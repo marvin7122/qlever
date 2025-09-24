@@ -281,6 +281,9 @@ void LocatedTriplesPerBlock::setOriginalMetadata(
 // the graph info is set to `nullopt`, which means that there is no info.
 static auto updateGraphMetadata(CompressedBlockMetadata& blockMetadata,
                                 const LocatedTriples& locatedTriples) {
+  // HACK
+  return;
+
   // We do not know anything about the triples contained in the block, so we
   // also cannot know if the `locatedTriples` introduces duplicates. We thus
   // have to be conservative and assume that there are duplicates.

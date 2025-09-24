@@ -87,6 +87,18 @@ void Server::initialize(const std::string& indexBaseName, bool useText,
     index_.addTextFromOnDiskIndex();
   }
 
+  // Set up callback for update-no-snapshots parameter changes
+  RuntimeParameters().setOnUpdateAction<"update-no-snapshots">(
+      [this](bool newValue) {
+        // When changed from true to false, create a snapshot
+        static bool previousValue =
+            RuntimeParameters().get<"update-no-snapshots">();
+        if (previousValue && !newValue) {
+          index_.deltaTriplesManager().forceSnapshotCreation();
+        }
+        previousValue = newValue;
+      });
+
   sortPerformanceEstimator_.computeEstimatesExpensively(
       allocator_, index_.numTriples().normalAndInternal_() *
                       PERCENTAGE_OF_TRIPLES_FOR_SORT_ESTIMATE / 100);

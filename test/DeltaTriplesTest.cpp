@@ -450,6 +450,65 @@ TEST_F(DeltaTriplesTest, DeltaTriplesManager) {
 }
 
 // _____________________________________________________________________________
+TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
+  DeltaTriplesManager deltaTriplesManager(testQec->getIndex().getImpl());
+  auto& vocab = testQec->getIndex().getVocab();
+  auto cancellationHandle =
+      std::make_shared<ad_utility::CancellationHandle<>>();
+
+  LocalVocab localVocab;
+  auto triplesToInsert = makeIdTriples(vocab, localVocab, {"<A> <B> <C>"});
+
+  // Initially, parameter should be false and snapshots should be created
+  EXPECT_FALSE(RuntimeParameters().get<"update-no-snapshots">());
+  auto initialSnapshot = deltaTriplesManager.getCurrentSnapshot();
+  auto initialIndex = initialSnapshot->index_;
+
+  // Insert a triple - should create new snapshot
+  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
+    deltaTriples.insertTriples(cancellationHandle, triplesToInsert);
+  });
+
+  auto snapshotAfterInsert = deltaTriplesManager.getCurrentSnapshot();
+  EXPECT_NE(snapshotAfterInsert->index_, initialIndex);
+
+  // Set parameter to true - updates should not create snapshots
+  RuntimeParameters().set<"update-no-snapshots">(true);
+  auto triplesToInsert2 = makeIdTriples(vocab, localVocab, {"<D> <E> <F>"});
+
+  auto snapshotBeforeSecondUpdate = deltaTriplesManager.getCurrentSnapshot();
+  auto indexBeforeSecondUpdate = snapshotBeforeSecondUpdate->index_;
+
+  // Insert another triple - should NOT create new snapshot
+  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
+    deltaTriples.insertTriples(cancellationHandle, triplesToInsert2);
+  });
+
+  auto snapshotAfterSecondInsert = deltaTriplesManager.getCurrentSnapshot();
+  EXPECT_EQ(snapshotAfterSecondInsert->index_, indexBeforeSecondUpdate);
+
+  // Force snapshot creation should work regardless of parameter
+  deltaTriplesManager.forceSnapshotCreation();
+  auto snapshotAfterForce = deltaTriplesManager.getCurrentSnapshot();
+  EXPECT_NE(snapshotAfterForce->index_, indexBeforeSecondUpdate);
+
+  // Set parameter back to false - should resume creating snapshots
+  RuntimeParameters().set<"update-no-snapshots">(false);
+  auto triplesToInsert3 = makeIdTriples(vocab, localVocab, {"<G> <H> <I>"});
+
+  auto snapshotBeforeThirdUpdate = deltaTriplesManager.getCurrentSnapshot();
+  auto indexBeforeThirdUpdate = snapshotBeforeThirdUpdate->index_;
+
+  // Insert another triple - should create new snapshot again
+  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
+    deltaTriples.insertTriples(cancellationHandle, triplesToInsert3);
+  });
+
+  auto snapshotAfterThirdInsert = deltaTriplesManager.getCurrentSnapshot();
+  EXPECT_NE(snapshotAfterThirdInsert->index_, indexBeforeThirdUpdate);
+}
+
+// _____________________________________________________________________________
 TEST_F(DeltaTriplesTest, restoreFromNonExistingFile) {
   DeltaTriples deltaTriples{testQec->getIndex()};
   deltaTriples.setPersists("filethatdoesnotexist");

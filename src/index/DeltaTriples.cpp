@@ -264,11 +264,15 @@ ReturnType DeltaTriplesManager::modify(
   return deltaTriples_.withWriteLock([this, &function, writeToDiskAfterRequest,
                                       &tracer](DeltaTriples& deltaTriples) {
     auto updateSnapshot = [this, &deltaTriples] {
-      auto newSnapshot = deltaTriples.getSnapshot();
-      currentLocatedTriplesSnapshot_.withWriteLock(
-          [&newSnapshot](auto& currentSnapshot) {
-            currentSnapshot = std::move(newSnapshot);
-          });
+      // Only create a new snapshot if the update-no-snapshots parameter is
+      // false
+      if (!RuntimeParameters().get<"update-no-snapshots">()) {
+        auto newSnapshot = deltaTriples.getSnapshot();
+        currentLocatedTriplesSnapshot_.withWriteLock(
+            [&newSnapshot](auto& currentSnapshot) {
+              currentSnapshot = std::move(newSnapshot);
+            });
+      }
     };
     auto writeAndUpdateSnapshot = [&updateSnapshot, &deltaTriples, &tracer,
                                    writeToDiskAfterRequest]() {
@@ -310,6 +314,17 @@ void DeltaTriplesManager::clear() { modify<void>(&DeltaTriples::clear); }
 // _____________________________________________________________________________
 SharedLocatedTriplesSnapshot DeltaTriplesManager::getCurrentSnapshot() const {
   return *currentLocatedTriplesSnapshot_.rlock();
+}
+
+// _____________________________________________________________________________
+void DeltaTriplesManager::forceSnapshotCreation() {
+  deltaTriples_.withWriteLock([this](DeltaTriples& deltaTriples) {
+    auto newSnapshot = deltaTriples.getSnapshot();
+    currentLocatedTriplesSnapshot_.withWriteLock(
+        [&newSnapshot](auto& currentSnapshot) {
+          currentSnapshot = std::move(newSnapshot);
+        });
+  });
 }
 
 // _____________________________________________________________________________
