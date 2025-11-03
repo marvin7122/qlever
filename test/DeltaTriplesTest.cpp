@@ -16,6 +16,7 @@
 #include "./util/GTestHelpers.h"
 #include "./util/IndexTestHelpers.h"
 #include "engine/ExportQueryExecutionTrees.h"
+#include "global/RuntimeParameters.h"
 #include "index/DeltaTriples.h"
 #include "index/IndexImpl.h"
 #include "index/Permutation.h"
@@ -460,7 +461,7 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
   auto triplesToInsert = makeIdTriples(vocab, localVocab, {"<A> <B> <C>"});
 
   // Initially, parameter should be false and snapshots should be created
-  EXPECT_FALSE(RuntimeParameters().get<"update-no-snapshots">());
+  EXPECT_FALSE(getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>());
   auto initialSnapshot = deltaTriplesManager.getCurrentSnapshot();
   auto initialIndex = initialSnapshot->index_;
 
@@ -473,7 +474,7 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
   EXPECT_NE(snapshotAfterInsert->index_, initialIndex);
 
   // Set parameter to true - updates should not create snapshots
-  RuntimeParameters().set<"update-no-snapshots">(true);
+  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(true);
   auto triplesToInsert2 = makeIdTriples(vocab, localVocab, {"<D> <E> <F>"});
 
   auto snapshotBeforeSecondUpdate = deltaTriplesManager.getCurrentSnapshot();
@@ -496,7 +497,7 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
   deltaTriplesManager.forceMetadataUpdate();
 
   // Set parameter back to false - should resume creating snapshots
-  RuntimeParameters().set<"update-no-snapshots">(false);
+  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
   auto triplesToInsert3 = makeIdTriples(vocab, localVocab, {"<G> <H> <I>"});
 
   auto snapshotBeforeThirdUpdate = deltaTriplesManager.getCurrentSnapshot();
@@ -521,7 +522,7 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior) {
   LocalVocab localVocab;
 
   // Ensure parameter starts as false
-  RuntimeParameters().set<"update-no-snapshots">(false);
+  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
 
   // Insert first triple with normal behavior - should update metadata
   auto triplesToInsert1 = makeIdTriples(vocab, localVocab, {"<A> <B> <C>"});
@@ -547,7 +548,7 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior) {
   EXPECT_TRUE(verifyMetadataUpdated());
 
   // Set parameter to true - metadata updates should be skipped
-  RuntimeParameters().set<"update-no-snapshots">(true);
+  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(true);
 
   // Reset metadata to simulate the state before updates
   deltaTriplesManager.deltaTriples_.withWriteLock([](auto& deltaTriples) {
@@ -586,7 +587,7 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior) {
   });
 
   // Set parameter back to false - should trigger metadata update automatically
-  RuntimeParameters().set<"update-no-snapshots">(false);
+  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
 
   // The callback should have triggered metadata update
   EXPECT_TRUE(verifyMetadataUpdated());

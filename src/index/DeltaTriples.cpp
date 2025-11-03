@@ -8,12 +8,15 @@
 
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "index/DeltaTriples.h"
 
 #include <absl/strings/str_cat.h>
 
+#include "backports/algorithm.h"
 #include "engine/ExecuteUpdate.h"
+#include "global/RuntimeParameters.h"
 #include "index/Index.h"
 #include "index/IndexImpl.h"
 #include "index/LocatedTriples.h"
@@ -90,9 +93,9 @@ DeltaTriplesCount DeltaTriples::getCounts() const {
 void DeltaTriples::insertTriples(CancellationHandle cancellationHandle,
                                  Triples triples,
                                  ad_utility::timer::TimeTracer& tracer) {
-  LOG(DEBUG) << "Inserting"
-             << " " << triples.size()
-             << " triples (including idempotent triples)." << std::endl;
+  AD_LOG_DEBUG << "Inserting"
+               << " " << triples.size()
+               << " triples (including idempotent triples)." << std::endl;
   modifyTriplesImpl(std::move(cancellationHandle), std::move(triples), true,
                     triplesInserted_, triplesDeleted_, tracer);
 }
@@ -101,9 +104,9 @@ void DeltaTriples::insertTriples(CancellationHandle cancellationHandle,
 void DeltaTriples::deleteTriples(CancellationHandle cancellationHandle,
                                  Triples triples,
                                  ad_utility::timer::TimeTracer& tracer) {
-  LOG(DEBUG) << "Deleting"
-             << " " << triples.size()
-             << " triples (including idempotent triples)." << std::endl;
+  AD_LOG_DEBUG << "Deleting"
+               << " " << triples.size()
+               << " triples (including idempotent triples)." << std::endl;
   modifyTriplesImpl(std::move(cancellationHandle), std::move(triples), false,
                     triplesDeleted_, triplesInserted_, tracer);
 }
@@ -176,7 +179,7 @@ void DeltaTriples::modifyTriplesImpl(CancellationHandle cancellationHandle,
   AD_EXPENSIVE_CHECK(std::unique(triples.begin(), triples.end()) ==
                      triples.end());
   tracer.beginTrace("removeExistingTriples");
-  std::erase_if(triples, [&targetMap](const IdTriple<0>& triple) {
+  ql::erase_if(triples, [&targetMap](const IdTriple<0>& triple) {
     return targetMap.contains(triple);
   });
   tracer.endTrace("removeExistingTriples");
@@ -193,7 +196,8 @@ void DeltaTriples::modifyTriplesImpl(CancellationHandle cancellationHandle,
   // Manually update the block metadata, because `eraseTripleInAllPermutations`
   // does not update them for performance reason.
   // Only update metadata if update-no-snapshots parameter is false
-  if (!RuntimeParameters().get<"update-no-snapshots">()) {
+
+  if (!getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>()) {
     ql::ranges::for_each(locatedTriples(),
                          &LocatedTriplesPerBlock::updateAugmentedMetadata);
   }
@@ -269,7 +273,7 @@ ReturnType DeltaTriplesManager::modify(
     auto updateSnapshot = [this, &deltaTriples] {
       // Only create a new snapshot if the update-no-snapshots parameter is
       // false
-      if (!RuntimeParameters().get<"update-no-snapshots">()) {
+      if (!getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>()) {
         auto newSnapshot = deltaTriples.getSnapshot();
         currentLocatedTriplesSnapshot_.withWriteLock(
             [&newSnapshot](auto& currentSnapshot) {

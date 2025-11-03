@@ -108,6 +108,18 @@ constexpr inline std::string_view QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX =
     ad_utility::constexprStrCat<string_constants::detail::openAngle,
                                 QLEVER_INTERNAL_PREFIX_URL,
                                 string_constants::detail::blank_node_prefix>();
+
+// The prefix of the SERVICE IRI used for a cached result with a name. Use as
+// in `SERVICE <ql:cached-result-with-name-$query-name$> {}`.
+namespace string_constants::detail {
+constexpr inline std::string_view cachedResultWithNamePrefix =
+    "cached-result-with-name-";
+}  // namespace string_constants::detail
+constexpr inline std::string_view CACHED_RESULT_WITH_NAME_PREFIX =
+    ad_utility::constexprStrCat<
+        QLEVER_INTERNAL_PREFIX_URL,
+        string_constants::detail::cachedResultWithNamePrefix>();
+
 constexpr inline std::pair<std::string_view, std::string_view> GEOF_PREFIX = {
     "geof:", "http://www.opengis.net/def/function/geosparql/"};
 constexpr inline std::pair<std::string_view, std::string_view> MATH_PREFIX = {
@@ -197,7 +209,15 @@ static constexpr std::string_view GEO_LITERAL_SUFFIX =
                                 GEO_WKT_LITERAL,
                                 string_constants::detail::closeAngle>();
 
-enum class UnitOfMeasurement { METERS, KILOMETERS, MILES, UNKNOWN };
+enum class UnitOfMeasurement {
+  METERS,
+  KILOMETERS,
+  MILES,
+  SQUARE_METERS,
+  SQUARE_KILOMETERS,
+  SQUARE_MILES,
+  UNKNOWN
+};
 constexpr inline std::string_view UNIT_PREFIX = "http://qudt.org/vocab/unit/";
 namespace string_constants::detail {
 constexpr inline std::string_view unit_meter = "M";
@@ -217,6 +237,24 @@ constexpr inline std::string_view unit_mile = "MI";
 constexpr inline std::string_view UNIT_MILE_IRI =
     ad_utility::constexprStrCat<UNIT_PREFIX,
                                 string_constants::detail::unit_mile>();
+namespace string_constants::detail {
+constexpr inline std::string_view unit_square_meter = "M2";
+}  // namespace string_constants::detail
+constexpr inline std::string_view UNIT_SQUARE_METER_IRI =
+    ad_utility::constexprStrCat<UNIT_PREFIX,
+                                string_constants::detail::unit_square_meter>();
+namespace string_constants::detail {
+constexpr inline std::string_view unit_square_kilometer = "KiloM2";
+}  // namespace string_constants::detail
+constexpr inline std::string_view UNIT_SQUARE_KILOMETER_IRI =
+    ad_utility::constexprStrCat<
+        UNIT_PREFIX, string_constants::detail::unit_square_kilometer>();
+namespace string_constants::detail {
+constexpr inline std::string_view unit_square_mile = "MI2";
+}  // namespace string_constants::detail
+constexpr inline std::string_view UNIT_SQUARE_MILE_IRI =
+    ad_utility::constexprStrCat<UNIT_PREFIX,
+                                string_constants::detail::unit_square_mile>();
 
 constexpr std::string_view SF_PREFIX = "http://www.opengis.net/ont/sf#";
 

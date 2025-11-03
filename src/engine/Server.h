@@ -14,6 +14,7 @@
 
 #include "ExecuteUpdate.h"
 #include "engine/Engine.h"
+#include "engine/NamedResultCache.h"
 #include "engine/QueryExecutionContext.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
@@ -40,11 +41,12 @@ class Server {
   FRIEND_TEST(ServerTest, getQueryId);
   FRIEND_TEST(ServerTest, createMessageSender);
   FRIEND_TEST(ServerTest, adjustParsedQueryLimitOffset);
+  FRIEND_TEST(ServerTest, configurePinnedResultWithName);
 
  public:
   explicit Server(unsigned short port, size_t numThreads,
                   ad_utility::MemorySize maxMem, std::string accessToken,
-                  bool usePatternTrick = true);
+                  bool noAccessCheck = false, bool usePatternTrick = true);
 
   virtual ~Server() = default;
 
@@ -78,7 +80,9 @@ class Server {
   const size_t numThreads_;
   unsigned short port_;
   std::string accessToken_;
+  bool noAccessCheck_;
   QueryResultCache cache_;
+  NamedResultCache namedResultCache_;
   ad_utility::AllocatorWithLimit<Id> allocator_;
   SortPerformanceEstimator sortPerformanceEstimator_;
   Index index_;
@@ -201,11 +205,22 @@ class Server {
                         std::string_view operationSPARQL,
                         ad_utility::websocket::MessageSender& messageSender,
                         const ad_utility::url_parser::ParamValueMap& params,
-                        TimeLimit timeLimit);
+                        TimeLimit timeLimit, bool accessTokenOk);
   // Sets the export limit (`send` parameter) and offset on the ParsedQuery;
   static void adjustParsedQueryLimitOffset(
       PlannedQuery& plannedQuery, const ad_utility::MediaType& mediaType,
       const ad_utility::url_parser::ParamValueMap& parameters);
+
+  // Configure pinned of named results on the `qec`. If `pinResultWithName` is
+  // set, then the `qec` is configured such that the query result will be stored
+  // in the named result cache. If `pinNamedGeoIndex` is also set, it is
+  // expected to be the variable name of a column (without leading `?`) on which
+  // a geometry index should be built. Throws if named pinning is required, but
+  // the access token is not okay.
+  static void configurePinnedResultWithName(
+      const std::optional<std::string>& pinResultWithName,
+      const std::optional<std::string>& pinNamedGeoIndex, bool accessTokenOk,
+      QueryExecutionContext& qec);
 
   // Plan a parsed query.
   PlannedQuery planQuery(ParsedQuery&& operation,
@@ -234,11 +249,11 @@ class Server {
 
   /// Invoke `function` on `threadPool_`, and return an awaitable to wait for
   /// its completion, wrapping the result.
-  template <std::invocable Function,
-            typename T = std::invoke_result_t<Function>>
-  Awaitable<T> computeInNewThread(boost::asio::static_thread_pool& threadPool,
-                                  Function function,
-                                  SharedCancellationHandle handle);
+  CPP_template(typename Function, typename T = std::invoke_result_t<Function>)(
+      requires ql::concepts::invocable<Function>)
+      Awaitable<T> computeInNewThread(
+          boost::asio::static_thread_pool& threadPool, Function function,
+          SharedCancellationHandle handle);
 
   /// This method extracts a client-defined query id from the passed HTTP
   /// request if it is present. If it is not present or empty, a new
@@ -285,6 +300,7 @@ class Server {
   /// formulated towards end users, it can be sent directly as the text of an
   /// HTTP error response.
   bool checkAccessToken(std::optional<std::string_view> accessToken) const;
+  FRIEND_TEST(ServerTest, checkAccessToken);
 
   /// Check if user-provided timeout is authorized with a valid access-token or
   /// lower than the server default. Return an empty optional and send a 403

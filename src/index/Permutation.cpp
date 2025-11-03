@@ -8,7 +8,6 @@
 
 #include "index/ConstantsIndexBuilding.h"
 #include "index/DeltaTriples.h"
-#include "util/GeneratorConverter.h"
 #include "util/StringUtils.h"
 
 // _____________________________________________________________________
@@ -59,8 +58,8 @@ void Permutation::loadFromDisk(const std::string& onDiskBase,
   }
   meta_.readFromFile(&file);
   reader_.emplace(allocator_, std::move(file));
-  LOG(INFO) << "Registered " << readableName_
-            << " permutation: " << meta_.statistics() << std::endl;
+  AD_LOG_INFO << "Registered " << readableName_
+              << " permutation: " << meta_.statistics() << std::endl;
   isLoaded_ = true;
 }
 
@@ -183,7 +182,7 @@ std::optional<Permutation::MetadataAndBlocks> Permutation::getMetadataAndBlocks(
     const ScanSpecAndBlocks& scanSpecAndBlocks,
     const LocatedTriplesSnapshot& locatedTriplesSnapshot) const {
   const auto& p = getActualPermutation(scanSpecAndBlocks.scanSpec_);
-  auto firstAndLastTriple = p.reader().getFirstAndLastTriple(
+  auto firstAndLastTriple = p.reader().getFirstAndLastTripleIgnoringGraph(
       scanSpecAndBlocks,
       p.getLocatedTriplesForPermutation(locatedTriplesSnapshot));
   if (!firstAndLastTriple.has_value()) {
@@ -194,7 +193,7 @@ std::optional<Permutation::MetadataAndBlocks> Permutation::getMetadataAndBlocks(
 }
 
 // _____________________________________________________________________
-Permutation::IdTableGenerator Permutation::lazyScan(
+CompressedRelationReader::IdTableGeneratorInputRange Permutation::lazyScan(
     const ScanSpecAndBlocks& scanSpecAndBlocks,
     std::optional<std::vector<CompressedBlockMetadata>> optBlocks,
     ColumnIndicesRef additionalColumns,
@@ -207,14 +206,10 @@ Permutation::IdTableGenerator Permutation::lazyScan(
     optBlocks = CompressedRelationReader::convertBlockMetadataRangesToVector(
         scanSpecAndBlocks.blockMetadata_);
   }
-  auto lazyScan{p.reader().lazyScan(
+  return p.reader().lazyScan(
       scanSpecAndBlocks.scanSpec_, std::move(optBlocks.value()),
       std::move(columns), cancellationHandle,
-      p.getLocatedTriplesForPermutation(locatedTriplesSnapshot), limitOffset)};
-
-  return cppcoro::fromInputRange<IdTable,
-                                 CompressedRelationReader::LazyScanMetadata>(
-      std::move(lazyScan));
+      p.getLocatedTriplesForPermutation(locatedTriplesSnapshot), limitOffset);
 }
 
 // ______________________________________________________________________

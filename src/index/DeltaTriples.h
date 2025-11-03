@@ -12,9 +12,9 @@
 #ifndef QLEVER_SRC_INDEX_DELTATRIPLES_H
 #define QLEVER_SRC_INDEX_DELTATRIPLES_H
 
+#include "backports/three_way_comparison.h"
 #include "engine/LocalVocab.h"
 #include "global/IdTriple.h"
-#include "global/RuntimeParameters.h"
 #include "index/Index.h"
 #include "index/IndexBuilderTypes.h"
 #include "index/LocatedTriples.h"
@@ -61,7 +61,8 @@ struct DeltaTriplesCount {
   friend DeltaTriplesCount operator-(const DeltaTriplesCount& lhs,
                                      const DeltaTriplesCount& rhs);
 
-  bool operator==(const DeltaTriplesCount& other) const = default;
+  QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR_LOCAL(DeltaTriplesCount,
+                                              triplesInserted_, triplesDeleted_)
 };
 
 // A class for maintaining triples that are inserted or deleted after index
@@ -84,6 +85,7 @@ class DeltaTriples {
   FRIEND_TEST(DeltaTriplesTest, clear);
   FRIEND_TEST(DeltaTriplesTest, addTriplesToLocalVocab);
   FRIEND_TEST(DeltaTriplesTest, storeAndRestoreData);
+  FRIEND_TEST(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior);
 
  public:
   using Triples = std::vector<IdTriple<0>>;
@@ -260,6 +262,7 @@ class DeltaTriplesManager {
 
   explicit DeltaTriplesManager(const IndexImpl& index);
   FRIEND_TEST(DeltaTriplesTest, DeltaTriplesManager);
+  FRIEND_TEST(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior);
 
   // Modify the underlying `DeltaTriples` by applying `function` and then update
   // the current snapshot. Concurrent calls to `modify` and `clear` will be

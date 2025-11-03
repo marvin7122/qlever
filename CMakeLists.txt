@@ -33,6 +33,11 @@ option(USE_PRECOMPILED_HEADERS "Use precompiled headers to reduce compile times"
 # on clang and g++
 option(COMPILER_VERSION_CHECK_DEACTIVATED "Disable compiler version check" OFF)
 
+option(REDUCED_FEATURE_SET_FOR_CPP17 "Exclude some features like `SERVICE`, `LOAD`, and transitive property paths, that haven't been migrated to C++17 yet" OFF)
+if (REDUCED_FEATURE_SET_FOR_CPP17)
+    add_compile_definitions(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
+endif()
+
 set(RANGE_V3_REQUIRED_BY_COMPILER OFF)
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "11.0.0" AND NOT COMPILER_VERSION_CHECK_DEACTIVATED)
@@ -73,6 +78,17 @@ if ("${CMAKE_GENERATOR}" STREQUAL "Ninja")
     elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
         add_compile_options(-fcolor-diagnostics)
     endif ()
+endif ()
+
+# Enable the manual usage of the C++ 17 backports (currently `range-v3` instead
+# of `std::ranges` and the `std::enable_if_t` based expansion of the concept
+# macros from `range-v3`.
+option(USE_CPP_17_BACKPORTS "Use the C++17 backports (range-v3 and enable_if_t instead of std::ranges and concepts)" OFF)
+if (${USE_CPP_17_BACKPORTS} OR ${RANGE_V3_REQUIRED_BY_COMPILER})
+    MESSAGE(STATUS "Using the C++17 backports (e.g. range-v3)")
+    add_compile_definitions(QLEVER_CPP_17 CPP_CXX_CONCEPTS=0)
+else ()
+    add_compile_definitions(RANGE_V3_COMBINE_WITH_STD)
 endif ()
 
 ###############################################################################
@@ -125,7 +141,6 @@ FetchContent_Declare(
         GIT_TAG 5ae161451ec1baaac352d7567298d3ac143bccae # branch fork-for-qlever
 )
 
-add_compile_definitions(RANGE_V3_COMBINE_WITH_STD)
 
 #################################
 # libspatialjoin
@@ -133,7 +148,7 @@ add_compile_definitions(RANGE_V3_COMBINE_WITH_STD)
 FetchContent_Declare(
         spatialjoin
         GIT_REPOSITORY https://github.com/ad-freiburg/spatialjoin
-        GIT_TAG fd59f632ae2dc674a1f9f5b0b0c0382085d1dd88
+        GIT_TAG 7f5c9007090cd1b902ad1873beb064820caebf39
 )
 # disable bzip2 and zlib support in spatialjoin, we don't need it
 add_compile_definitions(SPATIALJOIN_NO_BZIP2=True SPATIALJOIN_NO_ZLIB=True)
@@ -190,7 +205,7 @@ endif ()
 ######################################
 # BOOST
 ######################################
-find_package(Boost 1.81 COMPONENTS iostreams program_options url REQUIRED CONFIG)
+find_package(Boost 1.81 COMPONENTS iostreams program_options url container REQUIRED CONFIG)
 include_directories(${Boost_INCLUDE_DIR})
 
 
@@ -207,9 +222,9 @@ find_package(OpenSSL REQUIRED)
 # is a drop-in replacement for `target_link_libraries` that additionally links
 # against the common libraries.
 function(qlever_target_link_libraries target)
-    target_link_libraries(${target} ${ARGN} absl::flat_hash_map
+    target_link_libraries(${target} ${ARGN} absl::compare absl::flat_hash_map
             absl::flat_hash_set absl::strings absl::str_format ICU::uc
-            ICU::i18n OpenSSL::SSL OpenSSL::Crypto GTest::gtest GTest::gmock fsst nlohmann_json::nlohmann_json)
+            ICU::i18n OpenSSL::SSL OpenSSL::Crypto GTest::gtest GTest::gmock fsst nlohmann_json::nlohmann_json Boost::container)
 
     # memorySize is a utility library for defining memory sizes.
     if (NOT ${target} STREQUAL "memorySize")
@@ -226,14 +241,6 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -Wall -Wextra")
 # Enable the specification of additional compiler flags manually from the commandline
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ADDITIONAL_COMPILER_FLAGS}")
 
-# Enable the manual usage of the C++ 17 backports (currently `range-v3` instead
-# of `std::ranges` and the `std::enable_if_t` based expansion of the concept
-# macros from `range-v3`.
-set(USE_CPP_17_BACKPORTS OFF CACHE BOOL "Use the C++17 backports (range-v3 and enable_if_t instead of std::ranges and concepts)")
-if (${USE_CPP_17_BACKPORTS} OR ${RANGE_V3_REQUIRED_BY_COMPILER})
-    MESSAGE(STATUS "Using the C++17 backports (e.g. range-v3)")
-    add_compile_definitions(QLEVER_CPP_17 CPP_CXX_CONCEPTS=0)
-endif ()
 
 set(VOCAB_UNCOMPRESSED_IN_MEMORY OFF CACHE BOOL "Store QLever's vocabulary uncompressed and completely in RAM")
 if (${VOCAB_UNCOMPRESSED_IN_MEMORY})
@@ -458,10 +465,10 @@ add_library(compilationInfo ${CMAKE_CURRENT_BINARY_DIR}/CompilationInfo.cpp)
 qlever_target_link_libraries(compilationInfo)
 
 add_executable(IndexBuilderMain src/index/IndexBuilderMain.cpp)
-qlever_target_link_libraries(IndexBuilderMain qlever index ${CMAKE_THREAD_LIBS_INIT} Boost::program_options compilationInfo)
+qlever_target_link_libraries(IndexBuilderMain qlever index ${CMAKE_THREAD_LIBS_INIT} Boost::program_options compilationInfo global)
 
 add_executable(ServerMain src/ServerMain.cpp)
-qlever_target_link_libraries(ServerMain engine server ${CMAKE_THREAD_LIBS_INIT} Boost::program_options compilationInfo)
+qlever_target_link_libraries(ServerMain engine server ${CMAKE_THREAD_LIBS_INIT} Boost::program_options compilationInfo global)
 if (USE_PRECOMPILED_HEADERS)
 target_precompile_headers(ServerMain REUSE_FROM engine)
 endif()

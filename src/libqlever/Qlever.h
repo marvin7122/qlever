@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "engine/NamedResultCache.h"
 #include "engine/QueryExecutionContext.h"
 #include "engine/QueryPlanner.h"
 #include "global/RuntimeParameters.h"
@@ -171,6 +172,7 @@ class Qlever {
   ad_utility::AllocatorWithLimit<Id> allocator_;
   SortPerformanceEstimator sortPerformanceEstimator_;
   Index index_;
+  mutable NamedResultCache namedResultCache_;
   bool enablePatternTrick_;
 
  public:
@@ -217,6 +219,20 @@ class Qlever {
   std::string query(std::string query,
                     ad_utility::MediaType mediaType =
                         ad_utility::MediaType::sparqlJson) const;
+
+  // Plan, parse, and execute the given `query` and pin the result to the cache
+  // with the given options (name and possibly request for building a geometry
+  // index). This result can then be reused in a query as follows: `SERVICE
+  // ql:cached-result-with-name-<name> {}`.
+  void queryAndPinResultWithName(
+      QueryExecutionContext::PinResultWithName options, std::string query);
+  // Shorthand using only the name and no geo index for convenience and
+  // compatibility.
+  void queryAndPinResultWithName(std::string name, std::string query);
+
+  // Clear the result with the given `name` from the cache.
+  void eraseResultWithName(std::string name);
+  void clearNamedResultCache();
 };
 }  // namespace qlever
 

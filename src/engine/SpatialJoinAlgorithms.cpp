@@ -6,27 +6,34 @@
 
 #include "engine/SpatialJoinAlgorithms.h"
 
+#include <s2/s2closest_edge_query.h>
 #include <s2/s2closest_point_query.h>
 #include <s2/s2earth.h>
 #include <s2/s2point.h>
 #include <s2/s2point_index.h>
+#include <s2/s2polyline.h>
 #include <s2/util/units/length-units.h>
 #include <spatialjoin/BoxIds.h>
 #include <spatialjoin/Sweeper.h>
-#include <spatialjoin/WKTParse.h>
 #include <util/geo/Geo.h>
 
 #include <cmath>
 #include <set>
 
+#include "backports/three_way_comparison.h"
 #include "engine/ExportQueryExecutionTrees.h"
+#include "engine/NamedResultCache.h"
 #include "engine/SpatialJoin.h"
+#include "engine/SpatialJoinParser.h"
 #include "global/RuntimeParameters.h"
 #include "rdfTypes/GeometryInfoHelpersImpl.h"
+#include "util/ChunkedForLoop.h"
 #include "util/Exception.h"
+#include "util/GeoConverters.h"
 #include "util/GeoSparqlHelpers.h"
 
 using namespace BoostGeometryNamespace;
+using namespace geometryConverters;
 
 // ____________________________________________________________________________
 SpatialJoinAlgorithms::SpatialJoinAlgorithms(
@@ -67,13 +74,9 @@ std::pair<util::geo::I32Box, size_t> SpatialJoinAlgorithms::libspatialjoinParse(
     std::optional<util::geo::I32Box> prefilterBox) const {
   const auto [idTable, column] = idTableAndCol;
 
-  // Initialize the parser.
-  sj::WKTParser parser(&sweeper, numThreads);
-
   // Convert prefilter box to lat lng coordinates for comparing against geometry
   // info from vocabulary.
   std::optional<util::geo::DBox> prefilterLatLngBox = std::nullopt;
-  size_t prefilterCounter = 0;
   if (prefilterBox.has_value()) {
     prefilterLatLngBox = ad_utility::detail::projectInt32WebMercToDoubleLatLng(
         prefilterBox.value());
@@ -91,54 +94,26 @@ std::pair<util::geo::I32Box, size_t> SpatialJoinAlgorithms::libspatialjoinParse(
         "prefilter-disabled-by-bounding-box-area", true);
   }
 
-  // Iterate over all rows in `idTable` and parse the geometries from `column`.
-  for (size_t row = 0; row < idTable->size(); row++) {
-    throwIfCancelled();
+  // Initialize the parser.
+  ad_utility::detail::parallel_wkt_parser::WKTParser parser(
+      &sweeper, numThreads, usePrefiltering, prefilterLatLngBox,
+      qec_->getIndex());
 
-    const auto id = idTable->at(row, column);
-    if (id.getDatatype() == Datatype::VocabIndex) {
-      // If we have a prefilter box, check if we also have a precomputed
-      // bounding box for the geometry this `VocabIndex` is referring to.
-      if (usePrefiltering &&
-          prefilterGeoByBoundingBox(prefilterLatLngBox, qec_->getIndex(),
-                                    id.getVocabIndex())) {
-        prefilterCounter++;
-        continue;
-      }
-
-      // If we have not filtered out this geometry, read and parse the full
-      // string.
-      const auto& wkt = qec_->getIndex().indexToString(id.getVocabIndex());
-      parser.parseWKT(wkt.c_str(), row, leftOrRightSide);
-    } else if (id.getDatatype() == Datatype::GeoPoint) {
-      const auto& p = id.getGeoPoint();
-      const util::geo::DPoint utilPoint{p.getLng(), p.getLat()};
-
-      // If point is not contained in the prefilter box, we can skip it
-      // immediately instead of feeding it to the parser.
-      if (prefilterLatLngBox.has_value() &&
-          !util::geo::intersects(prefilterLatLngBox.value(), utilPoint)) {
-        prefilterCounter++;
-        continue;
-      }
-
-      parser.parsePoint(utilPoint, row, leftOrRightSide);
-    } else if (id.getDatatype() == Datatype::LocalVocabIndex) {
-      // `LocalVocabEntry` has to be parsed in any case: we have no information
-      // except the string.
-      const auto& literalOrIri = *id.getLocalVocabIndex();
-      if (literalOrIri.isLiteral()) {
-        const auto& wkt =
-            asStringViewUnsafe(literalOrIri.getLiteral().getContent());
-        parser.parseWKT(wkt, row, leftOrRightSide);
-      }
-    }
-  }
+  // Iterate over all rows in `idTable` and add the geometries from `column` to
+  // the parallel WKT parser.
+  const auto& geoms = idTable->getColumn(column);
+  ad_utility::chunkedForLoop<wktParserChunkSizeForCancellationCheck>(
+      0, idTable->size(),
+      [&parser, &geoms, &leftOrRightSide](size_t row) {
+        parser.addValueIdToQueue(geoms[row], row, leftOrRightSide);
+      },
+      [this]() { throwIfCancelled(); });
 
   // Wait for all parser threads to finish, then return the bounding box of all
   // the geometries parsed so far.
   parser.done();
 
+  auto prefilterCounter = parser.getPrefilterCounter();
   if (spatialJoin_.has_value() && prefilterBox.has_value()) {
     spatialJoin_.value()->runtimeInfo().addDetail(
         "num-geoms-dropped-by-prefilter", prefilterCounter);
@@ -151,7 +126,7 @@ std::pair<util::geo::I32Box, size_t> SpatialJoinAlgorithms::libspatialjoinParse(
 size_t SpatialJoinAlgorithms::getNumThreads() {
   size_t maxHwConcurrency = std::thread::hardware_concurrency();
   size_t userPreference =
-      RuntimeParameters().get<"spatial-join-max-num-threads">();
+      getRuntimeParameter<&RuntimeParameters::spatialJoinMaxNumThreads_>();
   if (userPreference == 0 || maxHwConcurrency < userPreference) {
     return maxHwConcurrency;
   }
@@ -161,12 +136,30 @@ size_t SpatialJoinAlgorithms::getNumThreads() {
 // ____________________________________________________________________________
 std::optional<GeoPoint> SpatialJoinAlgorithms::getPoint(const IdTable* restable,
                                                         size_t row,
-                                                        ColumnIndex col) const {
+                                                        ColumnIndex col) {
   auto id = restable->at(row, col);
   return id.getDatatype() == Datatype::GeoPoint
              ? std::optional{id.getGeoPoint()}
              : std::nullopt;
 };
+
+// ____________________________________________________________________________
+std::optional<S2Polyline> SpatialJoinAlgorithms::getPolyline(
+    const IdTable& restable, size_t row, ColumnIndex col, const Index& index) {
+  using namespace util::geo;
+  auto id = restable.at(row, col);
+  auto str = ExportQueryExecutionTrees::idToStringAndType(index, id, {});
+  if (!str.has_value()) {
+    return std::nullopt;
+  }
+  // The `lineFromWKT` function skips the part of the string before the first
+  // opening bracket. The geometry type needs to be checked separately.
+  if (getWKTType(str.value().first) != WKTType::LINESTRING) {
+    return std::nullopt;
+  }
+  auto line = lineFromWKT<double>(str.value().first);
+  return line.empty() ? std::nullopt : std::optional{toS2Polyline(line)};
+}
 
 // ____________________________________________________________________________
 std::string_view SpatialJoinAlgorithms::betweenQuotes(
@@ -312,7 +305,7 @@ void SpatialJoinAlgorithms::addResultTableEntry(IdTable* result,
 Result SpatialJoinAlgorithms::BaselineAlgorithm() {
   const auto [idTableLeft, resultLeft, idTableRight, resultRight, leftJoinCol,
               rightJoinCol, rightSelectedCols, numColumns, maxDist, maxResults,
-              joinType] = params_;
+              joinType, rightCacheName] = params_;
   IdTable result{numColumns, qec_->getAllocator()};
 
   // cartesian product between the two tables, pairs are restricted according to
@@ -387,7 +380,7 @@ Result SpatialJoinAlgorithms::BaselineAlgorithm() {
 Result SpatialJoinAlgorithms::LibspatialjoinAlgorithm() {
   const auto [idTableLeft, resultLeft, idTableRight, resultRight, leftJoinCol,
               rightJoinCol, rightSelectedCols, numColumns, maxDist, maxResults,
-              joinType] = params_;
+              joinType, rightCacheName] = params_;
   // Setup.
   IdTable result{numColumns, qec_->getAllocator()};
   size_t NUM_THREADS = getNumThreads();
@@ -542,16 +535,8 @@ Result SpatialJoinAlgorithms::LibspatialjoinAlgorithm() {
 Result SpatialJoinAlgorithms::S2geometryAlgorithm() {
   const auto [idTableLeft, resultLeft, idTableRight, resultRight, leftJoinCol,
               rightJoinCol, rightSelectedCols, numColumns, maxDist, maxResults,
-              joinType] = params_;
+              joinType, rightCacheName] = params_;
   IdTable result{numColumns, qec_->getAllocator()};
-
-  // Helper function to convert `GeoPoint` to `S2Point`
-  auto constexpr toS2Point = [](const GeoPoint& p) {
-    auto lat = p.getLat();
-    auto lng = p.getLng();
-    auto latlng = S2LatLng::FromDegrees(lat, lng);
-    return S2Point{latlng};
-  };
 
   S2PointIndex<size_t> s2index;
 
@@ -569,7 +554,6 @@ Result SpatialJoinAlgorithms::S2geometryAlgorithm() {
       s2index.Add(toS2Point(p.value()), row);
     }
   }
-
   // Performs a nearest neighbor search on the index and returns the closest
   // points that satisfy the criteria given by `maxDist_` and `maxResults_`.
 
@@ -587,7 +571,6 @@ Result SpatialJoinAlgorithms::S2geometryAlgorithm() {
 
   auto searchTable = indexOfRight ? idTableLeft : idTableRight;
   auto searchJoinCol = indexOfRight ? leftJoinCol : rightJoinCol;
-
   // Use the index to lookup the points of the other table
   for (size_t searchRow = 0; searchRow < searchTable->size(); searchRow++) {
     auto p = getPoint(searchTable, searchRow, searchJoinCol);
@@ -615,11 +598,73 @@ Result SpatialJoinAlgorithms::S2geometryAlgorithm() {
 }
 
 // ____________________________________________________________________________
+Result SpatialJoinAlgorithms::S2PointPolylineAlgorithm() {
+  const auto [idTableLeft, resultLeft, idTableRight, resultRight, leftJoinCol,
+              rightJoinCol, rightSelectedCols, numColumns, maxDist, maxResults,
+              joinType, rightCacheName] = params_;
+  IdTable result{numColumns, qec_->getAllocator()};
+
+  AD_CORRECTNESS_CHECK(rightCacheName.has_value());
+  auto s2index =
+      qec_->namedResultCache().get(rightCacheName.value())->cachedGeoIndex_;
+  AD_CORRECTNESS_CHECK(s2index.has_value());
+  AD_CORRECTNESS_CHECK(!maxResults.has_value() && maxDist.has_value());
+
+  // Construct a query object with the given constraints
+  auto s2indexPtr = s2index.value().getIndex();
+  auto s2query = S2ClosestEdgeQuery{s2indexPtr.get()};
+  s2query.mutable_options()->set_inclusive_max_distance(S2Earth::ToAngle(
+      util::units::Meters(static_cast<float>(maxDist.value()))));
+
+  ad_utility::Timer timerAll{ad_utility::Timer::Started};
+  ad_utility::Timer timerS2{ad_utility::Timer::Stopped};
+  ad_utility::Timer timerWrite{ad_utility::Timer::Stopped};
+
+  // Use the index to lookup the points of the other table
+  for (size_t rowLeft = 0; rowLeft < idTableLeft->size(); rowLeft++) {
+    auto p = getPoint(idTableLeft, rowLeft, leftJoinCol);
+    if (!p.has_value()) {
+      continue;
+    }
+    auto s2target = S2ClosestEdgeQuery::PointTarget{toS2Point(p.value())};
+
+    ad_utility::HashMap<size_t, double> deduplicatedSet{};
+    timerS2.cont();
+    auto res = s2query.FindClosestEdges(&s2target);
+
+    for (const auto& neighbor : res) {
+      // In this loop we only receive points that already satisfy the given
+      // criteria
+      auto indexRow = s2index.value().getRow(neighbor.shape_id());
+      auto dist = S2Earth::ToKm(neighbor.distance());
+      deduplicatedSet[indexRow] = dist;
+    }
+    timerS2.stop();
+    timerWrite.cont();
+    for (auto [indexRow, dist] : deduplicatedSet) {
+      auto rowRight = indexRow;
+      addResultTableEntry(&result, idTableLeft, idTableRight, rowLeft, rowRight,
+                          Id::makeFromDouble(dist));
+    }
+    timerWrite.stop();
+  }
+  spatialJoin_.value()->runtimeInfo().addDetail("time for s2 queries",
+                                                timerS2.msecs().count());
+  spatialJoin_.value()->runtimeInfo().addDetail("time for result writing",
+                                                timerWrite.msecs().count());
+  spatialJoin_.value()->runtimeInfo().addDetail("time total",
+                                                timerAll.msecs().count());
+
+  return Result{std::move(result), std::vector<ColumnIndex>{},
+                Result::getMergedLocalVocab(*resultLeft, *resultRight)};
+}
+
+// ____________________________________________________________________________
 std::vector<Box> SpatialJoinAlgorithms::computeQueryBox(
     const Point& startPoint, double additionalDist) const {
   const auto [idTableLeft, resultLeft, idTableRight, resultRight, leftJoinCol,
               rightJoinCol, rightSelectedCols, numColumns, maxDist, maxResults,
-              joinType] = params_;
+              joinType, rightCacheName] = params_;
   AD_CORRECTNESS_CHECK(maxDist.has_value(),
                        "Max distance must have a value for this operation");
   // haversine function
@@ -699,7 +744,7 @@ std::vector<Box> SpatialJoinAlgorithms::computeQueryBoxForLargeDistances(
     const Point& startPoint) const {
   const auto [idTableLeft, resultLeft, idTableRight, resultRight, leftJoinCol,
               rightJoinCol, rightSelectedCols, numColumns, maxDist, maxResults,
-              joinType] = params_;
+              joinType, rightCacheName] = params_;
   AD_CORRECTNESS_CHECK(maxDist.has_value(),
                        "Max distance must have a value for this operation");
 
@@ -878,15 +923,18 @@ Result SpatialJoinAlgorithms::BoundingBoxAlgorithm() {
     size_t rowLeft_;
     size_t rowRight_;
 
-    auto operator<=>(const AddedPair& other) const {
-      return (rowLeft_ == other.rowLeft_) ? (rowRight_ <=> other.rowRight_)
-                                          : (rowLeft_ <=> other.rowLeft_);
+    auto compareThreeWay(const AddedPair& other) const {
+      return (rowLeft_ == other.rowLeft_)
+                 ? ql::compareThreeWay(rowRight_, other.rowRight_)
+                 : ql::compareThreeWay(rowLeft_, other.rowLeft_);
     }
+
+    QL_DEFINE_CUSTOM_THREEWAY_OPERATOR_LOCAL(AddedPair)
   };
 
   const auto [idTableLeft, resultLeft, idTableRight, resultRight, leftJoinCol,
               rightJoinCol, rightSelectedCols, numColumns, maxDist, maxResults,
-              joinType] = params_;
+              joinType, rightCacheName] = params_;
   IdTable result{numColumns, qec_->getAllocator()};
 
   // create r-tree for smaller result table
@@ -983,5 +1031,5 @@ void SpatialJoinAlgorithms::throwIfCancelled() const {
 // ____________________________________________________________________________
 double SpatialJoinAlgorithms::maxAreaPrefilterBox() {
   return static_cast<double>(
-      RuntimeParameters().get<"spatial-join-prefilter-max-size">());
+      getRuntimeParameter<&RuntimeParameters::spatialJoinPrefilterMaxSize_>());
 }
