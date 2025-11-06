@@ -248,13 +248,6 @@ std::vector<LocatedTriples::iterator> LocatedTriplesPerBlock::add(
   }
 
   tracer.endTrace("adding");
-  tracer.beginTrace("updateMetadata");
-  // Only update metadata if update-no-snapshots parameter is false
-  if (!getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>()) {
-    updateAugmentedMetadata();
-  }
-  tracer.endTrace("updateMetadata");
-
   return handles;
 }
 

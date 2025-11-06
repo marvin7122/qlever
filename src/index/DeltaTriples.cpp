@@ -48,8 +48,6 @@ DeltaTriples::locateAndAddTriples(CancellationHandle cancellationHandle,
     tracer.beginTrace("locateTriples");
     auto& perm = index_.getPermutation(permutation);
     auto locatedTriples = LocatedTriple::locateTriplesInPermutation(
-        // TODO<qup42>: replace with `getAugmentedMetadata` once integration
-        //  is done
         triples, perm.metaData().blockData(), perm.keyOrder(), insertOrDelete,
         cancellationHandle);
     cancellationHandle->throwIfCancelled();
@@ -192,16 +190,6 @@ void DeltaTriples::modifyTriplesImpl(CancellationHandle cancellationHandle,
     }
   });
   tracer.endTrace("removeInverseTriples");
-  tracer.beginTrace("updateMetadata");
-  // Manually update the block metadata, because `eraseTripleInAllPermutations`
-  // does not update them for performance reason.
-  // Only update metadata if update-no-snapshots parameter is false
-
-  if (!getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>()) {
-    ql::ranges::for_each(locatedTriples(),
-                         &LocatedTriplesPerBlock::updateAugmentedMetadata);
-  }
-  tracer.endTrace("updateMetadata");
   tracer.beginTrace("locatedAndAdd");
 
   std::vector<LocatedTripleHandles> handles = locateAndAddTriples(
@@ -277,13 +265,15 @@ DeltaTriplesManager::DeltaTriplesManager(const IndexImpl& index)
 template <typename ReturnType>
 ReturnType DeltaTriplesManager::modify(
     const std::function<ReturnType(DeltaTriples&)>& function,
-    bool writeToDiskAfterRequest, ad_utility::timer::TimeTracer& tracer) {
+    bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
+    ad_utility::timer::TimeTracer& tracer) {
   // While holding the lock for the underlying `DeltaTriples`, perform the
   // actual `function` (typically some combination of insert and delete
   // operations) and (while still holding the lock) update the
   // `currentLocatedTriplesSnapshot_`.
   tracer.beginTrace("acquiringDeltaTriplesWriteLock");
   return deltaTriples_.withWriteLock([this, &function, writeToDiskAfterRequest,
+                                      updateMetadataAfterRequest,
                                       &tracer](DeltaTriples& deltaTriples) {
     auto updateSnapshot = [this, &deltaTriples] {
       // Only create a new snapshot if the update-no-snapshots parameter is
@@ -307,13 +297,26 @@ ReturnType DeltaTriplesManager::modify(
       updateSnapshot();
       tracer.endTrace("snapshotCreation");
     };
+    auto updateMetadata = [&tracer, &deltaTriples,
+                           updateMetadataAfterRequest]() {
+      // Only update the metadata if the update-no-snapshots parameter is
+      // false
+      tracer.beginTrace("updateMetadata");
+      if (!getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>() &&
+          updateMetadataAfterRequest) {
+        deltaTriples.updateAugmentedMetadata();
+      }
+      tracer.endTrace("updateMetadata");
+    };
 
     tracer.endTrace("acquiringDeltaTriplesWriteLock");
     if constexpr (std::is_void_v<ReturnType>) {
       function(deltaTriples);
+      updateMetadata();
       writeAndUpdateSnapshot();
     } else {
       ReturnType returnValue = function(deltaTriples);
+      updateMetadata();
       writeAndUpdateSnapshot();
       return returnValue;
     }
@@ -322,13 +325,15 @@ ReturnType DeltaTriplesManager::modify(
 // Explicit instantiations
 template void DeltaTriplesManager::modify<void>(
     std::function<void(DeltaTriples&)> const&, bool writeToDiskAfterRequest,
-    ad_utility::timer::TimeTracer&);
+    bool updateMetadataAfterRequest, ad_utility::timer::TimeTracer&);
 template UpdateMetadata DeltaTriplesManager::modify<UpdateMetadata>(
     const std::function<UpdateMetadata(DeltaTriples&)>&,
-    bool writeToDiskAfterRequest, ad_utility::timer::TimeTracer&);
+    bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
+    ad_utility::timer::TimeTracer&);
 template DeltaTriplesCount DeltaTriplesManager::modify<DeltaTriplesCount>(
     const std::function<DeltaTriplesCount(DeltaTriples&)>&,
-    bool writeToDiskAfterRequest, ad_utility::timer::TimeTracer&);
+    bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
+    ad_utility::timer::TimeTracer&);
 
 // _____________________________________________________________________________
 void DeltaTriplesManager::clear() { modify<void>(&DeltaTriples::clear); }
@@ -365,6 +370,12 @@ void DeltaTriples::setOriginalMetadata(
   locatedTriples()
       .at(static_cast<size_t>(permutation))
       .setOriginalMetadata(std::move(metadata));
+}
+
+// _____________________________________________________________________________
+void DeltaTriples::updateAugmentedMetadata() {
+  ql::ranges::for_each(locatedTriples(),
+                       &LocatedTriplesPerBlock::updateAugmentedMetadata);
 }
 
 // _____________________________________________________________________________
@@ -419,6 +430,7 @@ void DeltaTriples::readFromDisk() {
   AD_LOG_INFO << "Done, #inserted triples = " << idRanges.at(1).size()
               << ", #deleted triples = " << idRanges.at(0).size() << std::endl;
 }
+
 // _____________________________________________________________________________
 void DeltaTriples::setPersists(std::optional<std::string> filename) {
   filenameForPersisting_ = std::move(filename);
