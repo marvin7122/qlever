@@ -458,33 +458,30 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
       std::make_shared<ad_utility::CancellationHandle<>>();
 
   LocalVocab localVocab;
-  auto triplesToInsert = makeIdTriples(vocab, localVocab, {"<A> <B> <C>"});
+
+  auto insertTriples = [&, this](const std::vector<std::string>& turtles) {
+    auto triples = makeIdTriples(vocab, localVocab, turtles);
+    deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
+      deltaTriples.insertTriples(cancellationHandle, std::move(triples));
+    });
+  };
 
   // Initially, parameter should be false and snapshots should be created
   EXPECT_FALSE(getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>());
   auto initialSnapshot = deltaTriplesManager.getCurrentSnapshot();
   auto initialIndex = initialSnapshot->index_;
 
-  // Insert a triple - should create new snapshot
-  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
-    deltaTriples.insertTriples(cancellationHandle, triplesToInsert);
-  });
+  insertTriples({"<A> <B> <C>"});
 
   auto snapshotAfterInsert = deltaTriplesManager.getCurrentSnapshot();
   EXPECT_NE(snapshotAfterInsert->index_, initialIndex);
 
   // Set parameter to true - updates should not create snapshots
   setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(true);
-  auto triplesToInsert2 = makeIdTriples(vocab, localVocab, {"<D> <E> <F>"});
 
   auto snapshotBeforeSecondUpdate = deltaTriplesManager.getCurrentSnapshot();
   auto indexBeforeSecondUpdate = snapshotBeforeSecondUpdate->index_;
-
-  // Insert another triple - should NOT create new snapshot
-  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
-    deltaTriples.insertTriples(cancellationHandle, triplesToInsert2);
-  });
-
+  insertTriples({"<D> <E> <F>"});
   auto snapshotAfterSecondInsert = deltaTriplesManager.getCurrentSnapshot();
   EXPECT_EQ(snapshotAfterSecondInsert->index_, indexBeforeSecondUpdate);
 
@@ -493,20 +490,15 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
   auto snapshotAfterForce = deltaTriplesManager.getCurrentSnapshot();
   EXPECT_NE(snapshotAfterForce->index_, indexBeforeSecondUpdate);
 
-  // Force metadata update should also work regardless of parameter
-  deltaTriplesManager.forceMetadataUpdate();
-
-  // Set parameter back to false - should resume creating snapshots
+  // Set parameter back to false - immediately creates a snapshot and resumes
+  // creating snapshots
   setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
-  auto triplesToInsert3 = makeIdTriples(vocab, localVocab, {"<G> <H> <I>"});
 
   auto snapshotBeforeThirdUpdate = deltaTriplesManager.getCurrentSnapshot();
   auto indexBeforeThirdUpdate = snapshotBeforeThirdUpdate->index_;
+  EXPECT_NE(indexBeforeThirdUpdate, snapshotAfterForce->index_);
 
-  // Insert another triple - should create new snapshot again
-  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
-    deltaTriples.insertTriples(cancellationHandle, triplesToInsert3);
-  });
+  insertTriples({"<G> <H> <I>"});
 
   auto snapshotAfterThirdInsert = deltaTriplesManager.getCurrentSnapshot();
   EXPECT_NE(snapshotAfterThirdInsert->index_, indexBeforeThirdUpdate);
@@ -521,91 +513,67 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior) {
 
   LocalVocab localVocab;
 
-  // Ensure parameter starts as false
-  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
-
-  // Insert first triple with normal behavior - should update metadata
-  auto triplesToInsert1 = makeIdTriples(vocab, localVocab, {"<A> <B> <C>"});
-  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
-    deltaTriples.insertTriples(cancellationHandle, triplesToInsert1);
-  });
-
-  // Verify metadata was updated - check that augmented metadata exists
-  auto verifyMetadataUpdated = [&deltaTriplesManager]() {
+  auto setUpdateNoSnapshots =
+      setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_, bool>;
+  auto augmentedMetadataAvailable = [&deltaTriplesManager]() {
     return deltaTriplesManager.deltaTriples_.withReadLock(
         [](const auto& deltaTriples) {
           const auto& locatedTriples = deltaTriples.locatedTriples();
-          // At least one permutation should have updated metadata
-          return std::any_of(
-              locatedTriples.begin(), locatedTriples.end(),
-              [](const auto& permutation) {
-                // Check if any block has augmented metadata
-                return permutation.augmentedMetadata_.has_value();
-              });
+          auto hasAugmentedMetadata = [](const auto& permutation) {
+            return permutation.augmentedMetadata_.has_value();
+          };
+          // Either all permutations should have augmented metadata or none.
+          auto all = ql::ranges::all_of(locatedTriples, hasAugmentedMetadata);
+          auto none = ql::ranges::none_of(locatedTriples, hasAugmentedMetadata);
+          EXPECT_TRUE(all || none);
+          return all;
         });
   };
+  auto resetMetadata = [&deltaTriplesManager]() {
+    deltaTriplesManager.deltaTriples_.withWriteLock([](auto& deltaTriples) {
+      for (auto& permutation : deltaTriples.locatedTriples()) {
+        permutation.augmentedMetadata_.reset();
+      }
+    });
+  };
+  auto insertTriples = [&, this](const std::vector<std::string>& turtles) {
+    auto triples = makeIdTriples(vocab, localVocab, turtles);
+    deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
+      deltaTriples.insertTriples(cancellationHandle, std::move(triples));
+    });
+  };
 
-  EXPECT_TRUE(verifyMetadataUpdated());
+  // Ensure parameter starts as false
+  setUpdateNoSnapshots(false);
+  EXPECT_FALSE(augmentedMetadataAvailable());
+
+  // Insert first triple with normal behavior - should update metadata
+  insertTriples({"<A> <B> <C>"});
+  EXPECT_TRUE(augmentedMetadataAvailable());
 
   // Set parameter to true - metadata updates should be skipped
-  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(true);
+  setUpdateNoSnapshots(true);
+  resetMetadata();
+  insertTriples({"<D> <E> <F>"});
+  EXPECT_FALSE(augmentedMetadataAvailable());
 
-  // Reset metadata to simulate the state before updates
-  deltaTriplesManager.deltaTriples_.withWriteLock([](auto& deltaTriples) {
-    for (auto& permutation : deltaTriples.locatedTriples()) {
-      permutation.augmentedMetadata_.reset();
-    }
-  });
-
-  // Insert second triple with update-no-snapshots=true
-  auto triplesToInsert2 = makeIdTriples(vocab, localVocab, {"<D> <E> <F>"});
-  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
-    deltaTriples.insertTriples(cancellationHandle, triplesToInsert2);
-  });
-
-  // Verify metadata was NOT updated (should still be reset/nullopt)
-  EXPECT_FALSE(verifyMetadataUpdated());
-
-  // Insert third triple - still no metadata updates
-  auto triplesToInsert3 = makeIdTriples(vocab, localVocab, {"<G> <H> <I>"});
-  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
-    deltaTriples.insertTriples(cancellationHandle, triplesToInsert3);
-  });
-
-  // Verify metadata still not updated
-  EXPECT_FALSE(verifyMetadataUpdated());
+  insertTriples({"<G> <H> <I>"});
+  EXPECT_FALSE(augmentedMetadataAvailable());
 
   // Manually force metadata update - should work regardless of parameter
   deltaTriplesManager.forceMetadataUpdate();
-  EXPECT_TRUE(verifyMetadataUpdated());
+  EXPECT_TRUE(augmentedMetadataAvailable());
 
-  // Reset metadata again to test parameter change
-  deltaTriplesManager.deltaTriples_.withWriteLock([](auto& deltaTriples) {
-    for (auto& permutation : deltaTriples.locatedTriples()) {
-      permutation.augmentedMetadata_.reset();
-    }
-  });
-
-  // Set parameter back to false - should trigger metadata update automatically
-  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
-
-  // The callback should have triggered metadata update
-  EXPECT_TRUE(verifyMetadataUpdated());
+  // Set parameter back to false - immediately creates augmented metadata and
+  // resumes updating metadata after updates
+  resetMetadata();
+  setUpdateNoSnapshots(false);
+  EXPECT_TRUE(augmentedMetadataAvailable());
 
   // Future updates should resume normal metadata updates
-  deltaTriplesManager.deltaTriples_.withWriteLock([](auto& deltaTriples) {
-    for (auto& permutation : deltaTriples.locatedTriples()) {
-      permutation.augmentedMetadata_.reset();
-    }
-  });
-
-  auto triplesToInsert4 = makeIdTriples(vocab, localVocab, {"<J> <K> <L>"});
-  deltaTriplesManager.modify<void>([&](DeltaTriples& deltaTriples) {
-    deltaTriples.insertTriples(cancellationHandle, triplesToInsert4);
-  });
-
-  // Should have updated metadata automatically
-  EXPECT_TRUE(verifyMetadataUpdated());
+  resetMetadata();
+  insertTriples({"<J> <K> <L>"});
+  EXPECT_TRUE(augmentedMetadataAvailable());
 }
 
 // _____________________________________________________________________________
