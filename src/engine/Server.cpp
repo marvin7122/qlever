@@ -1043,13 +1043,13 @@ CPP_template_def(typename RequestT, typename ResponseT)(
         // directly on the `DeltaTriples` (we have an exclusive lock on them
         // anyway).
         for (ParsedQuery& update : updates) {
-          bool dontPropagateUpdates =
-              getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>();
+          bool propagateUpdates = getRuntimeParameter<
+              &RuntimeParameters::propagateChangesFromUpdates_>();
           // If snapshots are disabled but the update has a where clause, create
           // a snapshot and update the metadata anyway. This ensures that
           // updates are evaluated correctly even if the snapshots are disabled.
           tracer.beginTrace("snapshot");
-          if (dontPropagateUpdates &&
+          if (!propagateUpdates &&
               !update._rootGraphPattern._graphPatterns.empty()) {
             index_.deltaTriplesManager().forceMetadataUpdate();
             qec.updateLocatedTriplesSnapshot(
@@ -1083,8 +1083,8 @@ CPP_template_def(typename RequestT, typename ResponseT)(
                     tracer.endTrace("processUpdateImpl");
                     return res;
                   },
-                  {.updateMetadataAfterRequest = !dontPropagateUpdates,
-                   .updateSnapshotAfterRequest = !dontPropagateUpdates},
+                  {.updateMetadataAfterRequest = propagateUpdates,
+                   .updateSnapshotAfterRequest = propagateUpdates},
                   tracer);
           tracer.endTrace("execution");
 

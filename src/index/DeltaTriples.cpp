@@ -245,20 +245,20 @@ DeltaTriples::DeltaTriples(const Index& index)
 DeltaTriplesManager::DeltaTriplesManager(const IndexImpl& index)
     : deltaTriples_{index},
       currentLocatedTriplesSnapshot_{deltaTriples_.wlock()->getSnapshot()},
-      previousUpdateNoSnapshotsValue_{
-          getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>()} {
+      previousPropagateChangesFromUpdates_{getRuntimeParameter<
+          &RuntimeParameters::propagateChangesFromUpdates_>()} {
   // Set up callback for update-no-snapshots parameter changes.
   // Initialize with current value to avoid deadlock in callback.
-  globalRuntimeParameters.wlock()->updateNoSnapshots_.setOnUpdateAction(
-      [this](bool newValue) {
-        // When snapshots are disabled and then enabled again, update metadata
-        // and create a snapshot. When the same value is set twice or for the
-        // other transitions nothing happens.
-        if (previousUpdateNoSnapshotsValue_ && !newValue) {
+  globalRuntimeParameters.wlock()
+      ->propagateChangesFromUpdates_.setOnUpdateAction([this](bool newValue) {
+        // When update change propagation is enabled from being disabled,update
+        // metadata and create a snapshot. When the same value is set twice or
+        // for the other transitions nothing happens.
+        if (!previousPropagateChangesFromUpdates_ && newValue) {
           forceMetadataUpdate();
           updateStoredSnapshot();
         }
-        previousUpdateNoSnapshotsValue_ = newValue;
+        previousPropagateChangesFromUpdates_ = newValue;
       });
 }
 

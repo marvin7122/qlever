@@ -85,7 +85,7 @@ class DeltaTriples {
   FRIEND_TEST(DeltaTriplesTest, clear);
   FRIEND_TEST(DeltaTriplesTest, addTriplesToLocalVocab);
   FRIEND_TEST(DeltaTriplesTest, storeAndRestoreData);
-  FRIEND_TEST(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior);
+  FRIEND_TEST(DeltaTriplesTest, propagateChangesFromUpdatesMetadataBehavior);
 
  public:
   using Triples = std::vector<IdTriple<0>>;
@@ -258,7 +258,7 @@ class DeltaTriplesManager {
   ad_utility::Synchronized<DeltaTriples> deltaTriples_;
   ad_utility::Synchronized<SharedLocatedTriplesSnapshot, std::shared_mutex>
       currentLocatedTriplesSnapshot_;
-  bool previousUpdateNoSnapshotsValue_;
+  bool previousPropagateChangesFromUpdates_;
 
  public:
   using CancellationHandle = DeltaTriples::CancellationHandle;
@@ -266,7 +266,7 @@ class DeltaTriplesManager {
 
   explicit DeltaTriplesManager(const IndexImpl& index);
   FRIEND_TEST(DeltaTriplesTest, DeltaTriplesManager);
-  FRIEND_TEST(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior);
+  FRIEND_TEST(DeltaTriplesTest, propagateChangesFromUpdatesMetadataBehavior);
 
   struct ModifyOptions {
     bool writeToDiskAfterRequest = true;

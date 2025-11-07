@@ -717,8 +717,8 @@ TEST_F(LocatedTriplesTest, locatedTriple) {
 }
 
 TEST_F(LocatedTriplesTest, augmentedMetadata) {
-  // Ensure the update-no-snapshots parameter is false for this test
-  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
+  // Explicitly set the default value - updates are visible
+  setRuntimeParameter<&RuntimeParameters::propagateChangesFromUpdates_>(true);
 
   // Create a vector that is automatically converted to a span.
   using Span = std::vector<IdTriple<0>>;
@@ -827,8 +827,8 @@ TEST_F(LocatedTriplesTest, augmentedMetadata) {
 
 // _____________________________________________________________________________
 TEST_F(LocatedTriplesTest, augmentedMetadataGraphInfo) {
-  // Ensure the update-no-snapshots parameter is false for this test
-  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
+  // Explicitly set the default value - updates are visible
+  setRuntimeParameter<&RuntimeParameters::propagateChangesFromUpdates_>(true);
 
   // Create a vector that is automatically converted to a span.
   using Span = std::vector<IdTriple<0>>;

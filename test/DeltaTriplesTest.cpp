@@ -451,7 +451,7 @@ TEST_F(DeltaTriplesTest, DeltaTriplesManager) {
 }
 
 // _____________________________________________________________________________
-TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
+TEST_F(DeltaTriplesTest, propagateChangesFromUpdatesParameter) {
   DeltaTriplesManager deltaTriplesManager(testQec->getIndex().getImpl());
   auto& vocab = testQec->getIndex().getVocab();
   auto cancellationHandle =
@@ -466,8 +466,9 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
     });
   };
 
-  // Initially, parameter should be false and snapshots should be created
-  EXPECT_FALSE(getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>());
+  // Initially the changes from updates should be propagated.
+  EXPECT_TRUE(
+      getRuntimeParameter<&RuntimeParameters::propagateChangesFromUpdates_>());
   auto initialSnapshot = deltaTriplesManager.getCurrentSnapshot();
   auto initialIndex = initialSnapshot->index_;
 
@@ -476,8 +477,8 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
   auto snapshotAfterInsert = deltaTriplesManager.getCurrentSnapshot();
   EXPECT_NE(snapshotAfterInsert->index_, initialIndex);
 
-  // Set parameter to true - updates should not create snapshots
-  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(true);
+  // Disable the propagation of the changes from updates.
+  setRuntimeParameter<&RuntimeParameters::propagateChangesFromUpdates_>(false);
 
   auto snapshotBeforeSecondUpdate = deltaTriplesManager.getCurrentSnapshot();
   auto indexBeforeSecondUpdate = snapshotBeforeSecondUpdate->index_;
@@ -490,9 +491,8 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
   auto snapshotAfterForce = deltaTriplesManager.getCurrentSnapshot();
   EXPECT_NE(snapshotAfterForce->index_, indexBeforeSecondUpdate);
 
-  // Set parameter back to false - immediately creates a snapshot and resumes
-  // creating snapshots
-  setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>(false);
+  // The changes from the updates should directly be visible after enabling.
+  setRuntimeParameter<&RuntimeParameters::propagateChangesFromUpdates_>(true);
 
   auto snapshotBeforeThirdUpdate = deltaTriplesManager.getCurrentSnapshot();
   auto indexBeforeThirdUpdate = snapshotBeforeThirdUpdate->index_;
@@ -505,7 +505,7 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
 }
 
 // _____________________________________________________________________________
-TEST_F(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior) {
+TEST_F(DeltaTriplesTest, propagateChangesFromUpdatesMetadataBehavior) {
   DeltaTriplesManager deltaTriplesManager(testQec->getIndex().getImpl());
   auto& vocab = testQec->getIndex().getVocab();
   auto cancellationHandle =
@@ -513,8 +513,9 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior) {
 
   LocalVocab localVocab;
 
-  auto setUpdateNoSnapshots =
-      setRuntimeParameter<&RuntimeParameters::updateNoSnapshots_, bool>;
+  auto setPropagateChangesFromUpdates =
+      setRuntimeParameter<&RuntimeParameters::propagateChangesFromUpdates_,
+                          bool>;
   auto augmentedMetadataAvailable = [&deltaTriplesManager]() {
     return deltaTriplesManager.deltaTriples_.withReadLock(
         [](const auto& deltaTriples) {
@@ -543,16 +544,14 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior) {
     });
   };
 
-  // Ensure parameter starts as false
-  setUpdateNoSnapshots(false);
+  setPropagateChangesFromUpdates(true);
   EXPECT_FALSE(augmentedMetadataAvailable());
 
   // Insert first triple with normal behavior - should update metadata
   insertTriples({"<A> <B> <C>"});
   EXPECT_TRUE(augmentedMetadataAvailable());
 
-  // Set parameter to true - metadata updates should be skipped
-  setUpdateNoSnapshots(true);
+  setPropagateChangesFromUpdates(false);
   resetMetadata();
   insertTriples({"<D> <E> <F>"});
   EXPECT_FALSE(augmentedMetadataAvailable());
@@ -564,10 +563,10 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior) {
   deltaTriplesManager.forceMetadataUpdate();
   EXPECT_TRUE(augmentedMetadataAvailable());
 
-  // Set parameter back to false - immediately creates augmented metadata and
-  // resumes updating metadata after updates
+  // Make the changes from updates visible again. Immediately creates augmented
+  // metadata and resumes updating metadata after updates
   resetMetadata();
-  setUpdateNoSnapshots(false);
+  setPropagateChangesFromUpdates(true);
   EXPECT_TRUE(augmentedMetadataAvailable());
 
   // Future updates should resume normal metadata updates

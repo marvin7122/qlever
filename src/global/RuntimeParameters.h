@@ -117,10 +117,9 @@ struct RuntimeParameters {
   Bool treatDefaultGraphAsNamedGraph_{false,
                                       "treat-default-graph-as-named-graph"};
 
-  // If set to `true`, update operations will not create new snapshots,
-  // meaning that the changes from updates will not be visible to new
-  // queries until this parameter is set back to `false`.
-  Bool updateNoSnapshots_{false, "update-no-snapshots"};
+  // The changes from updates operations run after this parameter has been set to
+  // `false` will not be visible to queries until it is set back to `true`.
+  Bool propagateChangesFromUpdates_{true, "propagate-changes-from-updates"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
