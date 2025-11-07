@@ -244,20 +244,21 @@ DeltaTriples::DeltaTriples(const Index& index)
 // ____________________________________________________________________________
 DeltaTriplesManager::DeltaTriplesManager(const IndexImpl& index)
     : deltaTriples_{index},
-      currentLocatedTriplesSnapshot_{deltaTriples_.wlock()->getSnapshot()} {
-  // Set up callback for update-no-snapshots parameter changes
-  // Initialize with current value to avoid deadlock in callback
-  static bool previousUpdateNoSnapshotsValue =
-      getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>();
+      currentLocatedTriplesSnapshot_{deltaTriples_.wlock()->getSnapshot()},
+      previousUpdateNoSnapshotsValue_{
+          getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>()} {
+  // Set up callback for update-no-snapshots parameter changes.
+  // Initialize with current value to avoid deadlock in callback.
   globalRuntimeParameters.wlock()->updateNoSnapshots_.setOnUpdateAction(
       [this](bool newValue) {
-        // When changed from true to false, update metadata and create a
-        // snapshot
-        if (previousUpdateNoSnapshotsValue && !newValue) {
+        // When snapshots are disabled and then enabled again, update metadata
+        // and create a snapshot. When the same value is set twice or for the
+        // other transitions nothing happens.
+        if (previousUpdateNoSnapshotsValue_ && !newValue) {
           forceMetadataUpdate();
           forceSnapshotCreation();
         }
-        previousUpdateNoSnapshotsValue = newValue;
+        previousUpdateNoSnapshotsValue_ = newValue;
       });
 }
 
