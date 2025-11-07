@@ -1043,12 +1043,24 @@ CPP_template_def(typename RequestT, typename ResponseT)(
         // directly on the `DeltaTriples` (we have an exclusive lock on them
         // anyway).
         for (ParsedQuery& update : updates) {
-          // Make the snapshot before the query planning. Otherwise, it could
-          // happen that the query planner "knows" that a result is empty, when
-          // actually it is not due to a preceding update in the chain. Also,
-          // this improves the size estimates and hence the query plan.
+          // If snapshots are disabled but the update has a where clause, create
+          // a snapshot and update the metadata anyway. This ensures that
+          // updates are evaluated correctly even if the snapshots are disabled.
           tracer.beginTrace("snapshot");
-          qec.updateLocatedTriplesSnapshot();
+          if (getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>() &&
+              !update._rootGraphPattern._graphPatterns.empty()) {
+            index_.deltaTriplesManager().forceMetadataUpdate();
+            qec.updateLocatedTriplesSnapshot(
+                index_.deltaTriplesManager().getNewSnapshot());
+          } else {
+            // When snapshots are enabled (the default) update the snapshot
+            // before the query planning. Otherwise, it could happen that the
+            // query planner "knows" that a result is empty, when actually it is
+            // not due to a preceding update in the chain. Also, this improves
+            // the size estimates and hence the query plan.
+            qec.updateLocatedTriplesSnapshot(
+                index_.deltaTriplesManager().getCurrentSnapshot());
+          }
           tracer.endTrace("snapshot");
           tracer.beginTrace("planning");
           plannedUpdate = planQuery(std::move(update), requestTimer, timeLimit,

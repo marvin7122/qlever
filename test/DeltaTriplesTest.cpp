@@ -486,7 +486,7 @@ TEST_F(DeltaTriplesTest, updateNoSnapshotsParameter) {
   EXPECT_EQ(snapshotAfterSecondInsert->index_, indexBeforeSecondUpdate);
 
   // Force snapshot creation should work regardless of parameter
-  deltaTriplesManager.forceSnapshotCreation();
+  deltaTriplesManager.updateStoredSnapshot();
   auto snapshotAfterForce = deltaTriplesManager.getCurrentSnapshot();
   EXPECT_NE(snapshotAfterForce->index_, indexBeforeSecondUpdate);
 

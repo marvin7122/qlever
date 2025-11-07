@@ -256,7 +256,7 @@ DeltaTriplesManager::DeltaTriplesManager(const IndexImpl& index)
         // other transitions nothing happens.
         if (previousUpdateNoSnapshotsValue_ && !newValue) {
           forceMetadataUpdate();
-          forceSnapshotCreation();
+          updateStoredSnapshot();
         }
         previousUpdateNoSnapshotsValue_ = newValue;
       });
@@ -335,6 +335,11 @@ template DeltaTriplesCount DeltaTriplesManager::modify<DeltaTriplesCount>(
     const std::function<DeltaTriplesCount(DeltaTriples&)>&,
     bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
     ad_utility::timer::TimeTracer&);
+template SharedLocatedTriplesSnapshot
+DeltaTriplesManager::modify<SharedLocatedTriplesSnapshot>(
+    const std::function<SharedLocatedTriplesSnapshot(DeltaTriples&)>&,
+    bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
+    ad_utility::timer::TimeTracer&);
 
 // _____________________________________________________________________________
 void DeltaTriplesManager::clear() { modify<void>(&DeltaTriples::clear); }
@@ -345,13 +350,20 @@ SharedLocatedTriplesSnapshot DeltaTriplesManager::getCurrentSnapshot() const {
 }
 
 // _____________________________________________________________________________
-void DeltaTriplesManager::forceSnapshotCreation() {
+void DeltaTriplesManager::updateStoredSnapshot() {
   deltaTriples_.withWriteLock([this](DeltaTriples& deltaTriples) {
     auto newSnapshot = deltaTriples.getSnapshot();
     currentLocatedTriplesSnapshot_.withWriteLock(
         [&newSnapshot](auto& currentSnapshot) {
           currentSnapshot = std::move(newSnapshot);
         });
+  });
+}
+
+// _____________________________________________________________________________
+SharedLocatedTriplesSnapshot DeltaTriplesManager::getNewSnapshot() {
+  return deltaTriples_.withWriteLock([this](DeltaTriples& deltaTriples) {
+    return deltaTriples.getSnapshot();
   });
 }
 

@@ -290,9 +290,15 @@ class DeltaTriplesManager {
   // be safely used to execute a query without interfering with future updates.
   SharedLocatedTriplesSnapshot getCurrentSnapshot() const;
 
-  // Force creation of a new snapshot, regardless of the update-no-snapshots
-  // parameter. This is used when the parameter changes from true to false.
-  void forceSnapshotCreation();
+  // Create a snapshot of the current state of the `DeltaTriples`. In contrast
+  // to `updateStoredSnapshot()` this function only returns the new snapshot,
+  // it does not save it.
+  SharedLocatedTriplesSnapshot getNewSnapshot();
+
+  // Updates the stored snapshot with the current state of the `DeltaTriples`,
+  // regardless of the update-no-snapshots parameter. This is used when the
+  // parameter changes from true to false.
+  void updateStoredSnapshot();
 
   // Force update of augmented metadata for all permutations, regardless of
   // the update-no-snapshots parameter. This is used when the parameter
