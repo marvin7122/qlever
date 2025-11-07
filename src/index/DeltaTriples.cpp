@@ -266,80 +266,73 @@ DeltaTriplesManager::DeltaTriplesManager(const IndexImpl& index)
 template <typename ReturnType>
 ReturnType DeltaTriplesManager::modify(
     const std::function<ReturnType(DeltaTriples&)>& function,
-    bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
-    ad_utility::timer::TimeTracer& tracer) {
+    ModifyOptions options, ad_utility::timer::TimeTracer& tracer) {
   // While holding the lock for the underlying `DeltaTriples`, perform the
   // actual `function` (typically some combination of insert and delete
   // operations) and (while still holding the lock) update the
   // `currentLocatedTriplesSnapshot_`.
   tracer.beginTrace("acquiringDeltaTriplesWriteLock");
-  return deltaTriples_.withWriteLock([this, &function, writeToDiskAfterRequest,
-                                      updateMetadataAfterRequest,
-                                      &tracer](DeltaTriples& deltaTriples) {
-    auto updateSnapshot = [this, &deltaTriples] {
-      // Only create a new snapshot if the update-no-snapshots parameter is
-      // false
-      if (!getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>()) {
-        auto newSnapshot = deltaTriples.getSnapshot();
-        currentLocatedTriplesSnapshot_.withWriteLock(
-            [&newSnapshot](auto& currentSnapshot) {
-              currentSnapshot = std::move(newSnapshot);
-            });
-      }
-    };
-    auto writeAndUpdateSnapshot = [&updateSnapshot, &deltaTriples, &tracer,
-                                   writeToDiskAfterRequest]() {
-      if (writeToDiskAfterRequest) {
-        tracer.beginTrace("diskWriteback");
-        deltaTriples.writeToDisk();
-        tracer.endTrace("diskWriteback");
-      }
-      tracer.beginTrace("snapshotCreation");
-      updateSnapshot();
-      tracer.endTrace("snapshotCreation");
-    };
-    auto updateMetadata = [&tracer, &deltaTriples,
-                           updateMetadataAfterRequest]() {
-      // Only update the metadata if the update-no-snapshots parameter is
-      // false
-      tracer.beginTrace("updateMetadata");
-      if (!getRuntimeParameter<&RuntimeParameters::updateNoSnapshots_>() &&
-          updateMetadataAfterRequest) {
-        deltaTriples.updateAugmentedMetadata();
-      }
-      tracer.endTrace("updateMetadata");
-    };
+  return deltaTriples_.withWriteLock(
+      [this, &function, &options, &tracer](DeltaTriples& deltaTriples) {
+        auto updateSnapshot = [this, &deltaTriples, &options] {
+          // Only create a new snapshot if the update-no-snapshots parameter is
+          // false
+          if (options.updateSnapshotAfterRequest) {
+            auto newSnapshot = deltaTriples.getSnapshot();
+            currentLocatedTriplesSnapshot_.withWriteLock(
+                [&newSnapshot](auto& currentSnapshot) {
+                  currentSnapshot = std::move(newSnapshot);
+                });
+          }
+        };
+        auto writeAndUpdateSnapshot = [&updateSnapshot, &deltaTriples, &tracer,
+                                       &options]() {
+          if (options.writeToDiskAfterRequest) {
+            tracer.beginTrace("diskWriteback");
+            deltaTriples.writeToDisk();
+            tracer.endTrace("diskWriteback");
+          }
+          tracer.beginTrace("snapshotCreation");
+          updateSnapshot();
+          tracer.endTrace("snapshotCreation");
+        };
+        auto updateMetadata = [&tracer, &deltaTriples, &options]() {
+          // Only update the metadata if the update-no-snapshots parameter is
+          // false
+          tracer.beginTrace("updateMetadata");
+          if (options.updateMetadataAfterRequest) {
+            deltaTriples.updateAugmentedMetadata();
+          }
+          tracer.endTrace("updateMetadata");
+        };
 
-    tracer.endTrace("acquiringDeltaTriplesWriteLock");
-    if constexpr (std::is_void_v<ReturnType>) {
-      function(deltaTriples);
-      updateMetadata();
-      writeAndUpdateSnapshot();
-    } else {
-      ReturnType returnValue = function(deltaTriples);
-      updateMetadata();
-      writeAndUpdateSnapshot();
-      return returnValue;
-    }
-  });
+        tracer.endTrace("acquiringDeltaTriplesWriteLock");
+        if constexpr (std::is_void_v<ReturnType>) {
+          function(deltaTriples);
+          updateMetadata();
+          writeAndUpdateSnapshot();
+        } else {
+          ReturnType returnValue = function(deltaTriples);
+          updateMetadata();
+          writeAndUpdateSnapshot();
+          return returnValue;
+        }
+      });
 }
 // Explicit instantiations
 template void DeltaTriplesManager::modify<void>(
-    std::function<void(DeltaTriples&)> const&, bool writeToDiskAfterRequest,
-    bool updateMetadataAfterRequest, ad_utility::timer::TimeTracer&);
+    std::function<void(DeltaTriples&)> const&, ModifyOptions options,
+    ad_utility::timer::TimeTracer&);
 template UpdateMetadata DeltaTriplesManager::modify<UpdateMetadata>(
-    const std::function<UpdateMetadata(DeltaTriples&)>&,
-    bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
+    const std::function<UpdateMetadata(DeltaTriples&)>&, ModifyOptions options,
     ad_utility::timer::TimeTracer&);
 template DeltaTriplesCount DeltaTriplesManager::modify<DeltaTriplesCount>(
     const std::function<DeltaTriplesCount(DeltaTriples&)>&,
-    bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
-    ad_utility::timer::TimeTracer&);
+    ModifyOptions options, ad_utility::timer::TimeTracer&);
 template SharedLocatedTriplesSnapshot
 DeltaTriplesManager::modify<SharedLocatedTriplesSnapshot>(
     const std::function<SharedLocatedTriplesSnapshot(DeltaTriples&)>&,
-    bool writeToDiskAfterRequest, bool updateMetadataAfterRequest,
-    ad_utility::timer::TimeTracer&);
+    ModifyOptions options, ad_utility::timer::TimeTracer&);
 
 // _____________________________________________________________________________
 void DeltaTriplesManager::clear() { modify<void>(&DeltaTriples::clear); }
@@ -457,5 +450,5 @@ void DeltaTriplesManager::setFilenameForPersistentUpdatesAndReadFromDisk(
         deltaTriples.setPersists(std::move(filename));
         deltaTriples.readFromDisk();
       },
-      false);
+      {.writeToDiskAfterRequest = false});
 }

@@ -268,6 +268,12 @@ class DeltaTriplesManager {
   FRIEND_TEST(DeltaTriplesTest, DeltaTriplesManager);
   FRIEND_TEST(DeltaTriplesTest, updateNoSnapshotsMetadataBehavior);
 
+  struct ModifyOptions {
+    bool writeToDiskAfterRequest = true;
+    bool updateMetadataAfterRequest = true;
+    bool updateSnapshotAfterRequest = true;
+  };
+
   // Modify the underlying `DeltaTriples` by applying `function` and then update
   // the current snapshot. Concurrent calls to `modify` and `clear` will be
   // serialized, and each call to `getCurrentSnapshot` will either return the
@@ -275,8 +281,7 @@ class DeltaTriplesManager {
   // modification.
   template <typename ReturnType>
   ReturnType modify(const std::function<ReturnType(DeltaTriples&)>& function,
-                    bool writeToDiskAfterRequest = true,
-                    bool updateMetadataAfterRequest = true,
+                    ModifyOptions options = {},
                     ad_utility::timer::TimeTracer& tracer =
                         ad_utility::timer::DEFAULT_TIME_TRACER);
 

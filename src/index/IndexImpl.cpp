@@ -941,7 +941,9 @@ void IndexImpl::createFromOnDiskIndex(const std::string& onDiskBase,
           deltaTriples.setOriginalMetadata(p.permutation(),
                                            p.metaData().blockDataShared());
         },
-        false, false);
+        {.writeToDiskAfterRequest = false,
+         .updateMetadataAfterRequest = false,
+         .updateSnapshotAfterRequest = false});
   };
 
   auto load = [this, &isInternalId, &setMetadata](
