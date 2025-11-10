@@ -354,9 +354,8 @@ void DeltaTriplesManager::updateStoredSnapshot() {
 
 // _____________________________________________________________________________
 SharedLocatedTriplesSnapshot DeltaTriplesManager::getNewSnapshot() {
-  return deltaTriples_.withWriteLock([this](DeltaTriples& deltaTriples) {
-    return deltaTriples.getSnapshot();
-  });
+  return deltaTriples_.withWriteLock(
+      [](DeltaTriples& deltaTriples) { return deltaTriples.getSnapshot(); });
 }
 
 // _____________________________________________________________________________
