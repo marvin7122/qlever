@@ -467,7 +467,7 @@ TEST_F(DeltaTriplesTest, propagateChangesFromUpdatesParameter) {
         [&](DeltaTriples& deltaTriples) {
           deltaTriples.insertTriples(cancellationHandle, std::move(triples));
         },
-        {.updateSnapshotAfterRequest = updateSnapshot});
+        {.updateSnapshotAfterRequest_ = updateSnapshot});
   };
 
   // Initially the changes from updates should be propagated.
@@ -549,7 +549,7 @@ TEST_F(DeltaTriplesTest, propagateChangesFromUpdatesMetadataBehavior) {
         [&](DeltaTriples& deltaTriples) {
           deltaTriples.insertTriples(cancellationHandle, std::move(triples));
         },
-        {.updateMetadataAfterRequest = updateMetadata});
+        {.updateMetadataAfterRequest_ = updateMetadata});
   };
 
   setPropagateChangesFromUpdates(true);

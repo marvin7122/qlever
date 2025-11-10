@@ -274,7 +274,7 @@ ReturnType DeltaTriplesManager::modify(
         auto updateSnapshot = [this, &deltaTriples, &options] {
           // Only create a new snapshot if the propagate-changes-from-updates
           // parameter is true.
-          if (options.updateSnapshotAfterRequest) {
+          if (options.updateSnapshotAfterRequest_) {
             auto newSnapshot = deltaTriples.getSnapshot();
             currentLocatedTriplesSnapshot_.withWriteLock(
                 [&newSnapshot](auto& currentSnapshot) {
@@ -284,7 +284,7 @@ ReturnType DeltaTriplesManager::modify(
         };
         auto writeAndUpdateSnapshot = [&updateSnapshot, &deltaTriples, &tracer,
                                        &options]() {
-          if (options.writeToDiskAfterRequest) {
+          if (options.writeToDiskAfterRequest_) {
             tracer.beginTrace("diskWriteback");
             deltaTriples.writeToDisk();
             tracer.endTrace("diskWriteback");
@@ -297,7 +297,7 @@ ReturnType DeltaTriplesManager::modify(
           // Only update the metadata if the propagate-changes-from-updates
           // parameter is true.
           tracer.beginTrace("updateMetadata");
-          if (options.updateMetadataAfterRequest) {
+          if (options.updateMetadataAfterRequest_) {
             deltaTriples.updateAugmentedMetadata();
           }
           tracer.endTrace("updateMetadata");
@@ -444,5 +444,5 @@ void DeltaTriplesManager::setFilenameForPersistentUpdatesAndReadFromDisk(
         deltaTriples.setPersists(std::move(filename));
         deltaTriples.readFromDisk();
       },
-      {.writeToDiskAfterRequest = false});
+      {.writeToDiskAfterRequest_ = false});
 }

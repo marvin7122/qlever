@@ -1086,8 +1086,8 @@ CPP_template_def(typename RequestT, typename ResponseT)(
                     tracer.endTrace("processUpdateImpl");
                     return res;
                   },
-                  {.updateMetadataAfterRequest = propagateUpdates,
-                   .updateSnapshotAfterRequest = propagateUpdates},
+                  {.updateMetadataAfterRequest_ = propagateUpdates,
+                   .updateSnapshotAfterRequest_ = propagateUpdates},
                   tracer);
           tracer.endTrace("execution");
 
