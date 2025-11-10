@@ -244,9 +244,7 @@ DeltaTriples::DeltaTriples(const Index& index)
 // ____________________________________________________________________________
 DeltaTriplesManager::DeltaTriplesManager(const IndexImpl& index)
     : deltaTriples_{index},
-      currentLocatedTriplesSnapshot_{deltaTriples_.wlock()->getSnapshot()},
-      previousPropagateChangesFromUpdates_{getRuntimeParameter<
-          &RuntimeParameters::propagateChangesFromUpdates_>()} {
+      currentLocatedTriplesSnapshot_{deltaTriples_.wlock()->getSnapshot()} {
   // Set up callback for propagate-changes-form-updates parameter changes.
   globalRuntimeParameters.wlock()
       ->propagateChangesFromUpdates_.setOnUpdateAction([this](bool newValue) {

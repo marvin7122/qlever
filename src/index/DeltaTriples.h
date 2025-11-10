@@ -15,6 +15,7 @@
 #include "backports/three_way_comparison.h"
 #include "engine/LocalVocab.h"
 #include "global/IdTriple.h"
+#include "global/RuntimeParameters.h"
 #include "index/Index.h"
 #include "index/IndexBuilderTypes.h"
 #include "index/LocatedTriples.h"
@@ -252,11 +253,10 @@ class DeltaTriples {
   friend class DeltaTriplesManager;
 };
 
-// TODO: testing
 struct ModifyOptions {
-  bool writeToDiskAfterRequest = true;
-  bool updateMetadataAfterRequest = true;
-  bool updateSnapshotAfterRequest = true;
+  bool writeToDiskAfterRequest_ = true;
+  bool updateMetadataAfterRequest_ = true;
+  bool updateSnapshotAfterRequest_ = true;
 };
 
 // This class synchronizes the access to a `DeltaTriples` object, thus avoiding
@@ -265,7 +265,8 @@ class DeltaTriplesManager {
   ad_utility::Synchronized<DeltaTriples> deltaTriples_;
   ad_utility::Synchronized<SharedLocatedTriplesSnapshot, std::shared_mutex>
       currentLocatedTriplesSnapshot_;
-  bool previousPropagateChangesFromUpdates_;
+  bool previousPropagateChangesFromUpdates_ =
+      getRuntimeParameter<&RuntimeParameters::propagateChangesFromUpdates_>();
 
  public:
   using CancellationHandle = DeltaTriples::CancellationHandle;
