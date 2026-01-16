@@ -279,20 +279,29 @@ auto evaluateTripleForConstruct =
 // _____________________________________________________________________________
 auto ExportQueryExecutionTrees::constructQueryResultToTriples(
     const QueryExecutionTree& qet,
-    const ad_utility::sparql_types::Triples& constructTriples,
-    LimitOffsetClause limitAndOffset, std::shared_ptr<const Result> result,
-    uint64_t& resultSize, CancellationHandle cancellationHandle) {
+    const ad_utility::sparql_types::Triples&
+        constructTemplateTriples,  // CONSTRUCT template triples
+    LimitOffsetClause limitAndOffset,
+    std::shared_ptr<const Result> result,  // the WHERE clause result
+    uint64_t& resultSize,  // output: how many triples will be produced
+    CancellationHandle cancellationHandle  // for interrupting long operations
+) {
   // The `resultSizeMultiplicator`(last argument of `getRowIndices`) is
   // explained by the following: For each result from the WHERE clause, we
-  // produce up to `constructTriples.size()` triples. We do not account for
-  // triples that are filtered out because one of the components is UNDEF (it
-  // would require materializing the whole result)
+  // produce up to `constructTemplateTriples.size()` triples. We do not account
+  // for triples that are filtered out because one of the components is UNDEF
+  // (it would require materializing the whole result)
   auto rowIndices = getRowIndices(limitAndOffset, *result, resultSize,
-                                  constructTriples.size());
+                                  constructTemplateTriples.size());
+  // takes ownership of the `rowIndices` range by wrapping it in an `OwningView`
+  // which ensures that the underlying data stays alive. begins a "range
+  // transformation pipeline" using the pipe operator | (a pipeline of
+  // operations on the range of objects).
   return ad_utility::InputRangeTypeErased(
       ad_utility::OwningView{std::move(rowIndices)} |
+
       ql::views::transform(
-          [&qet, &constructTriples, result = std::move(result),
+          [&qet, &constructTemplateTriples, result = std::move(result),
            cancellationHandle = std::move(cancellationHandle),
            rowOffset = size_t{0}](const auto& tableWithView) mutable {
             // NOTE: This reference is captured in the following lambda.
@@ -302,11 +311,12 @@ auto ExportQueryExecutionTrees::constructQueryResultToTriples(
             auto& idTable = tableWithView.tableWithVocab_.idTable();
             auto currentRowOffset = rowOffset;
             rowOffset += idTable.size();
+
             return ql::ranges::transform_view(
                 tableWithView.view_, [&, currentRowOffset](uint64_t i) {
                   auto& localVocab = tableWithView.tableWithVocab_.localVocab();
                   return ql::ranges::transform_view(
-                      constructTriples,
+                      constructTemplateTriples,
                       [&cancellationHandle,
                        context = ConstructQueryExportContext{
                            i, idTable, localVocab, qet.getVariableColumns(),
