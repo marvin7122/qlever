@@ -28,6 +28,9 @@ class ExportQueryExecutionTrees {
   using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
   using Literal = ad_utility::triple_component::Literal;
 
+  template <class T>
+  using InputRangeTypeErased = ad_utility::InputRangeTypeErased<T>;
+
   // Compute the result of the given `parsedQuery` (created by the
   // `SparqlParser`) for which the `QueryExecutionTree` has been previously
   // created by the `QueryPlanner`. The result is converted into a sequence of
@@ -227,6 +230,14 @@ class ExportQueryExecutionTrees {
       LimitOffsetClause limitAndOffset, std::shared_ptr<const Result> result,
       uint64_t& resultSize, CancellationHandle cancellationHandle);
 
+  // Helper function that generates the construct clause result triples for a
+  // single WHERE-result-table-row.
+  std::
+      vector<QueryExecutionTree::StringTriple> static createConstructTriplesForRow(
+          const ad_utility::sparql_types::Triples& constructClauseTriples,
+          CancellationHandle cancellationHandle,
+          ConstructQueryExportContext context);
+
   // Helper function that generates the result of a CONSTRUCT query as a
   // CSV or TSV stream.
   template <MediaType format>
@@ -260,6 +271,8 @@ class ExportQueryExecutionTrees {
     TableConstRefWithVocab tableWithVocab_;
     ql::ranges::iota_view<uint64_t, uint64_t> view_;
   };
+
+  using TableWithRange = ExportQueryExecutionTrees::TableWithRange;
 
  private:
   // Yield all `IdTables` provided by the given `result`.
