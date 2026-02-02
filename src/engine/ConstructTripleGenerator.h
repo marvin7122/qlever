@@ -228,7 +228,7 @@ class ConstructTripleGenerator {
   // ___________________________________________________________________________
   // This generator has to be called for each table contained in the result of
   // `ExportQueryExecutionTrees::getRowIndices` IN ORDER (because of
-  // rowOffsset).
+  // `rowOffset_`).
   //
   // For each row of the result table (the table that is created as result of
   // processing the WHERE-clause of a CONSTRUCT-query) it creates the resulting
@@ -264,35 +264,34 @@ class ConstructTripleGenerator {
   // template to how the term at this position is to be resolved).
   void analyzeTemplate();
 
-  // Analyzes a single term and returns its resolution info.
-  // Dispatches to the appropriate type-specific handler based on term type.
+  // Analyzes a `GraphTerm` and returns its resolution info.
   TermResolution analyzeTerm(const GraphTerm& term, size_t tripleIdx,
                              size_t pos, PositionInTriple role);
 
-  // Analyzes an IRI term: precomputes the string value.
+  // Analyzes an `Iri` term: precomputes the string value.
   TermResolution analyzeIriTerm(const Iri& iri, size_t tripleIdx, size_t pos);
 
-  // Analyzes a Literal term: precomputes the string value.
+  // Analyzes a `Literal` term: precomputes the string value.
   TermResolution analyzeLiteralTerm(const Literal& literal, size_t tripleIdx,
                                     size_t pos, PositionInTriple role);
 
-  // Analyzes a Variable term: registers it and precomputes column index.
+  // Analyzes a `Variable` term: registers it and precomputes column index.
   TermResolution analyzeVariableTerm(const Variable& var);
 
-  // Analyzes a BlankNode term: registers it and precomputes format strings.
+  // Analyzes a `BlankNode` term: registers it and precomputes format strings.
   TermResolution analyzeBlankNodeTerm(const BlankNode& blankNode);
 
-  // Evaluates all Variables and BlankNodes for a batch of rows using
-  // column-oriented access for better cache locality.
-  // Delegates to evaluateVariablesForBatch() and evaluateBlankNodesForBatch().
+  // Evaluates all `Variable` objects and `BlankNode` objectsfor a batch of
+  // result-table rows.
   BatchEvaluationCache evaluateBatchColumnOriented(
       const IdTable& idTable, const LocalVocab& localVocab,
       ql::span<const uint64_t> rowIndices, size_t currentRowOffset,
       IdCache& idCache, IdCacheStatsLogger& statsLogger) const;
 
-  // Evaluates all variables for a batch of rows using column-oriented access.
-  // For each variable, reads all IDs from its column across all batch rows,
-  // converts them to strings (using the cache), and stores pointers.
+  // Evaluates all `Variable` objects for a batch of result-table rows.
+  // For each variable, reads all IDs from its `IdTable` column across all batch
+  // rows, converts them to strings (using the `IdCache`), and stores pointers
+  // into `IdCache`.
   void evaluateVariablesForBatch(BatchEvaluationCache& batchCache,
                                  const IdTable& idTable,
                                  const LocalVocab& localVocab,
@@ -308,8 +307,8 @@ class ConstructTripleGenerator {
 
   // Instantiates a single triple using the precomputed constants and
   // the batch evaluation cache for a specific row. Returns an empty
-  // StringTriple if any component is UNDEF. Variable string values are
-  // provided via the pre-computed variableStrings cache (one lookup per
+  // `StringTriple` if any component is UNDEF. `Variable` string values are
+  // provided via the precomputed variableStrings cache (one lookup per
   // variable per row, reused across all triples in the row).
   StringTriple instantiateTripleFromBatch(
       size_t tripleIdx, const BatchEvaluationCache& batchCache,

@@ -81,6 +81,7 @@ void ConstructTripleGenerator::analyzeTemplate() {
 ConstructTripleGenerator::TermResolution ConstructTripleGenerator::analyzeTerm(
     const GraphTerm& term, size_t tripleIdx, size_t pos,
     PositionInTriple role) {
+  // TODO<ms2144>: use std::variant lambda dispatch here.
   if (std::holds_alternative<Iri>(term)) {
     return analyzeIriTerm(std::get<Iri>(term), tripleIdx, pos);
   } else if (std::holds_alternative<Literal>(term)) {
