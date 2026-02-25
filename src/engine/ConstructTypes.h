@@ -5,14 +5,13 @@
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 // You may not use this file except in compliance with the Apache 2.0 License,
-// which can be found in the `LICENSE` file at the root of the QLever project
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_ENGINE_CONSTRUCTTYPES_H
 #define QLEVER_SRC_ENGINE_CONSTRUCTTYPES_H
 
 #include <array>
 #include <memory>
-#include <string>
 #include <variant>
 #include <vector>
 
@@ -24,8 +23,8 @@ struct PrecomputedConstant {
   std::string value_;
 };
 
-// We precompute which `IdTable` column to look up at construct query triple
-// instantitation time.
+// We precompute which `IdTable` column to look up at template triple
+// evaluation time.
 struct PrecomputedVariable {
   size_t columnIndex_;
 };
@@ -58,10 +57,22 @@ struct PreprocessedConstructTemplate {
   std::vector<PreprocessedTriple> preprocessedTriples_;
   std::vector<size_t> uniqueVariableColumns_;
 };
+// --- Evaluation types ---
 
 // Result of evaluating a term (`Iri`, `Literal`, `Variable`, `BlankNode`) to
 // its string representation.
 using EvaluatedTerm = std::shared_ptr<const std::string>;
+
+// Result of instantiating a single template triple for a specific result table
+// row. Contains the resolved string values for subject, predicate, and object.
+struct EvaluatedTriple {
+  EvaluatedTerm subject_;
+  EvaluatedTerm predicate_;
+  EvaluatedTerm object_;
+
+  // Get string value for a component.
+  static const std::string& getValue(const EvaluatedTerm& var) { return *var; }
+};
 
 }  // namespace qlever::constructExport
 
