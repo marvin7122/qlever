@@ -59,15 +59,28 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
     size_t idTableColumnIdx, const BatchEvaluationContext& ctx,
     const LocalVocab& localVocab, const Index& index, IdCache& idCache) {
   decltype(auto) col = ctx.idTable_.getColumn(idTableColumnIdx);
+  const size_t numRows = ctx.numRows();
 
-  auto evaluateRow = [&](size_t rowIdx) {
-    return idCache.getOrCompute(col[rowIdx], [&](Id id) {
-      return idToEvaluatedTerm(index, id, localVocab);
+  // Build a `(Id, rowInBatch)` index vector and sort by `Id`. This converts
+  // the vocabulary lookups from random-access reads to roughly sequential
+  // reads, reducing page faults and enabling hardware prefetching.
+  std::vector<std::pair<Id, size_t>> sortedIndices;
+  sortedIndices.reserve(numRows);
+  for (size_t i = 0; i < numRows; ++i) {
+    sortedIndices.emplace_back(col[ctx.firstRow_ + i], i);
+  }
+  ql::ranges::sort(sortedIndices, [](const auto& a, const auto& b) {
+    return a.first < b.first;
+  });
+
+  // Evaluate in sorted `Id` order and scatter results back to row positions.
+  EvaluatedVariableValues result(numRows);
+  for (const auto& [id, rowInBatch] : sortedIndices) {
+    result[rowInBatch] = idCache.getOrCompute(id, [&](Id resolvedId) {
+      return idToEvaluatedTerm(index, resolvedId, localVocab);
     });
-  };
-
-  return ql::views::iota(ctx.firstRow_, ctx.endRow_) |
-         ql::views::transform(evaluateRow) | ::ranges::to<std::vector>();
+  }
+  return result;
 }
 
 }  // namespace qlever::constructExport
