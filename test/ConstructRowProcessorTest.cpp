@@ -25,9 +25,9 @@ using ::testing::Pointee;
 // Matcher for EvaluatedTriple: checks all three string values by pointer.
 static auto matchTriple(const std::string& s, const std::string& p,
                         const std::string& o) {
-  return AllOf(Field(&EvaluatedTriple::subject_, Pointee(Eq(s))),
-               Field(&EvaluatedTriple::predicate_, Pointee(Eq(p))),
-               Field(&EvaluatedTriple::object_, Pointee(Eq(o))));
+  return AllOf(AD_FIELD(EvaluatedTriple, subject_, Pointee(Eq(s))),
+               AD_FIELD(EvaluatedTriple, predicate_, Pointee(Eq(p))),
+               AD_FIELD(EvaluatedTriple, object_, Pointee(Eq(o))));
 }
 
 // Drain all triples from a ConstructRowProcessor into a vector.
@@ -80,7 +80,8 @@ class ConstructRowProcessorTest : public ::testing::Test {
 
   // Shorthand constructors for the three PreprocessedTerm variants.
   static PreprocessedTerm Const(std::string v) {
-    return PrecomputedConstant{std::move(v)};
+    return PrecomputedConstant{
+        std::make_shared<const std::string>(std::move(v))};
   }
   static PreprocessedTerm Var(size_t col) { return PrecomputedVariable{col}; }
   static PreprocessedTerm Bnode(std::string prefix, std::string suffix) {

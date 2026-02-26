@@ -20,7 +20,7 @@ namespace qlever::constructExport {
 // `PrintTo` overloads so gmock shows human-readable output instead of raw
 // bytes.
 void PrintTo(const PrecomputedConstant& c, std::ostream* os) {
-  *os << "PrecomputedConstant{\"" << c.value_ << "\"}";
+  *os << "PrecomputedConstant{\"" << *c.evaluatedTerm_ << "\"}";
 }
 void PrintTo(const PrecomputedVariable& v, std::ostream* os) {
   *os << "PrecomputedVariable{" << v.columnIndex_ << "}";
@@ -63,7 +63,8 @@ struct ContextWrapper {
 // see https://github.com/google/googletest/blob/main/docs/reference/matchers.md
 static constexpr auto matchesPrecomputedConstant = [](const auto& value) {
   return ::testing::VariantWith<PrecomputedConstant>(
-      AD_FIELD(PrecomputedConstant, value_, std::string(value)));
+      AD_FIELD(PrecomputedConstant, evaluatedTerm_,
+               ::testing::Pointee(std::string(value))));
 };
 
 static constexpr auto matchesPrecomputedVariable = [](const auto& columnIdx) {

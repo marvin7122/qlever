@@ -17,10 +17,15 @@
 
 namespace qlever::constructExport {
 
+// Result of evaluating a term (`Iri`, `Literal`, `Variable`, `BlankNode`) to
+// its string representation.
+using EvaluatedTerm = std::shared_ptr<const std::string>;
+
 // A constant (`Iri` or `Literal`) whose string value is fully known at
-// preprocessing time.
+// preprocessing time. The `EvaluatedTerm` is built once at preprocessing and
+// shared across all rows, avoiding per-row heap allocation.
 struct PrecomputedConstant {
-  std::string value_;
+  EvaluatedTerm evaluatedTerm_;
 };
 
 // We precompute which `IdTable` column to look up at template triple
@@ -58,10 +63,6 @@ struct PreprocessedConstructTemplate {
   std::vector<size_t> uniqueVariableColumns_;
 };
 // --- Evaluation types ---
-
-// Result of evaluating a term (`Iri`, `Literal`, `Variable`, `BlankNode`) to
-// its string representation.
-using EvaluatedTerm = std::shared_ptr<const std::string>;
 
 // Result of instantiating a single template triple for a specific result table
 // row. Contains the resolved string values for subject, predicate, and object.

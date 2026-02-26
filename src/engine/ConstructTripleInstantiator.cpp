@@ -30,7 +30,7 @@ std::optional<EvaluatedTerm> ConstructTripleInstantiator::instantiateTerm(
         using T = std::decay_t<decltype(t)>;
 
         if constexpr (std::is_same_v<T, PrecomputedConstant>) {
-          return std::make_shared<const std::string>(t.value_);
+          return t.evaluatedTerm_;
         } else if constexpr (std::is_same_v<T, PrecomputedVariable>) {
           return batchResult.getVariable(t.columnIndex_, rowInBatch);
         } else if constexpr (std::is_same_v<T, PrecomputedBlankNode>) {

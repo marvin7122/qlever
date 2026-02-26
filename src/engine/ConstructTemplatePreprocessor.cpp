@@ -19,7 +19,7 @@ namespace qlever::constructExport {
 // _____________________________________________________________________________
 std::optional<PreprocessedTerm> ConstructTemplatePreprocessor::preprocessIri(
     const Iri& iri) {
-  return PrecomputedConstant{iri.iri()};
+  return PrecomputedConstant{std::make_shared<const std::string>(iri.iri())};
 }
 
 // _____________________________________________________________________________
@@ -27,7 +27,8 @@ std::optional<PreprocessedTerm>
 ConstructTemplatePreprocessor::preprocessLiteral(const Literal& literal,
                                                  PositionInTriple role) {
   if (role == PositionInTriple::OBJECT) {
-    return PrecomputedConstant{literal.literal()};
+    return PrecomputedConstant{
+        std::make_shared<const std::string>(literal.literal())};
   }
   return std::nullopt;
 }
