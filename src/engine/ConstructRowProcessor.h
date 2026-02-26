@@ -36,7 +36,7 @@ class ConstructRowProcessor
   using CancellationHandle = ad_utility::SharedCancellationHandle;
 
   // Default batch size for processing rows.
-  static constexpr size_t DEFAULT_BATCH_SIZE = 64;
+  static constexpr size_t DEFAULT_BATCH_SIZE = 1024;
 
   // Multiplier for computing ID cache capacity from batch size and variable
   // count. Provides headroom for cross-batch cache hits on repeated values.
