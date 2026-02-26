@@ -14,9 +14,8 @@ namespace qlever::constructExport {
 // _____________________________________________________________________________
 IdCache ConstructRowProcessor::makeIdCache(
     const PreprocessedConstructTemplate& tmpl) {
-  return IdCache(DEFAULT_BATCH_SIZE *
-                 std::max(tmpl.uniqueVariableColumns_.size(), size_t{1}) *
-                 CACHE_CAPACITY_FACTOR);
+  return IdCache(std::max(tmpl.uniqueVariableColumns_.size(), size_t{1}) *
+                 CACHE_ENTRIES_PER_VARIABLE);
 }
 
 // _____________________________________________________________________________

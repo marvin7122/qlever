@@ -38,9 +38,10 @@ class ConstructRowProcessor
   // Default batch size for processing rows.
   static constexpr size_t DEFAULT_BATCH_SIZE = 1024;
 
-  // Multiplier for computing ID cache capacity from batch size and variable
-  // count. Provides headroom for cross-batch cache hits on repeated values.
-  static constexpr size_t CACHE_CAPACITY_FACTOR = 32;
+  // Number of cached entries per variable. Cache capacity =
+  // numVariables * CACHE_ENTRIES_PER_VARIABLE. Sized to hold roughly 2048
+  // rows worth of distinct IDs per variable, independent of batch size.
+  static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
 
   ConstructRowProcessor(
       const PreprocessedConstructTemplate& preprocessedTemplate,
