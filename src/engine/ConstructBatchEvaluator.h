@@ -17,7 +17,6 @@
 #include "engine/idTable/IdTable.h"
 #include "index/Index.h"
 #include "util/Exception.h"
-#include "util/HashMap.h"
 #include "util/LruCacheWithStatistics.h"
 
 namespace qlever::constructExport {
@@ -31,16 +30,15 @@ using EvaluatedVariableValues = std::vector<std::optional<EvaluatedTerm>>;
 // Result of batch-evaluating all variables for a batch of rows. Stores the
 // evaluated values per variable column and the number of rows in the batch.
 struct BatchEvaluationResult {
-  // Map from `IdTable` column index to evaluated values for each row in batch.
-  // A hash map is used because the set of evaluated columns may be sparse:
-  // some variables from the WHERE-clause (in the `IdTable`) may not appear in
-  // the CONSTRUCT template and are thus not evaluated.
-  ad_utility::HashMap<size_t, EvaluatedVariableValues> variablesByColumn_;
+  // Evaluated values indexed by variable position (the order in which
+  // variables appear in `PreprocessedConstructTemplate::uniqueVariableColumns_`
+  // and `PrecomputedVariable::columnIndex_`).
+  std::vector<EvaluatedVariableValues> variablesByColumn_;
   size_t numRows_ = 0;
 
-  const std::optional<EvaluatedTerm>& getVariable(size_t columnIndex,
+  const std::optional<EvaluatedTerm>& getVariable(size_t positionIndex,
                                                   size_t rowInBatch) const {
-    return variablesByColumn_.at(columnIndex).at(rowInBatch);
+    return variablesByColumn_[positionIndex][rowInBatch];
   }
 };
 

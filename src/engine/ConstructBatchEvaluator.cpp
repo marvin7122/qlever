@@ -24,13 +24,11 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
     const LocalVocab& localVocab, const Index& index, IdCache& idCache) {
   BatchEvaluationResult batchResult;
   batchResult.numRows_ = evaluationContext.numRows();
+  batchResult.variablesByColumn_.reserve(variableColumnIndices.size());
 
   for (size_t variableColumnIdx : variableColumnIndices) {
-    auto [it, wasNew] = batchResult.variablesByColumn_.emplace(
-        variableColumnIdx,
-        evaluateVariableByColumn(variableColumnIdx, evaluationContext,
-                                 localVocab, index, idCache));
-    AD_CORRECTNESS_CHECK(wasNew);
+    batchResult.variablesByColumn_.push_back(evaluateVariableByColumn(
+        variableColumnIdx, evaluationContext, localVocab, index, idCache));
   }
 
   return batchResult;

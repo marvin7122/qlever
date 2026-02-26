@@ -28,8 +28,11 @@ struct PrecomputedConstant {
   EvaluatedTerm evaluatedTerm_;
 };
 
-// We precompute which `IdTable` column to look up at template triple
-// evaluation time.
+// After preprocessing (via `ConstructTemplatePreprocessor::preprocess`),
+// `columnIndex_` is the position of this variable in the
+// `BatchEvaluationResult::variablesByColumn_` vector. The mapping from position
+// to column is recorded in
+// `PreprocessedConstructTemplate::uniqueVariableColumns_`.
 struct PrecomputedVariable {
   size_t columnIndex_;
 };
@@ -60,6 +63,10 @@ using PreprocessedTriple = std::array<PreprocessedTerm, NUM_TRIPLE_POSITIONS>;
 // evaluated for each row of the result-table.
 struct PreprocessedConstructTemplate {
   std::vector<PreprocessedTriple> preprocessedTriples_;
+  // variable `i` corresponds to column `uniqueVariableColumns[i]` in the
+  // `idTable`. The variable first encountered in the construct template triples
+  // corresponds to variable 0, the second encountered variable corresponds to
+  // variable 1 ...
   std::vector<size_t> uniqueVariableColumns_;
 };
 // --- Evaluation types ---

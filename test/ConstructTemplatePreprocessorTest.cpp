@@ -143,9 +143,11 @@ TEST(ConstructTemplatePreprocessorTest, preprocessVariableBound) {
   varMap[Variable{"?x"}] = makeAlwaysDefinedColumn(3);
   auto result = ConstructTemplatePreprocessor::preprocess(triples, varMap);
 
+  // After preprocessing, columnIndex_ holds the position (0) in
+  // uniqueVariableColumns_, not the raw IdTable column (3).
   EXPECT_THAT(
       result.preprocessedTriples_,
-      matchSingleTriple(Var(3), Const("<http://p>"), Const("<http://o>")));
+      matchSingleTriple(Var(0), Const("<http://p>"), Const("<http://o>")));
 
   // The unique variable columns should contain column 3.
   ASSERT_EQ(result.uniqueVariableColumns_.size(), 1);
@@ -219,7 +221,7 @@ TEST(ConstructTemplatePreprocessorTest,
   auto result = ConstructTemplatePreprocessor::preprocess(triples, varMap);
 
   EXPECT_THAT(result.preprocessedTriples_,
-              matchSingleTriple(Var(5), Const("<http://p>"), Var(5)));
+              matchSingleTriple(Var(0), Const("<http://p>"), Var(0)));
 
   ASSERT_EQ(result.uniqueVariableColumns_.size(), 1);
   EXPECT_EQ(result.uniqueVariableColumns_[0], 5);
@@ -241,8 +243,8 @@ TEST(ConstructTemplatePreprocessorTest,
   EXPECT_THAT(
       result.preprocessedTriples_,
       ElementsAre(
-          ElementsAre(Var(2), Const("<http://p1>"), Const("<http://o1>")),
-          ElementsAre(Const("<http://s2>"), Const("<http://p2>"), Var(2))));
+          ElementsAre(Var(0), Const("<http://p1>"), Const("<http://o1>")),
+          ElementsAre(Const("<http://s2>"), Const("<http://p2>"), Var(0))));
 
   ASSERT_EQ(result.uniqueVariableColumns_.size(), 1);
   EXPECT_EQ(result.uniqueVariableColumns_[0], 2);
@@ -368,7 +370,7 @@ TEST(ConstructTemplatePreprocessorTest, mixedTermTypesAcrossTriples) {
 
   EXPECT_THAT(
       result.preprocessedTriples_,
-      ElementsAre(ElementsAre(Const("<http://s>"), Const("<http://p>"), Var(4)),
+      ElementsAre(ElementsAre(Const("<http://s>"), Const("<http://p>"), Var(0)),
                   ElementsAre(Bnode("_:u", "_b1"), Const("<http://q>"),
                               Const("text"))));
 
