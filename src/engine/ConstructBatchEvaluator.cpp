@@ -69,6 +69,7 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   for (size_t i = 0; i < numRows; ++i) {
     sortedIndices.emplace_back(col[ctx.firstRow_ + i], i);
   }
+
   ql::ranges::sort(sortedIndices, [](const auto& a, const auto& b) {
     return a.first < b.first;
   });
@@ -82,5 +83,7 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   }
   return result;
 }
+
+// _____________________________________________________________________________
 
 }  // namespace qlever::constructExport
