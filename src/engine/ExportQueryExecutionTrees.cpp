@@ -693,6 +693,63 @@ ExportQueryExecutionTrees::idToStringAndType(const Index& index, Id id,
                                              const LocalVocab& localVocab,
                                              ql::identity&& escapeFunction);
 
+// _____________________________________________________________________________
+template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
+          typename EscapeFunction>
+std::vector<std::optional<std::pair<std::string, const char*>>>
+ExportQueryExecutionTrees::idsToStringAndType(const Index& index,
+                                              ql::span<const Id> ids,
+                                              const LocalVocab& localVocab,
+                                              EscapeFunction&& escapeFunction) {
+  std::vector<std::optional<std::pair<std::string, const char*>>> results(
+      ids.size());
+
+  // VocabIndex IDs require a potentially expensive vocabulary lookup (on-disk
+  // or compressed). Defer them so they can be processed in sorted order for
+  // better I/O locality.
+  std::vector<size_t> vocabIndexPositions;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    if (ids[i].getDatatype() == Datatype::VocabIndex) {
+      vocabIndexPositions.push_back(i);
+    } else {
+      results[i] =
+          idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+              index, ids[i], localVocab, escapeFunction);
+    }
+  }
+
+  // Sort by `VocabIndex` value to convert random-access vocabulary reads into
+  // more sequential reads.
+  ql::ranges::sort(vocabIndexPositions, [&ids](size_t a, size_t b) {
+    return ids[a].getVocabIndex() < ids[b].getVocabIndex();
+  });
+  for (size_t pos : vocabIndexPositions) {
+    results[pos] =
+        idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+            index, ids[pos], localVocab, escapeFunction);
+  }
+
+  return results;
+}
+
+// ___________________________________________________________________________
+template std::vector<std::optional<std::pair<std::string, const char*>>>
+ExportQueryExecutionTrees::idsToStringAndType<false, false, ql::identity>(
+    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
+    ql::identity&& escapeFunction);
+
+// ___________________________________________________________________________
+template std::vector<std::optional<std::pair<std::string, const char*>>>
+ExportQueryExecutionTrees::idsToStringAndType<true, false, ql::identity>(
+    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
+    ql::identity&& escapeFunction);
+
+// ___________________________________________________________________________
+template std::vector<std::optional<std::pair<std::string, const char*>>>
+ExportQueryExecutionTrees::idsToStringAndType<true, true, ql::identity>(
+    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
+    ql::identity&& escapeFunction);
+
 // Convert a stringvalue and optional type to JSON binding.
 static nlohmann::json stringAndTypeToBinding(std::string_view entitystr,
                                              const char* xsdType) {
