@@ -45,17 +45,17 @@ TEST(LRUCache, testEmptyCapacityForbidden) {
 }
 
 // _____________________________________________________________________________
-TEST(LRUCache, tryGetReturnsNullptrOnMiss) {
+TEST(LRUCache, tryGetReturnsNoneOnMiss) {
   ad_utility::util::LRUCache<int, int> cache{2};
-  EXPECT_EQ(nullptr, cache.tryGet(42));
+  EXPECT_FALSE(cache.tryGet(42));
 }
 
 // _____________________________________________________________________________
-TEST(LRUCache, tryGetReturnsPointerToValueOnHit) {
+TEST(LRUCache, tryGetReturnsValueOnHit) {
   ad_utility::util::LRUCache<int, int> cache{2};
   cache.getOrCompute(7, [](int k) { return k * 10; });
-  const int* v = cache.tryGet(7);
-  ASSERT_NE(nullptr, v);
+  auto v = cache.tryGet(7);
+  ASSERT_TRUE(v);
   EXPECT_EQ(70, *v);
 }
 
@@ -67,11 +67,11 @@ TEST(LRUCache, tryGetPromotesToMostRecentlyUsed) {
   cache.getOrCompute(1, [](int k) { return k; });
   cache.getOrCompute(2, [](int k) { return k; });
   // Key 2 is LRU; promote key 2 via tryGet so key 1 becomes LRU.
-  ASSERT_NE(nullptr, cache.tryGet(2));
+  ASSERT_TRUE(cache.tryGet(2));
   // Inserting key 3 must evict key 1, not key 2.
   cache.getOrCompute(3, [](int k) { return k; });
-  EXPECT_NE(nullptr, cache.tryGet(2));  // still present
-  EXPECT_EQ(nullptr, cache.tryGet(1));  // evicted
+  EXPECT_TRUE(cache.tryGet(2));   // still present
+  EXPECT_FALSE(cache.tryGet(1));  // evicted
 }
 
 // _____________________________________________________________________________
@@ -79,7 +79,7 @@ TEST(LRUCache, tryGetPromotesToMostRecentlyUsed) {
 // `getOrCompute` for the same key must still call the compute function.
 TEST(LRUCache, tryGetDoesNotInsert) {
   ad_utility::util::LRUCache<int, int> cache{2};
-  EXPECT_EQ(nullptr, cache.tryGet(99));
+  EXPECT_FALSE(cache.tryGet(99));
   int computeCount = 0;
   cache.getOrCompute(99, [&computeCount](int k) {
     ++computeCount;

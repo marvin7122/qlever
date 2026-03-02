@@ -76,8 +76,8 @@ TEST(LRUCacheWithStatistics, tryGetHitIncrementsHitCounter) {
   EXPECT_EQ(cache.stats().hits_, 0);
   EXPECT_EQ(cache.stats().misses_, 1);
 
-  const int* v = cache.tryGet(1);
-  ASSERT_NE(nullptr, v);
+  auto v = cache.tryGet(1);
+  ASSERT_TRUE(v);
   EXPECT_EQ(10, *v);
   EXPECT_EQ(cache.stats().hits_, 1);
   EXPECT_EQ(cache.stats().misses_, 1);
@@ -88,7 +88,7 @@ TEST(LRUCacheWithStatistics, tryGetHitIncrementsHitCounter) {
 // when `getOrCompute` triggers the compute function.
 TEST(LRUCacheWithStatistics, tryGetMissDoesNotIncrementMissCounter) {
   LRUCacheWithStatistics<int, int> cache{2};
-  EXPECT_EQ(nullptr, cache.tryGet(99));
+  EXPECT_FALSE(cache.tryGet(99));
   EXPECT_EQ(cache.stats().hits_, 0);
   EXPECT_EQ(cache.stats().misses_, 0);
 }
@@ -105,7 +105,7 @@ TEST(LRUCacheWithStatistics, tryGetInterleavedWithGetOrCompute) {
   EXPECT_EQ(cache.stats().misses_, 2);
   EXPECT_EQ(cache.stats().hits_, 0);
 
-  ASSERT_NE(nullptr, cache.tryGet(1));  // hit via tryGet
+  ASSERT_TRUE(cache.tryGet(1));  // hit via tryGet
   EXPECT_EQ(cache.stats().hits_, 1);
   EXPECT_EQ(cache.stats().misses_, 2);
 

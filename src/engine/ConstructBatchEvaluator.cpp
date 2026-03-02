@@ -86,7 +86,8 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   std::vector<Id> missIds;
   std::vector<size_t> missRows;
   for (const auto& [id, rowInBatch] : sortedIndices) {
-    if (const auto* cached = idCache.tryGet(id)) {
+    auto cached = idCache.tryGet(id);
+    if (cached) {
       result[rowInBatch] = *cached;
     } else {
       missIds.push_back(id);
