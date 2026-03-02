@@ -33,17 +33,6 @@ class LRUCache {
 
   size_t capacity() const { return capacity_; }
 
-  // Look up `key` in the cache without computing a value. If found, move the
-  // key to the front (most recently used) and return a copy of the cached
-  // value. Otherwise return `std::nullopt`.
-  std::optional<V> tryGet(const K& key) {
-    auto it = cache_.find(key);
-    if (it == cache_.end()) return std::nullopt;
-    const auto& [value, listIterator] = it->second;
-    keys_.splice(keys_.begin(), keys_, listIterator);
-    return value;
-  }
-
   // Check if `key` is in the cache and return a reference to the value if it is
   // found. Otherwise, compute the value using `computeFunction` and store it in
   // the cache. If the cache is already at maximum capacity, evict the least

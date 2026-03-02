@@ -39,16 +39,6 @@ class LRUCacheWithStatistics {
  public:
   explicit LRUCacheWithStatistics(size_t capacity) : cache_{capacity} {}
 
-  // Look up `key` in the cache without computing a value. If found, increment
-  // the hit count and return a copy of the cached value. Otherwise return
-  // `std::nullopt` without incrementing the miss count. The caller is
-  // responsible for using `getOrCompute` for misses, which will count them.
-  std::optional<V> tryGet(const K& key) {
-    auto result = cache_.tryGet(key);
-    if (result) ++stats_.hits_;
-    return result;
-  }
-
   // Look up `key` in the cache. If found, return the cached value (cache hit).
   // Otherwise, compute the value using `computeFunction`, store it, and return
   // it (cache miss).

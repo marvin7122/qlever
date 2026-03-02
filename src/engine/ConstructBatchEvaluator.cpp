@@ -17,30 +17,6 @@
 
 namespace qlever::constructExport {
 
-namespace {
-
-// Convert an already-resolved `optional<pair<string, type>>` (as returned by
-// `ExportQueryExecutionTrees::idsToStringAndType`) to an `EvaluatedTerm`.
-// Returns `std::nullopt` if the input is `std::nullopt` (undefined Id).
-std::optional<EvaluatedTerm> toEvaluatedTerm(
-    std::optional<std::pair<std::string, const char*>> optStringAndType) {
-  if (!optStringAndType.has_value()) return std::nullopt;
-  auto [str, type] = std::move(*optStringAndType);
-  const char* i = XSD_INT_TYPE;
-  const char* d = XSD_DECIMAL_TYPE;
-  const char* b = XSD_BOOLEAN_TYPE;
-  // Note: If `type` is `XSD_DOUBLE_TYPE`, `str` is always "NaN", "INF" or
-  // "-INF", which doesn't have a short form notation.
-  if (type == nullptr || type == i || type == d ||
-      (type == b && str.length() > 1)) {
-    return std::make_shared<const std::string>(std::move(str));
-  }
-  return std::make_shared<const std::string>(
-      absl::StrCat("\"", str, "\"^^<", type, ">"));
-}
-
-}  // namespace
-
 // _____________________________________________________________________________
 BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
     ql::span<const size_t> variableColumnIndices,
@@ -59,43 +35,55 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
 }
 
 // _____________________________________________________________________________
+std::optional<EvaluatedTerm> ConstructBatchEvaluator::idToEvaluatedTerm(
+    const Index& index, Id id, const LocalVocab& localVocab) {
+  auto optStringAndType =
+      ExportQueryExecutionTrees::idToStringAndType(index, id, localVocab);
+  if (!optStringAndType.has_value()) return std::nullopt;
+  auto& [str, type] = optStringAndType.value();
+  const char* i = XSD_INT_TYPE;
+  const char* d = XSD_DECIMAL_TYPE;
+  const char* b = XSD_BOOLEAN_TYPE;
+  // Note: If `type` is `XSD_DOUBLE_TYPE`, `str` is always "NaN", "INF" or
+  // "-INF", which doesn't have a short form notation.
+  if (type == nullptr || type == i || type == d ||
+      (type == b && str.length() > 1)) {
+    return std::make_shared<const std::string>(std::move(str));
+  }
+  return std::make_shared<const std::string>(
+      absl::StrCat("\"", str, "\"^^<", type, ">"));
+}
+
+// _____________________________________________________________________________
 EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
     size_t idTableColumnIdx, const BatchEvaluationContext& ctx,
     const LocalVocab& localVocab, const Index& index, IdCache& idCache) {
   decltype(auto) col = ctx.idTable_.getColumn(idTableColumnIdx);
   const size_t numRows = ctx.numRows();
 
-  EvaluatedVariableValues result{numRows};
-
-  // First pass: serve cache hits immediately; collect cache-miss positions and
-  // their `Id`s for batch resolution.
-  std::vector<size_t> cacheMissRowIndices;
-  std::vector<Id> cacheMisses;
+  // Build a `(Id, rowInBatch)` index vector and sort by `Id`. This converts
+  // the vocabulary lookups from random-access reads to roughly sequential
+  // reads, reducing page faults and enabling hardware prefetching.
+  std::vector<std::pair<Id, size_t>> sortedIndices;
+  sortedIndices.reserve(numRows);
   for (size_t i = 0; i < numRows; ++i) {
-    Id id = col[ctx.firstRow_ + i];
-    if (auto cached = idCache.tryGet(id)) {
-      result[i] = *cached;
-    } else {
-      cacheMissRowIndices.push_back(i);
-      cacheMisses.push_back(id);
-    }
+    sortedIndices.emplace_back(col[ctx.firstRow_ + i], i);
   }
 
-  // Batch-resolve cache misses. `idsToStringAndType` sorts `VocabIndex` `Id`s
-  // internally for I/O locality.
-  auto resolved = ExportQueryExecutionTrees::idsToStringAndType(
-      index, cacheMisses, localVocab);
+  ql::ranges::sort(sortedIndices, [](const auto& a, const auto& b) {
+    return a.first < b.first;
+  });
 
-  // Convert, insert into the cache, and scatter into the result. For repeated
-  // miss IDs (same Id appears twice in `cacheMisses`), subsequent
-  // `getOrCompute` calls will be cache hits and return the shared_ptr stored by
-  // the first.
-  for (size_t j = 0; j < cacheMissRowIndices.size(); ++j) {
-    auto evaluatedTerm = toEvaluatedTerm(std::move(resolved[j]));
-    result[cacheMissRowIndices[j]] = idCache.getOrCompute(
-        cacheMisses[j], [&evaluatedTerm](const Id&) { return evaluatedTerm; });
+  // Evaluate in sorted `Id` order and scatter results back to row positions.
+  EvaluatedVariableValues result(numRows);
+  for (const auto& [id, rowInBatch] : sortedIndices) {
+    result[rowInBatch] = idCache.getOrCompute(id, [&](Id resolvedId) {
+      return idToEvaluatedTerm(index, resolvedId, localVocab);
+    });
   }
   return result;
 }
+
+// _____________________________________________________________________________
 
 }  // namespace qlever::constructExport

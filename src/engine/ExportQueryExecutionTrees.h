@@ -9,9 +9,7 @@
 #define QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
 
 #include <functional>
-#include <vector>
 
-#include "backports/span.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/QueryExportTypes.h"
 #include "parser/data/LimitOffsetClause.h"
@@ -82,20 +80,6 @@ class ExportQueryExecutionTrees {
   static std::optional<std::pair<std::string, const char*>> idToStringAndType(
       const Index& index, Id id, const LocalVocab& localVocab,
       EscapeFunction&& escapeFunction = EscapeFunction{});
-
-  // Batch variant of `idToStringAndType`. Resolves all `ids` and returns a
-  // vector of results in the same order as `ids`. Ids with datatype
-  // `VocabIndex` are processed in sorted order of their vocab index to improve
-  // I/O locality for compressed or on-disk vocabularies. All other ids are
-  // resolved immediately (their values are either encoded in the id bits or
-  // stored in the `LocalVocab`).
-  template <bool removeQuotesAndAngleBrackets = false,
-            bool returnOnlyLiterals = false,
-            typename EscapeFunction = ql::identity>
-  static std::vector<std::optional<std::pair<std::string, const char*>>>
-  idsToStringAndType(const Index& index, ql::span<const Id> ids,
-                     const LocalVocab& localVocab,
-                     EscapeFunction&& escapeFunction = EscapeFunction{});
 
   // Same as the previous function, but only handles the datatypes for which the
   // value is encoded directly in the ID. For other datatypes an exception is
