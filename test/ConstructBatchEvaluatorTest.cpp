@@ -292,7 +292,7 @@ TEST_F(ConstructBatchEvaluatorTest, realisticConstructPattern) {
 // Use idS_, idO_, idS_: the second access to idS_ (row 2) is a cache miss
 // because idO_ (row 1) evicted it, a new string is allocated.
 TEST_F(ConstructBatchEvaluatorTest, cacheOfSizeOneEvictsAndRecomputesOnAccess) {
-  auto idTable = makeIdTableFromVector({{idS_}, {idO_}, {idS_}});
+  auto idTable = makeIdTableFromVector({{idS_}, {idS_}, {idO_}});
   IdCache idCache{1};
 
   auto result = evaluateIdTable({0}, idTable, idCache);
