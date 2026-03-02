@@ -693,6 +693,62 @@ ExportQueryExecutionTrees::idToStringAndType(const Index& index, Id id,
                                              const LocalVocab& localVocab,
                                              ql::identity&& escapeFunction);
 
+// ___________________________________________________________________________
+template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
+          typename EscapeFunction>
+std::vector<std::optional<std::pair<std::string, const char*>>>
+ExportQueryExecutionTrees::idsToStringAndType(const Index& index,
+                                              ql::span<const Id> ids,
+                                              const LocalVocab& localVocab,
+                                              EscapeFunction&& escapeFunction) {
+  std::vector<std::optional<std::pair<std::string, const char*>>> results(
+      ids.size());
+
+  // `ids` is sorted by `ValueId`. Because the datatype tag occupies the 4 most
+  // significant bits of a `ValueId`, all `VocabIndex` IDs form a single
+  // contiguous block and are already sorted by vocabulary position within that
+  // block. We resolve all other datatypes immediately (in-memory lookups) and
+  // record where the `VocabIndex` block begins.
+  size_t vocabBegin = ids.size();
+  for (size_t i = 0; i < ids.size(); ++i) {
+    if (ids[i].getDatatype() != Datatype::VocabIndex) {
+      results[i] =
+          idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+              index, ids[i], localVocab, escapeFunction);
+    } else if (vocabBegin == ids.size()) {
+      vocabBegin = i;
+    }
+  }
+
+  // Resolve the contiguous `VocabIndex` block in sorted (vocabulary-position)
+  // order, giving sequential I/O access to the on-disk vocabulary file.
+  for (size_t i = vocabBegin;
+       i < ids.size() && ids[i].getDatatype() == Datatype::VocabIndex; ++i) {
+    results[i] =
+        idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+            index, ids[i], localVocab, escapeFunction);
+  }
+
+  return results;
+}
+
+// Explicit instantiations — mirror the three instantiations of
+// idToStringAndType.
+// ___________________________________________________________________________
+template std::vector<std::optional<std::pair<std::string, const char*>>>
+ExportQueryExecutionTrees::idsToStringAndType<false, false, ql::identity>(
+    const Index&, ql::span<const Id>, const LocalVocab&, ql::identity&&);
+
+// ___________________________________________________________________________
+template std::vector<std::optional<std::pair<std::string, const char*>>>
+ExportQueryExecutionTrees::idsToStringAndType<true, false, ql::identity>(
+    const Index&, ql::span<const Id>, const LocalVocab&, ql::identity&&);
+
+// ___________________________________________________________________________
+template std::vector<std::optional<std::pair<std::string, const char*>>>
+ExportQueryExecutionTrees::idsToStringAndType<true, true, ql::identity>(
+    const Index&, ql::span<const Id>, const LocalVocab&, ql::identity&&);
+
 // Convert a stringvalue and optional type to JSON binding.
 static nlohmann::json stringAndTypeToBinding(std::string_view entitystr,
                                              const char* xsdType) {

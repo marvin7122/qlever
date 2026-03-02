@@ -60,6 +60,15 @@ class LRUCacheWithStatistics {
     return result;
   }
 
+  // Check if `key` is in the cache. If found, update LRU order, increment the
+  // hit counter, and return a pointer to the cached value. If not found, return
+  // `nullptr`. Does not insert or compute anything.
+  const V* tryGet(const K& key) {
+    const V* v = cache_.tryGet(key);
+    if (v) ++stats_.hits_;
+    return v;
+  }
+
   const LRUCacheStats& stats() const { return stats_; }
 
   size_t capacity() const { return cache_.capacity(); }

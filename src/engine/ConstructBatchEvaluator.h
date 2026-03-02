@@ -91,6 +91,12 @@ class ConstructBatchEvaluator {
   // Returns `std::nullopt` if the `Id` has no string representation.
   static std::optional<EvaluatedTerm> idToEvaluatedTerm(
       const Index& index, Id id, const LocalVocab& localVocab);
+
+  // Convert the result of `idToStringAndType` / `idsToStringAndType` to an
+  // `EvaluatedTerm`, applying XSD-type formatting. Returns `std::nullopt` if
+  // the input is `std::nullopt` (i.e. the `Id` was `Undefined`).
+  static std::optional<EvaluatedTerm> stringAndTypeToEvaluatedTerm(
+      std::optional<std::pair<std::string, const char*>> optStringAndType);
 };
 
 }  // namespace qlever::constructExport

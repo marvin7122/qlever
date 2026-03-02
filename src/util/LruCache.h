@@ -33,6 +33,16 @@ class LRUCache {
 
   size_t capacity() const { return capacity_; }
 
+  // Check if `key` is in the cache. If found, move it to the front (most
+  // recently used) and return a pointer to the cached value. If not found,
+  // return `nullptr`. Does not insert or compute anything.
+  const V* tryGet(const K& key) {
+    auto it = cache_.find(key);
+    if (it == cache_.end()) return nullptr;
+    keys_.splice(keys_.begin(), keys_, it->second.second);
+    return &it->second.first;
+  }
+
   // Check if `key` is in the cache and return a reference to the value if it is
   // found. Otherwise, compute the value using `computeFunction` and store it in
   // the cache. If the cache is already at maximum capacity, evict the least
