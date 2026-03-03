@@ -21,14 +21,16 @@ namespace qlever::constructExport {
 BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
     ql::span<const size_t> variableColumnIndices,
     const BatchEvaluationContext& evaluationContext,
-    const LocalVocab& localVocab, const Index& index, IdCache& idCache) {
+    const LocalVocab& localVocab, const Index& index, IdCache& idCache,
+    ConstructOutputMode outputMode) {
   BatchEvaluationResult batchResult;
   batchResult.numRows_ = evaluationContext.numRows();
   batchResult.variablesByColumn_.reserve(variableColumnIndices.size());
 
   for (size_t variableColumnIdx : variableColumnIndices) {
-    batchResult.variablesByColumn_.push_back(evaluateVariableByColumn(
-        variableColumnIdx, evaluationContext, localVocab, index, idCache));
+    batchResult.variablesByColumn_.push_back(
+        evaluateVariableByColumn(variableColumnIdx, evaluationContext,
+                                 localVocab, index, idCache, outputMode));
   }
 
   return batchResult;
@@ -37,16 +39,23 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
 // _____________________________________________________________________________
 std::optional<EvaluatedTerm>
 ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
-    std::optional<std::pair<std::string, const char*>> optStringAndType) {
+    std::optional<std::pair<std::string, const char*>> optStringAndType,
+    ConstructOutputMode outputMode) {
   if (!optStringAndType.has_value()) return std::nullopt;
   auto& [str, type] = optStringAndType.value();
   const char* i = XSD_INT_TYPE;
   const char* d = XSD_DECIMAL_TYPE;
   const char* b = XSD_BOOLEAN_TYPE;
+  // In N-Triples format, all typed literals must carry an explicit datatype.
+  // For other formats (and for the string-triples path), short-form notation
+  // (e.g. `42` instead of `"42"^^<xsd:int>`) is acceptable.
+  bool useShortForm = std::holds_alternative<StringTriplesMode>(outputMode) ||
+                      std::get<ad_utility::MediaType>(outputMode) !=
+                          ad_utility::MediaType::ntriples;
   // Note: If `type` is `XSD_DOUBLE_TYPE`, `str` is always "NaN", "INF" or
   // "-INF", which doesn't have a short form notation.
-  if (type == nullptr || type == i || type == d ||
-      (type == b && str.length() > 1)) {
+  if (useShortForm && (type == nullptr || type == i || type == d ||
+                       (type == b && str.length() > 1))) {
     return std::make_shared<const std::string>(std::move(str));
   }
   return std::make_shared<const std::string>(
@@ -55,15 +64,18 @@ ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
 
 // _____________________________________________________________________________
 std::optional<EvaluatedTerm> ConstructBatchEvaluator::idToEvaluatedTerm(
-    const Index& index, Id id, const LocalVocab& localVocab) {
+    const Index& index, Id id, const LocalVocab& localVocab,
+    ConstructOutputMode outputMode) {
   return stringAndTypeToEvaluatedTerm(
-      ExportQueryExecutionTrees::idToStringAndType(index, id, localVocab));
+      ExportQueryExecutionTrees::idToStringAndType(index, id, localVocab),
+      outputMode);
 }
 
 // _____________________________________________________________________________
 EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
     size_t idTableColumnIdx, const BatchEvaluationContext& ctx,
-    const LocalVocab& localVocab, const Index& index, IdCache& idCache) {
+    const LocalVocab& localVocab, const Index& index, IdCache& idCache,
+    ConstructOutputMode outputMode) {
   decltype(auto) col = ctx.idTable_.getColumn(idTableColumnIdx);
   const size_t numRows = ctx.numRows();
 
@@ -103,9 +115,10 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   auto missResolved =
       ExportQueryExecutionTrees::idsToStringAndType(index, missIds, localVocab);
   for (size_t i = 0; i < missIds.size(); ++i) {
-    result[missRows[i]] =
-        idCache.getOrCompute(missIds[i], [&missResolved, i](const Id&) {
-          return stringAndTypeToEvaluatedTerm(std::move(missResolved[i]));
+    result[missRows[i]] = idCache.getOrCompute(
+        missIds[i], [&missResolved, i, outputMode](const Id&) {
+          return stringAndTypeToEvaluatedTerm(std::move(missResolved[i]),
+                                              outputMode);
         });
   }
   return result;

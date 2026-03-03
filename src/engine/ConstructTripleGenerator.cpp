@@ -83,7 +83,7 @@ ConstructTripleGenerator::generateStringTriplesForResultTable(
 
   auto processor = std::make_unique<ConstructRowProcessor>(
       preprocessedTemplate_, index_.get(), cancellationHandle_, table,
-      currentRowOffset);
+      currentRowOffset, StringTriplesMode{});
 
   return ad_utility::InputRangeTypeErased<StringTriple>{
       std::make_unique<StringTripleAdapter>(std::move(processor))};
@@ -127,7 +127,7 @@ ConstructTripleGenerator::generateFormattedTriples(
 
   auto processor = std::make_unique<ConstructRowProcessor>(
       preprocessedTemplate_, index_.get(), cancellationHandle_, table,
-      currentRowOffset);
+      currentRowOffset, format);
 
   return ad_utility::InputRangeTypeErased<std::string>{
       std::make_unique<FormattedTripleAdapter>(std::move(processor), format)};

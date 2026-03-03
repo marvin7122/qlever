@@ -106,7 +106,8 @@ TEST_F(ConstructRowProcessorTest, emptyTable) {
   auto tmpl = makeTemplate({triple(Const("<s>"), Const("<p>"), Const("<o>"))});
   auto table = makeRange(idTable, 0, 0);
 
-  ConstructRowProcessor proc{tmpl, index_, makeHandle(), table, 0};
+  ConstructRowProcessor proc{tmpl,  index_, makeHandle(),
+                             table, 0,      ad_utility::MediaType::turtle};
 
   EXPECT_TRUE(collectAll(proc).empty());
 }
@@ -119,7 +120,8 @@ TEST_F(ConstructRowProcessorTest, allConstantsYieldsOneTriplePerRow) {
   auto tmpl = makeTemplate({triple(Const("<s>"), Const("<p>"), Const("<o>"))});
   auto table = makeRange(idTable, 0, 3);
 
-  ConstructRowProcessor proc{tmpl, index_, makeHandle(), table, 0};
+  ConstructRowProcessor proc{tmpl,  index_, makeHandle(),
+                             table, 0,      ad_utility::MediaType::turtle};
   auto triples = collectAll(proc);
 
   EXPECT_THAT(triples, ElementsAre(matchTriple("<s>", "<p>", "<o>"),
@@ -136,7 +138,8 @@ TEST_F(ConstructRowProcessorTest, variableInSubjectResolved) {
   auto tmpl = makeTemplate({triple(Var(0), Const("<p>"), Const("<o>"))}, {0});
   auto table = makeRange(idTable, 0, 2);
 
-  ConstructRowProcessor proc{tmpl, index_, makeHandle(), table, 0};
+  ConstructRowProcessor proc{tmpl,  index_, makeHandle(),
+                             table, 0,      ad_utility::MediaType::turtle};
 
   EXPECT_THAT(collectAll(proc), ElementsAre(matchTriple("<s>", "<p>", "<o>"),
                                             matchTriple("<o>", "<p>", "<o>")));
@@ -149,7 +152,8 @@ TEST_F(ConstructRowProcessorTest, undefDropsTriple) {
   auto tmpl = makeTemplate({triple(Var(0), Const("<p>"), Const("<o>"))}, {0});
   auto table = makeRange(idTable, 0, 3);
 
-  ConstructRowProcessor proc{tmpl, index_, makeHandle(), table, 0};
+  ConstructRowProcessor proc{tmpl,  index_, makeHandle(),
+                             table, 0,      ad_utility::MediaType::turtle};
 
   EXPECT_THAT(collectAll(proc), ElementsAre(matchTriple("<s>", "<p>", "<o>"),
                                             matchTriple("<o>", "<p>", "<o>")));
@@ -164,7 +168,8 @@ TEST_F(ConstructRowProcessorTest, multipleTemplateTriples) {
                            {0});
   auto table = makeRange(idTable, 0, 2);
 
-  ConstructRowProcessor proc{tmpl, index_, makeHandle(), table, 0};
+  ConstructRowProcessor proc{tmpl,  index_, makeHandle(),
+                             table, 0,      ad_utility::MediaType::turtle};
 
   EXPECT_THAT(collectAll(proc), ElementsAre(matchTriple("<s>", "<p>", "<o1>"),
                                             matchTriple("<s>", "<q>", "<o2>"),
@@ -184,7 +189,8 @@ TEST_F(ConstructRowProcessorTest, blankNodeUsesCorrectRowId) {
   // View starts at row 1 of the IdTable: firstRow = 1, numRows = 2.
   // currentRowOffset = 10.
   auto table = makeRange(idTable, 1, 3);
-  ConstructRowProcessor proc{tmpl, index_, makeHandle(), table, 10};
+  ConstructRowProcessor proc{tmpl,  index_, makeHandle(),
+                             table, 10,     ad_utility::MediaType::turtle};
 
   // row 0 of batch -> blankNodeRowId = 10 + 1 + 0 = 11
   // row 1 of batch -> blankNodeRowId = 10 + 1 + 1 = 12
@@ -205,7 +211,8 @@ TEST_F(ConstructRowProcessorTest, viewSubrangeReadsCorrectRows) {
       makeTemplate({triple(Var(0), Const("<pred>"), Const("<obj>"))}, {0});
   auto table = makeRange(idTable, 1, 3);
 
-  ConstructRowProcessor proc{tmpl, index_, makeHandle(), table, 0};
+  ConstructRowProcessor proc{tmpl,  index_, makeHandle(),
+                             table, 0,      ad_utility::MediaType::turtle};
 
   EXPECT_THAT(collectAll(proc),
               ElementsAre(matchTriple("<p>", "<pred>", "<obj>"),
@@ -222,7 +229,8 @@ TEST_F(ConstructRowProcessorTest, acrossBatchBoundary) {
   auto tmpl = makeTemplate({triple(Var(0), Const("<p>"), Const("<o>"))}, {0});
   auto table = makeRange(idTable, 0, N);
 
-  ConstructRowProcessor proc{tmpl, index_, makeHandle(), table, 0};
+  ConstructRowProcessor proc{tmpl,  index_, makeHandle(),
+                             table, 0,      ad_utility::MediaType::turtle};
   auto triples = collectAll(proc);
 
   ASSERT_EQ(triples.size(), N);
@@ -242,7 +250,8 @@ TEST_F(ConstructRowProcessorTest, cancellationThrowsBetweenBatches) {
   auto table = makeRange(idTable, 0, N);
 
   auto handle = makeHandle();
-  ConstructRowProcessor proc{tmpl, index_, handle, table, 0};
+  ConstructRowProcessor proc{tmpl,  index_, handle,
+                             table, 0,      ad_utility::MediaType::turtle};
 
   // Drain all DEFAULT_BATCH_SIZE triples from batch 0.
   for (size_t i = 0; i < ConstructRowProcessor::DEFAULT_BATCH_SIZE; ++i) {

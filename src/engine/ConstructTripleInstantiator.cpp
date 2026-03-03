@@ -48,10 +48,11 @@ std::string ConstructTripleInstantiator::formatTriple(
     const EvaluatedTerm& subject, const EvaluatedTerm& predicate,
     const EvaluatedTerm& object, const ad_utility::MediaType& format) {
   using enum ad_utility::MediaType;
-  static constexpr std::array supportedFormats{turtle, csv, tsv};
+  static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
   AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
 
-  if (format == ad_utility::MediaType::turtle) {
+  if (format == ad_utility::MediaType::turtle ||
+      format == ad_utility::MediaType::ntriples) {
     // Only escape literals (strings starting with "). IRIs and blank nodes
     // are used as-is, avoiding an unnecessary string copy.
     if (ql::starts_with(*object, "\"")) {

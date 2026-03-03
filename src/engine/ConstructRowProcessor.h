@@ -46,7 +46,8 @@ class ConstructRowProcessor
   ConstructRowProcessor(
       const PreprocessedConstructTemplate& preprocessedTemplate,
       const Index& index, CancellationHandle cancellationHandle,
-      const TableWithRange& table, size_t currentRowOffset);
+      const TableWithRange& table, size_t currentRowOffset,
+      ConstructOutputMode outputMode);
 
   // Returns the next instantiated triple, or nullopt when exhausted.
   // Incomplete triples are filtered out.
@@ -87,6 +88,8 @@ class ConstructRowProcessor
 
   // LRU cache for avoiding redundant vocabulary lookups across batches.
   IdCache idCache_;
+
+  ConstructOutputMode outputMode_;
 
   // Lazy range driving the batch iteration.
   ad_utility::InputRangeTypeErased<EvaluatedTriple> innerRange_;

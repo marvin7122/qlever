@@ -15,6 +15,8 @@
 #include <variant>
 #include <vector>
 
+#include "util/http/MediaTypes.h"
+
 namespace qlever::constructExport {
 
 // Result of evaluating a term (`Iri`, `Literal`, `Variable`, `BlankNode`) to
@@ -81,6 +83,15 @@ struct EvaluatedTriple {
   // Get string value for a component.
   static const std::string& getValue(const EvaluatedTerm& var) { return *var; }
 };
+
+// Tag for the string-triples path where no MediaType is known.
+struct StringTriplesMode {};
+
+// Discriminates between the two uses of ConstructRowProcessor:
+// - StringTriplesMode: used by `generateStringTriplesForResultTable`
+// - MediaType:         used by `generateFormattedTriples`
+using ConstructOutputMode =
+    std::variant<StringTriplesMode, ad_utility::MediaType>;
 
 }  // namespace qlever::constructExport
 

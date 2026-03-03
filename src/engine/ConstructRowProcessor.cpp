@@ -22,7 +22,8 @@ IdCache ConstructRowProcessor::makeIdCache(
 ConstructRowProcessor::ConstructRowProcessor(
     const PreprocessedConstructTemplate& preprocessedTemplate,
     const Index& index, CancellationHandle cancellationHandle,
-    const TableWithRange& table, size_t currentRowOffset)
+    const TableWithRange& table, size_t currentRowOffset,
+    ConstructOutputMode outputMode)
     : preprocessedTemplate_(preprocessedTemplate),
       index_(index),
       cancellationHandle_(std::move(cancellationHandle)),
@@ -30,6 +31,7 @@ ConstructRowProcessor::ConstructRowProcessor(
       rowIndices_(table.view_),
       currentRowOffset_(currentRowOffset),
       idCache_(makeIdCache(preprocessedTemplate)),
+      outputMode_(outputMode),
       innerRange_(makeInnerRange()) {}
 
 // _____________________________________________________________________________
@@ -64,7 +66,7 @@ std::vector<EvaluatedTriple> ConstructRowProcessor::computeBatch(
 
   auto batchResult = ConstructBatchEvaluator::evaluateBatch(
       preprocessedTemplate_.uniqueVariableColumns_, batchContext,
-      tableWithVocab_.localVocab(), index_.get(), idCache_);
+      tableWithVocab_.localVocab(), index_.get(), idCache_, outputMode_);
 
   std::vector<EvaluatedTriple> triples;
   triples.reserve(batchResult.numRows_ *

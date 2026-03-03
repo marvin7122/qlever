@@ -78,25 +78,29 @@ class ConstructBatchEvaluator {
   static BatchEvaluationResult evaluateBatch(
       ql::span<const size_t> variableColumnIndices,
       const BatchEvaluationContext& evaluationContext,
-      const LocalVocab& localVocab, const Index& index, IdCache& idCache);
+      const LocalVocab& localVocab, const Index& index, IdCache& idCache,
+      ConstructOutputMode outputMode);
 
  private:
   // Evaluate a single variable (identified by its `IdTable` column index)
   // across all rows in the batch.
   static EvaluatedVariableValues evaluateVariableByColumn(
       size_t idTableColumnIdx, const BatchEvaluationContext& ctx,
-      const LocalVocab& localVocab, const Index& index, IdCache& idCache);
+      const LocalVocab& localVocab, const Index& index, IdCache& idCache,
+      ConstructOutputMode outputMode);
 
   // Convert a single `Id` to its `EvaluatedTerm` string representation.
   // Returns `std::nullopt` if the `Id` has no string representation.
   static std::optional<EvaluatedTerm> idToEvaluatedTerm(
-      const Index& index, Id id, const LocalVocab& localVocab);
+      const Index& index, Id id, const LocalVocab& localVocab,
+      ConstructOutputMode outputMode);
 
   // Convert the result of `idToStringAndType` / `idsToStringAndType` to an
   // `EvaluatedTerm`, applying XSD-type formatting. Returns `std::nullopt` if
   // the input is `std::nullopt` (i.e. the `Id` was `Undefined`).
   static std::optional<EvaluatedTerm> stringAndTypeToEvaluatedTerm(
-      std::optional<std::pair<std::string, const char*>> optStringAndType);
+      std::optional<std::pair<std::string, const char*>> optStringAndType,
+      ConstructOutputMode outputMode);
 };
 
 }  // namespace qlever::constructExport
