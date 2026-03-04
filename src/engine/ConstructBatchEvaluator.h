@@ -62,7 +62,7 @@ struct BatchEvaluationContext {
 };
 
 // Resolves `Id` values in variable columns to their string representations
-// (IRI, literal, etc.) via `ExportQueryExecutionTrees::idToStringAndType`.
+// (IRI, literal, etc.) via `idToStringAndType`.
 //
 // The evaluation is column-oriented: for each variable (identified by their
 // `IdTable` column), all rows in the batch are evaluated before moving to the

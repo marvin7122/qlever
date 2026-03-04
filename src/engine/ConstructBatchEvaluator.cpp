@@ -10,7 +10,7 @@
 
 #include <absl/strings/str_cat.h>
 
-#include "engine/ExportQueryExecutionTrees.h"
+#include "engine/ValueIdHelpers.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/Views.h"
@@ -67,8 +67,7 @@ std::optional<EvaluatedTerm> ConstructBatchEvaluator::idToEvaluatedTerm(
     const Index& index, Id id, const LocalVocab& localVocab,
     ConstructOutputMode outputMode) {
   return stringAndTypeToEvaluatedTerm(
-      ExportQueryExecutionTrees::idToStringAndType(index, id, localVocab),
-      outputMode);
+      ql::valueId::idToStringAndType(index, id, localVocab), outputMode);
 }
 
 // _____________________________________________________________________________
@@ -113,7 +112,7 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   // `getOrCompute`; duplicate IDs in `missIds` are handled correctly: the
   // second occurrence is already in cache and the lambda is not called.
   auto missResolved =
-      ExportQueryExecutionTrees::idsToStringAndType(index, missIds, localVocab);
+      ql::valueId::idsToStringAndType(index, missIds, localVocab);
   for (size_t i = 0; i < missIds.size(); ++i) {
     result[missRows[i]] = idCache.getOrCompute(
         missIds[i], [&missResolved, i, outputMode](const Id&) {
