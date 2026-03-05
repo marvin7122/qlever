@@ -15,6 +15,7 @@
 #include "global/Constants.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
+#include "util/Views.h"
 
 namespace qlever::constructExport {
 
@@ -38,6 +39,30 @@ std::optional<EvaluatedTerm> instantiateTerm(
         }
       },
       term);
+}
+
+// _____________________________________________________________________________
+std::vector<EvaluatedTriple> instantiateBatch(
+    const PreprocessedConstructTemplate& tmpl,
+    const BatchEvaluationResult& batchResult, size_t blankNodeBaseId) {
+  std::vector<EvaluatedTriple> triples;
+  triples.reserve(batchResult.numRows_ * tmpl.preprocessedTriples_.size());
+
+  for (size_t rowInBatch : ql::views::iota(size_t{0}, batchResult.numRows_)) {
+    const size_t blankNodeRowId = blankNodeBaseId + rowInBatch;
+    for (const auto& triple : tmpl.preprocessedTriples_) {
+      auto subject =
+          instantiateTerm(triple[0], batchResult, rowInBatch, blankNodeRowId);
+      auto predicate =
+          instantiateTerm(triple[1], batchResult, rowInBatch, blankNodeRowId);
+      auto object =
+          instantiateTerm(triple[2], batchResult, rowInBatch, blankNodeRowId);
+      if (subject && predicate && object) {
+        triples.push_back(EvaluatedTriple{*subject, *predicate, *object});
+      }
+    }
+  }
+  return triples;
 }
 
 // _____________________________________________________________________________

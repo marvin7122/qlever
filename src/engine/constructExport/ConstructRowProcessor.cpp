@@ -61,32 +61,12 @@ std::vector<EvaluatedTriple> ConstructRowProcessor::computeBatch(
   BatchEvaluationContext batchContext{tableWithVocab_.idTable(),
                                       firstRow() + batchStart,
                                       firstRow() + batchEnd};
-
   auto batchResult =
       evaluateBatch(preprocessedTemplate_.uniqueVariableColumns_, batchContext,
                     tableWithVocab_.localVocab(), index_.get(), idCache_);
 
-  std::vector<EvaluatedTriple> triples;
-  triples.reserve(batchResult.numRows_ *
-                  preprocessedTemplate_.preprocessedTriples_.size());
-
   const size_t blankNodeBaseId = currentRowOffset_ + firstRow() + batchStart;
-  for (size_t rowInBatch : ql::views::iota(size_t{0}, batchResult.numRows_)) {
-    const size_t blankNodeRowId = blankNodeBaseId + rowInBatch;
-
-    for (const auto& triple : preprocessedTemplate_.preprocessedTriples_) {
-      auto subject =
-          instantiateTerm(triple[0], batchResult, rowInBatch, blankNodeRowId);
-      auto predicate =
-          instantiateTerm(triple[1], batchResult, rowInBatch, blankNodeRowId);
-      auto object =
-          instantiateTerm(triple[2], batchResult, rowInBatch, blankNodeRowId);
-      if (subject && predicate && object) {
-        triples.push_back(EvaluatedTriple{*subject, *predicate, *object});
-      }
-    }
-  }
-  return triples;
+  return instantiateBatch(preprocessedTemplate_, batchResult, blankNodeBaseId);
 }
 
 }  // namespace qlever::constructExport

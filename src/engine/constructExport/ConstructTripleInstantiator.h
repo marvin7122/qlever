@@ -12,6 +12,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "engine/constructExport/ConstructBatchEvaluator.h"
 #include "engine/constructExport/ConstructTypes.h"
@@ -27,6 +28,15 @@ namespace qlever::constructExport {
 std::optional<EvaluatedTerm> instantiateTerm(
     const PreprocessedTerm& term, const BatchEvaluationResult& batchResult,
     size_t rowInBatch, size_t blankNodeRowId);
+
+// Instantiates all template triples for all rows in a batch. For each row,
+// every triple in `tmpl.preprocessedTriples_` is instantiated; triples with
+// any unbound term are silently dropped. `blankNodeBaseId` is the absolute
+// row ID of the first row in the batch (used to generate unique blank node
+// IDs).
+std::vector<EvaluatedTriple> instantiateBatch(
+    const PreprocessedConstructTemplate& tmpl,
+    const BatchEvaluationResult& batchResult, size_t blankNodeBaseId);
 
 // Render a single term to its string form.
 // `shortForm=true`  (turtle, csv, tsv, string-triples): integers, decimals
