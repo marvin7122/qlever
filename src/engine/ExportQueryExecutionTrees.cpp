@@ -34,6 +34,7 @@ using ad_utility::InputRangeTypeErased;
 namespace {
 
 using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
+using Literal = ad_utility::triple_component::Literal;
 
 // _____________________________________________________________________________
 // Return true iff the `result` is nonempty.
@@ -676,7 +677,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
   ql::erase(columns, std::nullopt);
 
   auto getBinding = [&](const TableConstRefWithVocab& pair, const uint64_t& i) {
-    nlohmann::ordered_json binding = {};
+    auto binding = nlohmann::ordered_json::object();
     for (const auto& column : columns) {
       auto optionalStringAndType = ql::valueId::idToStringAndType(
           qet.getQec()->getIndex(), pair.idTable()(i, column->columnIndex_),
