@@ -5,7 +5,7 @@
 #include <gmock/gmock.h>
 
 #include "./util/AllocatorTestHelpers.h"
-#include "engine/ConstructQueryEvaluator.h"
+#include "engine/constructExport/ConstructQueryEvaluator.h"
 #include "index/Index.h"
 #include "parser/data/ConstructQueryExportContext.h"
 #include "parser/data/Types.h"

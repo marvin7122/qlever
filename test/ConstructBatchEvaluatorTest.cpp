@@ -10,7 +10,7 @@
 
 #include "./util/IdTableHelpers.h"
 #include "./util/IndexTestHelpers.h"
-#include "engine/ConstructBatchEvaluator.h"
+#include "engine/constructExport/ConstructBatchEvaluator.h"
 
 namespace {
 
@@ -18,14 +18,16 @@ using namespace qlever::constructExport;
 using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Field;
 using ::testing::Optional;
 using ::testing::Pointee;
 
-// Matcher for `std::optional<std::shared_ptr<const std::string>>`:
-// asserts the optional is non-empty and the pointed-to string equals
+// Matcher for `std::optional<EvaluatedTerm>` (i.e.
+// `std::optional<std::shared_ptr<const EvaluatedTermData>>`): asserts the
+// optional is non-empty and the pointed-to term's `str` field equals
 // `expected`.
 static constexpr auto evalTerm = [](const std::string& expected) {
-  return Optional(Pointee(Eq(expected)));
+  return Optional(Pointee(Field(&EvaluatedTermData::str, Eq(expected))));
 };
 
 static const EvaluatedVariableValues& getColumn(
@@ -66,9 +68,8 @@ class ConstructBatchEvaluatorTest : public ::testing::Test {
       const std::vector<size_t>& variableColumnIndices, const IdTable& idTable,
       IdCache& idCache) {
     BatchEvaluationContext ctx{idTable, 0, idTable.numRows()};
-    return ConstructBatchEvaluator::evaluateBatch(
-        variableColumnIndices, ctx, localVocab_, index_, idCache,
-        ad_utility::MediaType::turtle);
+    return evaluateBatch(variableColumnIndices, ctx, localVocab_, index_,
+                         idCache);
   }
 
   // Evaluate a sub-range [`firstRow`, `endRow`) of the `IdTable`.
@@ -76,9 +77,8 @@ class ConstructBatchEvaluatorTest : public ::testing::Test {
       const std::vector<size_t>& variableColumnIndices, const IdTable& idTable,
       size_t firstRow, size_t endRow, IdCache& idCache) {
     BatchEvaluationContext ctx{idTable, firstRow, endRow};
-    return ConstructBatchEvaluator::evaluateBatch(
-        variableColumnIndices, ctx, localVocab_, index_, idCache,
-        ad_utility::MediaType::turtle);
+    return evaluateBatch(variableColumnIndices, ctx, localVocab_, index_,
+                         idCache);
   }
 };
 

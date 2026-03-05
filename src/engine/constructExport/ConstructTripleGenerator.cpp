@@ -7,11 +7,11 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include "engine/ConstructTripleGenerator.h"
+#include "engine/constructExport/ConstructTripleGenerator.h"
 
-#include "engine/ConstructRowProcessor.h"
-#include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ExportQueryExecutionTrees.h"
+#include "engine/constructExport/ConstructRowProcessor.h"
+#include "engine/constructExport/ConstructTemplatePreprocessor.h"
 
 namespace qlever::constructExport {
 
@@ -33,8 +33,8 @@ class FormattedTripleAdapter
   std::optional<std::string> get() override {
     auto triple = processor_->get();
     if (!triple) return std::nullopt;
-    return ConstructTripleInstantiator::formatTriple(
-        triple->subject_, triple->predicate_, triple->object_, format_);
+    return formatTriple(triple->subject_, triple->predicate_, triple->object_,
+                        format_);
   }
 
  private:
@@ -52,9 +52,9 @@ class StringTripleAdapter : public ad_utility::InputRangeFromGet<StringTriple> {
   std::optional<StringTriple> get() override {
     auto triple = processor_->get();
     if (!triple) return std::nullopt;
-    return StringTriple{EvaluatedTriple::getValue(triple->subject_),
-                        EvaluatedTriple::getValue(triple->predicate_),
-                        EvaluatedTriple::getValue(triple->object_)};
+    return StringTriple{renderTerm(*triple->subject_, true),
+                        renderTerm(*triple->predicate_, true),
+                        renderTerm(*triple->object_, true)};
   }
 
  private:
@@ -75,18 +75,22 @@ ConstructTripleGenerator::ConstructTripleGenerator(
 }
 
 // _____________________________________________________________________________
-ad_utility::InputRangeTypeErased<StringTriple>
-ConstructTripleGenerator::generateStringTriplesForResultTable(
-    const TableWithRange& table) {
+std::unique_ptr<ConstructRowProcessor>
+ConstructTripleGenerator::prepareRowProcessor(const TableWithRange& table) {
   const size_t currentRowOffset = rowOffset_;
   rowOffset_ += table.tableWithVocab_.idTable().numRows();
 
-  auto processor = std::make_unique<ConstructRowProcessor>(
+  return std::make_unique<ConstructRowProcessor>(
       preprocessedTemplate_, index_.get(), cancellationHandle_, table,
-      currentRowOffset, StringTriplesMode{});
+      currentRowOffset);
+}
 
+// _____________________________________________________________________________
+ad_utility::InputRangeTypeErased<StringTriple>
+ConstructTripleGenerator::generateStringTriplesForResultTable(
+    const TableWithRange& table) {
   return ad_utility::InputRangeTypeErased<StringTriple>{
-      std::make_unique<StringTripleAdapter>(std::move(processor))};
+      std::make_unique<StringTripleAdapter>(prepareRowProcessor(table))};
 }
 
 // _____________________________________________________________________________
@@ -122,15 +126,9 @@ ConstructTripleGenerator::generateStringTriples(
 ad_utility::InputRangeTypeErased<std::string>
 ConstructTripleGenerator::generateFormattedTriples(
     const TableWithRange& table, ad_utility::MediaType format) {
-  const size_t currentRowOffset = rowOffset_;
-  rowOffset_ += table.tableWithVocab_.idTable().numRows();
-
-  auto processor = std::make_unique<ConstructRowProcessor>(
-      preprocessedTemplate_, index_.get(), cancellationHandle_, table,
-      currentRowOffset, format);
-
   return ad_utility::InputRangeTypeErased<std::string>{
-      std::make_unique<FormattedTripleAdapter>(std::move(processor), format)};
+      std::make_unique<FormattedTripleAdapter>(prepareRowProcessor(table),
+                                               format)};
 }
 
 // _____________________________________________________________________________

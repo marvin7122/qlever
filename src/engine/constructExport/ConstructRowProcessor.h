@@ -13,9 +13,9 @@
 #include <optional>
 #include <vector>
 
-#include "engine/ConstructBatchEvaluator.h"
-#include "engine/ConstructTripleInstantiator.h"
 #include "engine/QueryExportTypes.h"
+#include "engine/constructExport/ConstructBatchEvaluator.h"
+#include "engine/constructExport/ConstructTripleInstantiator.h"
 #include "util/CancellationHandle.h"
 #include "util/InputRangeUtils.h"
 
@@ -46,8 +46,7 @@ class ConstructRowProcessor
   ConstructRowProcessor(
       const PreprocessedConstructTemplate& preprocessedTemplate,
       const Index& index, CancellationHandle cancellationHandle,
-      const TableWithRange& table, size_t currentRowOffset,
-      ConstructOutputMode outputMode);
+      const TableWithRange& table, size_t currentRowOffset);
 
   // Returns the next instantiated triple, or nullopt when exhausted.
   // Incomplete triples are filtered out.
@@ -88,8 +87,6 @@ class ConstructRowProcessor
 
   // LRU cache for avoiding redundant vocabulary lookups across batches.
   IdCache idCache_;
-
-  ConstructOutputMode outputMode_;
 
   // Lazy range driving the batch iteration.
   ad_utility::InputRangeTypeErased<EvaluatedTriple> innerRange_;

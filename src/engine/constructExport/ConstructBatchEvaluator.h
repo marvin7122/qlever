@@ -12,8 +12,8 @@
 #include <optional>
 #include <vector>
 
-#include "engine/ConstructTypes.h"
 #include "engine/LocalVocab.h"
+#include "engine/constructExport/ConstructTypes.h"
 #include "engine/idTable/IdTable.h"
 #include "index/Index.h"
 #include "util/Exception.h"
@@ -61,47 +61,16 @@ struct BatchEvaluationContext {
   size_t numRows() const { return endRow_ - firstRow_; }
 };
 
-// Resolves `Id` values in variable columns to their string representations
-// (IRI, literal, etc.) via `idToStringAndType`.
-//
-// The evaluation is column-oriented: for each variable (identified by their
-// `IdTable` column), all rows in the batch are evaluated before moving to the
-// next column.
-//
-// An `IdCache` (LRU cache keyed by `Id`) avoids redundant evaluation of the
-// same `Id` across rows and batches.
-class ConstructBatchEvaluator {
- public:
-  // Evaluates the variables identified by `variableColumnIndices` for all rows
-  // in `evaluationContext`. Each entry in `variableColumnIndices` is an
-  // `IdTable` column index representing a variable in the CONSTRUCT template.
-  static BatchEvaluationResult evaluateBatch(
-      ql::span<const size_t> variableColumnIndices,
-      const BatchEvaluationContext& evaluationContext,
-      const LocalVocab& localVocab, const Index& index, IdCache& idCache,
-      ConstructOutputMode outputMode);
-
- private:
-  // Evaluate a single variable (identified by its `IdTable` column index)
-  // across all rows in the batch.
-  static EvaluatedVariableValues evaluateVariableByColumn(
-      size_t idTableColumnIdx, const BatchEvaluationContext& ctx,
-      const LocalVocab& localVocab, const Index& index, IdCache& idCache,
-      ConstructOutputMode outputMode);
-
-  // Convert a single `Id` to its `EvaluatedTerm` string representation.
-  // Returns `std::nullopt` if the `Id` has no string representation.
-  static std::optional<EvaluatedTerm> idToEvaluatedTerm(
-      const Index& index, Id id, const LocalVocab& localVocab,
-      ConstructOutputMode outputMode);
-
-  // Convert the result of `idToStringAndType` / `idsToStringAndType` to an
-  // `EvaluatedTerm`, applying XSD-type formatting. Returns `std::nullopt` if
-  // the input is `std::nullopt` (i.e. the `Id` was `Undefined`).
-  static std::optional<EvaluatedTerm> stringAndTypeToEvaluatedTerm(
-      std::optional<std::pair<std::string, const char*>> optStringAndType,
-      ConstructOutputMode outputMode);
-};
+// Resolves the variables identified by `variableColumnIndices` for all rows in
+// `evaluationContext`. Each entry in `variableColumnIndices` is an `IdTable`
+// column index representing a variable in the CONSTRUCT template. `Id` values
+// are resolved via `idToStringAndType` using `index` and `localVocab`; an
+// `IdCache` (LRU cache keyed by `Id`) avoids redundant lookups across rows and
+// batches.
+BatchEvaluationResult evaluateBatch(
+    ql::span<const size_t> variableColumnIndices,
+    const BatchEvaluationContext& evaluationContext,
+    const LocalVocab& localVocab, const Index& index, IdCache& idCache);
 
 }  // namespace qlever::constructExport
 

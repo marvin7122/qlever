@@ -7,7 +7,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include "engine/ConstructRowProcessor.h"
+#include "engine/constructExport/ConstructRowProcessor.h"
 
 namespace qlever::constructExport {
 
@@ -22,8 +22,7 @@ IdCache ConstructRowProcessor::makeIdCache(
 ConstructRowProcessor::ConstructRowProcessor(
     const PreprocessedConstructTemplate& preprocessedTemplate,
     const Index& index, CancellationHandle cancellationHandle,
-    const TableWithRange& table, size_t currentRowOffset,
-    ConstructOutputMode outputMode)
+    const TableWithRange& table, size_t currentRowOffset)
     : preprocessedTemplate_(preprocessedTemplate),
       index_(index),
       cancellationHandle_(std::move(cancellationHandle)),
@@ -31,7 +30,6 @@ ConstructRowProcessor::ConstructRowProcessor(
       rowIndices_(table.view_),
       currentRowOffset_(currentRowOffset),
       idCache_(makeIdCache(preprocessedTemplate)),
-      outputMode_(outputMode),
       innerRange_(makeInnerRange()) {}
 
 // _____________________________________________________________________________
@@ -64,9 +62,9 @@ std::vector<EvaluatedTriple> ConstructRowProcessor::computeBatch(
                                       firstRow() + batchStart,
                                       firstRow() + batchEnd};
 
-  auto batchResult = ConstructBatchEvaluator::evaluateBatch(
-      preprocessedTemplate_.uniqueVariableColumns_, batchContext,
-      tableWithVocab_.localVocab(), index_.get(), idCache_, outputMode_);
+  auto batchResult =
+      evaluateBatch(preprocessedTemplate_.uniqueVariableColumns_, batchContext,
+                    tableWithVocab_.localVocab(), index_.get(), idCache_);
 
   std::vector<EvaluatedTriple> triples;
   triples.reserve(batchResult.numRows_ *
@@ -77,12 +75,12 @@ std::vector<EvaluatedTriple> ConstructRowProcessor::computeBatch(
     const size_t blankNodeRowId = blankNodeBaseId + rowInBatch;
 
     for (const auto& triple : preprocessedTemplate_.preprocessedTriples_) {
-      auto subject = ConstructTripleInstantiator::instantiateTerm(
-          triple[0], batchResult, rowInBatch, blankNodeRowId);
-      auto predicate = ConstructTripleInstantiator::instantiateTerm(
-          triple[1], batchResult, rowInBatch, blankNodeRowId);
-      auto object = ConstructTripleInstantiator::instantiateTerm(
-          triple[2], batchResult, rowInBatch, blankNodeRowId);
+      auto subject =
+          instantiateTerm(triple[0], batchResult, rowInBatch, blankNodeRowId);
+      auto predicate =
+          instantiateTerm(triple[1], batchResult, rowInBatch, blankNodeRowId);
+      auto object =
+          instantiateTerm(triple[2], batchResult, rowInBatch, blankNodeRowId);
       if (subject && predicate && object) {
         triples.push_back(EvaluatedTriple{*subject, *predicate, *object});
       }

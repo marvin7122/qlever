@@ -5,16 +5,16 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEGENERATOR_H
-#define QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEGENERATOR_H
+#ifndef QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEGENERATOR_H
+#define QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEGENERATOR_H
 
 #include <functional>
 #include <memory>
 #include <vector>
 
-#include "engine/ConstructTypes.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/QueryExportTypes.h"
+#include "engine/constructExport/ConstructTypes.h"
 #include "global/Constants.h"
 #include "global/Id.h"
 #include "parser/data/ConstructQueryExportContext.h"
@@ -23,6 +23,8 @@
 #include "util/stream_generator.h"
 
 namespace qlever::constructExport {
+
+class ConstructRowProcessor;
 
 // Generates triples from CONSTRUCT query results by instantiating triple
 // patterns (from the CONSTRUCT clause) with values from the result table
@@ -69,8 +71,12 @@ class ConstructTripleGenerator {
 
   // Preprocessed template with triples and unique variable columns.
   PreprocessedConstructTemplate preprocessedTemplate_;
+
+  // Helper that handles `rowOffset_` and creates a `ConstructRowProcessor`.
+  std::unique_ptr<ConstructRowProcessor> prepareRowProcessor(
+      const TableWithRange& table);
 };
 
 }  // namespace qlever::constructExport
 
-#endif  // QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEGENERATOR_H
+#endif  // QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEGENERATOR_H

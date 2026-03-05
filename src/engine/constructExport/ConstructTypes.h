@@ -7,21 +7,38 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_CONSTRUCTTYPES_H
-#define QLEVER_SRC_ENGINE_CONSTRUCTTYPES_H
+#ifndef QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTYPES_H
+#define QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTYPES_H
 
 #include <array>
 #include <memory>
 #include <variant>
 #include <vector>
 
-#include "util/http/MediaTypes.h"
-
 namespace qlever::constructExport {
 
-// Result of evaluating a term (`Iri`, `Literal`, `Variable`, `BlankNode`) to
-// its string representation.
-using EvaluatedTerm = std::shared_ptr<const std::string>;
+// Canonical representation of a resolved RDF term stored in the LRU cache.
+//
+// Two fundamentally different representations are used, distinguished by
+// whether `type` is null:
+// 1) type != nullptr: `str` represnents an encoded literal (directly encoded
+// into `ValueId`). `str` is the raw unquoted value (e.g. "42" for an xsd:int,
+// "3.14" for an xsd:decimal). `type` points to the compile-time XSD type string
+// constant (e.g. XSD_INT_TYPE).  Whether to emit the short form ("42") or the
+// fully-qualified form ("\"42\"^^<xsd:integer>") is decided at rendering time
+// by renderTerm.
+// 2)  type == nullptr: an IRI, a blank node, or a vocabulary-indexed literal.
+// `str` already holds the complete, ready-to-emit serialized
+// form (e.g. "<http://example.org/>", "\"hello\"@en"). No further rendering is
+// needed; the value is returned as-is for every format.
+struct EvaluatedTermData {
+  std::string str;
+  const char* type;  // non-null iff encoded literal (case 1 above)
+};
+
+// Shared ownership of EvaluatedTermData. The shared_ptr allows cheap copying
+// when the same Id appears in multiple rows or is reused from the LRU cache.
+using EvaluatedTerm = std::shared_ptr<const EvaluatedTermData>;
 
 // A constant (`Iri` or `Literal`) whose string value is fully known at
 // preprocessing time. The `EvaluatedTerm` is built once at preprocessing and
@@ -71,28 +88,19 @@ struct PreprocessedConstructTemplate {
   // variable 1 ...
   std::vector<size_t> uniqueVariableColumns_;
 };
+
 // --- Evaluation types ---
 
 // Result of instantiating a single template triple for a specific result table
-// row. Contains the resolved string values for subject, predicate, and object.
+// row. Contains the resolved canonical values for subject, predicate, and
+// object. Use renderTerm to obtain a rendered
+// string.
 struct EvaluatedTriple {
   EvaluatedTerm subject_;
   EvaluatedTerm predicate_;
   EvaluatedTerm object_;
-
-  // Get string value for a component.
-  static const std::string& getValue(const EvaluatedTerm& var) { return *var; }
 };
-
-// Tag for the string-triples path where no MediaType is known.
-struct StringTriplesMode {};
-
-// Discriminates between the two uses of ConstructRowProcessor:
-// - StringTriplesMode: used by `generateStringTriplesForResultTable`
-// - MediaType:         used by `generateFormattedTriples`
-using ConstructOutputMode =
-    std::variant<StringTriplesMode, ad_utility::MediaType>;
 
 }  // namespace qlever::constructExport
 
-#endif  // QLEVER_SRC_ENGINE_CONSTRUCTTYPES_H
+#endif  // QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTYPES_H
