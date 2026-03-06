@@ -53,7 +53,10 @@ RuntimeParameters::RuntimeParameters() {
   add(sortInMemoryThreshold_);
   add(prefilteredOptionalJoin_);
   add(enableMaterializedViewQueryRewrite_);
+<<<<<<< HEAD
   add(serviceAllowedIriPrefixes_);
+=======
+>>>>>>> b50d7d7a (Rewrite simple chain join to scan of materialized view if possible (#2649))
 
   defaultQueryTimeout_.setParameterConstraint(
       [](std::chrono::seconds value, std::string_view parameterName) {
