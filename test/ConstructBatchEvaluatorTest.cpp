@@ -10,7 +10,7 @@
 
 #include "./util/IdTableHelpers.h"
 #include "./util/IndexTestHelpers.h"
-#include "engine/ConstructBatchEvaluator.h"
+#include "engine/constructExport/ConstructBatchEvaluator.h"
 
 namespace {
 

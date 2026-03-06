@@ -5,15 +5,15 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEGENERATOR_H
-#define QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEGENERATOR_H
+#ifndef QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEGENERATOR_H
+#define QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEGENERATOR_H
 
 #include <functional>
 
-#include "engine/ConstructQueryEvaluator.h"
-#include "engine/ConstructTypes.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/QueryExportTypes.h"
+#include "engine/constructExport/ConstructQueryEvaluator.h"
+#include "engine/constructExport/ConstructTypes.h"
 #include "global/Constants.h"
 #include "parser/data/ConstructQueryExportContext.h"
 #include "util/CancellationHandle.h"
@@ -83,4 +83,4 @@ class ConstructTripleGenerator {
 
 }  // namespace qlever::constructExport
 
-#endif  // QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEGENERATOR_H
+#endif  // QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEGENERATOR_H
