@@ -61,9 +61,10 @@ class LRUCacheWithStatistics {
   }
 
   // Check if `key` is in the cache. If found, update LRU order, increment the
-  // hit counter, and return a const reference to the cached value.
-  // If not found, return `boost::none`. Does not insert or compute anything.
-  boost::optional<const V&> tryGet(const K& key) {
+  // hit counter, and return a reference to the cached value wrapped in
+  // `std::optional`. If not found, return `std::nullopt`. Does not insert or
+  // compute anything.
+  std::optional<std::reference_wrapper<const V>> tryGet(const K& key) {
     auto v = cache_.tryGet(key);
     if (v) ++stats_.hits_;
     return v;

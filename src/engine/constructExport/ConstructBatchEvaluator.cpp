@@ -58,7 +58,7 @@ EvaluatedVariableValues evaluateVariableByColumn(
   for (const auto& [id, rowInBatch] : sortedIndices) {
     auto cached = idCache.tryGet(id);
     if (cached) {
-      result[rowInBatch] = *cached;
+      result[rowInBatch] = cached->get();
     } else {
       missIds.push_back(id);
       missRows.push_back(rowInBatch);

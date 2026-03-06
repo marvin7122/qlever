@@ -7,9 +7,10 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include <boost/optional.hpp>
 #include <cstdint>
+#include <functional>
 #include <list>
+#include <optional>
 
 #include "backports/concepts.h"
 #include "util/Exception.h"
@@ -35,13 +36,14 @@ class LRUCache {
   size_t capacity() const { return capacity_; }
 
   // Check if `key` is in the cache. If found, move it to the front (most
-  // recently used) and return an optional reference to the cached value. If
-  // not found, return `boost::none`. Does not insert or compute anything.
-  boost::optional<const V&> tryGet(const K& key) {
+  // recently used) and return a reference to the cached value wrapped in
+  // `std::optional`. If not found, return `std::nullopt`. Does not insert or
+  // compute anything.
+  std::optional<std::reference_wrapper<const V>> tryGet(const K& key) {
     auto it = cache_.find(key);
-    if (it == cache_.end()) return boost::none;
+    if (it == cache_.end()) return std::nullopt;
     keys_.splice(keys_.begin(), keys_, it->second.second);
-    return boost::optional<const V&>(it->second.first);
+    return std::cref(it->second.first);
   }
 
   // Check if `key` is in the cache and return a reference to the value if it is
