@@ -7,11 +7,11 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include "engine/ConstructTemplatePreprocessor.h"
+#include "engine/constructExport/ConstructTemplatePreprocessor.h"
 
 #include <absl/strings/str_cat.h>
 
-#include "engine/ConstructQueryEvaluator.h"
+#include "engine/constructExport/ConstructQueryEvaluator.h"
 #include "util/Algorithm.h"
 #include "util/TypeTraits.h"
 

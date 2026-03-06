@@ -4,13 +4,13 @@
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
-#ifndef QLEVER_SRC_ENGINE_CONSTRUCTTEMPLATEPREPROCESSOR_H
-#define QLEVER_SRC_ENGINE_CONSTRUCTTEMPLATEPREPROCESSOR_H
+#ifndef QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTEMPLATEPREPROCESSOR_H
+#define QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTEMPLATEPREPROCESSOR_H
 
 #include <vector>
 
-#include "engine/ConstructTypes.h"
 #include "engine/VariableToColumnMap.h"
+#include "engine/constructExport/ConstructTypes.h"
 #include "parser/data/ConstructQueryExportContext.h"
 #include "parser/data/Types.h"
 
@@ -58,4 +58,4 @@ class ConstructTemplatePreprocessor {
 
 }  // namespace qlever::constructExport
 
-#endif  // QLEVER_SRC_ENGINE_CONSTRUCTTEMPLATEPREPROCESSOR_H
+#endif  // QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTEMPLATEPREPROCESSOR_H

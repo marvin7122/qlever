@@ -144,15 +144,12 @@ struct RuntimeParameters {
   Bool enableMaterializedViewQueryRewrite_{
       true, "enable-materialized-view-query-rewrite"};
 
-<<<<<<< HEAD
   // A list of IRI prefixes that are allowed as `SERVICE` endpoints. If empty
   // (the default), all IRIs are allowed. If non-empty, `SERVICE` requests to
   // IRIs that do not start with any of the given prefixes are rejected.
   SpaceSeparatedStrings serviceAllowedIriPrefixes_{
       {}, "service-allowed-iri-prefixes"};
 
-=======
->>>>>>> b50d7d7a (Rewrite simple chain join to scan of materialized view if possible (#2649))
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

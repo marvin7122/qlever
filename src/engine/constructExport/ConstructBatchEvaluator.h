@@ -6,14 +6,14 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_CONSTRUCTBATCHEVALUATOR_H
-#define QLEVER_SRC_ENGINE_CONSTRUCTBATCHEVALUATOR_H
+#ifndef QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTBATCHEVALUATOR_H
+#define QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTBATCHEVALUATOR_H
 
 #include <optional>
 #include <vector>
 
-#include "engine/ConstructTypes.h"
 #include "engine/LocalVocab.h"
+#include "engine/constructExport/ConstructTypes.h"
 #include "engine/idTable/IdTable.h"
 #include "index/Index.h"
 #include "util/Exception.h"
@@ -97,4 +97,4 @@ class ConstructBatchEvaluator {
 
 }  // namespace qlever::constructExport
 
-#endif  // QLEVER_SRC_ENGINE_CONSTRUCTBATCHEVALUATOR_H
+#endif  // QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTBATCHEVALUATOR_H

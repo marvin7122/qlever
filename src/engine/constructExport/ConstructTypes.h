@@ -7,8 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project
 
-#ifndef QLEVER_SRC_ENGINE_CONSTRUCTTYPES_H
-#define QLEVER_SRC_ENGINE_CONSTRUCTTYPES_H
+#ifndef QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTYPES_H
+#define QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTYPES_H
 
 #include <array>
 #include <memory>
@@ -65,4 +65,4 @@ using EvaluatedTerm = std::shared_ptr<const std::string>;
 
 }  // namespace qlever::constructExport
 
-#endif  // QLEVER_SRC_ENGINE_CONSTRUCTTYPES_H
+#endif  // QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTYPES_H
