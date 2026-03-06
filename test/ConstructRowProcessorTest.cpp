@@ -10,7 +10,7 @@
 
 #include "./util/IdTableHelpers.h"
 #include "./util/IndexTestHelpers.h"
-#include "engine/constructExport/ConstructRowProcessor.h"
+#include "engine/ConstructRowProcessor.h"
 #include "util/CancellationHandle.h"
 
 namespace {

@@ -13,9 +13,9 @@
 #include <optional>
 #include <vector>
 
+#include "engine/ConstructBatchEvaluator.h"
+#include "engine/ConstructTripleInstantiator.h"
 #include "engine/QueryExportTypes.h"
-#include "engine/constructExport/ConstructBatchEvaluator.h"
-#include "engine/constructExport/ConstructTripleInstantiator.h"
 #include "util/CancellationHandle.h"
 #include "util/InputRangeUtils.h"
 

@@ -4,8 +4,8 @@
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
-#ifndef QLEVER_CONSTRUCTQUERYEVALUATOR_H
-#define QLEVER_CONSTRUCTQUERYEVALUATOR_H
+#ifndef QLEVER_SRC_ENGINE_CONSTRUCTQUERYEVALUATOR_H
+#define QLEVER_SRC_ENGINE_CONSTRUCTQUERYEVALUATOR_H
 
 #include "engine/QueryExecutionTree.h"
 #include "parser/data/BlankNode.h"
@@ -72,4 +72,4 @@ class ConstructQueryEvaluator {
 
 }  // namespace qlever::constructExport
 
-#endif  // QLEVER_CONSTRUCTQUERYEVALUATOR_H
+#endif  // QLEVER_SRC_ENGINE_CONSTRUCTQUERYEVALUATOR_H

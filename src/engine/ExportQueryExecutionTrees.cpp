@@ -18,7 +18,7 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
-#include "engine/constructExport/ConstructTripleGenerator.h"
+#include "engine/ConstructTripleGenerator.h"
 #include "global/RuntimeParameters.h"
 #include "index/EncodedIriManager.h"
 #include "index/IndexImpl.h"

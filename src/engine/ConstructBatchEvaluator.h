@@ -12,8 +12,8 @@
 #include <optional>
 #include <vector>
 
+#include "engine/ConstructTypes.h"
 #include "engine/LocalVocab.h"
-#include "engine/constructExport/ConstructTypes.h"
 #include "engine/idTable/IdTable.h"
 #include "index/Index.h"
 #include "util/Exception.h"

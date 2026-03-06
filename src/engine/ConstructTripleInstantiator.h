@@ -7,15 +7,15 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEINSTANTIATOR_H
-#define QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEINSTANTIATOR_H
+#ifndef QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEINSTANTIATOR_H
+#define QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEINSTANTIATOR_H
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "engine/constructExport/ConstructBatchEvaluator.h"
-#include "engine/constructExport/ConstructTypes.h"
+#include "engine/ConstructBatchEvaluator.h"
+#include "engine/ConstructTypes.h"
 #include "util/http/MediaTypes.h"
 
 namespace qlever::constructExport {
@@ -56,4 +56,4 @@ std::string formatTriple(const EvaluatedTerm& subject,
 
 }  // namespace qlever::constructExport
 
-#endif  // QLEVER_SRC_ENGINE_CONSTRUCTEXPORT_CONSTRUCTTRIPLEINSTANTIATOR_H
+#endif  // QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEINSTANTIATOR_H
