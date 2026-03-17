@@ -43,14 +43,12 @@ class ExportQueryExecutionTrees {
   // created by the `QueryPlanner`. The result is converted into a sequence of
   // bytes that represents the result of the computed query in the format
   // specified by the `mediaType`. Supported formats for this function are CSV,
-  // TSV, Turtle, Binary, SparqlJSON, QLeverJSON. Note that the Binary format
-  // can only be used with SELECT queries and the Turtle format can only be used
-  // with CONSTRUCT queries. Invalid `mediaType`s and invalid combinations of
-  // `mediaType` and the query type will throw. The result is returned as a
-  // `generator` that lazily computes the serialized result in large chunks of
-  // bytes.
-  // TODO<ms2144>: maybe update this comment, since we now also support the
-  // ntriples format for construct queries.
+  // TSV, Turtle, NTriples, Binary, SparqlJSON, QLeverJSON. Note that the Binary
+  // format can only be used with SELECT queries and the Turtle and NTriples
+  // format can only be used with CONSTRUCT queries. Invalid `mediaType`s and
+  // invalid combinations of `mediaType` and the query type will throw. The
+  // result is returned as a `generator` that lazily computes the serialized
+  // result in large chunks of bytes.
   using ComputeResultReturnType =
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
       cppcoro::generator<std::string>;
