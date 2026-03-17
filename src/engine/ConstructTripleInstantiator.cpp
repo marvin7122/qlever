@@ -88,14 +88,15 @@ std::string formatTriple(const EvaluatedTerm& subject,
                          const EvaluatedTerm& object,
                          const ad_utility::MediaType& format) {
   using enum ad_utility::MediaType;
-  static constexpr std::array supportedFormats{turtle, csv, tsv};
+  static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
   AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
 
-  std::string s = formatTerm(*subject, true);
-  std::string p = formatTerm(*predicate, true);
-  std::string o = formatTerm(*object, true);
+  const bool shortForm = (format != ntriples);
+  std::string s = formatTerm(*subject, shortForm);
+  std::string p = formatTerm(*predicate, shortForm);
+  std::string o = formatTerm(*object, shortForm);
 
-  if (format == turtle) {
+  if (format == turtle || format == ntriples) {
     // Only escape literals (strings starting with "). IRIs and blank nodes
     // are used as-is, avoiding an unnecessary string copy.
     if (ql::starts_with(o, "\"")) {

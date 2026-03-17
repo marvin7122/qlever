@@ -266,10 +266,16 @@ auto ExportQueryExecutionTrees::constructQueryResultToTriples(
     const ad_utility::sparql_types::Triples& constructTriples,
     LimitOffsetClause limitAndOffset, std::shared_ptr<const Result> result,
     uint64_t& resultSize, CancellationHandle cancellationHandle) {
-  return qlever::constructExport::ConstructTripleGenerator::
-      generateStringTriples(qet, constructTriples, limitAndOffset,
-                            std::move(result), resultSize,
-                            std::move(cancellationHandle));
+  // For each result from the WHERE clause, we produce up to
+  // `constructTriples.size()` triples. We do not account for triples that are
+  // filtered out because one of the components is UNDEF (it would require
+  // materializing the whole result).
+  auto rowIndices = getRowIndices(limitAndOffset, *result, resultSize,
+                                  constructTriples.size());
+  return qlever::constructExport::ConstructTripleGenerator(
+             constructTriples, std::move(result), qet.getVariableColumns(),
+             qet.getQec()->getIndex(), std::move(cancellationHandle))
+      .generateStringTriples(std::move(rowIndices));
 }
 
 // _____________________________________________________________________________
@@ -445,13 +451,14 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
     [[maybe_unused]] const ad_utility::Timer& requestTimer,
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
   using enum ad_utility::MediaType;
-  static constexpr std::array supportedFormats{octetStream, csv, tsv, turtle,
-                                               qleverJson};
+  static constexpr std::array supportedFormats{
+      octetStream, csv, tsv, turtle, qleverJson, ntriples};
   static_assert(ad_utility::contains(supportedFormats, format));
 
   // TODO<joka921> Use a proper error message, or check that we get a more
   // reasonable error from upstream.
   AD_CONTRACT_CHECK(format != MediaType::turtle);
+  AD_CONTRACT_CHECK(format != MediaType::ntriples);
   AD_CONTRACT_CHECK(format != MediaType::qleverJson);
 
   // This call triggers the possibly expensive computation of the query result
@@ -754,8 +761,8 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
   using enum MediaType;
   static constexpr std::array supportedFormats{
-      octetStream, csv,        tsv,    sparqlXml,
-      sparqlJson,  qleverJson, turtle, binaryQleverExport};
+      octetStream, csv,    tsv,      sparqlXml,         sparqlJson,
+      qleverJson,  turtle, ntriples, binaryQleverExport};
   static_assert(ad_utility::contains(supportedFormats, format));
 
   if constexpr (format == octetStream || format == binaryQleverExport) {
@@ -776,9 +783,9 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   qlever::constructExport::ConstructTripleGenerator generator(
       constructTriples, std::move(result), qet.getVariableColumns(),
       qet.getQec()->getIndex(), std::move(cancellationHandle));
-
   for (const auto& tripleString :
-       generator.generateAllFormattedTriples(std::move(rowIndices), format)) {
+       std::move(generator).generateAllFormattedTriples(std::move(rowIndices),
+                                                        format)) {
     STREAMABLE_YIELD(tripleString);
   }
 }
@@ -870,15 +877,15 @@ ExportQueryExecutionTrees::computeResult(
   using enum MediaType;
 
   static constexpr std::array supportedTypes{
-      csv,       tsv,        octetStream, turtle,
-      sparqlXml, sparqlJson, qleverJson,  binaryQleverExport};
+      csv,        tsv,        octetStream,        turtle,  sparqlXml,
+      sparqlJson, qleverJson, binaryQleverExport, ntriples};
   AD_CORRECTNESS_CHECK(ad_utility::contains(supportedTypes, mediaType));
 
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
   auto inner =
       ad_utility::ConstexprSwitch<csv, tsv, octetStream, turtle, sparqlXml,
-                                  sparqlJson, qleverJson, binaryQleverExport>{}(
-          compute, mediaType);
+                                  sparqlJson, qleverJson, binaryQleverExport,
+                                  ntriples>{}(compute, mediaType);
 
   return [](auto range) -> cppcoro::generator<std::string> {
     for (auto&& item : range) {
