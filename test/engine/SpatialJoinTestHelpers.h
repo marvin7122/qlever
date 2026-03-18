@@ -6,6 +6,7 @@
 #include <cstdlib>
 
 #include "../util/IndexTestHelpers.h"
+#include "engine/ExportQueryExecutionTrees.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
 #include "engine/QueryExecutionTree.h"

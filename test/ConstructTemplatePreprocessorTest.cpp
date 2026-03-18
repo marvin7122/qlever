@@ -20,7 +20,8 @@ namespace qlever::constructExport {
 // `PrintTo` overloads so gmock shows human-readable output instead of raw
 // bytes.
 void PrintTo(const PrecomputedConstant& c, std::ostream* os) {
-  *os << "PrecomputedConstant{\"" << c.value_ << "\"}";
+  *os << "PrecomputedConstant{str: \"" << c.evaluatedTerm_->str
+      << "\", type: \"" << c.evaluatedTerm_->type << "\"}";
 }
 void PrintTo(const PrecomputedVariable& v, std::ostream* os) {
   *os << "PrecomputedVariable{" << v.columnIndex_ << "}";
@@ -62,8 +63,11 @@ struct ContextWrapper {
 // Composable matchers for `PreprocessedTerm` variants.
 // see https://github.com/google/googletest/blob/main/docs/reference/matchers.md
 static constexpr auto matchesPrecomputedConstant = [](const auto& value) {
+  // only match the string, not the type field.
   return ::testing::VariantWith<PrecomputedConstant>(
-      AD_FIELD(PrecomputedConstant, value_, std::string(value)));
+      AD_FIELD(PrecomputedConstant, evaluatedTerm_,
+               ::testing::Pointee(
+                   AD_FIELD(EvaluatedTermData, str, std::string(value)))));
 };
 
 static constexpr auto matchesPrecomputedVariable = [](const auto& columnIdx) {
@@ -142,6 +146,7 @@ TEST(ConstructTemplatePreprocessorTest, preprocessVariableBound) {
   varMap[Variable{"?x"}] = makeAlwaysDefinedColumn(3);
   auto result = ConstructTemplatePreprocessor::preprocess(triples, varMap);
 
+  // After preprocessing, columnIndex_ holds the original IdTable column (3).
   EXPECT_THAT(
       result.preprocessedTriples_,
       matchSingleTriple(Var(3), Const("<http://p>"), Const("<http://o>")));
