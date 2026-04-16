@@ -15,9 +15,12 @@
 #define QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
 
 #include <functional>
+#include <vector>
 
+#include "backports/span.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/QueryExportTypes.h"
+#include "index/ExportIds.h"
 #include "parser/data/LimitOffsetClause.h"
 #include "util/CancellationHandle.h"
 #include "util/http/MediaTypes.h"
@@ -124,7 +127,7 @@ class ExportQueryExecutionTrees {
 
   // Helper function that generates the result of a CONSTRUCT query as
   // `StringTriple`s.
-  static auto constructQueryResultToTriples(
+  static auto constructQueryResultToStringTriples(
       const QueryExecutionTree& qet,
       const ad_utility::sparql_types::Triples& constructClauseTriples,
       LimitOffsetClause limitAndOffset, std::shared_ptr<const Result> result,
