@@ -278,7 +278,7 @@ addLinkAndDiscoverTestNoLibs(StringBatcherTest)
 
 addLinkAndDiscoverTest(AcceptHeaderTest mediaTypes httpParser)
 
-addLinkAndDiscoverTestNoLibs(CompactStringVectorTest)
+addLinkAndDiscoverTestNoLibs(CompactStringVectorTest parser)
 
 addLinkAndDiscoverTest(SparqlDataTypesTest engine)
 
@@ -514,3 +514,7 @@ addLinkAndDiscoverTest(ExternalValuesTest engine)
 addLinkAndDiscoverTest(ConstructBatchEvaluatorTest engine)
 
 addLinkAndDiscoverTest(ExportIdsTest engine parser)
+
+addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
+
+addLinkAndDiscoverTest(ConstructTripleGeneratorTest engine)
