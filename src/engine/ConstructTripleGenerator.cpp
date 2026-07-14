@@ -58,33 +58,34 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
     const Index& index, CancellationHandle cancellationHandle,
     InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset) {
   auto preprocessedTemplate = ConstructTemplatePreprocessor::preprocess(
-      templateTriples, variableColumns);
+      templateTriples, variableColumns, index);
   IdCache cache = makeIdCache(preprocessedTemplate);
 
-  auto sharedTemplate = std::make_shared<PreprocessedConstructTemplate>(
-      std::move(preprocessedTemplate));
-  auto sharedCache = std::make_shared<IdCache>(std::move(cache));
-  auto processTable = [sharedTemplate, &index, cancellationHandle, sharedCache,
-                       accumulatedRowOffset =
-                           rowOffset](const TableWithRange& table) mutable {
-    const auto& preprocessedTemplate = *sharedTemplate;
-    auto& cache = *sharedCache;
+  auto preprocessedTemplatePtr =
+      std::make_shared<const PreprocessedConstructTemplate>(
+          std::move(preprocessedTemplate));
 
-    const size_t numRowsOfTable = ql::ranges::size(table.view_);
-    // Snapshot the offset for this table, then advance it for the next table.
-    const size_t tableRowOffset = accumulatedRowOffset;
-    accumulatedRowOffset += numRowsOfTable;
+  auto processTable =
+      [preprocessedTemplate = std::move(preprocessedTemplatePtr), &index,
+       cancellationHandle, cache = std::move(cache),
+       accumulatedRowOffset = rowOffset](const TableWithRange& table) mutable {
+        const size_t numRowsOfTable = ql::ranges::size(table.view_);
 
-    return ranges::views::chunk(table.view_, BATCH_SIZE) |
-           ql::views::transform([&table, &preprocessedTemplate, &index, &cache,
-                                 cancellationHandle,
-                                 tableRowOffset](auto chunkView) {
-             return computeBatch(table.tableWithVocab_, chunkView,
-                                 preprocessedTemplate, index, cache,
-                                 tableRowOffset, cancellationHandle);
-           }) |
-           ql::views::join;
-  };
+        // Snapshot the offset for this table, then advance it for the next
+        // table.
+        const size_t tableRowOffset = accumulatedRowOffset;
+        accumulatedRowOffset += numRowsOfTable;
+
+        return ranges::views::chunk(table.view_, BATCH_SIZE) |
+               ql::views::transform([&table, &preprocessedTemplate, &index,
+                                     &cache, cancellationHandle,
+                                     tableRowOffset](auto chunkView) {
+                 return computeBatch(table.tableWithVocab_, chunkView,
+                                     *preprocessedTemplate, index, cache,
+                                     tableRowOffset, cancellationHandle);
+               }) |
+               ql::views::join;
+      };
 
   auto pipeline = allView(std::move(rowIndices)) |
                   ql::views::transform(std::move(processTable)) |
