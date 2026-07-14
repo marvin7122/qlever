@@ -90,16 +90,6 @@ inline constexpr size_t NUM_TRIPLE_POSITIONS = 3;
 // A single preprocessed CONSTRUCT template triple.
 using PreprocessedTriple = std::array<PreprocessedTerm, NUM_TRIPLE_POSITIONS>;
 
-// Result of preprocessing all CONSTRUCT template triples. Contains the
-// preprocessed triples and the unique variable column indices (indices into the
-// `IdTable` that the variables in the construct template correspond to).
-struct PreprocessedConstructTemplate {
-  std::vector<PreprocessedTriple> preprocessedTriples_;
-  // The dedupicated set of `IdTable` column indices that appear in the template
-  // triples, in order of first encounter.
-  std::vector<size_t> uniqueVariableColumns_;
-};
-
 // Result of instantiating a single template triple for a specific result table
 // row.
 struct EvaluatedTriple {
