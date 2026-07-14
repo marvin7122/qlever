@@ -7,7 +7,6 @@
 
 #include <boost/program_options.hpp>
 #include <cstdlib>
-#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -16,7 +15,6 @@
 #include "engine/Server.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
-#include "libqlever/Qlever.h"
 #include "util/MemorySize/MemorySize.h"
 #include "util/ParseableDuration.h"
 #include "util/ProgramOptionsHelpers.h"
@@ -46,12 +44,18 @@ int main(int argc, char** argv) {
   // filled / set depending on the options.
   using ad_utility::NonNegative;
 
-  qlever::EngineConfig config;
+  std::string indexBasename;
   std::string accessToken;
   bool noAccessCheck = false;
+  bool text = false;
   unsigned short port;
   NonNegative numSimultaneousQueries = 1;
-  bool noMetricsLog = false;
+  bool noPatterns;
+  bool onlyPsoAndPosPermutations;
+  bool persistUpdates;
+  std::vector<std::string> preloadMaterializedViews;
+
+  ad_utility::MemorySize memoryMaxSize;
 
   ad_utility::ParameterToProgramOptionFactory optionFactory{
       &globalRuntimeParameters};
@@ -63,7 +67,7 @@ int main(int argc, char** argv) {
   add("help,h", "Produce this help message.");
   add("version,v", "Print version information.");
   // TODO<joka921> Can we output the "required" automatically?
-  add("index-basename,i", po::value<std::string>(&config.baseName_)->required(),
+  add("index-basename,i", po::value<std::string>(&indexBasename)->required(),
       "The basename of the index files (required).");
   add("port,p", po::value<unsigned short>(&port)->required(),
       "The port on which HTTP requests are served (required).");
@@ -77,9 +81,8 @@ int main(int argc, char** argv) {
       po::value<NonNegative>(&numSimultaneousQueries)->default_value(1),
       "The number of queries that can be processed simultaneously.");
   add("memory-max-size,m",
-      po::value<ad_utility::MemorySize>()
-          ->default_value(DEFAULT_MEM_FOR_QUERIES)
-          ->notifier([&config](auto v) { config.memoryLimit_ = v; }),
+      po::value<ad_utility::MemorySize>(&memoryMaxSize)
+          ->default_value(DEFAULT_MEM_FOR_QUERIES),
       "Limit on the total amount of memory that can be used for "
       "query processing and caching. If exceeded, query will return with "
       "an error, but the engine will not crash.");
@@ -105,18 +108,14 @@ int main(int argc, char** argv) {
       "least-recently used non-pinned entries from the cache. Note that "
       "this condition and the size limit specified via --cache-max-size "
       "both have to hold (logical AND).");
-  add("no-patterns,P", po::bool_switch(&config.noPatterns_),
+  add("no-patterns,P", po::bool_switch(&noPatterns),
       "Disable the use of patterns. If disabled, the special predicate "
       "`ql:has-predicate` is not available.");
-  add("no-metrics-log", po::bool_switch(&noMetricsLog),
-      "Disable the per-query metrics log. By default a JSONL log of query "
-      "start/end events is written next to the index files "
-      "(`<index-basename>.metrics-log.jsonl`).");
-  add("text,t", po::bool_switch(&config.loadTextIndex_),
+  add("text,t", po::bool_switch(&text),
       "Also load the text index. The text index must have been built before "
       "using `qlever-index` with options `-d` and `- w`.");
   add("only-pso-and-pos-permutations,o",
-      po::bool_switch(&config.onlyPsoAndPos_),
+      po::bool_switch(&onlyPsoAndPosPermutations),
       "Only load the PSO and POS permutations. This disables queries with "
       "predicate variables.");
   add("default-query-timeout,s",
@@ -147,7 +146,7 @@ int main(int argc, char** argv) {
       "endpoint might change at any point in time. If you control the "
       "endpoints, you can override this setting. This will disable the sibling "
       "optimization where VALUES are dynamically pushed into `SERVICE`.");
-  add("persist-updates", po::bool_switch(&config.persistUpdates_),
+  add("persist-updates", po::bool_switch(&persistUpdates),
       "If set, then SPARQL UPDATES will be persisted on disk. Otherwise they "
       "will be lost when the engine is stopped");
   add("syntax-test-mode",
@@ -179,7 +178,7 @@ int main(int argc, char** argv) {
       "Memory limit for sorting rows during the writing of materialized "
       "views.");
   add("preload-materialized-views,l",
-      po::value<std::vector<std::string>>(&config.preloadMaterializedViews_)
+      po::value<std::vector<std::string>>(&preloadMaterializedViews)
           ->multitoken(),
       "The names of materialized views to be loaded automatically on server "
       "start (this option takes an arbitrary number of arguments).");
@@ -204,15 +203,15 @@ int main(int argc, char** argv) {
       "Default is INFO. The compile-time level (CMake -DLOGLEVEL=...) applies "
       "as an upper bound — messages above it are never emitted regardless of "
       "this setting.");
-  add("construct-deduplication",
+  add("construct-deduplicate",
       optionFactory
-          .getProgramOption<&RuntimeParameters::constructDeduplication_>(),
+          .getProgramOption<&RuntimeParameters::constructDeduplicate_>(),
       R"("Controls deduplication of triples in CONSTRUCT query results. "
-      "\"none\" (default): no deduplication, every triple is emitted. "
+      "\"false\" (default): no deduplication, every triple is emitted. "
       "\"global\": a triple is emitted at most once across the entire result. "
-      "\"batchwise:N\" (positive integer N): deduplicate against the N most "
-      "recently seen unique triples per template triple (bounded memory, "
-      "partial deduplication).")");
+      "N (positive integer): deduplicate against the N most recently seen "
+      "unique triples per template triple (bounded memory, partial "
+      "deduplication).")");
   po::variables_map optionsMap;
 
   try {
@@ -238,17 +237,13 @@ int main(int argc, char** argv) {
               << std::endl;
 
   try {
-    Server server(port, numSimultaneousQueries, std::move(accessToken), config,
-                  noAccessCheck);
-    // Per-query jsonl metrics log, written next to the index files. On by
-    // default; `--no-metrics-log` opts out.
-    if (!noMetricsLog) {
-      server.configureQueryEventLog(config.baseName_ + ".metrics-log.jsonl");
-    }
-    server.run();
+    Server server(port, numSimultaneousQueries, memoryMaxSize,
+                  std::move(accessToken), noAccessCheck, !noPatterns);
+    server.run(indexBasename, text, !noPatterns, !onlyPsoAndPosPermutations,
+               persistUpdates, preloadMaterializedViews);
   } catch (const std::exception& e) {
-    // Reached if opening the metrics log fails; server.run() otherwise handles
-    // its own exceptions.
+    // This code should never be reached as all exceptions should be handled
+    // within server.run()
     AD_LOG_ERROR << e.what() << std::endl;
     return 1;
   }
