@@ -7,7 +7,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include "ConstructDeduplicationFilter.h"
+#include "ConstructDeduplicator.h"
 
 namespace qlever::constructExport {
 
@@ -76,7 +76,6 @@ DeduplicationKey ConstructDeduplicator::makeFullTripleKey(
   for (auto&& [out, term] : ranges::views::zip(key, triple)) {
     out = canonicalize(std::visit(toDedupId, term));
   }
-  resetIfVocabTooLarge();
   return key;
 }
 

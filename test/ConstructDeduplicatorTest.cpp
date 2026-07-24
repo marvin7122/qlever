@@ -8,7 +8,7 @@
 
 #include <gtest/gtest.h>
 
-#include "engine/ConstructDeduplicationFilter.h"
+#include "engine/ConstructDeduplicator.h"
 #include "index/LocalVocab.h"
 #include "index/LocalVocabEntry.h"
 #include "util/AllocatorTestHelpers.h"
