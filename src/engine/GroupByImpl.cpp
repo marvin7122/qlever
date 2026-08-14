@@ -2018,7 +2018,7 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
   if (!_groupByVariables.empty() || _aliases.size() != 1) {
     return std::nullopt;
   }
-  auto* sum = dynamic_cast<sparqlExpression::SumExpression*>(
+  auto* sum = dynamic_cast<const sparqlExpression::SumExpression*>(
       _aliases.front()._expression.getPimpl());
   if (!sum) {
     return std::nullopt;
@@ -2042,8 +2042,9 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
   if (innerGroup->aliases().front()._target != catVar) {
     return std::nullopt;
   }
-  auto* groupConcat = dynamic_cast<sparqlExpression::GroupConcatExpression*>(
-      innerGroup->aliases().front()._expression.getPimpl());
+  auto* groupConcat =
+      dynamic_cast<const sparqlExpression::GroupConcatExpression*>(
+          innerGroup->aliases().front()._expression.getPimpl());
   if (!groupConcat ||
       groupConcat->isAggregate() ==
           sparqlExpression::SparqlExpression::AggregateStatus::
