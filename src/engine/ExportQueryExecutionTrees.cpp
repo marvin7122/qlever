@@ -1038,7 +1038,7 @@ ExportQueryExecutionTrees::computeResult(
                        streamableYielder)
                  : constructQueryResultToStream<format>(
                        qet, parsedQuery.constructClause().triples_, limit,
-                       qet.getResult(true), std::move(cancellationHandle),
+                       qet.getResult(false), std::move(cancellationHandle),
                        streamableYielder);
     }
   }};
