@@ -1,7 +1,10 @@
-// Copyright 2018, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Florian Kramer (florian.kramer@mail.uni-freiburg.de)
-//          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
+// Copyright 2018 - 2026 The QLever Authors, in particular:
+//
+// 2018 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2018 - 2020 Florian Kramer <florian.kramer@mail.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
@@ -14,13 +17,13 @@
 #include "engine/GroupByImpl.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
-#include "engine/OptionalJoin.h"
-#include "engine/Union.h"
 #include "engine/MaterializedViews.h"
 #include "engine/NamedResultCache.h"
+#include "engine/OptionalJoin.h"
 #include "engine/QueryPlanner.h"
 #include "engine/Sort.h"
 #include "engine/SpatialJoinAlgorithms.h"
+#include "engine/Union.h"
 #include "engine/Values.h"
 #include "engine/ValuesForTesting.h"
 #include "engine/sparqlExpressions/AggregateExpression.h"
@@ -3334,9 +3337,9 @@ TEST(GroupBy, BlankNodeInGroupBy) {
 TEST_F(GroupByOptimizations, countStarTwoPredicateJoin) {
   // COUNT(*) of `?s <p1> ?o1 . ?s <p2> ?o2`.
   // x has 2 p1 and 1 p2; y has 1 p1 and 1 p2; z has only p1. Total = 2+1 = 3.
-  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
-      "<x> <p1> <a> . <x> <p1> <b> . <x> <p2> <c> . "
-      "<y> <p1> <d> . <y> <p2> <e> . <z> <p1> <f> ."))};
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <p1> <a> . <x> <p1> <b> . <x> <p2> <c> . "
+                    "<y> <p1> <d> . <y> <p2> <e> . <z> <p1> <f> ."))};
   auto qec = ctx.makeQec();
   auto left = makeExecutionTree<IndexScan>(
       &qec, Permutation::Enum::PSO,
@@ -3355,8 +3358,8 @@ TEST_F(GroupByOptimizations, countStarTwoPredicateJoin) {
 
 // _____________________________________________________________________________
 TEST_F(GroupByOptimizations, countStarBagUnionOfTwoScans) {
-  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
-      "<x> <p1> <a> . <y> <p2> <b> . <z> <p2> <c> ."))};
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <p1> <a> . <y> <p2> <b> . <z> <p2> <c> ."))};
   auto qec = ctx.makeQec();
   auto left = makeExecutionTree<IndexScan>(
       &qec, Permutation::Enum::PSO,
@@ -3375,8 +3378,8 @@ TEST_F(GroupByOptimizations, countStarBagUnionOfTwoScans) {
 
 // _____________________________________________________________________________
 TEST_F(GroupByOptimizations, countStarOptionalEmptyRight) {
-  QecWrapper ctx{std::make_shared<Index>(
-      makeTestIndex("<x> <p1> <a> . <y> <p1> <b> ."))};
+  QecWrapper ctx{
+      std::make_shared<Index>(makeTestIndex("<x> <p1> <a> . <y> <p1> <b> ."))};
   auto qec = ctx.makeQec();
   auto left = makeExecutionTree<IndexScan>(
       &qec, Permutation::Enum::PSO,

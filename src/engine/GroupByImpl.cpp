@@ -1,9 +1,11 @@
-// Copyright 2018 - 2025, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Florian Kramer [2018 - 2020]
-//          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2026 The QLever Authors, in particular:
 //
-// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+// 2018 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2018 - 2020 Florian Kramer <florian.kramer@mail.uni-freiburg.de>, UFR
+// 2025        Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include "engine/GroupByImpl.h"
 
