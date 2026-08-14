@@ -127,16 +127,27 @@ class FsstRepeatedDecoder {
   // Decompress into a caller-provided buffer. Intermediate passes use the
   // scratch buffer; the final pass writes to `output`. Returns the number of
   // bytes written to `output`.
+  //
+  // `scratch` is split into two halves that the intermediate passes alternate
+  // between, because a pass must never decompress a buffer into itself. Its
+  // capacity must therefore be twice the largest intermediate result (for
+  // `N == 2` there is only a single intermediate pass, but the split is applied
+  // uniformly so that the capacity contract does not depend on `N`).
   size_t decompressInto(std::string_view str, char* output,
                         size_t outputCapacity, char* scratch,
                         size_t scratchCapacity) const {
+    const size_t halfCapacity = scratchCapacity / 2;
+    char* halves[2] = {scratch, scratch + halfCapacity};
     const char* currentInput = str.data();
     size_t currentSize = str.size();
+    size_t nextHalf = 0;
     // All passes except the last write to scratch.
     for (size_t pass = N; pass > 1; --pass) {
+      char* target = halves[nextHalf];
       currentSize = decoders_[pass - 1].decompressInto(
-          {currentInput, currentSize}, scratch, scratchCapacity);
-      currentInput = scratch;
+          {currentInput, currentSize}, target, halfCapacity);
+      currentInput = target;
+      nextHalf ^= 1;
     }
     // Final pass writes to the output buffer.
     return decoders_[0].decompressInto({currentInput, currentSize}, output,
