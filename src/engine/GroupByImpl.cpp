@@ -7,9 +7,9 @@
 
 #include "engine/GroupByImpl.h"
 
-#include <algorithm>
-
 #include <absl/strings/str_join.h>
+
+#include <algorithm>
 
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
@@ -2130,11 +2130,10 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     return table;
   };
 
-  auto distinctCounts = [&](const IndexScan& scan, const Variable& joinVar)
-      -> std::optional<IdTable> {
-    const auto& locTriples =
-        scan.permutation().getLocatedTriplesForPermutation(
-            locatedTriplesState());
+  auto distinctCounts = [&](const IndexScan& scan,
+                            const Variable& joinVar) -> std::optional<IdTable> {
+    const auto& locTriples = scan.permutation().getLocatedTriplesForPermutation(
+        locatedTriplesState());
     if (!locTriples.isEmpty() || scan.permutation().permutationType() ==
                                      Permutation::Type::MATERIALIZED_VIEW) {
       return std::nullopt;
@@ -2142,7 +2141,7 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     const auto& permutedTriple = scan.getPermutedTriple();
     std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
     if (!col0Id.has_value()) {
-      return std::nullopt;
+      return IdTable{2, getExecutionContext()->getAllocator()};
     }
     auto target = permutationWithWantedCol1(scan, joinVar);
     if (!target.has_value()) {
@@ -2190,8 +2189,7 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
   auto collectStarScans = [&](auto& self, QueryExecutionTree* tree,
                               std::optional<Variable>& joinVar,
                               std::vector<const IndexScan*>& scans,
-                              std::vector<QueryExecutionTree*>& nodes)
-      -> bool {
+                              std::vector<QueryExecutionTree*>& nodes) -> bool {
     if (auto* join = dynamic_cast<Join*>(tree->getRootOperation().get())) {
       auto children = join->getChildren();
       if (children.size() != 2) {
@@ -2255,8 +2253,7 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     return idTableFromInt(total.value());
   }
 
-  if (auto* minus =
-          dynamic_cast<Minus*>(_subtree->getRootOperation().get())) {
+  if (auto* minus = dynamic_cast<Minus*>(_subtree->getRootOperation().get())) {
     auto children = minus->getChildren();
     if (children.size() != 2) {
       return std::nullopt;
@@ -2305,6 +2302,15 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
                           nodes) ||
         !joinVar.has_value() || scans.size() < 2) {
       return std::nullopt;
+    }
+    for (const auto* scan : scans) {
+      const bool onSubject = scan->subject().isVariable() &&
+                             scan->subject().getVariable() == joinVar.value();
+      const bool onObject = scan->object().isVariable() &&
+                            scan->object().getVariable() == joinVar.value();
+      if (!onSubject && !onObject) {
+        return std::nullopt;
+      }
     }
     std::vector<IdTable> tables;
     tables.reserve(scans.size());
