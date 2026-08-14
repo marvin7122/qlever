@@ -12,6 +12,7 @@
 
 #include "backports/algorithm.h"
 #include "util/Algorithm.h"
+#include "util/stream_generator.h"
 
 // _____________________________________________________________________________
 RuntimeParameters::RuntimeParameters() {
@@ -67,12 +68,22 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(streamGeneratorBufferSize_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
   // in sync with the parameter default from the start.
   logLevel_.setOnUpdateAction(
       [](LogLevel level) { ad_utility::setRuntimeLogLevel(level); });
+
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
+  // Same mechanism for the export buffer size: `util` must not depend on
+  // `global`, so the parameter writes through to an atomic in
+  // `stream_generator.h`. Only generators created after the change see it.
+  streamGeneratorBufferSize_.setOnUpdateAction([](ad_utility::MemorySize size) {
+    ad_utility::streams::setStreamGeneratorBufferSize(size.getBytes());
+  });
+#endif
 
   // A constraint that rejects values that are not strictly positive, with a
   // readable error message. Works for integral types and for

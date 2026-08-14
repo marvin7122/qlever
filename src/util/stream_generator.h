@@ -29,8 +29,11 @@
 
 #include <cstring>
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
+#include <atomic>
 #include <coroutine>
+#include <cstddef>
 #include <exception>
+#include <memory>
 #include <sstream>
 
 #include "util/CompilerWarnings.h"
@@ -39,6 +42,36 @@
 #endif
 
 namespace ad_utility::streams {
+
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
+// The buffer size used by generators that do not fix their buffer size at
+// compile time (in particular the `stream_generator` alias below, which is what
+// all query exports use). The buffer is the unit in which a result is handed to
+// the HTTP layer: a larger buffer means fewer, larger writes, at the cost of
+// one buffer per concurrent result stream.
+//
+// This lives here rather than being read from `RuntimeParameters` directly so
+// that `util` does not have to depend on `global`; the runtime parameter
+// `stream-generator-buffer-size` writes through to this atomic on every update
+// (see `RuntimeParameters.cpp`), mirroring how the log level is propagated.
+inline std::atomic<size_t>& streamGeneratorBufferSizeAtomic() {
+  static std::atomic<size_t> value{1u << 20};
+  return value;
+}
+
+// Read the currently configured buffer size. Never returns 0.
+inline size_t streamGeneratorBufferSize() {
+  size_t size =
+      streamGeneratorBufferSizeAtomic().load(std::memory_order_relaxed);
+  return size == 0 ? 1 : size;
+}
+
+// Set the buffer size for generators that are created from now on. Existing
+// generators keep the size they were created with.
+inline void setStreamGeneratorBufferSize(size_t size) {
+  streamGeneratorBufferSizeAtomic().store(size, std::memory_order_relaxed);
+}
+#endif
 
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
 template <size_t BUFFER_SIZE>
@@ -63,11 +96,19 @@ class suspend_sometimes {
 
 // The promise type that backs the generator type and handles storage and
 // suspension-related decisions.
+// `BUFFER_SIZE == 0` means "take the buffer size from the runtime parameter
+// `stream-generator-buffer-size` when the generator is created"; any other
+// value fixes the size at compile time (used by the tests, which need a small
+// buffer to exercise the overflow path).
 template <size_t BUFFER_SIZE>
 class stream_generator_promise {
-  std::array<char, BUFFER_SIZE> data_;
+  // The buffer lives on the heap rather than inside the coroutine frame, so
+  // that a large buffer does not turn every coroutine frame allocation into a
+  // multi-megabyte one.
+  size_t bufferSize_ =
+      BUFFER_SIZE == 0 ? streamGeneratorBufferSize() : BUFFER_SIZE;
+  std::unique_ptr<char[]> data_{new char[bufferSize_]};
   size_t currentIndex_ = 0;
-  static_assert(BUFFER_SIZE > 0, "Buffer size must be greater than zero");
   // Temporarily store data that didn't fit into the buffer so far.
   std::string_view overflow_;
   std::exception_ptr exception_;
@@ -92,16 +133,16 @@ class stream_generator_promise {
   suspend_sometimes yield_value(std::string_view value) noexcept {
     if (isBufferLargeEnough(value)) {
       if (!value.empty()) {
-        std::memcpy(data_.data() + currentIndex_, value.data(), value.size());
+        std::memcpy(data_.get() + currentIndex_, value.data(), value.size());
       }
       currentIndex_ += value.size();
       overflow_ = {};
       // Only suspend if we reached the maximum capacity exactly.
-      return suspend_sometimes{currentIndex_ == BUFFER_SIZE};
+      return suspend_sometimes{currentIndex_ == bufferSize_};
     }
-    size_t fittingSize = BUFFER_SIZE - currentIndex_;
-    std::memcpy(data_.data() + currentIndex_, value.data(), fittingSize);
-    currentIndex_ = BUFFER_SIZE;
+    size_t fittingSize = bufferSize_ - currentIndex_;
+    std::memcpy(data_.get() + currentIndex_, value.data(), fittingSize);
+    currentIndex_ = bufferSize_;
     overflow_ = value.substr(fittingSize);
     return suspend_sometimes{true};
   }
@@ -136,7 +177,7 @@ class stream_generator_promise {
   constexpr void return_void() const noexcept {}
 
   reference_type value() const noexcept {
-    return std::string_view{data_.data(), currentIndex_};
+    return std::string_view{data_.get(), currentIndex_};
   }
 
   // Don't allow any use of 'co_await' inside the generator coroutine.
@@ -153,7 +194,7 @@ class stream_generator_promise {
   // Return true if the buffer still has enough capacity remaining to copy
   // `value` in its entirety.
   bool isBufferLargeEnough(std::string_view value) const {
-    return currentIndex_ + value.size() <= BUFFER_SIZE;
+    return currentIndex_ + value.size() <= bufferSize_;
   }
 };
 
@@ -241,7 +282,8 @@ template <size_t BUFFER_SIZE>
 class [[nodiscard]] basic_stream_generator {
  public:
   // The size of the internal buffer, which is also the maximum size of a
-  // single block that the generator yields.
+  // single block that the generator yields. For `BUFFER_SIZE == 0` this is not
+  // known at compile time; use `streamGeneratorBufferSize()` for that case.
   static constexpr size_t BUFFER_SIZE_BYTES = BUFFER_SIZE;
 
   using promise_type = detail::stream_generator_promise<BUFFER_SIZE>;
@@ -306,8 +348,10 @@ stream_generator_promise<BUFFER_SIZE>::get_return_object() noexcept {
 }
 }  // namespace detail
 
-// Use 8 MiB buffer size by default.
-using stream_generator = basic_stream_generator<8u << 20>;
+// The buffer size is not fixed at compile time; it is taken from the runtime
+// parameter `stream-generator-buffer-size` (default 1 MiB) when a generator is
+// created. See `streamGeneratorBufferSize()` above.
+using stream_generator = basic_stream_generator<0>;
 
 #endif
 

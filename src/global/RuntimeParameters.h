@@ -239,6 +239,14 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // The size of the buffer in which a query result is accumulated before it is
+  // handed to the HTTP layer. Larger buffers mean fewer, larger writes, at the
+  // cost of one buffer per concurrent result stream: the memory footprint of
+  // this setting is `value * (number of concurrent result streams)`. Only
+  // generators created after a change see the new value.
+  MemorySizeParameter streamGeneratorBufferSize_{
+      ad_utility::MemorySize::megabytes(1), "stream-generator-buffer-size"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
