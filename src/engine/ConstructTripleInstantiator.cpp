@@ -98,27 +98,6 @@ std::vector<EvaluatedTriple> instantiateBatch(
   return triples;
 }
 
-// _____________________________________________________________________________
-std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
-  if (term.rdfTermDataType_ == nullptr) {
-    // IRI, blank node, or vocab-indexed literal: already in final form.
-    return term.rdfTermString_;
-  }
-  const auto* i = static_cast<const char*>(XSD_INT_TYPE);
-  const auto* d = static_cast<const char*>(XSD_DECIMAL_TYPE);
-  const auto* b = static_cast<const char*>(XSD_BOOLEAN_TYPE);
-
-  // Note: XSD_DOUBLE_TYPE values (for example "NaN", "INF", "-INF") always
-  // include the datatype.
-  if (!includeDataType &&
-      (term.rdfTermDataType_ == i || term.rdfTermDataType_ == d ||
-       (term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1))) {
-    return term.rdfTermString_;
-  }
-  return absl::StrCat("\"", term.rdfTermString_, "\"^^<", term.rdfTermDataType_,
-                      ">");
-}
-
 namespace {
 // Returns true iff `formatTerm` (and `appendFormattedTerm`) emit `term` in the
 // fully qualified form `"value"^^<datatype>` as opposed to the short form
@@ -219,6 +198,15 @@ void appendEscapedForTsv(std::string& out, std::string_view input) {
 }  // namespace
 
 // _____________________________________________________________________________
+std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+  // Implemented in terms of `appendFormattedTerm` so that the two cannot
+  // disagree about how a term is formatted.
+  std::string result;
+  appendFormattedTerm(result, term, includeDataType);
+  return result;
+}
+
+// _____________________________________________________________________________
 std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
                          const ad_utility::MediaType& format) {
   using enum ad_utility::MediaType;
@@ -238,10 +226,22 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
   // `thread_local` means one independent buffer per thread: concurrent export
   // requests on different threads do not share (and thus do not lock) the
   // buffers, and each thread keeps its capacity across requests.
+  // A single pathological row would otherwise pin its capacity in the
+  // thread-local buffers for the rest of the thread's life, once per export
+  // worker. Release anything above this bound; rows that large are rare enough
+  // that reallocating for them is irrelevant.
+  static constexpr size_t maxRetainedCapacity = 1u << 20;
   thread_local std::string buffer;
   thread_local std::string scratch;
-  buffer.clear();
-  scratch.clear();
+  auto resetBuffer = [](std::string& buf) {
+    if (buf.capacity() > maxRetainedCapacity) {
+      std::string{}.swap(buf);
+    } else {
+      buf.clear();
+    }
+  };
+  resetBuffer(buffer);
+  resetBuffer(scratch);
 
   const EvaluatedTermData& s = *subject;
   const EvaluatedTermData& p = *predicate;
@@ -250,7 +250,9 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
   // Conservative estimate of the size of the assembled row. It never
   // under-allocates: an escape sequence replaces a single character by at
   // most two characters, so reserving an extra copy of the terms that may be
-  // escaped is always sufficient. The over-allocation is bounded by that
+  // escaped covers the character-wise expansion. CSV escaping additionally
+  // surrounds an escaped field with a pair of quotation marks, which is
+  // accounted for separately below. The over-allocation is bounded by that
   // escape headroom (plus a small constant for the separators), and the
   // capacity is retained in the thread-local buffer for subsequent rows.
   auto formattedTermSize = [&includeDataType](const EvaluatedTermData& term) {
@@ -278,6 +280,11 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
     estimatedSize +=
         formattedTermSize(s) + formattedTermSize(p) + formattedTermSize(o);
     estimatedSize += 3;  // two separators + trailing newline
+    if (format == csv) {
+      // An escaped CSV field is additionally surrounded by two quotation
+      // marks, which the character-wise doubling above does not cover.
+      estimatedSize += 6;
+    }
   }
   buffer.reserve(estimatedSize);
 
