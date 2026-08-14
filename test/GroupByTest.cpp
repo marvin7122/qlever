@@ -3329,7 +3329,7 @@ TEST(GroupBy, BlankNodeInGroupBy) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, distinctCountTwoVariableScanColumnOne) {
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanColumnOne) {
   // `?s <label3> ?o` with `COUNT(DISTINCT ?o)`: two-variable scan with bound
   // predicate. The counted variable ?o is column 1 of the scan's permutation
   // (POS), so the new metadata fast path answers it directly.
@@ -3356,7 +3356,7 @@ TEST(GroupByOptimizations, distinctCountTwoVariableScanColumnOne) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, distinctCountTwoVariableScanColumnTwo) {
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanColumnTwo) {
   // `?s <label3> ?o` with `COUNT(DISTINCT ?s)`: the counted variable ?s is
   // column 2 of the POS permutation, so the helper must select the PSO
   // permutation (where ?s is column 1) to answer from the relation metadata.
