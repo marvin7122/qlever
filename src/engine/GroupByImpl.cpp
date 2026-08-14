@@ -2008,7 +2008,7 @@ std::optional<IdTable> GroupByImpl::computeSumOverDistinctValues() const {
   if (!_groupByVariables.empty() || _aliases.size() != 1) {
     return std::nullopt;
   }
-  auto* sum = dynamic_cast<sparqlExpression::SumExpression*>(
+  auto* sum = dynamic_cast<const sparqlExpression::SumExpression*>(
       _aliases.front()._expression.getPimpl());
   if (!sum) {
     return std::nullopt;
@@ -2031,7 +2031,8 @@ std::optional<IdTable> GroupByImpl::computeSumOverDistinctValues() const {
       std::dynamic_pointer_cast<const IndexScan>(_subtree->getRootOperation());
   if (!indexScan || indexScan->numVariables() != 2 ||
       !indexScan->graphsToFilter().areAllGraphsAllowed() ||
-      !indexScan->additionalVariables().empty()) {
+      !indexScan->additionalVariables().empty() ||
+      !indexScan->getLimitOffset().isUnconstrained()) {
     return std::nullopt;
   }
   if (!isVariableBoundInSubtree(wantedVar)) {
@@ -2086,28 +2087,35 @@ std::optional<IdTable> GroupByImpl::computeSumOverDistinctValues() const {
     ctx._endIndex = 1;
     auto evaluated = inner->evaluate(&ctx);
     bool poisoned = false;
+    std::optional<Id> scalar;
     std::visit(
         [&](auto&& value) {
           using T = std::decay_t<decltype(value)>;
           if constexpr (std::is_same_v<T, Id>) {
-            if (value.isUndefined()) {
-              poisoned = true;
-              return;
+            scalar = value;
+          } else if constexpr (std::is_same_v<
+                                   T, sparqlExpression::VectorWithMemoryLimit<
+                                          Id>>) {
+            if (value.size() == 1) {
+              scalar = value[0];
             }
-            if (value.getDatatype() == Datatype::Int) {
-              total += static_cast<double>(value.getInt()) *
-                       static_cast<double>(multiplicity);
-            } else if (value.getDatatype() == Datatype::Double) {
-              anyDouble = true;
-              total += value.getDouble() * static_cast<double>(multiplicity);
-            } else {
-              poisoned = true;
-            }
-          } else {
-            poisoned = true;
           }
         },
         evaluated);
+    if (!scalar.has_value() || scalar.value().isUndefined()) {
+      poisoned = true;
+    } else if (scalar.value().getDatatype() == Datatype::Int) {
+      total += static_cast<double>(scalar.value().getInt()) *
+               static_cast<double>(multiplicity);
+    } else if (scalar.value().getDatatype() == Datatype::Double) {
+      anyDouble = true;
+      total += scalar.value().getDouble() * static_cast<double>(multiplicity);
+    } else if (scalar.value().getDatatype() == Datatype::Bool) {
+      total +=
+          scalar.value().getBool() ? static_cast<double>(multiplicity) : 0.0;
+    } else {
+      poisoned = true;
+    }
     if (poisoned) {
       IdTable table{1, getExecutionContext()->getAllocator()};
       table.push_back({Id::makeUndefined()});

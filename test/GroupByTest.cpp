@@ -3329,7 +3329,7 @@ TEST(GroupBy, BlankNodeInGroupBy) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, sumYearOverDistinctValues) {
+TEST_F(GroupByOptimizations, sumYearOverDistinctValues) {
   QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
       "<x> <published> \"1999\"^^<http://www.w3.org/2001/XMLSchema#gYear> . "
       "<y> <published> \"2001\"^^<http://www.w3.org/2001/XMLSchema#gYear> . "
@@ -3345,12 +3345,12 @@ TEST(GroupByOptimizations, sumYearOverDistinctValues) {
       "SUM(YEAR(?o))"};
   std::vector<Alias> aliases{Alias{std::move(sumYear), Variable{"?sum"}}};
   GroupByImpl groupBy{&qec, {}, aliases, scan};
-  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false),
-              optionalHasTable({{I(5999)}}));
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(5999)}}));
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, sumStrlenOverDistinctValues) {
+TEST_F(GroupByOptimizations, sumStrlenOverDistinctValues) {
   QecWrapper ctx{std::make_shared<Index>(
       makeTestIndex("<x> <label> \"ab\" . <y> <label> \"abc\" . "
                     "<z> <label> \"ab\" ."))};
@@ -3365,6 +3365,6 @@ TEST(GroupByOptimizations, sumStrlenOverDistinctValues) {
       "SUM(STRLEN(?o))"};
   std::vector<Alias> aliases{Alias{std::move(sumStrlen), Variable{"?sum"}}};
   GroupByImpl groupBy{&qec, {}, aliases, scan};
-  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false),
-              optionalHasTable({{I(7)}}));
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(7)}}));
 }
