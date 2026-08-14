@@ -2038,7 +2038,8 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
       filter->getSubtree()->getRootOperation().get());
   if (!scan || scan->numVariables() != 3 ||
       !scan->graphsToFilter().areAllGraphsAllowed() ||
-      !scan->additionalVariables().empty()) {
+      !scan->additionalVariables().empty() ||
+      !scan->getLimitOffset().isUnconstrained()) {
     return std::nullopt;
   }
 
@@ -2073,6 +2074,19 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
 
   const auto& vocab = getIndex().getVocab();
   size_t total = 0;
+  const bool countedIsBound =
+      countStar ||
+      (counted.has_value() && isVariableBoundInSubtree(counted.value()));
+  if (!countedIsBound) {
+    filter->getSubtree()
+        ->getRootOperation()
+        ->updateRuntimeInformationWhenOptimizedOut({});
+    filter->updateRuntimeInformationWhenOptimizedOut(
+        {filter->getSubtree()->getRootOperation()->getRuntimeInfoPointer()});
+    IdTable table{1, getExecutionContext()->getAllocator()};
+    table.push_back({Id::makeFromInt(0)});
+    return table;
+  }
   for (size_t i = 0; i < distinctIds.numRows(); ++i) {
     const Id id = distinctIds(i, 0);
     const size_t multiplicity = static_cast<size_t>(distinctIds(i, 1).getInt());

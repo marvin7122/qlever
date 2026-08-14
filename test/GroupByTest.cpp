@@ -3330,7 +3330,7 @@ TEST(GroupBy, BlankNodeInGroupBy) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, countFilterIsLiteral) {
+TEST_F(GroupByOptimizations, countFilterIsLiteral) {
   QecWrapper ctx{std::make_shared<Index>(
       makeTestIndex("<s> <p> \"lit\" . <s> <p> <iri> . <s> <p> 1 ."))};
   auto qec = ctx.makeQec();
@@ -3344,12 +3344,12 @@ TEST(GroupByOptimizations, countFilterIsLiteral) {
   std::vector<Alias> aliases{
       Alias{makeCountPimpl(Variable{"?o"}, false), Variable{"?c"}}};
   GroupByImpl groupBy{&qec, {}, aliases, filter};
-  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false),
-              optionalHasTable({{I(2)}}));
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(2)}}));
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, countFilterIsBlank) {
+TEST_F(GroupByOptimizations, countFilterIsBlank) {
   QecWrapper ctx{std::make_shared<Index>(
       makeTestIndex("_:b1 <p> <o> . _:b2 <p> <o> . <s> <p> <o> ."))};
   auto qec = ctx.makeQec();
@@ -3363,6 +3363,6 @@ TEST(GroupByOptimizations, countFilterIsBlank) {
   std::vector<Alias> aliases{
       Alias{makeCountPimpl(Variable{"?s"}, false), Variable{"?c"}}};
   GroupByImpl groupBy{&qec, {}, aliases, filter};
-  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false),
-              optionalHasTable({{I(2)}}));
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(2)}}));
 }
