@@ -1,15 +1,17 @@
-// Copyright 2018 - 2025, University of Freiburg
+// Copyright 2018 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
 // Authors: Florian Kramer [2018 - 2020]
 //          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "engine/GroupByImpl.h"
 
-#include <algorithm>
-
 #include <absl/strings/str_join.h>
+
+#include <algorithm>
+#include <array>
 
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
@@ -41,6 +43,7 @@
 #include "parser/Alias.h"
 #include "util/Algorithm.h"
 #include "util/Exception.h"
+#include "util/HashMap.h"
 #include "util/HashSet.h"
 #include "util/Timer.h"
 
@@ -2130,11 +2133,10 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     return table;
   };
 
-  auto distinctCounts = [&](const IndexScan& scan, const Variable& joinVar)
-      -> std::optional<IdTable> {
-    const auto& locTriples =
-        scan.permutation().getLocatedTriplesForPermutation(
-            locatedTriplesState());
+  auto distinctCounts = [&](const IndexScan& scan,
+                            const Variable& joinVar) -> std::optional<IdTable> {
+    const auto& locTriples = scan.permutation().getLocatedTriplesForPermutation(
+        locatedTriplesState());
     if (!locTriples.isEmpty() || scan.permutation().permutationType() ==
                                      Permutation::Type::MATERIALIZED_VIEW) {
       return std::nullopt;
@@ -2190,8 +2192,7 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
   auto collectStarScans = [&](auto& self, QueryExecutionTree* tree,
                               std::optional<Variable>& joinVar,
                               std::vector<const IndexScan*>& scans,
-                              std::vector<QueryExecutionTree*>& nodes)
-      -> bool {
+                              std::vector<QueryExecutionTree*>& nodes) -> bool {
     if (auto* join = dynamic_cast<Join*>(tree->getRootOperation().get())) {
       auto children = join->getChildren();
       if (children.size() != 2) {
@@ -2255,8 +2256,7 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     return idTableFromInt(total.value());
   }
 
-  if (auto* minus =
-          dynamic_cast<Minus*>(_subtree->getRootOperation().get())) {
+  if (auto* minus = dynamic_cast<Minus*>(_subtree->getRootOperation().get())) {
     auto children = minus->getChildren();
     if (children.size() != 2) {
       return std::nullopt;
@@ -2301,24 +2301,225 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     std::optional<Variable> joinVar;
     std::vector<const IndexScan*> scans;
     std::vector<QueryExecutionTree*> nodes;
-    if (!collectStarScans(collectStarScans, _subtree.get(), joinVar, scans,
-                          nodes) ||
-        !joinVar.has_value() || scans.size() < 2) {
+    if (collectStarScans(collectStarScans, _subtree.get(), joinVar, scans,
+                         nodes) &&
+        joinVar.has_value() && scans.size() >= 2) {
+      std::vector<IdTable> tables;
+      tables.reserve(scans.size());
+      bool allCounts = true;
+      for (const auto* scan : scans) {
+        auto counts = distinctCounts(*scan, joinVar.value());
+        if (!counts.has_value()) {
+          allCounts = false;
+          break;
+        }
+        tables.push_back(std::move(counts.value()));
+      }
+      if (allCounts) {
+        for (auto* node : nodes) {
+          node->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
+              {});
+        }
+        return idTableFromInt(zipperInnerMany(tables));
+      }
+    }
+
+    scans.clear();
+    nodes.clear();
+    auto collectBoundPredicateScans = [&](auto& self,
+                                          QueryExecutionTree* tree) -> bool {
+      if (auto* join = dynamic_cast<Join*>(tree->getRootOperation().get())) {
+        auto children = join->getChildren();
+        if (children.size() != 2) {
+          return false;
+        }
+        nodes.push_back(tree);
+        return self(self, children[0]) && self(self, children[1]);
+      }
+      const auto* scan = unwrapIndexScan(*tree);
+      if (!scan || scan->numVariables() != 2 ||
+          !scan->graphsToFilter().areAllGraphsAllowed() ||
+          !scan->additionalVariables().empty() ||
+          scan->predicate().isVariable() || !scan->subject().isVariable() ||
+          !scan->object().isVariable()) {
+        return false;
+      }
+      nodes.push_back(tree);
+      scans.push_back(scan);
+      return true;
+    };
+    if (!collectBoundPredicateScans(collectBoundPredicateScans,
+                                    _subtree.get()) ||
+        scans.size() < 3) {
       return std::nullopt;
     }
-    std::vector<IdTable> tables;
-    tables.reserve(scans.size());
-    for (const auto* scan : scans) {
-      auto counts = distinctCounts(*scan, joinVar.value());
-      if (!counts.has_value()) {
+
+    ad_utility::HashMap<Variable, std::vector<size_t>> scansByVar;
+    for (size_t i = 0; i < scans.size(); ++i) {
+      scansByVar[scans[i]->subject().getVariable()].push_back(i);
+      scansByVar[scans[i]->object().getVariable()].push_back(i);
+    }
+    std::vector<Variable> ends;
+    for (const auto& [var, idxs] : scansByVar) {
+      if (idxs.size() == 1) {
+        ends.push_back(var);
+      } else if (idxs.size() != 2) {
         return std::nullopt;
       }
-      tables.push_back(std::move(counts.value()));
+    }
+    if (ends.size() != 2) {
+      return std::nullopt;
+    }
+
+    std::vector<const IndexScan*> ordered;
+    std::vector<char> used(scans.size(), 0);
+    Variable current = ends.front();
+    while (ordered.size() < scans.size()) {
+      auto it = scansByVar.find(current);
+      if (it == scansByVar.end()) {
+        return std::nullopt;
+      }
+      std::optional<size_t> nextIdx;
+      for (size_t idx : it->second) {
+        if (used[idx] == 0) {
+          nextIdx = idx;
+          break;
+        }
+      }
+      if (!nextIdx.has_value()) {
+        return std::nullopt;
+      }
+      used[nextIdx.value()] = 1;
+      const auto* scan = scans[nextIdx.value()];
+      ordered.push_back(scan);
+      current = scan->subject().getVariable() == current
+                    ? scan->object().getVariable()
+                    : scan->subject().getVariable();
+    }
+
+    auto sharedVar = [](const IndexScan& left,
+                        const IndexScan& right) -> std::optional<Variable> {
+      std::array<Variable, 2> leftVars{left.subject().getVariable(),
+                                       left.object().getVariable()};
+      std::array<Variable, 2> rightVars{right.subject().getVariable(),
+                                        right.object().getVariable()};
+      std::optional<Variable> found;
+      for (const auto& leftVar : leftVars) {
+        for (const auto& rightVar : rightVars) {
+          if (leftVar == rightVar) {
+            if (found.has_value() && found.value() != leftVar) {
+              return std::nullopt;
+            }
+            found = leftVar;
+          }
+        }
+      }
+      return found;
+    };
+
+    auto scanPairsByCol1 =
+        [&](const IndexScan& scan,
+            const Variable& col1Var) -> std::optional<IdTable> {
+      const auto& locTriples =
+          scan.permutation().getLocatedTriplesForPermutation(
+              locatedTriplesState());
+      if (!locTriples.isEmpty() || scan.permutation().permutationType() ==
+                                       Permutation::Type::MATERIALIZED_VIEW) {
+        return std::nullopt;
+      }
+      auto target = permutationWithWantedCol1(scan, col1Var);
+      if (!target.has_value()) {
+        return std::nullopt;
+      }
+      auto col0Id = toValueId(*scan.getPermutedTriple()[0], getIndex());
+      if (!col0Id.has_value()) {
+        return std::nullopt;
+      }
+      const auto& permutation =
+          getIndex().getImpl().getPermutation(target.value());
+      const Permutation::ColumnIndices extra{};
+      return permutation.scan(
+          permutation.getScanSpecAndBlocks(
+              ScanSpecification{col0Id.value(), std::nullopt, std::nullopt},
+              locatedTriplesState()),
+          extra, cancellationHandle_, locatedTriplesState(),
+          scan.getLimitOffset());
+    };
+
+    auto pushHistogramThroughPairs = [&](const IdTable& hist,
+                                         const IdTable& pairs) {
+      ad_utility::HashMap<Id, int64_t> outgoing;
+      size_t histRow = 0;
+      size_t pairRow = 0;
+      while (histRow < hist.numRows() && pairRow < pairs.numRows()) {
+        const Id histId = hist(histRow, 0);
+        const Id pairId = pairs(pairRow, 0);
+        if (histId == pairId) {
+          outgoing[pairs(pairRow, 1)] += hist(histRow, 1).getInt();
+          ++pairRow;
+        } else if (histId < pairId) {
+          ++histRow;
+        } else {
+          ++pairRow;
+        }
+      }
+      std::vector<std::pair<Id, int64_t>> rows;
+      rows.reserve(outgoing.size());
+      for (const auto& entry : outgoing) {
+        rows.emplace_back(entry.first, entry.second);
+      }
+      ql::ranges::sort(rows);
+      IdTable table{2, getExecutionContext()->getAllocator()};
+      table.reserve(rows.size());
+      for (const auto& [id, count] : rows) {
+        table.push_back({id, Id::makeFromInt(count)});
+      }
+      return table;
+    };
+
+    for (const auto* scan : ordered) {
+      auto size = scan->getLimitOffset().actualSize(scan->getExactSize());
+      if (size == 0) {
+        for (auto* node : nodes) {
+          node->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
+              {});
+        }
+        return idTableFromInt(0);
+      }
+    }
+
+    auto firstJoin = sharedVar(*ordered[0], *ordered[1]);
+    if (!firstJoin.has_value()) {
+      return std::nullopt;
+    }
+    auto hist = distinctCounts(*ordered[0], firstJoin.value());
+    if (!hist.has_value()) {
+      return std::nullopt;
+    }
+    for (size_t hop = 1; hop + 1 < ordered.size(); ++hop) {
+      auto inVar = sharedVar(*ordered[hop - 1], *ordered[hop]);
+      if (!inVar.has_value()) {
+        return std::nullopt;
+      }
+      auto pairs = scanPairsByCol1(*ordered[hop], inVar.value());
+      if (!pairs.has_value()) {
+        return std::nullopt;
+      }
+      hist = pushHistogramThroughPairs(hist.value(), pairs.value());
+    }
+    auto lastJoin = sharedVar(*ordered[ordered.size() - 2], *ordered.back());
+    if (!lastJoin.has_value()) {
+      return std::nullopt;
+    }
+    auto lastCounts = distinctCounts(*ordered.back(), lastJoin.value());
+    if (!lastCounts.has_value()) {
+      return std::nullopt;
     }
     for (auto* node : nodes) {
       node->getRootOperation()->updateRuntimeInformationWhenOptimizedOut({});
     }
-    return idTableFromInt(zipperInnerMany(tables));
+    return idTableFromInt(
+        zipperTwo(hist.value(), lastCounts.value(), ZipperMode::Inner));
   }
 
   return std::nullopt;
