@@ -7,14 +7,18 @@
 
 #include "engine/GroupByImpl.h"
 
+#include <algorithm>
+
 #include <absl/strings/str_join.h>
 
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
 #include "engine/ExistsJoin.h"
+#include "engine/Filter.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
 #include "engine/LazyGroupBy.h"
+#include "engine/Minus.h"
 #include "engine/OptionalJoin.h"
 #include "engine/Sort.h"
 #include "engine/StripColumns.h"
@@ -2021,6 +2025,101 @@ const IndexScan* unwrapIndexScan(const QueryExecutionTree& tree) {
   }
   return dynamic_cast<const IndexScan*>(op.get());
 }
+
+enum class ZipperMode { Inner, Optional, Exists, Minus };
+
+size_t zipperTwo(const IdTable& left, const IdTable& right, ZipperMode mode) {
+  size_t i = 0;
+  size_t j = 0;
+  size_t total = 0;
+  auto lcount = [](const IdTable& t, size_t row) {
+    return static_cast<size_t>(t(row, 1).getInt());
+  };
+  while (i < left.numRows() && j < right.numRows()) {
+    const Id leftId = left(i, 0);
+    const Id rightId = right(j, 0);
+    if (leftId == rightId) {
+      const size_t lc = lcount(left, i);
+      const size_t rc = lcount(right, j);
+      switch (mode) {
+        case ZipperMode::Inner:
+          total += lc * rc;
+          break;
+        case ZipperMode::Optional:
+          total += lc * std::max<size_t>(1, rc);
+          break;
+        case ZipperMode::Exists:
+          total += lc;
+          break;
+        case ZipperMode::Minus:
+          break;
+      }
+      ++i;
+      ++j;
+    } else if (leftId < rightId) {
+      if (mode == ZipperMode::Optional || mode == ZipperMode::Minus) {
+        total += lcount(left, i);
+      }
+      ++i;
+    } else {
+      ++j;
+    }
+  }
+  if (mode == ZipperMode::Optional || mode == ZipperMode::Minus) {
+    while (i < left.numRows()) {
+      total += lcount(left, i);
+      ++i;
+    }
+  }
+  return total;
+}
+
+size_t zipperInnerMany(const std::vector<IdTable>& tables) {
+  if (tables.empty()) {
+    return 0;
+  }
+  if (tables.size() == 1) {
+    size_t total = 0;
+    for (size_t r = 0; r < tables[0].numRows(); ++r) {
+      total += static_cast<size_t>(tables[0](r, 1).getInt());
+    }
+    return total;
+  }
+  std::vector<size_t> pos(tables.size(), 0);
+  size_t total = 0;
+  while (true) {
+    bool done = false;
+    for (size_t t = 0; t < tables.size(); ++t) {
+      if (pos[t] >= tables[t].numRows()) {
+        done = true;
+        break;
+      }
+    }
+    if (done) {
+      break;
+    }
+    Id minId = tables[0](pos[0], 0);
+    for (size_t t = 1; t < tables.size(); ++t) {
+      if (tables[t](pos[t], 0) < minId) {
+        minId = tables[t](pos[t], 0);
+      }
+    }
+    bool allMatch = true;
+    size_t product = 1;
+    for (size_t t = 0; t < tables.size(); ++t) {
+      if (tables[t](pos[t], 0) == minId) {
+        product *= static_cast<size_t>(tables[t](pos[t], 1).getInt());
+        ++pos[t];
+      } else {
+        allMatch = false;
+      }
+    }
+    if (allMatch) {
+      total += product;
+    }
+  }
+  return total;
+}
 }  // namespace
 
 // _____________________________________________________________________________
@@ -2029,6 +2128,96 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     IdTable table{1, getExecutionContext()->getAllocator()};
     table.push_back({Id::makeFromInt(count)});
     return table;
+  };
+
+  auto distinctCounts = [&](const IndexScan& scan, const Variable& joinVar)
+      -> std::optional<IdTable> {
+    const auto& locTriples =
+        scan.permutation().getLocatedTriplesForPermutation(
+            locatedTriplesState());
+    if (!locTriples.isEmpty() || scan.permutation().permutationType() ==
+                                     Permutation::Type::MATERIALIZED_VIEW) {
+      return std::nullopt;
+    }
+    const auto& permutedTriple = scan.getPermutedTriple();
+    std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
+    if (!col0Id.has_value()) {
+      return std::nullopt;
+    }
+    auto target = permutationWithWantedCol1(scan, joinVar);
+    if (!target.has_value()) {
+      return std::nullopt;
+    }
+    const auto& permutation =
+        getIndex().getImpl().getPermutation(target.value());
+    return permutation.getDistinctCol1IdsAndCounts(
+        col0Id.value(), cancellationHandle_, locatedTriplesState(),
+        scan.getLimitOffset());
+  };
+
+  auto twoScanZip = [&](QueryExecutionTree* leftTree,
+                        QueryExecutionTree* rightTree,
+                        ZipperMode mode) -> std::optional<size_t> {
+    const auto* leftScan = unwrapIndexScan(*leftTree);
+    const auto* rightScan = unwrapIndexScan(*rightTree);
+    if (!leftScan || !rightScan) {
+      return std::nullopt;
+    }
+    if (leftScan->numVariables() != 2 || rightScan->numVariables() != 2 ||
+        !leftScan->graphsToFilter().areAllGraphsAllowed() ||
+        !rightScan->graphsToFilter().areAllGraphsAllowed() ||
+        !leftScan->additionalVariables().empty() ||
+        !rightScan->additionalVariables().empty()) {
+      return std::nullopt;
+    }
+    auto joinColumns =
+        QueryExecutionTree::getJoinColumns(*leftTree, *rightTree);
+    if (joinColumns.size() != 1) {
+      return std::nullopt;
+    }
+    auto joinVar =
+        leftTree->getVariableAndInfoByColumnIndex(joinColumns[0][0]).first;
+    auto leftCounts = distinctCounts(*leftScan, joinVar);
+    auto rightCounts = distinctCounts(*rightScan, joinVar);
+    if (!leftCounts.has_value() || !rightCounts.has_value()) {
+      return std::nullopt;
+    }
+    leftTree->getRootOperation()->updateRuntimeInformationWhenOptimizedOut({});
+    rightTree->getRootOperation()->updateRuntimeInformationWhenOptimizedOut({});
+    return zipperTwo(leftCounts.value(), rightCounts.value(), mode);
+  };
+
+  auto collectStarScans = [&](auto& self, QueryExecutionTree* tree,
+                              std::optional<Variable>& joinVar,
+                              std::vector<const IndexScan*>& scans,
+                              std::vector<QueryExecutionTree*>& nodes)
+      -> bool {
+    if (auto* join = dynamic_cast<Join*>(tree->getRootOperation().get())) {
+      auto children = join->getChildren();
+      if (children.size() != 2) {
+        return false;
+      }
+      nodes.push_back(tree);
+      return self(self, children[0], joinVar, scans, nodes) &&
+             self(self, children[1], joinVar, scans, nodes);
+    }
+    const auto* scan = unwrapIndexScan(*tree);
+    if (!scan || scan->numVariables() != 2 ||
+        !scan->graphsToFilter().areAllGraphsAllowed() ||
+        !scan->additionalVariables().empty()) {
+      return false;
+    }
+    nodes.push_back(tree);
+    scans.push_back(scan);
+    if (!joinVar.has_value()) {
+      // Prefer the subject variable of a bound-predicate scan.
+      if (scan->subject().isVariable() && !scan->predicate().isVariable()) {
+        joinVar = scan->subject().getVariable();
+      } else {
+        return false;
+      }
+    }
+    return true;
   };
 
   if (auto* unionOp =
@@ -2056,106 +2245,80 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     if (children.size() != 2) {
       return std::nullopt;
     }
-    if (!children[1]->knownEmptyResult()) {
+    auto total = twoScanZip(children[0], children[1], ZipperMode::Optional);
+    if (!total.has_value()) {
       return std::nullopt;
     }
-    auto leftSize = exactSizeIfIndexScan(*children[0]);
-    if (!leftSize.has_value()) {
-      return std::nullopt;
-    }
-    children[0]->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
-        {});
-    children[1]->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
-        {});
-    _subtree->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
+    optional->updateRuntimeInformationWhenOptimizedOut(
         {children[0]->getRootOperation()->getRuntimeInfoPointer(),
          children[1]->getRootOperation()->getRuntimeInfoPointer()});
-    return idTableFromInt(leftSize.value());
+    return idTableFromInt(total.value());
   }
 
-  if (auto* join = dynamic_cast<Join*>(_subtree->getRootOperation().get())) {
-    auto children = join->getChildren();
+  if (auto* minus =
+          dynamic_cast<Minus*>(_subtree->getRootOperation().get())) {
+    auto children = minus->getChildren();
     if (children.size() != 2) {
       return std::nullopt;
     }
-    const auto* leftScan = unwrapIndexScan(*children[0]);
-    const auto* rightScan = unwrapIndexScan(*children[1]);
-    if (!leftScan || !rightScan) {
+    auto total = twoScanZip(children[0], children[1], ZipperMode::Minus);
+    if (!total.has_value()) {
       return std::nullopt;
     }
-    if (leftScan->numVariables() != 2 || rightScan->numVariables() != 2 ||
-        !leftScan->graphsToFilter().areAllGraphsAllowed() ||
-        !rightScan->graphsToFilter().areAllGraphsAllowed() ||
-        !leftScan->additionalVariables().empty() ||
-        !rightScan->additionalVariables().empty()) {
-      return std::nullopt;
-    }
-    auto joinColumns =
-        QueryExecutionTree::getJoinColumns(*children[0], *children[1]);
-    if (joinColumns.size() != 1) {
-      return std::nullopt;
-    }
-    auto joinVar =
-        children[0]->getVariableAndInfoByColumnIndex(joinColumns[0][0]).first;
-
-    auto distinctCounts = [&](const IndexScan& scan) -> std::optional<IdTable> {
-      const auto& locTriples =
-          scan.permutation().getLocatedTriplesForPermutation(
-              locatedTriplesState());
-      if (!locTriples.isEmpty() || scan.permutation().permutationType() ==
-                                       Permutation::Type::MATERIALIZED_VIEW) {
-        return std::nullopt;
-      }
-      const auto& permutedTriple = scan.getPermutedTriple();
-      std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
-      if (!col0Id.has_value()) {
-        return std::nullopt;
-      }
-      auto target = permutationWithWantedCol1(scan, joinVar);
-      if (!target.has_value()) {
-        return std::nullopt;
-      }
-      const auto& permutation =
-          getIndex().getImpl().getPermutation(target.value());
-      return permutation.getDistinctCol1IdsAndCounts(
-          col0Id.value(), cancellationHandle_, locatedTriplesState(),
-          scan.getLimitOffset());
-    };
-
-    auto leftCounts = distinctCounts(*leftScan);
-    auto rightCounts = distinctCounts(*rightScan);
-    if (!leftCounts.has_value() || !rightCounts.has_value()) {
-      return std::nullopt;
-    }
-
-    children[0]->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
-        {});
-    children[1]->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
-        {});
-    join->updateRuntimeInformationWhenOptimizedOut(
+    minus->updateRuntimeInformationWhenOptimizedOut(
         {children[0]->getRootOperation()->getRuntimeInfoPointer(),
          children[1]->getRootOperation()->getRuntimeInfoPointer()});
+    return idTableFromInt(total.value());
+  }
 
-    const auto& left = leftCounts.value();
-    const auto& right = rightCounts.value();
-    size_t i = 0;
-    size_t j = 0;
-    size_t total = 0;
-    while (i < left.numRows() && j < right.numRows()) {
-      const Id leftId = left(i, 0);
-      const Id rightId = right(j, 0);
-      if (leftId == rightId) {
-        total += static_cast<size_t>(left(i, 1).getInt()) *
-                 static_cast<size_t>(right(j, 1).getInt());
-        ++i;
-        ++j;
-      } else if (leftId < rightId) {
-        ++i;
-      } else {
-        ++j;
-      }
+  if (auto* filter =
+          dynamic_cast<Filter*>(_subtree->getRootOperation().get())) {
+    if (!filter->getExpression().getPimpl()->isExistsExpression()) {
+      return std::nullopt;
     }
-    return idTableFromInt(total);
+    auto* exists = dynamic_cast<ExistsJoin*>(
+        filter->getSubtree()->getRootOperation().get());
+    if (!exists) {
+      return std::nullopt;
+    }
+    auto children = exists->getChildren();
+    if (children.size() != 2) {
+      return std::nullopt;
+    }
+    auto total = twoScanZip(children[0], children[1], ZipperMode::Exists);
+    if (!total.has_value()) {
+      return std::nullopt;
+    }
+    exists->updateRuntimeInformationWhenOptimizedOut(
+        {children[0]->getRootOperation()->getRuntimeInfoPointer(),
+         children[1]->getRootOperation()->getRuntimeInfoPointer()});
+    filter->updateRuntimeInformationWhenOptimizedOut(
+        {exists->getRuntimeInfoPointer()});
+    return idTableFromInt(total.value());
+  }
+
+  if (dynamic_cast<Join*>(_subtree->getRootOperation().get())) {
+    std::optional<Variable> joinVar;
+    std::vector<const IndexScan*> scans;
+    std::vector<QueryExecutionTree*> nodes;
+    if (!collectStarScans(collectStarScans, _subtree.get(), joinVar, scans,
+                          nodes) ||
+        !joinVar.has_value() || scans.size() < 2) {
+      return std::nullopt;
+    }
+    std::vector<IdTable> tables;
+    tables.reserve(scans.size());
+    for (const auto* scan : scans) {
+      auto counts = distinctCounts(*scan, joinVar.value());
+      if (!counts.has_value()) {
+        return std::nullopt;
+      }
+      tables.push_back(std::move(counts.value()));
+    }
+    for (auto* node : nodes) {
+      node->getRootOperation()->updateRuntimeInformationWhenOptimizedOut({});
+    }
+    return idTableFromInt(zipperInnerMany(tables));
   }
 
   return std::nullopt;
