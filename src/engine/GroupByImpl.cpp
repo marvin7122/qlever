@@ -7,9 +7,9 @@
 
 #include "engine/GroupByImpl.h"
 
-#include <limits>
-
 #include <absl/strings/str_join.h>
+
+#include <limits>
 
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
@@ -17,7 +17,6 @@
 #include "engine/GroupBy.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
-#include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/LazyGroupBy.h"
 #include "engine/Sort.h"
 #include "engine/StripColumns.h"
@@ -26,6 +25,7 @@
 #include "engine/sparqlExpressions/ExistsExpression.h"
 #include "engine/sparqlExpressions/GroupConcatExpression.h"
 #include "engine/sparqlExpressions/LiteralExpression.h"
+#include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/sparqlExpressions/SampleExpression.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
@@ -39,8 +39,8 @@
 #include "parser/Alias.h"
 #include "util/Algorithm.h"
 #include "util/Exception.h"
-#include "util/StringUtils.h"
 #include "util/HashSet.h"
+#include "util/StringUtils.h"
 #include "util/Timer.h"
 
 namespace groupBy::detail {
@@ -2008,8 +2008,7 @@ std::optional<Permutation::Enum> permutationWithWantedCol1(
 }
 
 size_t utf8Length(std::string_view s) {
-  return ad_utility::getUTF8Prefix(s, std::numeric_limits<size_t>::max())
-      .first;
+  return ad_utility::getUTF8Prefix(s, std::numeric_limits<size_t>::max()).first;
 }
 }  // namespace
 
@@ -2023,11 +2022,25 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
   if (!sum) {
     return std::nullopt;
   }
+  if (sum->isAggregate() ==
+      sparqlExpression::SparqlExpression::AggregateStatus::DistinctAggregate) {
+    return std::nullopt;
+  }
   auto sumChildren = sum->children();
   if (sumChildren.size() != 1) {
     return std::nullopt;
   }
-  // STRLEN(?cat)
+  // Only SUM(STRLEN(?cat)). A bare SUM(?cat) or SUM(YEAR(?cat)) is not
+  // the length identity.
+  if (sumChildren[0]->getVariableOrNullopt().has_value() ||
+      sumChildren[0]->isYearExpression()) {
+    return std::nullopt;
+  }
+  auto strlenKids = sumChildren[0]->children();
+  if (strlenKids.size() != 1 ||
+      !strlenKids[0]->getVariableOrNullopt().has_value()) {
+    return std::nullopt;
+  }
   auto strlenVars = sumChildren[0]->getUnaggregatedVariables();
   if (strlenVars.size() != 1) {
     return std::nullopt;
@@ -2045,10 +2058,9 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
   auto* groupConcat =
       dynamic_cast<const sparqlExpression::GroupConcatExpression*>(
           innerGroup->aliases().front()._expression.getPimpl());
-  if (!groupConcat ||
-      groupConcat->isAggregate() ==
-          sparqlExpression::SparqlExpression::AggregateStatus::
-              DistinctAggregate) {
+  if (!groupConcat || groupConcat->isAggregate() ==
+                          sparqlExpression::SparqlExpression::AggregateStatus::
+                              DistinctAggregate) {
     return std::nullopt;
   }
   auto gcChildren = groupConcat->children();
@@ -2068,15 +2080,15 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
       innerChildren[0]->getRootOperation().get());
   if (!scan || scan->numVariables() != 2 ||
       !scan->graphsToFilter().areAllGraphsAllowed() ||
-      !scan->additionalVariables().empty()) {
+      !scan->additionalVariables().empty() ||
+      !scan->getLimitOffset().isUnconstrained()) {
     return std::nullopt;
   }
 
   const auto& locTriples = scan->permutation().getLocatedTriplesForPermutation(
       locatedTriplesState());
-  if (!locTriples.isEmpty() ||
-      scan->permutation().permutationType() ==
-          Permutation::Type::MATERIALIZED_VIEW) {
+  if (!locTriples.isEmpty() || scan->permutation().permutationType() ==
+                                   Permutation::Type::MATERIALIZED_VIEW) {
     return std::nullopt;
   }
   const auto& permutedTriple = scan->getPermutedTriple();
@@ -2134,31 +2146,35 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
         cancellationHandle_,
         deadline_};
     auto evaluated = strlenExpr->evaluate(&scanCtx);
-    bool ok = false;
+    std::optional<Id> scalar;
     std::visit(
         [&](auto&& value) {
           using T = std::decay_t<decltype(value)>;
           if constexpr (std::is_same_v<T, Id>) {
-            if (value.getDatatype() == Datatype::Int) {
-              sumStrlen += value.getInt() * objects(i, 1).getInt();
-              ok = true;
+            scalar = value;
+          } else if constexpr (std::is_same_v<
+                                   T, sparqlExpression::VectorWithMemoryLimit<
+                                          Id>>) {
+            if (value.size() == 1) {
+              scalar = value[0];
             }
           }
         },
         evaluated);
-    if (!ok) {
+    if (!scalar.has_value() || scalar.value().getDatatype() != Datatype::Int) {
       return std::nullopt;
     }
+    sumStrlen += scalar.value().getInt() * objects(i, 1).getInt();
   }
 
   const int64_t sepLen =
       static_cast<int64_t>(utf8Length(groupConcat->getSeparator()));
   const int64_t total =
-      sumStrlen +
-      static_cast<int64_t>(numRows - numGroups) * sepLen;
+      sumStrlen + static_cast<int64_t>(numRows - numGroups) * sepLen;
 
-  innerChildren[0]->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
-      {});
+  innerChildren[0]
+      ->getRootOperation()
+      ->updateRuntimeInformationWhenOptimizedOut({});
   innerGroup->updateRuntimeInformationWhenOptimizedOut(
       {innerChildren[0]->getRootOperation()->getRuntimeInfoPointer()});
 

@@ -3329,7 +3329,7 @@ TEST(GroupBy, BlankNodeInGroupBy) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, sumStrlenOfGroupConcat) {
+TEST_F(GroupByOptimizations, sumStrlenOfGroupConcat) {
   QecWrapper ctx{std::make_shared<Index>(
       makeTestIndex("<x> <n> \"ab\" . <x> <n> \"c\" . <y> <n> \"de\" ."))};
   auto qec = ctx.makeQec();
@@ -3342,15 +3342,16 @@ TEST(GroupByOptimizations, sumStrlenOfGroupConcat) {
       "GROUP_CONCAT(?o)"};
   std::vector<Alias> innerAliases{
       Alias{std::move(groupConcat), Variable{"?cat"}}};
-  auto inner = makeExecutionTree<GroupBy>(&qec, std::vector<Variable>{Variable{"?s"}},
-                                          innerAliases, scan);
+  auto inner = makeExecutionTree<GroupBy>(
+      &qec, std::vector<Variable>{Variable{"?s"}}, innerAliases, scan);
   auto sumStrlen = SparqlExpressionPimpl{
       std::make_unique<SumExpression>(
-          false, makeStrlenExpression(makeVariableExpression(Variable{"?cat"}))),
+          false,
+          makeStrlenExpression(makeVariableExpression(Variable{"?cat"}))),
       "SUM(STRLEN(?cat))"};
   std::vector<Alias> outerAliases{
       Alias{std::move(sumStrlen), Variable{"?sum"}}};
   GroupByImpl outer{&qec, {}, outerAliases, inner};
-  EXPECT_THAT(outer.computeResultOnlyForTesting(false),
-              optionalHasTable({{I(6)}}));
+  EXPECT_THAT(outer.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(6)}}));
 }
