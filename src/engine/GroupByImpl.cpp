@@ -2144,7 +2144,7 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     const auto& permutedTriple = scan.getPermutedTriple();
     std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
     if (!col0Id.has_value()) {
-      return std::nullopt;
+      return IdTable{2, getExecutionContext()->getAllocator()};
     }
     auto target = permutationWithWantedCol1(scan, joinVar);
     if (!target.has_value()) {
@@ -2304,10 +2304,24 @@ std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
     if (collectStarScans(collectStarScans, _subtree.get(), joinVar, scans,
                          nodes) &&
         joinVar.has_value() && scans.size() >= 2) {
+      bool starVarOnEveryScan = true;
+      for (const auto* scan : scans) {
+        const bool onSubject = scan->subject().isVariable() &&
+                               scan->subject().getVariable() == joinVar.value();
+        const bool onObject = scan->object().isVariable() &&
+                              scan->object().getVariable() == joinVar.value();
+        if (!onSubject && !onObject) {
+          starVarOnEveryScan = false;
+          break;
+        }
+      }
       std::vector<IdTable> tables;
       tables.reserve(scans.size());
-      bool allCounts = true;
+      bool allCounts = starVarOnEveryScan;
       for (const auto* scan : scans) {
+        if (!allCounts) {
+          break;
+        }
         auto counts = distinctCounts(*scan, joinVar.value());
         if (!counts.has_value()) {
           allCounts = false;
