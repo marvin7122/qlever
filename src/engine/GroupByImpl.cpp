@@ -15,7 +15,6 @@
 #include "engine/Filter.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
-#include "engine/sparqlExpressions/PrefilterExpressionIndex.h"
 #include "engine/LazyGroupBy.h"
 #include "engine/Sort.h"
 #include "engine/StripColumns.h"
@@ -24,6 +23,7 @@
 #include "engine/sparqlExpressions/ExistsExpression.h"
 #include "engine/sparqlExpressions/GroupConcatExpression.h"
 #include "engine/sparqlExpressions/LiteralExpression.h"
+#include "engine/sparqlExpressions/PrefilterExpressionIndex.h"
 #include "engine/sparqlExpressions/SampleExpression.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
@@ -2014,8 +2014,7 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
     return std::nullopt;
   }
 
-  auto* filter =
-      dynamic_cast<Filter*>(_subtree->getRootOperation().get());
+  auto* filter = dynamic_cast<Filter*>(_subtree->getRootOperation().get());
   if (!filter) {
     return std::nullopt;
   }
@@ -2045,9 +2044,8 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
 
   const auto& locTriples = scan->permutation().getLocatedTriplesForPermutation(
       locatedTriplesState());
-  if (!locTriples.isEmpty() ||
-      scan->permutation().permutationType() ==
-          Permutation::Type::MATERIALIZED_VIEW) {
+  if (!locTriples.isEmpty() || scan->permutation().permutationType() ==
+                                   Permutation::Type::MATERIALIZED_VIEW) {
     return std::nullopt;
   }
 
@@ -2077,8 +2075,7 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
   size_t total = 0;
   for (size_t i = 0; i < distinctIds.numRows(); ++i) {
     const Id id = distinctIds(i, 0);
-    const size_t multiplicity =
-        static_cast<size_t>(distinctIds(i, 1).getInt());
+    const size_t multiplicity = static_cast<size_t>(distinctIds(i, 1).getInt());
     bool match = false;
     if (wantBlank) {
       match = id.getDatatype() == Datatype::BlankNodeIndex;
@@ -2094,8 +2091,9 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
     }
   }
 
-  filter->getSubtree()->getRootOperation()->updateRuntimeInformationWhenOptimizedOut(
-      {});
+  filter->getSubtree()
+      ->getRootOperation()
+      ->updateRuntimeInformationWhenOptimizedOut({});
   filter->updateRuntimeInformationWhenOptimizedOut(
       {filter->getSubtree()->getRootOperation()->getRuntimeInfoPointer()});
 
