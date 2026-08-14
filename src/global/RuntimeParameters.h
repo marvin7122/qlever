@@ -243,6 +243,13 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // NOTE: both of the following parameters are read exactly once, when a
+  // vocabulary is opened (`VocabularyOnDisk::open`), because the manager pool
+  // and its rings are constructed there. Changing them on a running server has
+  // no effect until the next index load; they are runtime parameters so that
+  // they can be set per server start without a rebuild, not so that they can be
+  // tuned live.
+
   // Size of the io_uring submission queue (ring size) per batch I/O manager.
   // Powers of two are preferred; liburing rounds up.  Larger rings increase
   // in-flight I/O concurrency at the cost of registered buffer memory.
