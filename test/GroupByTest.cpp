@@ -3331,7 +3331,7 @@ TEST(GroupBy, BlankNodeInGroupBy) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, countStarTwoPredicateJoin) {
+TEST_F(GroupByOptimizations, countStarTwoPredicateJoin) {
   // COUNT(*) of `?s <p1> ?o1 . ?s <p2> ?o2`.
   // x has 2 p1 and 1 p2; y has 1 p1 and 1 p2; z has only p1. Total = 2+1 = 3.
   QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
@@ -3354,7 +3354,7 @@ TEST(GroupByOptimizations, countStarTwoPredicateJoin) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, countStarBagUnionOfTwoScans) {
+TEST_F(GroupByOptimizations, countStarBagUnionOfTwoScans) {
   QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
       "<x> <p1> <a> . <y> <p2> <b> . <z> <p2> <c> ."))};
   auto qec = ctx.makeQec();
@@ -3374,7 +3374,7 @@ TEST(GroupByOptimizations, countStarBagUnionOfTwoScans) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, countStarOptionalEmptyRight) {
+TEST_F(GroupByOptimizations, countStarOptionalEmptyRight) {
   QecWrapper ctx{std::make_shared<Index>(
       makeTestIndex("<x> <p1> <a> . <y> <p1> <b> ."))};
   auto qec = ctx.makeQec();
