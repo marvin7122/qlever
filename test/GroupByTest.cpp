@@ -3329,7 +3329,7 @@ TEST(GroupBy, BlankNodeInGroupBy) {
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, minMaxTwoVariableScan) {
+TEST_F(GroupByOptimizations, minMaxTwoVariableScan) {
   // MIN/MAX of the object of `?s <label3> ?o` from the sorted distinct
   // object IDs (POS). Vocab order is lexicographic: <a> < <b> < <c>.
   QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
@@ -3348,17 +3348,18 @@ TEST(GroupByOptimizations, minMaxTwoVariableScan) {
   };
 
   EXPECT_THAT(makeGroupBy(makeMinPimpl(Variable{"?o"}))
-                  .computeResultOnlyForTesting(false),
-              optionalHasTable({{idA}}));
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{idA}}));
   EXPECT_THAT(makeGroupBy(makeMaxPimpl(Variable{"?o"}))
-                  .computeResultOnlyForTesting(false),
-              optionalHasTable({{idC}}));
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{idC}}));
 }
 
 // _____________________________________________________________________________
-TEST(GroupByOptimizations, minMaxEmptyRelation) {
-  QecWrapper ctx{std::make_shared<Index>(
-      makeTestIndex("<x> <other> <a> ."))};
+TEST_F(GroupByOptimizations, minMaxEmptyRelation) {
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex("<x> <other> <a> ."))};
   auto qec = ctx.makeQec();
   auto scan = makeExecutionTree<IndexScan>(
       &qec, Permutation::Enum::PSO,
@@ -3366,6 +3367,31 @@ TEST(GroupByOptimizations, minMaxEmptyRelation) {
   std::vector<Alias> aliases{
       Alias{makeMinPimpl(Variable{"?o"}), Variable{"?out"}}};
   GroupByImpl groupBy{&qec, {}, aliases, scan};
-  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false),
-              optionalHasTable({{Id::makeUndefined()}}));
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{Id::makeUndefined()}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxNegativeIntegers) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <n> -1 . <x> <n> 0 . <x> <n> 1 ."))};
+  auto qec = ctx.makeQec();
+  auto scanMin = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<n>"), Variable{"?o"}});
+  auto scanMax = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<n>"), Variable{"?o"}});
+  GroupByImpl minBy{&qec,
+                    {},
+                    {Alias{makeMinPimpl(Variable{"?o"}), Variable{"?out"}}},
+                    scanMin};
+  GroupByImpl maxBy{&qec,
+                    {},
+                    {Alias{makeMaxPimpl(Variable{"?o"}), Variable{"?out"}}},
+                    scanMax};
+  EXPECT_THAT(minBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(-1)}}));
+  EXPECT_THAT(maxBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(1)}}));
 }

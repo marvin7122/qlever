@@ -28,6 +28,7 @@
 #include "engine/sparqlExpressions/StdevExpression.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
+#include "global/ValueIdComparators.h"
 #include "index/Index.h"
 #include "index/IndexImpl.h"
 #include "index/Permutation.h"
@@ -2031,7 +2032,8 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
       std::dynamic_pointer_cast<const IndexScan>(_subtree->getRootOperation());
   if (!indexScan || indexScan->numVariables() != 2 ||
       !indexScan->graphsToFilter().areAllGraphsAllowed() ||
-      !indexScan->additionalVariables().empty()) {
+      !indexScan->additionalVariables().empty() ||
+      !indexScan->getLimitOffset().isUnconstrained()) {
     return std::nullopt;
   }
 
@@ -2067,8 +2069,16 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
   if (distinctIds.empty()) {
     table.push_back({Id::makeUndefined()});
   } else {
-    const Id value = isMin ? distinctIds(0, 0)
-                           : distinctIds(distinctIds.numRows() - 1, 0);
+    Id value = distinctIds(0, 0);
+    const auto cmp = isMin ? valueIdComparators::Comparison::LT
+                           : valueIdComparators::Comparison::GT;
+    for (size_t row = 1; row < distinctIds.numRows(); ++row) {
+      const Id candidate = distinctIds(row, 0);
+      if (valueIdComparators::compareIds(candidate, value, cmp) ==
+          valueIdComparators::ComparisonResult::True) {
+        value = candidate;
+      }
+    }
     table.push_back({value});
   }
   return table;
