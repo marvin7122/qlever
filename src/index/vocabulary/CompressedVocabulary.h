@@ -96,6 +96,7 @@ CPP_template(typename UnderlyingVocabulary,
     size_t maxCompressedSize = ::ranges::max(
         compressedViews | ql::views::transform(&std::string_view::size));
     auto scratchBuf = std::make_unique<char[]>(maxCompressedSize * 64 + 64);
+    const size_t kScratchSize = maxCompressedSize * 64 + 64;
 
     for (size_t i = 0; i < indices.size(); ++i) {
       // FSST decompresses at most 8x per pass; for FSST^2 max is 64x.
