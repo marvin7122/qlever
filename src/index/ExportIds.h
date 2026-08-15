@@ -313,9 +313,11 @@ idsToStringAndType(const Index& index, ql::span<const Id> ids,
   return results;
 }
 
-// Depth-2 pipeline: submit two vocab sub-batches, then consume the first
-// while the second is in flight. Each sub-batch is at most 256 indices so
-// two in-flight batches stay inside the default 512-entry ring.
+// Depth-2 pipeline over many vocab sub-batches: submit the next sub-batch's
+// lookup before consuming the current one, so its reads are in flight while
+// the current batch is consumed. Each sub-batch is at most
+// `maxVocabIndicesPerSubBatch` indices, so no single `addBatch` exceeds the
+// per-batch budget of the io_uring ring.
 constexpr size_t maxVocabIndicesPerSubBatch = 256;
 
 template <bool removeQuotesAndAngleBrackets = false,
@@ -339,24 +341,34 @@ idsToStringAndTypeDepth2(
   if (numVocabIndices == 0) {
     return results;
   }
-  const size_t subBatchSize = numVocabIndices <= maxVocabIndicesPerSubBatch
-                                  ? numVocabIndices
-                                  : (numVocabIndices + 1) / 2;
-  auto handleFirst = beginResolveVocabIndexIds(
-      index, ids, vocabPositions.subspan(0, subBatchSize));
-  std::unique_ptr<VocabLookupHandleBase> handleSecond;
-  if (subBatchSize < numVocabIndices) {
-    handleSecond = beginResolveVocabIndexIds(
-        index, ids, vocabPositions.subspan(subBatchSize));
-  }
-  finishResolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-      index, vocabPositions.subspan(0, subBatchSize), std::move(handleFirst),
-      results, escapeFunction);
-  if (handleSecond) {
+  // Submit the first sub-batch's lookup, then walk the remaining sub-batches
+  // in a depth-2 pipeline: each iteration submits the next sub-batch's lookup
+  // before finishing the current one, so the next batch's reads are in flight
+  // while the current batch is consumed.
+  auto handle = beginResolveVocabIndexIds(
+      index, ids,
+      vocabPositions.subspan(
+          0, std::min(maxVocabIndicesPerSubBatch, numVocabIndices)));
+  size_t batchStart = 0;
+  size_t batchSize = std::min(maxVocabIndicesPerSubBatch, numVocabIndices);
+  while (handle) {
+    const size_t batchEnd = batchStart + batchSize;
+    std::unique_ptr<VocabLookupHandleBase> nextHandle;
+    if (batchEnd < numVocabIndices) {
+      nextHandle = beginResolveVocabIndexIds(
+          index, ids,
+          vocabPositions.subspan(batchEnd,
+                                 std::min(maxVocabIndicesPerSubBatch,
+                                          numVocabIndices - batchEnd)));
+    }
     finishResolveVocabIndexIds<removeQuotesAndAngleBrackets,
                                returnOnlyLiterals>(
-        index, vocabPositions.subspan(subBatchSize), std::move(handleSecond),
+        index, vocabPositions.subspan(batchStart, batchSize), std::move(handle),
         results, escapeFunction);
+    handle = std::move(nextHandle);
+    batchStart = batchEnd;
+    batchSize =
+        std::min(maxVocabIndicesPerSubBatch, numVocabIndices - batchStart);
   }
   return results;
 }
