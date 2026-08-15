@@ -463,13 +463,14 @@ ExportQueryExecutionTrees::selectQueryResultBindingsToQLeverJSON(
 
 // _____________________________________________________________________________
 template <ad_utility::MediaType format>
-DISABLE_OVERREAD_WARNINGS STREAMABLE_GENERATOR_TYPE
+STREAMABLE_GENERATOR_TYPE
 ExportQueryExecutionTrees::selectQueryResultToStream(
     const QueryExecutionTree& qet,
     const parsedQuery::SelectClause& selectClause,
     LimitOffsetClause limitAndOffset, CancellationHandle cancellationHandle,
     [[maybe_unused]] const ad_utility::Timer& requestTimer,
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
+  DISABLE_OVERREAD_WARNINGS
   using enum ad_utility::MediaType;
   static_assert(ad_utility::contains(staticallySupportedMediaTypes, format));
 
@@ -591,8 +592,8 @@ ExportQueryExecutionTrees::selectQueryResultToStream(
     STREAMABLE_YIELD(std::move(output));
   }
   AD_LOG_DEBUG << "Done creating readable result.\n";
+  GCC_REENABLE_WARNINGS
 }
-GCC_REENABLE_WARNINGS
 
 // _____________________________________________________________________________
 // Convert a single ID to an XML binding of the given `variable`.
