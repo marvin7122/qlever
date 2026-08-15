@@ -26,6 +26,7 @@
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
+#include "util/CompilerWarnings.h"
 #include "util/ConstexprUtils.h"
 #include "util/http/MediaTypes.h"
 #include "util/views/TakeUntilInclusiveView.h"
@@ -462,7 +463,8 @@ ExportQueryExecutionTrees::selectQueryResultBindingsToQLeverJSON(
 
 // _____________________________________________________________________________
 template <ad_utility::MediaType format>
-STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
+DISABLE_OVERREAD_WARNINGS STREAMABLE_GENERATOR_TYPE
+ExportQueryExecutionTrees::selectQueryResultToStream(
     const QueryExecutionTree& qet,
     const parsedQuery::SelectClause& selectClause,
     LimitOffsetClause limitAndOffset, CancellationHandle cancellationHandle,
@@ -590,6 +592,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   }
   AD_LOG_DEBUG << "Done creating readable result.\n";
 }
+GCC_REENABLE_WARNINGS
 
 // _____________________________________________________________________________
 // Convert a single ID to an XML binding of the given `variable`.
