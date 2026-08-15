@@ -1,8 +1,11 @@
-// Copyright 2023 - 2024, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
-//          Robin Textor-Falconi <robintf@cs.uni-freiburg.de>
-//          Hannah Bast <bast@cs.uni-freiburg.de>
+// Copyright 2023 - 2026, The QLever Authors, in particular:
+//
+// 2023 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2023 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2023 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <gmock/gmock.h>
 
@@ -2281,7 +2284,7 @@ TEST(ExportQueryExecutionTrees, SelectQueryMoreThanOneBatchOfRows) {
   const std::string query = [&]() {
     std::string values;
     for (size_t i = 0; i < numRows; ++i) {
-      absl::StrAppend(&values, i == 0 ? "(" : " (", i, ")");
+      absl::StrAppend(&values, i == 0 ? "" : " ", i);
     }
     return absl::StrCat("SELECT ?x WHERE { VALUES ?x { ", values, " } }");
   }();
