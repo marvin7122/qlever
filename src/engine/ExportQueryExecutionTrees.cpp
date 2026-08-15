@@ -777,8 +777,6 @@ ExportQueryExecutionTrees::splitBlocksIntoGroups(
   if (totalRows == 0) {
     return groups;
   }
-  // The caller guarantees `numGroups <= totalRows`, so every group receives at
-  // least one row; verify the guarantee instead of trusting it.
   AD_CONTRACT_CHECK(numGroups <= totalRows);
   const uint64_t rowsPerGroup = (totalRows + numGroups - 1) / numGroups;
   // The `view_` ranges carry the original global row indices (the blank-node
@@ -855,7 +853,7 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   // The number of threads for the parallel serialization of the CONSTRUCT
   // triples.  0 means: use all logical cores.  The parallel path serializes
   // disjoint contiguous row ranges concurrently and yields their outputs in
-  // order, so the exported bytes are identical to the serial path.  It is
+  // order.  It is
   // disabled when triple deduplication is active, because the deduplicator is
   // shared mutable state that is not thread-safe.
   size_t numThreads =
