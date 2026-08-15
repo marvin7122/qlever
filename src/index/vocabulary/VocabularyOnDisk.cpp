@@ -198,21 +198,15 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
 
-  auto manager = ioManagers_->pop().value();
-  // Return the `manager` to the pool on every exit path (including exceptions,
-  // e.g. an out-of-range index), so we never leak an `IoManager` (and its
-  // io_uring buffers) out of the pool.
-  absl::Cleanup returnManagerOnThrow{[this, &manager]() {
-    ad_utility::terminateIfThrows(
-        [this, &manager]() { ioManagers_->push(std::move(manager)); },
-        "returning the `IoManager` to the pool in "
-        "`VocabularyOnDisk::beginLookup`");
-  }};
-
   auto handle = std::make_unique<LookupHandle>();
   handle->vocab_ = this;
+  // Take a pooled `IoManager` into the handle as its sole owner immediately,
+  // before any code that can throw. From here on the handle's destructor is the
+  // only code that returns the manager to the pool, so it is returned on every
+  // exit path (including exceptions such as an out-of-range index) without a
+  // separate cleanup that could double-return it.
+  handle->manager_ = ioManagers_->pop().value();
   handle->indices_.assign(indices.begin(), indices.end());
-  handle->manager_ = std::move(manager);
 
   // Submit the offset reads (Phase 1) without waiting for them: the caller
   // decides when to block (in `finishLookup`), which is what allows the reads
@@ -231,7 +225,6 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   handle->offsetBatch_ = handle->manager_->addBatch(offsetsFile_.fd(), sizes,
                                                     fileOffsets, targets);
 
-  std::move(returnManagerOnThrow).Cancel();
   return handle;
 }
 
