@@ -463,8 +463,7 @@ ExportQueryExecutionTrees::selectQueryResultBindingsToQLeverJSON(
 
 // _____________________________________________________________________________
 template <ad_utility::MediaType format>
-STREAMABLE_GENERATOR_TYPE
-ExportQueryExecutionTrees::selectQueryResultToStream(
+STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
     const QueryExecutionTree& qet,
     const parsedQuery::SelectClause& selectClause,
     LimitOffsetClause limitAndOffset, CancellationHandle cancellationHandle,
