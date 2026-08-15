@@ -58,7 +58,8 @@ std::unique_ptr<VocabLookupHandleBase> PolymorphicVocabulary::beginLookup(
     ql::span<const size_t> indices) const {
   return std::visit(
       [&indices](const auto& vocab) -> std::unique_ptr<VocabLookupHandleBase> {
-        if constexpr (requires { vocab.beginLookup(indices); }) {
+        if constexpr (ad_utility::vocabulary::HasBeginLookup<
+                          ql::remove_cvref_t<decltype(vocab)>>::value) {
           return vocab.beginLookup(indices);
         } else {
           auto handle = std::make_unique<EagerVocabLookupHandle>();

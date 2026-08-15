@@ -120,10 +120,11 @@ CPP_template(typename UnderlyingVocabulary,
     auto handle = std::make_unique<CompressedLookupHandle>();
     handle->vocab_ = this;
     handle->indices_.assign(indices.begin(), indices.end());
-    // `requires` is a compile-time check: if the underlying vocabulary
-    // supports the split-phase interface itself, delegate the reads to it;
-    // otherwise fall back to an eager in-memory lookup.
-    if constexpr (requires { underlyingVocabulary_.beginLookup(indices); }) {
+    // Compile-time check: if the underlying vocabulary supports the
+    // split-phase interface itself, delegate the reads to it; otherwise fall
+    // back to an eager in-memory lookup.
+    if constexpr (ad_utility::vocabulary::HasBeginLookup<
+                      UnderlyingVocabulary>::value) {
       handle->underlyingHandle_ = underlyingVocabulary_.beginLookup(indices);
     } else {
       auto eager = std::make_unique<EagerVocabLookupHandle>();

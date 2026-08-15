@@ -317,7 +317,8 @@ template <typename S, typename C, typename I>
 std::unique_ptr<VocabLookupHandleBase> Vocabulary<S, C, I>::beginLookup(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  if constexpr (requires { vocabulary_.beginLookup(indices); }) {
+  if constexpr (ad_utility::vocabulary::HasBeginLookup<
+                    VocabularyWithUnicodeComparator>::value) {
     return vocabulary_.beginLookup(indices);
   } else {
     auto handle = std::make_unique<EagerVocabLookupHandle>();

@@ -49,7 +49,8 @@ class UnicodeVocabulary {
 
   std::unique_ptr<VocabLookupHandleBase> beginLookup(
       ql::span<const size_t> indices) const {
-    if constexpr (requires { _underlyingVocabulary.beginLookup(indices); }) {
+    if constexpr (ad_utility::vocabulary::HasBeginLookup<
+                      UnderlyingVocabulary>::value) {
       return _underlyingVocabulary.beginLookup(indices);
     } else {
       auto handle = std::make_unique<EagerVocabLookupHandle>();
