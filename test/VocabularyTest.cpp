@@ -291,10 +291,8 @@ TEST(VocabularyTest, LookupBatchesStreamedEmptyStreamYieldsNothing) {
 
 // The depth-2 streamed lookup (`lookupBatchesStreamedDepth2`) must yield, for
 // each batch and in input order, exactly the same results as the eager
-// `lookupBatch` for that batch's indices. The generator additionally exposes
-// the in-flight handle via `details()`, which is exercised by the caller in
-// `idsToStringAndTypeDepth2`; the plain range-for loop used here completes
-// every lookup inside the generator itself.
+// `lookupBatch` for that batch's indices. The plain range-for loop used here
+// completes every lookup inside the generator itself.
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
 TEST(VocabularyTest, LookupBatchesStreamedDepth2) {
   auto v = createExampleVocabulary();

@@ -267,21 +267,10 @@ VocabLookupOutput lookupBatchesStreamed(const Vocab& vocab,
 //    consumption of the previous result. When the caller consumes the
 //    yielded result, the device serves the next batch's reads.
 //
-// The generator's `details()` (see `cppcoro::SetDetails`) exposes the
-// `unique_ptr<VocabLookupHandleBase>` of the batch whose reads are currently
-// in flight, i.e. the batch after the one whose result was just yielded. A
-// caller that wants to complete that lookup itself (e.g. right before its own
-// CPU-heavy phase) can take it via
-// `vocab.finishLookup(std::move(generator.details()))`; the generator then
-// ends on its next resume. A caller that never touches `details()` works with
-// a plain `for (auto&& result : generator)` loop and the generator completes
-// every lookup itself.
-//
 // The referenced `vocab` must outlive the returned generator.
 template <typename Vocab>
-cppcoro::generator<VocabBatchLookupResult,
-                   std::unique_ptr<VocabLookupHandleBase>>
-lookupBatchesStreamedDepth2(const Vocab& vocab, VocabLookupInput input) {
+cppcoro::generator<VocabBatchLookupResult> lookupBatchesStreamedDepth2(
+    const Vocab& vocab, VocabLookupInput input) {
   auto owningInput = ad_utility::OwningView{std::move(input)};
   auto it = owningInput.begin();
   const auto end = owningInput.end();
@@ -295,24 +284,16 @@ lookupBatchesStreamedDepth2(const Vocab& vocab, VocabLookupInput input) {
   while (currentHandle) {
     // Submit the lookup of the NEXT batch before blocking on the current one,
     // so the device can serve it while the caller consumes the current result.
-    // The handle is exposed via the generator's `details()` for callers that
-    // want to complete it themselves.
+    std::unique_ptr<VocabLookupHandleBase> nextHandle;
     if (it != end) {
-      co_await cppcoro::SetDetails<std::unique_ptr<VocabLookupHandleBase>>{
-          vocab.beginLookup(*it)};
+      nextHandle = vocab.beginLookup(*it);
       ++it;
-    } else {
-      co_await cppcoro::SetDetails<std::unique_ptr<VocabLookupHandleBase>>{
-          std::unique_ptr<VocabLookupHandleBase>{}};
     }
     // Block until the current batch's reads have completed (they were
     // submitted one iteration earlier). The next batch's reads are already in
     // flight at this point.
     co_yield vocab.finishLookup(std::move(currentHandle));
-    // Take over the next batch's handle. If the caller has already consumed it
-    // (via `finishLookup(std::move(generator.details()))`), it is null and the
-    // generator ends.
-    currentHandle = std::move(co_await cppcoro::getDetails);
+    currentHandle = std::move(nextHandle);
   }
 }
 
