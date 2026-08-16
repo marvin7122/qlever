@@ -23,6 +23,7 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
+#include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
@@ -853,9 +854,10 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   // The number of threads for the parallel serialization of the CONSTRUCT
   // triples.  0 means: use all logical cores.  The parallel path serializes
   // disjoint contiguous row ranges concurrently and yields their outputs in
-  // order.  It is
-  // disabled when triple deduplication is active, because the deduplicator is
-  // shared mutable state that is not thread-safe.
+  // order.  When triple deduplication is active, the chunks share a single
+  // deduplicator whose ID-space filter and `dedupVocab_` re-anchoring are
+  // guarded by a mutex (see `ConstructDeduplicator::isNew`); the string
+  // formatting happens outside the lock.
   size_t numThreads =
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
   const auto& dedupMode =
@@ -870,7 +872,7 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   // because the parallel path checks it again while collecting the results.
   auto config = makeConstructEvaluationConfig(qet, cancellationHandle);
 
-  if (numThreads <= 1 || dedupActive) {
+  if (numThreads <= 1) {
     auto triples = qlever::constructExport::ConstructTripleGenerator::
         generateFormattedTriples(constructTriples, qet.getVariableColumns(),
                                  std::move(rowIndices), limitAndOffset._offset,
@@ -882,6 +884,16 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   }
 
   // ----- Parallel path -----
+  // When triple deduplication is active, all chunks share one deduplicator so
+  // that duplicate triples are dropped across chunk boundaries as well. The
+  // shared filter is made thread-safe by a mutex (see
+  // `ConstructDeduplicator::isNew`), so the parallel path stays enabled.
+  if (dedupActive) {
+    config.sharedDeduplicator_ =
+        std::make_shared<qlever::constructExport::ConstructDeduplicator>(
+            config.mode_, *qet.getQec());
+  }
+
   // Materialize the row blocks once (the result of the WHERE clause is
   // already fully computed at this point, so this is only slicing).
   std::vector<TableWithRange> blocks;

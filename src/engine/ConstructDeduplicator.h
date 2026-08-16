@@ -10,6 +10,7 @@
 #define QLEVER_SRC_ENGINE_CONSTRUCTDEDUPLICATOR_H
 
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <variant>
 
@@ -121,6 +122,12 @@ class ConstructDeduplicator {
 
   // The deduplicator that decides whether a triple was already emitted.
   TripleDeduplicator filter_;
+
+  // Guards the shared deduplication state (`filter_` and `dedupVocab_`) against
+  // concurrent access from the parallel CONSTRUCT export path. The lock is held
+  // only for the ID-space filter check and the `dedupVocab_` re-anchoring; the
+  // expensive string formatting happens outside the lock (see `isNew`).
+  mutable std::mutex mutex_;
 
   // Compute the byte threshold that bounds `dedupVocab_` in `Lru` mode:
   // The explicit `maxDedupVocabSize` if given, else a default value that is

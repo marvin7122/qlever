@@ -113,8 +113,12 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
       templateTriples, variableColumns, config.index_);
   IdCache cache = makeIdCache(preprocessedTemplate);
 
-  std::shared_ptr<ConstructDeduplicator> deduplicator;
-  if (!std::holds_alternative<DeduplicationMode::None>(config.mode_.value_)) {
+  // Use a caller-provided deduplicator if one is shared across the parallel
+  // export chunks; otherwise create a fresh one for this call (serial path).
+  std::shared_ptr<ConstructDeduplicator> deduplicator =
+      config.sharedDeduplicator_;
+  if (!deduplicator &&
+      !std::holds_alternative<DeduplicationMode::None>(config.mode_.value_)) {
     deduplicator =
         std::make_shared<ConstructDeduplicator>(config.mode_, config.qec_);
   }
