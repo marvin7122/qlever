@@ -14,6 +14,8 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
 #define QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
 
+#include <vector>
+
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/QueryExportTypes.h"
@@ -210,11 +212,9 @@ class ExportQueryExecutionTrees {
   FRIEND_TEST(ExportQueryExecutionTrees,
               ensureGeneratorIsNotConsumedWhenNotRequired);
   FRIEND_TEST(ExportQueryExecutionTrees, verifyQleverJsonContainsValidMetadata);
-  FRIEND_TEST(ExportQueryExecutionTrees,
-              computeExportGroupsRespectsGroupBounds);
+  FRIEND_TEST(ExportQueryExecutionTrees, SplitBlockIntoChunks);
   FRIEND_TEST(ExportQueryExecutionTrees, SerializeConstructGroup);
   FRIEND_TEST(ExportQueryExecutionTrees, compensateForLimitOffsetClause);
-  FRIEND_TEST(ExportQueryExecutionTrees, SplitBlocksIntoGroups);
 
   // The per-format serialization body of the CONSTRUCT export: instantiates
   // `templateTriples` for every row in `rowRange` and serializes each resulting
@@ -230,25 +230,12 @@ class ExportQueryExecutionTrees {
       size_t rowOffset,
       const qlever::constructExport::EvaluationConfig& config);
 
-  // Split the materialized CONSTRUCT rows `blocks` into the contiguous groups
-  // that the parallel serialization serializes concurrently.  The number of
-  // groups is bounded by `4 * numThreads` and by the per-request buffer-memory
-  // budget (`bufferMemoryBytes`), so that at most `numThreads` group buffers
-  // are in flight while each group stays large enough to keep the per-group
-  // overhead (submitting a task, assembling one output buffer) negligible.
-  static std::vector<std::vector<TableWithRange>> computeExportGroups(
-      const std::vector<TableWithRange>& blocks, uint64_t totalRows,
-      size_t numThreads, size_t bufferMemoryBytes, size_t triplesPerRow);
-
-  // Split the exported rows of `blocks` into `numGroups` contiguous groups.  A
-  // block whose rows span a group boundary is split into sub-ranges, so that
-  // each group holds `TableWithRange`s whose `view_` ranges are pairwise
-  // disjoint and appear in the same order as in the original blocks.  This
-  // keeps the serialization of each group byte-identical to the serial path
-  // (the `view_` ranges carry the original global row indices, which the
-  // blank-node base IDs depend on).
-  static std::vector<std::vector<TableWithRange>> splitBlocksIntoGroups(
-      const std::vector<TableWithRange>& blocks, size_t numGroups);
+  // Cut one lazy WHERE block into contiguous row chunks of `rowsPerChunk`
+  // rows (the last chunk may be shorter). The `view_` ranges keep the original
+  // global row indices, which blank-node base IDs depend on. Empty blocks
+  // yield no chunks.
+  static std::vector<TableWithRange> splitBlockIntoChunks(
+      const TableWithRange& block, size_t rowsPerChunk);
 };
 
 #endif  // QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H

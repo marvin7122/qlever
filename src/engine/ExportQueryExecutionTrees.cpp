@@ -20,6 +20,7 @@
 #include <optional>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
@@ -766,62 +767,22 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
 }
 
 // _____________________________________________________________________________
-std::vector<std::vector<TableWithRange>>
-ExportQueryExecutionTrees::splitBlocksIntoGroups(
-    const std::vector<TableWithRange>& blocks, size_t numGroups) {
-  uint64_t totalRows = 0;
-  for (const auto& block : blocks) {
-    totalRows += ql::ranges::size(block.view_);
+std::vector<TableWithRange> ExportQueryExecutionTrees::splitBlockIntoChunks(
+    const TableWithRange& block, size_t rowsPerChunk) {
+  AD_CONTRACT_CHECK(rowsPerChunk > 0);
+  std::vector<TableWithRange> chunks;
+  if (ql::ranges::empty(block.view_)) {
+    return chunks;
   }
-  // Preconditions after `totalRows` is known so they can sit in one block.
-  AD_CORRECTNESS_CHECK(numGroups > 0);
-  std::vector<std::vector<TableWithRange>> groups(numGroups);
-  if (totalRows == 0) {
-    return groups;
+  const uint64_t begin0 = *ql::ranges::begin(block.view_);
+  const uint64_t end = begin0 + ql::ranges::size(block.view_);
+  const uint64_t step = static_cast<uint64_t>(rowsPerChunk);
+  for (uint64_t begin = begin0; begin < end; begin += step) {
+    const uint64_t pieceEnd = std::min(end, begin + step);
+    chunks.emplace_back(block.tableWithVocab_,
+                        ql::views::iota(begin, pieceEnd));
   }
-  AD_CONTRACT_CHECK(numGroups <= totalRows);
-  const uint64_t rowsPerGroup = (totalRows + numGroups - 1) / numGroups;
-  // The `view_` ranges carry the original global row indices (the blank-node
-  // base IDs depend on them), so the group boundaries are expressed in the
-  // same absolute index space: the first group starts at the first row of the
-  // first non-empty block, and the last group receives all remaining rows.
-  size_t firstNonEmptyBlock = 0;
-  while (ql::ranges::empty(blocks[firstNonEmptyBlock].view_)) {
-    ++firstNonEmptyBlock;
-  }
-  const uint64_t firstRow =
-      *ql::ranges::begin(blocks[firstNonEmptyBlock].view_);
-  // Exclusive end of the global row-index range covered by `blocks`.
-  const uint64_t globalRowEndExclusive = firstRow + totalRows;
-  size_t groupIndex = 0;
-  uint64_t groupEnd = firstRow + rowsPerGroup;
-  for (const auto& block : blocks) {
-    uint64_t begin = *ql::ranges::begin(block.view_);
-    uint64_t end = begin + ql::ranges::size(block.view_);
-    while (begin < end) {
-      // The last group receives all rows that are left.
-      if (groupIndex == numGroups - 1) {
-        groupEnd = end;
-      }
-      const uint64_t pieceEnd = std::min(end, groupEnd);
-      // A group boundary can lie before this block's first row only when the
-      // blocks are not contiguous; then the rows of the intermediate groups
-      // do not exist and those groups stay empty.
-      if (pieceEnd <= begin) {
-        ++groupIndex;
-        groupEnd = std::min(groupEnd + rowsPerGroup, globalRowEndExclusive);
-        continue;
-      }
-      groups[groupIndex].emplace_back(block.tableWithVocab_,
-                                      ql::views::iota(begin, pieceEnd));
-      begin = pieceEnd;
-      if (begin >= groupEnd && groupIndex + 1 < numGroups) {
-        ++groupIndex;
-        groupEnd = std::min(groupEnd + rowsPerGroup, globalRowEndExclusive);
-      }
-    }
-  }
-  return groups;
+  return chunks;
 }
 
 // _____________________________________________________________________________
@@ -839,27 +800,6 @@ std::string ExportQueryExecutionTrees::serializeConstructGroup(
     output += triple;
   }
   return output;
-}
-
-// _____________________________________________________________________________
-std::vector<std::vector<TableWithRange>>
-ExportQueryExecutionTrees::computeExportGroups(
-    const std::vector<TableWithRange>& blocks, uint64_t totalRows,
-    size_t numThreads, size_t bufferMemoryBytes, size_t triplesPerRow) {
-  triplesPerRow = std::max<size_t>(1, triplesPerRow);
-  // At any point in time at most `numThreads` group buffers are in flight, so
-  // bounding the group size by
-  // `bufferMemoryBytes / (numThreads * triplesPerRow * 128)` keeps the total
-  // in-flight output within the budget (128 is a conservative average size of
-  // one serialized triple in bytes).
-  size_t maxGroups = std::max<size_t>(1, 4 * numThreads);
-  size_t rowsPerGroup = bufferMemoryBytes / (numThreads * triplesPerRow * 128);
-  rowsPerGroup = std::max<size_t>(1, rowsPerGroup);
-  maxGroups = std::min(
-      maxGroups,
-      static_cast<size_t>((totalRows + rowsPerGroup - 1) / rowsPerGroup));
-  maxGroups = std::max<size_t>(1, maxGroups);
-  return splitBlocksIntoGroups(blocks, maxGroups);
 }
 
 // _____________________________________________________________________________
@@ -892,12 +832,13 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
                                   constructTriples.size());
 
   // The number of threads for the parallel serialization of the CONSTRUCT
-  // triples.  0 means: use all logical cores.  The parallel path serializes
-  // disjoint contiguous row ranges concurrently and yields their outputs in
-  // order.  When triple deduplication is active, the chunks share a single
-  // deduplicator whose ID-space filter and `dedupVocab_` re-anchoring are
-  // guarded by a mutex (see `ConstructDeduplicator::isNew`); the string
-  // formatting happens outside the lock.
+  // triples.  0 means: use all logical cores.  The parallel path walks lazy
+  // WHERE blocks, cuts each block into contiguous row chunks, and serializes
+  // those chunks on a worker pool. Outputs are yielded in row order.  When
+  // triple deduplication is active, the chunks share a single deduplicator
+  // whose ID-space filter and `dedupVocab_` re-anchoring are guarded by a
+  // mutex (see `ConstructDeduplicator::isNew`); the string formatting happens
+  // outside the lock.
   size_t numThreads =
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
   const auto& dedupMode =
@@ -937,60 +878,46 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
             config.mode_, *qet.getQec());
   }
 
-  // Materialize the row blocks once (the result of the WHERE clause is
-  // already fully computed at this point, so this is only slicing).
-  std::vector<TableWithRange> blocks;
-  uint64_t totalRows = 0;
-  for (TableWithRange& block : rowIndices) {
-    totalRows += ql::ranges::size(block.view_);
-    blocks.push_back(std::move(block));
-  }
-  if (totalRows == 0) {
-    STREAMABLE_RETURN;
-  }
-
-  // Split the rows into up to `4 * numThreads` contiguous groups, so that the
-  // work is load-balanced across the workers while each group is large enough
-  // to keep the per-group overhead (submitting a task, assembling one output
-  // buffer) negligible.  The group size is additionally bounded by the
-  // per-request buffer-memory budget (see `computeExportGroups`).
-  const size_t bufferMemory =
-      getRuntimeParameter<&RuntimeParameters::constructExportBufferMemory_>()
-          .getBytes();
-  std::vector<std::vector<TableWithRange>> groups = computeExportGroups(
-      blocks, totalRows, numThreads, bufferMemory, constructTriples.size());
-  numThreads = std::min(numThreads, groups.size());
-
-  // Submit one task per group; each task serializes its rows into a
-  // `std::string` via `serializeConstructGroup`, which uses the same generator
-  // pipeline as the serial path (including the `rowOffset`, on which the
-  // blank-node base IDs depend).
-  ad_utility::TaskQueue<false> queue{numThreads, numThreads,
+  // Walk lazy WHERE blocks one at a time. Workers may only touch the current
+  // block: its IdTable view dies when the generator advances. Each block is
+  // cut into contiguous chunks of `rowsPerChunk` rows and submitted in order
+  // to a pool of `numThreads` workers. At most `2 * numThreads` chunk strings
+  // are in flight so later chunks of a large block are not all materialized
+  // before the first one is yielded.
+  const size_t rowsPerChunk =
+      getRuntimeParameter<&RuntimeParameters::constructExportRowsPerChunk_>();
+  const size_t window = 2 * numThreads;
+  ad_utility::TaskQueue<false> queue{window, numThreads,
                                      "ConstructExportParallel"};
-  std::vector<std::future<std::string>> futures;
-  futures.reserve(groups.size());
   const auto& templateTriples = constructTriples;
   const auto& variableColumns = qet.getVariableColumns();
   const size_t rowOffset = limitAndOffset._offset;
-  for (std::vector<TableWithRange>& group : groups) {
-    if (group.empty()) {
+
+  for (TableWithRange& block : rowIndices) {
+    std::vector<TableWithRange> chunks =
+        splitBlockIntoChunks(block, rowsPerChunk);
+    if (chunks.empty()) {
       continue;
     }
-    futures.push_back(
-        queue.submit([&templateTriples, &variableColumns, rowOffset, &config,
-                      group = std::move(group)]() mutable {
-          return serializeConstructGroup<format>(
-              templateTriples, variableColumns,
-              ad_utility::InputRangeTypeErased(std::move(group)), rowOffset,
-              config);
-        }));
-  }
-
-  // Yield the group outputs in order, so that the exported bytes are
-  // identical to the serial path.
-  for (std::future<std::string>& future : futures) {
-    cancellationHandle->throwIfCancelled();
-    STREAMABLE_YIELD(std::move(future.get()));
+    std::vector<std::future<std::string>> futures(chunks.size());
+    size_t nextSubmit = 0;
+    size_t nextGet = 0;
+    while (nextGet < chunks.size()) {
+      while (nextSubmit < chunks.size() && nextSubmit - nextGet < window) {
+        futures[nextSubmit] = queue.submit(
+            [&templateTriples, &variableColumns, rowOffset, &config,
+             chunk = std::move(chunks[nextSubmit])]() mutable {
+              std::vector<TableWithRange> one{std::move(chunk)};
+              return serializeConstructGroup<format>(
+                  templateTriples, variableColumns,
+                  InputRangeTypeErased(std::move(one)), rowOffset, config);
+            });
+        ++nextSubmit;
+      }
+      cancellationHandle->throwIfCancelled();
+      STREAMABLE_YIELD(std::move(futures[nextGet].get()));
+      ++nextGet;
+    }
   }
   STREAMABLE_RETURN;
 }
@@ -1075,7 +1002,7 @@ ExportQueryExecutionTrees::computeResult(
                        streamableYielder)
                  : constructQueryResultToStream<format>(
                        qet, parsedQuery.constructClause().triples_, limit,
-                       qet.getResult(false), std::move(cancellationHandle),
+                       qet.getResult(true), std::move(cancellationHandle),
                        streamableYielder);
     }
   }};

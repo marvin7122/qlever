@@ -2292,18 +2292,15 @@ std::string makeConstructKg(size_t numTriples) {
 }
 
 // Returns the streamed result of the given CONSTRUCT query for the given
-// media type, with `numThreads` threads for the parallel serialization and
-// the given per-request buffer-memory budget (in bytes).
+// media type, with `numThreads` workers and `rowsPerChunk` rows per chunk.
 std::string constructResultWithThreads(const std::string& kg,
                                        const std::string& query,
                                        ad_utility::MediaType mediaType,
-                                       size_t numThreads,
-                                       size_t bufferMemoryBytes) {
+                                       size_t numThreads, size_t rowsPerChunk) {
   auto cleanupThreads = setRuntimeParameterForTest<
       &RuntimeParameters::constructExportNumThreads_>(numThreads);
-  auto cleanupBuffer = setRuntimeParameterForTest<
-      &RuntimeParameters::constructExportBufferMemory_>(
-      ad_utility::MemorySize::bytes(bufferMemoryBytes));
+  auto cleanupChunk = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowsPerChunk_>(rowsPerChunk);
   return runQueryStreamableResult(kg, query, mediaType);
 }
 }  // namespace
@@ -2319,32 +2316,29 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationMatchesSerial) {
   const std::string expectedNtriples =
       runQueryStreamableResult(kg, query, ntriples);
 
-  // A small buffer-memory budget forces the rows to be split into many small
-  // groups (with the default 64 MiB budget, 200 rows fit into a single
-  // group and the parallel path degenerates to one task).
-  constexpr size_t smallBuffer = 1024;
+  // A small chunk size forces many worker tasks (default 1024 would leave
+  // 200 rows as a single chunk).
+  constexpr size_t smallChunk = 10;
   for (size_t numThreads : {size_t{2}, size_t{4}, size_t{8}}) {
     EXPECT_EQ(
-        constructResultWithThreads(kg, query, tsv, numThreads, smallBuffer),
+        constructResultWithThreads(kg, query, tsv, numThreads, smallChunk),
         expectedTsv)
         << "numThreads = " << numThreads;
     EXPECT_EQ(
-        constructResultWithThreads(kg, query, turtle, numThreads, smallBuffer),
+        constructResultWithThreads(kg, query, turtle, numThreads, smallChunk),
         expectedTurtle)
         << "numThreads = " << numThreads;
-    EXPECT_EQ(constructResultWithThreads(kg, query, ntriples, numThreads,
-                                         smallBuffer),
-              expectedNtriples)
+    EXPECT_EQ(
+        constructResultWithThreads(kg, query, ntriples, numThreads, smallChunk),
+        expectedNtriples)
         << "numThreads = " << numThreads;
   }
 
   // numThreads == 0 means "all logical cores" and must also match.
-  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 0, smallBuffer),
+  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 0, smallChunk),
             expectedTsv);
-  // The default buffer-memory budget (single group) must also match.
-  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 4,
-                                       std::numeric_limits<size_t>::max()),
-            expectedTsv);
+  // One chunk for the whole result must also match.
+  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 4, 10'000), expectedTsv);
 }
 
 // Blank-node labels in the CONSTRUCT output depend on the global row index
@@ -2358,14 +2352,14 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationBlankNodes) {
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s";
   const std::string queryWithOffset =
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s LIMIT 60 OFFSET 30";
-  constexpr size_t smallBuffer = 1024;
+  constexpr size_t smallChunk = 10;
   for (const auto& q : {query, queryWithOffset}) {
     const std::string expected = runQueryStreamableResult(kg, q, turtle);
-    EXPECT_EQ(constructResultWithThreads(kg, q, turtle, 4, smallBuffer),
+    EXPECT_EQ(constructResultWithThreads(kg, q, turtle, 4, smallChunk),
               expected);
     // The blank-node labels are unique per row (fresh blank node per row).
     std::string parallel =
-        constructResultWithThreads(kg, q, turtle, 4, smallBuffer);
+        constructResultWithThreads(kg, q, turtle, 4, smallChunk);
     EXPECT_EQ(parallel, expected);
     EXPECT_NE(parallel.find("_:u"), std::string::npos);
   }
@@ -2406,21 +2400,11 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationEmptyResult) {
   }
 }
 
-// White-box test for `splitBlocksIntoGroups`, the row-group splitting of the
-// parallel CONSTRUCT export serialization.  The defensive branches (all
-// blocks empty, leading empty block, gap between non-contiguous blocks)
-// cannot be reached through the query interface (`getRowIndices` never
-// yields empty views and yields the views of the blocks in ascending order),
-// so the function is exercised directly.
-TEST(ExportQueryExecutionTrees, SplitBlocksIntoGroups) {
-  // `splitBlocksIntoGroups` only reads `view_` and copies `tableWithVocab_`
-  // (it never dereferences the table or the vocab), but the backing objects
-  // are kept alive and pinned anyway, so that the test would stay valid if
-  // the function ever started to dereference them.
+// White-box test for `splitBlockIntoChunks`. `getRowIndices` never yields
+// an empty view, but the function must still handle one.
+TEST(ExportQueryExecutionTrees, SplitBlockIntoChunks) {
   std::vector<IdTable> tables;
   std::vector<LocalVocab> vocabs;
-  tables.reserve(8);
-  vocabs.reserve(8);
   auto makeBlock = [&tables, &vocabs](uint64_t begin, uint64_t end) {
     tables.push_back(makeIdTableFromVector({{0}}));
     vocabs.emplace_back();
@@ -2428,143 +2412,37 @@ TEST(ExportQueryExecutionTrees, SplitBlocksIntoGroups) {
         TableConstRefWithVocab{tables.back().asStaticView<0>(), vocabs.back()},
         ql::views::iota(begin, end)};
   };
-  // Extract the (begin, end) pairs of all ranges of all groups, so that the
-  // groups can be compared with GMock.
-  auto rangesOf = [](const std::vector<std::vector<TableWithRange>>& groups) {
-    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> result;
-    for (const auto& group : groups) {
-      std::vector<std::pair<uint64_t, uint64_t>> ranges;
-      for (const auto& block : group) {
-        const uint64_t begin = *ql::ranges::begin(block.view_);
-        ranges.emplace_back(begin, begin + ql::ranges::size(block.view_));
-      }
-      result.push_back(std::move(ranges));
+  auto rangesOf = [](const std::vector<TableWithRange>& chunks) {
+    std::vector<std::pair<uint64_t, uint64_t>> ranges;
+    for (const auto& chunk : chunks) {
+      const uint64_t begin = *ql::ranges::begin(chunk.view_);
+      ranges.emplace_back(begin, begin + ql::ranges::size(chunk.view_));
     }
-    return result;
+    return ranges;
   };
 
-  // Contiguous blocks: a block whose rows span a group boundary is split.
   {
-    std::vector<TableWithRange> blocks{makeBlock(0, 4), makeBlock(4, 8),
-                                       makeBlock(8, 12)};
-    auto groups = ExportQueryExecutionTrees::splitBlocksIntoGroups(blocks, 2);
-    EXPECT_THAT(rangesOf(groups),
-                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 4},
-                                        std::pair<uint64_t, uint64_t>{4, 6}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{6, 8},
-                                        std::pair<uint64_t, uint64_t>{8, 12})));
+    auto chunks =
+        ExportQueryExecutionTrees::splitBlockIntoChunks(makeBlock(0, 10), 3);
+    EXPECT_THAT(rangesOf(chunks),
+                ElementsAre(std::pair<uint64_t, uint64_t>{0, 3},
+                            std::pair<uint64_t, uint64_t>{3, 6},
+                            std::pair<uint64_t, uint64_t>{6, 9},
+                            std::pair<uint64_t, uint64_t>{9, 10}));
   }
-  // All blocks empty: all groups stay empty.
   {
-    std::vector<TableWithRange> blocks{makeBlock(0, 0), makeBlock(0, 0)};
-    auto groups = ExportQueryExecutionTrees::splitBlocksIntoGroups(blocks, 3);
-    EXPECT_THAT(rangesOf(groups),
-                ElementsAre(ElementsAre(), ElementsAre(), ElementsAre()));
+    auto chunks = ExportQueryExecutionTrees::splitBlockIntoChunks(
+        makeBlock(100, 105), 10);
+    EXPECT_THAT(rangesOf(chunks),
+                ElementsAre(std::pair<uint64_t, uint64_t>{100, 105}));
   }
-  // Leading empty block: it is skipped before the first row is read.
   {
-    std::vector<TableWithRange> blocks{makeBlock(0, 0), makeBlock(0, 10)};
-    auto groups = ExportQueryExecutionTrees::splitBlocksIntoGroups(blocks, 2);
-    EXPECT_THAT(rangesOf(groups),
-                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 5}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{5, 10})));
+    auto chunks =
+        ExportQueryExecutionTrees::splitBlockIntoChunks(makeBlock(0, 0), 4);
+    EXPECT_TRUE(chunks.empty());
   }
-  // Non-contiguous blocks with a gap: the group boundaries that fall into
-  // the gap stay empty and the last group receives all remaining rows.
-  {
-    std::vector<TableWithRange> blocks{makeBlock(0, 10), makeBlock(1000, 1010)};
-    auto groups = ExportQueryExecutionTrees::splitBlocksIntoGroups(blocks, 4);
-    EXPECT_THAT(
-        rangesOf(groups),
-        ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 5}),
-                    ElementsAre(std::pair<uint64_t, uint64_t>{5, 10}),
-                    ElementsAre(),
-                    ElementsAre(std::pair<uint64_t, uint64_t>{1000, 1010})));
-  }
-}
-
-// ____________________________________________________________________________
-// White-box test for `computeExportGroups`, the group-sizing policy of the
-// parallel CONSTRUCT export.  It must bound the number of groups by both the
-// thread count (`4 * numThreads`) and the per-request buffer-memory budget.
-TEST(ExportQueryExecutionTrees, computeExportGroupsRespectsGroupBounds) {
-  // `computeExportGroups` only reads `view_` and copies `tableWithVocab_`, but
-  // the backing objects are kept alive and pinned anyway (same reasoning as
-  // the `SplitBlocksIntoGroups` test).
-  std::vector<IdTable> tables;
-  std::vector<LocalVocab> vocabs;
-  tables.reserve(4);
-  vocabs.reserve(4);
-  auto makeBlock = [&tables, &vocabs](uint64_t begin, uint64_t end) {
-    tables.push_back(makeIdTableFromVector({{0}}));
-    vocabs.emplace_back();
-    return TableWithRange{
-        TableConstRefWithVocab{tables.back().asStaticView<0>(), vocabs.back()},
-        ql::views::iota(begin, end)};
-  };
-  auto rangesOf = [](const std::vector<std::vector<TableWithRange>>& groups) {
-    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> result;
-    for (const auto& group : groups) {
-      std::vector<std::pair<uint64_t, uint64_t>> ranges;
-      for (const auto& block : group) {
-        const uint64_t begin = *ql::ranges::begin(block.view_);
-        ranges.emplace_back(begin, begin + ql::ranges::size(block.view_));
-      }
-      result.push_back(std::move(ranges));
-    }
-    return result;
-  };
-
-  // The buffer-memory budget dominates: 1024 bytes / (4 threads * 1 triple
-  // per row * 128) = 2 rows per group, so 10 rows become 5 groups.
-  {
-    std::vector<TableWithRange> blocks{makeBlock(0, 10)};
-    auto groups = ExportQueryExecutionTrees::computeExportGroups(
-        blocks, 10, /*numThreads=*/4, /*bufferMemoryBytes=*/1024,
-        /*triplesPerRow=*/1);
-    EXPECT_THAT(rangesOf(groups),
-                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 2}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{2, 4}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{4, 6}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{6, 8}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{8, 10})));
-  }
-  // The thread-count bound dominates: 4 * 2 = 8 groups is the maximum, even
-  // though the tiny buffer would allow up to 10 groups (one row per group).
-  {
-    std::vector<TableWithRange> blocks{makeBlock(0, 10)};
-    auto groups = ExportQueryExecutionTrees::computeExportGroups(
-        blocks, 10, /*numThreads=*/2, /*bufferMemoryBytes=*/256,
-        /*triplesPerRow=*/1);
-    EXPECT_EQ(groups.size(), 8u);
-    // The first five groups hold the 10 rows; the remaining three are empty.
-    EXPECT_THAT(rangesOf(groups),
-                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 2}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{2, 4}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{4, 6}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{6, 8}),
-                            ElementsAre(std::pair<uint64_t, uint64_t>{8, 10}),
-                            ElementsAre(), ElementsAre(), ElementsAre()));
-  }
-  // A huge buffer budget leaves all rows in a single group.
-  {
-    std::vector<TableWithRange> blocks{makeBlock(0, 10)};
-    auto groups = ExportQueryExecutionTrees::computeExportGroups(
-        blocks, 10, /*numThreads=*/4,
-        /*bufferMemoryBytes=*/std::numeric_limits<size_t>::max(),
-        /*triplesPerRow=*/1);
-    EXPECT_THAT(rangesOf(groups),
-                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 10})));
-  }
-  // An empty result yields one empty group and does not crash.
-  {
-    std::vector<TableWithRange> blocks{makeBlock(0, 0)};
-    auto groups = ExportQueryExecutionTrees::computeExportGroups(
-        blocks, 0, /*numThreads=*/4, /*bufferMemoryBytes=*/1024,
-        /*triplesPerRow=*/1);
-    EXPECT_EQ(groups.size(), 1u);
-    EXPECT_TRUE(rangesOf(groups).front().empty());
-  }
+  EXPECT_ANY_THROW(
+      ExportQueryExecutionTrees::splitBlockIntoChunks(makeBlock(0, 5), 0));
 }
 
 // ____________________________________________________________________________
