@@ -6,9 +6,9 @@
 """
 Export equivalence helper for QLever CONSTRUCT and SELECT outputs.
 
-This is not a substitute for a byte-identity check. The parallel CONSTRUCT path
-uses xxh3 for an order-preserving stream. Graph isomorphism is a different
-predicate.
+This is not a substitute for a byte-identity check. Graph isomorphism
+of CONSTRUCT results is a different predicate from byte identity of an
+order-preserving stream.
 
 CONSTRUCT (turtle, ntriples)
   The result is an RDF graph, which is a set of triples. Comparison uses
