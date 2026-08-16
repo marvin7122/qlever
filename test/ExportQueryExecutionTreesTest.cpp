@@ -2307,3 +2307,16 @@ TEST(ExportQueryExecutionTrees, SelectQueryMoreThanOneBatchOfRows) {
   EXPECT_EQ(runQueryStreamableResult(kg, query, ad_utility::MediaType::csv),
             expectedCsv);
 }
+
+// _____________________________________________________________________________
+// Batched SELECT must resolve real vocabulary IRIs and leave unbound columns
+// as empty cells. The integer VALUES test above never hits a `VocabIndex`.
+TEST(ExportQueryExecutionTrees, SelectQueryBatchWithVocabIrisAndUnbound) {
+  const std::string kg = "<http://ex/s> <http://ex/p> <http://ex/o> .";
+  const std::string query =
+      "SELECT ?s ?missing ?o WHERE { ?s <http://ex/p> ?o }";
+  EXPECT_EQ(runQueryStreamableResult(kg, query, ad_utility::MediaType::tsv),
+            "?s\t?missing\t?o\n<http://ex/s>\t\t<http://ex/o>\n");
+  EXPECT_EQ(runQueryStreamableResult(kg, query, ad_utility::MediaType::csv),
+            "s,missing,o\nhttp://ex/s,,http://ex/o\n");
+}
