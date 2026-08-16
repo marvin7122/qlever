@@ -100,7 +100,8 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize, size_t registeredBufferSize)
   // for buffered reads; the per-completion `memcpy` into the caller's buffer is
   // an additional cost that this design trades against the cheaper submission
   // path, so the approach only pays off if it is measured to.
-  registeredBufferPool_ = allocatePageAligned(ringSize_ * registeredBufferSize_);
+  registeredBufferPool_ =
+      allocatePageAligned(ringSize_ * registeredBufferSize_);
   registeredBufferPoolSize_ = ringSize_ * registeredBufferSize_;
   registeredIovecs_.reserve(ringSize_);
   freeBufferIndices_.reserve(ringSize_);
@@ -250,8 +251,7 @@ void IoUringPolicy::addBatch(int fd,
       // The buffer is selected via `poolIdx`; `addr` must point into that
       // registered buffer (here its base, so the read starts at offset 0).
       io_uring_prep_read_fixed(
-          sqe, fd,
-          registeredBufferPool_ + poolIdx * registeredBufferSize_,
+          sqe, fd, registeredBufferPool_ + poolIdx * registeredBufferSize_,
           static_cast<unsigned>(numBytesToRead), static_cast<__u64>(fileOffset),
           poolIdx);
     } else {
