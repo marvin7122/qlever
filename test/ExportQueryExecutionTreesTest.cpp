@@ -2581,8 +2581,8 @@ TEST(ExportQueryExecutionTrees, SerializeConstructGroup) {
   EvaluationConfig config{index, std::move(handle), *qec};
 
   const auto idS = ad_utility::testing::makeGetId(index)("<s>");
-  auto result = std::make_shared<const Result>(makeIdTableFromVector({{idS}}),
-                                               {}, LocalVocab{});
+  auto result = std::make_shared<const Result>(
+      makeIdTableFromVector({{idS}}), std::vector<ColumnIndex>{}, LocalVocab{});
   Triples templateTriples{
       std::array{GraphTerm{ad_utility::testing::iriV("<s>")},
                  GraphTerm{ad_utility::testing::iriV("<p>")},
