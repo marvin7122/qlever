@@ -84,6 +84,30 @@ ex:b ex:q "different" .
         b = _write(self._tmp.name, "b.csv", "?s,?p,?o\n_:q7,<p>,\"v\"\n<a>,<p>,<o>\n")
         self.assertEqual(main(["--format", "csv", a, b]), 0)
 
+    def test_tsv_multi_bnode_row_swap(self):
+        # First-use labels plus a positional Counter would fail here.
+        a = _write(self._tmp.name, "a.tsv", "?s\t?o\n_:x\tfoo\n_:y\tbar\n")
+        b = _write(self._tmp.name, "b.tsv", "?s\t?o\n_:a\tbar\n_:b\tfoo\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 0)
+
+    def test_tsv_column_reorder(self):
+        a = _write(self._tmp.name, "a.tsv", "?s\t?o\n<a>\t<o>\n")
+        b = _write(self._tmp.name, "b.tsv", "?o\t?s\n<o>\t<a>\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 0)
+
+    def test_tsv_empty_vs_header_only(self):
+        a = _write(self._tmp.name, "a.tsv", "")
+        b = _write(self._tmp.name, "b.tsv", "?s\t?o\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 1)
+
+    def test_turtle_duplicate_triples_are_a_set(self):
+        a = _write(self._tmp.name, "a.ttl",
+                   "<http://ex/s> <http://ex/p> <http://ex/o> .\n"
+                   "<http://ex/s> <http://ex/p> <http://ex/o> .\n")
+        b = _write(self._tmp.name, "b.ttl",
+                   "<http://ex/s> <http://ex/p> <http://ex/o> .\n")
+        self.assertEqual(main(["--format", "turtle", a, b]), 0)
+
     # --- Error handling ---
     def test_unknown_format(self):
         self.assertEqual(main(["--format", "xml", "a", "b"]), 2)

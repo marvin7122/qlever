@@ -4,34 +4,25 @@
 # Author: Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 """
-W3C equivalence oracle for QLever export outputs (MVP).
+Export equivalence helper for QLever CONSTRUCT and SELECT outputs.
 
-Compare two QLever export output files and report whether they are
-equivalent under the W3C data model, rather than byte-identical.  The
-SPARQL 1.1 Query specification and the RDF 1.1 concepts it builds on
-require the export to be an equivalent representation of the query
-result, not a byte-identical one:
+This is not a substitute for a byte-identity check. Parallel CONSTRUCT
+(#28) gates on xxh3 of an order-preserving stream. Graph isomorphism is
+a different predicate.
 
-* A CONSTRUCT result is an RDF graph.  Two graphs are equivalent when
-  they contain the same set of triples, where blank-node identity is
-  taken up to isomorphism and triple/term ordering carries no semantic
-  weight.
-* A SELECT result is a multiset of solutions.  Two solution multisets
-  are equivalent when they contain the same bindings with the same
-  multiplicities, independent of the order in which the solutions were
-  serialized.
+CONSTRUCT (turtle, ntriples)
+  The result is an RDF graph, which is a set of triples. Comparison uses
+  rdflib.compare.isomorphic. Duplicate triples are collapsed. A bug that
+  emits the same triple twice will still pass.
 
-This tool is the test oracle for the parallel export paths: the parallel
-CONSTRUCT serializer may legitimately produce a different byte stream
-from the serial path as long as the two outputs remain equivalent in the
-W3C sense.  For RDF graph formats the comparison delegates to rdflib's
-`compare.isomorphic`, which performs blank-node-aware graph isomorphism.
-For tabular (TSV/CSV) SELECT output the tool compares the solution
-multisets after canonicalising blank-node labels.
+SELECT (tsv, csv)
+  The result is a multiset of solution mappings, keyed by variable name.
+  Column order does not matter. Blank nodes shared across rows are
+  compared by encoding each result as an RDF graph (one blank node per
+  solution, predicates are variable names) and running isomorphism.
+  An empty file is not equivalent to a header-only file.
 
-Exit status: 0 when the two outputs are equivalent, 1 when they differ,
-2 on usage or parse errors.  The human-readable verdict is printed to
-stdout.
+Exit status: 0 equivalent, 1 different, 2 usage or parse error.
 
 Usage:
   check_export_equivalence.py --format turtle FILE_A FILE_B
@@ -39,114 +30,138 @@ Usage:
   check_export_equivalence.py --format tsv FILE_A FILE_B
   check_export_equivalence.py --format csv FILE_A FILE_B
 
-Format selection:
-  turtle     RDF graph in Turtle syntax (CONSTRUCT result)
-  ntriples   RDF graph in N-Triples syntax (CONSTRUCT result)
-  tsv        SELECT result as tab-separated values
-  csv        SELECT result as comma-separated values
-
-Requires rdflib (pip install rdflib) for the RDF graph formats.
+Requires rdflib for every format.
 """
 import csv
 import re
 import sys
-from typing import Iterable, List, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 _BNODE_LABEL = re.compile(r"^_:[A-Za-z0-9_\-]+$")
+_VAR_NS = "urn:qlever:var:"
 
 
 def _is_bnode(term: str) -> bool:
-    """True when `term` is an RDF blank-node label like `_:b0`."""
     return _BNODE_LABEL.match(term) is not None
 
 
-def _canonicalise_bnodes(rows: Iterable[Tuple[str, ...]],
-                         ) -> List[Tuple[str, ...]]:
-    """Map blank-node labels in a solution table to canonical first-use
-    labels so that the same logical blank node compares equal across the
-    two files even when the serializer used different labels."""
-    mapping: dict[str, str] = {}
-    counter = 0
-    canonical: List[Tuple[str, ...]] = []
+def _normalize_var(name: str) -> str:
+    return name[1:] if name.startswith("?") else name
+
+
+def _load_table(path: str, fmt: str) -> Tuple[Optional[Tuple[str, ...]],
+                                              List[Tuple[str, ...]]]:
+    """Return (header, rows). header is None when the file is empty."""
+    if fmt == "csv":
+        with open(path, encoding="utf-8", newline="") as fh:
+            rows = [tuple(row) for row in csv.reader(fh)]
+    else:
+        with open(path, encoding="utf-8") as fh:
+            rows = [tuple(line.rstrip("\n").split("\t")) for line in fh]
+    if not rows:
+        return None, []
+    return rows[0], rows[1:]
+
+
+def _cell_to_term(cell: str):
+    from rdflib import BNode, Literal, URIRef
+
+    if cell == "":
+        return None
+    if _is_bnode(cell):
+        return BNode(cell[2:])
+    if len(cell) >= 2 and cell[0] == "<" and cell[-1] == ">":
+        return URIRef(cell[1:-1])
+    if cell.startswith('"'):
+        from rdflib import Graph
+
+        graph = Graph()
+        graph.parse(data=f"_:s <urn:p> {cell} .\n", format="nt")
+        return next(graph.objects())
+    if "://" in cell:
+        return URIRef(cell)
+    return Literal(cell)
+
+
+def _solutions_to_graph(header: Sequence[str],
+                        rows: Sequence[Sequence[str]]):
+    from rdflib import BNode, Graph, URIRef
+
+    graph = Graph()
+    variables = [_normalize_var(name) for name in header]
     for row in rows:
-        out = []
-        for term in row:
-            if _is_bnode(term):
-                if term not in mapping:
-                    mapping[term] = f"_:b{counter}"
-                    counter += 1
-                out.append(mapping[term])
-            else:
-                out.append(term)
-        canonical.append(tuple(out))
-    return canonical
-
-
-def _load_tsv(path: str) -> List[Tuple[str, ...]]:
-    with open(path, encoding="utf-8") as fh:
-        # TSV in QLever uses a tab separator.  Skip the header line (the
-        # first line, which lists the projected variable names).
-        return [tuple(line.rstrip("\n").split("\t")) for line in fh][1:]
-
-
-def _load_csv(path: str) -> List[Tuple[str, ...]]:
-    with open(path, encoding="utf-8", newline="") as fh:
-        reader = csv.reader(fh)
-        rows = [tuple(row) for row in reader]
-    # Drop the header row (variable names).
-    return rows[1:]
-
-
-def _compare_multisets(a: List[Tuple[str, ...]],
-                       b: List[Tuple[str, ...]]) -> bool:
-    """True when `a` and `b` are the same multiset of solutions."""
-    if len(a) != len(b):
-        return False
-    from collections import Counter
-    return Counter(a) == Counter(b)
+        if len(row) != len(variables):
+            raise ValueError(
+                f"row has {len(row)} cells, header has {len(variables)}")
+        row_node = BNode()
+        for name, cell in zip(variables, row):
+            term = _cell_to_term(cell)
+            if term is None:
+                continue
+            graph.add((row_node, URIRef(_VAR_NS + name), term))
+    return graph
 
 
 def _check_graph(path_a: str, path_b: str, fmt: str) -> int:
-    import rdflib
+    from rdflib import Graph
     from rdflib import compare
 
     try:
-        graph_a = rdflib.Graph().parse(path_a, format=fmt)
-        graph_b = rdflib.Graph().parse(path_b, format=fmt)
-    except Exception as exc:  # rdflib raises several parser-specific types
+        graph_a = Graph().parse(path_a, format=fmt)
+        graph_b = Graph().parse(path_b, format=fmt)
+    except Exception as exc:
         sys.stderr.write(f"parse error: {exc}\n")
         return 2
 
     if compare.isomorphic(graph_a, graph_b):
-        print("equivalent (RDF graphs are isomorphic)")
+        print("equivalent (RDF graphs are isomorphic; CONSTRUCT is a set, "
+              "duplicate triples are collapsed)")
         return 0
 
-    # Helpful diagnostic: report the symmetric set difference of triples
-    # (best-effort; blank-node-heavy graphs may still differ by iso).
     print("NOT equivalent (RDF graphs are not isomorphic)")
     diff_a = set(graph_a) - set(graph_b)
     diff_b = set(graph_b) - set(graph_a)
-    for t in list(diff_a)[:10]:
-        print(f"  only in {path_a}: {t}")
-    for t in list(diff_b)[:10]:
-        print(f"  only in {path_b}: {t}")
+    for triple in list(diff_a)[:10]:
+        print(f"  only in {path_a}: {triple}")
+    for triple in list(diff_b)[:10]:
+        print(f"  only in {path_b}: {triple}")
     return 1
 
 
 def _check_solutions(path_a: str, path_b: str, fmt: str) -> int:
-    load = _load_csv if fmt == "csv" else _load_tsv
+    from rdflib import compare
+
     try:
-        rows_a = _canonicalise_bnodes(load(path_a))
-        rows_b = _canonicalise_bnodes(load(path_b))
+        header_a, rows_a = _load_table(path_a, fmt)
+        header_b, rows_b = _load_table(path_b, fmt)
     except (OSError, csv.Error) as exc:
         sys.stderr.write(f"read error: {exc}\n")
         return 2
 
-    if _compare_multisets(rows_a, rows_b):
-        print("equivalent (solution multisets match)")
+    if header_a is None or header_b is None:
+        print("NOT equivalent (empty file is not a SELECT result)")
+        return 1
+
+    vars_a = {_normalize_var(name) for name in header_a}
+    vars_b = {_normalize_var(name) for name in header_b}
+    if vars_a != vars_b:
+        print("NOT equivalent (projected variables differ)")
+        print(f"  {path_a}: {sorted(vars_a)}")
+        print(f"  {path_b}: {sorted(vars_b)}")
+        return 1
+
+    try:
+        graph_a = _solutions_to_graph(header_a, rows_a)
+        graph_b = _solutions_to_graph(header_b, rows_b)
+    except Exception as exc:
+        sys.stderr.write(f"parse error: {exc}\n")
+        return 2
+
+    if compare.isomorphic(graph_a, graph_b):
+        print("equivalent (SELECT mappings are isomorphic)")
         return 0
 
-    print("NOT equivalent (solution multisets differ)")
+    print("NOT equivalent (SELECT mappings differ)")
     print(f"  {path_a}: {len(rows_a)} solutions")
     print(f"  {path_b}: {len(rows_b)} solutions")
     return 1
