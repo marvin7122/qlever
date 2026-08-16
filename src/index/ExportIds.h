@@ -315,9 +315,10 @@ idsToStringAndType(const Index& index, ql::span<const Id> ids,
 
 // Depth-2 pipeline over many vocab sub-batches: submit the next sub-batch's
 // lookup before consuming the current one, so its reads are in flight while
-// the current batch is consumed. Each sub-batch is at most
-// `maxVocabIndicesPerSubBatch` indices, so no single `addBatch` exceeds the
-// per-batch budget of the io_uring ring.
+// the current batch is consumed. Each sub-batch is at most 256 indices so
+// `beginLookup` stays non-blocking: `addBatch` drains once in-flight reads
+// reach the default ring size (256). Depth-2 uses two pooled managers, not
+// one 512-slot ring.
 constexpr size_t maxVocabIndicesPerSubBatch = 256;
 
 template <bool removeQuotesAndAngleBrackets = false,

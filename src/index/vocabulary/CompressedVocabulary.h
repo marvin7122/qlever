@@ -136,10 +136,8 @@ CPP_template(typename UnderlyingVocabulary,
 
   VocabBatchLookupResult finishLookup(
       std::unique_ptr<VocabLookupHandleBase> handle) const {
-    auto* compressedHandle = static_cast<CompressedLookupHandle*>(handle.get());
-    AD_CONTRACT_CHECK(compressedHandle != nullptr &&
-                      compressedHandle->vocab_ == this);
-    return compressedHandle->finish();
+    AD_CONTRACT_CHECK(handle != nullptr);
+    return handle->finish();
   }
 
   //____________________________________________________________________________

@@ -231,9 +231,8 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::finishLookup(
     std::unique_ptr<VocabLookupHandleBase> handleBase) const {
-  auto* handle = static_cast<LookupHandle*>(handleBase.get());
-  AD_CONTRACT_CHECK(handle != nullptr && handle->vocab_ == this);
-  return handle->finish();
+  AD_CONTRACT_CHECK(handleBase != nullptr);
+  return handleBase->finish();
 }
 
 // _____________________________________________________________________________
@@ -257,16 +256,19 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
 
 // _____________________________________________________________________________
 VocabularyOnDisk::LookupHandle::~LookupHandle() {
-  // If `finish` was never called (e.g. an exception was thrown between
-  // `beginLookup` and `finishLookup`), return the `manager` to the pool so the
-  // pool does not leak managers out of its `NUM_VOCAB_BATCH_IO_MANAGERS`
-  // budget. After a successful `finish`, `manager_` is null and this is a
-  // no-op.
+  // If `finish` was never called (e.g. an exception between `beginLookup` and
+  // `finishLookup`), drain the offset reads first. Those reads target
+  // `offsetPairs_`, which dies with this handle. Returning a busy manager
+  // would let the next pool owner reuse the ring while the kernel still
+  // writes into freed memory.
   if (manager_) {
     ad_utility::terminateIfThrows(
-        [this]() { returnManagerToPool(); },
-        "returning the `IoManager` to the pool in the destructor of "
-        "`VocabularyOnDisk::LookupHandle`");
+        [this]() {
+          manager_->wait(offsetBatch_);
+          returnManagerToPool();
+        },
+        "draining in-flight offset reads and returning the `IoManager` in "
+        "the destructor of `VocabularyOnDisk::LookupHandle`");
   }
 }
 

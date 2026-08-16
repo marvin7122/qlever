@@ -203,9 +203,8 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // `offsetPairs_` to be set by `VocabularyOnDisk::beginLookup`.
     VocabBatchLookupResult finish() override;
 
-    // Return the `manager_` to the pool if `finish` was never called (e.g. an
-    // exception was thrown between `beginLookup` and `finishLookup`), so a
-    // manager is never leaked out of the pool.
+    // Drain in-flight offset reads, then return the `manager_` if `finish`
+    // was never called. The reads target `offsetPairs_`, which dies here.
     ~LookupHandle() override;
 
     const VocabularyOnDisk* vocab_ = nullptr;

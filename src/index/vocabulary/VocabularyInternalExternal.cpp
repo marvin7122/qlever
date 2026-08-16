@@ -69,9 +69,8 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyInternalExternal::beginLookup(
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::finishLookup(
     std::unique_ptr<VocabLookupHandleBase> handleBase) const {
-  auto* handle = static_cast<MixedLookupHandle*>(handleBase.get());
-  AD_CONTRACT_CHECK(handle != nullptr && handle->vocab_ == this);
-  return handle->finish();
+  AD_CONTRACT_CHECK(handleBase != nullptr);
+  return handleBase->finish();
 }
 
 // _____________________________________________________________________________
