@@ -468,6 +468,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
     LimitOffsetClause limitAndOffset, CancellationHandle cancellationHandle,
     [[maybe_unused]] const ad_utility::Timer& requestTimer,
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
+  DISABLE_OVERREAD_WARNINGS
   using enum ad_utility::MediaType;
   static_assert(ad_utility::contains(staticallySupportedMediaTypes, format));
 
@@ -589,6 +590,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
     STREAMABLE_YIELD(std::move(output));
   }
   AD_LOG_DEBUG << "Done creating readable result.\n";
+  GCC_REENABLE_WARNINGS
 }
 
 // _____________________________________________________________________________
