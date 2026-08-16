@@ -769,12 +769,13 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
 std::vector<std::vector<TableWithRange>>
 ExportQueryExecutionTrees::splitBlocksIntoGroups(
     const std::vector<TableWithRange>& blocks, size_t numGroups) {
-  AD_CORRECTNESS_CHECK(numGroups > 0);
-  std::vector<std::vector<TableWithRange>> groups(numGroups);
   uint64_t totalRows = 0;
   for (const auto& block : blocks) {
     totalRows += ql::ranges::size(block.view_);
   }
+  // Preconditions after `totalRows` is known so they can sit in one block.
+  AD_CORRECTNESS_CHECK(numGroups > 0);
+  std::vector<std::vector<TableWithRange>> groups(numGroups);
   if (totalRows == 0) {
     return groups;
   }
@@ -790,7 +791,8 @@ ExportQueryExecutionTrees::splitBlocksIntoGroups(
   }
   const uint64_t firstRow =
       *ql::ranges::begin(blocks[firstNonEmptyBlock].view_);
-  const uint64_t lastRowExclusive = firstRow + totalRows;
+  // Exclusive end of the global row-index range covered by `blocks`.
+  const uint64_t globalRowEndExclusive = firstRow + totalRows;
   size_t groupIndex = 0;
   uint64_t groupEnd = firstRow + rowsPerGroup;
   for (const auto& block : blocks) {
@@ -807,7 +809,7 @@ ExportQueryExecutionTrees::splitBlocksIntoGroups(
       // do not exist and those groups stay empty.
       if (pieceEnd <= begin) {
         ++groupIndex;
-        groupEnd = std::min(groupEnd + rowsPerGroup, lastRowExclusive);
+        groupEnd = std::min(groupEnd + rowsPerGroup, globalRowEndExclusive);
         continue;
       }
       groups[groupIndex].emplace_back(block.tableWithVocab_,
@@ -815,7 +817,7 @@ ExportQueryExecutionTrees::splitBlocksIntoGroups(
       begin = pieceEnd;
       if (begin >= groupEnd && groupIndex + 1 < numGroups) {
         ++groupIndex;
-        groupEnd = std::min(groupEnd + rowsPerGroup, lastRowExclusive);
+        groupEnd = std::min(groupEnd + rowsPerGroup, globalRowEndExclusive);
       }
     }
   }
