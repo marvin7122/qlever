@@ -161,11 +161,19 @@ void IoUringPolicy::wait(BatchHandle handle) {
   // with one syscall per burst.
   while (numInFlightReadRequestsPerBatch_.find(handle) !=
          numInFlightReadRequestsPerBatch_.end()) {
-    io_uring_cqe* cqe = nullptr;
-    int ret = io_uring_wait_cqe(&ring_, &cqe);
-    if (ret < 0) {
-      AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
-    }
+    // Block until at least one completion is available, and consume exactly
+    // that one CQE deterministically via the single-CQE path. We must not rely
+    // on the batch peek below to re-include the CQE returned by
+    // `io_uring_wait_cqe`: that function does not consume it, and whether a
+    // subsequent `io_uring_peek_batch_cqe` sees that same CQE (or how many
+    // ready CQEs it reports) depends on the kernel/liburing combination.
+    // Consuming the unblocking CQE here guarantees forward progress of the
+    // batch we are waiting on regardless of that interaction.
+    drainOneCqe();
+    // Then consume every further completion that is already ready, to
+    // amortize the `io_uring_enter` syscalls (the paper's central point) over
+    // bursts of completions (e.g. the two-phase reads of a depth-2 pipeline)
+    // instead of one syscall per CQE.
     drainAllReadyCqes();
   }
 }
