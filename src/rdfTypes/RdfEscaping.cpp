@@ -211,7 +211,7 @@ NormalizedRDFString normalizeRDFLiteral(const std::string_view origLiteral) {
 }
 
 // ____________________________________________________________________________
-std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
+void appendValidRDFLiteral(std::string& out, std::string_view normLiteral) {
   AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'));
   size_t posSecondQuote = normLiteral.find('"', 1);
   AD_CONTRACT_CHECK(posSecondQuote != std::string::npos);
@@ -220,7 +220,8 @@ std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
   // normalized literal has), there is nothing to do.
   if (posSecondQuote == posLastQuote &&
       normLiteral.find_first_of("\\\n\r") == std::string::npos) {
-    return std::string{normLiteral};
+    out.append(normLiteral);
+    return;
   }
   // Otherwise escape first all backlashes then all quotes (the order is
   // important) in the part between the first and the last quote and leave the
@@ -229,7 +230,13 @@ std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
   std::string content = absl::StrReplaceAll(
       normalizedContent,
       {{R"(\)", R"(\\)"}, {"\n", "\\n"}, {"\r", "\\r"}, {R"(")", R"(\")"}});
-  return absl::StrCat("\"", content, normLiteral.substr(posLastQuote));
+  absl::StrAppend(&out, "\"", content, normLiteral.substr(posLastQuote));
+}
+
+std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
+  std::string out;
+  appendValidRDFLiteral(out, normLiteral);
+  return out;
 }
 
 // __________________________________________________________________________
@@ -292,19 +299,36 @@ std::string unescapePrefixedIri(std::string_view literal) {
 }
 
 // __________________________________________________________________________
-std::string escapeForCsv(std::string input) {
+void appendEscapedForCsv(std::string& out, std::string_view input) {
   if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
-    return input;
+    out.append(input);
+    return;
   }
-  return absl::StrCat("\"", absl::StrReplaceAll(input, {{"\"", "\"\""}}), "\"");
+  absl::StrAppend(&out, "\"", absl::StrReplaceAll(input, {{"\"", "\"\""}}),
+                  "\"");
+}
+
+std::string escapeForCsv(std::string input) {
+  std::string out;
+  appendEscapedForCsv(out, input);
+  return out;
 }
 
 // __________________________________________________________________________
-std::string escapeForTsv(std::string input) {
-  if (ctre::search<detail::tsvSpecialCharsRegex>(input)) [[unlikely]] {
-    absl::StrReplaceAll({{"\t", " "}, {"\n", "\\n"}}, &input);
+void appendEscapedForTsv(std::string& out, std::string_view input) {
+  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
+    out.append(input);
+    return;
   }
-  return input;
+  std::string escaped{input};
+  absl::StrReplaceAll({{"\t", " "}, {"\n", "\\n"}}, &escaped);
+  out.append(escaped);
+}
+
+std::string escapeForTsv(std::string input) {
+  std::string out;
+  appendEscapedForTsv(out, input);
+  return out;
 }
 
 // __________________________________________________________________________

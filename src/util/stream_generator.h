@@ -1,8 +1,7 @@
-// Copyright 2021 - 2026, The QLever Authors, in particular:
+// Copyright 2021 - 2025 The QLever Authors, in particular:
 //
 // 2021 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
-// 2025 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
-// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+// 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -90,12 +89,6 @@ class stream_generator_promise {
   // this case the buffer will be filled to maximum capacity, so eventually
   // every bit of `value` is written, then the coroutine will be resumed.
   suspend_sometimes yield_value(std::string_view value) noexcept {
-    // GCC 11-15 emit spurious `-Wstringop-overread` warnings for the `memcpy`
-    // calls below when this function is inlined into a large coroutine frame
-    // and the size of `value` cannot be proven to fit into the buffer. The
-    // copies are always safe: `isBufferLargeEnough` guarantees that at most
-    // `value.size()` bytes are read from `value`.
-    DISABLE_OVERREAD_WARNINGS
     if (isBufferLargeEnough(value)) {
       if (!value.empty()) {
         std::memcpy(data_.data() + currentIndex_, value.data(), value.size());
@@ -110,23 +103,19 @@ class stream_generator_promise {
     currentIndex_ = BUFFER_SIZE;
     overflow_ = value.substr(fittingSize);
     return suspend_sometimes{true};
-    GCC_REENABLE_WARNINGS
   }
 
   // Overload so we can also pass char values, template such that all types that
   // implicitly convert to char are not accepted.
   CPP_template(typename CharT)(requires SimilarTo<CharT, char>)
       suspend_sometimes yield_value(CharT value) {
-    // Write the character directly instead of going through the
-    // `std::string_view` overload: the fortified `memcpy` there triggers a
-    // GCC 11 `-Wstringop-overread` false positive whose warning location is
-    // in the system header (string_fortified.h), so it cannot be suppressed
-    // with a diagnostic pragma. The direct write is always safe: the
-    // correctness check guarantees that at least one byte of buffer capacity
-    // remains.
-    AD_CORRECTNESS_CHECK(currentIndex_ < BUFFER_SIZE);
-    data_[currentIndex_++] = value;
-    return suspend_sometimes{currentIndex_ == BUFFER_SIZE};
+    std::string_view singleView{&value, 1};
+    // This is only safe to do if we can write into the buffer immediately.
+    AD_CORRECTNESS_CHECK(isBufferLargeEnough(singleView));
+    // Disable false positive warning on GCC.
+    DISABLE_OVERREAD_WARNINGS
+    return yield_value(singleView);
+    GCC_REENABLE_WARNINGS
   }
 
   // Return true if the overflow has been completely consumed.

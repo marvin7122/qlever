@@ -154,68 +154,6 @@ void appendFormattedTerm(std::string& out, const EvaluatedTermData& term,
   out.push_back('>');
 }
 
-// Returns true iff `RdfEscaping::validRDFLiteralFromNormalized` would have to
-// escape `normLiteral`, i.e. if there are characters between its first and
-// last quote that must be escaped.
-bool needsRDFLiteralEscaping(std::string_view normLiteral) {
-  AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'));
-  size_t posSecondQuote = normLiteral.find('"', 1);
-  AD_CONTRACT_CHECK(posSecondQuote != std::string::npos);
-  size_t posLastQuote = normLiteral.rfind('"');
-  // If there are only two quotes (the first and the last, which every
-  // normalized literal has) and no escape sequences, there is nothing to do.
-  return posSecondQuote != posLastQuote ||
-         normLiteral.find_first_of("\\\n\r") != std::string::npos;
-}
-
-// Appends `normLiteral` to `out`, escaping it exactly like
-// `RdfEscaping::validRDFLiteralFromNormalized` does, but without allocating a
-// new string in the common case where no escaping is required.
-void appendValidRDFLiteral(std::string& out, std::string_view normLiteral) {
-  if (!needsRDFLiteralEscaping(normLiteral)) {
-    out.append(normLiteral);
-    return;
-  }
-  // Otherwise escape first all backslashes then all quotes (the order is
-  // important) in the part between the first and the last quote and leave the
-  // rest unchanged.
-  size_t posLastQuote = normLiteral.rfind('"');
-  std::string_view normalizedContent = normLiteral.substr(1, posLastQuote - 1);
-  out.push_back('"');
-  using Replacement = std::pair<absl::string_view, absl::string_view>;
-  absl::StrAppend(
-      &out, absl::StrReplaceAll(
-                normalizedContent,
-                {Replacement{R"(\)", R"(\\)"}, Replacement{"\n", "\\n"},
-                 Replacement{"\r", "\\r"}, Replacement{R"(")", R"(\")"}}));
-  out.append(normLiteral.substr(posLastQuote));
-}
-
-// Appends `input` to `out`, escaping it exactly like
-// `RdfEscaping::escapeForCsv` does.
-void appendEscapedForCsv(std::string& out, std::string_view input) {
-  if (input.find_first_of("\"\r\n,") == std::string_view::npos) [[likely]] {
-    out.append(input);
-    return;
-  }
-  out.push_back('"');
-  using Replacement = std::pair<absl::string_view, absl::string_view>;
-  absl::StrAppend(&out,
-                  absl::StrReplaceAll(input, {Replacement{"\"", "\"\""}}));
-  out.push_back('"');
-}
-
-// Appends `input` to `out`, escaping it exactly like
-// `RdfEscaping::escapeForTsv` does.
-void appendEscapedForTsv(std::string& out, std::string_view input) {
-  if (input.find_first_of("\n\t") == std::string_view::npos) [[likely]] {
-    out.append(input);
-    return;
-  }
-  using Replacement = std::pair<absl::string_view, absl::string_view>;
-  absl::StrAppend(&out, absl::StrReplaceAll(input, {Replacement{"\t", " "},
-                                                    Replacement{"\n", "\\n"}}));
-}
 }  // namespace
 
 // _____________________________________________________________________________
@@ -229,30 +167,19 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
 
   const bool includeDataType = (format == ntriples);
 
-  // Buffers that are reused across rows: their capacity is retained between
-  // calls, so rows that are not larger than the previous maximum do not
-  // trigger any allocation. The only per-row allocation is the copy of the
-  // assembled row into the return value (which the caller owns). `scratch`
-  // is only used to hold the formatted object term (turtle/ntriples) or the
-  // formatted terms (csv/tsv) before they are appended (and possibly escaped).
-  // `thread_local` means one independent buffer per thread: concurrent export
-  // requests on different threads do not share (and thus do not lock) the
-  // buffers, and each thread keeps its capacity across requests.
-  thread_local std::string buffer;
-  thread_local std::string scratch;
-  buffer.clear();
-  scratch.clear();
+  // Caller-owned locals, not `thread_local`. TLS capacity is sticky for the
+  // thread lifetime. A later inline into a suspendable export coroutine
+  // would be S6367. The return still copies `buffer`.
+  std::string buffer;
+  std::string scratch;
 
   const EvaluatedTermData& s = *subject;
   const EvaluatedTermData& p = *predicate;
   const EvaluatedTermData& o = *object;
 
-  // Conservative estimate of the size of the assembled row. It never
-  // under-allocates: an escape sequence replaces a single character by at
-  // most two characters, so reserving an extra copy of the terms that may be
-  // escaped is always sufficient. The over-allocation is bounded by that
-  // escape headroom (plus a small constant for the separators), and the
-  // capacity is retained in the thread-local buffer for subsequent rows.
+  // Conservative estimate of the assembled row. An escape sequence replaces
+  // one character by at most two, so one extra copy of escapable terms is
+  // enough.
   auto formattedTermSize = [&includeDataType](const EvaluatedTermData& term) {
     size_t size = term.rdfTermString_.size();
     if (needsDatatypeWrapper(term, includeDataType)) {
@@ -293,7 +220,7 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
     // depends on the formatted form.
     if (objectIsLiteral) {
       appendFormattedTerm(scratch, o, includeDataType);
-      appendValidRDFLiteral(buffer, scratch);
+      RdfEscaping::appendValidRDFLiteral(buffer, scratch);
     } else {
       appendFormattedTerm(buffer, o, includeDataType);
     }
@@ -304,9 +231,9 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
       scratch.clear();
       appendFormattedTerm(scratch, term, includeDataType);
       if (format == csv) {
-        appendEscapedForCsv(buffer, scratch);
+        RdfEscaping::appendEscapedForCsv(buffer, scratch);
       } else {
-        appendEscapedForTsv(buffer, scratch);
+        RdfEscaping::appendEscapedForTsv(buffer, scratch);
       }
     };
     appendEscapedTerm(s);
