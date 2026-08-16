@@ -7,8 +7,8 @@
 Export equivalence helper for QLever CONSTRUCT and SELECT outputs.
 
 This is not a substitute for a byte-identity check. The parallel CONSTRUCT path
-gates on xxh3 of an order-preserving stream. Graph isomorphism is
-a different predicate.
+uses xxh3 for an order-preserving stream. Graph isomorphism is a different
+predicate.
 
 CONSTRUCT (turtle, ntriples)
   The result is an RDF graph, which is a set of triples. Comparison uses
