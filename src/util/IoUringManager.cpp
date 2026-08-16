@@ -102,9 +102,13 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize, size_t registeredBufferSize)
                 << registeredIovecs_.size() * registeredBufferSize_
                 << " bytes of buffers (RLIMIT_MEMLOCK is likely too low), "
                    "falling back to unregistered reads.\n";
-    registeredBufferPool_.clear();
-    registeredIovecs_.clear();
-    freeBufferIndices_.clear();
+    // Release the pool memory instead of keeping the capacity allocated
+    // (`clear()` retains the underlying buffer). A single manager's pool is
+    // `ringSize * registeredBufferSize` bytes, i.e. tens of MiB, so leaving it
+    // allocated after a failed register would waste memory for no benefit.
+    registeredBufferPool_ = {};
+    registeredIovecs_ = {};
+    freeBufferIndices_ = {};
     ret = 0;
   }
   if (ret < 0) {
