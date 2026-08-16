@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -57,6 +58,21 @@ void SyncIoPolicy::addBatch(int fd,
 
 #ifdef QLEVER_HAS_IO_URING
 
+// Allocate a page-aligned block of `numBytes` bytes, as required for O_DIRECT
+// reads (the kernel rejects a non-page-aligned buffer for O_DIRECT). Throws on
+// failure. The returned pointer must be released with `free`.
+char* allocatePageAligned(size_t numBytes) {
+  const long pageSize = ::sysconf(_SC_PAGESIZE);
+  if (pageSize <= 0) {
+    AD_THROW("sysconf(_SC_PAGESIZE) failed in IoUringManager");
+  }
+  void* raw = nullptr;
+  if (::posix_memalign(&raw, static_cast<size_t>(pageSize), numBytes) != 0) {
+    AD_THROW("posix_memalign failed in IoUringManager");
+  }
+  return static_cast<char*>(raw);
+}
+
 //______________________________________________________________________________
 IoUringPolicy::IoUringPolicy(unsigned ringSize, size_t registeredBufferSize)
     : ringSize_(ringSize), registeredBufferSize_(registeredBufferSize) {
@@ -74,19 +90,23 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize, size_t registeredBufferSize)
 
   // --- Set up the registered buffer pool -----------------------------------
   // Pre-allocate one buffer per ring slot so that every in-flight SQE can
-  // target its own registered buffer. Registering the buffers lets the kernel
-  // pin their pages once instead of on every read, which removes the
-  // per-request `get_user_pages`/unpin work from the I/O path. Note that this
-  // does *not* remove the page-cache-to-user copy for buffered reads; the
-  // per-completion `memcpy` into the caller's buffer is an additional cost
-  // that this design trades against the cheaper submission path, so the
-  // approach only pays off if it is measured to.
-  registeredBufferPool_.resize(ringSize_ * registeredBufferSize_, '\0');
+  // target its own registered buffer. The pool is allocated page-aligned so it
+  // can serve O_DIRECT reads (which require page-aligned buffers); the
+  // buffered reads currently issued by the vocabulary layer do not need the
+  // alignment, but it is the prerequisite for that zero-copy path. Registering
+  // the buffers lets the kernel pin their pages once instead of on every read,
+  // which removes the per-request `get_user_pages`/unpin work from the I/O
+  // path. Note that registration does *not* remove the page-cache-to-user copy
+  // for buffered reads; the per-completion `memcpy` into the caller's buffer is
+  // an additional cost that this design trades against the cheaper submission
+  // path, so the approach only pays off if it is measured to.
+  registeredBufferPool_ = allocatePageAligned(ringSize_ * registeredBufferSize_);
+  registeredBufferPoolSize_ = ringSize_ * registeredBufferSize_;
   registeredIovecs_.reserve(ringSize_);
   freeBufferIndices_.reserve(ringSize_);
   for (unsigned i = 0; i < ringSize_; ++i) {
     registeredIovecs_.push_back(
-        {registeredBufferPool_.data() + i * registeredBufferSize_,
+        {registeredBufferPool_ + i * registeredBufferSize_,
          registeredBufferSize_});
     freeBufferIndices_.push_back(i);
   }
@@ -106,7 +126,8 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize, size_t registeredBufferSize)
     // (`clear()` retains the underlying buffer). A single manager's pool is
     // `ringSize * registeredBufferSize` bytes, i.e. tens of MiB, so leaving it
     // allocated after a failed register would waste memory for no benefit.
-    registeredBufferPool_ = {};
+    registeredBufferPool_ = nullptr;
+    registeredBufferPoolSize_ = 0;
     registeredIovecs_ = {};
     freeBufferIndices_ = {};
     ret = 0;
@@ -151,8 +172,10 @@ IoUringPolicy::~IoUringPolicy() {
     io_uring_cqe_seen(&ring_, cqe);
     --numInFlightReadRequests_;
   }
-  if (!registeredBufferPool_.empty()) {
+  if (registeredBufferPool_ != nullptr) {
     io_uring_unregister_buffers(&ring_);
+    std::free(registeredBufferPool_);
+    registeredBufferPool_ = nullptr;
   }
   io_uring_queue_exit(&ring_);
 }
@@ -198,7 +221,7 @@ void IoUringPolicy::addBatch(int fd,
     // with `-EFAULT`, so anything larger reads straight into the caller's
     // buffer instead. The pool is also empty when buffer registration failed
     // at construction time.
-    const bool usePool = !registeredBufferPool_.empty() &&
+    const bool usePool = registeredBufferPool_ != nullptr &&
                          numBytesToRead <= registeredBufferSize_;
 
     // The ring has limited capacity. If it is exhausted, flush the prepared
@@ -228,7 +251,7 @@ void IoUringPolicy::addBatch(int fd,
       // registered buffer (here its base, so the read starts at offset 0).
       io_uring_prep_read_fixed(
           sqe, fd,
-          registeredBufferPool_.data() + poolIdx * registeredBufferSize_,
+          registeredBufferPool_ + poolIdx * registeredBufferSize_,
           static_cast<unsigned>(numBytesToRead), static_cast<__u64>(fileOffset),
           poolIdx);
     } else {
@@ -312,7 +335,7 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
     // anyway, and is the reason this policy has to be measured rather than
     // assumed to be faster.
     std::memcpy(inFlightRead.targetBuffer,
-                registeredBufferPool_.data() +
+                registeredBufferPool_ +
                     inFlightRead.poolBufferIndex * registeredBufferSize_,
                 inFlightRead.expectedNumBytes);
     freePoolBuffer(inFlightRead.poolBufferIndex);

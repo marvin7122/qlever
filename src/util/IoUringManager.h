@@ -228,12 +228,21 @@ class IoUringPolicy {
   static constexpr size_t noPoolBuffer = std::numeric_limits<size_t>::max();
 
   // --- Registered buffer pool ------------------------------------------------
-  // The pre-allocated memory for the registered buffers: one contiguous block
-  // of `ringSize_ * registeredBufferSize_` bytes that io_uring writes into
-  // directly. Ring slot `i` owns the byte range
-  // `[i * registeredBufferSize_, (i + 1) * registeredBufferSize_)`. Empty
-  // when buffer registration failed at construction time.
-  std::vector<char> registeredBufferPool_;
+  // The pre-allocated memory for the registered buffers: one contiguous,
+  // page-aligned block of `ringSize_ * registeredBufferSize_` bytes that
+  // io_uring writes into directly. Ring slot `i` owns the byte range
+  // `[i * registeredBufferSize_, (i + 1) * registeredBufferSize_)`. The block
+  // is page-aligned so the pool can serve O_DIRECT reads (which require the
+  // buffer to be page-aligned); the buffered reads currently issued by the
+  // vocabulary layer do not need the alignment, but it is the prerequisite for
+  // that zero-copy path. `nullptr` when buffer registration failed at
+  // construction time. Allocated via `posix_memalign` and owned by this object
+  // (freed with `free` in the destructor).
+  char* registeredBufferPool_ = nullptr;
+  // Total size in bytes of `registeredBufferPool_` (equal to `ringSize_ *
+  // registeredBufferSize_`), retained so the destructor can free the block
+  // without recomputing the ring geometry.
+  size_t registeredBufferPoolSize_ = 0;
 
   // The `iovec` descriptors for `io_uring_register_buffers`. One per pool
   // buffer, pointing into the corresponding sub-range of
