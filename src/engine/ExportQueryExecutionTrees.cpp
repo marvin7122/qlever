@@ -824,6 +824,44 @@ ExportQueryExecutionTrees::splitBlocksIntoGroups(
 
 // _____________________________________________________________________________
 template <ad_utility::MediaType format>
+std::string ExportQueryExecutionTrees::serializeConstructGroup(
+    const ad_utility::sparql_types::Triples& templateTriples,
+    const VariableToColumnMap& variableColumns,
+    ad_utility::InputRangeTypeErased<TableWithRange> rowRange, size_t rowOffset,
+    const qlever::constructExport::EvaluationConfig& config) {
+  std::string output;
+  for (const std::string& triple : qlever::constructExport::
+           ConstructTripleGenerator::generateFormattedTriples(
+               templateTriples, variableColumns, std::move(rowRange), rowOffset,
+               format, config)) {
+    output += triple;
+  }
+  return output;
+}
+
+// _____________________________________________________________________________
+std::vector<std::vector<TableWithRange>>
+ExportQueryExecutionTrees::computeExportGroups(
+    const std::vector<TableWithRange>& blocks, uint64_t totalRows,
+    size_t numThreads, size_t bufferMemoryBytes, size_t triplesPerRow) {
+  triplesPerRow = std::max<size_t>(1, triplesPerRow);
+  // At any point in time at most `numThreads` group buffers are in flight, so
+  // bounding the group size by
+  // `bufferMemoryBytes / (numThreads * triplesPerRow * 128)` keeps the total
+  // in-flight output within the budget (128 is a conservative average size of
+  // one serialized triple in bytes).
+  size_t maxGroups = std::max<size_t>(1, 4 * numThreads);
+  size_t rowsPerGroup = bufferMemoryBytes / (numThreads * triplesPerRow * 128);
+  rowsPerGroup = std::max<size_t>(1, rowsPerGroup);
+  maxGroups = std::min(
+      maxGroups,
+      static_cast<size_t>((totalRows + rowsPerGroup - 1) / rowsPerGroup));
+  maxGroups = std::max<size_t>(1, maxGroups);
+  return splitBlocksIntoGroups(blocks, maxGroups);
+}
+
+// _____________________________________________________________________________
+template <ad_utility::MediaType format>
 STREAMABLE_GENERATOR_TYPE
 ExportQueryExecutionTrees::constructQueryResultToStream(
     const QueryExecutionTree& qet,
@@ -873,6 +911,9 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   auto config = makeConstructEvaluationConfig(qet, cancellationHandle);
 
   if (numThreads <= 1) {
+    // ----- Serial path -----
+    // Serialize the rows with the same generator pipeline as the parallel
+    // path, yielding one triple at a time so that the export stays streaming.
     auto triples = qlever::constructExport::ConstructTripleGenerator::
         generateFormattedTriples(constructTriples, qet.getVariableColumns(),
                                  std::move(rowIndices), limitAndOffset._offset,
@@ -910,29 +951,18 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   // work is load-balanced across the workers while each group is large enough
   // to keep the per-group overhead (submitting a task, assembling one output
   // buffer) negligible.  The group size is additionally bounded by the
-  // per-request buffer-memory budget: at any point in time at most
-  // `numThreads` group buffers are in flight, so bounding the group size by
-  // `bufferMemory / (numThreads * triplesPerRow * 128)` keeps the total
-  // in-flight output within the budget (128 is a conservative average size of
-  // one serialized triple in bytes).
+  // per-request buffer-memory budget (see `computeExportGroups`).
   const size_t bufferMemory =
       getRuntimeParameter<&RuntimeParameters::constructExportBufferMemory_>()
           .getBytes();
-  const size_t triplesPerRow = std::max<size_t>(1, constructTriples.size());
-  size_t maxGroups = std::max<size_t>(1, 4 * numThreads);
-  size_t rowsPerGroup = bufferMemory / (numThreads * triplesPerRow * 128);
-  rowsPerGroup = std::max<size_t>(1, rowsPerGroup);
-  maxGroups = std::min(
-      maxGroups,
-      static_cast<size_t>((totalRows + rowsPerGroup - 1) / rowsPerGroup));
-  maxGroups = std::max<size_t>(1, maxGroups);
-  std::vector<std::vector<TableWithRange>> groups =
-      splitBlocksIntoGroups(blocks, maxGroups);
+  std::vector<std::vector<TableWithRange>> groups = computeExportGroups(
+      blocks, totalRows, numThreads, bufferMemory, constructTriples.size());
   numThreads = std::min(numThreads, groups.size());
 
   // Submit one task per group; each task serializes its rows into a
-  // `std::string` with the same generator pipeline as the serial path
-  // (including the `rowOffset`, on which the blank-node base IDs depend).
+  // `std::string` via `serializeConstructGroup`, which uses the same generator
+  // pipeline as the serial path (including the `rowOffset`, on which the
+  // blank-node base IDs depend).
   ad_utility::TaskQueue<false> queue{numThreads, numThreads,
                                      "ConstructExportParallel"};
   std::vector<std::future<std::string>> futures;
@@ -947,15 +977,10 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
     futures.push_back(
         queue.submit([&templateTriples, &variableColumns, rowOffset, &config,
                       group = std::move(group)]() mutable {
-          std::string output;
-          auto triples = qlever::constructExport::ConstructTripleGenerator::
-              generateFormattedTriples(templateTriples, variableColumns,
-                                       InputRangeTypeErased(std::move(group)),
-                                       rowOffset, format, config);
-          for (const std::string& triple : triples) {
-            output += triple;
-          }
-          return output;
+          return serializeConstructGroup<format>(
+              templateTriples, variableColumns,
+              ad_utility::InputRangeTypeErased(std::move(group)), rowOffset,
+              config);
         }));
   }
 

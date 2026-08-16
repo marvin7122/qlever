@@ -21,6 +21,7 @@
 #include "util/IndexTestHelpers.h"
 #include "util/ParseableDuration.h"
 #include "util/RuntimeParametersTestHelpers.h"
+#include "util/TripleComponentTestHelpers.h"
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
@@ -2480,4 +2481,128 @@ TEST(ExportQueryExecutionTrees, SplitBlocksIntoGroups) {
                     ElementsAre(),
                     ElementsAre(std::pair<uint64_t, uint64_t>{1000, 1010})));
   }
+}
+
+// ____________________________________________________________________________
+// White-box test for `computeExportGroups`, the group-sizing policy of the
+// parallel CONSTRUCT export.  It must bound the number of groups by both the
+// thread count (`4 * numThreads`) and the per-request buffer-memory budget.
+TEST(ExportQueryExecutionTrees, computeExportGroupsRespectsGroupBounds) {
+  // `computeExportGroups` only reads `view_` and copies `tableWithVocab_`, but
+  // the backing objects are kept alive and pinned anyway (same reasoning as
+  // the `SplitBlocksIntoGroups` test).
+  std::vector<IdTable> tables;
+  std::vector<LocalVocab> vocabs;
+  tables.reserve(4);
+  vocabs.reserve(4);
+  auto makeBlock = [&tables, &vocabs](uint64_t begin, uint64_t end) {
+    tables.push_back(makeIdTableFromVector({{0}}));
+    vocabs.emplace_back();
+    return TableWithRange{
+        TableConstRefWithVocab{tables.back().asStaticView<0>(), vocabs.back()},
+        ql::views::iota(begin, end)};
+  };
+  auto rangesOf = [](const std::vector<std::vector<TableWithRange>>& groups) {
+    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> result;
+    for (const auto& group : groups) {
+      std::vector<std::pair<uint64_t, uint64_t>> ranges;
+      for (const auto& block : group) {
+        const uint64_t begin = *ql::ranges::begin(block.view_);
+        ranges.emplace_back(begin, begin + ql::ranges::size(block.view_));
+      }
+      result.push_back(std::move(ranges));
+    }
+    return result;
+  };
+
+  // The buffer-memory budget dominates: 1024 bytes / (4 threads * 1 triple
+  // per row * 128) = 2 rows per group, so 10 rows become 5 groups.
+  {
+    std::vector<TableWithRange> blocks{makeBlock(0, 10)};
+    auto groups = ExportQueryExecutionTrees::computeExportGroups(
+        blocks, 10, /*numThreads=*/4, /*bufferMemoryBytes=*/1024,
+        /*triplesPerRow=*/1);
+    EXPECT_THAT(rangesOf(groups),
+                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 2}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{2, 4}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{4, 6}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{6, 8}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{8, 10})));
+  }
+  // The thread-count bound dominates: 4 * 2 = 8 groups is the maximum, even
+  // though the tiny buffer would allow up to 10 groups (one row per group).
+  {
+    std::vector<TableWithRange> blocks{makeBlock(0, 10)};
+    auto groups = ExportQueryExecutionTrees::computeExportGroups(
+        blocks, 10, /*numThreads=*/2, /*bufferMemoryBytes=*/256,
+        /*triplesPerRow=*/1);
+    EXPECT_EQ(groups.size(), 8u);
+    // The first five groups hold the 10 rows; the remaining three are empty.
+    EXPECT_THAT(rangesOf(groups),
+                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 2}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{2, 4}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{4, 6}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{6, 8}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{8, 10}),
+                            ElementsAre(), ElementsAre(), ElementsAre()));
+  }
+  // A huge buffer budget leaves all rows in a single group.
+  {
+    std::vector<TableWithRange> blocks{makeBlock(0, 10)};
+    auto groups = ExportQueryExecutionTrees::computeExportGroups(
+        blocks, 10, /*numThreads=*/4,
+        /*bufferMemoryBytes=*/std::numeric_limits<size_t>::max(),
+        /*triplesPerRow=*/1);
+    EXPECT_THAT(rangesOf(groups),
+                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 10})));
+  }
+  // An empty result yields one empty group and does not crash.
+  {
+    std::vector<TableWithRange> blocks{makeBlock(0, 0)};
+    auto groups = ExportQueryExecutionTrees::computeExportGroups(
+        blocks, 0, /*numThreads=*/4, /*bufferMemoryBytes=*/1024,
+        /*triplesPerRow=*/1);
+    EXPECT_EQ(groups.size(), 1u);
+    EXPECT_TRUE(rangesOf(groups).front().empty());
+  }
+}
+
+// ____________________________________________________________________________
+// White-box test for `serializeConstructGroup`, the per-format serialization
+// body shared by the workers of the parallel CONSTRUCT export.  It must
+// serialize a single row range exactly as the serial path does, concatenated
+// into one output string.
+TEST(ExportQueryExecutionTrees, SerializeConstructGroup) {
+  using namespace qlever::constructExport;
+  auto qec = ad_utility::testing::getQec("<s> <p> <o> .");
+  const Index& index = qec->getIndex();
+  auto handle =
+      std::make_shared<ad_utility::SharedCancellationHandle::element_type>();
+  EvaluationConfig config{index, std::move(handle), *qec};
+
+  const auto idS = ad_utility::testing::makeGetId(index)("<s>");
+  auto result = std::make_shared<const Result>(makeIdTableFromVector({{idS}}),
+                                               {}, LocalVocab{});
+  Triples templateTriples{std::array{ad_utility::testing::iriV("<s>"),
+                                     ad_utility::testing::iriV("<p>"),
+                                     ad_utility::testing::iriV("<o>")}};
+  VariableToColumnMap varMap{};
+  auto singleRange = [&result] {
+    TableWithRange twr{
+        TableConstRefWithVocab{result->idTableView(), result->localVocab()},
+        ql::views::iota(0, 1)};
+    return ad_utility::InputRangeTypeErased(
+        std::vector<TableWithRange>{std::move(twr)});
+  };
+
+  const std::string turtleOut =
+      ExportQueryExecutionTrees::serializeConstructGroup<
+          ad_utility::MediaType::turtle>(templateTriples, varMap, singleRange(),
+                                         /*rowOffset=*/0, config);
+  EXPECT_EQ(turtleOut, "<s> <p> <o> .\n");
+
+  const std::string tsvOut = ExportQueryExecutionTrees::serializeConstructGroup<
+      ad_utility::MediaType::tsv>(templateTriples, varMap, singleRange(),
+                                  /*rowOffset=*/0, config);
+  EXPECT_EQ(tsvOut, "<s>\t<p>\t<o>\n");
 }
