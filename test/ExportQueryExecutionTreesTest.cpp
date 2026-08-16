@@ -2591,7 +2591,7 @@ TEST(ExportQueryExecutionTrees, SerializeConstructGroup) {
   auto singleRange = [&result] {
     TableWithRange twr{
         TableConstRefWithVocab{result->idTableView(), result->localVocab()},
-        ql::views::iota(0, 1)};
+        ql::views::iota(0u, 1u)};
     return ad_utility::InputRangeTypeErased(
         std::vector<TableWithRange>{std::move(twr)});
   };
