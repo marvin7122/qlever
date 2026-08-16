@@ -2583,9 +2583,10 @@ TEST(ExportQueryExecutionTrees, SerializeConstructGroup) {
   const auto idS = ad_utility::testing::makeGetId(index)("<s>");
   auto result = std::make_shared<const Result>(makeIdTableFromVector({{idS}}),
                                                {}, LocalVocab{});
-  Triples templateTriples{std::array{ad_utility::testing::iriV("<s>"),
-                                     ad_utility::testing::iriV("<p>"),
-                                     ad_utility::testing::iriV("<o>")}};
+  Triples templateTriples{
+      std::array{GraphTerm{ad_utility::testing::iriV("<s>")},
+                 GraphTerm{ad_utility::testing::iriV("<p>")},
+                 GraphTerm{ad_utility::testing::iriV("<o>")}}};
   VariableToColumnMap varMap{};
   auto singleRange = [&result] {
     TableWithRange twr{
