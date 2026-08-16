@@ -1,0 +1,52 @@
+name: PR Agent (DeepSeek)
+
+# PR-Agent does a DeepSeek-driven diff review on every pull request and
+# answers slash-commands (@/review, @/describe, @/improve, @/ask) in comments.
+# This is the CI-level "fast" pass; the deeper agentic pass (ai-code-reviewer,
+# specialist agents + Ural validation) runs as the local pr-agent-local-reviews
+# pipeline on the workstation and watches the same PRs.
+#
+# PRs are authored by marvin7122 on his own fork (same-repo branches), so the
+# plain `pull_request` event has secret access. Do NOT switch to
+# pull_request_target unless external contributors are expected.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: write
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pr_agent_job:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    name: PR-Agent DeepSeek review
+    steps:
+      - name: PR Agent action step
+        id: pragent
+        uses: the-pr-agent/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # DeepSeek via LiteLLM (deep-reasoning primary, chat fallback).
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          config.model: "deepseek/deepseek-reasoner"
+          config.fallback_models: '["deepseek/deepseek-chat"]'
+          # Run the auto tools on PR open/update.
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_improve: "false"
+          # Only PRs authored by marvin7122 (same-repo), skip bots/drafts.
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review", "synchronize"]'
+          # QLever review conventions: feed project context so the model picks
+          # up the 216-item checklist + CLAUDE.md guidance. Reduce noise.
+          PR_REVIEWER.REQUIRE_TESTS_REVIEW: "true"
+          PR_CODE_SUGGESTIONS.NUM_CODE_SUGGESTIONS: "5"
