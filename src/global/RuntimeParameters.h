@@ -58,7 +58,7 @@ struct RuntimeParameters {
   // export results (row-to-string formatting). 0 means: use all logical
   // cores, consistent with `computeInParallelChunks`. Defaults to 1 (serial
   // path); flip it to 0 (all logical cores) when the parallel serialization
-  // layer is enabled (tracking issue 82).
+  // layer is enabled.
   SizeT constructExportNumThreads_{1, "construct-export-num-threads"};
   // The total memory budget for the per-worker output buffers of the parallel
   // CONSTRUCT export serialization, split evenly across the workers. Only
