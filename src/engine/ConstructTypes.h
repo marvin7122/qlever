@@ -12,6 +12,7 @@
 
 #include <array>
 #include <memory>
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -99,6 +100,22 @@ class EvaluatedTerm {
              lhs.blankRow_ == rhs.blankRow_;
     }
     return lhs.data_ == rhs.data_;
+  }
+
+  friend std::ostream& operator<<(std::ostream& os, const EvaluatedTerm& term) {
+    if (term.isBlankNode()) {
+      os << term.blankPrefix_ << term.blankRow_ << term.blankSuffix_;
+      return os;
+    }
+    if (!term.data_) {
+      os << "EvaluatedTerm()";
+      return os;
+    }
+    os << term.data_->rdfTermString_;
+    if (term.data_->rdfTermDataType_ != nullptr) {
+      os << "^^<" << term.data_->rdfTermDataType_ << '>';
+    }
+    return os;
   }
 };
 
