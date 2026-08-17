@@ -2352,8 +2352,8 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationBlankNodes) {
 }
 
 // When triple deduplication is active, the parallel path stays enabled: the
-// chunks share one ConstructDeduplicator (mutex around the ID-space filter).
-// The output must match the serial path.
+// chunks share one `ConstructDeduplicator`.
+// This test verifies that the output must match the serial path.
 TEST(ExportQueryExecutionTrees, ParallelConstructSerializationWithDedup) {
   using enum ad_utility::MediaType;
   // Duplicate triples in the result (each ?o appears twice), so deduplication
