@@ -26,6 +26,7 @@ RuntimeParameters::RuntimeParameters() {
   add(sortEstimateCancellationFactor_);
   add(cacheMaxNumEntries_);
   add(constructExportNumThreads_);
+  add(constructExportMaterializedGroups_);
   add(cacheMaxSize_);
   add(cacheMaxSizeSingleEntry_);
   add(lazyIndexScanQueueSize_);

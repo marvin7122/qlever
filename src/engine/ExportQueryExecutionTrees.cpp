@@ -16,6 +16,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
+#include <algorithm>
 #include <future>
 #include <optional>
 #include <string_view>
@@ -786,6 +787,59 @@ std::vector<TableWithRange> ExportQueryExecutionTrees::splitBlockIntoChunks(
 }
 
 // _____________________________________________________________________________
+std::vector<std::vector<TableWithRange>>
+ExportQueryExecutionTrees::splitBlocksIntoGroups(
+    const std::vector<TableWithRange>& blocks, size_t numGroups) {
+  uint64_t totalRows = 0;
+  for (const auto& block : blocks) {
+    totalRows += ql::ranges::size(block.view_);
+  }
+  AD_CORRECTNESS_CHECK(numGroups > 0);
+  std::vector<std::vector<TableWithRange>> groups(numGroups);
+  if (totalRows == 0) {
+    return groups;
+  }
+  AD_CONTRACT_CHECK(numGroups <= totalRows);
+  const uint64_t rowsPerGroup = (totalRows + numGroups - 1) / numGroups;
+  // The `view_` ranges carry the original global row indices (the blank-node
+  // base IDs depend on them), so the group boundaries are expressed in the
+  // same absolute index space: the first group starts at the first row of the
+  // first non-empty block, and the last group receives all remaining rows.
+  size_t firstNonEmptyBlock = 0;
+  while (ql::ranges::empty(blocks[firstNonEmptyBlock].view_)) {
+    ++firstNonEmptyBlock;
+  }
+  const uint64_t firstRow =
+      *ql::ranges::begin(blocks[firstNonEmptyBlock].view_);
+  const uint64_t globalRowEndExclusive = firstRow + totalRows;
+  size_t groupIndex = 0;
+  uint64_t groupEnd = firstRow + rowsPerGroup;
+  for (const auto& block : blocks) {
+    uint64_t begin = *ql::ranges::begin(block.view_);
+    uint64_t end = begin + ql::ranges::size(block.view_);
+    while (begin < end) {
+      if (groupIndex == numGroups - 1) {
+        groupEnd = end;
+      }
+      const uint64_t pieceEnd = std::min(end, groupEnd);
+      if (pieceEnd <= begin) {
+        ++groupIndex;
+        groupEnd = std::min(groupEnd + rowsPerGroup, globalRowEndExclusive);
+        continue;
+      }
+      groups[groupIndex].emplace_back(block.tableWithVocab_,
+                                      ql::views::iota(begin, pieceEnd));
+      begin = pieceEnd;
+      if (begin >= groupEnd && groupIndex + 1 < numGroups) {
+        ++groupIndex;
+        groupEnd = std::min(groupEnd + rowsPerGroup, globalRowEndExclusive);
+      }
+    }
+  }
+  return groups;
+}
+
+// _____________________________________________________________________________
 template <ad_utility::MediaType format>
 std::string ExportQueryExecutionTrees::serializeConstructGroup(
     const ad_utility::sparql_types::Triples& templateTriples,
@@ -832,13 +886,16 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
                                   constructTriples.size());
 
   // The number of threads for the parallel serialization of the CONSTRUCT
-  // triples.  0 means: use all logical cores.  The parallel path walks lazy
-  // WHERE blocks, cuts each block into contiguous row chunks, and serializes
-  // those chunks on a worker pool. Outputs are yielded in row order.  When
-  // triple deduplication is active, the chunks share a single deduplicator
-  // whose ID-space filter and `dedupVocab_` re-anchoring are guarded by a
-  // mutex (see `ConstructDeduplicator::isNew`); the string formatting happens
-  // outside the lock.
+  // triples.  0 means: use all logical cores.  There are two parallel
+  // dispatchers.  On a lazy WHERE result the path walks one live block,
+  // cuts it into `BATCH_SIZE` row chunks, and joins before the generator
+  // advances.  On a fully materialized WHERE result the default path
+  // partitions the whole table into `4 * numThreads` equal-row groups
+  // (`construct-export-materialized-groups`).  Outputs are yielded in row
+  // order.  When triple deduplication is active, the slices share a single
+  // deduplicator whose ID-space filter and `dedupVocab_` re-anchoring are
+  // guarded by a mutex (see `ConstructDeduplicator::isNew`); the string
+  // formatting happens outside the lock.
   size_t numThreads =
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
   const auto& dedupMode =
@@ -868,8 +925,8 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   }
 
   // ----- Parallel path -----
-  // When triple deduplication is active, all chunks share one deduplicator so
-  // that duplicate triples are dropped across chunk boundaries as well. The
+  // When triple deduplication is active, all slices share one deduplicator so
+  // that duplicate triples are dropped across slice boundaries as well. The
   // shared filter is made thread-safe by a mutex (see
   // `ConstructDeduplicator::isNew`), so the parallel path stays enabled.
   if (dedupActive) {
@@ -878,13 +935,10 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
             config.mode_, *qet.getQec());
   }
 
-  // Walk lazy WHERE blocks one at a time. Workers may only touch the current
-  // block: its IdTable view dies when the generator advances. Each block is
-  // cut into contiguous chunks of `BATCH_SIZE` rows and submitted in order
-  // to a pool of `numThreads` workers. At most `2 * numThreads` chunk strings
-  // are in flight so later chunks of a large block are not all materialized
-  // before the first one is yielded. Chunk size is the generator batch, not
-  // a runtime parameter: a second knob would drift from `IdCache` / lookup.
+  const bool useGroupDispatch =
+      result->isFullyMaterialized() &&
+      getRuntimeParameter<
+          &RuntimeParameters::constructExportMaterializedGroups_>();
   const size_t rowsPerChunk =
       qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE;
   const size_t window = 2 * numThreads;
@@ -894,6 +948,61 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   const auto& variableColumns = qet.getVariableColumns();
   const size_t rowOffset = limitAndOffset._offset;
 
+  auto submitSlice = [&](std::vector<TableWithRange> slice) {
+    return queue.submit([&templateTriples, &variableColumns, rowOffset, &config,
+                         slice = std::move(slice)]() mutable {
+      return serializeConstructGroup<format>(
+          templateTriples, variableColumns,
+          InputRangeTypeErased(std::move(slice)), rowOffset, config);
+    });
+  };
+
+  if (useGroupDispatch) {
+    // The `IdTable` already lives in `result`. Collecting the export slices
+    // is only index arithmetic. Split into `4 * numThreads` equal-row groups
+    // (or fewer when the table is smaller) and dispatch those groups.
+    std::vector<TableWithRange> blocks;
+    uint64_t totalRows = 0;
+    for (TableWithRange& block : rowIndices) {
+      totalRows += ql::ranges::size(block.view_);
+      blocks.push_back(std::move(block));
+    }
+    if (totalRows == 0) {
+      STREAMABLE_RETURN;
+    }
+    const size_t numGroups = std::min(std::max<size_t>(1, 4 * numThreads),
+                                      static_cast<size_t>(totalRows));
+    std::vector<std::vector<TableWithRange>> groups =
+        splitBlocksIntoGroups(blocks, numGroups);
+    std::vector<std::vector<TableWithRange>> work;
+    work.reserve(groups.size());
+    for (std::vector<TableWithRange>& group : groups) {
+      if (!group.empty()) {
+        work.push_back(std::move(group));
+      }
+    }
+    std::vector<std::future<std::string>> futures(work.size());
+    size_t nextSubmit = 0;
+    size_t nextGet = 0;
+    while (nextGet < work.size()) {
+      while (nextSubmit < work.size() && nextSubmit - nextGet < window) {
+        futures[nextSubmit] = submitSlice(std::move(work[nextSubmit]));
+        ++nextSubmit;
+      }
+      cancellationHandle->throwIfCancelled();
+      STREAMABLE_YIELD(std::move(futures[nextGet].get()));
+      ++nextGet;
+    }
+    STREAMABLE_RETURN;
+  }
+
+  // Walk lazy WHERE blocks one at a time. Workers may only touch the current
+  // block: its IdTable view dies when the generator advances. Each block is
+  // cut into contiguous chunks of `BATCH_SIZE` rows and submitted in order
+  // to a pool of `numThreads` workers. At most `2 * numThreads` chunk strings
+  // are in flight so later chunks of a large block are not all materialized
+  // before the first one is yielded. Chunk size is the generator batch, not
+  // a runtime parameter: a second knob would drift from `IdCache` / lookup.
   for (TableWithRange& block : rowIndices) {
     std::vector<TableWithRange> chunks =
         splitBlockIntoChunks(block, rowsPerChunk);
@@ -905,14 +1014,8 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
     size_t nextGet = 0;
     while (nextGet < chunks.size()) {
       while (nextSubmit < chunks.size() && nextSubmit - nextGet < window) {
-        futures[nextSubmit] = queue.submit(
-            [&templateTriples, &variableColumns, rowOffset, &config,
-             chunk = std::move(chunks[nextSubmit])]() mutable {
-              std::vector<TableWithRange> one{std::move(chunk)};
-              return serializeConstructGroup<format>(
-                  templateTriples, variableColumns,
-                  InputRangeTypeErased(std::move(one)), rowOffset, config);
-            });
+        std::vector<TableWithRange> one{std::move(chunks[nextSubmit])};
+        futures[nextSubmit] = submitSlice(std::move(one));
         ++nextSubmit;
       }
       cancellationHandle->throwIfCancelled();

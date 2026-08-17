@@ -61,6 +61,15 @@ struct RuntimeParameters {
   // layer is enabled.
   SizeT constructExportNumThreads_{1, "construct-export-num-threads"};
 
+  // When the WHERE result is already fully materialized and the thread count
+  // is at least 2, partition the whole table into `4 * numThreads` equal-row
+  // groups and dispatch those groups. The `IdTable` views stay valid for the
+  // whole table, so workers need not join between generator blocks. Default
+  // true. Ignored on a lazy result and when the thread count is at most 1.
+  // Set false to keep the 1024-row chunk walk on a materialized table (A/B).
+  Bool constructExportMaterializedGroups_{
+      true, "construct-export-materialized-groups"};
+
   MemorySizeParameter cacheMaxSize_{ad_utility::MemorySize::gigabytes(30),
                                     "cache-max-size"};
   MemorySizeParameter cacheMaxSizeSingleEntry_{

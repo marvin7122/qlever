@@ -213,6 +213,7 @@ class ExportQueryExecutionTrees {
               ensureGeneratorIsNotConsumedWhenNotRequired);
   FRIEND_TEST(ExportQueryExecutionTrees, verifyQleverJsonContainsValidMetadata);
   FRIEND_TEST(ExportQueryExecutionTrees, SplitBlockIntoChunks);
+  FRIEND_TEST(ExportQueryExecutionTrees, SplitBlocksIntoGroups);
   FRIEND_TEST(ExportQueryExecutionTrees, SerializeConstructGroup);
   FRIEND_TEST(ExportQueryExecutionTrees, compensateForLimitOffsetClause);
 
@@ -237,6 +238,14 @@ class ExportQueryExecutionTrees {
   // blocks yield no chunks.
   static std::vector<TableWithRange> splitBlockIntoChunks(
       const TableWithRange& block, size_t rowsPerChunk);
+
+  // Partition `blocks` into `numGroups` contiguous groups of roughly equal
+  // row counts. Group boundaries keep the original global row indices
+  // (blank-node base IDs depend on them). Empty input yields `numGroups`
+  // empty groups. `numGroups` must be at least 1. If the blocks contain at
+  // least one row, `numGroups` must be at most that row count.
+  static std::vector<std::vector<TableWithRange>> splitBlocksIntoGroups(
+      const std::vector<TableWithRange>& blocks, size_t numGroups);
 };
 
 #endif  // QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H

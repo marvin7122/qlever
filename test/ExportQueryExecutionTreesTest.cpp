@@ -2292,13 +2292,18 @@ std::string makeConstructKg(size_t numTriples) {
 }
 
 // Returns the streamed result of the given CONSTRUCT query for the given
-// media type, with `numThreads` workers. Chunk size is `BATCH_SIZE`.
+// media type, with `numThreads` workers. `materializedGroups` selects the
+// equal-row group dispatcher when the WHERE result is fully materialized.
 std::string constructResultWithThreads(const std::string& kg,
                                        const std::string& query,
                                        ad_utility::MediaType mediaType,
-                                       size_t numThreads) {
+                                       size_t numThreads,
+                                       bool materializedGroups = true) {
   auto cleanupThreads = setRuntimeParameterForTest<
       &RuntimeParameters::constructExportNumThreads_>(numThreads);
+  auto cleanupGroups = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportMaterializedGroups_>(
+      materializedGroups);
   return runQueryStreamableResult(kg, query, mediaType);
 }
 }  // namespace
@@ -2316,20 +2321,28 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationMatchesSerial) {
   const std::string expectedNtriples =
       runQueryStreamableResult(kg, query, ntriples);
 
-  for (size_t numThreads : {size_t{2}, size_t{4}, size_t{8}}) {
-    EXPECT_EQ(constructResultWithThreads(kg, query, tsv, numThreads),
+  for (bool materializedGroups : {true, false}) {
+    for (size_t numThreads : {size_t{2}, size_t{4}, size_t{8}}) {
+      EXPECT_EQ(constructResultWithThreads(kg, query, tsv, numThreads,
+                                           materializedGroups),
+                expectedTsv)
+          << "numThreads = " << numThreads
+          << ", materializedGroups = " << materializedGroups;
+      EXPECT_EQ(constructResultWithThreads(kg, query, turtle, numThreads,
+                                           materializedGroups),
+                expectedTurtle)
+          << "numThreads = " << numThreads
+          << ", materializedGroups = " << materializedGroups;
+      EXPECT_EQ(constructResultWithThreads(kg, query, ntriples, numThreads,
+                                           materializedGroups),
+                expectedNtriples)
+          << "numThreads = " << numThreads
+          << ", materializedGroups = " << materializedGroups;
+    }
+    EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 0, materializedGroups),
               expectedTsv)
-        << "numThreads = " << numThreads;
-    EXPECT_EQ(constructResultWithThreads(kg, query, turtle, numThreads),
-              expectedTurtle)
-        << "numThreads = " << numThreads;
-    EXPECT_EQ(constructResultWithThreads(kg, query, ntriples, numThreads),
-              expectedNtriples)
-        << "numThreads = " << numThreads;
+        << "materializedGroups = " << materializedGroups;
   }
-
-  // numThreads == 0 means "all logical cores" and must also match.
-  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 0), expectedTsv);
 }
 
 // Blank-node labels in the CONSTRUCT output depend on the global row index
@@ -2342,12 +2355,15 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationBlankNodes) {
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s";
   const std::string queryWithOffset =
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s LIMIT 60 OFFSET 30";
-  for (const auto& q : {query, queryWithOffset}) {
-    const std::string expected = runQueryStreamableResult(kg, q, turtle);
-    EXPECT_EQ(constructResultWithThreads(kg, q, turtle, 4), expected);
-    std::string parallel = constructResultWithThreads(kg, q, turtle, 4);
-    EXPECT_EQ(parallel, expected);
-    EXPECT_NE(parallel.find("_:u"), std::string::npos);
+  for (bool materializedGroups : {true, false}) {
+    for (const auto& q : {query, queryWithOffset}) {
+      const std::string expected = runQueryStreamableResult(kg, q, turtle);
+      std::string parallel =
+          constructResultWithThreads(kg, q, turtle, 4, materializedGroups);
+      EXPECT_EQ(parallel, expected)
+          << "materializedGroups = " << materializedGroups;
+      EXPECT_NE(parallel.find("_:u"), std::string::npos);
+    }
   }
 }
 
@@ -2368,8 +2384,16 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationWithDedup) {
       setRuntimeParameterForTest<&RuntimeParameters::constructDeduplication_>(
           ad_utility::DeduplicationMode::full());
   const std::string expected = runQueryStreamableResult(kg, query, turtle);
-  EXPECT_EQ(constructResultWithThreads(kg, query, turtle, 4), expected);
-  EXPECT_EQ(constructResultWithThreads(kg, query, turtle, 0), expected);
+  for (bool materializedGroups : {true, false}) {
+    EXPECT_EQ(
+        constructResultWithThreads(kg, query, turtle, 4, materializedGroups),
+        expected)
+        << "materializedGroups = " << materializedGroups;
+    EXPECT_EQ(
+        constructResultWithThreads(kg, query, turtle, 0, materializedGroups),
+        expected)
+        << "materializedGroups = " << materializedGroups;
+  }
 }
 
 // The parallel path must also handle an empty result (no rows to serialize):
@@ -2428,6 +2452,72 @@ TEST(ExportQueryExecutionTrees, SplitBlockIntoChunks) {
   }
   EXPECT_ANY_THROW(
       ExportQueryExecutionTrees::splitBlockIntoChunks(makeBlock(0, 5), 0));
+}
+
+// White-box test for `splitBlocksIntoGroups`. The group dispatcher uses this
+// on a fully materialized WHERE result.
+TEST(ExportQueryExecutionTrees, SplitBlocksIntoGroups) {
+  // `splitBlocksIntoGroups` only reads `view_` and copies `tableWithVocab_`
+  // (it never dereferences the table or the vocab), but the backing objects
+  // are kept alive and pinned anyway, so that the test would stay valid if
+  // the function ever started to dereference them.
+  std::vector<IdTable> tables;
+  std::vector<LocalVocab> vocabs;
+  tables.reserve(8);
+  vocabs.reserve(8);
+  auto makeBlock = [&tables, &vocabs](uint64_t begin, uint64_t end) {
+    tables.push_back(makeIdTableFromVector({{0}}));
+    vocabs.emplace_back();
+    return TableWithRange{
+        TableConstRefWithVocab{tables.back().asStaticView<0>(), vocabs.back()},
+        ql::views::iota(begin, end)};
+  };
+  auto rangesOf = [](const std::vector<std::vector<TableWithRange>>& groups) {
+    std::vector<std::vector<std::pair<uint64_t, uint64_t>>> result;
+    for (const auto& group : groups) {
+      std::vector<std::pair<uint64_t, uint64_t>> ranges;
+      for (const auto& block : group) {
+        const uint64_t begin = *ql::ranges::begin(block.view_);
+        ranges.emplace_back(begin, begin + ql::ranges::size(block.view_));
+      }
+      result.push_back(std::move(ranges));
+    }
+    return result;
+  };
+
+  {
+    std::vector<TableWithRange> blocks{makeBlock(0, 4), makeBlock(4, 8),
+                                       makeBlock(8, 12)};
+    auto groups = ExportQueryExecutionTrees::splitBlocksIntoGroups(blocks, 2);
+    EXPECT_THAT(rangesOf(groups),
+                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 4},
+                                        std::pair<uint64_t, uint64_t>{4, 6}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{6, 8},
+                                        std::pair<uint64_t, uint64_t>{8, 12})));
+  }
+  {
+    std::vector<TableWithRange> blocks{makeBlock(0, 0), makeBlock(0, 0)};
+    auto groups = ExportQueryExecutionTrees::splitBlocksIntoGroups(blocks, 3);
+    EXPECT_THAT(rangesOf(groups),
+                ElementsAre(ElementsAre(), ElementsAre(), ElementsAre()));
+  }
+  {
+    std::vector<TableWithRange> blocks{makeBlock(0, 0), makeBlock(0, 10)};
+    auto groups = ExportQueryExecutionTrees::splitBlocksIntoGroups(blocks, 2);
+    EXPECT_THAT(rangesOf(groups),
+                ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 5}),
+                            ElementsAre(std::pair<uint64_t, uint64_t>{5, 10})));
+  }
+  {
+    std::vector<TableWithRange> blocks{makeBlock(0, 10), makeBlock(1000, 1010)};
+    auto groups = ExportQueryExecutionTrees::splitBlocksIntoGroups(blocks, 4);
+    EXPECT_THAT(
+        rangesOf(groups),
+        ElementsAre(ElementsAre(std::pair<uint64_t, uint64_t>{0, 5}),
+                    ElementsAre(std::pair<uint64_t, uint64_t>{5, 10}),
+                    ElementsAre(),
+                    ElementsAre(std::pair<uint64_t, uint64_t>{1000, 1010})));
+  }
 }
 
 // ____________________________________________________________________________
