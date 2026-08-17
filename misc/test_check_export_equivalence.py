@@ -12,7 +12,10 @@ import os
 import tempfile
 import unittest
 
-from check_export_equivalence import main
+try:
+    from misc.check_export_equivalence import main
+except ModuleNotFoundError:
+    from check_export_equivalence import main
 
 
 def _write(tmpdir: str, name: str, content: str) -> str:
