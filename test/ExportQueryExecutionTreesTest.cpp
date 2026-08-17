@@ -2346,7 +2346,8 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationBlankNodes) {
   EXPECT_NE(parallel.find("_:u"), std::string::npos);
 }
 
-TEST(ExportQueryExecutionTrees, ParallelConstructSerializationBlankNodesWithOffset) {
+TEST(ExportQueryExecutionTrees,
+     ParallelConstructSerializationBlankNodesWithOffset) {
   using enum ad_utility::MediaType;
   const std::string kg = makeConstructKg(
       qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE + 100);
