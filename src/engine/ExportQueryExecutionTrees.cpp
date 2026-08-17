@@ -880,12 +880,13 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
 
   // Walk lazy WHERE blocks one at a time. Workers may only touch the current
   // block: its IdTable view dies when the generator advances. Each block is
-  // cut into contiguous chunks of `rowsPerChunk` rows and submitted in order
+  // cut into contiguous chunks of `BATCH_SIZE` rows and submitted in order
   // to a pool of `numThreads` workers. At most `2 * numThreads` chunk strings
   // are in flight so later chunks of a large block are not all materialized
-  // before the first one is yielded.
+  // before the first one is yielded. Chunk size is the generator batch, not
+  // a runtime parameter: a second knob would drift from `IdCache` / lookup.
   const size_t rowsPerChunk =
-      getRuntimeParameter<&RuntimeParameters::constructExportRowsPerChunk_>();
+      qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE;
   const size_t window = 2 * numThreads;
   ad_utility::TaskQueue<false> queue{window, numThreads,
                                      "ConstructExportParallel"};

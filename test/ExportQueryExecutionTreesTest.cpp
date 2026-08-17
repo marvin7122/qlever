@@ -2292,22 +2292,22 @@ std::string makeConstructKg(size_t numTriples) {
 }
 
 // Returns the streamed result of the given CONSTRUCT query for the given
-// media type, with `numThreads` workers and `rowsPerChunk` rows per chunk.
+// media type, with `numThreads` workers. Chunk size is `BATCH_SIZE`.
 std::string constructResultWithThreads(const std::string& kg,
                                        const std::string& query,
                                        ad_utility::MediaType mediaType,
-                                       size_t numThreads, size_t rowsPerChunk) {
+                                       size_t numThreads) {
   auto cleanupThreads = setRuntimeParameterForTest<
       &RuntimeParameters::constructExportNumThreads_>(numThreads);
-  auto cleanupChunk = setRuntimeParameterForTest<
-      &RuntimeParameters::constructExportRowsPerChunk_>(rowsPerChunk);
   return runQueryStreamableResult(kg, query, mediaType);
 }
 }  // namespace
 
 TEST(ExportQueryExecutionTrees, ParallelConstructSerializationMatchesSerial) {
   using enum ad_utility::MediaType;
-  const std::string kg = makeConstructKg(200);
+  // More than one `BATCH_SIZE` chunk so several workers get work.
+  const std::string kg = makeConstructKg(
+      qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE + 200);
   const std::string query = "CONSTRUCT {?s ?p ?o} WHERE {?s ?p ?o} ORDER BY ?s";
   // Reference output from the serial path (default thread count).
   const std::string expectedTsv = runQueryStreamableResult(kg, query, tsv);
@@ -2316,50 +2316,36 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationMatchesSerial) {
   const std::string expectedNtriples =
       runQueryStreamableResult(kg, query, ntriples);
 
-  // A small chunk size forces many worker tasks (default 1024 would leave
-  // 200 rows as a single chunk).
-  constexpr size_t smallChunk = 10;
   for (size_t numThreads : {size_t{2}, size_t{4}, size_t{8}}) {
-    EXPECT_EQ(
-        constructResultWithThreads(kg, query, tsv, numThreads, smallChunk),
-        expectedTsv)
+    EXPECT_EQ(constructResultWithThreads(kg, query, tsv, numThreads),
+              expectedTsv)
         << "numThreads = " << numThreads;
-    EXPECT_EQ(
-        constructResultWithThreads(kg, query, turtle, numThreads, smallChunk),
-        expectedTurtle)
+    EXPECT_EQ(constructResultWithThreads(kg, query, turtle, numThreads),
+              expectedTurtle)
         << "numThreads = " << numThreads;
-    EXPECT_EQ(
-        constructResultWithThreads(kg, query, ntriples, numThreads, smallChunk),
-        expectedNtriples)
+    EXPECT_EQ(constructResultWithThreads(kg, query, ntriples, numThreads),
+              expectedNtriples)
         << "numThreads = " << numThreads;
   }
 
   // numThreads == 0 means "all logical cores" and must also match.
-  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 0, smallChunk),
-            expectedTsv);
-  // One chunk for the whole result must also match.
-  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 4, 10'000), expectedTsv);
+  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, 0), expectedTsv);
 }
 
 // Blank-node labels in the CONSTRUCT output depend on the global row index
-// (via the row offset).  When the rows are split into groups, every group
-// must keep the original global row indices, so the labels are identical to
-// the serial path — also in combination with an OFFSET.
+// (via the row offset). Chunks must keep those indices, also with OFFSET.
 TEST(ExportQueryExecutionTrees, ParallelConstructSerializationBlankNodes) {
   using enum ad_utility::MediaType;
-  const std::string kg = makeConstructKg(100);
+  const std::string kg = makeConstructKg(
+      qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE + 100);
   const std::string query =
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s";
   const std::string queryWithOffset =
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s LIMIT 60 OFFSET 30";
-  constexpr size_t smallChunk = 10;
   for (const auto& q : {query, queryWithOffset}) {
     const std::string expected = runQueryStreamableResult(kg, q, turtle);
-    EXPECT_EQ(constructResultWithThreads(kg, q, turtle, 4, smallChunk),
-              expected);
-    // The blank-node labels are unique per row (fresh blank node per row).
-    std::string parallel =
-        constructResultWithThreads(kg, q, turtle, 4, smallChunk);
+    EXPECT_EQ(constructResultWithThreads(kg, q, turtle, 4), expected);
+    std::string parallel = constructResultWithThreads(kg, q, turtle, 4);
     EXPECT_EQ(parallel, expected);
     EXPECT_NE(parallel.find("_:u"), std::string::npos);
   }
@@ -2382,8 +2368,8 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationWithDedup) {
       setRuntimeParameterForTest<&RuntimeParameters::constructDeduplication_>(
           ad_utility::DeduplicationMode::full());
   const std::string expected = runQueryStreamableResult(kg, query, turtle);
-  EXPECT_EQ(constructResultWithThreads(kg, query, turtle, 4, 1024), expected);
-  EXPECT_EQ(constructResultWithThreads(kg, query, turtle, 0, 1024), expected);
+  EXPECT_EQ(constructResultWithThreads(kg, query, turtle, 4), expected);
+  EXPECT_EQ(constructResultWithThreads(kg, query, turtle, 0), expected);
 }
 
 // The parallel path must also handle an empty result (no rows to serialize):
@@ -2394,9 +2380,8 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationEmptyResult) {
   const std::string query =
       "CONSTRUCT {?s ?p ?o} WHERE {?s ?p ?o FILTER(?s = <s999>)}";
   for (size_t numThreads : {size_t{1}, size_t{4}}) {
-    EXPECT_EQ(constructResultWithThreads(kg, query, tsv, numThreads, 1024), "");
-    EXPECT_EQ(constructResultWithThreads(kg, query, turtle, numThreads, 1024),
-              "");
+    EXPECT_EQ(constructResultWithThreads(kg, query, tsv, numThreads), "");
+    EXPECT_EQ(constructResultWithThreads(kg, query, turtle, numThreads), "");
   }
 }
 

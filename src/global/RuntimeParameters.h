@@ -60,10 +60,6 @@ struct RuntimeParameters {
   // path); flip it to 0 (all logical cores) when the parallel serialization
   // layer is enabled.
   SizeT constructExportNumThreads_{1, "construct-export-num-threads"};
-  // Rows per worker chunk on the parallel CONSTRUCT path. Each lazy WHERE
-  // block is cut into contiguous pieces of this many rows and handed to
-  // workers in order. Default matches `ConstructTripleGenerator::BATCH_SIZE`.
-  SizeT constructExportRowsPerChunk_{1024, "construct-export-rows-per-chunk"};
 
   MemorySizeParameter cacheMaxSize_{ad_utility::MemorySize::gigabytes(30),
                                     "cache-max-size"};

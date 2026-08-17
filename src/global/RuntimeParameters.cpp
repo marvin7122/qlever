@@ -26,7 +26,6 @@ RuntimeParameters::RuntimeParameters() {
   add(sortEstimateCancellationFactor_);
   add(cacheMaxNumEntries_);
   add(constructExportNumThreads_);
-  add(constructExportRowsPerChunk_);
   add(cacheMaxSize_);
   add(cacheMaxSizeSingleEntry_);
   add(lazyIndexScanQueueSize_);
@@ -95,7 +94,6 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
-  constructExportRowsPerChunk_.setParameterConstraint(mustBeStrictlyPositive);
 }
 
 // _____________________________________________________________________________

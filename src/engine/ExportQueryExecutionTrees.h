@@ -231,9 +231,10 @@ class ExportQueryExecutionTrees {
       const qlever::constructExport::EvaluationConfig& config);
 
   // Cut one lazy WHERE block into contiguous row chunks of `rowsPerChunk`
-  // rows (the last chunk may be shorter). The `view_` ranges keep the original
-  // global row indices, which blank-node base IDs depend on. Empty blocks
-  // yield no chunks.
+  // rows (the last chunk may be shorter). Production uses
+  // `ConstructTripleGenerator::BATCH_SIZE`. The `view_` ranges keep the
+  // original global row indices, which blank-node base IDs depend on. Empty
+  // blocks yield no chunks.
   static std::vector<TableWithRange> splitBlockIntoChunks(
       const TableWithRange& block, size_t rowsPerChunk);
 };
