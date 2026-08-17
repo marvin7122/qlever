@@ -219,9 +219,6 @@ class ExportQueryExecutionTrees {
   // The per-format serialization body of the CONSTRUCT export: instantiates
   // `templateTriples` for every row in `rowRange` and serializes each resulting
   // triple according to `format`, concatenated into a single output string.
-  // This is the serialization work that the workers of the parallel path
-  // perform on their slice of the rows; the serial path iterates the same
-  // generator pipeline directly (per triple, to keep the export streaming).
   template <ad_utility::MediaType format>
   static std::string serializeConstructGroup(
       const ad_utility::sparql_types::Triples& templateTriples,
@@ -230,11 +227,11 @@ class ExportQueryExecutionTrees {
       size_t rowOffset,
       const qlever::constructExport::EvaluationConfig& config);
 
-  // Cut one lazy WHERE block into contiguous row chunks of `rowsPerChunk`
+  // Cut one lazy `TableWithRange` into contiguous row chunks of `rowsPerChunk`
   // rows (the last chunk may be shorter). Production uses
-  // `ConstructTripleGenerator::BATCH_SIZE`. The `view_` ranges keep the
-  // original global row indices, which blank-node base IDs depend on. Empty
-  // blocks yield no chunks.
+  // `ConstructTripleGenerator::BATCH_SIZE`. The returned `view_` ranges keep
+  // the original global row indices, which blank-node base IDs depend on.
+  // Empty blocks yield no chunks.
   static std::vector<TableWithRange> splitBlockIntoChunks(
       const TableWithRange& block, size_t rowsPerChunk);
 };

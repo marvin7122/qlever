@@ -41,11 +41,11 @@ struct EvaluationConfig {
   std::reference_wrapper<const QueryExecutionContext> qec_;
   ad_utility::DeduplicationMode mode_ = ad_utility::DeduplicationMode::none();
 
-  // An optional deduplicator shared by all chunks of a parallel CONSTRUCT
-  // export. When set, `evaluateTables` uses it instead of creating a fresh
-  // one, so that the parallel export path can deduplicate against one shared
-  // filter while serializing disjoint row ranges concurrently. When null, each
-  // call creates its own deduplicator (the serial path).
+  // Deduplicator shared by all chunks of a parallel CONSTRUCT export.
+  // Null means the caller did not share one; `evaluateTables` then creates
+  // a private instance when `mode_` is not `None`. Do not wrap this type in
+  // `std::optional`: `ConstructDeduplicator` contains a `std::mutex` and is
+  // therefore neither copyable nor movable.
   std::shared_ptr<ConstructDeduplicator> sharedDeduplicator_ = nullptr;
 };
 

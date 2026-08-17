@@ -124,9 +124,7 @@ class ConstructDeduplicator {
   TripleDeduplicator filter_;
 
   // Guards the shared deduplication state (`filter_` and `dedupVocab_`) against
-  // concurrent access from the parallel CONSTRUCT export path. The lock is held
-  // only for the ID-space filter check and the `dedupVocab_` re-anchoring; the
-  // expensive string formatting happens outside the lock (see `isNew`).
+  // concurrent access from the parallel CONSTRUCT export path.
   mutable std::mutex mutex_;
 
   // Compute the byte threshold that bounds `dedupVocab_` in `Lru` mode:
