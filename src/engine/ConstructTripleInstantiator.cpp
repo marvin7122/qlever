@@ -282,12 +282,12 @@ void appendFormattedTriple(std::string& out,
   }
 
   AD_CONTRACT_CHECK(format == csv || format == tsv);
-  const bool csv = format == ad_utility::MediaType::csv;
-  appendCsvOrTsvTerm(out, subject, includeDataType, csv);
-  out.push_back(csv ? ',' : '\t');
-  appendCsvOrTsvTerm(out, predicate, includeDataType, csv);
-  out.push_back(csv ? ',' : '\t');
-  appendCsvOrTsvTerm(out, object, includeDataType, csv);
+  const bool isCsv = format == ad_utility::MediaType::csv;
+  appendCsvOrTsvTerm(out, subject, includeDataType, isCsv);
+  out.push_back(isCsv ? ',' : '\t');
+  appendCsvOrTsvTerm(out, predicate, includeDataType, isCsv);
+  out.push_back(isCsv ? ',' : '\t');
+  appendCsvOrTsvTerm(out, object, includeDataType, isCsv);
   out.push_back('\n');
 }
 
