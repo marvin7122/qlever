@@ -90,7 +90,7 @@ std::optional<std::string> evaluate(
 
   auto result = instantiateTerm(*preprocessed, batchResult, 0, rowIdx);
   if (!result) return std::nullopt;
-  return formatTerm(**result, false);
+  return formatTerm(*result, false);
 }
 }  // namespace
 
