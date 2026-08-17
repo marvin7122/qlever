@@ -61,6 +61,17 @@ std::vector<EvaluatedTriple> instantiateBatch(
 // Terms with `type == nullptr` (IRIs, blank nodes, vocab-indexed literals)
 // are returned as-is regardless of `includeDataType`.
 std::string formatTerm(const EvaluatedTermData& term, bool includeDataType);
+std::string formatTerm(const EvaluatedTerm& term, bool includeDataType);
+
+// Append the formatted term to `out` (same bytes as `formatTerm`).
+void appendFormattedTerm(std::string& out, const EvaluatedTerm& term,
+                         bool includeDataType);
+
+// Append one serialized result triple, including the trailing newline, to
+// `out`. Same bytes as `formatTriple`.
+void appendFormattedTriple(std::string& out,
+                           const EvaluatedTriple& evaluatedTriple,
+                           const ad_utility::MediaType& format);
 
 // Formats a triple (subject, predicate, object) according to the output
 // format `format`.

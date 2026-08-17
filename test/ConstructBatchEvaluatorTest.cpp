@@ -20,15 +20,14 @@ using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Field;
 using ::testing::Optional;
-using ::testing::Pointee;
 
-// Matcher for `std::optional<EvaluatedTerm>` (i.e.
-// `std::optional<std::shared_ptr<const EvaluatedTermData>>`): asserts the
-// optional is non-empty and the pointed-to term's `rdfTermString_` field equals
-// `expected`.
+// Matcher for `std::optional<EvaluatedTerm>`: the optional is non-empty and
+// the term's stored string equals `expected`. Vocabulary terms still own an
+// `EvaluatedTermData`; this matcher is not used for inline blank nodes.
 constexpr auto evalTerm = [](const std::string& expected) {
-  return Optional(
-      Pointee(Field(&EvaluatedTermData::rdfTermString_, Eq(expected))));
+  return Optional(::testing::ResultOf(
+      [](const EvaluatedTerm& term) { return term->rdfTermString_; },
+      Eq(expected)));
 };
 
 const EvaluatedVariableValues& getColumn(const BatchEvaluationResult& result,

@@ -302,6 +302,36 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
 }
 
 // _____________________________________________________________________________
+TEST(ExportIds, appendIdToStringMatchesIdToStringAndType) {
+  std::string kg =
+      "<s> <p> <o> . "
+      "<s> <q> \"hello\" . "
+      "<s> <p> 42 . "
+      "<s> <p> 3.14 .";
+  auto qec = ad_utility::testing::getQec(kg);
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  auto getId = ad_utility::testing::makeGetId(index);
+
+  std::vector<Id> ids{getId("<s>"),           getId("\"hello\""),
+                      Id::makeFromInt(42),    Id::makeFromDouble(3.14),
+                      Id::makeFromBool(true), Id::makeUndefined()};
+
+  for (Id id : ids) {
+    auto expected = ql::exportIds::idToStringAndType(index, id, localVocab);
+    std::string out;
+    auto appended = ql::exportIds::appendIdToString(out, index, id, localVocab);
+    if (!expected.has_value()) {
+      EXPECT_FALSE(appended.written);
+      continue;
+    }
+    EXPECT_TRUE(appended.written);
+    EXPECT_EQ(out, expected->first);
+    EXPECT_EQ(appended.xsdType, expected->second);
+  }
+}
+
+// _____________________________________________________________________________
 // Empty span returns an empty vector.
 TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");

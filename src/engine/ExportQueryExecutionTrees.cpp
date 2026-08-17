@@ -18,10 +18,12 @@
 
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
 #include "engine/ConstructTripleGenerator.h"
+#include "engine/ConstructTripleInstantiator.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
@@ -513,9 +515,15 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
   uint64_t resultSize = 0;
+  // Reused across cells. Yield copies into the 1 MiB stream buffer via
+  // `string_view` and only returns after that copy finishes.
+  std::string cell;
+  const Index& index = qet.getQec()->getIndex();
+  constexpr bool stripQuotesAndAngles = format == csv;
+  constexpr auto appendEscaped = format == tsv
+                                     ? RdfEscaping::appendEscapedForTsv
+                                     : RdfEscaping::appendEscapedForCsv;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
     for (uint64_t i : range) {
@@ -523,12 +531,11 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
         if (selectedColumnIndices[j].has_value()) {
           const auto& val = selectedColumnIndices[j].value();
           Id id = pair.idTable()(i, val.columnIndex_);
-          auto optionalStringAndType =
-              ql::exportIds::idToStringAndType<format == csv>(
-                  qet.getQec()->getIndex(), id, pair.localVocab(),
-                  escapeFunction);
-          if (optionalStringAndType.has_value()) [[likely]] {
-            STREAMABLE_YIELD(optionalStringAndType.value().first);
+          cell.clear();
+          auto appended = ql::exportIds::appendIdToString<stripQuotesAndAngles>(
+              cell, index, id, pair.localVocab(), appendEscaped);
+          if (appended.written) [[likely]] {
+            STREAMABLE_YIELD(cell);
           }
         }
         if (j + 1 < selectedColumnIndices.size()) {
@@ -791,13 +798,19 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
                                   constructTriples.size());
 
   auto triples = qlever::constructExport::ConstructTripleGenerator::
-      generateFormattedTriples(
+      generateEvaluatedTriples(
           constructTriples, qet.getVariableColumns(), std::move(rowIndices),
-          limitAndOffset._offset, format,
+          limitAndOffset._offset,
           makeConstructEvaluationConfig(qet, std::move(cancellationHandle)));
 
-  for (const std::string& triple : triples) {
-    STREAMABLE_YIELD(triple);
+  // Reused across triples. `STREAMABLE_YIELD` copies into the 1 MiB stream
+  // buffer via `string_view` and only returns after that copy (or overflow)
+  // finishes, so clearing afterwards is safe.
+  std::string line;
+  for (const auto& triple : triples) {
+    line.clear();
+    qlever::constructExport::appendFormattedTriple(line, triple, format);
+    STREAMABLE_YIELD(line);
   }
 }
 

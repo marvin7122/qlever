@@ -54,6 +54,15 @@ class ConstructTripleGenerator {
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
 
   // Instantiates `templateTriples` for each row in `rowIndices` and returns a
+  // lazy range of `EvaluatedTriple`. Duplicate triples are handled according
+  // to `config.mode_`.
+  static InputRangeTypeErased<EvaluatedTriple> generateEvaluatedTriples(
+      const Triples& templateTriples,
+      const VariableToColumnMap& variableColumns,
+      InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
+      const EvaluationConfig& config);
+
+  // Instantiates `templateTriples` for each row in `rowIndices` and returns a
   // lazy range of triples serialized according to `mediaType`.
   // Duplicate triples are handled according to `config.mode_`.
   static InputRangeTypeErased<std::string> generateFormattedTriples(

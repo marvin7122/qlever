@@ -145,6 +145,16 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
 }
 
 //______________________________________________________________________________
+InputRangeTypeErased<EvaluatedTriple>
+ConstructTripleGenerator::generateEvaluatedTriples(
+    const Triples& templateTriples, const VariableToColumnMap& variableColumns,
+    InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
+    const EvaluationConfig& config) {
+  return evaluateTables(templateTriples, variableColumns, std::move(rowIndices),
+                        rowOffset, config);
+}
+
+//______________________________________________________________________________
 InputRangeTypeErased<std::string>
 ConstructTripleGenerator::generateFormattedTriples(
     const Triples& templateTriples, const VariableToColumnMap& variableColumns,

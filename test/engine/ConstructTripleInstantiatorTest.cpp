@@ -31,15 +31,18 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
       EvaluatedTermData{std::move(str), type});
 }
 
-// Matches an `EvaluatedTerm` (shared_ptr<const EvaluatedTermData>) by
-// dereferencing it and checking both fields. `type` uses pointer equality,
-// matching the compile-time constants (e.g. XSD_INT_TYPE) or nullptr.
-static constexpr auto matchesEvaluatedTerm = [](const auto& str,
-                                                const char* type) {
-  return ::testing::Pointee(::testing::AllOf(
-      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
-      AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type))));
-};
+// Matches an `EvaluatedTerm` by its serialized form and datatype pointer.
+// Blank nodes are stored inline and have no `EvaluatedTermData`.
+static auto matchesEvaluatedTerm(const auto& str, const char* type) {
+  return ::testing::Truly(
+      [expected = std::string(str), type](const EvaluatedTerm& term) {
+        if (term.isBlankNode()) {
+          return formatTerm(term, false) == expected && type == nullptr;
+        }
+        return term.get() != nullptr && term->rdfTermString_ == expected &&
+               term->rdfTermDataType_ == type;
+      });
+}
 
 // Matches an `EvaluatedTriple` by applying `matchesEvaluatedTerm` with
 // `nullptr` type to each of subject, predicate, and object.
@@ -578,6 +581,42 @@ TEST(FormatTriple, NTriplesQualifiesEveryTypedDatatype) {
   expectQualified(XSD_BOOLEAN_TYPE);
   expectQualified(XSD_ANYURI_TYPE);
   expectQualified(GEO_WKT_LITERAL.data());
+}
+
+// _____________________________________________________________________________
+TEST(FormatTriple, AppendIntoReusedBufferMatchesFormatTriple) {
+  auto triple = EvaluatedTriple{makeTerm("<http://s>"), makeTerm("<http://p>"),
+                                makeTerm("\"hello\nworld\"")};
+  std::string reused;
+  for (auto format :
+       {ad_utility::MediaType::turtle, ad_utility::MediaType::ntriples,
+        ad_utility::MediaType::csv, ad_utility::MediaType::tsv}) {
+    reused.clear();
+    appendFormattedTriple(reused, triple, format);
+    EXPECT_EQ(reused, formatTriple(triple, format));
+    reused.clear();
+    appendFormattedTriple(reused, triple, format);
+    EXPECT_EQ(reused, formatTriple(triple, format));
+  }
+}
+
+// _____________________________________________________________________________
+TEST(FormatTriple, TurtleBlankNodeSubject) {
+  auto triple = EvaluatedTriple{EvaluatedTerm::blankNode("_:g", "_x", 7),
+                                makeTerm("<http://p>"), makeTerm("<http://o>")};
+  EXPECT_EQ("_:g7_x <http://p> <http://o> .\n",
+            formatTriple(triple, ad_utility::MediaType::turtle));
+}
+
+// _____________________________________________________________________________
+TEST(InstantiateTerm, BlankNodeDoesNotAllocateEvaluatedTermData) {
+  auto batchResult = BatchEvaluationResult{{}, 1};
+  PreprocessedTerm preprocessed = PrecomputedBlankNode{"_:g", "_label"};
+  auto result = instantiateTerm(preprocessed, batchResult, 0, 42);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(result->isBlankNode());
+  EXPECT_EQ(result->get(), nullptr);
+  EXPECT_EQ(formatTerm(*result, false), "_:g42_label");
 }
 
 }  // namespace

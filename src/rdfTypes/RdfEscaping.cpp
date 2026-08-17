@@ -13,6 +13,7 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/shift.h"
+#include "backports/span.h"
 #include "util/Exception.h"
 #include "util/HashSet.h"
 #include "util/Log.h"
@@ -211,7 +212,29 @@ NormalizedRDFString normalizeRDFLiteral(const std::string_view origLiteral) {
 }
 
 // ____________________________________________________________________________
-std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
+namespace {
+// Append `input`, replacing each listed source character with `repl` in one
+// pass over the original bytes. Same semantics as a simultaneous
+// `absl::StrReplaceAll` on those pairs.
+void appendWithCharReplacements(
+    std::string& out, std::string_view input,
+    ql::span<const std::pair<char, std::string_view>> replacements) {
+  size_t start = 0;
+  for (size_t i = 0; i < input.size(); ++i) {
+    for (const auto& [from, to] : replacements) {
+      if (input[i] == from) {
+        out.append(input.data() + start, i - start);
+        out.append(to);
+        start = i + 1;
+        break;
+      }
+    }
+  }
+  out.append(input.data() + start, input.size() - start);
+}
+}  // namespace
+
+void appendValidRDFLiteral(std::string& out, std::string_view normLiteral) {
   AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'));
   size_t posSecondQuote = normLiteral.find('"', 1);
   AD_CONTRACT_CHECK(posSecondQuote != std::string::npos);
@@ -220,16 +243,23 @@ std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
   // normalized literal has), there is nothing to do.
   if (posSecondQuote == posLastQuote &&
       normLiteral.find_first_of("\\\n\r") == std::string::npos) {
-    return std::string{normLiteral};
+    out.append(normLiteral);
+    return;
   }
-  // Otherwise escape first all backlashes then all quotes (the order is
-  // important) in the part between the first and the last quote and leave the
-  // rest unchanged.
+  // Escape `\`, newline, CR, and `"` in the lexical form. Leave the
+  // surrounding quotes and any language tag or datatype suffix unchanged.
   std::string_view normalizedContent = normLiteral.substr(1, posLastQuote - 1);
-  std::string content = absl::StrReplaceAll(
-      normalizedContent,
-      {{R"(\)", R"(\\)"}, {"\n", "\\n"}, {"\r", "\\r"}, {R"(")", R"(\")"}});
-  return absl::StrCat("\"", content, normLiteral.substr(posLastQuote));
+  static constexpr std::pair<char, std::string_view> kEscapes[] = {
+      {'\\', "\\\\"}, {'\n', "\\n"}, {'\r', "\\r"}, {'"', "\\\""}};
+  out.push_back('"');
+  appendWithCharReplacements(out, normalizedContent, kEscapes);
+  out.append(normLiteral.substr(posLastQuote));
+}
+
+std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
+  std::string out;
+  appendValidRDFLiteral(out, normLiteral);
+  return out;
 }
 
 // __________________________________________________________________________
@@ -292,19 +322,39 @@ std::string unescapePrefixedIri(std::string_view literal) {
 }
 
 // __________________________________________________________________________
-std::string escapeForCsv(std::string input) {
+void appendEscapedForCsv(std::string& out, std::string_view input) {
   if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
-    return input;
+    out.append(input);
+    return;
   }
-  return absl::StrCat("\"", absl::StrReplaceAll(input, {{"\"", "\"\""}}), "\"");
+  static constexpr std::pair<char, std::string_view> kEscapes[] = {
+      {'"', "\"\""}};
+  out.push_back('"');
+  appendWithCharReplacements(out, input, kEscapes);
+  out.push_back('"');
+}
+
+std::string escapeForCsv(std::string input) {
+  std::string out;
+  appendEscapedForCsv(out, input);
+  return out;
 }
 
 // __________________________________________________________________________
-std::string escapeForTsv(std::string input) {
-  if (ctre::search<detail::tsvSpecialCharsRegex>(input)) [[unlikely]] {
-    absl::StrReplaceAll({{"\t", " "}, {"\n", "\\n"}}, &input);
+void appendEscapedForTsv(std::string& out, std::string_view input) {
+  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
+    out.append(input);
+    return;
   }
-  return input;
+  static constexpr std::pair<char, std::string_view> kEscapes[] = {
+      {'\t', " "}, {'\n', "\\n"}};
+  appendWithCharReplacements(out, input, kEscapes);
+}
+
+std::string escapeForTsv(std::string input) {
+  std::string out;
+  appendEscapedForTsv(out, input);
+  return out;
 }
 
 // __________________________________________________________________________

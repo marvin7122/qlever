@@ -9,12 +9,14 @@
 
 #include "engine/ConstructTripleInstantiator.h"
 
-#include <absl/strings/str_cat.h>
+#include <array>
+#include <charconv>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "engine/ConstructDeduplicator.h"
 #include "global/Constants.h"
 #include "rdfTypes/RdfEscaping.h"
+#include "util/Algorithm.h"
 #include "util/Exception.h"
 #include "util/Views.h"
 
@@ -33,8 +35,7 @@ std::optional<EvaluatedTerm> instantiateTerm(
         } else if constexpr (std::is_same_v<T, PrecomputedVariable>) {
           return batchResult.getVariable(t.columnIndex_, rowIdxInBatch);
         } else if constexpr (std::is_same_v<T, PrecomputedBlankNode>) {
-          return std::make_shared<const EvaluatedTermData>(EvaluatedTermData{
-              absl::StrCat(t.prefix_, rowIdxTotal, t.suffix_), nullptr});
+          return EvaluatedTerm::blankNode(t.prefix_, t.suffix_, rowIdxTotal);
         } else {
           static_assert(ad_utility::alwaysFalse<T>, "Unhandled variant type");
         }
@@ -97,75 +98,213 @@ std::vector<EvaluatedTriple> instantiateBatch(
   return triples;
 }
 
-// _____________________________________________________________________________
-std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+namespace {
+// Returns true iff `formatTerm` (and `appendFormattedTerm`) emit `term` in the
+// fully qualified form `"value"^^<datatype>` as opposed to the short form
+// without quotation marks.
+bool needsDatatypeWrapper(const EvaluatedTermData& term, bool includeDataType) {
   if (term.rdfTermDataType_ == nullptr) {
-    // IRI, blank node, or vocab-indexed literal: already in final form.
-    return term.rdfTermString_;
+    return false;
   }
   const auto* i = static_cast<const char*>(XSD_INT_TYPE);
   const auto* d = static_cast<const char*>(XSD_DECIMAL_TYPE);
   const auto* b = static_cast<const char*>(XSD_BOOLEAN_TYPE);
-
   // Note: XSD_DOUBLE_TYPE values (for example "NaN", "INF", "-INF") always
   // include the datatype.
-  if (!includeDataType &&
-      (term.rdfTermDataType_ == i || term.rdfTermDataType_ == d ||
-       (term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1))) {
-    return term.rdfTermString_;
+  return includeDataType ||
+         (term.rdfTermDataType_ != i && term.rdfTermDataType_ != d &&
+          !(term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1));
+}
+
+void appendBlankNode(std::string& out, std::string_view prefix, size_t row,
+                     std::string_view suffix) {
+  out.append(prefix);
+  char digits[24];
+  auto [end, err] = std::to_chars(digits, digits + sizeof(digits), row);
+  AD_CORRECTNESS_CHECK(err == std::errc{});
+  out.append(digits, static_cast<size_t>(end - digits));
+  out.append(suffix);
+}
+
+void appendFormattedTermData(std::string& out, const EvaluatedTermData& term,
+                             bool includeDataType) {
+  if (!needsDatatypeWrapper(term, includeDataType)) {
+    out.append(term.rdfTermString_);
+    return;
   }
-  return absl::StrCat("\"", term.rdfTermString_, "\"^^<", term.rdfTermDataType_,
-                      ">");
+  out.push_back('"');
+  out.append(term.rdfTermString_);
+  out.append("\"^^<");
+  out.append(term.rdfTermDataType_);
+  out.push_back('>');
+}
+
+size_t formattedTermSize(const EvaluatedTerm& term, bool includeDataType) {
+  if (term.isBlankNode()) {
+    // 20 digits is enough for any 64-bit decimal row id.
+    return term.blankPrefix().size() + 20 + term.blankSuffix().size();
+  }
+  size_t size = term->rdfTermString_.size();
+  if (needsDatatypeWrapper(*term, includeDataType)) {
+    size += 6 + std::char_traits<char>::length(term->rdfTermDataType_);
+  }
+  return size;
+}
+
+bool termIsLiteral(const EvaluatedTerm& term, bool includeDataType) {
+  if (term.isBlankNode()) {
+    return false;
+  }
+  return needsDatatypeWrapper(*term, includeDataType) ||
+         ql::starts_with(term->rdfTermString_, '"');
+}
+
+// Escape the lexical form of a typed literal (the raw `rdfTermString_`) and
+// wrap it as `"escaped"^^<datatype>`.
+void appendTypedLiteral(std::string& out, const EvaluatedTermData& term) {
+  out.push_back('"');
+  // `appendValidRDFLiteral` expects a normalized `"content"` literal. Build
+  // that view without a heap string when the raw value has no quotes.
+  if (term.rdfTermString_.find_first_of("\\\"\n\r") == std::string::npos) {
+    out.append(term.rdfTermString_);
+  } else {
+    std::string wrapped;
+    wrapped.reserve(term.rdfTermString_.size() + 2);
+    wrapped.push_back('"');
+    wrapped.append(term.rdfTermString_);
+    wrapped.push_back('"');
+    std::string escaped;
+    RdfEscaping::appendValidRDFLiteral(escaped, wrapped);
+    // `escaped` is `"content"`; drop the surrounding quotes, already written.
+    AD_CORRECTNESS_CHECK(escaped.size() >= 2 && escaped.front() == '"' &&
+                         escaped.back() == '"');
+    out.append(escaped.data() + 1, escaped.size() - 2);
+  }
+  out.append("\"^^<");
+  out.append(term.rdfTermDataType_);
+  out.push_back('>');
+}
+
+void appendTurtleObject(std::string& out, const EvaluatedTerm& object,
+                        bool includeDataType) {
+  if (!termIsLiteral(object, includeDataType)) {
+    appendFormattedTerm(out, object, includeDataType);
+    return;
+  }
+  if (needsDatatypeWrapper(*object, includeDataType)) {
+    appendTypedLiteral(out, *object);
+    return;
+  }
+  RdfEscaping::appendValidRDFLiteral(out, object->rdfTermString_);
+}
+
+void appendCsvOrTsvTerm(std::string& out, const EvaluatedTerm& term,
+                        bool includeDataType, bool csv) {
+  const size_t begin = out.size();
+  appendFormattedTerm(out, term, includeDataType);
+  std::string_view formatted{out.data() + begin, out.size() - begin};
+  if (csv) {
+    if (!formatted.empty() &&
+        formatted.find_first_of("\r\n\",") != std::string_view::npos) {
+      std::string copy{formatted};
+      out.resize(begin);
+      RdfEscaping::appendEscapedForCsv(out, copy);
+    }
+  } else if (!formatted.empty() &&
+             formatted.find_first_of("\n\t") != std::string_view::npos) {
+    std::string copy{formatted};
+    out.resize(begin);
+    RdfEscaping::appendEscapedForTsv(out, copy);
+  }
+}
+}  // namespace
+
+// _____________________________________________________________________________
+void appendFormattedTerm(std::string& out, const EvaluatedTerm& term,
+                         bool includeDataType) {
+  if (term.isBlankNode()) {
+    appendBlankNode(out, term.blankPrefix(), term.blankRow(),
+                    term.blankSuffix());
+    return;
+  }
+  appendFormattedTermData(out, *term, includeDataType);
 }
 
 // _____________________________________________________________________________
-std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
-                         const ad_utility::MediaType& format) {
-  // TODO<ms2144>: take a look where we can eliminate string constructions here.
+std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+  std::string out;
+  appendFormattedTermData(out, term, includeDataType);
+  return out;
+}
+
+// _____________________________________________________________________________
+std::string formatTerm(const EvaluatedTerm& term, bool includeDataType) {
+  std::string out;
+  appendFormattedTerm(out, term, includeDataType);
+  return out;
+}
+
+// _____________________________________________________________________________
+void appendFormattedTriple(std::string& out,
+                           const EvaluatedTriple& evaluatedTriple,
+                           const ad_utility::MediaType& format) {
   using enum ad_utility::MediaType;
   static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
   AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
 
   const auto& [subject, predicate, object] = evaluatedTriple;
-
   const bool includeDataType = (format == ntriples);
 
-  std::string s = formatTerm(*subject, includeDataType);
-  std::string p = formatTerm(*predicate, includeDataType);
-  std::string o = formatTerm(*object, includeDataType);
+  const size_t start = out.size();
+  size_t estimatedSize = formattedTermSize(subject, includeDataType) +
+                         formattedTermSize(predicate, includeDataType) +
+                         formattedTermSize(object, includeDataType);
+  if (format == turtle || format == ntriples) {
+    if (termIsLiteral(object, includeDataType)) {
+      estimatedSize += formattedTermSize(object, includeDataType);
+    }
+    estimatedSize += 5;
+  } else {
+    estimatedSize += formattedTermSize(subject, includeDataType) +
+                     formattedTermSize(predicate, includeDataType) +
+                     formattedTermSize(object, includeDataType) + 3;
+  }
+  out.reserve(start + estimatedSize);
 
   if (format == turtle || format == ntriples) {
-    // Only escape literals (strings starting with "). IRIs and blank nodes
-    // are used as-is, avoiding an unnecessary string copy.
-    if (ql::starts_with(o, '"')) {
-      return absl::StrCat(
-          s, " ", p, " ",
-          RdfEscaping::validRDFLiteralFromNormalized(std::move(o)), " .\n");
-    }
-    return absl::StrCat(s, " ", p, " ", o, " .\n");
-
-  } else if (format == csv) {
-    return absl::StrCat(RdfEscaping::escapeForCsv(std::move(s)), ",",
-                        RdfEscaping::escapeForCsv(std::move(p)), ",",
-                        RdfEscaping::escapeForCsv(std::move(o)), "\n");
-  } else if (format == tsv) {
-    return absl::StrCat(RdfEscaping::escapeForTsv(std::move(s)), "\t",
-                        RdfEscaping::escapeForTsv(std::move(p)), "\t",
-                        RdfEscaping::escapeForTsv(std::move(o)), "\n");
-  } else {
-    AD_FAIL();  // unreachable
+    appendFormattedTerm(out, subject, includeDataType);
+    out.push_back(' ');
+    appendFormattedTerm(out, predicate, includeDataType);
+    out.push_back(' ');
+    appendTurtleObject(out, object, includeDataType);
+    out.append(" .\n");
+    return;
   }
+
+  AD_CONTRACT_CHECK(format == csv || format == tsv);
+  const bool isCsv = format == ad_utility::MediaType::csv;
+  appendCsvOrTsvTerm(out, subject, includeDataType, isCsv);
+  out.push_back(isCsv ? ',' : '\t');
+  appendCsvOrTsvTerm(out, predicate, includeDataType, isCsv);
+  out.push_back(isCsv ? ',' : '\t');
+  appendCsvOrTsvTerm(out, object, includeDataType, isCsv);
+  out.push_back('\n');
+}
+
+// _____________________________________________________________________________
+std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
+                         const ad_utility::MediaType& format) {
+  std::string buffer;
+  appendFormattedTriple(buffer, evaluatedTriple, format);
+  return buffer;
 }
 
 // _____________________________________________________________________________
 StringTriple createStringTriple(const EvaluatedTriple& evaluatedTriple,
                                 bool includeDataType) {
   const auto& [subject, predicate, object] = evaluatedTriple;
-
-  std::string s = formatTerm(*subject, includeDataType);
-  std::string p = formatTerm(*predicate, includeDataType);
-  std::string o = formatTerm(*object, includeDataType);
-
-  return StringTriple{std::move(s), std::move(p), std::move(o)};
+  return StringTriple{formatTerm(subject, includeDataType),
+                      formatTerm(predicate, includeDataType),
+                      formatTerm(object, includeDataType)};
 }
 }  // namespace qlever::constructExport

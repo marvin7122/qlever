@@ -103,6 +103,12 @@ NormalizedRDFString normalizeRDFLiteral(std::string_view origLiteral);
  */
 std::string validRDFLiteralFromNormalized(std::string_view normLiteral);
 
+// Append variants of the Turtle / CSV / TSV escapers. CONSTRUCT formatting
+// writes into a caller-owned buffer; the `std::string` APIs below call these.
+void appendValidRDFLiteral(std::string& out, std::string_view normLiteral);
+void appendEscapedForCsv(std::string& out, std::string_view input);
+void appendEscapedForTsv(std::string& out, std::string_view input);
+
 // If `input` is an IRI in `<angleBrackets>` remove those. If it is a
 // "literal"^^<withDatatype> (or with a language tag or nothing),
 // only return the part between the quotation marks (`literal`) in the

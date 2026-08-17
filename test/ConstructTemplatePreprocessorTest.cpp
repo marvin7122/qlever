@@ -47,10 +47,11 @@ auto iriV = ad_utility::testing::iriV;
 // see https://github.com/google/googletest/blob/main/docs/reference/matchers.md
 constexpr auto matchesPrecomputedConstant = [](const auto& value) {
   // only match the string, not the type field.
-  return ::testing::VariantWith<PrecomputedConstant>(
-      AD_FIELD(PrecomputedConstant, evaluatedTerm_,
-               ::testing::Pointee(AD_FIELD(EvaluatedTermData, rdfTermString_,
-                                           std::string(value)))));
+  return ::testing::VariantWith<PrecomputedConstant>(AD_FIELD(
+      PrecomputedConstant, evaluatedTerm_,
+      ::testing::ResultOf(
+          [](const EvaluatedTerm& term) { return term->rdfTermString_; },
+          std::string(value))));
 };
 
 // _____________________________________________________________________________

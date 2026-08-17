@@ -53,6 +53,38 @@ TEST(RdfEscapingTest, validRDFLiteralFromNormalized) {
 }
 
 // ___________________________________________________________________________
+TEST(RdfEscapingTest, appendApisMatchAllocatingApis) {
+  auto checkLiteral = [](std::string_view in) {
+    std::string out;
+    appendValidRDFLiteral(out, in);
+    EXPECT_EQ(out, validRDFLiteralFromNormalized(in)) << in;
+  };
+  checkLiteral(R"("plain")");
+  checkLiteral(R"(""\a\"")");
+  checkLiteral(R"("\b\"@en)");
+  checkLiteral(R"("\c""^^<s>)");
+  checkLiteral("\"\nhi\r\\\"");
+
+  auto checkCsv = [](std::string_view in) {
+    std::string out;
+    appendEscapedForCsv(out, in);
+    EXPECT_EQ(out, escapeForCsv(std::string{in})) << in;
+  };
+  checkCsv("abc");
+  checkCsv("a\nb\rc,d");
+  checkCsv("\"");
+  checkCsv("a\"b");
+
+  auto checkTsv = [](std::string_view in) {
+    std::string out;
+    appendEscapedForTsv(out, in);
+    EXPECT_EQ(out, escapeForTsv(std::string{in})) << in;
+  };
+  checkTsv("abc");
+  checkTsv("a\nb\tc");
+}
+
+// ___________________________________________________________________________
 TEST(RdfEscapingTest, normalizedContentFromLiteralOrIri) {
   auto f = [](std::string_view s) {
     return normalizedContentFromLiteralOrIri(std::string{s});
