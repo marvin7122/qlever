@@ -28,6 +28,17 @@ IdCache ConstructTripleGenerator::makeIdCache(
 
 namespace {
 
+std::shared_ptr<ConstructDeduplicator> makeDeduplicator(
+    const EvaluationConfig& config) {
+  if (config.sharedDeduplicator_) {
+    return config.sharedDeduplicator_;
+  }
+  if (std::holds_alternative<DeduplicationMode::None>(config.mode_.value_)) {
+    return nullptr;
+  }
+  return std::make_shared<ConstructDeduplicator>(config.mode_, config.qec_);
+}
+
 // Bundles the pieces `computeBatch` needs beyond the batch itself.
 struct BatchEvalContext {
   BatchEvalContext(const PreprocessedConstructTemplate& preprocessedTemplate,
@@ -113,15 +124,7 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
       templateTriples, variableColumns, config.index_);
   IdCache cache = makeIdCache(preprocessedTemplate);
 
-  // Use a caller-provided deduplicator if one is shared across the parallel
-  // export chunks; otherwise create a fresh one for this call (serial path).
-  std::shared_ptr<ConstructDeduplicator> deduplicator =
-      config.sharedDeduplicator_;
-  if (!deduplicator &&
-      !std::holds_alternative<DeduplicationMode::None>(config.mode_.value_)) {
-    deduplicator =
-        std::make_shared<ConstructDeduplicator>(config.mode_, config.qec_);
-  }
+  auto deduplicator = makeDeduplicator(config);
 
   auto preprocessedTemplatePtr =
       std::make_shared<const PreprocessedConstructTemplate>(
