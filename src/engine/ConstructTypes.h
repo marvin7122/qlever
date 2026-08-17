@@ -87,6 +87,19 @@ class EvaluatedTerm {
   std::string_view blankPrefix() const noexcept { return blankPrefix_; }
   std::string_view blankSuffix() const noexcept { return blankSuffix_; }
   size_t blankRow() const noexcept { return blankRow_; }
+
+  // Cached terms compare by `shared_ptr` identity. Blank nodes compare by
+  // prefix, suffix, and row.
+  friend bool operator==(const EvaluatedTerm& lhs,
+                         const EvaluatedTerm& rhs) noexcept {
+    if (lhs.isBlankNode() || rhs.isBlankNode()) {
+      return lhs.isBlankNode() && rhs.isBlankNode() &&
+             lhs.blankPrefix_ == rhs.blankPrefix_ &&
+             lhs.blankSuffix_ == rhs.blankSuffix_ &&
+             lhs.blankRow_ == rhs.blankRow_;
+    }
+    return lhs.data_ == rhs.data_;
+  }
 };
 
 // A constant (`Iri` or `Literal`) whose string value is fully known at
