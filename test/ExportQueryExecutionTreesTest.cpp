@@ -2333,22 +2333,29 @@ TEST(ExportQueryExecutionTrees, ParallelConstructSerializationMatchesSerial) {
 }
 
 // Blank-node labels in the CONSTRUCT output depend on the global row index
-// (via the row offset). Chunks must keep those indices, also with OFFSET.
+// (via the row offset). Chunks must keep those indices.
 TEST(ExportQueryExecutionTrees, ParallelConstructSerializationBlankNodes) {
   using enum ad_utility::MediaType;
   const std::string kg = makeConstructKg(
       qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE + 100);
   const std::string query =
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s";
-  const std::string queryWithOffset =
+  const std::string expected = runQueryStreamableResult(kg, query, turtle);
+  const std::string parallel = constructResultWithThreads(kg, query, turtle, 4);
+  EXPECT_EQ(parallel, expected);
+  EXPECT_NE(parallel.find("_:u"), std::string::npos);
+}
+
+TEST(ExportQueryExecutionTrees, ParallelConstructSerializationBlankNodesWithOffset) {
+  using enum ad_utility::MediaType;
+  const std::string kg = makeConstructKg(
+      qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE + 100);
+  const std::string query =
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s LIMIT 60 OFFSET 30";
-  for (const auto& q : {query, queryWithOffset}) {
-    const std::string expected = runQueryStreamableResult(kg, q, turtle);
-    EXPECT_EQ(constructResultWithThreads(kg, q, turtle, 4), expected);
-    std::string parallel = constructResultWithThreads(kg, q, turtle, 4);
-    EXPECT_EQ(parallel, expected);
-    EXPECT_NE(parallel.find("_:u"), std::string::npos);
-  }
+  const std::string expected = runQueryStreamableResult(kg, query, turtle);
+  const std::string parallel = constructResultWithThreads(kg, query, turtle, 4);
+  EXPECT_EQ(parallel, expected);
+  EXPECT_NE(parallel.find("_:u"), std::string::npos);
 }
 
 // When triple deduplication is active, the parallel path stays enabled: the
