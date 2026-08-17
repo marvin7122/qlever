@@ -112,6 +112,135 @@ LiteralOrIri getLiteralOrIriFromVocabIndex(const IndexImpl& index, Id id,
 std::optional<std::pair<std::string, const char*>>
 idToStringAndTypeForEncodedValue(Id id);
 
+// Result of appending a serialized `Id`. `written` is false for Undefined
+// and for `returnOnlyLiterals` when the id is not a literal.
+struct AppendedId {
+  bool written = false;
+  const char* xsdType = nullptr;
+};
+
+// Append the lexical form of an encoded-value `Id` to `out`. Same cases as
+// `idToStringAndTypeForEncodedValue`.
+AppendedId appendIdToStringForEncodedValue(std::string& out, Id id);
+
+// Default sink used by `appendIdToString` when the caller does not escape.
+struct AppendUnescaped {
+  void operator()(std::string& out, std::string_view sv) const {
+    out.append(sv);
+  }
+};
+
+// If `word` is an internal blank-node IRI, return the `_:...` form.
+inline std::optional<std::string_view> blankNodeFromSerializedIri(
+    std::string_view word) {
+  if (!ql::starts_with(word, QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX)) {
+    return std::nullopt;
+  }
+  word.remove_prefix(QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX.size());
+  if (word.empty() || word.back() != '>') {
+    return std::nullopt;
+  }
+  word.remove_suffix(1);
+  AD_CORRECTNESS_CHECK(ql::starts_with(word, "_:"));
+  return word;
+}
+
+// Strip surrounding `<>` or the quotes of a normalized literal (keeping only
+// the lexical form). Other strings are returned unchanged.
+inline std::string_view stripQuotesOrAngleBrackets(std::string_view word) {
+  if (ql::starts_with(word, '<') && ql::ends_with(word, '>') &&
+      word.size() >= 2) {
+    return word.substr(1, word.size() - 2);
+  }
+  if (ql::starts_with(word, '"')) {
+    const size_t lastQuote = word.rfind('"');
+    AD_CORRECTNESS_CHECK(lastQuote > 0);
+    return word.substr(1, lastQuote - 1);
+  }
+  return word;
+}
+
+// Append a vocabulary / local-vocab word that is already in emit form.
+template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
+          typename AppendEscape>
+AppendedId appendSerializedRdfWord(std::string& out, std::string_view word,
+                                   AppendEscape&& appendEscaped) {
+  if (auto blank = blankNodeFromSerializedIri(word)) {
+    if constexpr (returnOnlyLiterals) {
+      return {};
+    }
+    appendEscaped(out, *blank);
+    return {true, nullptr};
+  }
+  if constexpr (returnOnlyLiterals) {
+    if (!ql::starts_with(word, '"')) {
+      return {};
+    }
+  }
+  if constexpr (removeQuotesAndAngleBrackets) {
+    appendEscaped(out, stripQuotesOrAngleBrackets(word));
+  } else {
+    appendEscaped(out, word);
+  }
+  return {true, nullptr};
+}
+
+// Append the human-readable form of `id` to `out`. Same contract as
+// `idToStringAndType`, but writes into a caller-owned buffer.
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false,
+          typename AppendEscape = AppendUnescaped>
+AppendedId appendIdToString(std::string& out, const Index& index, Id id,
+                            const LocalVocab& localVocab,
+                            AppendEscape&& appendEscaped = AppendEscape{}) {
+  using enum Datatype;
+  auto datatype = id.getDatatype();
+  if constexpr (returnOnlyLiterals) {
+    if (!(datatype == VocabIndex || datatype == LocalVocabIndex)) {
+      return {};
+    }
+  }
+
+  switch (datatype) {
+    case WordVocabIndex: {
+      decltype(auto) entity = index.indexToString(id.getWordVocabIndex());
+      appendEscaped(out, std::string_view{entity});
+      return {true, nullptr};
+    }
+    case VocabIndex: {
+      decltype(auto) entity = index.indexToString(id.getVocabIndex());
+      return appendSerializedRdfWord<removeQuotesAndAngleBrackets,
+                                     returnOnlyLiterals>(
+          out, std::string_view{entity}, appendEscaped);
+    }
+    case LocalVocabIndex: {
+      const auto& word =
+          localVocab.getWord(id.getLocalVocabIndex()).asLiteralOrIri();
+      return appendSerializedRdfWord<removeQuotesAndAngleBrackets,
+                                     returnOnlyLiterals>(
+          out, word.toStringRepresentation(), appendEscaped);
+    }
+    case EncodedVal: {
+      if constexpr (returnOnlyLiterals) {
+        return {};
+      }
+      if constexpr (removeQuotesAndAngleBrackets) {
+        std::string tmp;
+        index.encodedIriManager().append(tmp, id);
+        return appendSerializedRdfWord<true, false>(out, tmp, appendEscaped);
+      }
+      index.encodedIriManager().append(out, id);
+      return {true, nullptr};
+    }
+    case TextRecordIndex: {
+      appendEscaped(out, index.getTextExcerpt(id.getTextRecordIndex()));
+      return {true, nullptr};
+    }
+    default:
+      return appendIdToStringForEncodedValue(out, id);
+  }
+}
+
 // Convert an `EncodedVal` ID to a `LiteralOrIri` by looking up the encoded
 // IRI via the `EncodedIriManager` in the index.
 LiteralOrIri encodedIdToLiteralOrIri(Id id, const IndexImpl& index);
@@ -168,38 +297,17 @@ template <bool removeQuotesAndAngleBrackets = false,
 std::optional<std::pair<std::string, const char*>> idToStringAndType(
     const Index& index, Id id, const LocalVocab& localVocab,
     EscapeFunction&& escapeFunction = EscapeFunction{}) {
-  using enum Datatype;
-  auto datatype = id.getDatatype();
-  if constexpr (returnOnlyLiterals) {
-    if (!(datatype == VocabIndex || datatype == LocalVocabIndex)) {
-      return std::nullopt;
-    }
+  std::string out;
+  auto appended =
+      appendIdToString<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+          out, index, id, localVocab,
+          [&](std::string& sink, std::string_view sv) {
+            sink.append(escapeFunction(std::string{sv}));
+          });
+  if (!appended.written) {
+    return std::nullopt;
   }
-
-  auto formatLiteralOrIri = [&escapeFunction](const auto& word) {
-    return literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
-                                       returnOnlyLiterals>(word,
-                                                           escapeFunction);
-  };
-
-  switch (id.getDatatype()) {
-    case WordVocabIndex: {
-      std::string_view entity = index.indexToString(id.getWordVocabIndex());
-      return std::pair{escapeFunction(std::string{entity}), nullptr};
-    }
-    case VocabIndex:
-    case LocalVocabIndex:
-      return formatLiteralOrIri(
-          getLiteralOrIriFromVocabIndex(index.getImpl(), id, localVocab));
-    case EncodedVal:
-      return formatLiteralOrIri(encodedIdToLiteralOrIri(id, index.getImpl()));
-    case TextRecordIndex:
-      return std::pair{
-          escapeFunction(index.getTextExcerpt(id.getTextRecordIndex())),
-          nullptr};
-    default:
-      return idToStringAndTypeForEncodedValue(id);
-  }
+  return std::pair{std::move(out), appended.xsdType};
 }
 
 // Positions (indices into the `ids` span) split by datatype: `VocabIndex` ids
@@ -266,9 +374,15 @@ void resolveVocabIndexIds(
   // `vocabStrings` is in the same order as `positions`, so zip scatters each
   // looked-up string back to the position it came from.
   for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, positions)) {
-    results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
-                                             returnOnlyLiterals>(
-        LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
+    std::string out;
+    auto appended = appendSerializedRdfWord<removeQuotesAndAngleBrackets,
+                                            returnOnlyLiterals>(
+        out, sv, [&](std::string& sink, std::string_view word) {
+          sink.append(escapeFunction(std::string{word}));
+        });
+    if (appended.written) {
+      results[i] = std::pair{std::move(out), appended.xsdType};
+    }
   }
 }
 

@@ -197,10 +197,16 @@ class EncodedIriManagerImpl {
   // Convert an `Id` that was encoded using this encoder back to a string.
   // Throw an exception if the `Id` has a datatype different from `EncodedVal`.
   std::string toString(Id id) const {
+    std::string out;
+    append(out, id);
+    return out;
+  }
+
+  // Append the IRI representation of an `EncodedVal` `id` to `out`.
+  void append(std::string& out, Id id) const {
     AD_CORRECTNESS_CHECK(id.getDatatype() == Datatype::EncodedVal);
-    // Get only the rightmost bits that represent the digits.
     auto [prefixIdx, digitEncoding] = splitIntoPrefixIdxAndPayload(id);
-    return toStringWithGivenPrefix(digitEncoding, prefixes_.at(prefixIdx));
+    appendWithGivenPrefix(out, digitEncoding, prefixes_.at(prefixIdx));
   }
 
   // The second half of `toString` above: combine the integer encoding of the
@@ -208,13 +214,18 @@ class EncodedIriManagerImpl {
   // Note: This function expects, that the prefix starts with `<`.
   static std::string toStringWithGivenPrefix(uint64_t digitEncoding,
                                              std::string_view prefix) {
-    AD_EXPENSIVE_CHECK(ql::starts_with(prefix, '<'));
     std::string result;
-    result.reserve(prefix.size() + NumDigits + 1);
-    result = prefix;
-    decodeDecimalFrom64Bit(result, digitEncoding);
-    result.push_back('>');
+    appendWithGivenPrefix(result, digitEncoding, prefix);
     return result;
+  }
+
+  static void appendWithGivenPrefix(std::string& out, uint64_t digitEncoding,
+                                    std::string_view prefix) {
+    AD_EXPENSIVE_CHECK(ql::starts_with(prefix, '<'));
+    out.reserve(out.size() + prefix.size() + NumDigits + 1);
+    out.append(prefix);
+    decodeDecimalFrom64Bit(out, digitEncoding);
+    out.push_back('>');
   }
 
   // From the `Id` (which is expected to be of type `EncodedVal`, else an

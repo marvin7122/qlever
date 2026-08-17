@@ -13,6 +13,7 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -47,9 +48,46 @@ struct EvaluatedTermData {
         rdfTermDataType_{rdfTermDataType} {}
 };
 
-// Shared ownership of `EvaluatedTermData`. The shared_ptr allows cheap copying
-// when the same `Id` appears in multiple rows or is reused from the `IdCache`.
-using EvaluatedTerm = std::shared_ptr<const EvaluatedTermData>;
+// A resolved CONSTRUCT term. Vocabulary and encoded values are stored in a
+// shared `EvaluatedTermData` so the `IdCache` can reuse them. Blank nodes are
+// stored inline (prefix and suffix views into the preprocessed template, plus
+// the row id) so instantiating a blank node does not heap-allocate a string
+// or a `shared_ptr` control block.
+class EvaluatedTerm {
+  std::shared_ptr<const EvaluatedTermData> data_{};
+  std::string_view blankPrefix_{};
+  std::string_view blankSuffix_{};
+  size_t blankRow_{0};
+
+ public:
+  EvaluatedTerm() = default;
+  EvaluatedTerm(std::nullptr_t) {}
+  EvaluatedTerm(std::shared_ptr<const EvaluatedTermData> data)
+      : data_{std::move(data)} {}
+
+  static EvaluatedTerm blankNode(std::string_view prefix,
+                                 std::string_view suffix, size_t row) {
+    EvaluatedTerm term;
+    term.blankPrefix_ = prefix;
+    term.blankSuffix_ = suffix;
+    term.blankRow_ = row;
+    return term;
+  }
+
+  explicit operator bool() const noexcept {
+    return static_cast<bool>(data_) || !blankPrefix_.empty();
+  }
+
+  bool isBlankNode() const noexcept { return !blankPrefix_.empty(); }
+
+  const EvaluatedTermData* get() const noexcept { return data_.get(); }
+  const EvaluatedTermData& operator*() const { return *data_; }
+  const EvaluatedTermData* operator->() const { return data_.get(); }
+
+  std::string_view blankPrefix() const noexcept { return blankPrefix_; }
+  std::string_view blankSuffix() const noexcept { return blankSuffix_; }
+  size_t blankRow() const noexcept { return blankRow_; }
+};
 
 // A constant (`Iri` or `Literal`) whose string value is fully known at
 // preprocessing time. The `EvaluatedTerm` is built once at preprocessing and

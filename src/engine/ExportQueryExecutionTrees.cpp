@@ -23,6 +23,7 @@
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
 #include "engine/ConstructTripleGenerator.h"
+#include "engine/ConstructTripleInstantiator.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
@@ -461,61 +462,6 @@ ExportQueryExecutionTrees::selectQueryResultBindingsToQLeverJSON(
 }
 
 // _____________________________________________________________________________
-// Assemble one CSV/TSV row into `rowBuffer`, reusing `cellStrings` across all
-// rows of the request.  This helper is NOT a coroutine and holds no state: the
-// two buffers are coroutine-frame locals in the caller and are passed by
-// reference, so their capacity is retained across rows.  They must not be
-// `thread_local` — a coroutine may be suspended and resumed on a different
-// thread, so thread_local state would alias another thread's buffers there.
-template <ad_utility::MediaType format>
-static void assembleCsvRowForStream(
-    std::string& rowBuffer,
-    std::vector<std::optional<std::string>>& cellStrings,
-    const QueryExecutionTree::ColumnIndicesAndTypes& selectedColumnIndices,
-    const TableConstRefWithVocab& tableWithVocab, size_t rowIndex,
-    const Index& index, char separator) {
-  constexpr auto& escapeFunction = format == ad_utility::MediaType::tsv
-                                       ? RdfEscaping::escapeForTsv
-                                       : RdfEscaping::escapeForCsv;
-  // Resolve all cells of the row first, so that the exact size of the row is
-  // known and the row buffer can be reserved exactly once before assembling
-  // the row.
-  cellStrings.clear();
-  cellStrings.resize(selectedColumnIndices.size());
-  size_t estimatedRowSize = 1;  // the trailing newline
-  for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
-    if (selectedColumnIndices[j].has_value()) {
-      const auto& val = selectedColumnIndices[j].value();
-      Id id = tableWithVocab.idTable()(rowIndex, val.columnIndex_);
-      auto optionalStringAndType =
-          ql::exportIds::idToStringAndType<format ==
-                                           ad_utility::MediaType::csv>(
-              index, id, tableWithVocab.localVocab(), escapeFunction);
-      if (optionalStringAndType.has_value()) [[likely]] {
-        cellStrings[j] = std::move(optionalStringAndType.value().first);
-        estimatedRowSize += cellStrings[j]->size();
-      }
-    }
-    if (j + 1 < selectedColumnIndices.size()) {
-      ++estimatedRowSize;  // the separator
-    }
-  }
-  rowBuffer.clear();
-  // Reserve the exact row size once; this is a no-op unless the current row
-  // is larger than any previous one (the capacity is retained in `rowBuffer`).
-  rowBuffer.reserve(estimatedRowSize);
-  for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
-    if (cellStrings[j].has_value()) {
-      rowBuffer.append(*cellStrings[j]);
-    }
-    if (j + 1 < selectedColumnIndices.size()) {
-      rowBuffer.push_back(separator);
-    }
-  }
-  rowBuffer.push_back('\n');
-}
-
-// _____________________________________________________________________________
 template <ad_utility::MediaType format>
 STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
     const QueryExecutionTree& qet,
@@ -570,20 +516,33 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD('\n');
 
   uint64_t resultSize = 0;
-  // Buffers that are reused across all rows of this request: their capacity
-  // is retained, so only rows that are larger than any previous one trigger
-  // a reallocation.  They are coroutine-frame locals (NOT `thread_local`): a
-  // coroutine may be suspended and resumed on a different thread, so
-  // thread_local state would be unsafe there (see `assembleCsvRowForStream`).
-  std::string rowBuffer;
-  std::vector<std::optional<std::string>> cellStrings;
+  // Reused across cells. Yield copies into the 1 MiB stream buffer via
+  // `string_view` and only returns after that copy finishes.
+  std::string cell;
+  const Index& index = qet.getQec()->getIndex();
+  constexpr bool stripQuotesAndAngles = format == csv;
+  constexpr auto appendEscaped = format == tsv
+                                     ? RdfEscaping::appendEscapedForTsv
+                                     : RdfEscaping::appendEscapedForCsv;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
     for (uint64_t i : range) {
-      assembleCsvRowForStream<format>(rowBuffer, cellStrings,
-                                      selectedColumnIndices, pair, i,
-                                      qet.getQec()->getIndex(), separator);
-      STREAMABLE_YIELD(std::move(rowBuffer));
+      for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
+        if (selectedColumnIndices[j].has_value()) {
+          const auto& val = selectedColumnIndices[j].value();
+          Id id = pair.idTable()(i, val.columnIndex_);
+          cell.clear();
+          auto appended = ql::exportIds::appendIdToString<stripQuotesAndAngles>(
+              cell, index, id, pair.localVocab(), appendEscaped);
+          if (appended.written) [[likely]] {
+            STREAMABLE_YIELD(cell);
+          }
+        }
+        if (j + 1 < selectedColumnIndices.size()) {
+          STREAMABLE_YIELD(separator);
+        }
+      }
+      STREAMABLE_YIELD('\n');
       cancellationHandle->throwIfCancelled();
     }
   }
@@ -839,13 +798,19 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
                                   constructTriples.size());
 
   auto triples = qlever::constructExport::ConstructTripleGenerator::
-      generateFormattedTriples(
+      generateEvaluatedTriples(
           constructTriples, qet.getVariableColumns(), std::move(rowIndices),
-          limitAndOffset._offset, format,
+          limitAndOffset._offset,
           makeConstructEvaluationConfig(qet, std::move(cancellationHandle)));
 
-  for (const std::string& triple : triples) {
-    STREAMABLE_YIELD(triple);
+  // Reused across triples. `STREAMABLE_YIELD` copies into the 1 MiB stream
+  // buffer via `string_view` and only returns after that copy (or overflow)
+  // finishes, so clearing afterwards is safe.
+  std::string line;
+  for (const auto& triple : triples) {
+    line.clear();
+    qlever::constructExport::appendFormattedTriple(line, triple, format);
+    STREAMABLE_YIELD(line);
   }
 }
 

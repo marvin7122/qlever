@@ -29,7 +29,7 @@ auto iriV = ad_utility::testing::iriV;
 static auto matchTriple(const std::string& s, const std::string& p,
                         const std::string& o) {
   auto termStr = [](const EvaluatedTerm& t) {
-    return formatTerm(*t, /*includeDataType=*/false);
+    return formatTerm(t, /*includeDataType=*/false);
   };
   return AllOf(Field(&EvaluatedTriple::subject_, ResultOf(termStr, s)),
                Field(&EvaluatedTriple::predicate_, ResultOf(termStr, p)),
@@ -358,7 +358,7 @@ TEST_F(ConstructTripleGeneratorTest, cannotCancelDuringBatch) {
 }
 
 // The `IdCache` is shared across batches: for the same `Id`, the
-// `EvaluatedTerm` `shared_ptr` returned in batch 1 is pointer-identical to the
+// `EvaluatedTerm` returned in batch 1 is pointer-identical to the
 // one from batch 0, proving the cache was not reset between batches.
 TEST_F(ConstructTripleGeneratorTest, idCacheIsSharedAcrossBatches) {
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;

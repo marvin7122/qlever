@@ -15,6 +15,10 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 
+#include <charconv>
+#include <cmath>
+#include <cstdio>
+
 #include "backports/StartsWithAndEndsWith.h"
 #include "global/Constants.h"
 #include "index/vocabulary/EncodedIriManager.h"
@@ -211,68 +215,92 @@ LiteralOrIri getLiteralOrIriFromVocabIndex(const IndexImpl& index, Id id,
   }
 }
 
+namespace {
+void appendSnprintf(std::string& out, const char* fmt, double d) {
+  char buf[64];
+  const int n = std::snprintf(buf, sizeof(buf), fmt, d);
+  AD_CORRECTNESS_CHECK(n > 0 && static_cast<size_t>(n) < sizeof(buf));
+  out.append(buf, static_cast<size_t>(n));
+}
+}  // namespace
+
 // _____________________________________________________________________________
-std::optional<std::pair<std::string, const char*>>
-idToStringAndTypeForEncodedValue(Id id) {
+AppendedId appendIdToStringForEncodedValue(std::string& out, Id id) {
   using enum Datatype;
   switch (id.getDatatype()) {
     case Undefined:
-      return std::nullopt;
-    case Double:
-      // We use the immediately invoked lambda here because putting this block
-      // in braces confuses the test coverage tool.
-      return [id] {
-        double d = id.getDouble();
-        if (!std::isfinite(d)) {
-          // NOTE: We used `std::stringstream` before which is bad for two
-          // reasons. First, it would output "nan" or "inf" in lowercase, which
-          // is not legal RDF syntax. Second, creating a `std::stringstream`
-          // object is unnecessarily expensive.
-          std::string literal = [d]() {
-            if (std::isnan(d)) {
-              return "NaN";
-            }
-            AD_CORRECTNESS_CHECK(std::isinf(d));
-            return d > 0 ? "INF" : "-INF";
-          }();
-          return std::pair{std::move(literal), XSD_DOUBLE_TYPE};
-        }
-        double dIntPart;
-        // If the fractional part is zero, write number with one decimal place
-        // to make it distinct from integers. Otherwise, use `%.13g`, which uses
-        // fixed-size or exponential notation, whichever is more compact.
-        std::string out;
-        if (std::modf(d, &dIntPart) == 0.0) {
-          out = absl::StrFormat("%.1f", d);
+      return {};
+    case Double: {
+      double d = id.getDouble();
+      if (!std::isfinite(d)) {
+        if (std::isnan(d)) {
+          out.append("NaN");
         } else {
-          out = absl::StrFormat("%.13g", d);
-          // For some values `modf` evaluates to zero, but rounding still leads
-          // to a value without a trailing '.0'.
-          if (out.find_last_of(".e") == std::string::npos) {
-            out += ".0";
-          }
+          AD_CORRECTNESS_CHECK(std::isinf(d));
+          out.append(d > 0 ? "INF" : "-INF");
         }
-        return std::pair{std::move(out), XSD_DECIMAL_TYPE};
-      }();
+        return {true, XSD_DOUBLE_TYPE};
+      }
+      double dIntPart;
+      if (std::modf(d, &dIntPart) == 0.0) {
+        appendSnprintf(out, "%.1f", d);
+      } else {
+        const size_t begin = out.size();
+        appendSnprintf(out, "%.13g", d);
+        std::string_view written{out.data() + begin, out.size() - begin};
+        if (written.find_last_of(".e") == std::string_view::npos) {
+          out += ".0";
+        }
+      }
+      return {true, XSD_DECIMAL_TYPE};
+    }
     case Bool:
-      return std::pair{std::string{id.getBoolLiteral()}, XSD_BOOLEAN_TYPE};
-    case Int:
-      return std::pair{std::to_string(id.getInt()), XSD_INT_TYPE};
-    case Date:
-      return id.getDate().toStringAndType();
-    case GeoPoint:
-      return id.getGeoPoint().toStringAndType();
+      out.append(id.getBoolLiteral());
+      return {true, XSD_BOOLEAN_TYPE};
+    case Int: {
+      char buf[32];
+      auto [end, err] = std::to_chars(buf, buf + sizeof(buf), id.getInt());
+      AD_CORRECTNESS_CHECK(err == std::errc{});
+      out.append(buf, static_cast<size_t>(end - buf));
+      return {true, XSD_INT_TYPE};
+    }
+    case Date: {
+      auto [s, type] = id.getDate().toStringAndType();
+      out.append(s);
+      return {true, type};
+    }
+    case GeoPoint: {
+      auto [s, type] = id.getGeoPoint().toStringAndType();
+      out.append(s);
+      return {true, type};
+    }
     case BlankNodeIndex:
-      return std::pair{absl::StrCat("_:bn", id.getBlankNodeIndex().get()),
-                       nullptr};
-      // TODO<joka921> This is only to make the strange `toRdfLiteral` function
-      // work in the triple component class, which is only used to create cache
-      // keys etc. Consider removing it in the future.
+      out.append("_:bn");
+      {
+        char buf[24];
+        auto [end, err] =
+            std::to_chars(buf, buf + sizeof(buf), id.getBlankNodeIndex().get());
+        AD_CORRECTNESS_CHECK(err == std::errc{});
+        out.append(buf, static_cast<size_t>(end - buf));
+      }
+      return {true, nullptr};
     case EncodedVal:
-      return std::pair{absl::StrCat("encodedId: ", id.getBits()), nullptr};
+      absl::StrAppend(&out, "encodedId: ", id.getBits());
+      return {true, nullptr};
     default:
       AD_FAIL();
   }
+}
+
+// _____________________________________________________________________________
+std::optional<std::pair<std::string, const char*>>
+idToStringAndTypeForEncodedValue(Id id) {
+  std::string out;
+  auto appended = appendIdToStringForEncodedValue(out, id);
+  if (!appended.written) {
+    return std::nullopt;
+  }
+  return std::pair{std::move(out), appended.xsdType};
 }
 
 // _____________________________________________________________________________
