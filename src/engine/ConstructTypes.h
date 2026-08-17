@@ -145,8 +145,10 @@ struct PrecomputedVariable {
 // "_:u" (generated or user-defined) and suffix is "_" + label. This avoids
 // recomputing these constant parts for every result table row.
 struct PrecomputedBlankNode {
-  std::string prefix_;  // "_:g" or "_:u"
-  std::string suffix_;  // "_" + label
+  // Heap allocation keeps the character storage stable when the enclosing
+  // preprocessed template is moved into its shared owner.
+  std::shared_ptr<const std::string> prefix_;  // "_:g" or "_:u"
+  std::shared_ptr<const std::string> suffix_;  // "_" + label
 };
 
 // A single preprocessed term position in a CONSTRUCT template triple. The

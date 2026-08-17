@@ -35,7 +35,7 @@ std::optional<EvaluatedTerm> instantiateTerm(
         } else if constexpr (std::is_same_v<T, PrecomputedVariable>) {
           return batchResult.getVariable(t.columnIndex_, rowIdxInBatch);
         } else if constexpr (std::is_same_v<T, PrecomputedBlankNode>) {
-          return EvaluatedTerm::blankNode(t.prefix_, t.suffix_, rowIdxTotal);
+          return EvaluatedTerm::blankNode(*t.prefix_, *t.suffix_, rowIdxTotal);
         } else {
           static_assert(ad_utility::alwaysFalse<T>, "Unhandled variant type");
         }
