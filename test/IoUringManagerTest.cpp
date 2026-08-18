@@ -315,6 +315,21 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
               ::testing::ElementsAreArray(scenario.expected()));
 }
 
+// Ring smaller than `kSubmitWave` still completes a batch larger than the
+// ring. The sliding window must reap a wave and refill, not one-in/one-out.
+TYPED_TEST(IoUringManagerTest, SlidingWindowSmallRing) {
+  constexpr size_t N = 80;
+  SequentialReadScenarioForTesting scenario;
+  for (size_t i = 0; i < N; ++i) {
+    scenario.addRead(std::string(4, static_cast<char>('A' + (i % 26))));
+  }
+  auto [tmp, fd] = makeTempFile(scenario.content());
+  TypeParam manager(8);
+  manager.wait(scenario.submitTo(manager, fd));
+  EXPECT_THAT(scenario.results(),
+              ::testing::ElementsAreArray(scenario.expected()));
+}
+
 // Verify that many independent `addBatch` calls can be outstanding (submitted
 // to the kernel but not yet waited on) at once, and that the manager tracks
 // each batch's completion correctly. M batches of one read each are submitted
