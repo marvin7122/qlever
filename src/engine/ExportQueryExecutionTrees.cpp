@@ -41,6 +41,47 @@ namespace {
 using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
 using Literal = ad_utility::triple_component::Literal;
 
+// `0` for `construct-export-num-threads` means all logical cores.
+size_t resolveExportNumThreads() {
+  const size_t n =
+      getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
+  return n == 0 ? std::max(1u, std::thread::hardware_concurrency()) : n;
+}
+
+// Format one SELECT CSV/TSV chunk. The header is not included.
+template <ad_utility::MediaType format>
+std::string serializeSelectCsvTsvChunk(
+    const TableWithRange& chunk,
+    const QueryExecutionTree::ColumnIndicesAndTypes& columns,
+    const Index& index) {
+  static constexpr char separator =
+      format == ad_utility::MediaType::tsv ? '\t' : ',';
+  constexpr auto& escapeFunction = format == ad_utility::MediaType::tsv
+                                       ? RdfEscaping::escapeForTsv
+                                       : RdfEscaping::escapeForCsv;
+  std::string out;
+  for (uint64_t i : chunk.view_) {
+    for (size_t j = 0; j < columns.size(); ++j) {
+      if (columns[j].has_value()) {
+        const auto& val = columns[j].value();
+        const Id id = chunk.tableWithVocab_.idTable()(i, val.columnIndex_);
+        auto optionalStringAndType =
+            ql::exportIds::idToStringAndType<format ==
+                                             ad_utility::MediaType::csv>(
+                index, id, chunk.tableWithVocab_.localVocab(), escapeFunction);
+        if (optionalStringAndType.has_value()) [[likely]] {
+          out += optionalStringAndType.value().first;
+        }
+      }
+      if (j + 1 < columns.size()) {
+        out += separator;
+      }
+    }
+    out += '\n';
+  }
+  return out;
+}
+
 // _____________________________________________________________________________
 // Return true iff the `result` is nonempty.
 bool getResultForAsk(const std::shared_ptr<const Result>& result) {
@@ -518,11 +559,22 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
+  uint64_t resultSize = 0;
+  auto rowIndices = getRowIndices(limitAndOffset, *result, resultSize);
+  const size_t numThreads = resolveExportNumThreads();
+  if (numThreads >= 2) {
+    SelectCsvTsvStreamParams params{std::move(selectedColumnIndices),
+                                    qet.getQec()->getIndex()};
+    STREAMABLE_YIELD_FROM(selectQueryResultCsvTsvParallel<format>(
+        std::move(params), std::move(rowIndices), numThreads,
+        cancellationHandle, streamableYielder));
+    AD_LOG_DEBUG << "Done creating readable result.\n";
+    STREAMABLE_RETURN;
+  }
+
   constexpr auto& escapeFunction =
       format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
-  uint64_t resultSize = 0;
-  for (const auto& [pair, range] :
-       getRowIndices(limitAndOffset, *result, resultSize)) {
+  for (const auto& [pair, range] : rowIndices) {
     for (uint64_t i : range) {
       for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
         if (selectedColumnIndices[j].has_value()) {
@@ -545,6 +597,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
     }
   }
   AD_LOG_DEBUG << "Done creating readable result.\n";
+  STREAMABLE_RETURN;
 }
 
 // _____________________________________________________________________________
@@ -836,11 +889,7 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   // WHERE blocks, cuts each block into contiguous row chunks, and serializes
   // those chunks on a worker pool. Outputs are yielded in row order.
 
-  size_t numThreads =
-      getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
-  if (numThreads == 0) {
-    numThreads = std::max(1u, std::thread::hardware_concurrency());
-  }
+  const size_t numThreads = resolveExportNumThreads();
   // Copy the cancellation handle (instead of moving it like the serial path),
   // because the parallel path checks it again while collecting the results.
   auto config = makeConstructEvaluationConfig(qet, cancellationHandle);
@@ -925,6 +974,46 @@ ExportQueryExecutionTrees::constructQueryResultParallel(
                   params.constructTriples_, params.variableColumns_,
                   InputRangeTypeErased(std::move(one)), params.rowOffset_,
                   params.config_);
+            });
+        ++nextSubmit;
+      }
+      cancellationHandle->throwIfCancelled();
+      STREAMABLE_YIELD(std::move(futures[nextGet].get()));
+      ++nextGet;
+    }
+  }
+  STREAMABLE_RETURN;
+}
+
+// _____________________________________________________________________________
+template <ad_utility::MediaType format>
+STREAMABLE_GENERATOR_TYPE
+ExportQueryExecutionTrees::selectQueryResultCsvTsvParallel(
+    SelectCsvTsvStreamParams params,
+    ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
+    size_t numThreads, CancellationHandle cancellationHandle,
+    [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
+  const size_t rowsPerChunk =
+      qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE;
+  const size_t window = 2 * numThreads;
+  ad_utility::TaskQueue<false> queue{window, numThreads,
+                                     "SelectExportParallel"};
+
+  for (TableWithRange& block : rowIndices) {
+    std::vector<TableWithRange> chunks =
+        splitBlockIntoChunks(block, rowsPerChunk);
+    if (chunks.empty()) {
+      continue;
+    }
+    std::vector<std::future<std::string>> futures(chunks.size());
+    size_t nextSubmit = 0;
+    size_t nextGet = 0;
+    while (nextGet < chunks.size()) {
+      while (nextSubmit < chunks.size() && nextSubmit - nextGet < window) {
+        futures[nextSubmit] =
+            queue.submit([&params, chunk = std::move(chunks[nextSubmit])]() {
+              return serializeSelectCsvTsvChunk<format>(chunk, params.columns_,
+                                                        params.index_.get());
             });
         ++nextSubmit;
       }

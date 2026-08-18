@@ -258,6 +258,22 @@ class ExportQueryExecutionTrees {
       ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
       size_t numThreads, CancellationHandle cancellationHandle,
       STREAMABLE_YIELDER_ARG_DECL);
+
+  // Inputs the SELECT CSV/TSV parallel coroutine owns in its frame.
+  struct SelectCsvTsvStreamParams {
+    QueryExecutionTree::ColumnIndicesAndTypes columns_;
+    std::reference_wrapper<const Index> index_;
+  };
+
+  // Format each live SELECT block on a `TaskQueue`. CSV and TSV only.
+  // Join the current block before the generator advances. The header is
+  // yielded by the caller before this function runs.
+  template <ad_utility::MediaType format>
+  static STREAMABLE_GENERATOR_TYPE selectQueryResultCsvTsvParallel(
+      SelectCsvTsvStreamParams params,
+      ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
+      size_t numThreads, CancellationHandle cancellationHandle,
+      STREAMABLE_YIELDER_ARG_DECL);
 };
 
 #endif  // QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
