@@ -508,6 +508,7 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
                                                                 indices);
   AD_EXPECT_THROW_WITH_MESSAGE(sv.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
+  EXPECT_ANY_THROW(sv.lookupBatch(ql::span<const size_t>{}));
 
   const std::array<size_t, 3> oneMarker{
       static_cast<size_t>(sv.addMarker(0, 1)),

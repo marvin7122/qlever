@@ -16,6 +16,8 @@
 #include <utility>
 
 namespace ad_utility::vocabulary {
+#include <vector>
+#include "backports/algorithm.h"
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {

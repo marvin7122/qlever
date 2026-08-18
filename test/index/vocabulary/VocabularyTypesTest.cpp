@@ -101,6 +101,30 @@ TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
 }
 
 // _____________________________________________________________________________
+TEST(VocabBatchLookupData, MakeOwnedVocabBatchCopiesViews) {
+  const std::string a = "alpha";
+  const std::string empty;
+  const std::string b = "beta";
+  const std::array<std::string_view, 3> views{a, empty, b};
+  auto result = makeOwnedVocabBatch(views);
+  ASSERT_EQ(result->size(), 3u);
+  EXPECT_EQ((*result)[0], "alpha");
+  EXPECT_EQ((*result)[1], "");
+  EXPECT_EQ((*result)[2], "beta");
+  EXPECT_NE((*result)[0].data(), a.data());
+}
+
+// Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
+// used when words are produced incrementally with sizes not known up front
+// (e.g. decompressing one word at a time in `CompressedVocabulary`). Each word
+// gets a pointer-stable allocation, so appending a later (differently sized)
+// word never invalidates an earlier `string_view`, unlike the single growing
+// buffer of `VocabBatchLookupData`, which would reallocate and leave the
+// already-recorded views dangling.
+TEST(PmrVocabBatchLookupData, PmrAsResultPointerStableAcrossAppends) {
+  auto data = std::make_shared<PmrVocabBatchLookupData>();
+  data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>();
+  auto* resource = data->buffer().get();
 
 TEST(VocabBatchLookupData, ContiguousBuilderZeroSizedWordsAndMixed) {
   const std::array<size_t, 4> sizes{0, 3, 0, 4};

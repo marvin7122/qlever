@@ -133,6 +133,8 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
                                ::testing::HasSubstr("!indices.empty()"));
 
   // Use the test writer's RAM cache for even IDs and read odd IDs from disk.
+  EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
+  // Even writer indices are RAM-cached; odd indices are disk-only.
   const std::array<size_t, 3> ramOnly{0, 2, 4};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(ramOnly), ramOnly);
