@@ -496,18 +496,17 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
-// A vocabulary manager needs fixed-file slots for exactly its two stable input
-// files: the offsets file and the word-data file. A third descriptor indicates
-// that the manager is being used outside that contract and must fail instead of
-// silently issuing a normal-FD request that bypasses fixed-file registration.
+// Require `IoUringPolicy` to use fixed-file slots for its two stable vocabulary
+// files, the offsets file and the word-data file. Reject a third descriptor
+// instead of accepting it without fixed-file registration.
 TEST(IoUringPolicy, thirdVocabularyFileIsRejected) {
   if (!ioUringAvailableAtRuntime()) {
     GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
                     "(e.g. blocked by seccomp inside Docker)";
   }
-  auto [firstFile, firstFd] = makeTempFile("AAAA");
-  auto [secondFile, secondFd] = makeTempFile("BBBB");
-  auto [thirdFile, thirdFd] = makeTempFile("CCCC");
+  const auto firstFd = makeTempFile("AAAA").second;
+  const auto secondFd = makeTempFile("BBBB").second;
+  const auto thirdFd = makeTempFile("CCCC").second;
   ad_utility::IoUringPolicy policy{64};
 
   std::string firstBuffer(4, '\0');
@@ -519,10 +518,12 @@ TEST(IoUringPolicy, thirdVocabularyFileIsRejected) {
   std::array<char*, 1> secondBuffers{secondBuffer.data()};
   std::array<char*, 1> thirdBuffers{thirdBuffer.data()};
 
-  policy.addBatch(firstFd, sizes, offsets, firstBuffers, 0);
-  policy.wait(0);
-  policy.addBatch(secondFd, sizes, offsets, secondBuffers, 1);
-  policy.wait(1);
+  const auto submit = [&](int fd, auto& buffers, uint64_t batchIndex) {
+    policy.addBatch(fd, sizes, offsets, buffers, batchIndex);
+    policy.wait(batchIndex);
+  };
+  submit(firstFd, firstBuffers, 0);
+  submit(secondFd, secondBuffers, 1);
   AD_EXPECT_THROW_WITH_MESSAGE(
       policy.addBatch(thirdFd, sizes, offsets, thirdBuffers, 2),
       HasSubstr("at most two vocabulary files"));
