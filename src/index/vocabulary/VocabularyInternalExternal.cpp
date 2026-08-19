@@ -19,8 +19,8 @@
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   auto fromInternal = internalVocab_[i];
-  if (fromInternal.has_value()) {
-    return std::string{fromInternal.value()};
+  if (fromInternal) {
+    return std::string{*fromInternal};
   }
   return externalVocab_[i];
 }
@@ -38,16 +38,17 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
 
   for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
     auto fromInternal = internalVocab_[idx];
-    if (fromInternal.has_value()) {
-      assembled[static_cast<size_t>(i)] = fromInternal.value();
+    if (fromInternal) {
+      assembled[static_cast<size_t>(i)] = *fromInternal;
     } else {
       diskSlots.push_back(static_cast<size_t>(i));
       diskIndices.push_back(idx);
     }
   }
 
-  // CONSTRUCT cache misses are almost all external. Hand the disk batch
-  // through so we do not copy the already-owned compressed bytes.
+  // If every requested index misses internalVocab_, return
+  // externalVocab_.lookupBatch directly to preserve its result buffer and
+  // avoid assembling and copying the results.
   if (diskIndices.size() == indices.size()) {
     return externalVocab_.lookupBatch(diskIndices);
   }

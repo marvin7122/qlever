@@ -218,9 +218,6 @@ class IoUringPolicy {
   // advanced so no CQE is processed twice.
   const char* pendingErrorMessage_ = nullptr;
 
-  // Wait for one CQE and update the in-flight bookkeeping.
-  void drainOneCqe();
-
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;

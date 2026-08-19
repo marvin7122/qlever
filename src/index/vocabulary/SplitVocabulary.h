@@ -196,41 +196,42 @@ class SplitVocabulary {
   }
 
   // Partition `indices` by marker and forward each group to the matching
-  // underlying `lookupBatch`. Result order matches `indices`, including
-  // duplicates and mixed markers. `OnDiskCompressedGeoSplit` therefore
-  // reaches the on-disk batch path instead of walking `operator[]`.
+  // underlying `lookupBatch`. Return results in the order of `indices`,
+  // including duplicates and mixed markers. Ensure that
+  // `OnDiskCompressedGeoSplit` uses the on-disk batch path instead of walking
+  // `operator[]`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
 
     std::array<std::vector<size_t>, numberOfVocabs> slotsPerMarker;
-    std::array<std::vector<size_t>, numberOfVocabs> unmarkedPerMarker;
+    std::array<std::vector<size_t>, numberOfVocabs> vocabIndicesPerMarker;
     for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
       const uint8_t marker = getMarker(idx);
       slotsPerMarker[marker].push_back(static_cast<size_t>(i));
-      unmarkedPerMarker[marker].push_back(getVocabIndex(idx));
+      vocabIndicesPerMarker[marker].push_back(getVocabIndex(idx));
     }
 
     std::array<VocabBatchLookupResult, numberOfVocabs> batches;
     uint8_t usedMarkers = 0;
     uint8_t lastUsedMarker = 0;
     for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
-      if (unmarkedPerMarker[marker].empty()) {
+      if (vocabIndicesPerMarker[marker].empty()) {
         continue;
       }
       batches[marker] = std::visit(
           [&](const auto& vocab) {
-            return vocab.lookupBatch(unmarkedPerMarker[marker]);
+            return vocab.lookupBatch(vocabIndicesPerMarker[marker]);
           },
           underlying_[marker]);
       AD_CORRECTNESS_CHECK(batches[marker]->size() ==
-                           unmarkedPerMarker[marker].size());
+                           vocabIndicesPerMarker[marker].size());
       ++usedMarkers;
       lastUsedMarker = marker;
     }
 
-    // One marker: return that batch. Mixed markers cannot share one buffer.
+    // Mixed markers require one owned result buffer.
     if (usedMarkers == 1) {
-      return std::move(batches[lastUsedMarker]);
+      return batches[lastUsedMarker];
     }
 
     std::vector<std::string_view> assembled(indices.size());

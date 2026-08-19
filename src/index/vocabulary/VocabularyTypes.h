@@ -131,8 +131,8 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {};
 
-// Copy `words` into one contiguous `VocabBatchLookupData` buffer. Use this
-// when the views come from mixed owners that cannot share one result object.
+// Copy `words` into one contiguous `VocabBatchLookupData` buffer when the
+// views originate from multiple batch-result owners.
 inline VocabBatchLookupResult makeOwnedVocabBatch(
     ql::span<const std::string_view> words) {
   AD_CONTRACT_CHECK(!words.empty());
@@ -147,10 +147,12 @@ inline VocabBatchLookupResult makeOwnedVocabBatch(
   char* buffer = data->buffer().data();
   for (size_t i = 0; i < words.size(); ++i) {
     const std::string_view word = words[i];
-    if (!word.empty()) {
+    if (word.empty()) {
+      data->views()[i] = {};
+    } else {
       std::memcpy(buffer + offset, word.data(), word.size());
+      data->views()[i] = std::string_view{buffer + offset, word.size()};
     }
-    data->views()[i] = std::string_view{buffer + offset, word.size()};
     offset += word.size();
   }
   return VocabBatchLookupData::asResult(std::move(data));
