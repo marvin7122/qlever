@@ -519,8 +519,10 @@ TEST(IoUringPolicy, thirdVocabularyFileIsRejected) {
   std::array<char*, 1> secondBuffers{secondBuffer.data()};
   std::array<char*, 1> thirdBuffers{thirdBuffer.data()};
 
-  policy.wait(policy.addBatch(firstFd, sizes, offsets, firstBuffers, 0));
-  policy.wait(policy.addBatch(secondFd, sizes, offsets, secondBuffers, 1));
+  policy.addBatch(firstFd, sizes, offsets, firstBuffers, 0);
+  policy.wait();
+  policy.addBatch(secondFd, sizes, offsets, secondBuffers, 1);
+  policy.wait();
   AD_EXPECT_THROW_WITH_MESSAGE(
       policy.addBatch(thirdFd, sizes, offsets, thirdBuffers, 2),
       HasSubstr("at most two vocabulary files"));
