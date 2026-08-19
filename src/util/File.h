@@ -1,6 +1,8 @@
-// Copyright 2011, University of Freiburg, Chair of Algorithms and Data
+// Copyright 2011 - 2026, University of Freiburg, Chair of Algorithms and Data
 // Structures.
-// Author: Björn Buchhold <buchholb>
+// Authors:
+//   Björn Buchhold <buchholb>
+//   Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #ifndef QLEVER_SRC_UTIL_FILE_H
 #define QLEVER_SRC_UTIL_FILE_H

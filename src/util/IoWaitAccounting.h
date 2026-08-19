@@ -154,12 +154,11 @@ inline ThreadCounters total() {
   return total;
 }
 
-// Writes the totals to stderr when the process exits. The benchmark harness
-// starts a fresh server per repetition and issues one query, so the
-// process-lifetime totals are that query's totals plus the index load, which
-// is identical across the arms of an A/B. Emitted unconditionally so that a
-// run with the instrumentation disabled is visibly distinguishable from one
-// where the line is missing.
+// Writes the totals to stderr when the process exits. The process starts fresh
+// for each repetition and issues one query, so the process-lifetime totals are
+// that query's totals plus the index load, which is identical across the arms
+// of an A/B. Emitted unconditionally so that a run with the instrumentation
+// disabled is visibly distinguishable from one where the line is missing.
 struct ExitReporter {
   ~ExitReporter() {
     const ThreadCounters counters = total();
