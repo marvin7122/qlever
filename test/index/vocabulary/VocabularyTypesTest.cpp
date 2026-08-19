@@ -8,6 +8,8 @@
 #include <absl/functional/function_ref.h>
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include "../../util/GTestHelpers.h"
 #include "index/vocabulary/VocabularyTypes.h"
 
@@ -86,6 +88,51 @@ TEST(VocabBatchLookupData, AsResultEmpty) {
   auto data = std::make_shared<VocabBatchLookupData>();
   VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
   EXPECT_TRUE(result->empty());
+}
+
+TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
+  auto firstOwner = std::make_shared<StringVectorVocabBatchLookupData>();
+  firstOwner->buffer() = {"alpha", "beta"};
+  firstOwner->views() = {firstOwner->buffer()[0], firstOwner->buffer()[1]};
+  auto first = StringVectorVocabBatchLookupData::asResult(firstOwner);
+
+  auto secondOwner = std::make_shared<StringVectorVocabBatchLookupData>();
+  secondOwner->buffer() = {"gamma"};
+  secondOwner->views() = {secondOwner->buffer()[0]};
+  auto second = StringVectorVocabBatchLookupData::asResult(secondOwner);
+
+  const char* alphaData = (*first)[0].data();
+  const char* gammaData = (*second)[0].data();
+  std::vector<std::string_view> mixed{(*first)[0], (*second)[0], (*first)[1]};
+  std::vector<VocabBatchLookupResult> owners{std::move(first),
+                                             std::move(second)};
+  firstOwner.reset();
+  secondOwner.reset();
+
+  auto result = keepAliveVocabBatch(std::move(owners), std::move(mixed),
+                                    NoIndexRamWords{});
+  ASSERT_EQ(result->size(), 3u);
+  EXPECT_EQ((*result)[0], "alpha");
+  EXPECT_EQ((*result)[1], "gamma");
+  EXPECT_EQ((*result)[2], "beta");
+  EXPECT_EQ((*result)[0].data(), alphaData);
+  EXPECT_EQ((*result)[1].data(), gammaData);
+}
+
+TEST(VocabBatchLookupData, KeepAliveRequiresOwnerOrIndexRamWords) {
+  std::vector<std::string_view> views{"orphan"};
+  EXPECT_ANY_THROW(
+      keepAliveVocabBatch({}, std::move(views), NoIndexRamWords{}));
+}
+
+TEST(VocabBatchLookupData, KeepAliveNamesIndexRamWords) {
+  const std::string stored = "ram-word";
+  const std::array<std::string_view, 1> indexRamWords{stored};
+  std::vector<std::string_view> views{stored};
+  auto result = keepAliveVocabBatch({}, std::move(views), indexRamWords);
+  ASSERT_EQ(result->size(), 1u);
+  EXPECT_EQ((*result)[0], "ram-word");
+  EXPECT_EQ((*result)[0].data(), stored.data());
 }
 
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
