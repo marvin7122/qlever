@@ -189,8 +189,9 @@ TEST_F(ConstructBatchEvaluatorTest, cachedVocabTermKeepsItsStorageAlive) {
 
   const auto cached = idCache.tryGet(idS_);
   ASSERT_TRUE(cached.has_value());
-  EXPECT_EQ(cached.value()->rdfTermString_, "<s>");
-  EXPECT_NE(cached.value()->owner_, nullptr);
+  ASSERT_TRUE(cached.value().has_value());
+  EXPECT_EQ(cached.value().value()->rdfTermString_, "<s>");
+  EXPECT_NE(cached.value().value()->owner_, nullptr);
 }
 
 // The same `IdCache` instance is passed to multiple `evaluateBatch` calls.
