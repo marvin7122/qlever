@@ -146,9 +146,8 @@ struct RuntimeParameters {
 
   // Time the calls on which a query thread blocks waiting for storage (the
   // positioned `pread` in `File::read` and the io_uring completion wait) and
-  // report the totals per query. Off by default: it is a measurement aid, not
-  // a production feature. Because the flag is a runtime parameter, both arms
-  // of an instrumentation-cost A/B use the same binary.
+  // report the totals per query. Off by default: it is a diagnostic aid, not
+  // a production feature.
   Bool measureIoWait_{false, "measure-io-wait"};
   // If set to `true`, then a division by zero in an expression will lead
   // to an

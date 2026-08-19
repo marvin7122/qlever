@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <mutex>
+#include <type_traits>
 #include <vector>
 
 namespace ad_utility::ioWait {
@@ -35,14 +36,8 @@ namespace ad_utility::ioWait {
 // default; the enable flag is a relaxed atomic load of a value that does not
 // change during a query, so the branch predicts perfectly.
 //
-// The same binary therefore measures both arms of an instrumentation-cost A/B:
-// run it once with `measure-io-wait=false` and once with `=true`.
-
-// Benchmark override. The benchmark harness has no way to append arguments to
-// the server command line, so a driver cannot set the `measure-io-wait`
-// runtime parameter for one arm of an A/B. Reading the environment instead
-// keeps the two arms on one binary, which is the property that makes the
-// instrumentation-cost measurement meaningful.
+// Environment override for enabling the instrumentation independently of
+// the runtime parameter.
 inline bool envOverride() {
   const char* value = std::getenv("QLEVER_MEASURE_IO_WAIT");
   return value != nullptr && value[0] == '1';
@@ -55,8 +50,8 @@ inline std::atomic<bool>& enabledFlag() {
   return enabled;
 }
 inline bool enabled() { return enabledFlag().load(std::memory_order_relaxed); }
-// The environment override wins, so a per-query runtime-parameter update
-// cannot switch the instrumentation off mid-benchmark.
+// The environment override wins, so a runtime-parameter update cannot switch
+// the instrumentation off while the process is running.
 inline void setEnabled(bool value) {
   enabledFlag().store(value || envOverride(), std::memory_order_relaxed);
 }
@@ -130,15 +125,13 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
     return callable();
   }
   const uint64_t start = detail::nowNanos();
-  // `Counters&` is resolved before the call so the reference is not held
-  // across it any longer than necessary.
   Counters& counters = selector(detail::threadCounters());
   if constexpr (std::is_void_v<decltype(callable())>) {
     callable();
     counters.nanos_ += detail::nowNanos() - start;
     ++counters.calls_;
   } else {
-    decltype(auto) result = callable();
+    auto result = callable();
     counters.nanos_ += detail::nowNanos() - start;
     ++counters.calls_;
     return result;
@@ -167,11 +160,8 @@ inline ThreadCounters total() {
   return total;
 }
 
-// Writes the totals to stderr when the process exits. The process starts fresh
-// for each repetition and issues one query, so the process-lifetime totals are
-// that query's totals plus the index load, which is identical across the arms
-// of an A/B. Emitted unconditionally so that a run with the instrumentation
-// disabled is visibly distinguishable from one where the line is missing.
+// Writes the totals to stderr when the process exits. Emitted unconditionally
+// so that disabled instrumentation is distinguishable from a missing report.
 struct ExitReporter {
   ~ExitReporter() {
     const ThreadCounters counters = total();
