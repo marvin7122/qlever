@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <mutex>
 #include <vector>
@@ -37,15 +38,27 @@ namespace ad_utility::ioWait {
 // The same binary therefore measures both arms of an instrumentation-cost A/B:
 // run it once with `measure-io-wait=false` and once with `=true`.
 
-// Whether the instrumentation is active. Set from the `measure-io-wait`
-// runtime parameter.
+// Benchmark override. The benchmark harness has no way to append arguments to
+// the server command line, so a driver cannot set the `measure-io-wait`
+// runtime parameter for one arm of an A/B. Reading the environment instead
+// keeps the two arms on one binary, which is the property that makes the
+// instrumentation-cost measurement meaningful.
+inline bool envOverride() {
+  const char* value = std::getenv("QLEVER_MEASURE_IO_WAIT");
+  return value != nullptr && value[0] == '1';
+}
+
+// Whether the instrumentation is active. Initialized from the environment and
+// afterwards also settable from the `measure-io-wait` runtime parameter.
 inline std::atomic<bool>& enabledFlag() {
-  static std::atomic<bool> enabled{false};
+  static std::atomic<bool> enabled{envOverride()};
   return enabled;
 }
 inline bool enabled() { return enabledFlag().load(std::memory_order_relaxed); }
+// The environment override wins, so a per-query runtime-parameter update
+// cannot switch the instrumentation off mid-benchmark.
 inline void setEnabled(bool value) {
-  enabledFlag().store(value, std::memory_order_relaxed);
+  enabledFlag().store(value || envOverride(), std::memory_order_relaxed);
 }
 
 // One call site's totals.
