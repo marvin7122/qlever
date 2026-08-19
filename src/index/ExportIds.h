@@ -13,8 +13,10 @@
 #ifndef QLEVER_SRC_INDEX_EXPORTIDS_H
 #define QLEVER_SRC_INDEX_EXPORTIDS_H
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -270,6 +272,86 @@ void resolveVocabIndexIds(
                                              returnOnlyLiterals>(
         LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
   }
+}
+
+// A resolved term that may borrow its bytes instead of owning them. `value_`
+// points into storage kept alive by `owner_`, which is either the
+// `VocabBatchLookupResult` the word came from (no copy) or a `std::string`
+// that had to be materialized. Borrowing is only sound when the serialized
+// form is byte-identical to the vocabulary word, which holds exactly when the
+// escape function is the identity and quotes and angle brackets are kept.
+struct BorrowedStringAndType {
+  std::string_view value_;
+  const char* type_;
+  std::shared_ptr<const void> owner_;
+};
+
+// Wrap an owning `(string, type)` pair as a `BorrowedStringAndType` that owns
+// its bytes through a `shared_ptr<const std::string>`.
+inline std::optional<BorrowedStringAndType> ownStringAndType(
+    std::optional<std::pair<std::string, const char*>>&& stringAndType) {
+  if (!stringAndType.has_value()) {
+    return std::nullopt;
+  }
+  auto& [str, type] = stringAndType.value();
+  auto owned = std::make_shared<const std::string>(std::move(str));
+  std::string_view view{*owned};
+  return BorrowedStringAndType{view, type, std::move(owned)};
+}
+
+// Serialized form of a vocabulary word, as a view into that word. Mirrors the
+// `literalOrIriToStringAndType` branches that do not transform the bytes: a
+// blank-node IRI yields a view into the IRI, everything else yields the whole
+// string representation. Both are substrings of the vocabulary word, so both
+// can be borrowed.
+inline std::string_view serializedViewOfVocabWord(
+    const LiteralOrIriView& word AD_LIFETIMEBOUND) {
+  if (word.isIri()) {
+    if (auto blankNodeString = blankNodeIriToString(word.getIri())) {
+      return blankNodeString.value();
+    }
+  }
+  return word.toStringRepresentation();
+}
+
+// Batch-resolve `ids` like `idsToStringAndType`, but let the terms that come
+// from the on-disk vocabulary borrow their bytes from the batch result instead
+// of copying them into a fresh `std::string`. Restricted to the identity
+// escape function and to keeping quotes and angle brackets, because every
+// other configuration rewrites the bytes and therefore has to own them.
+//
+// Only `VocabIndex` terms borrow. `LocalVocabIndex` terms would have to share
+// ownership of the block's `LocalVocab`, which they cannot yet, and encoded
+// values are generated rather than read, so both keep materializing.
+inline std::vector<std::optional<BorrowedStringAndType>>
+idsToBorrowedStringAndType(const Index& index, ql::span<const Id> ids,
+                           const LocalVocab& localVocab) {
+  std::vector<std::optional<BorrowedStringAndType>> results(ids.size());
+  PartitionedIdPositions positions = partitionIdPositions(ids);
+
+  for (size_t i : positions.nonVocabIndexIndices_) {
+    results[i] = ownStringAndType(
+        idToStringAndType<false, false>(index, ids[i], localVocab));
+  }
+
+  const auto& vocabPositions = positions.vocabIndexIndices_;
+  if (vocabPositions.empty()) {
+    return results;
+  }
+  auto rawIndices = ::ranges::to_vector(
+      vocabPositions | ql::views::transform([&ids](size_t i) {
+        return static_cast<size_t>(ids[i].getVocabIndex().get());
+      }));
+  auto vocabStrings = index.getImpl().getVocab().lookupBatch(rawIndices);
+
+  // Every view below points into `vocabStrings`, which each result keeps alive
+  // by holding a copy of the `shared_ptr`. No word bytes are copied.
+  for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, vocabPositions)) {
+    const auto word = LiteralOrIriView::fromStringRepresentation(sv);
+    results[i] = BorrowedStringAndType{serializedViewOfVocabWord(word), nullptr,
+                                       vocabStrings};
+  }
+  return results;
 }
 
 // Batch variant of `idToStringAndType`. We cannot assume that the `VocabIndex`

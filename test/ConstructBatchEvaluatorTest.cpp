@@ -174,6 +174,26 @@ TEST_F(ConstructBatchEvaluatorTest, repeatedIdsProduceConsistentResults) {
   EXPECT_THAT(getColumn(result, 0), Each(evalTerm("<s>")));
 }
 
+// A vocabulary term is retained in `IdCache` after the lookup batch has been
+// destroyed. Its owner must therefore keep the storage backing the view alive.
+TEST_F(ConstructBatchEvaluatorTest, cachedVocabTermKeepsItsStorageAlive) {
+  auto idTable = makeIdTableFromVector({{idS_}});
+  IdCache idCache{1024};
+
+  {
+    auto result = evaluateIdTable({0}, idTable, idCache);
+    ASSERT_EQ(result.numRows_, 1);
+    ASSERT_TRUE(getColumn(result, 0).at(0).has_value());
+    EXPECT_NE(getColumn(result, 0).at(0).value()->owner_, nullptr);
+  }
+
+  const auto cached = idCache.tryGet(idS_);
+  ASSERT_TRUE(cached.has_value());
+  ASSERT_TRUE(cached.value().has_value());
+  EXPECT_EQ(cached.value().value()->rdfTermString_, "<s>");
+  EXPECT_NE(cached.value().value()->owner_, nullptr);
+}
+
 // The same `IdCache` instance is passed to multiple `evaluateBatch` calls.
 // Verify that the evaluator produces correct results across both batches.
 TEST_F(ConstructBatchEvaluatorTest,
