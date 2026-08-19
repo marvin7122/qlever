@@ -515,9 +515,9 @@ TEST(IoUringPolicy, thirdVocabularyFileIsRejected) {
   std::string thirdBuffer(4, '\0');
   const std::array<size_t, 1> sizes{4};
   const std::array<uint64_t, 1> offsets{0};
-  const std::array<char*, 1> firstBuffers{firstBuffer.data()};
-  const std::array<char*, 1> secondBuffers{secondBuffer.data()};
-  const std::array<char*, 1> thirdBuffers{thirdBuffer.data()};
+  std::array<char*, 1> firstBuffers{firstBuffer.data()};
+  std::array<char*, 1> secondBuffers{secondBuffer.data()};
+  std::array<char*, 1> thirdBuffers{thirdBuffer.data()};
 
   policy.wait(policy.addBatch(firstFd, sizes, offsets, firstBuffers, 0));
   policy.wait(policy.addBatch(secondFd, sizes, offsets, secondBuffers, 1));
