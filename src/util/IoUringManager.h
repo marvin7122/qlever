@@ -226,13 +226,13 @@ class IoUringPolicy {
   explicit IoUringPolicy(unsigned ringSize);
   ~IoUringPolicy();
 
-  // Sliding-window submit (Option 2). Prepare and `io_uring_submit` up to
-  // `kSubmitWave` SQEs at a time. When the ring is full, wait for at least
-  // `kReapWave` completions, then submit the next wave. Do not drain one CQE
-  // and immediately submit one SQE: that is one `io_uring_enter` per read.
-  // Read `i` reads `numBytesToRead[i]` bytes from `fd` at `offsets[i]` into
-  // `buffers[i]`. Track the reads under `handle` for `wait()`.
-  static constexpr unsigned kSubmitWave = 32;
+  // Sliding-window submit. Prepare as many SQEs as the ring has free slots,
+  // then `io_uring_submit` them in one call. When the ring is full, wait for
+  // at least `kReapWave` completions, reap every ready CQE, and submit the
+  // next wave. Do not drain one CQE and immediately submit one SQE: that is
+  // one `io_uring_enter` per read. Read `i` reads `numBytesToRead[i]` bytes
+  // from `fd` at `offsets[i]` into `buffers[i]`. Track the reads under
+  // `handle` for `wait()`.
   static constexpr unsigned kReapWave = 8;
 
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,
@@ -256,8 +256,13 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 // `SyncIoManager`. Passing the flag by reference makes this probe-once: after
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall.
+// Full-submission arm: the ring is sized so that a whole vocabulary lookup
+// batch fits. `ConstructTripleGenerator::BATCH_SIZE` is 1024 rows and a row
+// contributes at most three vocabulary indices, so 4096 slots bound the
+// largest `addBatch` and the submission loop never has to wait for
+// completions to free a slot.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
+    bool& preferIoUring, unsigned ringSize = 4096) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
