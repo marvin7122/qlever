@@ -95,12 +95,12 @@ TEST(VocabBatchLookupData, MakeOwnedVocabBatchCopiesViews) {
   const std::string empty;
   const std::string b = "beta";
   const std::array<std::string_view, 3> views{a, empty, b};
-  auto result = makeOwnedVocabBatch(views);
-  ASSERT_EQ(result->size(), 3u);
-  EXPECT_EQ((*result)[0], "alpha");
-  EXPECT_EQ((*result)[1], "");
-  EXPECT_EQ((*result)[2], "beta");
-  EXPECT_NE((*result)[0].data(), a.data());
+  auto ownedVocabBatch = makeOwnedVocabBatch(views);
+  ASSERT_EQ(ownedVocabBatch->size(), 3u);
+  EXPECT_EQ((*ownedVocabBatch)[0], "alpha");
+  EXPECT_EQ((*ownedVocabBatch)[1], "");
+  EXPECT_EQ((*ownedVocabBatch)[2], "beta");
+  EXPECT_NE((*ownedVocabBatch)[0].data(), a.data());
 }
 
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing

@@ -7,7 +7,7 @@
 #include <array>
 #include <variant>
 
-#include "VocabularyTestHelpers.h"
+#include "./VocabularyTestHelpers.h"
 #include "backports/StartsWithAndEndsWith.h"
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"

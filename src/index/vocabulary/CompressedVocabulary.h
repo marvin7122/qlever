@@ -109,7 +109,7 @@ CPP_template(typename UnderlyingVocabulary,
 
   // Batch-read the compressed words from the underlying vocabulary (which may
   // itself be on-disk / io_uring), then decompress each word with the decoder
-  // of its block. The result order matches `indices`.
+  // of its block. Return results in the order of `indices`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressed = underlyingVocabulary_.lookupBatch(indices);
@@ -122,12 +122,12 @@ CPP_template(typename UnderlyingVocabulary,
           return compressionWrapper_.decompress(word, getDecoderIdx(idx));
         }));
 
-    auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-    data->buffer() = std::move(words);
-    data->views() = ::ranges::to_vector(
-        data->buffer() |
+    auto batchData = std::make_shared<StringVectorVocabBatchLookupData>();
+    batchData->buffer() = std::move(words);
+    batchData->views() = ::ranges::to_vector(
+        batchData->buffer() |
         ql::views::transform(ad_utility::staticCast<std::string_view>));
-    return StringVectorVocabBatchLookupData::asResult(std::move(data));
+    return StringVectorVocabBatchLookupData::asResult(std::move(batchData));
   }
 
   //____________________________________________________________________________

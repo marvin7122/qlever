@@ -228,9 +228,6 @@ void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
   }
 }
 
-//______________________________________________________________________________
-void ad_utility::IoUringPolicy::drainOneCqe() { drainAtLeast(1); }
-
 #endif  // QLEVER_HAS_IO_URING
 
 }  // namespace ad_utility
