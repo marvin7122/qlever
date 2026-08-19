@@ -315,8 +315,8 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
               ::testing::ElementsAreArray(scenario.expected()));
 }
 
-// Ring smaller than `kSubmitWave` still completes a batch larger than the
-// ring. The sliding window must reap a wave and refill, not one-in/one-out.
+// A batch much larger than the ring still completes. The sliding window must
+// reap a wave and refill, not one-in/one-out.
 TYPED_TEST(IoUringManagerTest, SlidingWindowSmallRing) {
   constexpr size_t N = 80;
   SequentialReadScenarioForTesting scenario;
