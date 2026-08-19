@@ -1,6 +1,8 @@
-//   Copyright 2024, University of Freiburg,
+//   Copyright 2024 - 2026, University of Freiburg,
 //   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+//   Authors:
+//     Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+//     Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
