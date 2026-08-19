@@ -12,6 +12,7 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -495,6 +496,36 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
+// A vocabulary manager needs fixed-file slots for exactly its two stable input
+// files: the offsets file and the word-data file. A third descriptor indicates
+// that the manager is being used outside that contract and must fail instead of
+// silently issuing a normal-FD request that bypasses fixed-file registration.
+TEST(IoUringPolicy, thirdVocabularyFileIsRejected) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  auto [firstFile, firstFd] = makeTempFile("AAAA");
+  auto [secondFile, secondFd] = makeTempFile("BBBB");
+  auto [thirdFile, thirdFd] = makeTempFile("CCCC");
+  ad_utility::IoUringPolicy policy{64};
+
+  std::string firstBuffer(4, '\0');
+  std::string secondBuffer(4, '\0');
+  std::string thirdBuffer(4, '\0');
+  const std::array<size_t, 1> sizes{4};
+  const std::array<uint64_t, 1> offsets{0};
+  const std::array<char*, 1> firstBuffers{firstBuffer.data()};
+  const std::array<char*, 1> secondBuffers{secondBuffer.data()};
+  const std::array<char*, 1> thirdBuffers{thirdBuffer.data()};
+
+  policy.wait(policy.addBatch(firstFd, sizes, offsets, firstBuffers, 0));
+  policy.wait(policy.addBatch(secondFd, sizes, offsets, secondBuffers, 1));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      policy.addBatch(thirdFd, sizes, offsets, thirdBuffers, 2),
+      HasSubstr("at most two vocabulary files"));
+}
+
 // Drop the manager while reads are still in flight (submitted but never
 // waited). `IoUringPolicy`'s destructor drains the outstanding completions
 // (and logs a warning) before tearing down the ring, so the kernel is done
