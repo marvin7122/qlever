@@ -15,6 +15,7 @@
 #include <stdexcept>
 
 #include "util/Exception.h"
+#include "util/IoWaitAccounting.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -162,7 +163,11 @@ void IoUringPolicy::wait(BatchHandle handle) {
 void ad_utility::IoUringPolicy::drainOneCqe() {
   // Block until at least one completion queue entry (CQE) is available.
   io_uring_cqe* cqe = nullptr;
-  int ret = io_uring_wait_cqe(&ring_, &cqe);
+  // Timed because this is where the thread blocks waiting for the device. A
+  // no-op unless `measure-io-wait` is set.
+  int ret = ad_utility::ioWait::timed(
+      ad_utility::ioWait::ioUringWaitCounters,
+      [&]() { return io_uring_wait_cqe(&ring_, &cqe); });
   if (ret < 0) {
     AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
   }
