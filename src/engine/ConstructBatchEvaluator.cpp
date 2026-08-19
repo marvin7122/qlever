@@ -11,6 +11,18 @@
 #include "index/ExportIds.h"
 
 namespace qlever::constructExport {
+namespace {
+// Convert a borrowed batch-lookup result to an `EvaluatedTerm`. The term takes
+// over the owner, so a word read from the on-disk vocabulary remains shared
+// instead of being copied.
+std::optional<EvaluatedTerm> borrowedStringAndTypeToEvaluatedTerm(
+    std::optional<ql::exportIds::BorrowedStringAndType>&& optStringAndType) {
+  if (!optStringAndType.has_value()) return std::nullopt;
+  auto& borrowed = optStringAndType.value();
+  return std::make_shared<const EvaluatedTermData>(
+      borrowed.value_, borrowed.type_, std::move(borrowed.owner_));
+}
+}  // namespace
 
 // _____________________________________________________________________________
 BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
@@ -32,15 +44,6 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
 }
 
 // _____________________________________________________________________________
-std::optional<EvaluatedTerm>
-ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
-    std::optional<std::pair<std::string, const char*>>&& optStringAndType) {
-  if (!optStringAndType.has_value()) return std::nullopt;
-  auto& [str, type] = optStringAndType.value();
-  return std::make_shared<const EvaluatedTermData>(std::move(str), type);
-}
-
-// _____________________________________________________________________________
 EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
     size_t idTableColumnIdx, const BatchEvaluationContext& ctx,
     const LocalVocab& localVocab, const Index& index, IdCache& idCache) {
@@ -51,8 +54,8 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
 
   // Build a `(rowInBatch, Id)` index vector and sort by `Id`. This ensures
   // that `VocabIndex` IDs form a contiguous, sorted block (see
-  // `idsToStringAndType`), converting vocabulary lookups from random-access
-  // reads to sequential reads for I/O locality.
+  // `idsToBorrowedStringAndType`), converting vocabulary lookups from
+  // random-access reads to sequential reads for I/O locality.
   auto sortedIndices = ::ranges::to_vector(::ranges::views::enumerate(col));
 
   ql::ranges::sort(sortedIndices, {}, ad_utility::second);
@@ -99,12 +102,11 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   // them per block is fine performance-wise: `LocalVocabEntry`s live in RAM,
   // so there is no disk I/O to amortize across batches.
   auto missResolved =
-      ql::exportIds::idsToStringAndType(index, missIds, localVocab);
+      ql::exportIds::idsToBorrowedStringAndType(index, missIds, localVocab);
   for (auto&& [id, resolved, rows] :
        ::ranges::views::zip(missIds, missResolved, missRows)) {
     auto evaluate = [&resolved](const Id&) {
-      return ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
-          std::move(resolved));
+      return borrowedStringAndTypeToEvaluatedTerm(std::move(resolved));
     };
     const std::optional<EvaluatedTerm> evaluated =
         id.getDatatype() == Datatype::LocalVocabIndex

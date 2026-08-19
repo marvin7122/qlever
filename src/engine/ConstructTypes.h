@@ -13,12 +13,14 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
 #include "global/Id.h"
 #include "global/ValueId.h"
 #include "index/LocalVocab.h"
+#include "util/Exception.h"
 
 namespace qlever::constructExport {
 
@@ -38,13 +40,66 @@ namespace qlever::constructExport {
 // No further formatting is needed; the value is returned as-is for every
 // format. This is the legacy format returned by `ExportIds::idToStringAndType`.
 struct EvaluatedTermData {
-  std::string rdfTermString_;
+  // The owned representation used when formatting changes the term or it does
+  // not originate in the shared vocabulary storage. Keeping this string in the
+  // term preserves small-string optimization and avoids an extra allocation.
+  std::string ownedRdfTermString_;
+  // View onto the term's bytes. For an owned term it points into
+  // `ownedRdfTermString_`; for a borrowed vocabulary term `owner_` keeps the
+  // pointed-to batch lookup storage alive.
+  std::string_view rdfTermString_;
   const char* rdfTermDataType_;  // non-null iff encoded literal (case 1 above)
+  // Non-null only for a borrowed vocabulary term.
+  std::shared_ptr<const void> owner_;
 
-  //____________________________________________________________________________
+  // Owning constructor: materializes `rdfTermString` in this object. Used for
+  // encoded values, local-vocabulary terms, and any path that rewrites bytes.
   EvaluatedTermData(std::string rdfTermString, const char* rdfTermDataType)
-      : rdfTermString_{std::move(rdfTermString)},
+      : ownedRdfTermString_{std::move(rdfTermString)},
+        rdfTermString_{ownedRdfTermString_},
         rdfTermDataType_{rdfTermDataType} {}
+
+  EvaluatedTermData(const EvaluatedTermData& other)
+      : ownedRdfTermString_{other.ownedRdfTermString_},
+        rdfTermString_{other.owner_ ? other.rdfTermString_
+                                    : std::string_view{ownedRdfTermString_}},
+        rdfTermDataType_{other.rdfTermDataType_},
+        owner_{other.owner_} {}
+
+  EvaluatedTermData(EvaluatedTermData&& other) noexcept
+      : ownedRdfTermString_{std::move(other.ownedRdfTermString_)},
+        rdfTermString_{other.owner_ ? other.rdfTermString_
+                                    : std::string_view{ownedRdfTermString_}},
+        rdfTermDataType_{other.rdfTermDataType_},
+        owner_{std::move(other.owner_)} {}
+
+  EvaluatedTermData& operator=(const EvaluatedTermData& other) {
+    ownedRdfTermString_ = other.ownedRdfTermString_;
+    rdfTermDataType_ = other.rdfTermDataType_;
+    owner_ = other.owner_;
+    rdfTermString_ =
+        owner_ ? other.rdfTermString_ : std::string_view{ownedRdfTermString_};
+    return *this;
+  }
+
+  EvaluatedTermData& operator=(EvaluatedTermData&& other) noexcept {
+    ownedRdfTermString_ = std::move(other.ownedRdfTermString_);
+    rdfTermDataType_ = other.rdfTermDataType_;
+    owner_ = std::move(other.owner_);
+    rdfTermString_ =
+        owner_ ? other.rdfTermString_ : std::string_view{ownedRdfTermString_};
+    return *this;
+  }
+
+  // Borrowing constructor: `rdfTermString` must point into storage owned by
+  // `owner`, which this term keeps alive.
+  EvaluatedTermData(std::string_view rdfTermString, const char* rdfTermDataType,
+                    std::shared_ptr<const void> owner)
+      : rdfTermString_{rdfTermString},
+        rdfTermDataType_{rdfTermDataType},
+        owner_{std::move(owner)} {
+    AD_CONTRACT_CHECK(owner_ != nullptr);
+  }
 };
 
 // Shared ownership of `EvaluatedTermData`. The shared_ptr allows cheap copying
