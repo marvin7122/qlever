@@ -296,7 +296,7 @@ inline std::string report() {
 //
 // WHY A FILE AND A POLLER, NOT AN EXIT HOOK. The server can stop with a
 // signal, so static destructors do not necessarily run. Writing from a signal
-//// handler would mean formatting inside a handler, which is not
+// handler would mean formatting inside a handler, which is not
 // async-signal-safe. A poller that keeps a complete report on disk is correct
 // whatever kills the process, and also captures the worker population *while*
 // the query runs, which is when the workers exist.
