@@ -14,7 +14,6 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
-#include <limits>
 #include <unordered_map>
 
 #include "backports/algorithm.h"
@@ -149,8 +148,8 @@ struct SyncIoPolicy {
                 BatchHandle handle) const;
 
   void wait(BatchHandle) const {
-      // No-op: `addBatch` already completed all reads synchronously.
-  };
+    // No-op: `addBatch` already completed all reads synchronously.
+  }
 
   // Read exactly `numBytes` bytes from file descriptor `fd` at `fileOffset`
   // (from the start of the file) into `targetBuffer`. Throws exception if the
@@ -165,11 +164,6 @@ struct SyncIoPolicy {
 // (blocking if the ring is full), and lets the caller block on a specific batch
 // via `wait()`. Single-threaded use only. See https://github.com/axboe/liburing
 // for more details.
-//
-// Registered buffers: the policy pre-allocates and registers a pool of buffers
-// with io_uring. Registration pins the pages once and avoids repeated
-// page-pinning for each read. On completion, the data is memcpy'd from the
-// registered buffer into the caller's target buffer.
 #ifdef QLEVER_HAS_IO_URING
 
 class IoUringPolicy {
@@ -184,12 +178,6 @@ class IoUringPolicy {
   // sized generously. Reads that still do not fit take the unregistered
   // fallback path in `addBatch`, so this value is a performance knob and never
   // a correctness limit.
-  //
-  // NOTE: it would be tempting to size this to the longest word of the
-  // vocabulary at hand, but that length is not known without scanning the
-  // entire offsets file (8 bytes per word, i.e. gigabytes for a Wikidata-sized
-  // index) at every index load, which is far more expensive than the
-  // occasional fallback read.
   static constexpr size_t DEFAULT_REGISTERED_BUFFER_SIZE = 64 * 1024;
 
  private:
@@ -200,60 +188,31 @@ class IoUringPolicy {
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
-  // not yet completed. Used to detect whether the ring is full.
-  size_t numInFlightReadRequests_ = 0;
+  // not yet returned by `io_uring_wait_cqe`. Must never exceed `ringSize_`.
+  unsigned numInFlightReadRequests_ = 0;
 
-  // The same in-flight reads as `numInFlight_`, but broken down per batch:
-  // maps a batch handle to the number of its reads that have not yet completed
-  // (are "in flight"). An entry for a batch (identified by `BatchHandle`) is
-  // removed once `wait()` has observed all of its reads complete.
+  // Maps each `BatchHandle` to the number of its read requests that are still
+  // in-flight (prepared, submitted, or waiting for a CQE). Erased when 0.
   ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
 
-  // Per-read metadata needed when a completion is reaped: which batch the read
-  // belongs to, how many bytes it was supposed to read (so that reading fewer
-  // bytes than expected can be detected), where the caller wants the data
-  // copied, and the index of the registered buffer that received the data so
-  // it can be returned to the free pool. See `inFlightReadsByRequestId_`.
+  // Per-read metadata needed when a completion is reaped.
   struct InFlightRead {
     BatchHandle batchHandle;
     size_t expectedNumBytes;
-    // `noPoolBuffer` for reads that were too large for a pool buffer and went
-    // straight into the caller's buffer; then there is nothing to copy back
-    // and nothing to return to the pool.
+    // `NO_POOL_BUFFER` for reads that were too large for a pool buffer and went
+    // straight into the caller's buffer.
     size_t poolBufferIndex;
     char* targetBuffer;
   };
 
-  // Sentinel for `InFlightRead::poolBufferIndex`, see there.
-  static constexpr size_t noPoolBuffer = std::numeric_limits<size_t>::max();
+  // Sentinel for `InFlightRead::poolBufferIndex`.
+  static constexpr size_t NO_POOL_BUFFER = std::numeric_limits<size_t>::max();
 
   // --- Registered buffer pool ------------------------------------------------
-  // The pre-allocated memory for the registered buffers: one contiguous,
-  // page-aligned block of `ringSize_ * registeredBufferSize_` bytes that
-  // io_uring writes into directly. Ring slot `i` owns the byte range
-  // `[i * registeredBufferSize_, (i + 1) * registeredBufferSize_)`. The block
-  // is page-aligned so the pool can serve O_DIRECT reads (which require the
-  // buffer to be page-aligned); the buffered reads currently issued by the
-  // vocabulary layer do not need the alignment, but it is the prerequisite for
-  // that zero-copy path. `nullptr` when buffer registration failed at
-  // construction time. Allocated via `posix_memalign` and owned by this object
-  // (freed with `free` in the destructor).
   char* registeredBufferPool_ = nullptr;
-  // Total size in bytes of `registeredBufferPool_` (equal to `ringSize_ *
-  // registeredBufferSize_`), retained so the destructor can free the block
-  // without recomputing the ring geometry.
   size_t registeredBufferPoolSize_ = 0;
-
-  // The `iovec` descriptors for `io_uring_register_buffers`. One per pool
-  // buffer, pointing into the corresponding sub-range of
-  // `registeredBufferPool_`.
   std::vector<struct iovec> registeredIovecs_;
-
-  // Indices of registered buffers that are currently free (not in use by any
-  // in-flight read). Popped when a buffer is claimed in `addBatch`, pushed when
-  // a completion returns it in `drainOneCqe`.
   std::vector<size_t> freeBufferIndices_;
-
   // --- End registered buffer pool --------------------------------------------
 
   // Monotonically increasing counter that mints a unique request id for each
@@ -262,21 +221,25 @@ class IoUringPolicy {
   uint64_t nextRequestIdToAssign_ = 0;
 
   // Maps a read's request id to its metadata. An entry is inserted when the
-  // read is prepared in `addBatch` and erased when its completion is reaped in
-  // `drainOneCqe`.
+  // read is prepared in `addBatch` and erased when its completion is reaped.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
-  // Allocate a buffer from the registered pool. Blocks (draining completions)
-  // if no buffer is free. Returns the pool index.
-  // Precondition: at least one buffer will become free (i.e. there is at least
-  // one in-flight read that can complete).
-  size_t allocatePoolBuffer();
+  // Wait until at least `minComplete` CQEs are ready, then reap every ready
+  // CQE. `minComplete` must be in `[1, numInFlightReadRequests_]`.
+  void drainAtLeast(unsigned minComplete);
 
-  // Return a buffer to the free pool.
-  void freePoolBuffer(size_t index);
+  // Reap every CQE that is already ready. Does not block.
+  void drainAllReadyCqes();
 
-  // Wait for one CQE, copy data from the registered buffer into the caller's
-  // target, return the pool buffer, and update the in-flight bookkeeping.
+  // Apply one completion to the in-flight bookkeeping. Always updates the
+  // counts. Stores the first I/O error message in `pendingErrorMessage_`.
+  void processCqe(int numBytesRead, uint64_t requestId);
+
+  // First I/O error seen while reaping a wave. Thrown after the wave is
+  // advanced so no CQE is processed twice.
+  const char* pendingErrorMessage_ = nullptr;
+
+  // Wait for one CQE and update the in-flight bookkeeping.
   void drainOneCqe();
 
  public:
@@ -290,13 +253,15 @@ class IoUringPolicy {
                                                 DEFAULT_REGISTERED_BUFFER_SIZE);
   ~IoUringPolicy();
 
-  // Enqueue a batch of read requests and submit them to the kernel. Blocks the
-  // calling thread only when the submission queue is full, in order to drain
-  // completion queue entries and free slots in the submission queue. Read `i`
-  // reads `numBytesToRead[i]` bytes from file descriptor `fd`, starting at
-  // offset `offsets[i]` (from the start of the file), into the buffer starting
-  // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
-  // to `wait()` to block until this batch has completed.
+  // Sliding-window submit (Option 2). Prepare and `io_uring_submit` up to
+  // `kSubmitWave` SQEs at a time. When the ring is full, wait for at least
+  // `kReapWave` completions, then submit the next wave. Do not drain one CQE
+  // and immediately submit one SQE: that is one `io_uring_enter` per read.
+  // Read `i` reads `numBytesToRead[i]` bytes from `fd` at `offsets[i]` into
+  // `buffers[i]`. Track the reads under `handle` for `wait()`.
+  static constexpr unsigned kSubmitWave = 32;
+  static constexpr unsigned kReapWave = 8;
+
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
