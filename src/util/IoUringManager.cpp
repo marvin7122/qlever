@@ -81,13 +81,13 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize, size_t registeredBufferSize)
       freeBufferIndices_.push_back(ringSize_ - 1 - i);
     }
     ret = io_uring_register_buffers(&ring_, registeredIovecs_.data(),
-                                     registeredIovecs_.size());
+                                    registeredIovecs_.size());
     if (ret < 0) {
-      AD_LOG_WARN
-          << "io_uring_register_buffers failed in IoUringPolicy: failed to register "
-          << registeredIovecs_.size() * registeredBufferSize_
-          << " bytes of buffers (RLIMIT_MEMLOCK is likely too low), "
-             "falling back to unregistered reads.\n";
+      AD_LOG_WARN << "io_uring_register_buffers failed in IoUringPolicy: "
+                     "failed to register "
+                  << registeredIovecs_.size() * registeredBufferSize_
+                  << " bytes of buffers (RLIMIT_MEMLOCK is likely too low), "
+                     "falling back to unregistered reads.\n";
       std::free(registeredBufferPool_);
       registeredBufferPool_ = nullptr;
       registeredBufferPoolSize_ = 0;
