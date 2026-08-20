@@ -214,6 +214,8 @@ class IoUringPolicy {
   std::vector<struct iovec> registeredIovecs_;
   std::vector<size_t> freeBufferIndices_;
   // --- End registered buffer pool --------------------------------------------
+  size_t allocatePoolBuffer();
+  void freePoolBuffer(size_t index);
 
   // Monotonically increasing counter that mints a unique request id for each
   // individual read. The id is stored in the SQE's `user_data` and recovered
