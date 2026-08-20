@@ -5,12 +5,15 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
@@ -192,9 +195,56 @@ class SplitVocabulary {
     return scanAllImpl(std::make_index_sequence<numberOfVocabs>{});
   }
 
-  //____________________________________________________________________________
+  // Partition `indices` by marker and forward each group to the matching
+  // underlying `lookupBatch`. Return results in the order of `indices`,
+  // including duplicates and mixed markers. Ensure that
+  // `OnDiskCompressedGeoSplit` uses the on-disk batch path instead of walking
+  // `operator[]`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    AD_CONTRACT_CHECK(!indices.empty());
+
+    std::array<std::vector<size_t>, numberOfVocabs> slotsPerMarker;
+    std::array<std::vector<size_t>, numberOfVocabs> vocabIndicesPerMarker;
+    for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
+      const uint8_t marker = getMarker(idx);
+      slotsPerMarker[marker].push_back(static_cast<size_t>(i));
+      vocabIndicesPerMarker[marker].push_back(getVocabIndex(idx));
+    }
+
+    std::array<VocabBatchLookupResult, numberOfVocabs> batches;
+    uint8_t usedMarkers = 0;
+    uint8_t lastUsedMarker = 0;
+    for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
+      if (vocabIndicesPerMarker[marker].empty()) {
+        continue;
+      }
+      batches[marker] = std::visit(
+          [&](const auto& vocab) {
+            return vocab.lookupBatch(vocabIndicesPerMarker[marker]);
+          },
+          underlying_[marker]);
+      AD_CORRECTNESS_CHECK(batches[marker]->size() ==
+                           vocabIndicesPerMarker[marker].size());
+      ++usedMarkers;
+      lastUsedMarker = marker;
+    }
+
+    // Mixed markers require one owned result buffer.
+    if (usedMarkers == 1) {
+      return batches[lastUsedMarker];
+    }
+
+    std::vector<std::string_view> assembled(indices.size());
+    for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
+      if (!batches[marker]) {
+        continue;
+      }
+      for (auto [slot, word] :
+           ::ranges::views::zip(slotsPerMarker[marker], *batches[marker])) {
+        assembled[slot] = word;
+      }
+    }
+    return makeOwnedVocabBatch(assembled);
   }
 
   //____________________________________________________________________________

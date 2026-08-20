@@ -1,16 +1,67 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (kalmbach@cs.uni-freiburg.de)
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyInternalExternal.h"
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "backports/algorithm.h"
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   auto fromInternal = internalVocab_[i];
-  if (fromInternal.has_value()) {
-    return std::string{fromInternal.value()};
+  if (fromInternal) {
+    return std::string{*fromInternal};
   }
   return externalVocab_[i];
+}
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
+    ql::span<const size_t> indices) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+
+  std::vector<std::string_view> assembled(indices.size());
+  std::vector<size_t> diskIndices;
+  std::vector<size_t> diskSlots;
+  diskIndices.reserve(indices.size());
+  diskSlots.reserve(indices.size());
+
+  for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
+    auto fromInternal = internalVocab_[idx];
+    if (fromInternal) {
+      assembled[static_cast<size_t>(i)] = *fromInternal;
+    } else {
+      diskSlots.push_back(static_cast<size_t>(i));
+      diskIndices.push_back(idx);
+    }
+  }
+
+  // If every requested index misses internalVocab_, return
+  // externalVocab_.lookupBatch directly to preserve its result buffer and
+  // avoid assembling and copying the results.
+  if (diskIndices.size() == indices.size()) {
+    return externalVocab_.lookupBatch(diskIndices);
+  }
+
+  VocabBatchLookupResult disk;
+  if (!diskIndices.empty()) {
+    disk = externalVocab_.lookupBatch(diskIndices);
+    AD_CORRECTNESS_CHECK(disk->size() == diskIndices.size());
+    for (auto [slot, word] : ::ranges::views::zip(diskSlots, *disk)) {
+      assembled[slot] = word;
+    }
+  }
+  return makeOwnedVocabBatch(assembled);
 }
 
 // _____________________________________________________________________________

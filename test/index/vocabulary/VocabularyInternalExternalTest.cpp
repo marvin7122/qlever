@@ -4,6 +4,10 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <string>
+#include <vector>
+
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyInternalExternal.h"
@@ -109,6 +113,27 @@ TEST(VocabularyInternalExternal, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary("AccessOperator1"));
   testAccessOperatorForUnorderedVocabulary(
       createVocabularyFromDisk("AccessOperator2"));
+}
+
+// `lookupBatch` must match `operator[]` in request order, including cache
+// hits (even `i` in the writer: stored in RAM) and misses (odd `i`: disk
+// only), plus reordered and duplicated indices.
+TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto vocab = createVocabulary("LookupBatch")(words);
+  const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
+  auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
+
+  // Even writer indices are RAM-cached; odd indices are disk-only.
+  const std::array<size_t, 3> ramOnly{0, 2, 4};
+  assertLookupResultMatchesVocabularyAtIndices(
+      vocab, vocab.lookupBatch(ramOnly), ramOnly);
+  const std::array<size_t, 3> diskOnly{1, 3, 1};
+  assertLookupResultMatchesVocabularyAtIndices(
+      vocab, vocab.lookupBatch(diskOnly), diskOnly);
 }
 
 TEST(VocabularyInternalExternal, EmptyVocabulary) {
