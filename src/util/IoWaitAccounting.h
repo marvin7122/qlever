@@ -5,13 +5,21 @@
 #ifndef QLEVER_SRC_UTIL_IOWAITACCOUNTING_H
 #define QLEVER_SRC_UTIL_IOWAITACCOUNTING_H
 
+#include <dirent.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <fstream>
 #include <mutex>
+#include <sstream>
+#include <string>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -162,23 +170,150 @@ inline ThreadCounters total() {
   return total;
 }
 
-// Writes the totals to stderr when the process exits. Emitted unconditionally
-// so that disabled instrumentation is distinguishable from a missing report.
-struct ExitReporter {
-  ~ExitReporter() {
-    const ThreadCounters counters = total();
-    std::fprintf(stderr,
-                 "io-wait-accounting enabled=%d pread_calls=%llu "
-                 "pread_wait_s=%.6f iouring_waits=%llu iouring_wait_s=%.6f\n",
-                 static_cast<int>(enabled()),
-                 static_cast<unsigned long long>(counters.pread_.calls_),
-                 static_cast<double>(counters.pread_.nanos_) / 1e9,
-                 static_cast<unsigned long long>(counters.ioUringWait_.calls_),
-                 static_cast<double>(counters.ioUringWait_.nanos_) / 1e9);
+// Kernel-side worker accounting.
+//
+// The vocabulary files are opened buffered and the ring is created with
+// `flags = 0` (no SQPOLL, no IOPOLL). A buffered read that misses the page
+// cache therefore cannot complete inline in the submitting task, so io_uring
+// punts it to its `io-wq` worker pool. Those workers are created with
+// `create_io_thread()` and belong to the submitting process's thread group,
+// so they appear under `/proc/self/task/` with a `iou-wrk-` comm and their
+// CPU time is charged to this process.
+//
+// That is where the concurrency of the batched path comes from: not from new
+// application threads, but from several kernel workers performing blocking
+// reads at once. Sampling them separates "the export thread waited less" from
+// "more reads were in flight", which a single `cpu_s` figure cannot.
+struct WorkerSample {
+  uint64_t maxWorkers_ = 0;   // highest `iou-wrk-` count seen
+  uint64_t maxThreads_ = 0;   // highest total task count seen
+  uint64_t workerTicks_ = 0;  // utime + stime of `iou-wrk-` tasks, last sample
+};
+
+namespace detail {
+inline WorkerSample& workerSample() {
+  static WorkerSample sample;
+  return sample;
+}
+
+// Reads `utime + stime` from a `/proc/.../stat` line. Both follow the comm
+// field, which may itself contain spaces, so parse after the final ')'.
+inline uint64_t ticksFromStat(const std::string& stat) {
+  const auto close = stat.rfind(')');
+  if (close == std::string::npos) {
+    return 0;
   }
+  std::istringstream rest{stat.substr(close + 1)};
+  std::string field;
+  // Fields after comm: state(3) ppid(4) ... utime is 14, stime is 15.
+  uint64_t utime = 0;
+  uint64_t stime = 0;
+  for (int index = 3; index <= 15; ++index) {
+    if (!(rest >> field)) {
+      return 0;
+    }
+    if (index == 14) {
+      utime = std::strtoull(field.c_str(), nullptr, 10);
+    } else if (index == 15) {
+      stime = std::strtoull(field.c_str(), nullptr, 10);
+    }
+  }
+  return utime + stime;
+}
+
+// One pass over `/proc/self/task`, recording the io_uring worker population.
+inline void sampleWorkers() {
+  DIR* dir = opendir("/proc/self/task");
+  if (dir == nullptr) {
+    return;
+  }
+  uint64_t threads = 0;
+  uint64_t workers = 0;
+  uint64_t ticks = 0;
+  while (dirent* entry = readdir(dir)) {
+    if (entry->d_name[0] == '.') {
+      continue;
+    }
+    ++threads;
+    const std::string base = std::string{"/proc/self/task/"} + entry->d_name;
+    std::ifstream commFile{base + "/comm"};
+    std::string comm;
+    if (!std::getline(commFile, comm) || comm.rfind("iou-wrk", 0) != 0) {
+      continue;
+    }
+    ++workers;
+    std::ifstream statFile{base + "/stat"};
+    std::string stat;
+    if (std::getline(statFile, stat)) {
+      ticks += ticksFromStat(stat);
+    }
+  }
+  closedir(dir);
+  WorkerSample& sample = workerSample();
+  sample.maxThreads_ = std::max(sample.maxThreads_, threads);
+  sample.maxWorkers_ = std::max(sample.maxWorkers_, workers);
+  sample.workerTicks_ = std::max(sample.workerTicks_, ticks);
+}
+}  // namespace detail
+
+// Formats the current totals as one line.
+inline std::string report() {
+  const ThreadCounters counters = total();
+  const WorkerSample& sample = detail::workerSample();
+  const double tick = 1.0 / static_cast<double>(sysconf(_SC_CLK_TCK));
+  std::ostringstream out;
+  out << "io-wait-accounting"
+      << " enabled=" << static_cast<int>(enabled())
+      << " pread_calls=" << counters.pread_.calls_
+      << " pread_wait_s=" << static_cast<double>(counters.pread_.nanos_) / 1e9
+      << " iouring_waits=" << counters.ioUringWait_.calls_ << " iouring_wait_s="
+      << static_cast<double>(counters.ioUringWait_.nanos_) / 1e9
+      << " iowq_workers_max=" << sample.maxWorkers_
+      << " threads_max=" << sample.maxThreads_
+      << " iowq_cpu_s=" << static_cast<double>(sample.workerTicks_) * tick;
+  return out.str();
+}
+
+// Periodically samples the io_uring worker pool and rewrites the report to the
+// file named by `QLEVER_IO_WAIT_REPORT`, plus stderr at process exit.
+//
+// WHY A FILE AND A POLLER, NOT AN EXIT HOOK. The benchmark harness stops the
+// server with a signal, so static destructors never run: run io-wait-crossarm-1
+// produced no report at all for exactly this reason. Writing from a signal
+// handler would mean formatting inside a handler, which is not
+// async-signal-safe. A poller that keeps a complete report on disk is correct
+// whatever kills the process, and also captures the worker population *while*
+// the query runs, which is when the workers exist.
+inline void startReporter() {
+  static std::once_flag once;
+  std::call_once(once, []() {
+    const char* path = std::getenv("QLEVER_IO_WAIT_REPORT");
+    if (path == nullptr) {
+      return;
+    }
+    std::thread{[file = std::string{path}]() {
+      while (true) {
+        detail::sampleWorkers();
+        // Write to a temporary and rename, so a reader never sees half a line.
+        const std::string tmp = file + ".tmp";
+        {
+          std::ofstream out{tmp, std::ios::trunc};
+          out << report() << '\n';
+        }
+        std::rename(tmp.c_str(), file.c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      }
+    }}.detach();
+  });
+}
+
+// Also reports on a normal exit, for interactive use.
+struct ExitReporter {
+  ~ExitReporter() { std::fprintf(stderr, "%s\n", report().c_str()); }
 };
 inline const ExitReporter& exitReporter() {
   static ExitReporter reporter;
+  startReporter();
   return reporter;
 }
 
