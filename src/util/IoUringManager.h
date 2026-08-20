@@ -229,13 +229,13 @@ class IoUringPolicy {
   explicit IoUringPolicy(unsigned ringSize);
   ~IoUringPolicy();
 
-  // Sliding-window submit (Option 2). Prepare and `io_uring_submit` up to
-  // `kSubmitWave` SQEs at a time. When the ring is full, wait for at least
-  // `kReapWave` completions, then submit the next wave. Do not drain one CQE
-  // and immediately submit one SQE: that is one `io_uring_enter` per read.
-  // Read `i` reads `numBytesToRead[i]` bytes from `fd` at `offsets[i]` into
-  // `buffers[i]`. Track the reads under `handle` for `wait()`.
-  static constexpr unsigned kSubmitWave = 32;
+  // Sliding-window submit. Prepare as many SQEs as the ring has free slots,
+  // then `io_uring_submit` them in one call. When the ring is full, wait for
+  // at least `kReapWave` completions, reap every ready CQE, and submit the
+  // next wave. Do not drain one CQE and immediately submit one SQE: that is
+  // one `io_uring_enter` per read. Read `i` reads `numBytesToRead[i]` bytes
+  // from `fd` at `offsets[i]` into `buffers[i]`. Track the reads under
+  // `handle` for `wait()`.
   static constexpr unsigned kReapWave = 8;
 
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,

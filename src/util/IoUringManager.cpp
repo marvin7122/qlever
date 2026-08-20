@@ -132,8 +132,11 @@ void IoUringPolicy::addBatch(int fd,
       drainAtLeast(want);
       continue;
     }
-    const size_t wave = std::min({numReadRequestsToPerform - next, freeSlots,
-                                  static_cast<size_t>(kSubmitWave)});
+    // Submit as many SQEs as the ring has room for. `io_uring_submit` is
+    // non-blocking and costs one `io_uring_enter` regardless of how many SQEs
+    // it flushes, so capping the wave only adds syscalls without bounding any
+    // resource: the ring itself is the bound.
+    const size_t wave = std::min(numReadRequestsToPerform - next, freeSlots);
     for (size_t k = 0; k < wave; ++k) {
       prepareOne(next + k);
     }
