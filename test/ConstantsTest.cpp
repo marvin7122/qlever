@@ -31,6 +31,17 @@ TEST(Constants, testDefaultQueryTimeoutIsStriclyPositive) {
       setRuntimeParameter<&RuntimeParameters::defaultQueryTimeout_>(1s));
 }
 
+TEST(Constants, constructExportRowBatchSizeIsStrictlyPositive) {
+  auto reset = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(1024);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(0),
+      AllOf(HasSubstr("construct-export-row-batch-size"), HasSubstr("0")),
+      std::runtime_error);
+  EXPECT_NO_THROW(
+      setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(1));
+}
+
 namespace {
 constexpr std::string_view hi = "hi";
 constexpr std::string_view bye = "-bye";

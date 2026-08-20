@@ -242,6 +242,13 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // Number of WHERE-result rows in one CONSTRUCT export chunk. Each chunk
+  // runs one vocabulary `lookupBatch` (offset reads, then string reads) and
+  // then formats triples. Larger values amortize `io_uring_enter`; smaller
+  // values can yield the first HTTP body bytes sooner. Must be >= 1. Default
+  // 1024 matches `ConstructTripleGenerator::BATCH_SIZE`.
+  SizeT constructExportRowBatchSize_{1024, "construct-export-row-batch-size"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
