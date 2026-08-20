@@ -294,10 +294,9 @@ inline std::string report() {
 // Periodically samples the io_uring worker pool and rewrites the report to the
 // file named by `QLEVER_IO_WAIT_REPORT`, plus stderr at process exit.
 //
-// WHY A FILE AND A POLLER, NOT AN EXIT HOOK. The benchmark harness stops the
-// server with a signal, so static destructors never run: run io-wait-crossarm-1
-// produced no report at all for exactly this reason. Writing from a signal
-// handler would mean formatting inside a handler, which is not
+// WHY A FILE AND A POLLER, NOT AN EXIT HOOK. The server can stop with a
+// signal, so static destructors do not necessarily run. Writing from a signal
+//// handler would mean formatting inside a handler, which is not
 // async-signal-safe. A poller that keeps a complete report on disk is correct
 // whatever kills the process, and also captures the worker population *while*
 // the query runs, which is when the workers exist.
