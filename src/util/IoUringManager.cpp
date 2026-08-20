@@ -116,7 +116,8 @@ void IoUringPolicy::addBatch(int fd,
     if (numInFlightReadRequests_ >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
-      io_uring_submit(&ring_);
+      ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
+                                [&]() { return io_uring_submit(&ring_); });
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
       }
@@ -145,7 +146,8 @@ void IoUringPolicy::addBatch(int fd,
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
-  io_uring_submit(&ring_);
+  ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
+                            [&]() { return io_uring_submit(&ring_); });
 }
 
 //______________________________________________________________________________

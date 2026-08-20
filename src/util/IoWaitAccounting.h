@@ -75,6 +75,13 @@ struct Counters {
 struct ThreadCounters {
   Counters pread_;
   Counters ioUringWait_;
+  // `io_uring_submit` is a blocking call site too. With `flags = 0` on a
+  // buffered file, a read that the kernel can service without punting is
+  // performed inside `io_uring_enter`, so the thread blocks in submit and the
+  // matching completion is already present when it is reaped. Run
+  // io-wait-crossarm-3 measured 60.9 million completion waits totalling only
+  // 1.87 s, which is what that looks like when submit is not instrumented.
+  Counters ioUringSubmit_;
 };
 
 namespace detail {
@@ -106,6 +113,8 @@ struct ThreadRegistration {
     reg.finished_.pread_.calls_ += counters_.pread_.calls_;
     reg.finished_.ioUringWait_.nanos_ += counters_.ioUringWait_.nanos_;
     reg.finished_.ioUringWait_.calls_ += counters_.ioUringWait_.calls_;
+    reg.finished_.ioUringSubmit_.nanos_ += counters_.ioUringSubmit_.nanos_;
+    reg.finished_.ioUringSubmit_.calls_ += counters_.ioUringSubmit_.calls_;
     reg.live_.erase(std::remove(reg.live_.begin(), reg.live_.end(), &counters_),
                     reg.live_.end());
   }
@@ -155,6 +164,9 @@ inline Counters& preadCounters(ThreadCounters& counters) {
 inline Counters& ioUringWaitCounters(ThreadCounters& counters) {
   return counters.ioUringWait_;
 }
+inline Counters& ioUringSubmitCounters(ThreadCounters& counters) {
+  return counters.ioUringSubmit_;
+}
 
 // Totals over all threads, live and finished.
 inline ThreadCounters total() {
@@ -166,6 +178,8 @@ inline ThreadCounters total() {
     total.pread_.calls_ += counters->pread_.calls_;
     total.ioUringWait_.nanos_ += counters->ioUringWait_.nanos_;
     total.ioUringWait_.calls_ += counters->ioUringWait_.calls_;
+    total.ioUringSubmit_.nanos_ += counters->ioUringSubmit_.nanos_;
+    total.ioUringSubmit_.calls_ += counters->ioUringSubmit_.calls_;
   }
   return total;
 }
@@ -268,6 +282,9 @@ inline std::string report() {
       << " pread_wait_s=" << static_cast<double>(counters.pread_.nanos_) / 1e9
       << " iouring_waits=" << counters.ioUringWait_.calls_ << " iouring_wait_s="
       << static_cast<double>(counters.ioUringWait_.nanos_) / 1e9
+      << " iouring_submits=" << counters.ioUringSubmit_.calls_
+      << " iouring_submit_s="
+      << static_cast<double>(counters.ioUringSubmit_.nanos_) / 1e9
       << " iowq_workers_max=" << sample.maxWorkers_
       << " threads_max=" << sample.maxThreads_
       << " iowq_cpu_s=" << static_cast<double>(sample.workerTicks_) * tick;
@@ -277,7 +294,7 @@ inline std::string report() {
 // Periodically samples the io_uring worker pool and rewrites the report to the
 // file named by `QLEVER_IO_WAIT_REPORT`, plus stderr at process exit.
 //
-// WHY A FILE AND A POLLER, NOT AN EXIT HOOK. The server can stop via a
+// WHY A FILE AND A POLLER, NOT AN EXIT HOOK. The benchmark harness stops the
 // server with a signal, so static destructors never run: run io-wait-crossarm-1
 // produced no report at all for exactly this reason. Writing from a signal
 // handler would mean formatting inside a handler, which is not
