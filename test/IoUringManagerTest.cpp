@@ -388,6 +388,19 @@ TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
                                HasSubstr("read fewer bytes than requested"));
 }
 
+// An invalid file descriptor must throw. `SyncIoPolicy` throws from `pread`
+// in `addBatch`. `IoUringPolicy` submits the SQE and throws from `wait` when
+// the CQE reports `res < 0`.
+TYPED_TEST(IoUringManagerTest, InvalidFdThrows) {
+  TypeParam manager(64);
+  ReadBatchForTesting batch;
+  batch.add(0, 4);
+  constexpr int invalidFd = -1;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      manager.wait(batch.submitTo(manager, invalidFd)),
+      AnyOf(HasSubstr("pread failed"), HasSubstr("I/O error")));
+}
+
 // A read that is fully satisfied returns the requested bytes from the requested
 // offset.
 TEST(ReadFullyOrThrow, FullReadSucceeds) {
