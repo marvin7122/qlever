@@ -82,10 +82,10 @@ IoUringPolicy::~IoUringPolicy() {
                    "so the kernel stops writing into the target buffers.\n";
   }
   // Reap the outstanding completions before tearing down the ring, so the
-  // kernel is no longer writing into any target buffer once we return. We
-  // deliberately do not call `drainOneCqe` here: it throws on I/O errors, and a
-  // destructor must not throw. We also stop if `io_uring_wait_cqe` fails, to
-  // avoid spinning forever (it would not decrement the in-flight count).
+  // kernel is no longer writing into any target buffer once we return. Do not
+  // call `drainAtLeast` here: it throws on I/O errors, and a destructor must
+  // not throw. Stop if `io_uring_wait_cqe` fails, to avoid spinning forever
+  // (it would not decrement the in-flight count).
   while (numInFlightReadRequests_ > 0) {
     io_uring_cqe* cqe = nullptr;
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
@@ -128,7 +128,7 @@ void IoUringPolicy::addBatch(int fd,
     const size_t freeSlots = ringSize_ - numInFlightReadRequests_;
     if (freeSlots == 0) {
       const unsigned want = static_cast<unsigned>(
-          std::min<size_t>(kReapWave, numInFlightReadRequests_));
+          std::min<size_t>(REAP_WAVE, numInFlightReadRequests_));
       drainAtLeast(want);
       continue;
     }
@@ -141,8 +141,18 @@ void IoUringPolicy::addBatch(int fd,
       prepareOne(next + k);
     }
     next += wave;
-    if (io_uring_submit(&ring_) < 0) {
-      AD_THROW("io_uring_submit failed in IoUringPolicy");
+    // `io_uring_submit` may return fewer SQEs than prepared. Those leftovers
+    // stay in the SQ; submit them before preparing the next wave. A zero
+    // return is treated as failure: draining would deadlock if nothing has
+    // reached the kernel yet.
+    size_t stillToSubmit = wave;
+    while (stillToSubmit > 0) {
+      const int submitted = io_uring_submit(&ring_);
+      if (submitted <= 0) {
+        AD_THROW("io_uring_submit failed in IoUringPolicy");
+      }
+      AD_CORRECTNESS_CHECK(static_cast<size_t>(submitted) <= stillToSubmit);
+      stillToSubmit -= static_cast<size_t>(submitted);
     }
   }
 }
@@ -152,7 +162,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
   while (numInFlightReadRequestsPerBatch_.find(handle) !=
          numInFlightReadRequestsPerBatch_.end()) {
     const unsigned want = static_cast<unsigned>(
-        std::min<size_t>(kReapWave, numInFlightReadRequests_));
+        std::min<size_t>(REAP_WAVE, numInFlightReadRequests_));
     AD_CORRECTNESS_CHECK(want > 0);
     drainAtLeast(want);
   }
@@ -230,9 +240,6 @@ void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
     return;
   }
 }
-
-//______________________________________________________________________________
-void ad_utility::IoUringPolicy::drainOneCqe() { drainAtLeast(1); }
 
 #endif  // QLEVER_HAS_IO_URING
 

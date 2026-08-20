@@ -218,9 +218,6 @@ class IoUringPolicy {
   // advanced so no CQE is processed twice.
   const char* pendingErrorMessage_ = nullptr;
 
-  // Wait for one CQE and update the in-flight bookkeeping.
-  void drainOneCqe();
-
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;
@@ -229,15 +226,17 @@ class IoUringPolicy {
   explicit IoUringPolicy(unsigned ringSize);
   ~IoUringPolicy();
 
-  // Sliding-window submit. Prepare as many SQEs as the ring has free slots,
-  // then `io_uring_submit` them in one call. When the ring is full, wait for
-  // at least `kReapWave` completions, reap every ready CQE, and submit the
-  // next wave. Do not drain one CQE and immediately submit one SQE: that is
-  // one `io_uring_enter` per read. Read `i` reads `numBytesToRead[i]` bytes
-  // from `fd` at `offsets[i]` into `buffers[i]`. Track the reads under
-  // `handle` for `wait()`.
-  static constexpr unsigned kReapWave = 8;
+  // Minimum completions to wait for when the ring is full or `wait()` blocks.
+  // Waiting for more than one CQE amortizes `io_uring_enter` on the reap path.
+  static constexpr unsigned REAP_WAVE = 8;
 
+  // Prepare as many SQEs as the ring has free slots and submit them. When the
+  // ring is full, wait for at least `REAP_WAVE` completions, reap every ready
+  // CQE, and submit the next wave. Do not drain one CQE and immediately
+  // submit one SQE: that is one `io_uring_enter` per read. Read `i` reads
+  // `numBytesToRead[i]` bytes from `fd` at `offsets[i]` into `buffers[i]`.
+  // The caller owns `buffers` until `wait(handle)` returns. Track the reads
+  // under `handle` for `wait()`.
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
