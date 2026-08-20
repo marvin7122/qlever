@@ -5,6 +5,7 @@
 #ifndef QLEVER_SRC_UTIL_IOWAITACCOUNTING_H
 #define QLEVER_SRC_UTIL_IOWAITACCOUNTING_H
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -97,7 +98,9 @@ struct ThreadRegistration {
     reg.finished_.pread_.calls_ += counters_.pread_.calls_;
     reg.finished_.ioUringWait_.nanos_ += counters_.ioUringWait_.nanos_;
     reg.finished_.ioUringWait_.calls_ += counters_.ioUringWait_.calls_;
-    std::erase(reg.live_, &counters_);
+    reg.live_.erase(
+        std::remove(reg.live_.begin(), reg.live_.end(), &counters_),
+        reg.live_.end());
   }
 };
 
