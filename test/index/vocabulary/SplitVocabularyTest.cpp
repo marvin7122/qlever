@@ -659,5 +659,3 @@ TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   ASSERT_TRUE(wordWriter2->finishWasCalled());
   wordWriter2.reset();
 }
-
-}  // namespace
