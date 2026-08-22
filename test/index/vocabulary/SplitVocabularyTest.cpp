@@ -440,13 +440,14 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
   // vocabularies (here: words starting with `"a` go into the second vocab).
   // `scanAll` must still enumerate all of them.
   TwoSplitVocabulary sv;
-  auto ww = sv.makeDiskWriterPtr("splitVocabScanAll.dat");
+  const auto filename = gtestCurrentTestName();
+  auto ww = sv.makeDiskWriterPtr(filename);
   (*ww)("\"\"", true);
   (*ww)("\"abc\"", true);
   (*ww)("\"axyz\"", true);
   (*ww)("\"xyz\"", true);
   ww->finish();
-  sv.readFromFile("splitVocabScanAll.dat");
+  sv.readFromFile(filename);
 
   // `scanAll` yields all words of all underlying vocabularies, together with
   // their marker-encoded global index (main vocabulary first, then the second
@@ -462,6 +463,9 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
                                      P{sv.addMarker(1, 0), "\"xyz\""},
                                      P{sv.addMarker(0, 1), "\"abc\""},
                                      P{sv.addMarker(1, 1), "\"axyz\""}));
+  sv.close();
+  ad_utility::deleteFile(filename);
+  ad_utility::deleteFile(absl::StrCat(filename, ".a"));
 }
 
 // _____________________________________________________________________________
