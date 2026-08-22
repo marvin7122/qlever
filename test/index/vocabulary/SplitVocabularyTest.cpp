@@ -506,7 +506,7 @@ using namespace splitVocabTestHelpers;
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
-  static constexpr const char* filename_ = "SplitVocabularyTestData.dat";
+  static constexpr const char* filename_ = "SplitVocabularyWithDataTest.dat";
 
   static void SetUpTestSuite() {
     ad_utility::deleteFile(filename_, false);
