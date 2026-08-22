@@ -420,21 +420,23 @@ CPP_template(typename UnderlyingVocabulary,
       ql::pmr::monotonic_buffer_resource& buffer, std::string& scratch) const {
     AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
 
+    // All allocations for the decompressed words go through the
+    // allocator-aware `ql::pmr::polymorphic_allocator` rather than calling
+    // `memory_resource::allocate` on the raw resource.
+    ql::pmr::polymorphic_allocator<char> allocator{&buffer};
+
     const size_t boundOnDecompressedWordSize =
         compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx);
     if (boundOnDecompressedWordSize == 0) {
-      return std::string_view{static_cast<char*>(buffer.allocate(1)),
-                              size_t{0}};
+      return std::string_view{allocator.allocate(1), size_t{0}};
     }
 
-    // `memory_resource::allocate` returns `void*` to storage we own for
-    // `boundOnDecompressedWordSize` bytes. Casting to `char*` is well-defined
-    // and is the usual way to treat that storage as a byte buffer: the
-    // selected decoder writes into it, then we form a `string_view` over the
-    // used prefix. Alignment is at least `alignof(std::max_align_t)` for this
-    // resource, which is sufficient for an array of `char`.
-    auto* mem =
-        static_cast<char*>(buffer.allocate(boundOnDecompressedWordSize));
+    // The allocator hands out storage we own for `boundOnDecompressedWordSize`
+    // bytes, which we treat as a byte buffer: the selected decoder writes into
+    // it, then we form a `string_view` over the used prefix. Alignment is at
+    // least `alignof(std::max_align_t)` for this resource, which is sufficient
+    // for an array of `char`.
+    char* mem = allocator.allocate(boundOnDecompressedWordSize);
     const size_t numBytesWritten = compressionWrapper_.decompressInto(
         compressedWord, decoderIdx,
         ql::span<char>{mem, boundOnDecompressedWordSize}, scratch);

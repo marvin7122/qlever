@@ -178,14 +178,16 @@ struct MultiOwnerVocabBatchLookupData
 // single combined `VocabBatchLookupResult` via `keepAliveVocabBatch()`.
 inline void scatterVocabBatchLookupResult(
     VocabBatchLookupResult result, ql::span<const size_t> resultPositions,
-    ql::span<std::string_view> viewsInInputOrder,
+    ql::span<std::string_view> viewsInInputOrder, ql::span<bool> filledSlots,
     std::vector<VocabBatchOwner>& owners) {
   AD_CONTRACT_CHECK(result != nullptr);
   AD_CONTRACT_CHECK(result->size() == resultPositions.size());
+  AD_CONTRACT_CHECK(filledSlots.size() == viewsInInputOrder.size());
   for (auto [resultPosition, word] :
        ::ranges::views::zip(resultPositions, *result)) {
     AD_CORRECTNESS_CHECK(resultPosition < viewsInInputOrder.size());
-    AD_CORRECTNESS_CHECK(viewsInInputOrder[resultPosition].data() == nullptr);
+    AD_CORRECTNESS_CHECK(!filledSlots[resultPosition]);
+    filledSlots[resultPosition] = true;
     viewsInInputOrder[resultPosition] = word;
   }
   owners.push_back(std::move(result));
@@ -201,15 +203,26 @@ inline void scatterVocabBatchLookupResult(
 // later redesign could replace it with a builder or an owned-view capability
 // type so slots are only filled together with their storage.
 inline VocabBatchLookupResult keepAliveVocabBatch(
-    std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words) {
+    std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words,
+    std::vector<bool> filledSlots) {
   AD_CONTRACT_CHECK(!owners.empty());
   AD_CONTRACT_CHECK(!words.empty());
-  AD_CORRECTNESS_CHECK(ql::ranges::all_of(
-      words, [](const std::string_view& v) { return v.data() != nullptr; }));
+  AD_CONTRACT_CHECK(filledSlots.size() == words.size());
+  AD_CORRECTNESS_CHECK(
+      ql::ranges::all_of(filledSlots, [](bool filled) { return filled; }));
   auto data = std::make_shared<MultiOwnerVocabBatchLookupData>();
   data->buffer() = std::move(owners);
   data->views() = std::move(words);
   return MultiOwnerVocabBatchLookupData::asResult(std::move(data));
+}
+
+// Compatibility overload for callers that already know every output slot is
+// filled and whose views are non-null.
+inline VocabBatchLookupResult keepAliveVocabBatch(
+    std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words) {
+  std::vector<bool> filledSlots(words.size(), true);
+  return keepAliveVocabBatch(std::move(owners), std::move(words),
+                             std::move(filledSlots));
 }
 
 // Generic sequential fallback implementations of the batch-lookup interface,
