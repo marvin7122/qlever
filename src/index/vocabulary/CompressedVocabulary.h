@@ -119,6 +119,7 @@ CPP_template(typename UnderlyingVocabulary,
   // returned result. The order of words in the result matches `indices`.
   // Return a `VocabBatchLookupResult` keeping the PMR monotonic buffer resource
   // alive and providing `string_view`s for each requested index in `indices`.
+  // `indices` must not be empty.
   //
   // TODO<ms2144>: Because `ql::pmr::monotonic_buffer_resource` does not support
   // reclaiming or shrinking individual allocations in place, any unused memory

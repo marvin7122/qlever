@@ -331,7 +331,7 @@ class SplitVocabulary {
 
   //____________________________________________________________________________
   // Partition `indices` by marker, look up each group, and reassemble the
-  // results in input order.
+  // results in input order. `indices` must not be empty.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto markerIndicesAndPositions =
