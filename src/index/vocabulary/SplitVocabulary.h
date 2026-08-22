@@ -1,6 +1,12 @@
-// Copyright 2025 University of Freiburg
-// Chair of Algorithms and Data Structures
-// Author: Christoph Ullinger <ullingec@cs.uni-freiburg.de>
+// Copyright 2025 - 2026, The QLever Authors, in particular:
+//
+// 2025 - 2026 Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
@@ -134,32 +140,6 @@ class SplitVocabulary {
          }))...);
   }
 
-  // Partition marked indices into paired (`underlyingIndex`, `resultPosition`)
-  // lists per marker using this vocabulary's `getMarker`/`getVocabIndex`.
-  // Thin wrapper around the shared
-  // `ad_utility::vocabulary::partitionMarkerIndicesAndPositions`.
-  // _____________________________________________________________________________
-  static IndicesAndPositionsByMarker partitionMarkerIndicesAndPositions(
-      ql::span<const size_t> indices) {
-    return ad_utility::vocabulary::partitionMarkerIndicesAndPositions<
-        numberOfVocabs>(indices, [](uint64_t markedIndex) {
-      return std::pair{getMarker(markedIndex), getVocabIndex(markedIndex)};
-    });
-  }
-
-  // Merge the per-vocabulary batches into one result in input order.
-  // `numberOfResults` is the total number of requested indices (the sum of
-  // the per-marker position counts; the caller knows it without re-summing).
-  // _____________________________________________________________________________
-  static VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
-      MarkerBatchLookups markerLookups,
-      const IndicesAndPositionsByMarker& markerIndicesAndPositions,
-      size_t numberOfResults) {
-    return ad_utility::vocabulary::mergeMarkerBatchesInInputOrder(
-        markerIndicesAndPositions, numberOfResults,
-        [&](size_t vocabMarker) { return markerLookups.release(vocabMarker); });
-  }
-
   // Batch lookup results for each underlying vocabulary, indexed by vocabulary
   // marker. Stores results only from vocabularies with lookup indices in this
   // batch (others remain null).
@@ -194,7 +174,8 @@ class SplitVocabulary {
   // _____________________________________________________________________________
   static VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
       MarkerBatchLookups markerLookups,
-      const IndicesAndPositionsByMarker& markerIndicesAndPositions,
+      const IndicesAndPositionsByMarker<numberOfVocabs>&
+          markerIndicesAndPositions,
       size_t numberOfResults) {
     std::vector<std::string_view> viewsInInputOrder(numberOfResults);
     std::vector<bool> filledSlots(numberOfResults, false);
@@ -302,7 +283,11 @@ class SplitVocabulary {
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto markerIndicesAndPositions =
-        partitionMarkerIndicesAndPositions(indices);
+        ::partitionMarkerIndicesAndPositions<numberOfVocabs>(
+            indices, [](uint64_t markedIndex) {
+              return std::pair{getMarker(markedIndex),
+                                getVocabIndex(markedIndex)};
+            });
 
     MarkerBatchLookups markerLookups;
     for (auto&& [marker, markerIndicesAndPositionsForMarker] :
