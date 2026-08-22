@@ -286,7 +286,7 @@ class SplitVocabulary {
         ::partitionMarkerIndicesAndPositions<numberOfVocabs>(
             indices, [](uint64_t markedIndex) {
               return std::pair{getMarker(markedIndex),
-                                getVocabIndex(markedIndex)};
+                               getVocabIndex(markedIndex)};
             });
 
     MarkerBatchLookups markerLookups;
