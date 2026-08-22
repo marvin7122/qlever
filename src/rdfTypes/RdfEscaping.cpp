@@ -1,6 +1,9 @@
-// Copyright 2021, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2021 - 2026, The QLever Authors, in particular:
+//
+// 2021 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include "rdfTypes/RdfEscaping.h"
 
@@ -8,7 +11,6 @@
 #include <absl/strings/str_replace.h>
 
 #include <charconv>
-#include <ctre-unicode.hpp>
 #include <string>
 
 #include "backports/StartsWithAndEndsWith.h"
@@ -16,16 +18,23 @@
 #include "util/Exception.h"
 #include "util/HashSet.h"
 #include "util/Log.h"
+#include "util/SimdUtils.h"
 #include "util/StringUtils.h"
 
 namespace RdfEscaping {
 using namespace std::string_literals;
 namespace detail {
 
-// CTRE regex patterns for C++17 compatibility
-constexpr ctll::fixed_string csvSpecialCharsRegex = "[\r\n\",]";
-constexpr ctll::fixed_string tsvSpecialCharsRegex = "[\n\t]";
-constexpr ctll::fixed_string xmlSpecialCharsRegex = "[&\"<>']";
+// The characters that must be escaped in the respective output formats. Named
+// so that the call sites of the SIMD scan do not repeat the raw character
+// lists (the individual formats use different sets).
+using LiteralContentSpecialChars =
+    ad_utility::simd::detail::CharacterSet<'"', '\\', '\n', '\r'>;
+using CsvSpecialChars =
+    ad_utility::simd::detail::CharacterSet<'\r', '\n', '"', ','>;
+using TsvSpecialChars = ad_utility::simd::detail::CharacterSet<'\t', '\n'>;
+using XmlSpecialChars =
+    ad_utility::simd::detail::CharacterSet<'&', '"', '<', '>', '\''>;
 
 // _____________________________________________________________________________
 std::string hexadecimalCharactersToUtf8Codepoint(std::string_view hex) {
@@ -210,22 +219,28 @@ NormalizedRDFString normalizeRDFLiteral(const std::string_view origLiteral) {
   return NormalizedRDFString{std::move(res)};
 }
 
-// ____________________________________________________________________________
+// __________________________________________________________________________
 std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
   AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'));
-  size_t posSecondQuote = normLiteral.find('"', 1);
-  AD_CONTRACT_CHECK(posSecondQuote != std::string::npos);
   size_t posLastQuote = normLiteral.rfind('"');
-  // If there are only two quotes (the first and the last, which every
-  // normalized literal has), there is nothing to do.
-  if (posSecondQuote == posLastQuote &&
-      normLiteral.find_first_of("\\\n\r") == std::string::npos) {
+  // The contract that there is a closing quote (a quote at a position > 0)
+  // is checked here; it is equivalent to the old
+  // `AD_CONTRACT_CHECK(find('"', 1) != npos)`.
+  AD_CONTRACT_CHECK(posLastQuote != 0);
+  // Fast path: a normalized literal only needs escaping if its content (the
+  // part between the first and the last quote) contains a quote, backslash,
+  // newline, or carriage return. The scan is a vectorized sweep (see
+  // `util/SimdUtils.h`); its equivalence with the previous `find_first_of`
+  // check and the window semantics are verified by explicit tests (see
+  // `test/rdfTypes/RdfEscapingTest.cpp`).
+  std::string_view normalizedContent = normLiteral.substr(1, posLastQuote - 1);
+  if (!ad_utility::simd::containsAnyByte(detail::LiteralContentSpecialChars{},
+                                         normalizedContent)) [[likely]] {
     return std::string{normLiteral};
   }
-  // Otherwise escape first all backlashes then all quotes (the order is
+  // Otherwise escape first all backslashes then all quotes (the order is
   // important) in the part between the first and the last quote and leave the
   // rest unchanged.
-  std::string_view normalizedContent = normLiteral.substr(1, posLastQuote - 1);
   std::string content = absl::StrReplaceAll(
       normalizedContent,
       {{R"(\)", R"(\\)"}, {"\n", "\\n"}, {"\r", "\\r"}, {R"(")", R"(\")"}});
@@ -293,7 +308,8 @@ std::string unescapePrefixedIri(std::string_view literal) {
 
 // __________________________________________________________________________
 std::string escapeForCsv(std::string input) {
-  if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
+  if (!ad_utility::simd::containsAnyByte(detail::CsvSpecialChars{}, input))
+      [[likely]] {
     return input;
   }
   return absl::StrCat("\"", absl::StrReplaceAll(input, {{"\"", "\"\""}}), "\"");
@@ -301,7 +317,8 @@ std::string escapeForCsv(std::string input) {
 
 // __________________________________________________________________________
 std::string escapeForTsv(std::string input) {
-  if (ctre::search<detail::tsvSpecialCharsRegex>(input)) [[unlikely]] {
+  if (ad_utility::simd::containsAnyByte(detail::TsvSpecialChars{}, input))
+      [[unlikely]] {
     absl::StrReplaceAll({{"\t", " "}, {"\n", "\\n"}}, &input);
   }
   return input;
@@ -309,7 +326,8 @@ std::string escapeForTsv(std::string input) {
 
 // __________________________________________________________________________
 std::string escapeForXml(std::string input) {
-  if (ctre::search<detail::xmlSpecialCharsRegex>(input)) [[unlikely]] {
+  if (ad_utility::simd::containsAnyByte(detail::XmlSpecialChars{}, input))
+      [[unlikely]] {
     absl::StrReplaceAll({{"&", "&amp;"},
                          {"<", "&lt;"},
                          {">", "&gt;"},
