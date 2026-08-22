@@ -13,13 +13,13 @@
 
 #include <chrono>
 #include <cstdint>
-#include <cstring>
 #include <iostream>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "backports/memory_resource.h"
+#include "backports/ranges.h"
 #include "backports/span.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/VocabularyInternalExternal.h"
@@ -158,8 +158,9 @@ DecodeStats runCopyBatch(const Vocab& vocab,
       views.emplace_back();
       continue;
     }
-    auto* mem = static_cast<char*>(buffer->allocate(n));
-    std::memcpy(mem, decompressed.data(), n);
+    ql::pmr::polymorphic_allocator<char> allocator{buffer.get()};
+    char* mem = allocator.allocate(n);
+    ql::ranges::copy(decompressed, mem);
     views.emplace_back(mem, n);
     s.checksum = mixView(s.checksum, views.back());
   }
@@ -185,7 +186,8 @@ DecodeStats runIntoBatch(const Vocab& vocab,
       views.emplace_back();
       continue;
     }
-    auto* mem = static_cast<char*>(buffer->allocate(bound));
+    ql::pmr::polymorphic_allocator<char> allocator{buffer.get()};
+    char* mem = allocator.allocate(bound);
     const size_t n = wrapper.decompressInto(
         w.compressed, w.decoderIdx, ql::span<char>{mem, bound}, scratch);
     AD_CORRECTNESS_CHECK(n <= bound);
