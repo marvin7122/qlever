@@ -199,7 +199,8 @@ class MultiSourceVocabBatchAssembler {
 
   // ___________________________________________________________________________
   // Scatter a child batch lookup result across the specified output positions
-  // and retain the child result object so its underlying string storage is kept alive.
+  // and retain the child result object so its underlying string storage is kept
+  // alive.
   void scatterSubBatchResultAtPositions(
       VocabBatchLookupResult subBatchResult,
       ql::span<const size_t> targetPositions) {
@@ -277,7 +278,7 @@ inline VocabBatchLookupResult keepAliveVocabBatch(
     std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words) {
   std::vector<bool> filledSlots(words.size(), true);
   return keepAliveVocabBatch(std::move(owners), std::move(words),
-                              std::move(filledSlots));
+                             std::move(filledSlots));
 }
 
 // Paired lookup data for one vocabulary marker: for each position `i` in the

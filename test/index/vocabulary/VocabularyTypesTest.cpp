@@ -370,7 +370,8 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerDoubleAssignmentThrows) {
+TEST(VocabBatchLookupData,
+     MultiSourceVocabBatchAssemblerDoubleAssignmentThrows) {
   MultiSourceVocabBatchAssembler assembler(2);
   assembler.assignWordAtPosition(0, "first");
 
