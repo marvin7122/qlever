@@ -278,7 +278,8 @@ template <size_t NumVocabs, typename GetMarkerAndVocabIndex>
 IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
     ql::span<const size_t> indices, GetMarkerAndVocabIndex getMarkerAndIndex) {
   IndicesAndPositionsByMarker<NumVocabs> out;
-  for (auto [resultPosition, markedIndex] : ql::views::enumerate(indices)) {
+  for (auto [resultPosition, markedIndex] :
+       ::ranges::views::enumerate(indices)) {
     auto [marker, underlyingIndex] = getMarkerAndIndex(markedIndex);
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
     out[marker].addPair(underlyingIndex, resultPosition);
