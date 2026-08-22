@@ -16,6 +16,7 @@
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/Exception.h"
+#include "util/GTestHelpers.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 
 namespace {
@@ -317,20 +318,10 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 //    verify content byte-for-byte, which makes corruption overwhelmingly
 //    likely but not formally guaranteed.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
-  // Verify that an intermediate local `std::pmr::string` would indeed use the
-  // Small String Optimization (SSO) on this platform by checking if `data()`
-  // points inside the object's own memory layout.
-  // Reference: https://en.cppreference.com/w/cpp/string/basic_string (SSO <= 15
-  // bytes on 64-bit libstdc++).
-  {
-    ql::pmr::monotonic_buffer_resource tempResource;
-    std::pmr::string sample{"s0", &tempResource};
-    const char* dataPtr = sample.data();
-    const auto* objStart = reinterpret_cast<const char*>(&sample);
-    const auto* objEnd = objStart + sizeof(sample);
-    ASSERT_TRUE(dataPtr >= objStart && dataPtr < objEnd)
-        << "Platform std::pmr::string does not use SSO for 2-character strings";
-  }
+  // Platform premise: an intermediate local `std::pmr::string` would indeed
+  // use the Small String Optimization (SSO), so short words would end up
+  // inside a destroyed stack object rather than the arena.
+  ASSERT_PMR_STRING_USES_SSO();
 
   // All words deliberately short (<= 15 chars): every one takes the SSO
   // path in a `pmr::string`-based implementation, and none would end up in
@@ -355,11 +346,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
 
   // Clobber the stack region a dangling SSO view would point into. Two deep
   // frames of sentinel bytes leave no plausible intact copy behind.
-  auto churn = []() {
-    volatile char sentinel[2048];
-    ql::ranges::fill(sentinel, '#');
-    static_cast<void>(sentinel);
-  };
+  auto churn = []() { ad_utility::clobberStack(); };
   churn();
   churn();
 
