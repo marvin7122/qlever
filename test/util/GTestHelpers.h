@@ -348,7 +348,7 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
 inline void assertPmrStringUsesSso(size_t maxSize = 15) {
   ql::pmr::monotonic_buffer_resource tempResource;
   const std::string sample(maxSize, 's');
-  std::pmr::string pmrSample{sample, &tempResource};
+  ql::pmr::string pmrSample{sample, &tempResource};
   const auto* objStart = reinterpret_cast<const char*>(&pmrSample);
   const auto* objEnd = objStart + sizeof(pmrSample);
   AD_CORRECTNESS_CHECK(pmrSample.data() >= objStart &&
