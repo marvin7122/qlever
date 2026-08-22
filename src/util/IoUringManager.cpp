@@ -12,7 +12,10 @@
 
 #include <unistd.h>
 
+#include <algorithm>
+#include <array>
 #include <stdexcept>
+#include <vector>
 
 #include "util/Exception.h"
 #include "util/Log.h"
@@ -56,17 +59,41 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
-  // Set up the submission and completion queues, shared between this process
-  // and the kernel, with (at least) `ringSize_` submission slots in the
-  // submission queue. liburing rounds the requested size up to a power of two,
-  // so the actual ring may be larger than `ringSize`; `ringSize_` is therefore
-  // a conservative (lower) bound for the "ring full" check below. See
-  // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
-  // details.
+IoUringPolicy::IoUringPolicy(unsigned ringSize, size_t registeredBufferSize)
+    : ringSize_(ringSize), registeredBufferSize_(registeredBufferSize) {
   int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
   if (ret < 0) {
     AD_THROW("io_uring_queue_init failed in IoUringManager");
+  }
+
+  registeredBufferPoolSize_ = ringSize_ * registeredBufferSize_;
+  if (posix_memalign(reinterpret_cast<void**>(&registeredBufferPool_), 4096,
+                     registeredBufferPoolSize_) != 0) {
+    registeredBufferPool_ = nullptr;
+    registeredBufferPoolSize_ = 0;
+  } else {
+    registeredIovecs_.resize(ringSize_);
+    freeBufferIndices_.reserve(ringSize_);
+    for (size_t i = 0; i < ringSize_; ++i) {
+      registeredIovecs_[i].iov_base =
+          registeredBufferPool_ + i * registeredBufferSize_;
+      registeredIovecs_[i].iov_len = registeredBufferSize_;
+      freeBufferIndices_.push_back(ringSize_ - 1 - i);
+    }
+    ret = io_uring_register_buffers(&ring_, registeredIovecs_.data(),
+                                    registeredIovecs_.size());
+    if (ret < 0) {
+      AD_LOG_WARN << "io_uring_register_buffers failed in IoUringPolicy: "
+                     "failed to register "
+                  << registeredIovecs_.size() * registeredBufferSize_
+                  << " bytes of buffers (RLIMIT_MEMLOCK is likely too low), "
+                     "falling back to unregistered reads.\n";
+      std::free(registeredBufferPool_);
+      registeredBufferPool_ = nullptr;
+      registeredBufferPoolSize_ = 0;
+      registeredIovecs_ = {};
+      freeBufferIndices_ = {};
+    }
   }
 }
 
@@ -78,11 +105,6 @@ IoUringPolicy::~IoUringPolicy() {
                    "`wait()`ed before destroying the policy. Draining them now "
                    "so the kernel stops writing into the target buffers.\n";
   }
-  // Reap the outstanding completions before tearing down the ring, so the
-  // kernel is no longer writing into any target buffer once we return. We
-  // deliberately do not call `drainOneCqe` here: it throws on I/O errors, and a
-  // destructor must not throw. We also stop if `io_uring_wait_cqe` fails, to
-  // avoid spinning forever (it would not decrement the in-flight count).
   while (numInFlightReadRequests_ > 0) {
     io_uring_cqe* cqe = nullptr;
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
@@ -91,7 +113,26 @@ IoUringPolicy::~IoUringPolicy() {
     io_uring_cqe_seen(&ring_, cqe);
     --numInFlightReadRequests_;
   }
+  if (registeredBufferPool_ != nullptr) {
+    io_uring_unregister_buffers(&ring_);
+    std::free(registeredBufferPool_);
+    registeredBufferPool_ = nullptr;
+  }
   io_uring_queue_exit(&ring_);
+}
+
+//______________________________________________________________________________
+size_t IoUringPolicy::allocatePoolBuffer() {
+  AD_CORRECTNESS_CHECK(!freeBufferIndices_.empty());
+  const size_t index = freeBufferIndices_.back();
+  freeBufferIndices_.pop_back();
+  return index;
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::freePoolBuffer(size_t index) {
+  AD_CORRECTNESS_CHECK(index < ringSize_);
+  freeBufferIndices_.push_back(index);
 }
 
 //______________________________________________________________________________
@@ -107,101 +148,162 @@ void IoUringPolicy::addBatch(int fd,
   }
   numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
 
-  for (const auto& [numBytesToRead, fileOffset, targetBuf] :
-       ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
-                            targetBufferPerRequest)) {
-    // The ring has no free slot, so make room: submit what we have prepared so
-    // far and block until enough completions have been drained.
-    if (numInFlightReadRequests_ >= ringSize_) {
-      // Flush the SQEs prepared so far to the kernel so the kernel can start
-      // servicing them. Their completions will free up submission slots.
-      io_uring_submit(&ring_);
-      while (numInFlightReadRequests_ >= ringSize_) {
-        drainOneCqe();
-      }
-    }
-
-    // Claim the next free SQE. The check above guarantees a slot is available,
-    // so `io_uring_get_sqe` must not return `nullptr` here.
+  auto prepareOne = [&](size_t i) {
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     AD_CORRECTNESS_CHECK(sqe != nullptr);
 
-    // Record the read's parameters in the SQE (this only sets the SQE's fields;
-    // the request is not handed to the kernel until a later `io_uring_submit`).
-    io_uring_prep_read(sqe, fd, targetBuf,
-                       static_cast<unsigned>(numBytesToRead),
-                       static_cast<__u64>(fileOffset));
+    const size_t numBytes = numBytesToReadPerRequest[i];
+    const bool usePool = (registeredBufferPool_ != nullptr) &&
+                         (numBytes <= registeredBufferSize_) &&
+                         !freeBufferIndices_.empty();
 
-    // Tag the SQE with a unique request id and record its metadata (the batch
-    // it belongs to and how many bytes it should read). io_uring copies the
-    // request id (the SQE's `user_data`) verbatim into the matching completion,
-    // so `drainOneCqe` can recover it.
+    size_t poolIdx = NO_POOL_BUFFER;
+    if (usePool) {
+      poolIdx = allocatePoolBuffer();
+      io_uring_prep_read_fixed(
+          sqe, fd, registeredBufferPool_ + poolIdx * registeredBufferSize_,
+          static_cast<unsigned>(numBytes),
+          static_cast<__u64>(fileOffsetPerRequest[i]),
+          static_cast<int>(poolIdx));
+    } else {
+      io_uring_prep_read(sqe, fd, targetBufferPerRequest[i],
+                         static_cast<unsigned>(numBytes),
+                         static_cast<__u64>(fileOffsetPerRequest[i]));
+    }
+
     const uint64_t requestId = nextRequestIdToAssign_++;
-    inFlightReadsByRequestId_[requestId] = InFlightRead{handle, numBytesToRead};
+    inFlightReadsByRequestId_[requestId] =
+        InFlightRead{handle, numBytes, poolIdx, targetBufferPerRequest[i]};
     io_uring_sqe_set_data64(sqe, requestId);
-    numInFlightReadRequests_++;
+    ++numInFlightReadRequests_;
+  };
+
+  size_t next = 0;
+  while (next < numReadRequestsToPerform) {
+    const size_t freeSlots = ringSize_ - numInFlightReadRequests_;
+    if (freeSlots == 0) {
+      const unsigned want = static_cast<unsigned>(
+          std::min<size_t>(kReapWave, numInFlightReadRequests_));
+      drainAtLeast(want);
+      continue;
+    }
+    const size_t wave = std::min({numReadRequestsToPerform - next, freeSlots,
+                                  static_cast<size_t>(kSubmitWave)});
+    for (size_t k = 0; k < wave; ++k) {
+      prepareOne(next + k);
+    }
+    next += wave;
+    if (io_uring_submit(&ring_) < 0) {
+      AD_THROW("io_uring_submit failed in IoUringPolicy");
+    }
   }
-  // Flush the remaining prepared SQEs to the kernel (the loop above only
-  // submits when the submission queue is full, so the last group of SQEs has
-  // not yet been submitted).
-  io_uring_submit(&ring_);
 }
 
 //______________________________________________________________________________
 void IoUringPolicy::wait(BatchHandle handle) {
-  // Drain completions until this batch is gone. `drainOneCqe` erases a batch as
-  // soon as its last read completes, so a present entry always still has
-  // outstanding reads.
   while (numInFlightReadRequestsPerBatch_.find(handle) !=
          numInFlightReadRequestsPerBatch_.end()) {
-    drainOneCqe();
+    const unsigned want = static_cast<unsigned>(
+        std::min<size_t>(kReapWave, numInFlightReadRequests_));
+    AD_CORRECTNESS_CHECK(want > 0);
+    drainAtLeast(want);
   }
 }
 
 //______________________________________________________________________________
-void ad_utility::IoUringPolicy::drainOneCqe() {
-  // Block until at least one completion queue entry (CQE) is available.
+void IoUringPolicy::drainAtLeast(unsigned minComplete) {
+  AD_CORRECTNESS_CHECK(minComplete > 0);
+  AD_CORRECTNESS_CHECK(minComplete <= numInFlightReadRequests_);
   io_uring_cqe* cqe = nullptr;
-  int ret = io_uring_wait_cqe(&ring_, &cqe);
+  const int ret =
+      io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
   if (ret < 0) {
-    AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
+    AD_THROW("io_uring_wait_cqes failed in IoUringPolicy");
   }
+  drainAllReadyCqes();
+}
 
-  // Recover the read's result (`cqe->res`) and the request id we stored in the
-  // SQE, then consume the CQE so its slot is freed. Do this before any throw.
-  const int numBytesRead = cqe->res;
-  const uint64_t requestId = io_uring_cqe_get_data64(cqe);
-  io_uring_cqe_seen(&ring_, cqe);
-  numInFlightReadRequests_--;
+//______________________________________________________________________________
+void IoUringPolicy::drainAllReadyCqes() {
+  struct RawCqe {
+    int res;
+    uint64_t id;
+  };
+  std::vector<RawCqe> raw;
+  raw.reserve(ringSize_);
+  while (true) {
+    std::array<io_uring_cqe*, 64> cqes{};
+    const unsigned n =
+        io_uring_peek_batch_cqe(&ring_, cqes.data(), cqes.size());
+    if (n == 0) {
+      break;
+    }
+    for (unsigned i = 0; i < n; ++i) {
+      raw.push_back(RawCqe{cqes[i]->res, io_uring_cqe_get_data64(cqes[i])});
+    }
+    io_uring_cq_advance(&ring_, n);
+  }
+  if (raw.empty()) {
+    return;
+  }
+  pendingErrorMessage_ = nullptr;
+  for (const RawCqe& cqe : raw) {
+    processCqe(cqe.res, cqe.id);
+  }
+  if (pendingErrorMessage_ != nullptr) {
+    AD_THROW(pendingErrorMessage_);
+  }
+}
 
-  // Every reaped CQE corresponds to exactly one in-flight read whose id we
-  // inserted in `addBatch`, so the entry must be present.
+//______________________________________________________________________________
+void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
+  --numInFlightReadRequests_;
+
   auto reqIt = inFlightReadsByRequestId_.find(requestId);
   AD_CORRECTNESS_CHECK(reqIt != inFlightReadsByRequestId_.end());
   const InFlightRead inFlightRead = reqIt->second;
   inFlightReadsByRequestId_.erase(reqIt);
 
-  // `cqe->res` < 0 is `-errno`.
-  if (numBytesRead < 0) {
-    AD_THROW("I/O error in IoUringPolicy read operation");
-  }
-  // A result smaller than requested (a partial read, or 0 at end of file) means
-  // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != inFlightRead.expectedNumBytes) {
-    AD_THROW("read fewer bytes than requested in IoUringPolicy");
-  }
-
-  // Attribute the completion to its batch and decrement that batch's in-flight
-  // count, erasing the batch once its last read completes. The entry must still
-  // be present here: the read we are processing belongs to this batch and was
-  // outstanding, so the batch's count was at least one and it had not yet been
-  // erased.
   auto it = numInFlightReadRequestsPerBatch_.find(inFlightRead.batchHandle);
   AD_CORRECTNESS_CHECK(it != numInFlightReadRequestsPerBatch_.end());
   if (--it->second == 0) {
     numInFlightReadRequestsPerBatch_.erase(it);
   }
+
+  const bool usedPool = (inFlightRead.poolBufferIndex != NO_POOL_BUFFER);
+
+  if (pendingErrorMessage_ != nullptr) {
+    if (usedPool) {
+      freePoolBuffer(inFlightRead.poolBufferIndex);
+    }
+    return;
+  }
+  if (numBytesRead < 0) {
+    if (usedPool) {
+      freePoolBuffer(inFlightRead.poolBufferIndex);
+    }
+    pendingErrorMessage_ = "I/O error in IoUringPolicy read operation";
+    return;
+  }
+  if (static_cast<size_t>(numBytesRead) != inFlightRead.expectedNumBytes) {
+    if (usedPool) {
+      freePoolBuffer(inFlightRead.poolBufferIndex);
+    }
+    pendingErrorMessage_ = "read fewer bytes than requested in IoUringPolicy";
+    return;
+  }
+
+  if (usedPool) {
+    std::memcpy(inFlightRead.targetBuffer,
+                registeredBufferPool_ +
+                    inFlightRead.poolBufferIndex * registeredBufferSize_,
+                inFlightRead.expectedNumBytes);
+    freePoolBuffer(inFlightRead.poolBufferIndex);
+  }
 }
+
+//______________________________________________________________________________
+void ad_utility::IoUringPolicy::drainOneCqe() { drainAtLeast(1); }
 
 #endif  // QLEVER_HAS_IO_URING
 
