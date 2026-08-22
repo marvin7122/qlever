@@ -305,7 +305,8 @@ TEST(VocabBatchLookupData, ScatterBatchDoubleWriteThrows) {
   // written.
   AD_EXPECT_THROW_WITH_MESSAGE(
       scatterVocabBatchLookupResult(std::move(batch2), pos0, views, owners),
-      ::testing::HasSubstr("viewsInInputOrder[resultPosition].data() == nullptr"));
+      ::testing::HasSubstr(
+          "viewsInInputOrder[resultPosition].data() == nullptr"));
 }
 
 // _____________________________________________________________________________
@@ -320,4 +321,3 @@ TEST(VocabBatchLookupData, KeepAliveVocabBatchIncompleteCoverageThrows) {
       keepAliveVocabBatch(std::move(owners), std::move(views)),
       ::testing::HasSubstr("v.data() != nullptr"));
 }
-

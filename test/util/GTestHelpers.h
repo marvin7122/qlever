@@ -335,7 +335,8 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
 // _____________________________________________________________________________
 // Returns "<TestSuiteName>" for the currently running test suite, with any '/'
 // replaced by '_' (parameterized test suites embed '/' in their names).
-// Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a test.
+// Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
+// test.
 inline std::string gtestCurrentTestSuiteName(
     bool assertInGtestEnvironment = true) {
   const auto* testSuite =
