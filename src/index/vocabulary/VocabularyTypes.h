@@ -178,22 +178,22 @@ struct MultiOwnerVocabBatchLookupData
 // aggregating storage ownership into a self-contained `VocabBatchLookupResult`.
 class MultiSourceVocabBatchAssembler {
  private:
-  // `std::optional` slots so "unwritten" is representable independently of the
-  // stored view: a legitimately empty word yields a default-constructed
-  // (nullptr-data) string_view, which must not be mistaken for an unset slot.
-  std::vector<std::optional<std::string_view>> assembledWordViews_;
+  std::vector<std::string_view> assembledWordViews_;
+  std::vector<bool> slotFilledTracking_;
   std::vector<VocabBatchOwner> storageOwners_;
 
  public:
   // ___________________________________________________________________________
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
-      : assembledWordViews_(totalExpectedWords) {}
+      : assembledWordViews_(totalExpectedWords),
+        slotFilledTracking_(totalExpectedWords, false) {}
 
   // ___________________________________________________________________________
   // Place a single resolved string_view into its corresponding output position.
   void assignWordAtPosition(size_t resultPosition, std::string_view word) {
     AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
-    AD_CORRECTNESS_CHECK(!assembledWordViews_[resultPosition].has_value());
+    AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
+    slotFilledTracking_[resultPosition] = true;
     assembledWordViews_[resultPosition] = word;
   }
 
