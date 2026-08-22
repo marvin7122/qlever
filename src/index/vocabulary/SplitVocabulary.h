@@ -1,12 +1,6 @@
-// Copyright 2025 - 2026, The QLever Authors, in particular:
-//
-// 2025        Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
-// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
-//
-// UFR = University of Freiburg, Chair of Algorithms and Data Structures
-//
-// You may not use this file except in compliance with the Apache 2.0 License,
-// which can be found in the `LICENSE` file at the root of the QLever project.
+// Copyright 2025 University of Freiburg
+// Chair of Algorithms and Data Structures
+// Author: Christoph Ullinger <ullingec@cs.uni-freiburg.de>
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
@@ -140,64 +134,30 @@ class SplitVocabulary {
          }))...);
   }
 
-  // Paired lookup data for one vocabulary marker: for each position `i` in the
-  // arrays, `underlyingIndices[i]` is the index to look up, and
-  // `resultPositions[i]` is where the result goes in the final output. The
-  // arrays are always kept in sync (same size).
-  struct MarkerIndicesAndPositions {
-   private:
-    std::vector<size_t> underlyingIndices_;
-    std::vector<size_t> resultPositions_;
-
-   public:
-    // Reserve capacity for the given number of pairs.
-    void reserve(size_t capacity) {
-      underlyingIndices_.reserve(capacity);
-      resultPositions_.reserve(capacity);
-    }
-
-    // Add a (`underlyingIndex`, `resultPosition`) pair.
-    void addPair(size_t underlyingIndex, size_t resultPosition) {
-      underlyingIndices_.push_back(underlyingIndex);
-      resultPositions_.push_back(resultPosition);
-    }
-
-    // Access the underlying indices for batch-lookup.
-    ql::span<const size_t> getUnderlyingIndices() const {
-      return underlyingIndices_;
-    }
-
-    // Access the result positions for scatter-back.
-    ql::span<const size_t> getResultPositions() const {
-      return resultPositions_;
-    }
-
-    // Check if this marker has any pairs.
-    bool empty() const { return underlyingIndices_.empty(); }
-
-    // Number of pairs.
-    size_t size() const { return underlyingIndices_.size(); }
-  };
-  using IndicesAndPositionsByMarker =
-      std::array<MarkerIndicesAndPositions, numberOfVocabs>;
-
   // Partition marked indices into paired (`underlyingIndex`, `resultPosition`)
-  // lists per marker. For each input index, extract the marker that identifies
-  // the underlying vocabulary, pair its index with its position in the input,
-  // and group both by marker. Pre-reserve each marker's indices via `reserve()`
-  // to avoid reallocations during partitioning.
+  // lists per marker using this vocabulary's `getMarker`/`getVocabIndex`.
+  // Thin wrapper around the shared
+  // `ad_utility::vocabulary::partitionMarkerIndicesAndPositions`.
   // _____________________________________________________________________________
   static IndicesAndPositionsByMarker partitionMarkerIndicesAndPositions(
       ql::span<const size_t> indices) {
-    IndicesAndPositionsByMarker out;
-    for (auto [resultPosition, markedIndex] :
-         ::ranges::views::enumerate(indices)) {
-      auto marker = getMarker(markedIndex);
-      AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
-      auto underlyingIndex = getVocabIndex(markedIndex);
-      out[marker].addPair(underlyingIndex, resultPosition);
-    }
-    return out;
+    return ad_utility::vocabulary::partitionMarkerIndicesAndPositions<
+        numberOfVocabs>(indices, [](uint64_t markedIndex) {
+      return std::pair{getMarker(markedIndex), getVocabIndex(markedIndex)};
+    });
+  }
+
+  // Merge the per-vocabulary batches into one result in input order.
+  // `numberOfResults` is the total number of requested indices (the sum of
+  // the per-marker position counts; the caller knows it without re-summing).
+  // _____________________________________________________________________________
+  static VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
+      MarkerBatchLookups markerLookups,
+      const IndicesAndPositionsByMarker& markerIndicesAndPositions,
+      size_t numberOfResults) {
+    return ad_utility::vocabulary::mergeMarkerBatchesInInputOrder(
+        markerIndicesAndPositions, numberOfResults,
+        [&](size_t vocabMarker) { return markerLookups.release(vocabMarker); });
   }
 
   // Batch lookup results for each underlying vocabulary, indexed by vocabulary
