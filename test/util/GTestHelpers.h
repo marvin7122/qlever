@@ -1,7 +1,10 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Julian Mundhahs (mundhahj@informatik.uni-freiburg.de)
-//          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022        Julian Mundhahs <mundhahj@informatik.uni-freiburg.de>, UFR
+// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #ifndef QLEVER_TEST_UTIL_GTESTHELPERS_H
 #define QLEVER_TEST_UTIL_GTESTHELPERS_H
@@ -13,10 +16,14 @@
 #include <re2/re2.h>
 
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <sstream>
+#include <vector>
 
+#include "backports/algorithm.h"
 #include "backports/concepts.h"
+#include "backports/memory_resource.h"
 #include "backports/three_way_comparison.h"
 #include "util/Log.h"
 #include "util/SourceLocation.h"
@@ -330,6 +337,53 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   return absl::StrReplaceAll(
       absl::StrCat(testInfo->test_suite_name(), "_", testInfo->name()),
       {{"/", "_"}});
+}
+
+// _____________________________________________________________________________
+// Check that `std::pmr::string` uses the Small String Optimization (SSO) on
+// this platform for strings of up to `maxSize` characters, i.e. that `data()`
+// points into the string object's own storage rather than memory allocated via
+// the allocator. Tests that rely on short `pmr::string`s keeping their content
+// inside the object (e.g. to construct dangling-view regression tests) can use
+// this as an explicit platform premise.
+inline void assertPmrStringUsesSso(size_t maxSize = 15) {
+  const std::string sample(maxSize, 's');
+  std::pmr::string pmrSample{sample};
+  const auto* objStart = reinterpret_cast<const char*>(&pmrSample);
+  const auto* objEnd = objStart + sizeof(pmrSample);
+  AD_CORRECTNESS_CHECK(pmrSample.data() >= objStart &&
+                       pmrSample.data() < objEnd);
+}
+
+// _____________________________________________________________________________
+// Overwrite the current stack frame with sentinel bytes, so that stale stack
+// contents (e.g. from a destroyed local object that a dangling view still
+// points into) become implausible to survive. Call it multiple times to also
+// clobber deeper frames.
+inline void clobberStack(size_t numBytes = 2048, char sentinel = '#') {
+  // `volatile` prevents the compiler from optimizing the write away.
+  std::unique_ptr<volatile char[]> buffer{new volatile char[numBytes]};
+  for (size_t i = 0; i < numBytes; ++i) {
+    buffer[i] = sentinel;
+  }
+}
+
+// _____________________________________________________________________________
+// Returns "<TestSuiteName>" for the currently running test suite, with any '/'
+// replaced by '_' (parameterized test suites embed '/' in their names).
+// Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
+// test.
+inline std::string gtestCurrentTestSuiteName(
+    bool assertInGtestEnvironment = true) {
+  const auto* testSuite =
+      ::testing::UnitTest::GetInstance()->current_test_suite();
+  if (assertInGtestEnvironment) {
+    AD_CORRECTNESS_CHECK(testSuite != nullptr);
+  }
+  if (testSuite == nullptr) {
+    return "";
+  }
+  return absl::StrReplaceAll(testSuite->name(), {{"/", "_"}});
 }
 
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H

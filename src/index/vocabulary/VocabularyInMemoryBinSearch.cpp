@@ -9,11 +9,16 @@ using std::string;
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::open(const string& fileName) {
   AD_CORRECTNESS_CHECK(
-      words_.size() == 0 && indices_.empty(),
+      words().size() == 0 && indices_.empty(),
       "Calling open on the same vocabulary twice is probably a bug");
   {
+    // Deserialize into a mutable buffer first (`words_` stores `const Words`
+    // for immutable sharing via `wordStorage()`, and moving on success ensures
+    // strong exception safety).
+    auto words = std::make_shared<Words>();
     ad_utility::serialization::FileReadSerializer file(fileName);
-    file >> words_;
+    file >> *words;
+    words_ = std::move(words);
   }
   {
     ad_utility::serialization::FileReadSerializer idFile(fileName + ".ids");
@@ -26,7 +31,7 @@ std::optional<std::string_view> VocabularyInMemoryBinSearch::operator[](
     uint64_t index) const {
   auto it = ql::ranges::lower_bound(indices_, index);
   if (it != indices_.end() && *it == index) {
-    return words_[it - indices_.begin()];
+    return words()[it - indices_.begin()];
   }
   return std::nullopt;
 }
@@ -34,11 +39,11 @@ std::optional<std::string_view> VocabularyInMemoryBinSearch::operator[](
 // _____________________________________________________________________________
 WordAndIndex VocabularyInMemoryBinSearch::iteratorToWordAndIndex(
     ql::ranges::iterator_t<Words> it) const {
-  if (it == words_.end()) {
+  if (it == words().end()) {
     return WordAndIndex::end();
   }
-  auto idx = static_cast<uint64_t>(it - words_.begin());
-  WordAndIndex result{words_[idx], indices_[idx]};
+  auto idx = static_cast<uint64_t>(it - words().begin());
+  WordAndIndex result{words()[idx], indices_[idx]};
   if (idx > 0) {
     result.previousIndex() = indices_[idx - 1];
   }
@@ -47,7 +52,12 @@ WordAndIndex VocabularyInMemoryBinSearch::iteratorToWordAndIndex(
 
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::close() {
-  words_.clear();
+  // Install a fresh empty buffer instead of clearing the existing one in place:
+  // outstanding `VocabBatchLookupResult`s hold non-owning string_views into the
+  // old character buffer along with a shared_ptr to it. Mutating the old buffer
+  // in place would invalidate those views; replacing the pointer lets the old
+  // buffer remain valid until all downstream results are destroyed.
+  words_ = std::make_shared<const Words>();
   indices_.clear();
 }
 
