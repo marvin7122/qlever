@@ -27,37 +27,13 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 }
 
 // _____________________________________________________________________________
-// Paired lookup data for disk/external vocabulary indices: keeps underlying
-// indices to look up and output positions in sync.
-class DiskLookupData {
- private:
-  std::vector<size_t> indices_;
-  std::vector<size_t> positions_;
-
- public:
-  void reserve(size_t capacity) {
-    indices_.reserve(capacity);
-    positions_.reserve(capacity);
-  }
-
-  void add(size_t idx, size_t position) {
-    indices_.push_back(idx);
-    positions_.push_back(position);
-  }
-
-  [[nodiscard]] ql::span<const size_t> indices() const { return indices_; }
-  [[nodiscard]] ql::span<const size_t> positions() const { return positions_; }
-  [[nodiscard]] bool empty() const { return indices_.empty(); }
-  [[nodiscard]] size_t size() const { return indices_.size(); }
-};
-
 // Partition input indices into internal-vocabulary hits and indices that must
 // be resolved by the external vocabulary, while keeping their positions in the
 // original input.
 struct IndexPartition {
   // (inputPosition, word)
   std::vector<std::pair<size_t, std::string_view>> internalSlots_;
-  DiskLookupData diskSlots_;
+  MarkerIndicesAndPositions diskSlots_;
 };
 
 static IndexPartition partitionIndicesBySource(
@@ -93,33 +69,25 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
 
   // Handle mixed internal and external indices by assembling results from both
   // sources.
-  std::vector<std::string_view> assembled(indices.size());
-  std::vector<bool> filledSlots(indices.size(), false);
+  MultiSourceVocabBatchAssembler assembler(indices.size());
 
-  // Fill in internal results first.
+  // 1. Assign internal hits to their positions.
   for (const auto& [position, word] : partition.internalSlots_) {
-    AD_CORRECTNESS_CHECK(position < assembled.size());
-    AD_CORRECTNESS_CHECK(!filledSlots[position]);
-    filledSlots[position] = true;
-    assembled[position] = word;
+    assembler.assignWordAtPosition(position, word);
   }
 
-  // Gather disk results and scatter them into the assembled vector.
-  // At most one owner from the external vocabulary plus the internal one.
-  std::vector<VocabBatchOwner> owners;
-  owners.reserve(1 + (partition.diskSlots_.empty() ? 0u : 1u));
+  // 2. Scatter disk results into their positions and retain their ownership.
   if (!partition.diskSlots_.empty()) {
     auto disk = externalVocab_.lookupBatch(partition.diskSlots_.indices());
-    scatterVocabBatchLookupResult(std::move(disk),
-                                  partition.diskSlots_.positions(), assembled,
-                                  filledSlots, owners);
+    assembler.scatterSubBatchResultAtPositions(std::move(disk),
+                                              partition.diskSlots_.positions());
   }
 
-  // Add ownership of internal data.
-  owners.push_back(internalVocab_.wordStorage());
+  // 3. Register ownership of internal vocabulary word storage.
+  assembler.registerStorageOwner(internalVocab_.wordStorage());
 
-  return keepAliveVocabBatch(std::move(owners), std::move(assembled),
-                             std::move(filledSlots));
+  // 4. Finalize and return self-contained result.
+  return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 
 // _____________________________________________________________________________
