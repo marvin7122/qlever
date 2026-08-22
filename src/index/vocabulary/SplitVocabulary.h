@@ -237,6 +237,7 @@ class SplitVocabulary {
       const IndicesAndPositionsByMarker& markerIndicesAndPositions,
       size_t numberOfResults) {
     std::vector<std::string_view> viewsInInputOrder(numberOfResults);
+    std::vector<bool> filledSlots(numberOfResults, false);
     std::vector<VocabBatchOwner> resultOwners;
 
     for (const auto& [vocabMarker, markerIndices] :
@@ -249,10 +250,12 @@ class SplitVocabulary {
 
       scatterVocabBatchLookupResult(markerLookups.release(vocabMarker),
                                     markerIndices.getResultPositions(),
-                                    viewsInInputOrder, resultOwners);
+                                    viewsInInputOrder, filledSlots,
+                                    resultOwners);
     }
     return keepAliveVocabBatch(std::move(resultOwners),
-                               std::move(viewsInInputOrder));
+                               std::move(viewsInInputOrder),
+                               std::move(filledSlots));
   }
 
   // Grant unit tests access to the private `lookupBatch` helpers.

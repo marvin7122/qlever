@@ -377,3 +377,15 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyVocabulary) {
   auto range = vocab.scanAll();
   EXPECT_EQ(ql::ranges::begin(range), ql::ranges::end(range));
 }
+
+// _____________________________________________________________________________
+// A vocabulary containing the empty string word ("") must be scanned correctly
+// across all compressors (exercising the `maxDecompressedSize == 0` fast path
+// in `scanAll`'s buffered decode).
+TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
+  auto createVocab = TestFixture::createCompressedVocabulary();
+  const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
+  auto vocab = createVocab(words);
+  using ::testing::ElementsAreArray;
+  EXPECT_THAT(scanAllToVector(vocab.scanAll()), ElementsAreArray(words));
+}

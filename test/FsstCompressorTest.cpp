@@ -398,19 +398,21 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
   template <size_t N>
   static void expectRepeatedDecompressIntoMatches(
       const std::vector<std::string>& words) {
-    std::vector<std::string_view> views;
-    views.reserve(words.size());
+    std::vector<std::string_view> compressed;
+    compressed.reserve(words.size());
     for (const auto& w : words) {
-      views.emplace_back(w);
+      compressed.emplace_back(w);
     }
     std::array<FsstDecoder, N> decoders{};
-    std::shared_ptr<std::string> keepAlive;
-    std::vector<std::string_view> compressed = views;
+    // Each stage's decoder holds views into that stage's symbol-table buffer,
+    // so every buffer must stay alive for as long as `decoders` is used.
+    std::vector<std::shared_ptr<std::string>> buffers;
+    buffers.reserve(N);
     for (size_t stage = 0; stage < N; ++stage) {
       auto [buffer, nextViews, decoder] = FsstEncoder::compressAll(compressed);
-      keepAlive = std::move(buffer);
       compressed.assign(nextViews.begin(), nextViews.end());
       decoders[stage] = decoder;
+      buffers.push_back(std::move(buffer));
     }
     FsstRepeatedDecoder<N> repeated{decoders};
     std::string scratch;

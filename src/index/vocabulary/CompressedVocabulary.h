@@ -114,7 +114,9 @@ CPP_template(typename UnderlyingVocabulary,
           const size_t boundOnDecompressedWordSize =
               compressionWrapper_.maxDecompressedSize(word, decoderIdx);
           if (boundOnDecompressedWordSize == 0) {
-            return IndexAndWord{index, std::string_view{}};
+            // Non-null `data()` so consumers that use `data() == nullptr` as
+            // the "unwritten" sentinel never mistake this word for one.
+            return IndexAndWord{index, std::string_view{"", size_t{0}}};
           }
           buffer.resize(boundOnDecompressedWordSize);
           const size_t numBytesWritten = compressionWrapper_.decompressInto(
@@ -133,10 +135,10 @@ CPP_template(typename UnderlyingVocabulary,
   // returned result. Unlike `sequentialLookupBatch` (still used by
   // `VocabularyInMemory::lookupBatch` as the generic fallback), this
   // specialization decodes directly into a PMR arena instead of materializing
-  // owning `std::string`s per word. The order of words in the result matches `indices`.
-  // Return a `VocabBatchLookupResult` keeping the PMR monotonic buffer resource
-  // alive and providing `string_view`s for each requested index in `indices`.
-  // `indices` must not be empty.
+  // owning `std::string`s per word. The order of words in the result matches
+  // `indices`. Return a `VocabBatchLookupResult` keeping the PMR monotonic
+  // buffer resource alive and providing `string_view`s for each requested index
+  // in `indices`. `indices` must not be empty.
   //
   // TODO<marvin7122>: Because `ql::pmr::monotonic_buffer_resource` does not
   // support reclaiming or shrinking individual allocations in place, any unused
@@ -152,8 +154,8 @@ CPP_template(typename UnderlyingVocabulary,
     AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
 
     auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-    std::vector<std::string_view> compressed;
-    compressed.reserve(indices.size());
+    std::vector<std::string_view> views;
+    views.reserve(indices.size());
     std::string scratch;
 
     for (const auto& [idx, compressedWord] :
@@ -408,8 +410,11 @@ CPP_template(typename UnderlyingVocabulary,
   // Decompress `compressedWord` with the decoder at `decoderIdx` into fresh
   // storage allocated from the PMR arena `buffer`, and return a
   // `string_view` over the decompressed bytes. The view is valid as long as
-  // `buffer` is alive. Words whose decompressed size bound is 0 (e.g. an empty
-  // word) yield an empty view without allocating.
+  // `buffer` is alive. Words whose decompressed size bound is 0 (e.g. an
+  // empty word) yield an empty view with a non-null `data()` pointer (into
+  // `buffer`), because `VocabBatchLookupResult` consumers use
+  // `data() == nullptr` as the "slot unwritten" sentinel; see
+  // `scatterVocabBatchLookupResult` in `VocabularyTypes.h`.
   std::string_view decompressWordIntoArena(
       const auto& compressedWord, size_t decoderIdx,
       ql::pmr::monotonic_buffer_resource& buffer, std::string& scratch) const {
@@ -418,7 +423,8 @@ CPP_template(typename UnderlyingVocabulary,
     const size_t boundOnDecompressedWordSize =
         compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx);
     if (boundOnDecompressedWordSize == 0) {
-      return std::string_view{};
+      return std::string_view{static_cast<char*>(buffer.allocate(1)),
+                              size_t{0}};
     }
 
     // `memory_resource::allocate` returns `void*` to storage we own for
