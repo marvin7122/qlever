@@ -61,6 +61,8 @@ class PrefixCompressor {
   }
 
  public:
+  // _________________________
+
   // Compress the given `word`. Note: This iterates over all prefixes in the
   // codebook, and it is currently not a bottleneck in the IndexBuilder.
   [[nodiscard]] std::string compress(std::string_view word) const {
