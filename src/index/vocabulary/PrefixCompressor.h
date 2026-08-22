@@ -1,7 +1,6 @@
-// Copyright 2022 - 2026, The QLever Authors, in particular:
+// Copyright 2022, The QLever Authors, in particular:
 //
-// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
-// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+// 2022 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
