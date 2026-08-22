@@ -346,9 +346,8 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
 // inside the object (e.g. to construct dangling-view regression tests) can use
 // this as an explicit platform premise.
 inline void assertPmrStringUsesSso(size_t maxSize = 15) {
-  ql::pmr::monotonic_buffer_resource tempResource;
   const std::string sample(maxSize, 's');
-  ql::pmr::string pmrSample{sample, &tempResource};
+  std::pmr::string pmrSample{sample};
   const auto* objStart = reinterpret_cast<const char*>(&pmrSample);
   const auto* objEnd = objStart + sizeof(pmrSample);
   AD_CORRECTNESS_CHECK(pmrSample.data() >= objStart &&
