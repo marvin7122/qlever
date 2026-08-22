@@ -325,6 +325,10 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
   for (int i = 0; i < 64; ++i) {
     words.push_back(absl::StrCat("s", i));
   }
+  // Enforce the test premise: all words must fit within standard library SSO
+  // capacity (<= 15 bytes on 64-bit platforms).
+  ASSERT_TRUE(ql::ranges::all_of(
+      words, [](const auto& word) { return word.size() <= 15; }));
   auto vocab = this->createCompressedVocabulary()(words);
 
   std::vector<size_t> indices(words.size());
