@@ -321,7 +321,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
   // Platform premise: an intermediate local `std::pmr::string` would indeed
   // use the Small String Optimization (SSO), so short words would end up
   // inside a destroyed stack object rather than the arena.
-  ASSERT_PMR_STRING_USES_SSO();
+  assertPmrStringUsesSso();
 
   // All words deliberately short (<= 15 chars): every one takes the SSO
   // path in a `pmr::string`-based implementation, and none would end up in
@@ -346,7 +346,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
 
   // Clobber the stack region a dangling SSO view would point into. Two deep
   // frames of sentinel bytes leave no plausible intact copy behind.
-  auto churn = []() { ad_utility::clobberStack(); };
+  auto churn = []() { clobberStack(); };
   churn();
   churn();
 
