@@ -39,7 +39,7 @@ class VocabularyInMemoryBinSearch
  private:
   // Store the word data through a `shared_ptr` so a
   // `VocabBatchLookupResult` can keep the referenced bytes alive after
-  // `close()` and destruction of the vocabulary. Keep the pointer non-null;
+  // `close()` and destruction of the vocabulary. Keep the pointer non-null.
   std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
   Indices indices_;
 
