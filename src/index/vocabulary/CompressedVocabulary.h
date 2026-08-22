@@ -1,9 +1,18 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
+
+#include <string>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "index/ConstantsIndexBuilding.h"
@@ -18,6 +27,7 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
+#include "util/TransparentFunctors.h"
 
 namespace detail {
 
@@ -97,9 +107,28 @@ CPP_template(typename UnderlyingVocabulary,
         });
   }
 
-  //____________________________________________________________________________
+  // Batch-read the compressed words from the underlying vocabulary, then
+  // decompress each word with the decoder of its block. The result order
+  // matches `indices`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    AD_CONTRACT_CHECK(!indices.empty());
+    auto compressed = underlyingVocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(compressed->size() == indices.size());
+
+    auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
+    std::vector<std::string_view> views;
+    views.reserve(indices.size());
+
+    for (const auto& idxAndWord : ::ranges::views::zip(indices, *compressed)) {
+      const auto& [idx, word] = idxAndWord;
+      std::string decompressed =
+          compressionWrapper_.decompress(word, getDecoderIdx(idx));
+      char* mem = static_cast<char*>(buffer->allocate(decompressed.size()));
+      std::memcpy(mem, decompressed.data(), decompressed.size());
+      views.emplace_back(mem, decompressed.size());
+    }
+
+    return makePmrVocabBatchLookupResult(std::move(buffer), std::move(views));
   }
 
   //____________________________________________________________________________

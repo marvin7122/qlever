@@ -1,13 +1,13 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
 
 #include <atomic>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "backports/memory_resource.h"
 #include "backports/span.h"
 #include "util/Exception.h"
@@ -131,6 +132,68 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {};
 
+// Construct a result from owning strings and expose views into their storage.
+inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
+    std::vector<std::string> words) {
+  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+  data->buffer() = std::move(words);
+  data->views() = ::ranges::to_vector(
+      data->buffer() |
+      ql::views::transform(ad_utility::staticCast<std::string_view>));
+  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+}
+
+// Construct a PMR-backed result and expose views into its monotonic allocator.
+inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
+    std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
+    std::vector<std::string_view> views) {
+  auto data = std::make_shared<PmrVocabBatchLookupData>();
+  data->buffer() = std::move(buffer);
+  data->views() = std::move(views);
+  return PmrVocabBatchLookupData::asResult(std::move(data));
+}
+
+// Hold whatever keeps the words of a mixed batch alive: child
+// `VocabBatchLookupResult`s and/or shared ownership of an in-memory
+// vocabulary's word storage. `views()` point into those owners. Because every
+// view is backed by an owner held here, the result is self-contained: no view
+// can dangle, and no caller has to guarantee that some other object outlives
+// it.
+using VocabBatchOwner = std::shared_ptr<const void>;
+struct MultiOwnerVocabBatchLookupData
+    : VocabLookupDataCommonBase<std::vector<VocabBatchOwner>> {};
+
+// Scatter one child batch into its positions in the combined result and retain
+// the child as an owner of the referenced word storage.
+inline void scatterVocabBatchLookupResult(
+    VocabBatchLookupResult result, ql::span<const size_t> resultPositions,
+    ql::span<std::string_view> viewsInInputOrder,
+    std::vector<VocabBatchOwner>& owners) {
+  AD_CONTRACT_CHECK(result != nullptr);
+  AD_CONTRACT_CHECK(result->size() == resultPositions.size());
+  for (auto [resultPosition, word] :
+       ::ranges::views::zip(resultPositions, *result)) {
+    AD_CORRECTNESS_CHECK(resultPosition < viewsInInputOrder.size());
+    viewsInInputOrder[resultPosition] = word;
+  }
+  owners.push_back(std::move(result));
+}
+
+// Return a result that keeps `owners` alive and exposes `viewsInInputOrder`
+// without copying word bytes. Every view must point into storage owned by one
+// of the `owners`; the caller establishes that by construction, so there is
+// nothing to verify here.
+inline VocabBatchLookupResult keepAliveVocabBatch(
+    std::vector<VocabBatchOwner> owners,
+    std::vector<std::string_view> viewsInInputOrder) {
+  AD_CONTRACT_CHECK(!owners.empty());
+  AD_CONTRACT_CHECK(!viewsInInputOrder.empty());
+  auto data = std::make_shared<MultiOwnerVocabBatchLookupData>();
+  data->buffer() = std::move(owners);
+  data->views() = std::move(viewsInInputOrder);
+  return MultiOwnerVocabBatchLookupData::asResult(std::move(data));
+}
+
 // Generic sequential fallback implementations of the batch-lookup interface,
 // used by all vocabularies that do not provide a specialized (e.g. io_uring)
 // implementation. They simply loop over the indices and issue the ordinary
@@ -154,13 +217,7 @@ VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
       indices | ql::views::transform(
                     [&vocab](size_t idx) { return std::string{vocab[idx]}; }));
 
-  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-  data->buffer() = std::move(words);
-  data->views() = ::ranges::to_vector(
-      data->buffer() |
-      ql::views::transform(ad_utility::staticCast<std::string_view>));
-
-  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+  return makeStringVectorVocabBatchLookupResult(std::move(words));
 }
 
 // Streamed version of `lookupBatch`: lazily apply `vocab.lookupBatch` for the
