@@ -114,6 +114,7 @@ TEST(VocabBatchLookupData, MakeOwnedVocabBatchCopiesViews) {
   EXPECT_NE((*result)[0].data(), a.data());
 }
 
+// Verify that an owning string batch exposes all input words as valid views.
 TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
   auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
 
@@ -122,6 +123,8 @@ TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
   EXPECT_EQ((*result)[1], "beta");
 }
 
+// Verify that scattering preserves input order and retains the child batch
+// owner.
 TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
   auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
@@ -144,6 +147,8 @@ TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   EXPECT_EQ((*result)[1].data(), gammaData);
 }
 
+// Verify that keeping child batches alive preserves their original string
+// storage.
 TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
   auto firstOwner = std::make_shared<StringVectorVocabBatchLookupData>();
   firstOwner->buffer() = {"alpha", "beta"};
