@@ -193,6 +193,7 @@ class SplitVocabulary {
     for (auto [resultPosition, markedIndex] :
          ::ranges::views::enumerate(indices)) {
       auto marker = getMarker(markedIndex);
+      AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
       auto underlyingIndex = getVocabIndex(markedIndex);
       out[marker].addPair(underlyingIndex, resultPosition);
     }
@@ -212,14 +213,17 @@ class SplitVocabulary {
 
     // Access the lookup result for the given vocabulary marker.
     VocabBatchLookupResult& operator[](size_t marker) {
+      AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
       return results_[marker];
     }
     const VocabBatchLookupResult& operator[](size_t marker) const {
+      AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
       return results_[marker];
     }
 
     // Move out the lookup result for the given vocabulary marker.
     VocabBatchLookupResult release(size_t marker) {
+      AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
       return std::move(results_[marker]);
     }
   };
