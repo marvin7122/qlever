@@ -48,10 +48,10 @@ class ConstructTripleGenerator {
 
  public:
   // the number of `IdTable` rows that one batch consists of.
-  static constexpr size_t BATCH_SIZE = 1024;
-  // the number of entries in the `IdCache` for each variable in the construct
-  // clause template.
-  static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
+  static constexpr size_t BATCH_SIZE = 8192;
+  // One cache entry per row in a batch, per template variable. A smaller
+  // cache than `BATCH_SIZE` thrashes on the first batch of distinct IDs.
+  static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = BATCH_SIZE;
 
   // Instantiates `templateTriples` for each row in `rowIndices` and returns a
   // lazy range of triples serialized according to `mediaType`.
