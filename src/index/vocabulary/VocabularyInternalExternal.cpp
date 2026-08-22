@@ -49,7 +49,7 @@ static IndexPartition partitionIndicesBySource(
       result.internalSlots_.emplace_back(static_cast<size_t>(i),
                                          fromInternal.value());
     } else {
-      result.diskSlots_.add(idx, static_cast<size_t>(i));
+      result.diskSlots_.addPair(idx, static_cast<size_t>(i));
     }
   }
   return result;
@@ -64,7 +64,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // Take the fast path when all indices are resolved through the external
   // (disk) vocabulary.
   if (partition.internalSlots_.empty()) {
-    return externalVocab_.lookupBatch(partition.diskSlots_.indices());
+    return externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
   }
 
   // Handle mixed internal and external indices by assembling results from both
@@ -78,9 +78,9 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
 
   // 2. Scatter disk results into their positions and retain their ownership.
   if (!partition.diskSlots_.empty()) {
-    auto disk = externalVocab_.lookupBatch(partition.diskSlots_.indices());
+    auto disk = externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
     assembler.scatterSubBatchResultAtPositions(std::move(disk),
-                                              partition.diskSlots_.positions());
+                                              partition.diskSlots_.getResultPositions());
   }
 
   // 3. Register ownership of internal vocabulary word storage.
