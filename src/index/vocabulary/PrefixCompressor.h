@@ -74,6 +74,8 @@ class PrefixCompressor {
     return static_cast<char>(NO_PREFIX_CHAR) + word;
   }
 
+  // _________________________
+
   // Return the index in `prefixToCode_` if the word was stored with a valid
   // compression prefix, or `std::nullopt` if it was stored uncompressed.
   [[nodiscard]] static std::optional<size_t> prefixIndex(
