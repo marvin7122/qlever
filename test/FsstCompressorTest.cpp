@@ -4,9 +4,12 @@
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
+<<<<<<< HEAD
 //
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
+=======
+>>>>>>> 5ac86bedf (style: apply QLever Authors copyright header format across changed files)
 
 #include <absl/strings/str_split.h>
 #include <gmock/gmock.h>

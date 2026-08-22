@@ -1,9 +1,13 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 5ac86bedf (style: apply QLever Authors copyright header format across changed files)
 // Copyright 2025 - 2026, The QLever Authors, in particular:
 //
 // 2025        Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
+<<<<<<< HEAD
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures.
 //
 // You may not use this file except in compliance with the Apache 2.0 License,
@@ -14,6 +18,9 @@
 // Author: Christoph Ullinger <ullingec@cs.uni-freiburg.de>
 //         Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 >>>>>>> 38b8b9d67 (style: update copyright headers to newest format across touched files)
+=======
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+>>>>>>> 5ac86bedf (style: apply QLever Authors copyright header format across changed files)
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
