@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 // Copyright 2026 The QLever Authors, in particular:
 //
 // 2026 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
@@ -7,6 +8,12 @@
 //
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
+=======
+// Copyright 2026, University of Freiburg,
+//                 Chair of Algorithms and Data Structures.
+// Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+//         Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+>>>>>>> 38b8b9d67 (style: update copyright headers to newest format across touched files)
 
 #include <absl/functional/function_ref.h>
 #include <gmock/gmock.h>
