@@ -105,10 +105,11 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   }
 
   // Gather disk results and scatter them into the assembled vector.
+  // At most one owner from the external vocabulary plus the internal one.
   std::vector<VocabBatchOwner> owners;
+  owners.reserve(1 + (partition.diskSlots_.empty() ? 0u : 1u));
   if (!partition.diskSlots_.empty()) {
     auto disk = externalVocab_.lookupBatch(partition.diskSlots_.indices());
-    owners.reserve(2);
     scatterVocabBatchLookupResult(std::move(disk),
                                   partition.diskSlots_.positions(), assembled,
                                   filledSlots, owners);
