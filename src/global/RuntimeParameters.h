@@ -1,6 +1,8 @@
-//   Copyright 2024, University of Freiburg,
+//   Copyright 2024 - 2026, University of Freiburg,
 //   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+//   Authors:
+//     Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+//     Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
@@ -141,6 +143,12 @@ struct RuntimeParameters {
   // This mode should only be activated when running the syntax tests of
   // the SPARQL conformance test suite.
   Bool syntaxTestMode_{false, "syntax-test-mode"};
+
+  // Time the calls on which a query thread blocks waiting for storage (the
+  // positioned `pread` in `File::read` and the io_uring completion wait) and
+  // report the totals per query. Off by default: it is a diagnostic aid, not
+  // a production feature.
+  Bool measureIoWait_{false, "measure-io-wait"};
   // If set to `true`, then a division by zero in an expression will lead
   // to an
   // expression error, meaning that the result is undefined. If set to
@@ -232,10 +240,13 @@ struct RuntimeParameters {
                               "log-level"};
 
   // Controls deduplication of triples in CONSTRUCT query results.
-  // "false" (default): no deduplication, every triple is emitted.
-  // "global": a triple is emitted at most once across the entire result.
-  // N (positive integer): deduplicate against the N most recently seen unique
-  // triples (per template triple); bounded memory, partial deduplication.
+  // "none" (default): no duplicate tracking; every valid instantiated result
+  // triple is emitted.
+  // "full": one shared set stores the full triple keys for the whole query;
+  // repeated result triples are suppressed.
+  // "lru:<positive integer>": one shared LRU cache stores at most that many
+  // recently seen unique full triple keys; bounded memory, partial
+  // deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
