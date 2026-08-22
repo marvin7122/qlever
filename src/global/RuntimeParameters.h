@@ -1,6 +1,9 @@
-//   Copyright 2024, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
@@ -8,6 +11,7 @@
 #include <algorithm>
 #include <optional>
 
+#include "global/Constants.h"
 #include "util/Log.h"
 #include "util/Parameters.h"
 
@@ -238,6 +242,20 @@ struct RuntimeParameters {
   // triples (per template triple); bounded memory, partial deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
+
+  // Size of the io_uring submission queue (ring size) per batch I/O manager.
+  // Powers of two are preferred; liburing rounds up.  Larger rings increase
+  // in-flight I/O concurrency at the cost of registered buffer memory.
+  SizeT vocabBatchIoRingSize_{256, "vocab-batch-io-ring-size"};
+
+  // Number of persistent BatchIoManager instances in the pool.  Each manager
+  // holds its own io_uring ring, so this bounds the number of concurrent
+  // batch vocabulary lookups.  More managers = more parallelism for
+  // multi-query workloads, at the cost of memory for rings + registered
+  // buffers.  The default value is the constant `NUM_VOCAB_BATCH_IO_MANAGERS`
+  // (Constants.h), the single source of truth for this value.
+  SizeT vocabBatchIoNumManagers_{NUM_VOCAB_BATCH_IO_MANAGERS,
+                                 "vocab-batch-io-num-managers"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE

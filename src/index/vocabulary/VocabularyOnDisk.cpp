@@ -1,6 +1,9 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -9,8 +12,10 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -288,11 +293,24 @@ void VocabularyOnDisk::open(const std::string& filename) {
   size_ = numOffsets - 1;
 
   // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
+  size_t numManagers =
+      getRuntimeParameter<&RuntimeParameters::vocabBatchIoNumManagers_>();
+  size_t ringSize =
+      getRuntimeParameter<&RuntimeParameters::vocabBatchIoRingSize_>();
+  // A pool without managers would make every `lookupBatch` block forever, and
+  // the batch manager API takes an `unsigned` ring size, so reject values that
+  // do not fit into the `unsigned` range (instead of silently wrapping them).
+  AD_CONTRACT_CHECK(numManagers > 0);
+  AD_CONTRACT_CHECK(ringSize > 0 &&
+                    ringSize <= std::numeric_limits<unsigned>::max());
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>(
-      NUM_VOCAB_BATCH_IO_MANAGERS);
+      std::unique_ptr<ad_utility::BatchManagerBase>>>(numManagers);
   bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+  for (size_t i = 0; i < numManagers; ++i) {
+    // The runtime parameter is a `size_t`; the batch manager API takes an
+    // `unsigned` ring size. Values above `UINT_MAX` were rejected above, so
+    // the cast is safe.
+    ioManagers_->push(ad_utility::makeBatchManager(
+        preferIoUring, static_cast<unsigned>(ringSize)));
   }
 }
