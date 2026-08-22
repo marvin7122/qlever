@@ -352,9 +352,7 @@ inline void assertPmrStringUsesSso(size_t maxSize = 15) {
   const auto* objStart = reinterpret_cast<const char*>(&pmrSample);
   const auto* objEnd = objStart + sizeof(pmrSample);
   AD_CORRECTNESS_CHECK(pmrSample.data() >= objStart &&
-                       pmrSample.data() < objEnd)
-      << "Platform std::pmr::string does not use SSO for " << maxSize
-      << "-character strings";
+                       pmrSample.data() < objEnd);
 }
 
 // _____________________________________________________________________________
@@ -364,8 +362,10 @@ inline void assertPmrStringUsesSso(size_t maxSize = 15) {
 // clobber deeper frames.
 inline void clobberStack(size_t numBytes = 2048, char sentinel = '#') {
   // `volatile` prevents the compiler from optimizing the write away.
-  std::vector<volatile char> buffer(numBytes, sentinel);
-  static_cast<void>(buffer.data());
+  std::unique_ptr<volatile char[]> buffer{new volatile char[numBytes]};
+  for (size_t i = 0; i < numBytes; ++i) {
+    buffer[i] = sentinel;
+  }
 }
 
 // _____________________________________________________________________________
