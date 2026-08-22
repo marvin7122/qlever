@@ -332,4 +332,23 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
       {{"/", "_"}});
 }
 
+// _____________________________________________________________________________
+// Returns "<TestSuiteName>" for the currently running test suite, with any '/'
+// replaced by '_' (parameterized test suites embed '/' in their names).
+// Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a test.
+inline std::string gtestCurrentTestSuiteName(
+    bool assertInGtestEnvironment = true) {
+  const auto* testSuite =
+      ::testing::UnitTest::GetInstance()->current_test_suite();
+  if (assertInGtestEnvironment) {
+    AD_CORRECTNESS_CHECK(testSuite != nullptr);
+  }
+  if (testSuite == nullptr) {
+    return "";
+  }
+  return absl::StrReplaceAll(testSuite->name(), {{"/", "_"}});
+}
+
+}  // namespace ad_utility::testing
+
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H

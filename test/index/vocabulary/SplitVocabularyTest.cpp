@@ -16,6 +16,7 @@
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyType.h"
+#include "util/GTestHelpers.h"
 
 namespace splitVocabTestHelpers {
 
@@ -507,10 +508,8 @@ using namespace splitVocabTestHelpers;
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
   static std::string getFilename() {
-    const auto* suite =
-        ::testing::UnitTest::GetInstance()->current_test_suite();
-    AD_CORRECTNESS_CHECK(suite != nullptr);
-    return absl::StrCat(suite->name(), ".dat");
+    return absl::StrCat(ad_utility::testing::gtestCurrentTestSuiteName(),
+                        ".dat");
   }
 
   static void SetUpTestSuite() {
