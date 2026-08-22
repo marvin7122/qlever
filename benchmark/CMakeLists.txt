@@ -44,7 +44,4 @@ if (NOT _NO_BENCHMARK)
     add_executable(SimdEscapeClassifierBenchmark
         SimdEscapeClassifierBenchmark.cpp)
 
-    add_executable(vocab-decode-arena-bench VocabDecodeArenaBenchmark.cpp)
-    qlever_target_link_libraries(vocab-decode-arena-bench vocabulary)
-
 endif()
