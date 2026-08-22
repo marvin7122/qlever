@@ -148,9 +148,10 @@ CPP_template(typename UnderlyingVocabulary,
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx);
 
       // A word whose decompressed size evaluates to 0 (e.g. an uncompressed
-      // empty string literal encoded as `NO_PREFIX_CHAR` under PrefixCompressor,
-      // or an empty word under FSST) yields an upper bound of 0. Skip PMR
-      // allocation and decompression, emitting an empty view directly.
+      // empty string literal encoded as `NO_PREFIX_CHAR` under
+      // PrefixCompressor, or an empty word under FSST) yields an upper bound of
+      // 0. Skip PMR allocation and decompression, emitting an empty view
+      // directly.
       if (boundOnDecompressedWordSize == 0) {
         views.emplace_back();
         continue;
