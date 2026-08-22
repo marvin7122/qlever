@@ -67,7 +67,7 @@ static IndexPartition partitionIndicesBySource(
   result.internalSlots_.reserve(indices.size());
   result.diskSlots_.reserve(indices.size());
 
-  for (auto [i, idx] : ql::views::enumerate(indices)) {
+  for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
     auto fromInternal = internalVocab[idx];
     if (fromInternal.has_value()) {
       result.internalSlots_.emplace_back(static_cast<size_t>(i),
