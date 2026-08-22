@@ -225,6 +225,98 @@ inline VocabBatchLookupResult keepAliveVocabBatch(
                              std::move(filledSlots));
 }
 
+// Paired lookup data for one vocabulary marker: for each position `i` in the
+// arrays, `underlyingIndices[i]` is the index to look up, and
+// `resultPositions[i]` is where the result goes in the final output. The
+// arrays are always kept in sync (same size).
+struct MarkerIndicesAndPositions {
+ private:
+  std::vector<size_t> underlyingIndices_;
+  std::vector<size_t> resultPositions_;
+
+ public:
+  // Reserve capacity for the given number of pairs.
+  void reserve(size_t capacity) {
+    underlyingIndices_.reserve(capacity);
+    resultPositions_.reserve(capacity);
+  }
+
+  // Add a (`underlyingIndex`, `resultPosition`) pair.
+  void addPair(size_t underlyingIndex, size_t resultPosition) {
+    underlyingIndices_.push_back(underlyingIndex);
+    resultPositions_.push_back(resultPosition);
+  }
+
+  // Access the underlying indices for batch-lookup.
+  ql::span<const size_t> getUnderlyingIndices() const {
+    return underlyingIndices_;
+  }
+
+  // Access the result positions for scatter-back.
+  ql::span<const size_t> getResultPositions() const { return resultPositions_; }
+
+  // Check if this marker has any pairs.
+  bool empty() const { return underlyingIndices_.empty(); }
+
+  // Number of pairs.
+  size_t size() const { return underlyingIndices_.size(); }
+};
+
+// Paired lookup data for each of `NumVocabs` underlying vocabularies, indexed
+// by the marker that identifies the vocabulary.
+template <size_t NumVocabs>
+using IndicesAndPositionsByMarker =
+    std::array<MarkerIndicesAndPositions, NumVocabs>;
+
+// Partition marked indices into paired (`underlyingIndex`, `resultPosition`)
+// lists per marker. For each input index, `getMarkerAndVocabIndex` extracts
+// the marker that identifies the underlying vocabulary and the unmarked vocab
+// index; the index is paired with its position in the input, and both are
+// grouped by marker.
+// _____________________________________________________________________________
+template <size_t NumVocabs, typename GetMarkerAndVocabIndex>
+IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
+    ql::span<const size_t> indices, GetMarkerAndVocabIndex getMarkerAndIndex) {
+  IndicesAndPositionsByMarker<NumVocabs> out;
+  for (auto [resultPosition, markedIndex] : ql::views::enumerate(indices)) {
+    auto [marker, underlyingIndex] = getMarkerAndIndex(markedIndex);
+    AD_CORRECTNESS_CHECK(marker < NumVocabs);
+    out[marker].addPair(underlyingIndex, resultPosition);
+  }
+  return out;
+}
+
+// Merge per-vocabulary lookup batches into a single combined
+// `VocabBatchLookupResult` where each word is at the position of its original
+// input index. `releaseLookupResultForMarker(marker)` must return (and move
+// out) the lookup result for the given marker. `numberOfResults` is the total
+// number of requested indices (the sum of the per-marker position counts; the
+// caller knows it without re-summing).
+// _____________________________________________________________________________
+template <size_t NumVocabs, typename ReleaseLookupResultForMarker>
+VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
+    const IndicesAndPositionsByMarker<NumVocabs>& markerIndicesAndPositions,
+    size_t numberOfResults, ReleaseLookupResultForMarker releaseLookupResult) {
+  std::vector<std::string_view> viewsInInputOrder(numberOfResults);
+  std::vector<bool> filledSlots(numberOfResults, false);
+  std::vector<VocabBatchOwner> resultOwners;
+
+  for (const auto& [vocabMarker, markerIndices] :
+       ::ranges::views::enumerate(markerIndicesAndPositions)) {
+    if (markerIndices.empty()) {
+      continue;
+    }
+    auto lookupResult = releaseLookupResult(vocabMarker);
+    AD_CORRECTNESS_CHECK(lookupResult != nullptr);
+    scatterVocabBatchLookupResult(std::move(lookupResult),
+                                  markerIndices.getResultPositions(),
+                                  viewsInInputOrder, filledSlots, resultOwners);
+  }
+  return keepAliveVocabBatch(std::move(resultOwners),
+                             std::move(viewsInInputOrder),
+                             std::move(filledSlots));
+}
+
 // Generic sequential fallback implementations of the batch-lookup interface,
 // used by all vocabularies that do not provide a specialized (e.g. io_uring)
 // implementation. They simply loop over the indices and issue the ordinary
