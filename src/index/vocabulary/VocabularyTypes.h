@@ -178,8 +178,8 @@ struct MultiOwnerVocabBatchLookupData
 // single combined `VocabBatchLookupResult` via `keepAliveVocabBatch()`.
 inline void scatterVocabBatchLookupResult(
     VocabBatchLookupResult result, ql::span<const size_t> resultPositions,
-    ql::span<std::string_view> viewsInInputOrder, ql::span<bool> filledSlots,
-    std::vector<VocabBatchOwner>& owners) {
+    ql::span<std::string_view> viewsInInputOrder,
+    std::vector<bool>& filledSlots, std::vector<VocabBatchOwner>& owners) {
   AD_CONTRACT_CHECK(result != nullptr);
   AD_CONTRACT_CHECK(result->size() == resultPositions.size());
   AD_CONTRACT_CHECK(filledSlots.size() == viewsInInputOrder.size());
