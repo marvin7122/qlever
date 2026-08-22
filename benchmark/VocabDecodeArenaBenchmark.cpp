@@ -19,10 +19,10 @@
 #include <vector>
 
 #include "backports/memory_resource.h"
-#include "backports/ranges.h"
 #include "backports/span.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/VocabularyInternalExternal.h"
+#include "util/Algorithm.h"
 #include "util/Exception.h"
 
 using Vocab = CompressedVocabulary<VocabularyInternalExternal>;
