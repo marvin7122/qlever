@@ -1,9 +1,19 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
+
+#include <memory>
+#include <string>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "index/ConstantsIndexBuilding.h"
@@ -18,6 +28,7 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
+#include "util/TransparentFunctors.h"
 
 namespace detail {
 
@@ -97,9 +108,36 @@ CPP_template(typename UnderlyingVocabulary,
         });
   }
 
-  //____________________________________________________________________________
+  // Batch-read the compressed words from the underlying vocabulary (which may
+  // itself be on-disk), then decompress each word with the decoder of its
+  // block. The result order matches `indices`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    return finishLookup(beginLookup(indices));
+  }
+
+  std::unique_ptr<VocabLookupHandleBase> beginLookup(
+      ql::span<const size_t> indices) const {
+    auto handle = std::make_unique<CompressedLookupHandle>();
+    handle->vocab_ = this;
+    handle->indices_.assign(indices.begin(), indices.end());
+    // Compile-time check: if the underlying vocabulary supports the
+    // split-phase interface itself, delegate the reads to it; otherwise fall
+    // back to an eager in-memory lookup.
+    if constexpr (ad_utility::vocabulary::HasBeginLookup<
+                      UnderlyingVocabulary>::value) {
+      handle->underlyingHandle_ = underlyingVocabulary_.beginLookup(indices);
+    } else {
+      auto eager = std::make_unique<EagerVocabLookupHandle>();
+      eager->result_ = underlyingVocabulary_.lookupBatch(indices);
+      handle->underlyingHandle_ = std::move(eager);
+    }
+    return handle;
+  }
+
+  VocabBatchLookupResult finishLookup(
+      std::unique_ptr<VocabLookupHandleBase> handle) const {
+    AD_CONTRACT_CHECK(handle != nullptr);
+    return handle->finish();
   }
 
   //____________________________________________________________________________
@@ -341,6 +379,29 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
  private:
+  class CompressedLookupHandle : public VocabLookupHandleBase {
+   public:
+    const CompressedVocabulary* vocab_ = nullptr;
+    std::vector<size_t> indices_;
+    std::unique_ptr<VocabLookupHandleBase> underlyingHandle_;
+
+    VocabBatchLookupResult finish() override {
+      auto compressed = underlyingHandle_->finish();
+      auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+      data->buffer() = ::ranges::to_vector(
+          ::ranges::views::zip(indices_, *compressed) |
+          ql::views::transform([this](const auto& idxAndWord) {
+            const auto& [idx, word] = idxAndWord;
+            return vocab_->compressionWrapper_.decompress(
+                word, vocab_->getDecoderIdx(idx));
+          }));
+      data->views() = ::ranges::to_vector(
+          data->buffer() |
+          ql::views::transform(ad_utility::staticCast<std::string_view>));
+      return StringVectorVocabBatchLookupData::asResult(std::move(data));
+    }
+  };
+
   // Get the correct decoder for the given `idx`.
   size_t getDecoderIdx(size_t idx) const { return idx / NumWordsPerBlock; }
 
