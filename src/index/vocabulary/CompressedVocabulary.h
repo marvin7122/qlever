@@ -149,8 +149,8 @@ CPP_template(typename UnderlyingVocabulary,
     AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
 
     auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-    std::vector<std::string_view> views;
-    views.reserve(indices.size());
+    std::vector<std::string_view> compressed;
+    compressed.reserve(indices.size());
     std::string scratch;
 
     for (const auto& [idx, compressedWord] :
