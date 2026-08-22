@@ -1,4 +1,4 @@
-// Copyright 2026, The QLever Authors, in particular:
+// Copyright 2026 The QLever Authors, in particular:
 //
 // 2026 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
@@ -111,16 +111,18 @@ TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   const char* gammaData = (*second)[0].data();
 
   std::vector<std::string_view> viewsInInputOrder(3);
+  std::vector<bool> filledSlots(3, false);
   std::vector<VocabBatchOwner> owners;
   const std::array<size_t, 2> firstPositions{2, 0};
   const std::array<size_t, 1> secondPositions{1};
   scatterVocabBatchLookupResult(std::move(first), firstPositions,
-                                viewsInInputOrder, owners);
+                                viewsInInputOrder, filledSlots, owners);
   scatterVocabBatchLookupResult(std::move(second), secondPositions,
-                                viewsInInputOrder, owners);
+                                viewsInInputOrder, filledSlots, owners);
 
-  auto result =
-      keepAliveVocabBatch(std::move(owners), std::move(viewsInInputOrder));
+  auto result = keepAliveVocabBatch(std::move(owners),
+                                    std::move(viewsInInputOrder),
+                                    std::move(filledSlots));
   EXPECT_THAT(*result, ::testing::ElementsAre("beta", "gamma", "alpha"));
   EXPECT_EQ((*result)[2].data(), alphaData);
   EXPECT_EQ((*result)[1].data(), gammaData);
@@ -268,11 +270,13 @@ TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
 TEST(VocabBatchLookupData, ScatterBatchResultSizeMismatchThrows) {
   auto batch = makeStringVectorVocabBatchLookupResult({"only-one"});
   std::vector<std::string_view> views(2);
+  std::vector<bool> filledSlots(2, false);
   std::vector<VocabBatchOwner> owners;
   const std::array<size_t, 2> positions{0, 1};
   // Two positions but one word in the batch.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      scatterVocabBatchLookupResult(std::move(batch), positions, views, owners),
+      scatterVocabBatchLookupResult(std::move(batch), positions, views,
+                                    filledSlots, owners),
       ::testing::HasSubstr("result->size() == resultPositions.size()"));
 }
 
@@ -298,26 +302,53 @@ TEST(VocabBatchLookupData, ScatterBatchDoubleWriteThrows) {
   auto batch1 = makeStringVectorVocabBatchLookupResult({"first"});
   auto batch2 = makeStringVectorVocabBatchLookupResult({"second"});
   std::vector<std::string_view> views(2);
+  std::vector<bool> filledSlots(2, false);
   std::vector<VocabBatchOwner> owners;
   const std::array<size_t, 1> pos0{0};
-  scatterVocabBatchLookupResult(std::move(batch1), pos0, views, owners);
+  scatterVocabBatchLookupResult(std::move(batch1), pos0, views, filledSlots,
+                                owners);
   // Attempting to scatter to position 0 again must throw because it was already
   // written.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      scatterVocabBatchLookupResult(std::move(batch2), pos0, views, owners),
-      ::testing::HasSubstr(
-          "viewsInInputOrder[resultPosition].data() == nullptr"));
+      scatterVocabBatchLookupResult(std::move(batch2), pos0, views, filledSlots,
+                                    owners),
+      ::testing::HasSubstr("!filledSlots[resultPosition]"));
 }
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, KeepAliveVocabBatchIncompleteCoverageThrows) {
   auto batch = makeStringVectorVocabBatchLookupResult({"first"});
-  std::vector<std::string_view> views(2);  // Slot 1 remains unwritten (null)
+  std::vector<std::string_view> views(2);
+  std::vector<bool> filledSlots(2, false);  // Slot 1 remains unfilled.
   std::vector<VocabBatchOwner> owners;
   const std::array<size_t, 1> pos0{0};
-  scatterVocabBatchLookupResult(std::move(batch), pos0, views, owners);
+  scatterVocabBatchLookupResult(std::move(batch), pos0, views, filledSlots,
+                                owners);
   // Slot 1 was never written, so keepAliveVocabBatch must throw.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      keepAliveVocabBatch(std::move(owners), std::move(views)),
-      ::testing::HasSubstr("v.data() != nullptr"));
+      keepAliveVocabBatch(std::move(owners), std::move(views),
+                          std::move(filledSlots)),
+      ::testing::HasSubstr("all_of(filledSlots"));
+}
+
+// _____________________________________________________________________________
+// Verify that a legitimately empty word (a default-constructed `string_view`
+// with null data pointer) does not trip any correctness check: the filled/un-
+// filled invariant is structural, not based on the view's data pointer.
+TEST(VocabBatchLookupData,
+     ScatterAndKeepAliveTolerateEmptyWordWithNullDataPointer) {
+  auto batch = makeStringVectorVocabBatchLookupResult({"", "x"});
+  ASSERT_EQ((*batch)[0].data(), nullptr);  // Empty word has null data.
+
+  std::vector<std::string_view> views(2);
+  std::vector<bool> filledSlots(2, false);
+  std::vector<VocabBatchOwner> owners;
+  const std::array<size_t, 2> positions{1, 0};
+  scatterVocabBatchLookupResult(std::move(batch), positions, views, filledSlots,
+                                owners);
+
+  auto result =
+      keepAliveVocabBatch(std::move(owners), std::move(views),
+                          std::move(filledSlots));
+  EXPECT_THAT(*result, ::testing::ElementsAre("x", ""));
 }
