@@ -1,7 +1,8 @@
-// Copyright 2021 - 2025 The QLever Authors, in particular:
+// Copyright 2021 - 2026, The QLever Authors, in particular:
 //
-// 2021 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
-// 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2021 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2021 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -89,6 +90,12 @@ class stream_generator_promise {
   // this case the buffer will be filled to maximum capacity, so eventually
   // every bit of `value` is written, then the coroutine will be resumed.
   suspend_sometimes yield_value(std::string_view value) noexcept {
+    // GCC 11-15 report a false positive `stringop-overread` on the `memcpy`
+    // below when a `std::string` is yielded by move and the source size cannot
+    // be statically proven. The `char` overload below suppresses the same
+    // warning; keep this guard so yielding strings from export paths builds
+    // cleanly with `-Wall -Wextra -Werror`.
+    DISABLE_OVERREAD_WARNINGS
     if (isBufferLargeEnough(value)) {
       if (!value.empty()) {
         std::memcpy(data_.data() + currentIndex_, value.data(), value.size());
@@ -103,6 +110,7 @@ class stream_generator_promise {
     currentIndex_ = BUFFER_SIZE;
     overflow_ = value.substr(fittingSize);
     return suspend_sometimes{true};
+    GCC_REENABLE_WARNINGS
   }
 
   // Overload so we can also pass char values, template such that all types that

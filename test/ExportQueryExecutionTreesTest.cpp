@@ -1,8 +1,11 @@
-// Copyright 2023 - 2024, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
-//          Robin Textor-Falconi <robintf@cs.uni-freiburg.de>
-//          Hannah Bast <bast@cs.uni-freiburg.de>
+// Copyright 2023 - 2026, The QLever Authors, in particular:
+//
+// 2023 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2023 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2023 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <gmock/gmock.h>
 
@@ -2266,3 +2269,51 @@ INSTANTIATE_TEST_SUITE_P(
         LruWindowParam{5, "abcde"},
         // window 10: all duplicates are caught, 5 unique triples remain.
         LruWindowParam{10, "abcde"}));
+
+// _____________________________________________________________________________
+// A SELECT result with more rows than the internal batching size (1000 rows
+// per `idsToStringAndType` call) must be exported completely: the rows
+// exercise the mid-stream flush of the batch buffer as well as the tail
+// batch after the loop. Both TSV and CSV must contain every row in order.
+TEST(ExportQueryExecutionTrees, SelectQueryMoreThanOneBatchOfRows) {
+  constexpr size_t numRows = 1000 + 3;  // one full batch plus a tail batch
+  const std::string kg = "";
+  const std::string query = [&]() {
+    std::string values;
+    for (size_t i = 0; i < numRows; ++i) {
+      absl::StrAppend(&values, i == 0 ? "" : " ", i);
+    }
+    return absl::StrCat("SELECT ?x WHERE { VALUES ?x { ", values, " } }");
+  }();
+  const std::string expectedTsv = [&]() {
+    std::string expected = "?x\n";
+    for (size_t i = 0; i < numRows; ++i) {
+      absl::StrAppend(&expected, i, "\n");
+    }
+    return expected;
+  }();
+  const std::string expectedCsv = [&]() {
+    std::string expected = "x\n";
+    for (size_t i = 0; i < numRows; ++i) {
+      absl::StrAppend(&expected, i, "\n");
+    }
+    return expected;
+  }();
+  EXPECT_EQ(runQueryStreamableResult(kg, query, ad_utility::MediaType::tsv),
+            expectedTsv);
+  EXPECT_EQ(runQueryStreamableResult(kg, query, ad_utility::MediaType::csv),
+            expectedCsv);
+}
+
+// _____________________________________________________________________________
+// Batched SELECT must resolve real vocabulary IRIs and leave unbound columns
+// as empty cells. The integer VALUES test above never hits a `VocabIndex`.
+TEST(ExportQueryExecutionTrees, SelectQueryBatchWithVocabIrisAndUnbound) {
+  const std::string kg = "<http://ex/s> <http://ex/p> <http://ex/o> .";
+  const std::string query =
+      "SELECT ?s ?missing ?o WHERE { ?s <http://ex/p> ?o }";
+  EXPECT_EQ(runQueryStreamableResult(kg, query, ad_utility::MediaType::tsv),
+            "?s\t?missing\t?o\n<http://ex/s>\t\t<http://ex/o>\n");
+  EXPECT_EQ(runQueryStreamableResult(kg, query, ad_utility::MediaType::csv),
+            "s,missing,o\nhttp://ex/s,,http://ex/o\n");
+}
