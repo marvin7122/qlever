@@ -130,7 +130,10 @@ CPP_template(typename UnderlyingVocabulary,
   //____________________________________________________________________________
   // Batch-read the compressed words from the underlying vocabulary, then
   // decompress each word with the decoder of its block into memory owned by the
-  // returned result. The order of words in the result matches `indices`.
+  // returned result. Unlike `sequentialLookupBatch` (still used by
+  // `VocabularyInMemory::lookupBatch` as the generic fallback), this
+  // specialization decodes directly into a PMR arena instead of materializing
+  // owning `std::string`s per word. The order of words in the result matches `indices`.
   // Return a `VocabBatchLookupResult` keeping the PMR monotonic buffer resource
   // alive and providing `string_view`s for each requested index in `indices`.
   // `indices` must not be empty.
