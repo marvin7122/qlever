@@ -147,10 +147,10 @@ CPP_template(typename UnderlyingVocabulary,
       const size_t boundOnDecompressedWordSize =
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx);
 
-      // An empty word ("") in the vocabulary (e.g. the empty string literal in
-      // RDF) compresses to 0 bytes under FSST / empty prefix, yielding an upper
-      // bound of 0. Skip PMR allocation and decompression, emitting an empty
-      // view directly.
+      // A word whose decompressed size evaluates to 0 (e.g. an uncompressed
+      // empty string literal encoded as `NO_PREFIX_CHAR` under PrefixCompressor,
+      // or an empty word under FSST) yields an upper bound of 0. Skip PMR
+      // allocation and decompression, emitting an empty view directly.
       if (boundOnDecompressedWordSize == 0) {
         views.emplace_back();
         continue;
