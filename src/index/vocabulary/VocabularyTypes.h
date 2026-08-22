@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
@@ -172,29 +178,28 @@ struct MultiOwnerVocabBatchLookupData
 // aggregating storage ownership into a self-contained `VocabBatchLookupResult`.
 class MultiSourceVocabBatchAssembler {
  private:
-  std::vector<std::string_view> assembledWordViews_;
-  std::vector<bool> slotFilledTracking_;
+  // `std::optional` slots so "unwritten" is representable independently of the
+  // stored view: a legitimately empty word yields a default-constructed
+  // (nullptr-data) string_view, which must not be mistaken for an unset slot.
+  std::vector<std::optional<std::string_view>> assembledWordViews_;
   std::vector<VocabBatchOwner> storageOwners_;
 
  public:
   // ___________________________________________________________________________
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
-      : assembledWordViews_(totalExpectedWords),
-        slotFilledTracking_(totalExpectedWords, false) {}
+      : assembledWordViews_(totalExpectedWords) {}
 
   // ___________________________________________________________________________
   // Place a single resolved string_view into its corresponding output position.
   void assignWordAtPosition(size_t resultPosition, std::string_view word) {
     AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
-    AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
-    slotFilledTracking_[resultPosition] = true;
+    AD_CORRECTNESS_CHECK(!assembledWordViews_[resultPosition].has_value());
     assembledWordViews_[resultPosition] = word;
   }
 
   // ___________________________________________________________________________
   // Scatter a child batch lookup result across the specified output positions
-  // and retain the child result object so its underlying string storage is kept
-  // alive.
+  // and retain the child result object so its underlying string storage is kept alive.
   void scatterSubBatchResultAtPositions(
       VocabBatchLookupResult subBatchResult,
       ql::span<const size_t> targetPositions) {
@@ -272,7 +277,7 @@ inline VocabBatchLookupResult keepAliveVocabBatch(
     std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words) {
   std::vector<bool> filledSlots(words.size(), true);
   return keepAliveVocabBatch(std::move(owners), std::move(words),
-                             std::move(filledSlots));
+                              std::move(filledSlots));
 }
 
 // Paired lookup data for one vocabulary marker: for each position `i` in the
