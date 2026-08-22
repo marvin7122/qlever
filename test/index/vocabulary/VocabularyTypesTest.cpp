@@ -350,3 +350,43 @@ TEST(VocabBatchLookupData,
                                     std::move(filledSlots));
   EXPECT_THAT(*result, ::testing::ElementsAre("x", ""));
 }
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
+  MultiSourceVocabBatchAssembler assembler(3);
+
+  // Direct word assignment at position 1:
+  assembler.assignWordAtPosition(1, "middle");
+
+  // Scatter sub-batch at positions 0 and 2:
+  auto subBatch = makeStringVectorVocabBatchLookupResult({"first", "last"});
+  const std::array<size_t, 2> subPositions{0, 2};
+  assembler.scatterSubBatchResultAtPositions(std::move(subBatch), subPositions);
+
+  // Finalize and check results:
+  auto result = std::move(assembler).finalizeVocabBatchLookupResult();
+  ASSERT_NE(result, nullptr);
+  EXPECT_THAT(*result, ::testing::ElementsAre("first", "middle", "last"));
+}
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerDoubleAssignmentThrows) {
+  MultiSourceVocabBatchAssembler assembler(2);
+  assembler.assignWordAtPosition(0, "first");
+
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      assembler.assignWordAtPosition(0, "overwrite"),
+      ::testing::HasSubstr("!slotFilledTracking_[resultPosition]"));
+}
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData,
+     MultiSourceVocabBatchAssemblerIncompleteCoverageThrows) {
+  MultiSourceVocabBatchAssembler assembler(2);
+  assembler.assignWordAtPosition(0, "first");
+  // Slot 1 remains unassigned.
+
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      std::move(assembler).finalizeVocabBatchLookupResult(),
+      ::testing::HasSubstr("std::all_of(slotFilledTracking_"));
+}

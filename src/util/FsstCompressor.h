@@ -42,15 +42,21 @@ struct CastToUnsignedPtr {
 };
 constexpr CastToUnsignedPtr castToUnsignedPtr{};
 
-// Allocate `bound` bytes, run `decode` into that buffer, and shrink to the
-// number of bytes written.
+// Allocate `bound` bytes without initializing them, run `decode` into that
+// buffer, and copy the decoded bytes into the resulting string.
 CPP_template(typename Decode)(
     requires ql::concepts::invocable<Decode, ql::span<char>>) std::string
     decompressToOwnedString(size_t bound, Decode decode) {
-  std::string output;
-  output.resize(bound);
-  output.resize(decode(ql::span<char>{output.data(), output.size()}));
-  return output;
+  // `std::string::resize` value-initializes its memory, which would write
+  // every byte once more before the decoder overwrites it. Decode into an
+  // uninitialized buffer instead, then move those bytes into the result.
+  if (bound == 0) {
+    return {};
+  }
+  auto buffer = std::make_unique_for_overwrite<char[]>(bound);
+  const size_t size = decode(ql::span<char>{buffer.get(), bound});
+  AD_CONTRACT_CHECK(size <= bound);
+  return std::string{buffer.get(), size};
 }
 }  // namespace detail
 

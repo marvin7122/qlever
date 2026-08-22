@@ -172,10 +172,73 @@ using VocabBatchOwner = std::shared_ptr<const void>;
 struct MultiOwnerVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<VocabBatchOwner>> {};
 
+// _____________________________________________________________________________
+// Helper struct that encapsulates assembling string_views from multiple
+// independent vocabulary sources, verifying collision-free total coverage, and
+// aggregating storage ownership into a self-contained `VocabBatchLookupResult`.
+class MultiSourceVocabBatchAssembler {
+ private:
+  std::vector<std::string_view> assembledWordViews_;
+  std::vector<bool> slotFilledTracking_;
+  std::vector<VocabBatchOwner> storageOwners_;
+
+ public:
+  // ___________________________________________________________________________
+  explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
+      : assembledWordViews_(totalExpectedWords),
+        slotFilledTracking_(totalExpectedWords, false) {}
+
+  // ___________________________________________________________________________
+  // Place a single resolved string_view into its corresponding output position.
+  void assignWordAtPosition(size_t resultPosition, std::string_view word) {
+    AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
+    AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
+    slotFilledTracking_[resultPosition] = true;
+    assembledWordViews_[resultPosition] = word;
+  }
+
+  // ___________________________________________________________________________
+  // Scatter a child batch lookup result across the specified output positions
+  // and retain the child result object so its underlying string storage is kept alive.
+  void scatterSubBatchResultAtPositions(
+      VocabBatchLookupResult subBatchResult,
+      ql::span<const size_t> targetPositions) {
+    AD_CONTRACT_CHECK(subBatchResult != nullptr);
+    AD_CONTRACT_CHECK(subBatchResult->size() == targetPositions.size());
+    for (auto [targetPosition, word] :
+         ::ranges::views::zip(targetPositions, *subBatchResult)) {
+      assignWordAtPosition(targetPosition, word);
+    }
+    storageOwners_.push_back(std::move(subBatchResult));
+  }
+
+  // ___________________________________________________________________________
+  // Register a shared storage owner (e.g. an in-memory vocabulary buffer)
+  // that must outlive the assembled string_views.
+  void registerStorageOwner(VocabBatchOwner storageOwner) {
+    AD_CONTRACT_CHECK(storageOwner != nullptr);
+    storageOwners_.push_back(std::move(storageOwner));
+  }
+
+  // ___________________________________________________________________________
+  // Finalize assembly into a self-contained VocabBatchLookupResult,
+  // verifying that every slot has been populated exactly once.
+  [[nodiscard]] VocabBatchLookupResult finalizeVocabBatchLookupResult() && {
+    AD_CONTRACT_CHECK(!assembledWordViews_.empty());
+    AD_CONTRACT_CHECK(!storageOwners_.empty());
+    AD_CORRECTNESS_CHECK(std::all_of(slotFilledTracking_.begin(),
+                                     slotFilledTracking_.end(),
+                                     [](bool isFilled) { return isFilled; }));
+
+    auto multiOwnerData = std::make_shared<MultiOwnerVocabBatchLookupData>();
+    multiOwnerData->buffer() = std::move(storageOwners_);
+    multiOwnerData->views() = std::move(assembledWordViews_);
+    return MultiOwnerVocabBatchLookupData::asResult(std::move(multiOwnerData));
+  }
+};
+
 // Scatter string_views from `result` into `viewsInInputOrder` at positions
 // given by `resultPositions`, and keep `result` in `owners` to retain storage.
-// Called multiple times to merge multiple `VocabBatchLookupResult`s into a
-// single combined `VocabBatchLookupResult` via `keepAliveVocabBatch()`.
 inline void scatterVocabBatchLookupResult(
     VocabBatchLookupResult result, ql::span<const size_t> resultPositions,
     ql::span<std::string_view> viewsInInputOrder,
@@ -193,15 +256,7 @@ inline void scatterVocabBatchLookupResult(
   owners.push_back(std::move(result));
 }
 
-// Create a `VocabBatchLookupResult` for the given `words`. The result will
-// additionally keep the `owners` alive. Only call this if the storage for the
-// `words` is managed by the `owners`; see `scatterVocabBatchLookupResult()` for
-// an example.
-//
-// TODO<ms2144>: This API takes independent owner and view lists, so the
-// lifetime link is a call-site convention rather than a structural type. A
-// later redesign could replace it with a builder or an owned-view capability
-// type so slots are only filled together with their storage.
+// Create a `VocabBatchLookupResult` for the given `words`.
 inline VocabBatchLookupResult keepAliveVocabBatch(
     std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words,
     std::vector<bool> filledSlots) {
@@ -222,7 +277,7 @@ inline VocabBatchLookupResult keepAliveVocabBatch(
     std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words) {
   std::vector<bool> filledSlots(words.size(), true);
   return keepAliveVocabBatch(std::move(owners), std::move(words),
-                             std::move(filledSlots));
+                              std::move(filledSlots));
 }
 
 // Paired lookup data for one vocabulary marker: for each position `i` in the
@@ -289,18 +344,13 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
 
 // Merge per-vocabulary lookup batches into a single combined
 // `VocabBatchLookupResult` where each word is at the position of its original
-// input index. `releaseLookupResultForMarker(marker)` must return (and move
-// out) the lookup result for the given marker. `numberOfResults` is the total
-// number of requested indices (the sum of the per-marker position counts; the
-// caller knows it without re-summing).
+// input index.
 // _____________________________________________________________________________
 template <size_t NumVocabs, typename ReleaseLookupResultForMarker>
 VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
     const IndicesAndPositionsByMarker<NumVocabs>& markerIndicesAndPositions,
     size_t numberOfResults, ReleaseLookupResultForMarker releaseLookupResult) {
-  std::vector<std::string_view> viewsInInputOrder(numberOfResults);
-  std::vector<bool> filledSlots(numberOfResults, false);
-  std::vector<VocabBatchOwner> resultOwners;
+  MultiSourceVocabBatchAssembler assembler(numberOfResults);
 
   for (const auto& [vocabMarker, markerIndices] :
        ::ranges::views::enumerate(markerIndicesAndPositions)) {
@@ -308,14 +358,10 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
       continue;
     }
     auto lookupResult = releaseLookupResult(vocabMarker);
-    AD_CORRECTNESS_CHECK(lookupResult != nullptr);
-    scatterVocabBatchLookupResult(std::move(lookupResult),
-                                  markerIndices.getResultPositions(),
-                                  viewsInInputOrder, filledSlots, resultOwners);
+    assembler.scatterSubBatchResultAtPositions(
+        std::move(lookupResult), markerIndices.getResultPositions());
   }
-  return keepAliveVocabBatch(std::move(resultOwners),
-                             std::move(viewsInInputOrder),
-                             std::move(filledSlots));
+  return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 
 // Generic sequential fallback implementations of the batch-lookup interface,

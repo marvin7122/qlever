@@ -169,17 +169,22 @@ class SplitVocabulary {
   };
 
   // Merge the per-vocabulary batches into one result in input order.
-  // `numberOfResults` is the total number of requested indices (the sum of
-  // the per-marker position counts; the caller knows it without re-summing).
+  // The result size is derived structurally from the position counts of the
+  // marker groups; `numberOfResults` must be consistent with that sum (it is
+  // checked, not trusted).
   // _____________________________________________________________________________
   static VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
       MarkerBatchLookups markerLookups,
       const IndicesAndPositionsByMarker<numberOfVocabs>&
           markerIndicesAndPositions,
       size_t numberOfResults) {
-    std::vector<std::string_view> viewsInInputOrder(numberOfResults);
-    std::vector<bool> filledSlots(numberOfResults, false);
-    std::vector<VocabBatchOwner> resultOwners;
+    size_t totalPositions = 0;
+    for (const auto& markerIndices : markerIndicesAndPositions) {
+      totalPositions += markerIndices.size();
+    }
+    AD_CORRECTNESS_CHECK(totalPositions == numberOfResults);
+
+    MultiSourceVocabBatchAssembler assembler(totalPositions);
 
     for (const auto& [vocabMarker, markerIndices] :
          ::ranges::views::enumerate(markerIndicesAndPositions)) {
@@ -188,15 +193,11 @@ class SplitVocabulary {
       }
 
       AD_CORRECTNESS_CHECK(markerLookups[vocabMarker] != nullptr);
-
-      scatterVocabBatchLookupResult(markerLookups.release(vocabMarker),
-                                    markerIndices.getResultPositions(),
-                                    viewsInInputOrder, filledSlots,
-                                    resultOwners);
+      assembler.scatterSubBatchResultAtPositions(
+          markerLookups.release(vocabMarker),
+          markerIndices.getResultPositions());
     }
-    return keepAliveVocabBatch(std::move(resultOwners),
-                               std::move(viewsInInputOrder),
-                               std::move(filledSlots));
+    return std::move(assembler).finalizeVocabBatchLookupResult();
   }
 
   // Grant unit tests access to the private `lookupBatch` helpers.
@@ -290,7 +291,7 @@ class SplitVocabulary {
             });
 
     MarkerBatchLookups markerLookups;
-    for (auto&& [marker, markerIndicesAndPositionsForMarker] :
+    for (const auto& [marker, markerIndicesAndPositionsForMarker] :
          ::ranges::views::enumerate(markerIndicesAndPositions)) {
       if (markerIndicesAndPositionsForMarker.empty()) {
         continue;
