@@ -108,7 +108,7 @@ struct DecoderMultiplexer {
     ENABLE_CLANG_WARNINGS
   }
 
-  // ______________________________________________________________
+  // ______________________
   // Return the maximum number of output bytes needed to decompress
   // `compressed` with `decoderIndex`.
   [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed,
