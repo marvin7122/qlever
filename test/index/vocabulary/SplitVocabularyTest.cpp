@@ -506,24 +506,31 @@ using namespace splitVocabTestHelpers;
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
-  static constexpr const char* filename_ = "SplitVocabularyWithDataTest.dat";
+  static std::string getFilename() {
+    const auto* suite =
+        ::testing::UnitTest::GetInstance()->current_test_suite();
+    AD_CORRECTNESS_CHECK(suite != nullptr);
+    return absl::StrCat(suite->name(), ".dat");
+  }
 
   static void SetUpTestSuite() {
-    ad_utility::deleteFile(filename_, false);
-    ad_utility::deleteFile(absl::StrCat(filename_, ".a"), false);
-    auto ww = sv_.makeDiskWriterPtr(filename_);
+    const auto filename = getFilename();
+    ad_utility::deleteFile(filename, false);
+    ad_utility::deleteFile(absl::StrCat(filename, ".a"), false);
+    auto ww = sv_.makeDiskWriterPtr(filename);
     (*ww)("\"\"", true);
     (*ww)("\"abc\"", true);
     (*ww)("\"axyz\"", true);
     (*ww)("\"xyz\"", true);
     ww->finish();
-    sv_.readFromFile(filename_);
+    sv_.readFromFile(filename);
   }
 
   static void TearDownTestSuite() {
+    const auto filename = getFilename();
     sv_.close();
-    ad_utility::deleteFile(filename_);
-    ad_utility::deleteFile(absl::StrCat(filename_, ".a"));
+    ad_utility::deleteFile(filename);
+    ad_utility::deleteFile(absl::StrCat(filename, ".a"));
   }
 
   static TwoSplitVocabulary sv_;
