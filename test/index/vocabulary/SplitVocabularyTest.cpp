@@ -13,8 +13,8 @@
 
 #include "./VocabularyTestHelpers.h"
 #include "backports/StartsWithAndEndsWith.h"
-#include "index/vocabulary/VocabBatchLookupHelpers.h"
 #include "index/vocabulary/SplitVocabularyImpl.h"
+#include "index/vocabulary/VocabBatchLookupHelpers.h"
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyType.h"
 #include "util/GTestHelpers.h"
