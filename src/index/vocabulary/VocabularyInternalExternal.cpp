@@ -1,8 +1,20 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (kalmbach@cs.uni-freiburg.de)
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyInternalExternal.h"
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "backports/algorithm.h"
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
@@ -11,6 +23,64 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
     return std::string{fromInternal.value()};
   }
   return externalVocab_[i];
+}
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
+    ql::span<const size_t> indices) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+
+  // Classify without mixed-result buffers. The pure-disk path returns the
+  // external batch directly and must not allocate `diskSlots` or `assembled`.
+  std::vector<size_t> diskIndices;
+  std::vector<std::pair<size_t, std::string_view>> internalSlots;
+  diskIndices.reserve(indices.size());
+
+  for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
+    auto fromInternal = internalVocab_[idx];
+    if (fromInternal.has_value()) {
+      internalSlots.emplace_back(static_cast<size_t>(i), fromInternal.value());
+    } else {
+      diskIndices.push_back(idx);
+    }
+  }
+
+  // Hand the disk batch through so we do not copy the already-owned compressed
+  // bytes.
+  if (diskIndices.size() == indices.size()) {
+    return externalVocab_.lookupBatch(diskIndices);
+  }
+
+  std::vector<std::string_view> assembled(indices.size());
+  for (const auto& [position, word] : internalSlots) {
+    assembled[position] = word;
+  }
+  std::vector<VocabBatchOwner> owners;
+  if (!diskIndices.empty()) {
+    // Mixed path only: input positions of disk misses, same order as
+    // `diskIndices`.
+    std::vector<char> isInternal(indices.size(), 0);
+    for (const auto& [position, word] : internalSlots) {
+      isInternal[position] = 1;
+    }
+    std::vector<size_t> diskSlots;
+    diskSlots.reserve(diskIndices.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      if (isInternal[i] == 0) {
+        diskSlots.push_back(i);
+      }
+    }
+    AD_CORRECTNESS_CHECK(diskSlots.size() == diskIndices.size());
+
+    auto disk = externalVocab_.lookupBatch(diskIndices);
+    owners.reserve(1 + static_cast<size_t>(!internalSlots.empty()));
+    scatterVocabBatchLookupResult(std::move(disk), diskSlots, assembled,
+                                  owners);
+  }
+  if (!internalSlots.empty()) {
+    owners.push_back(internalVocab_.wordStorage());
+  }
+  return keepAliveVocabBatch(std::move(owners), std::move(assembled));
 }
 
 // _____________________________________________________________________________
