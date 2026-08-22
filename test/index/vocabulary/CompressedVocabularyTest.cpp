@@ -317,6 +317,21 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 //    verify content byte-for-byte, which makes corruption overwhelmingly
 //    likely but not formally guaranteed.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
+  // Verify that an intermediate local `std::pmr::string` would indeed use the
+  // Small String Optimization (SSO) on this platform by checking if `data()`
+  // points inside the object's own memory layout.
+  // Reference: https://en.cppreference.com/w/cpp/string/basic_string (SSO <= 15
+  // bytes on 64-bit libstdc++).
+  {
+    ql::pmr::monotonic_buffer_resource tempResource;
+    std::pmr::string sample{"s0", &tempResource};
+    const char* dataPtr = sample.data();
+    const auto* objStart = reinterpret_cast<const char*>(&sample);
+    const auto* objEnd = objStart + sizeof(sample);
+    ASSERT_TRUE(dataPtr >= objStart && dataPtr < objEnd)
+        << "Platform std::pmr::string does not use SSO for 2-character strings";
+  }
+
   // All words deliberately short (<= 15 chars): every one takes the SSO
   // path in a `pmr::string`-based implementation, and none would end up in
   // the monotonic buffer that owns the result's storage.
