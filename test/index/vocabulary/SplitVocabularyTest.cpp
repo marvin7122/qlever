@@ -533,6 +533,8 @@ TEST(Vocabulary, SplitVocabularyLookupBatchRejectsOutOfRangeMarker) {
 
 using namespace splitVocabTestHelpers;
 
+using namespace splitVocabTestHelpers;
+
 // Share common SplitVocabulary setup across multiple tests.
 // Populates the vocabulary once per test suite with:
 //     and index 1: "" and index 1: "abc"; marker 1 with index 0: "xyz" and
