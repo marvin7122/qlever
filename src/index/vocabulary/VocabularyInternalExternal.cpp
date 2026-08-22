@@ -97,6 +97,8 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
 
   // Fill in internal results first.
   for (const auto& [position, word] : partition.internalSlots_) {
+    AD_CORRECTNESS_CHECK(position < assembled.size());
+    AD_CORRECTNESS_CHECK(assembled[position].data() == nullptr);
     assembled[position] = word;
   }
 

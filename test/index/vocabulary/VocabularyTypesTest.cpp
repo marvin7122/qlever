@@ -292,3 +292,32 @@ TEST(VocabBatchLookupData, MakePmrResultKeepsViewsAlive) {
   EXPECT_THAT(*result, ::testing::ElementsAre("one", "two"));
   EXPECT_EQ((*result)[0].data(), firstData);
 }
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, ScatterBatchDoubleWriteThrows) {
+  auto batch1 = makeStringVectorVocabBatchLookupResult({"first"});
+  auto batch2 = makeStringVectorVocabBatchLookupResult({"second"});
+  std::vector<std::string_view> views(2);
+  std::vector<VocabBatchOwner> owners;
+  const std::array<size_t, 1> pos0{0};
+  scatterVocabBatchLookupResult(std::move(batch1), pos0, views, owners);
+  // Attempting to scatter to position 0 again must throw because it was already
+  // written.
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      scatterVocabBatchLookupResult(std::move(batch2), pos0, views, owners),
+      ::testing::HasSubstr("viewsInInputOrder[resultPosition].data() == nullptr"));
+}
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, KeepAliveVocabBatchIncompleteCoverageThrows) {
+  auto batch = makeStringVectorVocabBatchLookupResult({"first"});
+  std::vector<std::string_view> views(2);  // Slot 1 remains unwritten (null)
+  std::vector<VocabBatchOwner> owners;
+  const std::array<size_t, 1> pos0{0};
+  scatterVocabBatchLookupResult(std::move(batch), pos0, views, owners);
+  // Slot 1 was never written, so keepAliveVocabBatch must throw.
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      keepAliveVocabBatch(std::move(owners), std::move(views)),
+      ::testing::HasSubstr("v.data() != nullptr"));
+}
+

@@ -182,18 +182,12 @@ inline void scatterVocabBatchLookupResult(
     std::vector<VocabBatchOwner>& owners) {
   AD_CONTRACT_CHECK(result != nullptr);
   AD_CONTRACT_CHECK(result->size() == resultPositions.size());
-  std::vector<bool> written(viewsInInputOrder.size());
   for (auto [resultPosition, word] :
        ::ranges::views::zip(resultPositions, *result)) {
     AD_CORRECTNESS_CHECK(resultPosition < viewsInInputOrder.size());
-    AD_CORRECTNESS_CHECK(!written[resultPosition]);
-    written[resultPosition] = true;
+    AD_CORRECTNESS_CHECK(viewsInInputOrder[resultPosition].data() == nullptr);
     viewsInInputOrder[resultPosition] = word;
   }
-  // Note: this function is called once per child batch; each call writes only
-  // its own positions. Completeness across calls (every position written) is
-  // the caller's contract, enforced by `keepAliveVocabBatch`'s non-empty
-  // checks and the per-call double-write guard above.
   owners.push_back(std::move(result));
 }
 
@@ -210,6 +204,8 @@ inline VocabBatchLookupResult keepAliveVocabBatch(
     std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words) {
   AD_CONTRACT_CHECK(!owners.empty());
   AD_CONTRACT_CHECK(!words.empty());
+  AD_CORRECTNESS_CHECK(ql::ranges::all_of(
+      words, [](const std::string_view& v) { return v.data() != nullptr; }));
   auto data = std::make_shared<MultiOwnerVocabBatchLookupData>();
   data->buffer() = std::move(owners);
   data->views() = std::move(words);
