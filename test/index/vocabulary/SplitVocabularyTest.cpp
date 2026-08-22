@@ -506,17 +506,25 @@ using namespace splitVocabTestHelpers;
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
+  static constexpr const char* filename_ = "SplitVocabularyTestData.dat";
+
   static void SetUpTestSuite() {
-    auto ww = sv_.makeDiskWriterPtr("SplitVocabularyTestData.dat");
+    ad_utility::deleteFile(filename_, false);
+    ad_utility::deleteFile(absl::StrCat(filename_, ".a"), false);
+    auto ww = sv_.makeDiskWriterPtr(filename_);
     (*ww)("\"\"", true);
     (*ww)("\"abc\"", true);
     (*ww)("\"axyz\"", true);
     (*ww)("\"xyz\"", true);
     ww->finish();
-    sv_.readFromFile("SplitVocabularyTestData.dat");
+    sv_.readFromFile(filename_);
   }
 
-  static void TearDownTestSuite() { sv_.close(); }
+  static void TearDownTestSuite() {
+    sv_.close();
+    ad_utility::deleteFile(filename_);
+    ad_utility::deleteFile(absl::StrCat(filename_, ".a"));
+  }
 
   static TwoSplitVocabulary sv_;
 };
