@@ -16,6 +16,7 @@
 #include <re2/re2.h>
 
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <sstream>
 #include <vector>
