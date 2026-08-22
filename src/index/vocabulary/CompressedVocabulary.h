@@ -106,8 +106,8 @@ CPP_template(typename UnderlyingVocabulary,
   auto scanAll() const {
     return ad_utility::CachingTransformInputRange(
         underlyingVocabulary_.scanAll(),
-        [this, buffer = std::string{}, scratch = std::string{}](
-            const IndexAndWord& compressed) mutable {
+        [this, buffer = std::string{},
+         scratch = std::string{}](const IndexAndWord& compressed) mutable {
           const auto& [index, word] = compressed;
           const size_t decoderIdx = getDecoderIdx(index);
           AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
@@ -118,11 +118,10 @@ CPP_template(typename UnderlyingVocabulary,
           }
           buffer.resize(boundOnDecompressedWordSize);
           const size_t numBytesWritten = compressionWrapper_.decompressInto(
-              word, decoderIdx,
-              ql::span<char>{buffer.data(), buffer.size()}, scratch);
+              word, decoderIdx, ql::span<char>{buffer.data(), buffer.size()},
+              scratch);
           AD_CORRECTNESS_CHECK(numBytesWritten > 0 &&
-                               numBytesWritten <=
-                                   boundOnDecompressedWordSize);
+                               numBytesWritten <= boundOnDecompressedWordSize);
           return IndexAndWord{index,
                               std::string_view{buffer.data(), numBytesWritten}};
         });
@@ -136,10 +135,10 @@ CPP_template(typename UnderlyingVocabulary,
   // alive and providing `string_view`s for each requested index in `indices`.
   // `indices` must not be empty.
   //
-  // TODO<marvin7122>: Because `ql::pmr::monotonic_buffer_resource` does not support
-  // reclaiming or shrinking individual allocations in place, any unused memory
-  // between the actual decompressed length and `maxDecompressedSize` remains
-  // allocated in the allocation arena until the entire batch result is
+  // TODO<marvin7122>: Because `ql::pmr::monotonic_buffer_resource` does not
+  // support reclaiming or shrinking individual allocations in place, any unused
+  // memory between the actual decompressed length and `maxDecompressedSize`
+  // remains allocated in the allocation arena until the entire batch result is
   // destroyed. Measure the empirical bound-vs-used memory waste on large-scale
   // workloads to determine whether a custom bump allocator with in-place tail
   // trimming or batch compaction is worthwhile.
@@ -156,9 +155,8 @@ CPP_template(typename UnderlyingVocabulary,
 
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, *compressedWords)) {
-      views.push_back(decompressWordIntoArena(compressedWord,
-                                              getDecoderIdx(idx), *buffer,
-                                              scratch));
+      views.push_back(decompressWordIntoArena(
+          compressedWord, getDecoderIdx(idx), *buffer, scratch));
     }
 
     return makePmrVocabBatchLookupResult(std::move(buffer), std::move(views));
