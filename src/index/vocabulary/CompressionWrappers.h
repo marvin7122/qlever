@@ -116,6 +116,7 @@ struct DecoderMultiplexer {
     return decoders_.at(decoderIndex).maxDecompressedSize(compressed);
   }
 
+  // ______________________________________________________________
   // Decode `compressed` with decoder at `decoderIndex` in `decoders_` into
   // the `out` buffer. `scratch` is used only by multi-stage FSST; single-stage
   // decoders ignore it. Return the number of bytes written to `out`.
