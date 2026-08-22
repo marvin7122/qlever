@@ -218,6 +218,9 @@ TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   ASSERT_FALSE(sv.getGeoInfo(1ULL << 59).has_value());
   ASSERT_FALSE(sv.getGeoInfo((1ULL << 59) | 1).has_value());
 
+  const auto filename = gtestCurrentTestName();
+  ad_utility::deleteFile(filename);
+  ad_utility::deleteFile(absl::StrCat(filename, ".a"));
   sv.close();
 }
 
