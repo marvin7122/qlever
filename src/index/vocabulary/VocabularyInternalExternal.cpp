@@ -67,7 +67,7 @@ static IndexPartition partitionIndicesBySource(
   result.internalSlots_.reserve(indices.size());
   result.diskSlots_.reserve(indices.size());
 
-  for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
+  for (auto [i, idx] : ql::views::enumerate(indices)) {
     auto fromInternal = internalVocab[idx];
     if (fromInternal.has_value()) {
       result.internalSlots_.emplace_back(static_cast<size_t>(i),
@@ -94,11 +94,13 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // Handle mixed internal and external indices by assembling results from both
   // sources.
   std::vector<std::string_view> assembled(indices.size());
+  std::vector<bool> filledSlots(indices.size(), false);
 
   // Fill in internal results first.
   for (const auto& [position, word] : partition.internalSlots_) {
     AD_CORRECTNESS_CHECK(position < assembled.size());
-    AD_CORRECTNESS_CHECK(assembled[position].data() == nullptr);
+    AD_CORRECTNESS_CHECK(!filledSlots[position]);
+    filledSlots[position] = true;
     assembled[position] = word;
   }
 
@@ -107,14 +109,16 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   if (!partition.diskSlots_.empty()) {
     auto disk = externalVocab_.lookupBatch(partition.diskSlots_.indices());
     owners.reserve(2);
-    scatterVocabBatchLookupResult(
-        std::move(disk), partition.diskSlots_.positions(), assembled, owners);
+    scatterVocabBatchLookupResult(std::move(disk),
+                                  partition.diskSlots_.positions(), assembled,
+                                  filledSlots, owners);
   }
 
   // Add ownership of internal data.
   owners.push_back(internalVocab_.wordStorage());
 
-  return keepAliveVocabBatch(std::move(owners), std::move(assembled));
+  return keepAliveVocabBatch(std::move(owners), std::move(assembled),
+                             std::move(filledSlots));
 }
 
 // _____________________________________________________________________________
