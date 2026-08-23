@@ -72,7 +72,7 @@ https://github.com/google/googletest/blob/main/docs/reference/matchers.md#matche
 #define AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(statement, errorMessageMatcher, \
                                               exceptionType)                  \
   try {                                                                       \
-    statement;                                                                \
+    (void)(statement);                                                        \
     ADD_FAILURE() << "No exception was thrown";                               \
   } catch (const exceptionType& e) {                                          \
     EXPECT_THAT(e.what(), errorMessageMatcher)                                \
