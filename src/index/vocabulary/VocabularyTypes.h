@@ -395,10 +395,28 @@ class MultiSourceVocabBatchAssembler
 
 // _____________________________________________________________________________
 // A mapping from an underlying vocabulary index to its target position in the
-// assembled output batch.
-struct VocabIndexMapping {
+// assembled output batch. All internal representation is private.
+class VocabIndexMapping {
+ private:
   size_t underlyingIndex_{};
   size_t resultPosition_{};
+
+ public:
+  VocabIndexMapping() = default;
+  VocabIndexMapping(size_t underlyingIndex, size_t resultPosition)
+      : underlyingIndex_{underlyingIndex}, resultPosition_{resultPosition} {}
+
+  [[nodiscard]] size_t underlyingIndex() const noexcept {
+    return underlyingIndex_;
+  }
+  [[nodiscard]] size_t resultPosition() const noexcept {
+    return resultPosition_;
+  }
+
+  void setUnderlyingIndex(size_t index) noexcept { underlyingIndex_ = index; }
+  void setResultPosition(size_t position) noexcept {
+    resultPosition_ = position;
+  }
 };
 
 // _____________________________________________________________________________
@@ -422,8 +440,8 @@ class MarkerIndicesAndPositions {
   // ___________________________________________________________________________
   // Add a mapped (underlyingIndex, resultPosition) entry.
   void add(VocabIndexMapping mapping) {
-    underlyingIndices_.push_back(mapping.underlyingIndex_);
-    resultPositions_.push_back(mapping.resultPosition_);
+    underlyingIndices_.push_back(mapping.underlyingIndex());
+    resultPositions_.push_back(mapping.resultPosition());
   }
 
   // ___________________________________________________________________________
@@ -484,7 +502,8 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
        ::ranges::views::enumerate(indices)) {
     auto [marker, underlyingIndex] = getMarkerAndIndex(markedIndex);
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
-    out[marker].add({underlyingIndex, static_cast<size_t>(resultPosition)});
+    out[marker].add(VocabIndexMapping{underlyingIndex,
+                                      static_cast<size_t>(resultPosition)});
   }
   return out;
 }
