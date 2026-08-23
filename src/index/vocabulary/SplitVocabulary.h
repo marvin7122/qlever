@@ -144,10 +144,12 @@ class SplitVocabulary {
   // ___________________________________________________________________________
   // Batch lookup results for each underlying vocabulary, indexed by vocabulary
   // marker. Stores results only from vocabularies with lookup indices in this
-  // batch (others remain null).
+  // batch. Single-release invariant guarantees each slot is consumed at most
+  // once.
   class MarkerBatchLookups {
    private:
     std::array<VocabBatchLookupResult, numberOfVocabs> results_{};
+    std::array<bool, numberOfVocabs> released_{};
 
    public:
     MarkerBatchLookups() = default;
@@ -155,16 +157,20 @@ class SplitVocabulary {
     // Access the lookup result for the given vocabulary marker.
     VocabBatchLookupResult& operator[](size_t marker) {
       AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
+      AD_CORRECTNESS_CHECK(!released_[marker]);
       return results_[marker];
     }
     const VocabBatchLookupResult& operator[](size_t marker) const {
       AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
+      AD_CORRECTNESS_CHECK(!released_[marker]);
       return results_[marker];
     }
 
-    // Move out the lookup result for the given vocabulary marker.
+    // Move out the lookup result for the given vocabulary marker exactly once.
     VocabBatchLookupResult release(size_t marker) {
       AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
+      AD_CORRECTNESS_CHECK(!released_[marker]);
+      released_[marker] = true;
       return std::move(results_[marker]);
     }
   };

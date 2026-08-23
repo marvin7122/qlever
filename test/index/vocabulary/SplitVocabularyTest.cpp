@@ -604,6 +604,14 @@ TEST_F(SplitVocabularyWithDataTest,
 }
 
 // _____________________________________________________________________________
+TEST(TwoSplitVocabulary, MarkerBatchLookupsDoubleReleaseThrows) {
+  TwoSplitVocabulary::MarkerBatchLookups lookups;
+  auto first = lookups.release(0);
+  AD_EXPECT_THROW_WITH_MESSAGE(lookups.release(0),
+                               ::testing::HasSubstr("!released_[marker]"));
+}
+
+// _____________________________________________________________________________
 TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   // Create a `SplitVocabulary::WordWriter` and destruct it without a call to
   // `finish()`.
