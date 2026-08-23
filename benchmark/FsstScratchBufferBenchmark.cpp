@@ -21,6 +21,7 @@
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
+#include "benchmark/infrastructure/Benchmark.h"
 
 namespace ad_benchmark {
 namespace {
