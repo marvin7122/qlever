@@ -11,6 +11,7 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include "../../util/GTestHelpers.h"
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -20,7 +21,6 @@
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/Exception.h"
 #include "util/Serializer/ByteBufferSerializer.h"
-#include "../../util/GTestHelpers.h"
 
 namespace {
 
