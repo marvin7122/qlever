@@ -331,13 +331,11 @@ TEST(VocabBatchLookupData, KeepAliveVocabBatchIncompleteCoverageThrows) {
 }
 
 // _____________________________________________________________________________
-// Verify that a legitimately empty word (a default-constructed `string_view`
-// with null data pointer) does not trip any correctness check: the filled/un-
-// filled invariant is structural, not based on the view's data pointer.
+// Verify that a legitimately empty word does not trip any correctness check:
+// the filled/unfilled invariant is structural, not based on the view contents.
 TEST(VocabBatchLookupData,
-     ScatterAndKeepAliveTolerateEmptyWordWithNullDataPointer) {
+     ScatterAndKeepAliveTolerateEmptyWord) {
   auto batch = makeStringVectorVocabBatchLookupResult({"", "x"});
-  ASSERT_EQ((*batch)[0].data(), nullptr);  // Empty word has null data.
 
   std::vector<std::string_view> views(2);
   std::vector<bool> filledSlots(2, false);
@@ -384,7 +382,9 @@ TEST(VocabBatchLookupData,
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerIncompleteCoverageThrows) {
   MultiSourceVocabBatchAssembler assembler(2);
-  assembler.assignWordAtPosition(0, "first");
+  auto subBatch = makeStringVectorVocabBatchLookupResult({"first"});
+  const std::array<size_t, 1> subPositions{0};
+  assembler.scatterSubBatchResultAtPositions(std::move(subBatch), subPositions);
   // Slot 1 remains unassigned.
 
   AD_EXPECT_THROW_WITH_MESSAGE(
