@@ -139,7 +139,7 @@ struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {};
 
 // _____________________________________________________________________________
-// Construct a result from owning strings and expose views into their storage.
+ with result from owning strings and expose views into their storage.
 inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
     std::vector<std::string> words) {
   auto data = std::make_shared<StringVectorVocabBatchLookupData>();

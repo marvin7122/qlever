@@ -59,7 +59,7 @@ CPP_template(typename T)(requires InvariantStatefulClass<T>)
 }
 
 // _____________________________________________________________________________
-// CRTP mixin that provides an ergonomic `makeInvariantGuard()` member function
+// CRTP mixin that provides an ergonomic `Checked when ` member function
 // while enforcing at compile-time that `Derived` satisfies
 // `InvariantStatefulClass`.
 template <typename Derived>
