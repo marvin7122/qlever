@@ -173,18 +173,16 @@ class VocabBatchLookupDataVocabTest : public ::testing::Test {
 };
 
 // _____________________________________________________________________________
-// A view obtained from `VocabularyInMemoryBinSearch` stays valid when the
-// vocabulary is `close()`d afterwards: the batch result retains
-// `wordStorage()` shared ownership of the bytes, and `close()` only installs a
-// fresh empty buffer instead of mutating the old one.
+// A batch result obtained from `VocabularyInMemoryBinSearch` stays valid when
+// the vocabulary is `close()`d afterwards: the result owns the bytes, and
+// `close()` only installs a fresh empty buffer instead of mutating the old one.
 TEST_F(VocabBatchLookupDataVocabTest, MultiSourceAssemblerOutlivesClose) {
   auto vocabulary = buildVocab("ram-word");
-  auto maybeWord = vocabulary[0];
-  ASSERT_TRUE(maybeWord.has_value());
-  const char* wordData = maybeWord->data();
+  const std::array<size_t, 1> positions{0};
+  auto batch = vocabulary.lookupBatch(positions);
+  const char* wordData = batch[0].data();
   MultiSourceVocabBatchAssembler assembler(1);
-  assembler.assignWordAtPosition(0, maybeWord.value());
-  assembler.registerStorageOwner(vocabulary.wordStorage());
+  assembler.scatterSubBatchResultAtPositions(std::move(batch), positions);
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
 
   vocabulary.close();
@@ -200,12 +198,11 @@ TEST_F(VocabBatchLookupDataVocabTest, MultiSourceAssemblerOutlivesClose) {
 TEST_F(VocabBatchLookupDataVocabTest,
        MultiSourceAssemblerOutlivesVocabularyDestruction) {
   auto vocabulary = std::make_optional(buildVocab("other-word"));
-  auto maybeWord = (*vocabulary)[0];
-  ASSERT_TRUE(maybeWord.has_value());
-  const char* wordData = maybeWord->data();
+  const std::array<size_t, 1> positions{0};
+  auto batch = vocabulary->lookupBatch(positions);
+  const char* wordData = batch[0].data();
   MultiSourceVocabBatchAssembler assembler(1);
-  assembler.assignWordAtPosition(0, maybeWord.value());
-  assembler.registerStorageOwner(vocabulary->wordStorage());
+  assembler.scatterSubBatchResultAtPositions(std::move(batch), positions);
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
 
   vocabulary.reset();
