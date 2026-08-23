@@ -134,7 +134,8 @@ class ContiguousVocabBatchBuilder {
     }
   }
 
-  [[nodiscard]] const std::vector<char*>& targets() const noexcept {
+  [[nodiscard]] ql::span<char*> targets() noexcept { return targets_; }
+  [[nodiscard]] ql::span<char* const> targets() const noexcept {
     return targets_;
   }
 
