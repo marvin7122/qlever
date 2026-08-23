@@ -432,6 +432,14 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
       EXPECT_THAT(std::string_view(intoBuf.data(), n),
                   ::testing::Eq(viaString));
       EXPECT_THAT(viaString, ::testing::Eq(words[i]));
+
+      // Also verify the 2-argument overload without scratch parameter:
+      std::string intoBuf2(repeated.maxDecompressedSize(compressed[i]), '\0');
+      const size_t n2 = repeated.decompressInto(
+          compressed[i], ql::span<char>{intoBuf2.data(), intoBuf2.size()});
+      EXPECT_THAT(n2, ::testing::Eq(viaString.size()));
+      EXPECT_THAT(std::string_view(intoBuf2.data(), n2),
+                  ::testing::Eq(viaString));
     }
 
     if constexpr (N >= 2) {

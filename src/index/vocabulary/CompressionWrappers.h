@@ -43,7 +43,7 @@ CPP_concept BulkResultForDecoder =
 template <typename T>
 CPP_requires(
     CompressionWrapper_,
-    requires(const T& t, std::string& decompressInto, ql::span<char> out)(
+    requires(const T& t, std::string& scratch, ql::span<char> out)(
         // Return the number of decoders that are stored.
         concepts::same_as<decltype(t.numDecoders()), size_t>,
         // Decompress the given string, use the Decoder specified by the second

@@ -177,34 +177,53 @@ class FsstRepeatedDecoder {
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
                                       std::string& scratch) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(str));
-    if constexpr (N >= 2) {
+    if constexpr (N == 1) {
+      return decoders_[0].decompressInto(str, out);
+    } else {
       if (scratch.size() < out.size()) {
         scratch.resize(out.size());
       }
+      std::array<ql::span<char>, 2> buffers{
+          out, ql::span<char>{scratch.data(), scratch.size()}};
+      // For even `N`, write the first stage to `scratch` and the last to `out`.
+      // For odd `N`, write the first and last stages to `out`.
+      size_t dest = (N % 2 == 0) ? 1 : 0;
+      std::string_view input = str;
+      size_t n = 0;
+      for (size_t stage = 0; stage < N; ++stage) {
+        n = decoders_[N - 1 - stage].decompressInto(input, buffers[dest]);
+        input = std::string_view{buffers[dest].data(), n};
+        dest ^= 1;
+      }
+      return n;
     }
-    std::array<ql::span<char>, 2> buffers{
-        out, ql::span<char>{scratch.data(), scratch.size()}};
-    // For even `N`, write the first stage to `scratch` and the last to `out`.
-    // For odd `N`, write the first and last stages to `out`.
-    size_t dest = (N % 2 == 0) ? 1 : 0;
-    std::string_view input = str;
-    size_t n = 0;
-    for (size_t stage = 0; stage < N; ++stage) {
-      n = decoders_[N - 1 - stage].decompressInto(input, buffers[dest]);
-      input = std::string_view{buffers[dest].data(), n};
-      dest ^= 1;
+  }
+
+  // ___________________________________________________________________________
+  // Decompress `str` into `out` without requiring a caller-owned scratch buffer.
+  [[nodiscard]] size_t decompressInto(std::string_view str,
+                                      ql::span<char> out) const {
+    if constexpr (N == 1) {
+      return decoders_[0].decompressInto(str, out);
+    } else {
+      std::string scratch;
+      return decompressInto(str, out, scratch);
     }
-    return n;
   }
 
   // ___________________________________________________________________________
   // Decompress a single string. Callers that already own an output buffer
   // should use `decompressInto` instead.
   std::string decompress(std::string_view str) const {
-    std::string scratch;
-    return detail::decompressToOwnedString(
-        maxDecompressedSize(str),
-        [&](ql::span<char> out) { return decompressInto(str, out, scratch); });
+    if constexpr (N == 1) {
+      return decoders_[0].decompress(str);
+    } else {
+      std::string current = decoders_[N - 1].decompress(str);
+      for (size_t stage = 1; stage < N; ++stage) {
+        current = decoders_[N - 1 - stage].decompress(current);
+      }
+      return current;
+    }
   }
 
   // ___________________________________________________________________________
