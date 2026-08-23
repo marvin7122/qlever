@@ -368,11 +368,39 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyVocabulary) {
 // _____________________________________________________________________________
 // A vocabulary containing the empty string word ("") must be scanned correctly
 // across all compressors (exercising the `maxDecompressedSize == 0` fast path
-// in `scanAll`'s buffered decode).
+// in `scanAll`'s buffered decode), and zero-length views must provide non-null
+// data pointers.
 TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
   auto createVocab = TestFixture::createCompressedVocabulary();
   const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
   auto vocab = createVocab(words);
+  std::vector<std::string> scannedWords;
+  for (const IndexAndWord& entry : vocab.scanAll()) {
+    if (entry.word_.empty()) {
+      EXPECT_NE(entry.word_.data(), nullptr);
+    }
+    scannedWords.emplace_back(entry.word_);
+  }
   using ::testing::ElementsAreArray;
-  EXPECT_THAT(scanAllToVector(vocab.scanAll()), ElementsAreArray(words));
+  EXPECT_THAT(scannedWords, ElementsAreArray(words));
+}
+
+// _____________________________________________________________________________
+TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
+  std::vector<DummyDecoder> decoders{DummyDecoder{}, DummyDecoder{}};
+  detail::DecoderMultiplexer<DummyDecoder> mux{std::move(decoders)};
+  ASSERT_EQ(mux.numDecoders(), 2u);
+
+  const std::string compressed = DummyCompressionWrapper::compress("testword");
+  const size_t bound = mux.maxDecompressedSize(compressed, 0);
+  EXPECT_EQ(bound, compressed.size());
+
+  std::string outputBuffer(bound, '\0');
+  std::string scratch;
+  const size_t written = mux.decompressInto(
+      compressed, 0, ql::span<char>{outputBuffer.data(), outputBuffer.size()},
+      scratch);
+  EXPECT_EQ(written, 8u);
+  EXPECT_EQ(std::string_view(outputBuffer.data(), written), "testword");
+  EXPECT_EQ(mux.decompress(compressed, 0), "testword");
 }
