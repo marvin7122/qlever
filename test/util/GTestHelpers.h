@@ -364,12 +364,14 @@ inline void assertPmrStringUsesSso(size_t maxSize = 15) {
 // points into) become implausible to survive. Call it multiple times to also
 // clobber deeper frames.
 template <size_t NumBytes = 4096>
-inline void clobberStack(char sentinel = '#') {
+[[gnu::noinline]] void clobberStack(char sentinel = '#') {
   // `volatile` prevents the compiler from optimizing the stack writes away.
   volatile char buffer[NumBytes];
   for (size_t i = 0; i < NumBytes; ++i) {
     buffer[i] = sentinel;
   }
+  // Memory barrier to ensure writes complete before function returns.
+  asm volatile("" : : "r"(buffer) : "memory");
 }
 
 // _____________________________________________________________________________
