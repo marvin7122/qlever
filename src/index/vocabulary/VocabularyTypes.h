@@ -119,7 +119,7 @@ class ContiguousVocabBatchBuilder {
   std::vector<char*> targets_;
 
  public:
-  Strong ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes)
+  explicit ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes)
       : data_{std::make_shared<ContiguousVocabBatchLookupData>()} {
     const size_t totalBytes = ::ranges::accumulate(wordSizes, size_t{0});
     data_->buffer_.resize(totalBytes);
