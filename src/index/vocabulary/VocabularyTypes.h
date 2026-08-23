@@ -329,8 +329,7 @@ inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
 // Helper struct that encapsulates assembling string_views from multiple
 // independent vocabulary sources, verifying collision-free total coverage, and
 // aggregating storage ownership into a self-contained `VocabBatchLookupResult`.
-class MultiSourceVocabBatchAssembler
-    : public ad_utility::WithInvariants<MultiSourceVocabBatchAssembler> {
+class MultiSourceVocabBatchAssembler {
  private:
   std::vector<std::string_view> assembledWordViews_;
   std::vector<bool> slotFilledTracking_;
@@ -340,10 +339,11 @@ class MultiSourceVocabBatchAssembler
   // ___________________________________________________________________________
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
       : assembledWordViews_(totalExpectedWords),
-        slotFilledTracking_(totalExpectedWords, false) {}
+        slotFilledTracking_(totalExpectedWords, false) {
+    checkInvariants();
+  }
 
   // ___________________________________________________________________________
-  // Structural invariant enforcement mandated by `WithInvariants<Derived>`.
   void checkInvariants() const {
     AD_CORRECTNESS_CHECK(assembledWordViews_.size() ==
                          slotFilledTracking_.size());
@@ -354,8 +354,6 @@ class MultiSourceVocabBatchAssembler
   // Place a single resolved string_view into its corresponding output position.
   void assignWordAtPosition(size_t resultPosition, std::string_view word) {
     AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
-    auto guard = makeInvariantGuard();
-
     AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
     slotFilledTracking_[resultPosition] = true;
     assembledWordViews_[resultPosition] = word;
@@ -369,14 +367,10 @@ class MultiSourceVocabBatchAssembler
       VocabBatchLookupResult subBatchResult,
       ql::span<const size_t> targetPositions) {
     AD_CONTRACT_CHECK(subBatchResult.size() == targetPositions.size());
-    auto guard = makeInvariantGuard();
 
     for (auto [targetPosition, word] :
          ::ranges::views::zip(targetPositions, subBatchResult)) {
-      AD_CORRECTNESS_CHECK(targetPosition < assembledWordViews_.size());
-      AD_CORRECTNESS_CHECK(!slotFilledTracking_[targetPosition]);
-      slotFilledTracking_[targetPosition] = true;
-      assembledWordViews_[targetPosition] = word;
+      assignWordAtPosition(targetPosition, word);
     }
     if (subBatchResult.owner() != nullptr) {
       storageOwners_.push_back(subBatchResult.owner());
@@ -388,21 +382,18 @@ class MultiSourceVocabBatchAssembler
   // that must outlive the assembled string_views.
   void registerStorageOwner(VocabBatchOwner storageOwner) {
     AD_CONTRACT_CHECK(storageOwner != nullptr);
-    auto guard = makeInvariantGuard();
-
     storageOwners_.push_back(std::move(storageOwner));
   }
 
   // ___________________________________________________________________________
-   exactly once.`VocabBatchLookupResult`,
-  //  (exactly once). exactly once.
+  // Finalize the assembled batch and return a self-contained
+  // `VocabBatchLookupResult` (can be called only once).
   [[nodiscard]] VocabBatchLookupResult finalizeVocabBatchLookupResult() && {
     checkInvariants();
     AD_CORRECTNESS_CHECK(!assembledWordViews_.empty());
     AD_CORRECTNESS_CHECK(!storageOwners_.empty());
-    AD_CORRECTNESS_CHECK(std::all_of(slotFilledTracking_.begin(),
-                                     slotFilledTracking_.end(),
-                                     [](bool isFilled) { return isFilled; }));
+    AD_CORRECTNESS_CHECK(ql::ranges::all_of(
+        slotFilledTracking_, [](bool isFilled) { return isFilled; }));
 
     auto multiOwnerData = std::make_shared<MultiOwnerVocabBatchLookupData>(
         std::move(storageOwners_), std::move(assembledWordViews_));
