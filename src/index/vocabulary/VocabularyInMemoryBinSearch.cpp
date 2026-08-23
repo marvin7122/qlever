@@ -13,7 +13,7 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
       "Calling open on the same vocabulary twice is probably a bug");
   {
     // Deserialize into a mutable buffer first (`words_` stores `const Words`
-    // for immutable sharing via `wordStorage()`, and moving on success ensures
+    // for immutable sharing with batch results, and moving on success ensures
     // strong exception safety).
     auto words = std::make_shared<Words>();
     ad_utility::serialization::FileReadSerializer file(fileName);
@@ -34,6 +34,24 @@ std::optional<std::string_view> VocabularyInMemoryBinSearch::operator[](
     return words()[it - indices_.begin()];
   }
   return std::nullopt;
+}
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
+    ql::span<const size_t> indices) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+
+  std::vector<std::string_view> views;
+  views.reserve(indices.size());
+  for (size_t index : indices) {
+    auto word = (*this)[index];
+    AD_CONTRACT_CHECK(word.has_value());
+    views.push_back(word.value());
+  }
+
+  auto data =
+      std::make_shared<BatchLookupData>(words_, std::move(views));
+  return BatchLookupData::asResult(std::move(data));
 }
 
 // _____________________________________________________________________________

@@ -37,9 +37,31 @@ class VocabularyInMemoryBinSearch
   using Indices = std::vector<uint64_t>;
 
  private:
+  // Own the in-memory word storage together with the string views into it.
+  // The enclosing vocabulary can be closed or destroyed while a batch result
+  // is still alive.
+  class BatchLookupData {
+   private:
+    std::shared_ptr<const Words> storage_;
+    std::vector<std::string_view> views_;
+
+   public:
+    BatchLookupData(std::shared_ptr<const Words> storage,
+                    std::vector<std::string_view> views)
+        : storage_{std::move(storage)}, views_{std::move(views)} {
+      AD_CORRECTNESS_CHECK(storage_ != nullptr);
+    }
+
+    static VocabBatchLookupResult asResult(
+        std::shared_ptr<BatchLookupData> self) {
+      auto span = ql::span<const std::string_view>{self->views_};
+      return VocabBatchLookupResult(VocabBatchOwner{std::move(self)}, span);
+    }
+  };
+
   // Store the word data through a `shared_ptr` so a
-  // `VocabBatchLookupResult` can keep the referenced bytes alive after
-  // `close()` and destruction of the vocabulary. Keep the pointer non-null.
+  // `BatchLookupData` can keep the referenced bytes alive after `close()` and
+  // destruction of the vocabulary. Keep the pointer non-null.
   std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
   Indices indices_;
 
@@ -69,6 +91,11 @@ class VocabularyInMemoryBinSearch
   // vocabulary, return `std::nullopt`.
   std::optional<std::string_view> operator[](uint64_t index) const;
 
+  // Look up a non-empty batch of indices that are present in the vocabulary.
+  // The returned views remain valid after this vocabulary is closed or
+  // destroyed.
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
+
   // Convert an iterator to a `WordAndIndex`. Required for the mixin.
   WordAndIndex iteratorToWordAndIndex(ql::ranges::iterator_t<Words> it) const;
 
@@ -97,11 +124,6 @@ class VocabularyInMemoryBinSearch
   // Const access to the underlying words.
   auto begin() const { return words().begin(); }
   auto end() const { return words().end(); }
-
-  // Return shared ownership of the word bytes. A batch-lookup result that
-  // hands out `string_view`s into this vocabulary stores this pointer, so the
-  // bytes cannot be freed while the result is alive.
-  std::shared_ptr<const Words> wordStorage() const { return words_; }
 
  private:
   // Access the words for internal use.  to avoid cascading changes ...words_->

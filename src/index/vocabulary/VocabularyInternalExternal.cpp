@@ -31,8 +31,7 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 // be resolved by the external vocabulary, while keeping their positions in the
 // original input.
 struct IndexPartition {
-  // (inputPosition, word)
-  std::vector<std::pair<size_t, std::string_view>> internalSlots_;
+  MarkerIndicesAndPositions internalSlots_;
   MarkerIndicesAndPositions diskSlots_;
 };
 
@@ -46,8 +45,7 @@ static IndexPartition partitionIndicesBySource(
   for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
     auto fromInternal = internalVocab[idx];
     if (fromInternal.has_value()) {
-      result.internalSlots_.emplace_back(static_cast<size_t>(i),
-                                         fromInternal.value());
+      result.internalSlots_.addPair(idx, static_cast<size_t>(i));
     } else {
       result.diskSlots_.addPair(idx, static_cast<size_t>(i));
     }
@@ -72,9 +70,13 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // sources.
   MultiSourceVocabBatchAssembler assembler(indices.size());
 
-  // 1. Assign internal hits to their positions.
-  for (const auto& [position, word] : partition.internalSlots_) {
-    assembler.assignWordAtPosition(position, word);
+  // 1. Look up internal hits with their storage owner and scatter them into
+  // their positions.
+  if (!partition.internalSlots_.empty()) {
+    auto internal = internalVocab_.lookupBatch(
+        partition.internalSlots_.getUnderlyingIndices());
+    assembler.scatterSubBatchResultAtPositions(
+        std::move(internal), partition.internalSlots_.getResultPositions());
   }
 
   // 2. Scatter disk results into their positions and retain their ownership.
@@ -85,10 +87,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
         std::move(disk), partition.diskSlots_.getResultPositions());
   }
 
-  // 3. Register ownership of internal vocabulary word storage.
-  assembler.registerStorageOwner(internalVocab_.wordStorage());
-
-  // 4. Finalize and return self-contained result.
+  // 3. Finalize and return self-contained result.
   return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 

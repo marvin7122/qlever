@@ -143,6 +143,14 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
   EXPECT_EQ(result[3], "beta");
 }
 
+TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
+  auto vocab = createVocabulary("LookupBatchRejectsMissingIndex")(
+      std::vector<std::string>{"alpha", "beta"});
+  const std::array<size_t, 1> missingIndex{2};
+
+  EXPECT_THROW(vocab.lookupBatch(missingIndex), ad_utility::Exception);
+}
+
 TEST(VocabularyInMemoryBinSearch, ErrorOnNonAscendingIds) {
   std::vector<std::string> words{"game", "4", "nobody"};
   std::vector<uint64_t> ids{2, 4, 3};
