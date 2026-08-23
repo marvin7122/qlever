@@ -38,7 +38,6 @@
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyTestHelpers.h"
 #include "index/vocabulary/VocabularyType.h"
-#include "util/GTestHelpers.h"
 
 namespace splitVocabTestHelpers {
 
