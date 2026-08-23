@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -29,7 +30,6 @@
 #include "util/Iterators.h"
 #include "util/TransparentFunctors.h"
 #include "util/Views.h"
-#include <cstring>
 
 // _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
@@ -112,7 +112,8 @@ class ContiguousVocabBatchLookupData {
 // _____________________________________________________________________________
 // Builder for a contiguous batch lookup result. Allocates single contiguous
 // memory for all requested word sizes, generates direct destination targets for
-// asynchronous I/O (e.g. io_uring), and pre-computes the string_view for each word at its fixed offset before any I/O happens.
+// asynchronous I/O (e.g. io_uring), and pre-computes the string_view for each
+// word at its fixed offset before any I/O happens.
 class ContiguousVocabBatchBuilder {
  private:
   std::shared_ptr<ContiguousVocabBatchLookupData> data_;

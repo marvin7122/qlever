@@ -200,7 +200,8 @@ class FsstRepeatedDecoder {
   }
 
   // ___________________________________________________________________________
-  // Decompress `str` into `out` without requiring a caller-owned scratch buffer.
+  // Decompress `str` into `out` without requiring a caller-owned scratch
+  // buffer.
   [[nodiscard]] size_t decompressInto(std::string_view str,
                                       ql::span<char> out) const {
     if constexpr (N == 1) {
