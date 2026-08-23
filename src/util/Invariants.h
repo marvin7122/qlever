@@ -16,48 +16,59 @@
 
 namespace ad_utility {
 
-// Concept requiring a class to provide a callable invariant check method.
+// _____________________________________________________________________________
+// Formal C++20 Concept satisfied by any class that provides an invariant
+// verification method: `void checkInvariants() const`.
 template <typename T>
-concept HasCheckInvariants = requires(const T& t) {
+concept InvariantStatefulClass = requires(const T& t) {
   { t.checkInvariants() } -> std::same_as<void>;
 };
 
 // _____________________________________________________________________________
-// CRTP mixin that enforces at compile-time that `Derived` implements
-// `void checkInvariants() const`, and provides a zero-overhead RAII guard
-// (`makeInvariantGuard()`) to automatically verify invariants upon method entry
-// and exit.
+// Generic RAII Guard that asserts class invariants on scope entry and scope
+// exit for ANY class that satisfies the `InvariantStatefulClass` concept.
+template <InvariantStatefulClass T>
+class InvariantGuard {
+ private:
+  const T* self_;
+
+ public:
+  explicit InvariantGuard(const T* self) : self_{self} {
+    AD_CORRECTNESS_CHECK(self_ != nullptr);
+    self_->checkInvariants();
+  }
+
+  ~InvariantGuard() { self_->checkInvariants(); }
+
+  InvariantGuard(const InvariantGuard&) = delete;
+  InvariantGuard& operator=(const InvariantGuard&) = delete;
+  InvariantGuard(InvariantGuard&&) noexcept = default;
+  InvariantGuard& operator=(InvariantGuard&&) noexcept = delete;
+};
+
+// _____________________________________________________________________________
+// Standalone deduction factory for InvariantGuard.
+template <InvariantStatefulClass T>
+[[nodiscard]] InvariantGuard<T> makeInvariantGuard(const T* instance) {
+  return InvariantGuard<T>{instance};
+}
+
+// _____________________________________________________________________________
+// CRTP mixin that provides an ergonomic `makeInvariantGuard()` member function
+// while enforcing at compile-time that `Derived` satisfies
+// `InvariantStatefulClass`.
 template <typename Derived>
 class WithInvariants {
- protected:
+ public:
   // ___________________________________________________________________________
-  // RAII Guard that asserts class invariants on scope entry and scope exit.
-  class InvariantGuard {
-   private:
-    const Derived* self_;
-
-   public:
-    explicit InvariantGuard(const Derived* self) : self_{self} {
-      AD_CORRECTNESS_CHECK(self_ != nullptr);
-      self_->checkInvariants();
-    }
-
-    ~InvariantGuard() { self_->checkInvariants(); }
-
-    InvariantGuard(const InvariantGuard&) = delete;
-    InvariantGuard& operator=(const InvariantGuard&) = delete;
-    InvariantGuard(InvariantGuard&&) noexcept = default;
-    InvariantGuard& operator=(InvariantGuard&&) noexcept = delete;
-  };
-
-  // ___________________________________________________________________________
-  // Instantiate an InvariantGuard verifying the derived instance.
-  [[nodiscard]] InvariantGuard makeInvariantGuard() const {
+  // Instantiate an InvariantGuard verifying the derived instance on entry/exit.
+  [[nodiscard]] auto makeInvariantGuard() const {
     static_assert(
-        HasCheckInvariants<Derived>,
-        "Classes inheriting from WithInvariants<T> must implement `void "
-        "checkInvariants() const`");
-    return InvariantGuard{static_cast<const Derived*>(this)};
+        InvariantStatefulClass<Derived>,
+        "Class inheriting from WithInvariants<T> must satisfy the "
+        "`ad_utility::InvariantStatefulClass` concept (implement `void "
+        "checkInvariants() const`).");
+    return InvariantGuard<Derived>{static_cast<const Derived*>(this)};
   }
 };
 
