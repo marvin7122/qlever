@@ -47,73 +47,145 @@ using VocabLookupOutput =
 // vocabulary implementations. Owns the materialized string data (`buffer()`,
 // whose concrete type `BufferType` depends on the implementation) and one
 // `string_view` per looked-up term (`views()`, each pointing into `buffer()`).
-// The vocabulary implementation that performs the lookup fills `buffer()` and
-// `views()`, then calls `asResult()` to hand out a `VocabBatchLookupResult`
-// that keeps this object (and thus the storage the views point into) alive for
-// as long as the `VocabBatchLookupResult` is used.
-//
-// NOTE: Use `finalize()` after filling `views` to set up the span, then use
-// `asResult()` to get a `VocabBatchLookupResult` via aliasing shared_ptr.
-template <typename BufferType>
-class VocabLookupDataCommonBase {
+// //
+// _____________________________________________________________________________
+// Type-erased smart pointer holding whatever keeps word storage alive. Used
+// to store child `VocabBatchLookupResult`s or references to vocabulary state
+// (e.g., shared ownership of a vocabulary's in-memory word storage).
+using VocabBatchOwner = std::shared_ptr<const void>;
+
+// _____________________________________________________________________________
+// Strong, self-contained batch-lookup result backed by a contiguous character
+// buffer (used for reading fixed-size chunks from disk). All storage is
+// private.
+class ContiguousVocabBatchLookupData {
+ private:
+  std::vector<char> buffer_;
+  std::vector<std::string_view> views_;
+  ql::span<std::string_view> span_;
+
+  friend class ContiguousVocabBatchBuilder;
+
  public:
-  // Mutable access to the buffer that holds the materialized string data, for
-  // the producer to fill before calling `asResult`.
-  BufferType& buffer() { return buffer_; }
-
-  // Mutable access to the views (one `string_view` per looked-up index, each
-  // pointing into `buffer()`), for the producer to fill before calling
-  // `asResult`.
-  std::vector<std::string_view>& views() { return views_; }
-
-  // Convert a filled lookup-data object into the public result type
-  // `VocabBatchLookupResult`. `self` must be the owning shared_ptr of the
-  // object to convert. The returned aliasing shared_ptr exposes only the span
-  // over `views()`, but keeps the whole object (and thus the
-  // `buffer()`/`views()` that the span points into) alive as long as the result
-  // lives.
   static VocabBatchLookupResult asResult(
-      std::shared_ptr<VocabLookupDataCommonBase> self) {
-    self->finalize();
+      std::shared_ptr<ContiguousVocabBatchLookupData> self) {
+    self->span_ = ql::span<std::string_view>{self->views_};
     auto* spanPtr = &self->span_;
     return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
                                                        spanPtr);
   }
-
- private:
-  // Buffer for the materialized string data (used by disk-based vocabularies).
-  BufferType buffer_;
-
-  // One `string_view` per looked-up index, each pointing into `buffer_`.
-  std::vector<std::string_view> views_;
-
-  // The span over `views_`, populated by `finalize()` and exposed by
-  // `asResult()`.
-  ql::span<std::string_view> span_;
-
-  // Set up `span_` over `views_`. Call after `views_` is fully filled; do not
-  // modify `views_` afterward, as `span_` would be invalidated.
-  void finalize() { span_ = ql::span<std::string_view>{views_}; }
 };
 
-// A vocabulary batch-lookup result whose total size is known up front, so all
-// strings can be materialized into a single contiguous `buffer()` in one go
-// (e.g. reading a contiguous byte range from a disk-based vocabulary). Because
-// the `views()` point into that one `std::vector<char>`, the buffer must not be
-// grown after the views are created: a reallocation would move the bytes and
-// invalidate every existing `string_view`. Use `PmrVocabBatchLookupData`
-// instead when words are produced incrementally with unknown sizes.
-struct VocabBatchLookupData : VocabLookupDataCommonBase<std::vector<char>> {};
+// _____________________________________________________________________________
+// Builder for a contiguous batch lookup result. Allocates single contiguous
+// memory for all requested word sizes, generates direct destination targets for
+// asynchronous I/O (e.g. io_uring), and derives string_views atomically.
+class ContiguousVocabBatchBuilder {
+ private:
+  std::shared_ptr<ContiguousVocabBatchLookupData> data_;
+  std::vector<char*> targets_;
 
-// A vocabulary batch-lookup result when words are produced incrementally with
-// sizes not known in advance (e.g. `CompressedVocabulary::lookupBatch`). A
-// single string buffer as in `VocabBatchLookupData` is unsuitable, as appending
-// would reallocate it and invalidate existing string_view's. Each word is
-// instead allocated from a monotonic_buffer_resource, giving pointer-stable
-// allocations. Exposed as a `VocabBatchLookupResult` via `asResult()`.
-using BufferType = std::unique_ptr<ql::pmr::monotonic_buffer_resource>;
-struct PmrVocabBatchLookupData : VocabLookupDataCommonBase<BufferType> {};
+ public:
+  explicit ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes)
+      : data_{std::make_shared<ContiguousVocabBatchLookupData>()} {
+    const size_t totalBytes = ::ranges::accumulate(wordSizes, size_t{0});
+    data_->buffer_.resize(totalBytes);
+    data_->views_.reserve(wordSizes.size());
+    targets_.reserve(wordSizes.size());
 
+    size_t offset = 0;
+    for (size_t size : wordSizes) {
+      char* target = data_->buffer_.data() + offset;
+      targets_.push_back(target);
+      data_->views_.emplace_back(target, size);
+      offset += size;
+    }
+  }
+
+  [[nodiscard]] const std::vector<char*>& targets() const noexcept {
+    return targets_;
+  }
+
+  [[nodiscard]] VocabBatchLookupResult finalize() && {
+    return ContiguousVocabBatchLookupData::asResult(std::move(data_));
+  }
+};
+
+// _____________________________________________________________________________
+// Strong, self-contained batch-lookup result backed by a PMR monotonic buffer
+// resource.
+class PmrVocabBatchLookupData {
+ private:
+  std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
+  std::vector<std::string_view> views_;
+  ql::span<std::string_view> span_;
+
+ public:
+  PmrVocabBatchLookupData(
+      std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
+      std::vector<std::string_view> views)
+      : buffer_{std::move(buffer)}, views_{std::move(views)} {
+    span_ = ql::span<std::string_view>{views_};
+  }
+
+  static VocabBatchLookupResult asResult(
+      std::shared_ptr<PmrVocabBatchLookupData> self) {
+    auto* spanPtr = &self->span_;
+    return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
+                                                       spanPtr);
+  }
+};
+
+// _____________________________________________________________________________
+// Strong, self-contained batch-lookup result backed by owning std::strings.
+class StringVectorVocabBatchLookupData {
+ private:
+  std::vector<std::string> buffer_;
+  std::vector<std::string_view> views_;
+  ql::span<std::string_view> span_;
+
+ public:
+  explicit StringVectorVocabBatchLookupData(std::vector<std::string> words)
+      : buffer_{std::move(words)} {
+    views_ = ::ranges::to_vector(
+        buffer_ |
+        ql::views::transform(ad_utility::staticCast<std::string_view>));
+    span_ = ql::span<std::string_view>{views_};
+  }
+
+  static VocabBatchLookupResult asResult(
+      std::shared_ptr<StringVectorVocabBatchLookupData> self) {
+    auto* spanPtr = &self->span_;
+    return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
+                                                       spanPtr);
+  }
+};
+
+// _____________________________________________________________________________
+// Strong, self-contained batch-lookup result that owns multiple independent
+// storage owners.
+class MultiOwnerVocabBatchLookupData {
+ private:
+  std::vector<VocabBatchOwner> owners_;
+  std::vector<std::string_view> views_;
+  ql::span<std::string_view> span_;
+
+ public:
+  MultiOwnerVocabBatchLookupData(std::vector<VocabBatchOwner> owners,
+                                 std::vector<std::string_view> views)
+      : owners_{std::move(owners)}, views_{std::move(views)} {
+    span_ = ql::span<std::string_view>{views_};
+  }
+
+  static VocabBatchLookupResult asResult(
+      std::shared_ptr<MultiOwnerVocabBatchLookupData> self) {
+    auto* spanPtr = &self->span_;
+    return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
+                                                       spanPtr);
+  }
+};
+
+// _____________________________________________________________________________
 // A single entry yielded by a vocabulary's `scanAll`: a word together with its
 // index in the vocabulary. For most vocabularies the indices are simply
 // `0, 1, 2, ...`, but e.g. a `SplitVocabulary` yields the (non-contiguous)
@@ -132,21 +204,12 @@ struct IndexAndWord {
 // all words of the vocabulary in order, together with their index.
 using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 
-// A vocabulary batch-lookup result whose words are already materialized as
-// owning `std::string`s. The words are moved into the
-// `std::vector<std::string>` buffer and the `views()` point at those strings.
-struct StringVectorVocabBatchLookupData
-    : VocabLookupDataCommonBase<std::vector<std::string>> {};
-
 // _____________________________________________________________________________
 // Construct a result from owning strings and expose views into their storage.
 inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
     std::vector<std::string> words) {
-  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-  data->buffer() = std::move(words);
-  data->views() = ::ranges::to_vector(
-      data->buffer() |
-      ql::views::transform(ad_utility::staticCast<std::string_view>));
+  auto data =
+      std::make_shared<StringVectorVocabBatchLookupData>(std::move(words));
   return StringVectorVocabBatchLookupData::asResult(std::move(data));
 }
 
@@ -166,6 +229,7 @@ class ArenaVocabBatchBuilder {
       : buffer_{std::make_unique<ql::pmr::monotonic_buffer_resource>()} {
     views_.reserve(expectedSize);
   }
+
   // Allocate storage inside the arena for up to `bound` bytes, invoke
   // `decompress(destinationSpan)` to write the bytes, and register the view.
   template <typename DecompressFunc>
@@ -198,9 +262,8 @@ class ArenaVocabBatchBuilder {
   // Atomically finalize and return the immutable batch result:
   [[nodiscard]] VocabBatchLookupResult finalize() && {
     AD_CONTRACT_CHECK(!views_.empty());
-    auto data = std::make_shared<PmrVocabBatchLookupData>();
-    data->buffer() = std::move(buffer_);
-    data->views() = std::move(views_);
+    auto data = std::make_shared<PmrVocabBatchLookupData>(std::move(buffer_),
+                                                          std::move(views_));
     return PmrVocabBatchLookupData::asResult(std::move(data));
   }
 };
@@ -222,21 +285,6 @@ inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
   return makePmrVocabBatchLookupResult(
       ql::span<const std::string_view>{words.begin(), words.size()});
 }
-
-// _____________________________________________________________________________
-// Type-erased smart pointer holding whatever keeps word storage alive. Used
-// to store child `VocabBatchLookupResult`s or references to vocabulary state
-// (e.g., shared ownership of a vocabulary's in-memory word storage).
-// See the usage below.
-using VocabBatchOwner = std::shared_ptr<const void>;
-
-// _____________________________________________________________________________
-// `VocabBatchLookupResult` that owns multiple independent storage sources.
-// Stores a list of `VocabBatchOwner`s that back the `string_view`s. Because
-// every view is backed by an owner stored here, the result is self-contained:
-// no view can dangle, and callers don't need to manage external lifetimes.
-struct MultiOwnerVocabBatchLookupData
-    : VocabLookupDataCommonBase<std::vector<VocabBatchOwner>> {};
 
 // _____________________________________________________________________________
 // Helper struct that encapsulates assembling string_views from multiple
@@ -316,9 +364,8 @@ class MultiSourceVocabBatchAssembler
                                      slotFilledTracking_.end(),
                                      [](bool isFilled) { return isFilled; }));
 
-    auto multiOwnerData = std::make_shared<MultiOwnerVocabBatchLookupData>();
-    multiOwnerData->buffer() = std::move(storageOwners_);
-    multiOwnerData->views() = std::move(assembledWordViews_);
+    auto multiOwnerData = std::make_shared<MultiOwnerVocabBatchLookupData>(
+        std::move(storageOwners_), std::move(assembledWordViews_));
     return MultiOwnerVocabBatchLookupData::asResult(std::move(multiOwnerData));
   }
 };

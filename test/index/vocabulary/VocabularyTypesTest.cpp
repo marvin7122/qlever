@@ -71,29 +71,24 @@ TEST(VocabularyTypes, verifyWordWriterBaseDestructorBehavesAsExpected) {
 }
 
 // _____________________________________________________________________________
-// `asResult` exposes the span over the filled views, and the returned aliasing
-// shared_ptr keeps the backing buffer/views alive after the original owning
-// shared_ptr is dropped (the whole point of the aliasing shared_ptr).
-TEST(VocabBatchLookupData, AsResultExposesViewsAndKeepsDataAlive) {
-  auto data = std::make_shared<VocabBatchLookupData>();
-  data->buffer() = {'f', 'o', 'o', 'b', 'a', 'r'};
-  data->views().emplace_back(data->buffer().data(), 3);      // "foo"
-  data->views().emplace_back(data->buffer().data() + 3, 3);  // "bar"
+// Verify that a contiguous batch builder allocates storage, writes targets,
+// and produces a valid, self-contained batch result.
+TEST(VocabBatchLookupData, ContiguousBuilderExposesViewsAndKeepsDataAlive) {
+  const std::array<size_t, 2> sizes{3, 3};
+  ContiguousVocabBatchBuilder builder(sizes);
+  ASSERT_EQ(builder.targets().size(), 2u);
+  std::memcpy(builder.targets()[0], "foo", 3);
+  std::memcpy(builder.targets()[1], "bar", 3);
 
-  VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
-
-  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "bar"));
-
-  // Drop our reference; the aliasing shared_ptr must keep the data alive.
-  data.reset();
+  VocabBatchLookupResult result = std::move(builder).finalize();
   EXPECT_THAT(*result, ::testing::ElementsAre("foo", "bar"));
 }
 
 // _____________________________________________________________________________
-// An empty lookup result is valid: no views, empty span.
-TEST(VocabBatchLookupData, AsResultEmpty) {
-  auto data = std::make_shared<VocabBatchLookupData>();
-  VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
+// An empty contiguous lookup result is valid: no views, empty span.
+TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
+  ContiguousVocabBatchBuilder builder({});
+  VocabBatchLookupResult result = std::move(builder).finalize();
   EXPECT_TRUE(result->empty());
 }
 
@@ -106,40 +101,27 @@ TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
 }
 
 // _____________________________________________________________________________
-// Verify that scattering preserves input order and retains the child batch
-// owner.
+// Verify that scattering multiple batch results retains their backing storage.
 TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
-  auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
-  auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
-  const char* alphaData = (*first)[0].data();
-  const char* gammaData = (*second)[0].data();
+  auto first = makeStringVectorVocabBatchLookupResult({"apple", "banana"});
+  auto second = makeStringVectorVocabBatchLookupResult({"cherry"});
 
   MultiSourceVocabBatchAssembler assembler(3);
-  const std::array<size_t, 2> firstPositions{2, 0};
-  const std::array<size_t, 1> secondPositions{1};
-  assembler.scatterSubBatchResultAtPositions(std::move(first), firstPositions);
-  assembler.scatterSubBatchResultAtPositions(std::move(second),
-                                             secondPositions);
+  const std::array<size_t, 2> firstPos{0, 2};
+  const std::array<size_t, 1> secondPos{1};
+  assembler.scatterSubBatchResultAtPositions(std::move(first), firstPos);
+  assembler.scatterSubBatchResultAtPositions(std::move(second), secondPos);
 
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
-  EXPECT_THAT(*result, ::testing::ElementsAre("beta", "gamma", "alpha"));
-  EXPECT_EQ((*result)[2].data(), alphaData);
-  EXPECT_EQ((*result)[1].data(), gammaData);
+  EXPECT_THAT(*result, ::testing::ElementsAre("apple", "cherry", "banana"));
 }
 
 // _____________________________________________________________________________
 // Verify that keeping child batches alive preserves their original string
 // storage.
-TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
-  auto firstOwner = std::make_shared<StringVectorVocabBatchLookupData>();
-  firstOwner->buffer() = {"alpha", "beta"};
-  firstOwner->views() = {firstOwner->buffer()[0], firstOwner->buffer()[1]};
-  auto first = StringVectorVocabBatchLookupData::asResult(firstOwner);
-
-  auto secondOwner = std::make_shared<StringVectorVocabBatchLookupData>();
-  secondOwner->buffer() = {"gamma"};
-  secondOwner->views() = {secondOwner->buffer()[0]};
-  auto second = StringVectorVocabBatchLookupData::asResult(secondOwner);
+TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
+  auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
+  auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
 
   const char* alphaData = (*first)[0].data();
   const char* gammaData = (*second)[0].data();
@@ -149,8 +131,6 @@ TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
   const std::array<size_t, 1> secondPos{1};
   assembler.scatterSubBatchResultAtPositions(std::move(first), firstPos);
   assembler.scatterSubBatchResultAtPositions(std::move(second), secondPos);
-  firstOwner.reset();
-  secondOwner.reset();
 
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
   EXPECT_THAT(*result, ::testing::ElementsAre("alpha", "gamma", "beta"));
@@ -237,44 +217,16 @@ TEST_F(VocabBatchLookupDataVocabTest,
 // (e.g. decompressing one word at a time in `CompressedVocabulary`). Each word
 // gets a pointer-stable allocation, so appending a later (differently sized)
 // word never invalidates an earlier `string_view`, unlike the single growing
-// buffer of `VocabBatchLookupData`, which would reallocate and leave the
-// already-recorded views dangling.
-TEST(PmrVocabBatchLookupData, PmrAsResultPointerStableAcrossAppends) {
-  auto data = std::make_shared<PmrVocabBatchLookupData>();
-  data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-  auto* resource = data->buffer().get();
-
-  // Allocate each word separately from the monotonic resource and record a view
-  // into it. Because the allocations are pointer-stable, the first view stays
-  // valid after the second word is appended.
-  auto appendWord = [&](std::string_view word) {
-    char* p = static_cast<char*>(resource->allocate(word.size()));
-    std::memcpy(p, word.data(), word.size());
-    data->views().emplace_back(p, word.size());
-  };
-  appendWord("foo");
-  std::string_view firstView = data->views().front();
-  appendWord("barbaz");
-  // Appending the second word did not invalidate the first view.
-  EXPECT_EQ(firstView, "foo");
-
-  VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
-  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "barbaz"));
-
-  // The aliasing shared_ptr keeps the resource (and thus its allocations)
-  // alive.
-  data.reset();
-  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "barbaz"));
-}
-
 // _____________________________________________________________________________
-// An empty pmr lookup result is valid: no views, empty span (matches the
-// `VocabBatchLookupData` `AsResultEmpty` case).
-TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
-  auto data = std::make_shared<PmrVocabBatchLookupData>();
-  data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-  VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
-  EXPECT_TRUE(result->empty());
+// Tests for `ArenaVocabBatchBuilder`: monotonic memory resource ensures
+// pointer-stable allocations across incremental word appends.
+TEST(PmrVocabBatchLookupData, ArenaBuilderPointerStableAcrossAppends) {
+  ArenaVocabBatchBuilder builder(2);
+  builder.appendWord("foo");
+  builder.appendWord("barbaz");
+
+  VocabBatchLookupResult result = std::move(builder).finalize();
+  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "barbaz"));
 }
 
 // _____________________________________________________________________________
