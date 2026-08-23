@@ -70,7 +70,7 @@ TEST(PrefixCompressor, decompressIntoMatchesDecompress) {
     EXPECT_THAT(viaString, Eq(word));
   };
   for (std::string_view word :
-       {"a", "al", "alp", "alph", "alpha", "alphabet", "nothing"}) {
+       {"", "a", "al", "alp", "alph", "alpha", "alphabet", "nothing"}) {
     checkWord(word);
   }
   const std::string onlyPrefix = p.compress("alpha");
@@ -78,6 +78,14 @@ TEST(PrefixCompressor, decompressIntoMatchesDecompress) {
   checkWord("alpha");
   AD_EXPECT_THROW_WITH_MESSAGE(static_cast<void>(p.maxDecompressedSize("")),
                                ::testing::HasSubstr("!compressedWord.empty()"));
+
+  // Decompressing into an undersized output buffer must fail contract check.
+  const std::string compressed = p.compress("alphabet");
+  std::string smallBuf(1, '\0');
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      static_cast<void>(p.decompressInto(
+          compressed, ql::span<char>{smallBuf.data(), smallBuf.size()})),
+      ::testing::HasSubstr("out.size() >= maxDecompressedSize"));
 }
 
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
