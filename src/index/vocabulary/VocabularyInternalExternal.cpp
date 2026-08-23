@@ -49,7 +49,7 @@ static IndexPartition partitionIndicesBySource(
       result.internalSlots_.emplace_back(static_cast<size_t>(i),
                                          fromInternal.value());
     } else {
-      result.diskSlots_.addPair(idx, static_cast<size_t>(i));
+      result.diskSlots_.add({idx, static_cast<size_t>(i)});
     }
   }
   return result;

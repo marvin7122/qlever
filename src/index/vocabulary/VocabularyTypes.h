@@ -394,11 +394,19 @@ class MultiSourceVocabBatchAssembler
 };
 
 // _____________________________________________________________________________
+// A mapping from an underlying vocabulary index to its target position in the
+// assembled output batch.
+struct VocabIndexMapping {
+  size_t underlyingIndex_{};
+  size_t resultPosition_{};
+};
+
+// _____________________________________________________________________________
 // Paired lookup data for one vocabulary marker: for each position `i` in the
 // arrays, `underlyingIndices[i]` is the index to look up, and
 // `resultPositions[i]` is where the result goes in the final output. The
 // arrays are always kept in sync (same size).
-struct MarkerIndicesAndPositions {
+class MarkerIndicesAndPositions {
  private:
   std::vector<size_t> underlyingIndices_;
   std::vector<size_t> resultPositions_;
@@ -412,29 +420,47 @@ struct MarkerIndicesAndPositions {
   }
 
   // ___________________________________________________________________________
-  // Add a (`underlyingIndex`, `resultPosition`) pair.
+  // Add a mapped (underlyingIndex, resultPosition) entry.
+  void add(VocabIndexMapping mapping) {
+    underlyingIndices_.push_back(mapping.underlyingIndex_);
+    resultPositions_.push_back(mapping.resultPosition_);
+  }
+
+  // ___________________________________________________________________________
+  // Add a (underlyingIndex, resultPosition) pair directly.
+  void add(size_t underlyingIndex, size_t resultPosition) {
+    add(VocabIndexMapping{underlyingIndex, resultPosition});
+  }
+
+  // ___________________________________________________________________________
+  // Legacy alias for compatibility.
   void addPair(size_t underlyingIndex, size_t resultPosition) {
-    underlyingIndices_.push_back(underlyingIndex);
-    resultPositions_.push_back(resultPosition);
+    add(underlyingIndex, resultPosition);
   }
 
   // ___________________________________________________________________________
   // Access the underlying indices for batch-lookup.
-  ql::span<const size_t> getUnderlyingIndices() const {
+  [[nodiscard]] ql::span<const size_t> getUnderlyingIndices() const noexcept {
     return underlyingIndices_;
   }
 
   // ___________________________________________________________________________
   // Access the result positions for scatter-back.
-  ql::span<const size_t> getResultPositions() const { return resultPositions_; }
+  [[nodiscard]] ql::span<const size_t> getResultPositions() const noexcept {
+    return resultPositions_;
+  }
 
   // ___________________________________________________________________________
   // Check if this marker has any pairs.
-  bool empty() const { return underlyingIndices_.empty(); }
+  [[nodiscard]] bool empty() const noexcept {
+    return underlyingIndices_.empty();
+  }
 
   // ___________________________________________________________________________
   // Number of pairs.
-  size_t size() const { return underlyingIndices_.size(); }
+  [[nodiscard]] size_t size() const noexcept {
+    return underlyingIndices_.size();
+  }
 };
 
 // _____________________________________________________________________________
@@ -458,7 +484,7 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
        ::ranges::views::enumerate(indices)) {
     auto [marker, underlyingIndex] = getMarkerAndIndex(markedIndex);
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
-    out[marker].addPair(underlyingIndex, resultPosition);
+    out[marker].add({underlyingIndex, static_cast<size_t>(resultPosition)});
   }
   return out;
 }
