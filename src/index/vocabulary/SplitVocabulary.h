@@ -141,6 +141,7 @@ class SplitVocabulary {
          }))...);
   }
 
+ public:
   // ___________________________________________________________________________
   // Batch lookup results for each underlying vocabulary, indexed by vocabulary
   // marker. Stores results only from vocabularies with lookup indices in this
