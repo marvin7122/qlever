@@ -153,7 +153,7 @@ CPP_template(typename UnderlyingVocabulary,
     ArenaVocabBatchBuilder builder(indices.size());
     std::string scratch;
     for (const auto& [idx, compressedWord] :
-         ql::views::zip(indices, compressedWords)) {
+         ::ranges::views::zip(indices, compressedWords)) {
       const size_t decoderIdx = getDecoderIdx(idx);
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),

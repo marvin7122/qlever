@@ -322,7 +322,7 @@ void assertVocabularyMatchesAtIndices(
   ASSERT_EQ(ql::ranges::distance(indices), expectedWords.size());
 
   for (const auto& [idx, expectedWord] :
-       ql::views::zip(indices, expectedWords)) {
+       ::ranges::views::zip(indices, expectedWords)) {
     EXPECT_EQ(std::string{vocab[idx]}, expectedWord)
         << "at vocabulary index " << idx;
   }
@@ -355,7 +355,7 @@ void assertLookupResultMatchesVocabularyAtIndices(
   };
 
   for (const auto& [resultWord, idx] :
-       ql::views::zip(lookupResult, indices)) {
+       ::ranges::views::zip(lookupResult, indices)) {
     EXPECT_EQ(resultWord, at(idx)) << " at vocabulary index " << idx;
   }
 }
