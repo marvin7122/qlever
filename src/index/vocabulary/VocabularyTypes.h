@@ -30,8 +30,66 @@
 #include "util/TransparentFunctors.h"
 #include "util/Views.h"
 
-// The result type for a batch of vocabulary lookups.
-using VocabBatchLookupResult = std::shared_ptr<ql::span<std::string_view>>;
+// _____________________________________________________________________________
+// Type-erased smart pointer holding whatever keeps word storage alive. Used
+// to store child `VocabBatchLookupResult`s or references to vocabulary state
+// (e.g., shared ownership of a vocabulary's in-memory word storage).
+using VocabBatchOwner = std::shared_ptr<const void>;
+
+// _____________________________________________________________________________
+// Strong value type representing the result of a batch vocabulary lookup.
+// Holds a `span<const string_view>` and keeps the backing word storage alive
+// via an internal `VocabBatchOwner`. Acts as a standard C++ range/container.
+class VocabBatchLookupResult {
+ private:
+  VocabBatchOwner owner_{};
+  ql::span<const std::string_view> span_{};
+
+ public:
+  // Default constructor: creates an empty, valid batch result.
+  VocabBatchLookupResult() = default;
+
+  // Explicit constructor: binds backing storage owner and span.
+  VocabBatchLookupResult(VocabBatchOwner owner,
+                         ql::span<const std::string_view> span)
+      : owner_{std::move(owner)}, span_{span} {
+    if (!span_.empty()) {
+      AD_CORRECTNESS_CHECK(owner_ != nullptr);
+    }
+  }
+
+  // Container & Range Interface:
+  [[nodiscard]] size_t size() const noexcept { return span_.size(); }
+  [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
+  [[nodiscard]] std::string_view operator[](size_t index) const {
+    AD_CONTRACT_CHECK(index < span_.size());
+    return span_[index];
+  }
+  [[nodiscard]] auto begin() const noexcept { return span_.begin(); }
+  [[nodiscard]] auto end() const noexcept { return span_.end(); }
+  [[nodiscard]] const std::string_view* data() const noexcept {
+    return span_.data();
+  }
+  [[nodiscard]] ql::span<const std::string_view> span() const noexcept {
+    return span_;
+  }
+  [[nodiscard]] const VocabBatchOwner& owner() const noexcept { return owner_; }
+
+  // Pointer-like access for full backward compatibility:
+  [[nodiscard]] const ql::span<const std::string_view>* operator->()
+      const noexcept {
+    return &span_;
+  }
+  [[nodiscard]] ql::span<const std::string_view> operator*() const noexcept {
+    return span_;
+  }
+  [[nodiscard]] bool operator==(std::nullptr_t) const noexcept {
+    return empty() && owner_ == nullptr;
+  }
+  [[nodiscard]] bool operator!=(std::nullptr_t) const noexcept {
+    return !(*this == nullptr);
+  }
+};
 
 // Type-erased input range of batches (each batch consists of a vector of
 // indices into the underlying Vocabulary, specifying which terms' string
@@ -43,17 +101,6 @@ using VocabLookupInput = ad_utility::InputRangeTypeErased<std::vector<size_t>>;
 using VocabLookupOutput =
     ad_utility::InputRangeTypeErased<VocabBatchLookupResult>;
 
-// Base class for a vocabulary batch-lookup result, shared by the different
-// vocabulary implementations. Owns the materialized string data (`buffer()`,
-// whose concrete type `BufferType` depends on the implementation) and one
-// `string_view` per looked-up term (`views()`, each pointing into `buffer()`).
-// //
-// _____________________________________________________________________________
-// Type-erased smart pointer holding whatever keeps word storage alive. Used
-// to store child `VocabBatchLookupResult`s or references to vocabulary state
-// (e.g., shared ownership of a vocabulary's in-memory word storage).
-using VocabBatchOwner = std::shared_ptr<const void>;
-
 // _____________________________________________________________________________
 // Strong, self-contained batch-lookup result backed by a contiguous character
 // buffer (used for reading fixed-size chunks from disk). All storage is
@@ -62,17 +109,14 @@ class ContiguousVocabBatchLookupData {
  private:
   std::vector<char> buffer_;
   std::vector<std::string_view> views_;
-  ql::span<std::string_view> span_;
 
   friend class ContiguousVocabBatchBuilder;
 
  public:
   static VocabBatchLookupResult asResult(
       std::shared_ptr<ContiguousVocabBatchLookupData> self) {
-    self->span_ = ql::span<std::string_view>{self->views_};
-    auto* spanPtr = &self->span_;
-    return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
-                                                       spanPtr);
+    auto span = ql::span<const std::string_view>{self->views_};
+    return VocabBatchLookupResult(std::move(self), span);
   }
 };
 
@@ -118,21 +162,17 @@ class PmrVocabBatchLookupData {
  private:
   std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
   std::vector<std::string_view> views_;
-  ql::span<std::string_view> span_;
 
  public:
   PmrVocabBatchLookupData(
       std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
       std::vector<std::string_view> views)
-      : buffer_{std::move(buffer)}, views_{std::move(views)} {
-    span_ = ql::span<std::string_view>{views_};
-  }
+      : buffer_{std::move(buffer)}, views_{std::move(views)} {}
 
   static VocabBatchLookupResult asResult(
       std::shared_ptr<PmrVocabBatchLookupData> self) {
-    auto* spanPtr = &self->span_;
-    return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
-                                                       spanPtr);
+    auto span = ql::span<const std::string_view>{self->views_};
+    return VocabBatchLookupResult(std::move(self), span);
   }
 };
 
@@ -142,7 +182,6 @@ class StringVectorVocabBatchLookupData {
  private:
   std::vector<std::string> buffer_;
   std::vector<std::string_view> views_;
-  ql::span<std::string_view> span_;
 
  public:
   explicit StringVectorVocabBatchLookupData(std::vector<std::string> words)
@@ -150,14 +189,12 @@ class StringVectorVocabBatchLookupData {
     views_ = ::ranges::to_vector(
         buffer_ |
         ql::views::transform(ad_utility::staticCast<std::string_view>));
-    span_ = ql::span<std::string_view>{views_};
   }
 
   static VocabBatchLookupResult asResult(
       std::shared_ptr<StringVectorVocabBatchLookupData> self) {
-    auto* spanPtr = &self->span_;
-    return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
-                                                       spanPtr);
+    auto span = ql::span<const std::string_view>{self->views_};
+    return VocabBatchLookupResult(std::move(self), span);
   }
 };
 
@@ -168,20 +205,16 @@ class MultiOwnerVocabBatchLookupData {
  private:
   std::vector<VocabBatchOwner> owners_;
   std::vector<std::string_view> views_;
-  ql::span<std::string_view> span_;
 
  public:
   MultiOwnerVocabBatchLookupData(std::vector<VocabBatchOwner> owners,
                                  std::vector<std::string_view> views)
-      : owners_{std::move(owners)}, views_{std::move(views)} {
-    span_ = ql::span<std::string_view>{views_};
-  }
+      : owners_{std::move(owners)}, views_{std::move(views)} {}
 
   static VocabBatchLookupResult asResult(
       std::shared_ptr<MultiOwnerVocabBatchLookupData> self) {
-    auto* spanPtr = &self->span_;
-    return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
-                                                       spanPtr);
+    auto span = ql::span<const std::string_view>{self->views_};
+    return VocabBatchLookupResult(std::move(self), span);
   }
 };
 
