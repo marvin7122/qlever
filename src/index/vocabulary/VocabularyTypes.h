@@ -336,7 +336,7 @@ class MultiSourceVocabBatchAssembler
   // ___________________________________________________________________________
   // Place a single resolved string_view into its corresponding output position.
   void assignWordAtPosition(size_t resultPosition, std::string_view word) {
-    AD_CONTRACT_CHECK(resultPosition < assembledWordViews_.size());
+    AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
     auto guard = makeInvariantGuard();
 
     AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
@@ -381,8 +381,8 @@ class MultiSourceVocabBatchAssembler
   // verifying that every slot has been populated exactly once.
   [[nodiscard]] VocabBatchLookupResult finalizeVocabBatchLookupResult() && {
     checkInvariants();
-    AD_CONTRACT_CHECK(!assembledWordViews_.empty());
-    AD_CONTRACT_CHECK(!storageOwners_.empty());
+    AD_CORRECTNESS_CHECK(!assembledWordViews_.empty());
+    AD_CORRECTNESS_CHECK(!storageOwners_.empty());
     AD_CORRECTNESS_CHECK(std::all_of(slotFilledTracking_.begin(),
                                      slotFilledTracking_.end(),
                                      [](bool isFilled) { return isFilled; }));
