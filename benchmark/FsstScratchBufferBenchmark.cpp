@@ -87,14 +87,28 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     BenchmarkResults results;
     auto& group = results.addGroup(
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
+    const char* selectedStrategyEnv = std::getenv("FSST_SCRATCH_ONLY");
+    const size_t selectedStrategy =
+        selectedStrategyEnv == nullptr
+            ? 3
+            : std::strtoul(selectedStrategyEnv, nullptr, 10);
+    const char* repetitionsEnv = std::getenv("FSST_SCRATCH_INNER_REPETITIONS");
+    const size_t repetitions = repetitionsEnv == nullptr
+                                   ? 1
+                                   : std::strtoul(repetitionsEnv, nullptr, 10);
+    AD_CONTRACT_CHECK(selectedStrategy <= 3);
+    AD_CONTRACT_CHECK(repetitions > 0);
 
     auto addFullSizeStringScratch = [&] {
       group.addMeasurement("full-size std::string scratch", [&] {
         std::string output(outputCapacity_, '\0');
         std::string scratch(outputCapacity_, '\0');
         size_t totalBytes = 0;
-        for (std::string_view compressed : compressed_) {
-          totalBytes += decodeRepeated(decoders_, compressed, output, scratch);
+        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
+          for (std::string_view compressed : compressed_) {
+            totalBytes +=
+                decodeRepeated(decoders_, compressed, output, scratch);
+          }
         }
         return totalBytes;
       });
@@ -104,10 +118,12 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
         auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
         auto scratch = std::unique_ptr<char[]>{new char[outputCapacity_]};
         size_t totalBytes = 0;
-        for (std::string_view compressed : compressed_) {
-          totalBytes += decodeRepeated(decoders_, compressed,
-                                       {output.get(), outputCapacity_},
-                                       {scratch.get(), outputCapacity_});
+        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
+          for (std::string_view compressed : compressed_) {
+            totalBytes += decodeRepeated(decoders_, compressed,
+                                         {output.get(), outputCapacity_},
+                                         {scratch.get(), outputCapacity_});
+          }
         }
         return totalBytes;
       });
@@ -117,10 +133,12 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
         auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
         auto scratch = std::unique_ptr<char[]>{new char[intermediateCapacity_]};
         size_t totalBytes = 0;
-        for (std::string_view compressed : compressed_) {
-          totalBytes += decodeRepeated(decoders_, compressed,
-                                       {output.get(), outputCapacity_},
-                                       {scratch.get(), intermediateCapacity_});
+        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
+          for (std::string_view compressed : compressed_) {
+            totalBytes += decodeRepeated(
+                decoders_, compressed, {output.get(), outputCapacity_},
+                {scratch.get(), intermediateCapacity_});
+          }
         }
         return totalBytes;
       });
@@ -140,6 +158,9 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
             ? 0
             : std::strtoul(orderEnv, nullptr, 10) % orders.size();
     for (size_t strategy : orders[orderIndex]) {
+      if (strategy != selectedStrategy && selectedStrategy != 3) {
+        continue;
+      }
       if (strategy == 0) {
         addFullSizeStringScratch();
       } else if (strategy == 1) {
