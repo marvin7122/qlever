@@ -399,7 +399,7 @@ struct IndexAndWord {
 using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 
 // _____________________________________________________________________________
-// Construct a result from owning strings and expose views into their storage.
+ with result from owning strings and expose views into their storage.
 inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
     std::vector<std::string> words) {
   AD_CONTRACT_CHECK(!words.empty());
