@@ -88,11 +88,10 @@ TEST(VocabBatchLookupData, ContiguousBuilderExposesViewsAndKeepsDataAlive) {
 }
 
 // _____________________________________________________________________________
-// An empty contiguous lookup result is valid: no views, empty span.
+// Empty contiguous batches are rejected because a batch must contain words.
 TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
-  ContiguousVocabBatchBuilder builder({});
-  VocabBatchLookupResult result = std::move(builder).finalize();
-  EXPECT_TRUE(result.empty());
+  AD_EXPECT_THROW_WITH_MESSAGE(ContiguousVocabBatchBuilder({}),
+                               ::testing::HasSubstr("!wordSizes.empty()"));
 }
 
 // _____________________________________________________________________________
@@ -259,7 +258,7 @@ TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
   // written.
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.scatterSubBatchResultAtPositions(std::move(batch2), pos0),
-      ::testing::HasSubstr("!slotFilledTracking_[targetPosition]"));
+      ::testing::HasSubstr("!slotFilledTracking_[resultPosition]"));
 }
 
 // _____________________________________________________________________________
@@ -324,7 +323,7 @@ TEST(VocabBatchLookupData,
 
   AD_EXPECT_THROW_WITH_MESSAGE(
       (void)std::move(assembler).finalizeVocabBatchLookupResult(),
-      ::testing::HasSubstr("std::all_of(slotFilledTracking_"));
+      ::testing::HasSubstr("ql::ranges::all_of("));
 }
 
 // _____________________________________________________________________________
