@@ -17,7 +17,6 @@
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
-#include "util/Random.h"
 
 namespace ad_benchmark {
 namespace {
@@ -50,12 +49,17 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
 
  public:
   FsstScratchBufferBenchmark() {
-    ad_utility::RandomCustomStringGenerator generator{
+    constexpr std::string_view alphabet{
         "abcdefghijklmnopqrstuvwxyz0123456789_:/.-#"};
     std::vector<std::string> words;
     words.reserve(5'000);
     for (size_t i = 0; i < 5'000; ++i) {
-      words.push_back("http://www.wikidata.org/entity/Q" + generator(45));
+      std::string suffix;
+      suffix.reserve(45);
+      for (size_t character = 0; character < 45; ++character) {
+        suffix += alphabet[(i * 17 + character * 31) % alphabet.size()];
+      }
+      words.push_back("http://www.wikidata.org/entity/Q" + suffix);
     }
 
     compressed_.assign(words.begin(), words.end());
