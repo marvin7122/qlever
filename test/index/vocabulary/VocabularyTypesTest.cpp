@@ -143,22 +143,28 @@ TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
 
   const char* alphaData = (*first)[0].data();
   const char* gammaData = (*second)[0].data();
-  std::vector<std::string_view> mixed{(*first)[0], (*second)[0], (*first)[1]};
-  std::vector<VocabBatchOwner> owners{std::move(first), std::move(second)};
+
+  MultiSourceVocabBatchAssembler assembler(3);
+  const std::array<size_t, 2> firstPos{0, 2};
+  const std::array<size_t, 1> secondPos{1};
+  assembler.scatterSubBatchResultAtPositions(std::move(first), firstPos);
+  assembler.scatterSubBatchResultAtPositions(std::move(second), secondPos);
   firstOwner.reset();
   secondOwner.reset();
 
-  auto result = keepAliveVocabBatch(std::move(owners), std::move(mixed));
+  auto result = std::move(assembler).finalizeVocabBatchLookupResult();
   EXPECT_THAT(*result, ::testing::ElementsAre("alpha", "gamma", "beta"));
   EXPECT_EQ((*result)[0].data(), alphaData);
   EXPECT_EQ((*result)[1].data(), gammaData);
 }
 
 // _____________________________________________________________________________
-TEST(VocabBatchLookupData, KeepAliveRequiresAnOwner) {
-  std::vector<std::string_view> views{"orphan"};
-  AD_EXPECT_THROW_WITH_MESSAGE(keepAliveVocabBatch({}, std::move(views)),
-                               ::testing::HasSubstr("owners"));
+TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
+  MultiSourceVocabBatchAssembler assembler(1);
+  assembler.assignWordAtPosition(0, "orphan");
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      std::move(assembler).finalizeVocabBatchLookupResult(),
+      ::testing::HasSubstr("!storageOwners_.empty()"));
 }
 
 // _____________________________________________________________________________
@@ -189,14 +195,15 @@ class VocabBatchLookupDataVocabTest : public ::testing::Test {
 // vocabulary is `close()`d afterwards: the batch result retains
 // `wordStorage()` shared ownership of the bytes, and `close()` only installs a
 // fresh empty buffer instead of mutating the old one.
-TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesClose) {
+TEST_F(VocabBatchLookupDataVocabTest, MultiSourceAssemblerOutlivesClose) {
   auto vocabulary = buildVocab("ram-word");
   auto maybeWord = vocabulary[0];
   ASSERT_TRUE(maybeWord.has_value());
   const char* wordData = maybeWord->data();
-  std::vector<std::string_view> views{maybeWord.value()};
-  std::vector<VocabBatchOwner> owners{vocabulary.wordStorage()};
-  auto result = keepAliveVocabBatch(std::move(owners), std::move(views));
+  MultiSourceVocabBatchAssembler assembler(1);
+  assembler.assignWordAtPosition(0, maybeWord.value());
+  assembler.registerStorageOwner(vocabulary.wordStorage());
+  auto result = std::move(assembler).finalizeVocabBatchLookupResult();
 
   vocabulary.close();
   EXPECT_EQ(vocabulary.size(), 0u);
@@ -208,14 +215,16 @@ TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesClose) {
 // Same guarantee when the vocabulary object is destroyed entirely while the
 // batch result still lives: shared ownership of the word storage keeps the
 // bytes alive past the destructor.
-TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesVocabularyDestruction) {
+TEST_F(VocabBatchLookupDataVocabTest,
+       MultiSourceAssemblerOutlivesVocabularyDestruction) {
   auto vocabulary = std::make_optional(buildVocab("other-word"));
   auto maybeWord = (*vocabulary)[0];
   ASSERT_TRUE(maybeWord.has_value());
   const char* wordData = maybeWord->data();
-  std::vector<std::string_view> views{maybeWord.value()};
-  std::vector<VocabBatchOwner> owners{vocabulary->wordStorage()};
-  auto result = keepAliveVocabBatch(std::move(owners), std::move(views));
+  MultiSourceVocabBatchAssembler assembler(1);
+  assembler.assignWordAtPosition(0, maybeWord.value());
+  assembler.registerStorageOwner(vocabulary->wordStorage());
+  auto result = std::move(assembler).finalizeVocabBatchLookupResult();
 
   vocabulary.reset();
   EXPECT_THAT(*result, ::testing::ElementsAre("other-word"));

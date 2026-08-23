@@ -153,43 +153,13 @@ inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
 // _____________________________________________________________________________
 // Builder for a PMR arena-backed `VocabBatchLookupResult`.
 // Encapsulates the `monotonic_buffer_resource`, allocates decompressed word
-// storage directly in the arena, and automatically manages scratch buffers for
-// multi-stage decompression wrappers without leaking accounting to callers.
-template <typename CompressionWrapper = void>
+// storage directly in the arena, and guarantees that all exposed `string_view`s
+// are safely backed by the arena storage without leaking memory resource
+// accounting to callers.
 class ArenaVocabBatchBuilder {
  private:
   std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
   std::vector<std::string_view> views_;
-
-  // Conditionally hold a scratch buffer if the CompressionWrapper's Decoder
-  // requires it; otherwise 0 memory overhead via an empty struct.
-  struct Empty {};
-
-  template <typename CW>
-  struct DetectScratch {
-    static constexpr bool value = false;
-  };
-
-  template <typename CW>
-  requires requires { typename CW::Decoder; } struct DetectScratch<CW> {
-    template <typename D>
-    static auto test(int) -> decltype(std::declval<const D&>().decompressInto(
-                                          std::declval<std::string_view>(),
-                                          std::declval<ql::span<char>>(),
-                                          std::declval<std::string&>()),
-                                      std::true_type{});
-    template <typename D>
-    static auto test(...) -> std::false_type;
-
-    static constexpr bool value =
-        decltype(test<typename CW::Decoder>(0))::value;
-  };
-
-  using ScratchStorage =
-      std::conditional_t<DetectScratch<CompressionWrapper>::value, std::string,
-                         Empty>;
-
-  [[no_unique_address]] ScratchStorage scratch_{};
 
  public:
   explicit ArenaVocabBatchBuilder(size_t expectedSize)
@@ -197,13 +167,10 @@ class ArenaVocabBatchBuilder {
     views_.reserve(expectedSize);
   }
 
-  // Decompress a single word directly into arena storage, automatically
-  // handling empty words and scratch buffers:
-  void decompressAndAppendWord(const CompressionWrapper& compressionWrapper,
-                               const auto& compressedWord, size_t decoderIdx) {
-    AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper.numDecoders());
-    const size_t bound =
-        compressionWrapper.maxDecompressedSize(compressedWord, decoderIdx);
+  // Allocate storage inside the arena for up to `bound` bytes, invoke
+  // `decompress(destinationSpan)` to write the bytes, and register the view.
+  template <typename DecompressFunc>
+  void appendDecompressedWord(size_t bound, DecompressFunc&& decompress) {
     if (bound == 0) {
       views_.emplace_back("");
       return;
@@ -211,16 +178,7 @@ class ArenaVocabBatchBuilder {
 
     ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
     char* mem = allocator.allocate(bound);
-
-    size_t bytesWritten = 0;
-    if constexpr (DetectScratch<CompressionWrapper>::value) {
-      bytesWritten = compressionWrapper.decompressInto(
-          compressedWord, decoderIdx, ql::span<char>{mem, bound}, scratch_);
-    } else {
-      std::string dummy;
-      bytesWritten = compressionWrapper.decompressInto(
-          compressedWord, decoderIdx, ql::span<char>{mem, bound}, dummy);
-    }
+    const size_t bytesWritten = decompress(ql::span<char>{mem, bound});
 
     AD_CORRECTNESS_CHECK(bytesWritten > 0 && bytesWritten <= bound);
     views_.emplace_back(mem, bytesWritten);
