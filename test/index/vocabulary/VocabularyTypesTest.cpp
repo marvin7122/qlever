@@ -388,6 +388,6 @@ TEST(VocabBatchLookupData,
   // Slot 1 remains unassigned.
 
   AD_EXPECT_THROW_WITH_MESSAGE(
-      std::move(assembler).finalizeVocabBatchLookupResult(),
+      (void)std::move(assembler).finalizeVocabBatchLookupResult(),
       ::testing::HasSubstr("std::all_of(slotFilledTracking_"));
 }
