@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "backports/span.h"
+#include "backports/string.h"
 #include "util/Concepts.h"
 #include "util/Exception.h"
 #include "util/Log.h"
@@ -44,21 +45,21 @@ struct CastToUnsignedPtr {
 constexpr CastToUnsignedPtr castToUnsignedPtr{};
 
 // _____________________________________________________________________________
-// Allocate `bound` bytes without initializing them, run `decode` into that
-// buffer, and copy the decoded bytes into the resulting string.
+// Allocate `bound` bytes without zero-initialization, decode directly into the
+// string buffer, and resize to the actual decoded size.
 CPP_template(typename Decode)(
     requires ql::concepts::invocable<Decode, ql::span<char>>) std::string
     decompressToOwnedString(size_t bound, Decode decode) {
-  // `std::string::resize` value-initializes its memory, which would write
-  // every byte once more before the decoder overwrites it. Decode into an
-  // uninitialized buffer instead, then move those bytes into the result.
   if (bound == 0) {
     return {};
   }
-  std::vector<char> buffer(bound);
-  const size_t size = decode(ql::span<char>{buffer});
-  AD_CONTRACT_CHECK(size <= bound);
-  return std::string{buffer.data(), size};
+  std::string result;
+  ql::resize_and_overwrite(result, bound, [&](char* buf, size_t count) {
+    const size_t size = decode(ql::span<char>{buf, count});
+    AD_CONTRACT_CHECK(size <= bound);
+    return size;
+  });
+  return result;
 }
 }  // namespace detail
 
