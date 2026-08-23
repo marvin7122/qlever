@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "backports/memory.h"
 #include "backports/span.h"
 #include "util/Concepts.h"
 #include "util/Exception.h"
@@ -55,7 +56,7 @@ CPP_template(typename Decode)(
   if (bound == 0) {
     return {};
   }
-  std::unique_ptr<char[]> buffer{new char[bound]};
+  auto buffer = ql::make_unique_for_overwrite<char[]>(bound);
   const size_t size = decode(ql::span<char>{buffer.get(), bound});
   AD_CONTRACT_CHECK(size <= bound);
   return std::string{buffer.get(), size};

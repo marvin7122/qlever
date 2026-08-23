@@ -383,8 +383,12 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
 template <size_t NumVocabs, typename ReleaseLookupResultForMarker>
 VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
     const IndicesAndPositionsByMarker<NumVocabs>& markerIndicesAndPositions,
-    size_t numberOfResults, ReleaseLookupResultForMarker releaseLookupResult) {
-  MultiSourceVocabBatchAssembler assembler(numberOfResults);
+    ReleaseLookupResultForMarker releaseLookupResult) {
+  size_t totalPositions = 0;
+  for (const auto& markerIndices : markerIndicesAndPositions) {
+    totalPositions += markerIndices.size();
+  }
+  MultiSourceVocabBatchAssembler assembler(totalPositions);
 
   for (const auto& [vocabMarker, markerIndices] :
        ::ranges::views::enumerate(markerIndicesAndPositions)) {

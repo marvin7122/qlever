@@ -598,7 +598,7 @@ TEST_F(SplitVocabularyWithDataTest,
   markerLookups[0] = sv_.lookupBatch(markerZeroIndices);
   markerLookups[1] = sv_.lookupBatch(markerOneIndices);
   auto merged = TwoSplitVocabulary::mergeMarkerBatchesInInputOrder(
-      std::move(markerLookups), partitions, indices.size());
+      std::move(markerLookups), partitions);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv_, merged,
                                                                 indices);
 }
