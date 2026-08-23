@@ -36,9 +36,6 @@ e2e_data/*
 
 # Local aux files (IDE, etc)
 .idea
-/.claude/
-/CLAUDE.md
-/GEMINI.md
 
 # vim files
 *.swp
