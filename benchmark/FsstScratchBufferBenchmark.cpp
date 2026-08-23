@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "backports/span.h"
-#include "benchmark/infrastructure/Benchmark.h"
+#include "../benchmark/infrastructure/Benchmark.h"
 #include "util/FsstCompressor.h"
 
 namespace ad_benchmark {
