@@ -433,6 +433,12 @@ TEST(VocabBatchLookupData, MakePmrVocabBatchLookupResultCopiesWords) {
 }
 
 // _____________________________________________________________________________
+TEST(VocabBatchLookupData, MakePmrVocabBatchLookupResultCopiesWords) {
+  auto result = makePmrVocabBatchLookupResult({"first", "second"});
+  EXPECT_THAT(*result, ::testing::ElementsAre("first", "second"));
+}
+
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
   auto batch1 =
       ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"first"});
