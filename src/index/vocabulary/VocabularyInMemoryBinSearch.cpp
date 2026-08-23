@@ -4,6 +4,8 @@
 
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 
+#include "util/Log.h"
+
 using std::string;
 
 // _____________________________________________________________________________
@@ -74,6 +76,12 @@ void VocabularyInMemoryBinSearch::close() {
   // old character buffer along with a shared_ptr to it. Mutating the old buffer
   // in place would invalidate those views; replacing the pointer lets the old
   // buffer remain valid until all downstream results are destroyed.
+  const auto owners = words_.use_count();
+  if (owners > 1) {
+    LOG(INFO) << "VocabularyInMemoryBinSearch close retains " << words().size()
+              << " words for " << owners - 1
+              << " outstanding batch-result owner(s).";
+  }
   words_ = std::make_shared<const Words>();
   indices_.clear();
 }
