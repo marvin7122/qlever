@@ -34,12 +34,15 @@ using EvaluatedVariableValues = std::vector<std::optional<EvaluatedTerm>>;
 struct BatchEvaluationResult {
   // `variablesByColumn_` maps a column index of the `Result` that is being
   // evaluated to the `EvaluatedVariableValues` for the variable that is stored
-  // in that column. We use a hash map (instead of a dense vector) because the
-  // set of evaluated columns may be sparse: some variables in the WHERE-clause
-  // (in the `IdTable`) may not appear in the CONSTRUCT template and are thus
-  // not evaluated.
-  // TODO<marvin7122> can this be a vector? How can we do this more cache
-  // friendly. We always look at the same variables here.
+  // in that column. We deliberately keep a hash map instead of a dense vector
+  // indexed by column: the set of evaluated columns may be sparse (some
+  // variables in the WHERE-clause `IdTable` do not appear in the CONSTRUCT
+  // template), so a dense vector would waste memory proportional to the
+  // largest column index rather than the number of evaluated variables. The
+  // map is built once per batch before any lookup, so lookups are stable
+  // within a batch; if profiling ever shows the indirection matters, the
+  // drop-in replacement is a dense vector plus an offset for the smallest
+  // evaluated column index.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> variablesByColumn_;
   size_t numRows_ = 0;
 
