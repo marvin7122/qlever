@@ -378,6 +378,86 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
 }
 
 // _____________________________________________________________________________
+// Direct test of the documented lifetime semantics of `scanAll`: each yielded
+// `string_view` points into a caller-owned decode buffer that is REUSED for
+// the next element, so a previously yielded view must no longer hold the old
+// word once the next element has been pulled. Because the buffer outlives the
+// whole range (it lives in the range adaptor's closure), reading the stale
+// view afterwards is well-defined memory access -- which makes the assertion
+// deterministic rather than UB-dependent.
+TYPED_TEST(CompressedVocabularyF, ScanAllViewInvalidAfterNextPull) {
+  auto createVocab = TestFixture::createCompressedVocabulary();
+  // Two distinct, differently-sized words so the reused decode buffer is
+  // guaranteed to be rewritten (and possibly reallocated) by the second pull.
+  const std::vector<std::string> words{"firstWord", "secondMuchLongerWord"};
+  auto vocab = createVocab(words);
+
+  auto range = vocab.scanAll();
+  auto it = ql::ranges::begin(range);
+  ASSERT_NE(it, ql::ranges::end(range));
+  IndexAndWord first = *it;
+  ASSERT_EQ(first.index_, 0u);
+  ASSERT_EQ(first.word_, words[0]);
+  const char* firstData = first.word_.data();
+
+  ++it;
+  ASSERT_NE(it, ql::ranges::end(range));
+  IndexAndWord second = *it;
+  ASSERT_EQ(second.index_, 1u);
+  ASSERT_EQ(second.word_, words[1]);
+
+  // The stale view must no longer represent the first word: the underlying
+  // buffer was reused for the second decompression.
+  EXPECT_NE(first.word_.data(), firstData);
+  EXPECT_NE(first.word_, words[0]);
+}
+
+// _____________________________________________________________________________
+// `lookupBatch` with several decoder blocks: a small block size (2 words per
+// block) forces multiple decoders, exercising the per-request decoder
+// selection. Covers a single-element batch, a batch with repeated indices,
+// and a mixed batch crossing block boundaries; results must match
+// `operator[]` exactly and appear in request order, with all views staying
+// valid while the returned result object lives.
+TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
+  const std::vector<std::string> words{"alpha", "beta",   "gamma", "delta",
+                                       "epsi",  "zeta",   "eta",   "theta",
+                                       "iota",  "kappa",  "",      "lambda"};
+
+  ad_utility::deleteFile("lookup-batch-blocks-tmp", false);
+  CompressedVocabulary<VocabularyInMemory, TypeParam, 2> vocab;
+  {
+    auto writerPtr = vocab.makeDiskWriterPtr("lookup-batch-blocks-tmp");
+    writeWordsAndFinish(*writerPtr, words);
+  }
+  vocab.open("lookup-batch-blocks-tmp");
+  ASSERT_EQ(vocab.size(), words.size());
+
+  // Single-element batch: boundary case with exactly one requested index.
+  auto single = vocab.lookupBatch(ql::span<const size_t>{7});
+  ASSERT_EQ(single.size(), 1u);
+  EXPECT_EQ(single[0], "theta");
+
+  // Multi-block batch containing repeated indices and the empty-string word:
+  // every entry must match the per-word `operator[]`, in request order.
+  const std::array<size_t, 8> indices{10, 0, 11, 5, 5, 2, 10, 9};
+  auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  EXPECT_TRUE(result[0].empty());
+  EXPECT_EQ(result[6], "");
+
+  // All views yielded by the result must stay intact while the result object
+  // is alive, even after unrelated allocations have run in between.
+  std::string unrelatedAllocation(64, 'x');
+  for (const auto& [view, idx] : ::ranges::views::zip(result, indices)) {
+    EXPECT_EQ(view, std::string{vocab[idx]}) << "at vocabulary index " << idx;
+  }
+  EXPECT_EQ(unrelatedAllocation.size(), 64u);
+
+  ad_utility::deleteFile("lookup-batch-blocks-tmp");
+}
+
+// _____________________________________________________________________________
 TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
   std::vector<DummyDecoder> decoders{DummyDecoder{}, DummyDecoder{}};
   ad_utility::vocabulary::detail::DecoderMultiplexer<DummyDecoder> mux{
