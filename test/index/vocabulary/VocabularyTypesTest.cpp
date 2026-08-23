@@ -333,8 +333,7 @@ TEST(VocabBatchLookupData, KeepAliveVocabBatchIncompleteCoverageThrows) {
 // _____________________________________________________________________________
 // Verify that a legitimately empty word does not trip any correctness check:
 // the filled/unfilled invariant is structural, not based on the view contents.
-TEST(VocabBatchLookupData,
-     ScatterAndKeepAliveTolerateEmptyWord) {
+TEST(VocabBatchLookupData, ScatterAndKeepAliveTolerateEmptyWord) {
   auto batch = makeStringVectorVocabBatchLookupResult({"", "x"});
 
   std::vector<std::string_view> views(2);
