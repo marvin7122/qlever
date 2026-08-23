@@ -304,10 +304,10 @@ inline constexpr std::array<std::string_view, 4> defaultTestWords{
 
 // Feed `words` into an already-constructed word `writer` and `finish()` it. The
 // `words` must be sorted.
-template <typename Writer>
-void writeWordsAndFinish(
-    Writer& writer, ql::span<const std::string_view> words = defaultTestWords) {
-  for (const auto& word : words) {
+template <typename Writer, typename Range = ql::span<const std::string_view>>
+void writeWordsAndFinish(Writer& writer,
+                         const Range& words = defaultTestWords) {
+  for (std::string_view word : words) {
     writer(word, false);
   }
   writer.finish();
@@ -322,7 +322,7 @@ void assertVocabularyMatchesAtIndices(
   ASSERT_EQ(ql::ranges::distance(indices), expectedWords.size());
 
   for (const auto& [idx, expectedWord] :
-       ::ranges::views::zip(indices, expectedWords)) {
+       ql::views::zip(indices, expectedWords)) {
     EXPECT_EQ(std::string{vocab[idx]}, expectedWord)
         << "at vocabulary index " << idx;
   }
@@ -355,8 +355,8 @@ void assertLookupResultMatchesVocabularyAtIndices(
   };
 
   for (const auto& [resultWord, idx] :
-       ::ranges::views::zip(lookupResult, indices)) {
-    EXPECT_EQ(resultWord, at(idx)) << " at  vocabulary index " << idx;
+       ql::views::zip(lookupResult, indices)) {
+    EXPECT_EQ(resultWord, at(idx)) << " at vocabulary index " << idx;
   }
 }
 
