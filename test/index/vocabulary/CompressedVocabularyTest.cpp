@@ -92,7 +92,6 @@ TEST(CompressedVocabulary, CompressionIsActuallyApplied) {
     writer.readableName() = "blabb";
     EXPECT_EQ(writer.readableName(), "blabb");
     // Test the case that the destructor implicitly calls `finish`.
-    // The other unit tests have
   }
 
   VocabularyInMemory simple;
@@ -119,38 +118,30 @@ using Compressors =
 template <typename Compressor>
 struct CompressedVocabularyF : public testing::Test {
   static_assert(ad_utility::vocabulary::CompressionWrapper<Compressor>);
-  // Tests for the FSST-compressed vocabulary. These use the generic testing
-  // framework that was set up for all the other vocabularies.
+  // Return a lambda that takes a vector of strings, builds a
+  // CompressedVocabulary containing those strings, and returns that
+  // vocabulary.
   static auto createCompressedVocabulary() {
-    std::string filename = gtestCurrentTestName();
-    return [filename =
-                std::move(filename)](const std::vector<std::string>& words) {
-      // We deliberately set the blocksize to a very small number.
-      CompressedVocabulary<VocabularyOnDisk, Compressor, 4> vocab;
-      auto writerPtr = vocab.makeDiskWriterPtr(filename);
-      auto& writer = *writerPtr;
-      for (const auto& word : words) {
-        writer(word, false);
-      }
-      writer.finish();
-      vocab.open(filename);
-      return vocab;
+    return [](const std::vector<std::string>& words,
+              std::string filename = gtestCurrentTestName()) {
+      ad_utility::deleteFile(filename, false);
+      CompressedVocabulary<VocabularyInMemory, Compressor> v;
+      auto writerPtr = v.makeDiskWriterPtr(filename);
+      writeWordsAndFinish(*writerPtr, words);
+      v.open(filename);
+      return v;
     };
   }
 };
+
 TYPED_TEST_SUITE(CompressedVocabularyF, Compressors);
 
 // _____________________________________________________________________________
-// The generic vocabulary framework tests, run for every compressor: lower and
-// upper bound searches must behave identically to an uncompressed vocabulary,
-// with both the standard string comparator and the numeric-index comparator.
 TYPED_TEST(CompressedVocabularyF, LowerUpperBoundStdLess) {
   testUpperAndLowerBoundWithStdLess(this->createCompressedVocabulary());
 }
 
 // _____________________________________________________________________________
-// See above: same bounds contract, but driven through the numeric comparator
-// that `ValueId`-based lookups use.
 TYPED_TEST(CompressedVocabularyF, LowerUpperBoundNumeric) {
   testUpperAndLowerBoundWithNumericComparator(
       this->createCompressedVocabulary());
@@ -165,9 +156,9 @@ TYPED_TEST(CompressedVocabularyF, AccessOperator) {
 
 // _____________________________________________________________________________
 // `lookupBatch` must agree with the per-word `operator[]` for arbitrary index
-// combinations: same words, same order as requested (duplicates included), and
-// each returned view must alias the vocabulary's own storage. An empty index
-// list is a contract violation and must throw.
+// combinations: same words, same order as requested (duplicates included), with
+// the returned batch owning the lifetime of all decompressed string views. An
+// empty index list is a contract violation and must throw.
 TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
                                        "epsilon"};
