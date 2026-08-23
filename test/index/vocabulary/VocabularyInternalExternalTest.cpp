@@ -142,6 +142,20 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
 }
 
 // _____________________________________________________________________________
+// Batch lookup results from `VocabularyInternalExternal` (both internal RAM
+// words and external disk words) must retain valid storage after `close()`.
+TEST(VocabularyInternalExternal, LookupBatchOutlivesClose) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
+  auto vocab = createVocabulary("LookupBatchOutlivesClose")(words);
+  const std::array<size_t, 4> indices{0, 1, 2, 3};
+  auto result = vocab.lookupBatch(indices);
+  vocab.close();
+
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("alpha", "beta", "gamma", "delta"));
+}
+
+// _____________________________________________________________________________
 TEST(VocabularyInternalExternal, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary("EmptyVocabulary"));
 }
