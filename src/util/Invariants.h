@@ -9,25 +9,30 @@
 #ifndef QLEVER_SRC_UTIL_INVARIANTS_H
 #define QLEVER_SRC_UTIL_INVARIANTS_H
 
-#include <concepts>
 #include <utility>
 
+#include "backports/concepts.h"
 #include "util/Exception.h"
 
 namespace ad_utility {
 
+namespace detail {
+template <typename T>
+CPP_requires(is_invariant_stateful_class_,
+             requires(const T& t)(t.checkInvariants()));
+}  // namespace detail
+
 // _____________________________________________________________________________
-// Formal C++20 Concept satisfied by any class that provides an invariant
+// Concept satisfied by any class that provides an invariant
 // verification method: `void checkInvariants() const`.
 template <typename T>
-concept InvariantStatefulClass = requires(const T& t) {
-  { t.checkInvariants() } -> std::same_as<void>;
-};
+CPP_concept InvariantStatefulClass =
+    CPP_requires_ref(detail::is_invariant_stateful_class_, T);
 
 // _____________________________________________________________________________
 // Generic RAII Guard that asserts class invariants on scope entry and scope
 // exit for ANY class that satisfies the `InvariantStatefulClass` concept.
-template <InvariantStatefulClass T>
+CPP_template(typename T)(requires InvariantStatefulClass<T>)
 class InvariantGuard {
  private:
   const T* self_;
@@ -48,7 +53,7 @@ class InvariantGuard {
 
 // _____________________________________________________________________________
 // Standalone deduction factory for InvariantGuard.
-template <InvariantStatefulClass T>
+CPP_template(typename T)(requires InvariantStatefulClass<T>)
 [[nodiscard]] InvariantGuard<T> makeInvariantGuard(const T* instance) {
   return InvariantGuard<T>{instance};
 }
