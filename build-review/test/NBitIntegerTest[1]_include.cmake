@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/NBitIntegerTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/NBitIntegerTest[1]_tests.cmake")
+else()
+  add_test(NBitIntegerTest_NOT_BUILT NBitIntegerTest_NOT_BUILT)
+endif()

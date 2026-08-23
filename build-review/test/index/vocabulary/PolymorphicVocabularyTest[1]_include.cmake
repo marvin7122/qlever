@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/PolymorphicVocabularyTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/PolymorphicVocabularyTest[1]_tests.cmake")
+else()
+  add_test(PolymorphicVocabularyTest_NOT_BUILT PolymorphicVocabularyTest_NOT_BUILT)
+endif()

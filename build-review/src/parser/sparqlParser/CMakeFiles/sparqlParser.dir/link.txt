@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../lib/libsparqlParser.a CMakeFiles/sparqlParser.dir/generated/SparqlAutomaticBaseListener.cpp.o CMakeFiles/sparqlParser.dir/generated/SparqlAutomaticLexer.cpp.o CMakeFiles/sparqlParser.dir/generated/SparqlAutomaticListener.cpp.o CMakeFiles/sparqlParser.dir/generated/SparqlAutomaticParser.cpp.o CMakeFiles/sparqlParser.dir/generated/SparqlAutomaticVisitor.cpp.o
+/usr/bin/ranlib ../../../lib/libsparqlParser.a

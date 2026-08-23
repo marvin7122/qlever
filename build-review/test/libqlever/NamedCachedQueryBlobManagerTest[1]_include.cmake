@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/libqlever/NamedCachedQueryBlobManagerTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/libqlever/NamedCachedQueryBlobManagerTest[1]_tests.cmake")
+else()
+  add_test(NamedCachedQueryBlobManagerTest_NOT_BUILT NamedCachedQueryBlobManagerTest_NOT_BUILT)
+endif()

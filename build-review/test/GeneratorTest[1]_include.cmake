@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/GeneratorTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/GeneratorTest[1]_tests.cmake")
+else()
+  add_test(GeneratorTest_NOT_BUILT GeneratorTest_NOT_BUILT)
+endif()

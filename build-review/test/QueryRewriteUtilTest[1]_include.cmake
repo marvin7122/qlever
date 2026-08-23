@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/QueryRewriteUtilTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/QueryRewriteUtilTest[1]_tests.cmake")
+else()
+  add_test(QueryRewriteUtilTest_NOT_BUILT QueryRewriteUtilTest_NOT_BUILT)
+endif()

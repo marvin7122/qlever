@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/IteratorTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/IteratorTest[1]_tests.cmake")
+else()
+  add_test(IteratorTest_NOT_BUILT IteratorTest_NOT_BUILT)
+endif()

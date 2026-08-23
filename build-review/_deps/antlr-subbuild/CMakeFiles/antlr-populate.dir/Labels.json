@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/CMakeFiles/antlr-populate"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/CMakeFiles/antlr-populate.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/CMakeFiles/antlr-populate-complete.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/antlr-populate-prefix/src/antlr-populate-stamp/antlr-populate-build.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/antlr-populate-prefix/src/antlr-populate-stamp/antlr-populate-configure.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/antlr-populate-prefix/src/antlr-populate-stamp/antlr-populate-download.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/antlr-populate-prefix/src/antlr-populate-stamp/antlr-populate-install.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/antlr-populate-prefix/src/antlr-populate-stamp/antlr-populate-mkdir.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/antlr-populate-prefix/src/antlr-populate-stamp/antlr-populate-patch.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/antlr-populate-prefix/src/antlr-populate-stamp/antlr-populate-test.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/antlr-subbuild/antlr-populate-prefix/src/antlr-populate-stamp/antlr-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"antlr-populate"
+		],
+		"name" : "antlr-populate"
+	}
+}

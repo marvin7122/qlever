@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConfigOptionProxyTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConfigOptionProxyTest[1]_tests.cmake")
+else()
+  add_test(ConfigOptionProxyTest_NOT_BUILT ConfigOptionProxyTest_NOT_BUILT)
+endif()

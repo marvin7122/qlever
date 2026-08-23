@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/CompressedVocabularyTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/CompressedVocabularyTest[1]_tests.cmake")
+else()
+  add_test(CompressedVocabularyTest_NOT_BUILT CompressedVocabularyTest_NOT_BUILT)
+endif()

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/TripleSerializerTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/TripleSerializerTest[1]_tests.cmake")
+else()
+  add_test(TripleSerializerTest_NOT_BUILT TripleSerializerTest_NOT_BUILT)
+endif()

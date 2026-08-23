@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/LiteralOrIriTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/LiteralOrIriTest[1]_tests.cmake")
+else()
+  add_test(LiteralOrIriTest_NOT_BUILT LiteralOrIriTest_NOT_BUILT)
+endif()

@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/CMakeFiles/fsst-populate"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/CMakeFiles/fsst-populate.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/CMakeFiles/fsst-populate-complete.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/fsst-populate-prefix/src/fsst-populate-stamp/fsst-populate-build.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/fsst-populate-prefix/src/fsst-populate-stamp/fsst-populate-configure.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/fsst-populate-prefix/src/fsst-populate-stamp/fsst-populate-download.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/fsst-populate-prefix/src/fsst-populate-stamp/fsst-populate-install.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/fsst-populate-prefix/src/fsst-populate-stamp/fsst-populate-mkdir.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/fsst-populate-prefix/src/fsst-populate-stamp/fsst-populate-patch.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/fsst-populate-prefix/src/fsst-populate-stamp/fsst-populate-test.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/fsst-subbuild/fsst-populate-prefix/src/fsst-populate-stamp/fsst-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"fsst-populate"
+		],
+		"name" : "fsst-populate"
+	}
+}

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ResetWhenMovedTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ResetWhenMovedTest[1]_tests.cmake")
+else()
+  add_test(ResetWhenMovedTest_NOT_BUILT ResetWhenMovedTest_NOT_BUILT)
+endif()

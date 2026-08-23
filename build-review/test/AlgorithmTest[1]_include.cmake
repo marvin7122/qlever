@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/AlgorithmTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/AlgorithmTest[1]_tests.cmake")
+else()
+  add_test(AlgorithmTest_NOT_BUILT AlgorithmTest_NOT_BUILT)
+endif()

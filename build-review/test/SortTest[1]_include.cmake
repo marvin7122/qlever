@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/SortTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/SortTest[1]_tests.cmake")
+else()
+  add_test(SortTest_NOT_BUILT SortTest_NOT_BUILT)
+endif()

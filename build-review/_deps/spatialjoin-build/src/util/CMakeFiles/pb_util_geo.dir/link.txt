@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../../lib/libpb_util_geo.a CMakeFiles/pb_util_geo.dir/geo/Geo.cpp.o CMakeFiles/pb_util_geo.dir/geo/output/GeoJsonOutput.cpp.o
+/usr/bin/ranlib ../../../../lib/libpb_util_geo.a

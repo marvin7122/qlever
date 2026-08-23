@@ -20,6 +20,7 @@
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyType.h"
+#include "util/GTestHelpers.h"
 
 namespace splitVocabTestHelpers {
 
@@ -513,7 +514,7 @@ using namespace splitVocabTestHelpers;
 
 // Share common SplitVocabulary setup across multiple tests.
 // Populates the vocabulary once per test suite with:
-//   index 0: "" (marker 0); index 1: "xyz" (marker 1)
+//    (marker 0) and "" (marker 0); index 1: "xyz" (marker 1)
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:

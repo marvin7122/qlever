@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/SparqlDataTypesTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/SparqlDataTypesTest[1]_tests.cmake")
+else()
+  add_test(SparqlDataTypesTest_NOT_BUILT SparqlDataTypesTest_NOT_BUILT)
+endif()

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ParsedRequestBuilderTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ParsedRequestBuilderTest[1]_tests.cmake")
+else()
+  add_test(ParsedRequestBuilderTest_NOT_BUILT ParsedRequestBuilderTest_NOT_BUILT)
+endif()

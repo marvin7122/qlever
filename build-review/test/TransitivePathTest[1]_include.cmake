@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/TransitivePathTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/TransitivePathTest[1]_tests.cmake")
+else()
+  add_test(TransitivePathTest_NOT_BUILT TransitivePathTest_NOT_BUILT)
+endif()

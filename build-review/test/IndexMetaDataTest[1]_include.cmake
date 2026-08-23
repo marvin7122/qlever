@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/IndexMetaDataTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/IndexMetaDataTest[1]_tests.cmake")
+else()
+  add_test(IndexMetaDataTest_NOT_BUILT IndexMetaDataTest_NOT_BUILT)
+endif()

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/CompactStringVectorTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/CompactStringVectorTest[1]_tests.cmake")
+else()
+  add_test(CompactStringVectorTest_NOT_BUILT CompactStringVectorTest_NOT_BUILT)
+endif()

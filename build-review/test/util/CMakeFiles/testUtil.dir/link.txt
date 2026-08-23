@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../lib/libtestUtil.a CMakeFiles/testUtil.dir/IdTableHelpers.cpp.o CMakeFiles/testUtil.dir/ValidatorHelpers.cpp.o CMakeFiles/testUtil.dir/RandomTestHelpers.cpp.o CMakeFiles/testUtil.dir/BenchmarkMeasurementContainerHelpers.cpp.o CMakeFiles/testUtil.dir/IndexTestHelpers.cpp.o
+/usr/bin/ranlib ../../lib/libtestUtil.a

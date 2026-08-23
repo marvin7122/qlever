@@ -104,7 +104,7 @@ class VocabularyInMemoryBinSearch
   std::shared_ptr<const Words> wordStorage() const { return words_; }
 
  private:
-  // Access the words for internal use. Prefer this over words_-> to avoid
+  // Access the words for internal use.  to avoid cascading changes ...words_-> to avoid
   // cascading changes if the storage representation changes in the future.
   const Words& words() const { return *words_; }
 

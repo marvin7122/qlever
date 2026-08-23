@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../lib/libconfigManager.a CMakeFiles/configManager.dir/ConfigManager.cpp.o CMakeFiles/configManager.dir/ConfigOption.cpp.o CMakeFiles/configManager.dir/generated/ConfigShorthandLexer.cpp.o CMakeFiles/configManager.dir/generated/ConfigShorthandParser.cpp.o CMakeFiles/configManager.dir/ConfigShorthandVisitor.cpp.o CMakeFiles/configManager.dir/ConfigUtil.cpp.o CMakeFiles/configManager.dir/ConfigExceptions.cpp.o CMakeFiles/configManager.dir/Validator.cpp.o
+/usr/bin/ranlib ../../../lib/libconfigManager.a

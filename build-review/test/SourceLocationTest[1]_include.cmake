@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/SourceLocationTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/SourceLocationTest[1]_tests.cmake")
+else()
+  add_test(SourceLocationTest_NOT_BUILT SourceLocationTest_NOT_BUILT)
+endif()

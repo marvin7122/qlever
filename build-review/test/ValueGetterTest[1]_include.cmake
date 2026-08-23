@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ValueGetterTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ValueGetterTest[1]_tests.cmake")
+else()
+  add_test(ValueGetterTest_NOT_BUILT ValueGetterTest_NOT_BUILT)
+endif()

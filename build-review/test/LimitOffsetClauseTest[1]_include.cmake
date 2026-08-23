@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/LimitOffsetClauseTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/LimitOffsetClauseTest[1]_tests.cmake")
+else()
+  add_test(LimitOffsetClauseTest_NOT_BUILT LimitOffsetClauseTest_NOT_BUILT)
+endif()

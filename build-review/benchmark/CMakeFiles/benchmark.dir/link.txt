@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../lib/libbenchmark.a CMakeFiles/benchmark.dir/infrastructure/Benchmark.cpp.o CMakeFiles/benchmark.dir/infrastructure/BenchmarkMeasurementContainer.cpp.o CMakeFiles/benchmark.dir/infrastructure/BenchmarkToJson.cpp.o CMakeFiles/benchmark.dir/infrastructure/BenchmarkToString.cpp.o
+/usr/bin/ranlib ../lib/libbenchmark.a

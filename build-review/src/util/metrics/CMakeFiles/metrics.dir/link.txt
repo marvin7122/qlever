@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../lib/libmetrics.a CMakeFiles/metrics.dir/Metrics.cpp.o CMakeFiles/metrics.dir/ServerMetrics.cpp.o CMakeFiles/metrics.dir/InstrumentedExecutor.cpp.o
+/usr/bin/ranlib ../../../lib/libmetrics.a

@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../../lib/libopentelemetry_exporter_prometheus_builder.a CMakeFiles/opentelemetry_exporter_prometheus_builder.dir/src/prometheus_pull_builder.cc.o
+/usr/bin/ranlib ../../../../lib/libopentelemetry_exporter_prometheus_builder.a

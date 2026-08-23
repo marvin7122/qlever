@@ -43,7 +43,7 @@ CPP_concept BulkResultForDecoder =
 template <typename T>
 CPP_requires(
     CompressionWrapper_,
-    requires(const T& t, std::string& scratch, ql::span<char> out)(
+    requires(const T& t, std::string& decompressInto, ql::span<char> out)(
         // Return the number of decoders that are stored.
         concepts::same_as<decltype(t.numDecoders()), size_t>,
         // Decompress the given string, use the Decoder specified by the second
@@ -117,7 +117,7 @@ struct DecoderMultiplexer {
   }
 
   // ___________________________________________________________________________
-  // Decode `compressed` with decoder at `decoderIndex` in `decoders_` into
+  //  with decoder at `compressed` with decoder at `decoderIndex` in `decoders_` into
   // the `out` buffer. `scratch` is used only by multi-stage FSST; single-stage
   // decoders ignore it. Return the number of bytes written to `out`.
   [[nodiscard]] size_t decompressInto(std::string_view compressed,

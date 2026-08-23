@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/OptionalJoinTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/OptionalJoinTest[1]_tests.cmake")
+else()
+  add_test(OptionalJoinTest_NOT_BUILT OptionalJoinTest_NOT_BUILT)
+endif()

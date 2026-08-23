@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/backports/AtomicFlagTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/backports/AtomicFlagTest[1]_tests.cmake")
+else()
+  add_test(AtomicFlagTest_NOT_BUILT AtomicFlagTest_NOT_BUILT)
+endif()

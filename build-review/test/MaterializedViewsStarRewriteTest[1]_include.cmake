@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/MaterializedViewsStarRewriteTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/MaterializedViewsStarRewriteTest[1]_tests.cmake")
+else()
+  add_test(MaterializedViewsStarRewriteTest_NOT_BUILT MaterializedViewsStarRewriteTest_NOT_BUILT)
+endif()

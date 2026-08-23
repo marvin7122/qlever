@@ -1,0 +1,1 @@
+/usr/bin/c++   -Wall -Wextra  -march=native -O3 -DNDEBUG -O3 -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/binary12.dir/link.d CMakeFiles/binary12.dir/fsst.cpp.o -o fsst12  -ljemalloc -luring -lzstd ../../lib/libfsst12.a -ljemalloc -luring -lzstd

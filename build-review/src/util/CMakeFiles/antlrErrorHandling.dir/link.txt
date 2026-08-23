@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../lib/libantlrErrorHandling.a CMakeFiles/antlrErrorHandling.dir/antlr/ANTLRErrorHandling.cpp.o CMakeFiles/antlrErrorHandling.dir/antlr/GenerateAntlrExceptionMetadata.cpp.o CMakeFiles/antlrErrorHandling.dir/ParseException.cpp.o
+/usr/bin/ranlib ../../lib/libantlrErrorHandling.a

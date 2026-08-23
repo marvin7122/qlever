@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/FindUndefRangesTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/FindUndefRangesTest[1]_tests.cmake")
+else()
+  add_test(FindUndefRangesTest_NOT_BUILT FindUndefRangesTest_NOT_BUILT)
+endif()

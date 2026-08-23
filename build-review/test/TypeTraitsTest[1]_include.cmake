@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/TypeTraitsTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/TypeTraitsTest[1]_tests.cmake")
+else()
+  add_test(TypeTraitsTest_NOT_BUILT TypeTraitsTest_NOT_BUILT)
+endif()

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/FileTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/FileTest[1]_tests.cmake")
+else()
+  add_test(FileTest_NOT_BUILT FileTest_NOT_BUILT)
+endif()

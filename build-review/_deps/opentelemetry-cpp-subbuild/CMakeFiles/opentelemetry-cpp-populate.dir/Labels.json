@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/CMakeFiles/opentelemetry-cpp-populate"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/CMakeFiles/opentelemetry-cpp-populate.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/CMakeFiles/opentelemetry-cpp-populate-complete.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/opentelemetry-cpp-populate-prefix/src/opentelemetry-cpp-populate-stamp/opentelemetry-cpp-populate-build.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/opentelemetry-cpp-populate-prefix/src/opentelemetry-cpp-populate-stamp/opentelemetry-cpp-populate-configure.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/opentelemetry-cpp-populate-prefix/src/opentelemetry-cpp-populate-stamp/opentelemetry-cpp-populate-download.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/opentelemetry-cpp-populate-prefix/src/opentelemetry-cpp-populate-stamp/opentelemetry-cpp-populate-install.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/opentelemetry-cpp-populate-prefix/src/opentelemetry-cpp-populate-stamp/opentelemetry-cpp-populate-mkdir.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/opentelemetry-cpp-populate-prefix/src/opentelemetry-cpp-populate-stamp/opentelemetry-cpp-populate-patch.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/opentelemetry-cpp-populate-prefix/src/opentelemetry-cpp-populate-stamp/opentelemetry-cpp-populate-test.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/opentelemetry-cpp-subbuild/opentelemetry-cpp-populate-prefix/src/opentelemetry-cpp-populate-stamp/opentelemetry-cpp-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"opentelemetry-cpp-populate"
+		],
+		"name" : "opentelemetry-cpp-populate"
+	}
+}

@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../../lib/libabsl_kernel_timeout_internal.a CMakeFiles/kernel_timeout_internal.dir/internal/kernel_timeout.cc.o
+/usr/bin/ranlib ../../../../lib/libabsl_kernel_timeout_internal.a

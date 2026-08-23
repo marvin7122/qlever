@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstantsTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstantsTest[1]_tests.cmake")
+else()
+  add_test(ConstantsTest_NOT_BUILT ConstantsTest_NOT_BUILT)
+endif()

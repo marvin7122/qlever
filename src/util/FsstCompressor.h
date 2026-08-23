@@ -63,6 +63,7 @@ CPP_template(typename Decode)(
 }
 }  // namespace detail
 
+// _____________________________________________________________________________
 // A simple C++ wrapper around the C-API of the `FSST` library. It consists of
 // two types, a thredsafe `FsstDecoder` that can be used to perform
 // decompression, and a single-threaded `FsstEncoder` for compression.
@@ -71,15 +72,18 @@ class FsstDecoder {
   fsst_decoder_t decoder_;
 
  public:
+  // ____________________________________________________________________________
   // The default constructor does lead to an invalid decoder, but is required
   // for the serialization module. Don't use it.
   FsstDecoder() = default;
 
+  // ____________________________________________________________________________
   // Construct from the internal `fsst_decoder_t`. Note that the typical way to
   // obtain an `FsstDecoder` is by first creating a `FsstEncoder` and calling
   // `getDecoder()` on that encoder.
   explicit FsstDecoder(const fsst_decoder_t& decoder) : decoder_{decoder} {}
 
+  // ____________________________________________________________________________
   // Use the FSST library guarantee: expansion is at most this factor.
   static constexpr size_t maxExpansionFactor = 8;
 
@@ -202,6 +206,7 @@ class FsstRepeatedDecoder {
         maxDecompressedSize(str),
         [&](ql::span<char> out) { return decompressInto(str, out, scratch); });
   }
+
   // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
   CPP_template_2(typename T, typename U)(
@@ -211,9 +216,11 @@ class FsstRepeatedDecoder {
   }
 };
 
+// _____________________________________________________________________________
 // The encoder class.
 class FsstEncoder {
  private:
+  // ___________________________________________________________________________
   // The encoder state of FSST is rather complex and managed via a pointer
   // indirection. We manage this using a `unique_ptr` with a custom deleter.
   struct Deleter {
@@ -224,11 +231,13 @@ class FsstEncoder {
   static constexpr auto cast = detail::castToUnsignedPtr;
 
  public:
+  // ___________________________________________________________________________
   // Create an `FsstEncoder`. The given `strings` are used to create the
   // codebook.
   explicit FsstEncoder(const std::vector<std::string>& strings)
       : encoder_{makeEncoder(strings)} {}
 
+  // ___________________________________________________________________________
   // Compress a single string.
   std::string compress(std::string_view word) {
     size_t len = word.size();
@@ -245,12 +254,15 @@ class FsstEncoder {
     return output;
   }
 
+  // ___________________________________________________________________________
   // Return a decoder, that can be used to decompress strings that have been
   // compressed by this encoder.
   FsstDecoder makeDecoder() const {
     return FsstDecoder{fsst_decoder(encoder_.get())};
   }
 
+  // ___________________________________________________________________________
+  // Return a decoder, that can be used to decompress strings that have been
   // Interface for the case that all the strings that shall ever be compressed
   // using the same codebook shall also contribute to that codebook. Build a
   // codebook from the `strings`, and then use that codebook to compress each of
@@ -266,6 +278,7 @@ class FsstEncoder {
   }
 
  private:
+  // ___________________________________________________________________________
   // The implementation of the constructor and of `compressAll`.
   template <bool alsoCompressAll = false, typename Strings>
   static std::conditional_t<alsoCompressAll, BulkResult, Encoder> makeEncoder(

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/GraphPatternAnalysisTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/GraphPatternAnalysisTest[1]_tests.cmake")
+else()
+  add_test(GraphPatternAnalysisTest_NOT_BUILT GraphPatternAnalysisTest_NOT_BUILT)
+endif()

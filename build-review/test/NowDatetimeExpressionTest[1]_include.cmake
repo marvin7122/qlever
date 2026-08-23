@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/NowDatetimeExpressionTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/NowDatetimeExpressionTest[1]_tests.cmake")
+else()
+  add_test(NowDatetimeExpressionTest_NOT_BUILT NowDatetimeExpressionTest_NOT_BUILT)
+endif()

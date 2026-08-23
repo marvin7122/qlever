@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/TextLimitOperationTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/TextLimitOperationTest[1]_tests.cmake")
+else()
+  add_test(TextLimitOperationTest_NOT_BUILT TextLimitOperationTest_NOT_BUILT)
+endif()

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ExternalOverflowStorageTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ExternalOverflowStorageTest[1]_tests.cmake")
+else()
+  add_test(ExternalOverflowStorageTest_NOT_BUILT ExternalOverflowStorageTest_NOT_BUILT)
+endif()

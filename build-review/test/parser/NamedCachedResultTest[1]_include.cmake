@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/NamedCachedResultTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/NamedCachedResultTest[1]_tests.cmake")
+else()
+  add_test(NamedCachedResultTest_NOT_BUILT NamedCachedResultTest_NOT_BUILT)
+endif()

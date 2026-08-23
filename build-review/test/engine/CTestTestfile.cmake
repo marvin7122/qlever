@@ -1,0 +1,38 @@
+# CMake generated Testfile for 
+# Source directory: /home/userNoPriv/code/qlever/qlever-code/test/engine
+# Build directory: /home/userNoPriv/code/qlever/qlever-code/build-review/test/engine
+# 
+# This file includes the relevant testing commands required for 
+# testing this directory and lists subdirectories to be tested as well.
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/IndexScanTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/TextIndexScanForWordTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/TextIndexScanForEntityTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/DistinctTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/GroupByHashMapOptimizationTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/LazyGroupByTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/CountConnectedSubgraphsTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/ResponseJsonTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/BindTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/SpatialJoinPrefilterTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/SpatialJoinParserTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/SpatialJoinCachedIndexTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/QueryExecutionTreeTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/DescribeTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/ExistsJoinTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/NeutralOptionalTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/OptionalJoinTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/GroupConcatExpressionTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/StripColumnsTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/NamedResultCacheTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/NamedResultCacheSerializerTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/ExplicitIdTableOperationTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/StringMappingTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/PermutationSelectorTest[1]_include.cmake")
+include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/ConstructTripleInstantiatorTest[1]_include.cmake")
+add_test([=[CartesianProductJoinTest]=] "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/CartesianProductJoinTest")
+set_tests_properties([=[CartesianProductJoinTest]=] PROPERTIES  _BACKTRACE_TRIPLES "/home/userNoPriv/code/qlever/qlever-code/test/CMakeLists.txt;110;add_test;/home/userNoPriv/code/qlever/qlever-code/test/engine/CMakeLists.txt;3;addLinkAndRunAsSingleTest;/home/userNoPriv/code/qlever/qlever-code/test/engine/CMakeLists.txt;0;")
+add_test([=[SpatialJoinTest]=] "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/SpatialJoinTest")
+set_tests_properties([=[SpatialJoinTest]=] PROPERTIES  _BACKTRACE_TRIPLES "/home/userNoPriv/code/qlever/qlever-code/test/CMakeLists.txt;110;add_test;/home/userNoPriv/code/qlever/qlever-code/test/engine/CMakeLists.txt;6;addLinkAndRunAsSingleTest;/home/userNoPriv/code/qlever/qlever-code/test/engine/CMakeLists.txt;0;")
+add_test([=[SpatialJoinAlgorithmsTest]=] "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/SpatialJoinAlgorithmsTest")
+set_tests_properties([=[SpatialJoinAlgorithmsTest]=] PROPERTIES  _BACKTRACE_TRIPLES "/home/userNoPriv/code/qlever/qlever-code/test/CMakeLists.txt;110;add_test;/home/userNoPriv/code/qlever/qlever-code/test/engine/CMakeLists.txt;15;addLinkAndRunAsSingleTest;/home/userNoPriv/code/qlever/qlever-code/test/engine/CMakeLists.txt;0;")
+subdirs("idTable")

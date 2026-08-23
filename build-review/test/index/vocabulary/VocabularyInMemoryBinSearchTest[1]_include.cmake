@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/VocabularyInMemoryBinSearchTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/VocabularyInMemoryBinSearchTest[1]_tests.cmake")
+else()
+  add_test(VocabularyInMemoryBinSearchTest_NOT_BUILT VocabularyInMemoryBinSearchTest_NOT_BUILT)
+endif()

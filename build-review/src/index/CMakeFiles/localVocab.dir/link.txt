@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../lib/liblocalVocab.a CMakeFiles/localVocab.dir/LocalVocabEntry.cpp.o CMakeFiles/localVocab.dir/LocalVocabContext.cpp.o CMakeFiles/localVocab.dir/LocalVocab.cpp.o
+/usr/bin/ranlib ../../lib/liblocalVocab.a

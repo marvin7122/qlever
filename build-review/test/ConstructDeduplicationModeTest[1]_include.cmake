@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstructDeduplicationModeTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstructDeduplicationModeTest[1]_tests.cmake")
+else()
+  add_test(ConstructDeduplicationModeTest_NOT_BUILT ConstructDeduplicationModeTest_NOT_BUILT)
+endif()

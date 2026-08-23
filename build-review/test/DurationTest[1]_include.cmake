@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/DurationTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/DurationTest[1]_tests.cmake")
+else()
+  add_test(DurationTest_NOT_BUILT DurationTest_NOT_BUILT)
+endif()

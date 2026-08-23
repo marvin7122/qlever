@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ThreadSafeQueueTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ThreadSafeQueueTest[1]_tests.cmake")
+else()
+  add_test(ThreadSafeQueueTest_NOT_BUILT ThreadSafeQueueTest_NOT_BUILT)
+endif()

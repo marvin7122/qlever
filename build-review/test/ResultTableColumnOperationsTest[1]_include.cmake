@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ResultTableColumnOperationsTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ResultTableColumnOperationsTest[1]_tests.cmake")
+else()
+  add_test(ResultTableColumnOperationsTest_NOT_BUILT ResultTableColumnOperationsTest_NOT_BUILT)
+endif()

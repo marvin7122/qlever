@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/PriorityQueueTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/PriorityQueueTest[1]_tests.cmake")
+else()
+  add_test(PriorityQueueTest_NOT_BUILT PriorityQueueTest_NOT_BUILT)
+endif()

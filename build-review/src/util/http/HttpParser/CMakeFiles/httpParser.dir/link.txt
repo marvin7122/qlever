@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../../lib/libhttpParser.a CMakeFiles/httpParser.dir/AcceptHeaderQleverVisitor.cpp.o CMakeFiles/httpParser.dir/generated/AcceptHeaderBaseListener.cpp.o CMakeFiles/httpParser.dir/generated/AcceptHeaderLexer.cpp.o CMakeFiles/httpParser.dir/generated/AcceptHeaderListener.cpp.o CMakeFiles/httpParser.dir/generated/AcceptHeaderParser.cpp.o CMakeFiles/httpParser.dir/generated/AcceptHeaderVisitor.cpp.o
+/usr/bin/ranlib ../../../../lib/libhttpParser.a

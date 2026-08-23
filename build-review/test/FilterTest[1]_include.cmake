@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/FilterTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/FilterTest[1]_tests.cmake")
+else()
+  add_test(FilterTest_NOT_BUILT FilterTest_NOT_BUILT)
+endif()

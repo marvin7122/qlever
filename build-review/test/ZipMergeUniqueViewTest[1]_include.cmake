@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ZipMergeUniqueViewTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ZipMergeUniqueViewTest[1]_tests.cmake")
+else()
+  add_test(ZipMergeUniqueViewTest_NOT_BUILT ZipMergeUniqueViewTest_NOT_BUILT)
+endif()

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/MemorySizeTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/MemorySizeTest[1]_tests.cmake")
+else()
+  add_test(MemorySizeTest_NOT_BUILT MemorySizeTest_NOT_BUILT)
+endif()

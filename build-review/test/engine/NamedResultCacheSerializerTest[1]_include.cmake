@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/NamedResultCacheSerializerTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/NamedResultCacheSerializerTest[1]_tests.cmake")
+else()
+  add_test(NamedResultCacheSerializerTest_NOT_BUILT NamedResultCacheSerializerTest_NOT_BUILT)
+endif()

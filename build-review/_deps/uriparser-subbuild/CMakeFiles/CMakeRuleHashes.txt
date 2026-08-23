@@ -1,0 +1,11 @@
+# Hashes of file build rules.
+06883406ef5ac8fa974756d2e600758f CMakeFiles/uriparser-populate
+7190442dececa99e48ea09bff51c1630 CMakeFiles/uriparser-populate-complete
+495a875daa93b92371a6392c829bad68 uriparser-populate-prefix/src/uriparser-populate-stamp/uriparser-populate-build
+fb8468eeaf42a6721a69f05cfba497ef uriparser-populate-prefix/src/uriparser-populate-stamp/uriparser-populate-configure
+9981d9f70254398d045e1f7424209f8f uriparser-populate-prefix/src/uriparser-populate-stamp/uriparser-populate-download
+a55b1156379abdc47513d09d8bce1919 uriparser-populate-prefix/src/uriparser-populate-stamp/uriparser-populate-install
+af3aecf3864f126878c88dab36c2464d uriparser-populate-prefix/src/uriparser-populate-stamp/uriparser-populate-mkdir
+77eacd2b91a5fcc8a9f25ed98330bd18 uriparser-populate-prefix/src/uriparser-populate-stamp/uriparser-populate-patch
+a197b53007028f7ed1af2d4b722b95e9 uriparser-populate-prefix/src/uriparser-populate-stamp/uriparser-populate-test
+9438efb39f2fbc32a33eaa7fe74b6acc uriparser-populate-prefix/src/uriparser-populate-stamp/uriparser-populate-update

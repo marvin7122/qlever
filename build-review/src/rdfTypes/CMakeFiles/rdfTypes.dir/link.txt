@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../lib/librdfTypes.a CMakeFiles/rdfTypes.dir/Iri.cpp.o CMakeFiles/rdfTypes.dir/Literal.cpp.o CMakeFiles/rdfTypes.dir/Variable.cpp.o CMakeFiles/rdfTypes.dir/GeoPoint.cpp.o CMakeFiles/rdfTypes.dir/GeometryInfo.cpp.o CMakeFiles/rdfTypes.dir/GeoSparqlHelpers.cpp.o
+/usr/bin/ranlib ../../lib/librdfTypes.a

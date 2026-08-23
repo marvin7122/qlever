@@ -27,11 +27,13 @@
 
 // TODO<joka921> Include the relevant constants directly here.
 
+// ____________________________________________________________________________
 /// Compression and decompression of words given a codebook of common prefixes.
 /// The maximum number of prefixes is `NUM_COMPRESSION_PREFIXES` (currently
 /// 126).
 class PrefixCompressor {
  private:
+  // ___________________________________________________________________________
   // Simple class for a prefix and its code as members of the codebook.
   struct PrefixCode {
     PrefixCode() = default;
@@ -46,14 +48,17 @@ class PrefixCompressor {
     }
   };
 
+  // ___________________________________________________________________________
   // List of all prefixes, sorted descending by the length
   // of the prefixes. Used for lookup when compressing.
   std::vector<PrefixCode> codeToPrefix_{};
 
+  // ___________________________________________________________________________
   // maps (numeric) keys to the prefix they encode.
   // currently only 128 prefixes are supported.
   std::array<std::string, NUM_COMPRESSION_PREFIXES> prefixToCode_{""};
 
+  // ___________________________________________________________________________
   AD_SERIALIZE_FRIEND_FUNCTION(PrefixCompressor) {
     serializer | arg.codeToPrefix_;
     serializer | arg.prefixToCode_;

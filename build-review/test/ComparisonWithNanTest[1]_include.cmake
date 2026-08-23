@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ComparisonWithNanTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ComparisonWithNanTest[1]_tests.cmake")
+else()
+  add_test(ComparisonWithNanTest_NOT_BUILT ComparisonWithNanTest_NOT_BUILT)
+endif()

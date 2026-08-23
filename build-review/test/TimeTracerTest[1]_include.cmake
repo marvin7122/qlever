@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/TimeTracerTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/TimeTracerTest[1]_tests.cmake")
+else()
+  add_test(TimeTracerTest_NOT_BUILT TimeTracerTest_NOT_BUILT)
+endif()

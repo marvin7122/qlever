@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/PrefilterExpressionIndexTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/PrefilterExpressionIndexTest[1]_tests.cmake")
+else()
+  add_test(PrefilterExpressionIndexTest_NOT_BUILT PrefilterExpressionIndexTest_NOT_BUILT)
+endif()

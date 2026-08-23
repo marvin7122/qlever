@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/IdTripleTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/IdTripleTest[1]_tests.cmake")
+else()
+  add_test(IdTripleTest_NOT_BUILT IdTripleTest_NOT_BUILT)
+endif()

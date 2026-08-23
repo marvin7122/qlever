@@ -29,6 +29,7 @@
 #include "util/Iterators.h"
 #include "util/TransparentFunctors.h"
 #include "util/Views.h"
+#include <cstring>
 
 // _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
@@ -111,14 +112,14 @@ class ContiguousVocabBatchLookupData {
 // _____________________________________________________________________________
 // Builder for a contiguous batch lookup result. Allocates single contiguous
 // memory for all requested word sizes, generates direct destination targets for
-// asynchronous I/O (e.g. io_uring), and derives string_views atomically.
+// asynchronous I/O (e.g. io_uring), and pre-computes the string_view for each word at its fixed offset before any I/O happens.
 class ContiguousVocabBatchBuilder {
  private:
   std::shared_ptr<ContiguousVocabBatchLookupData> data_;
   std::vector<char*> targets_;
 
  public:
-  explicit ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes)
+  Strong ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes)
       : data_{std::make_shared<ContiguousVocabBatchLookupData>()} {
     const size_t totalBytes = ::ranges::accumulate(wordSizes, size_t{0});
     data_->buffer_.resize(totalBytes);
@@ -378,7 +379,7 @@ class MultiSourceVocabBatchAssembler
 
   // ___________________________________________________________________________
   // Finalize assembly into a self-contained `VocabBatchLookupResult`,
-  // verifying that every slot has been populated exactly once.
+  // // Finalize assembly into a self-contained  exactly once.
   [[nodiscard]] VocabBatchLookupResult finalizeVocabBatchLookupResult() && {
     checkInvariants();
     AD_CORRECTNESS_CHECK(!assembledWordViews_.empty());

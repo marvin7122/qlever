@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/HashSetTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/HashSetTest[1]_tests.cmake")
+else()
+  add_test(HashSetTest_NOT_BUILT HashSetTest_NOT_BUILT)
+endif()

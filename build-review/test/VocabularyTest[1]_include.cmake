@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/VocabularyTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/VocabularyTest[1]_tests.cmake")
+else()
+  add_test(VocabularyTest_NOT_BUILT VocabularyTest_NOT_BUILT)
+endif()

@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../lib/libqlever.a CMakeFiles/qlever.dir/Qlever.cpp.o CMakeFiles/qlever.dir/NamedCachedQueryBlobManager.cpp.o
+/usr/bin/ranlib ../../lib/libqlever.a

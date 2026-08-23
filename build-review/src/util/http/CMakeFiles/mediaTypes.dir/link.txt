@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../lib/libmediaTypes.a CMakeFiles/mediaTypes.dir/MediaTypes.cpp.o
+/usr/bin/ranlib ../../../lib/libmediaTypes.a

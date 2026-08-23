@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ZstdCompressionTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ZstdCompressionTest[1]_tests.cmake")
+else()
+  add_test(ZstdCompressionTest_NOT_BUILT ZstdCompressionTest_NOT_BUILT)
+endif()

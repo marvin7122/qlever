@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/CMakeFiles/spatialjoin-populate"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/CMakeFiles/spatialjoin-populate.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/CMakeFiles/spatialjoin-populate-complete.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/spatialjoin-populate-prefix/src/spatialjoin-populate-stamp/spatialjoin-populate-build.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/spatialjoin-populate-prefix/src/spatialjoin-populate-stamp/spatialjoin-populate-configure.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/spatialjoin-populate-prefix/src/spatialjoin-populate-stamp/spatialjoin-populate-download.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/spatialjoin-populate-prefix/src/spatialjoin-populate-stamp/spatialjoin-populate-install.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/spatialjoin-populate-prefix/src/spatialjoin-populate-stamp/spatialjoin-populate-mkdir.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/spatialjoin-populate-prefix/src/spatialjoin-populate-stamp/spatialjoin-populate-patch.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/spatialjoin-populate-prefix/src/spatialjoin-populate-stamp/spatialjoin-populate-test.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/spatialjoin-subbuild/spatialjoin-populate-prefix/src/spatialjoin-populate-stamp/spatialjoin-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"spatialjoin-populate"
+		],
+		"name" : "spatialjoin-populate"
+	}
+}

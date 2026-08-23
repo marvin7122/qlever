@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../lib/libantlrParser.a CMakeFiles/antlrParser.dir/generated/SparqlAutomaticBaseListener.cpp.o CMakeFiles/antlrParser.dir/generated/SparqlAutomaticLexer.cpp.o CMakeFiles/antlrParser.dir/generated/SparqlAutomaticListener.cpp.o CMakeFiles/antlrParser.dir/generated/SparqlAutomaticParser.cpp.o CMakeFiles/antlrParser.dir/generated/SparqlAutomaticVisitor.cpp.o
+/usr/bin/ranlib ../../../lib/libantlrParser.a

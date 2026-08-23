@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../lib/libhttp.a CMakeFiles/http.dir/HttpServer.cpp.o CMakeFiles/http.dir/HttpClient.cpp.o CMakeFiles/http.dir/HttpProxyConfig.cpp.o CMakeFiles/http.dir/HttpUtils.cpp.o CMakeFiles/http.dir/UrlParser.cpp.o CMakeFiles/http.dir/websocket/WebSocketSession.cpp.o CMakeFiles/http.dir/websocket/MessageSender.cpp.o CMakeFiles/http.dir/websocket/QueryToSocketDistributor.cpp.o CMakeFiles/http.dir/websocket/QueryHub.cpp.o CMakeFiles/http.dir/websocket/UpdateFetcher.cpp.o
+/usr/bin/ranlib ../../../lib/libhttp.a

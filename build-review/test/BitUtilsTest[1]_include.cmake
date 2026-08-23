@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/BitUtilsTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/BitUtilsTest[1]_tests.cmake")
+else()
+  add_test(BitUtilsTest_NOT_BUILT BitUtilsTest_NOT_BUILT)
+endif()

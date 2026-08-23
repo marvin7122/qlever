@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/backports/ShiftTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/backports/ShiftTest[1]_tests.cmake")
+else()
+  add_test(ShiftTest_NOT_BUILT ShiftTest_NOT_BUILT)
+endif()

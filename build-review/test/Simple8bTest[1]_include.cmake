@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/Simple8bTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/Simple8bTest[1]_tests.cmake")
+else()
+  add_test(Simple8bTest_NOT_BUILT Simple8bTest_NOT_BUILT)
+endif()

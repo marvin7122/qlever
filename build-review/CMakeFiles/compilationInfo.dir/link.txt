@@ -1,0 +1,2 @@
+/usr/bin/ar qc lib/libcompilationInfo.a CMakeFiles/compilationInfo.dir/CompilationInfo.cpp.o
+/usr/bin/ranlib lib/libcompilationInfo.a

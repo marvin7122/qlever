@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../../lib/libpb_util_xml.a CMakeFiles/pb_util_xml.dir/xml/XmlWriter.cpp.o
+/usr/bin/ranlib ../../../../lib/libpb_util_xml.a

@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/GeoVocabularyTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/GeoVocabularyTest[1]_tests.cmake")
+else()
+  add_test(GeoVocabularyTest_NOT_BUILT GeoVocabularyTest_NOT_BUILT)
+endif()

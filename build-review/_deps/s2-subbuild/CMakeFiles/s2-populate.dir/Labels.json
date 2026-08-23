@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/CMakeFiles/s2-populate"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/CMakeFiles/s2-populate.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/CMakeFiles/s2-populate-complete.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/s2-populate-prefix/src/s2-populate-stamp/s2-populate-build.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/s2-populate-prefix/src/s2-populate-stamp/s2-populate-configure.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/s2-populate-prefix/src/s2-populate-stamp/s2-populate-download.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/s2-populate-prefix/src/s2-populate-stamp/s2-populate-install.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/s2-populate-prefix/src/s2-populate-stamp/s2-populate-mkdir.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/s2-populate-prefix/src/s2-populate-stamp/s2-populate-patch.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/s2-populate-prefix/src/s2-populate-stamp/s2-populate-test.rule"
+		},
+		{
+			"file" : "/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/s2-subbuild/s2-populate-prefix/src/s2-populate-stamp/s2-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"s2-populate"
+		],
+		"name" : "s2-populate"
+	}
+}

@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../../../lib/libpb_util.a CMakeFiles/pb_util.dir/3rdparty/MurmurHash3.cpp.o CMakeFiles/pb_util.dir/Misc.cpp.o
+/usr/bin/ranlib ../../../../lib/libpb_util.a

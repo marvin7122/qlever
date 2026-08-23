@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/LocaleManagerTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/LocaleManagerTest[1]_tests.cmake")
+else()
+  add_test(LocaleManagerTest_NOT_BUILT LocaleManagerTest_NOT_BUILT)
+endif()

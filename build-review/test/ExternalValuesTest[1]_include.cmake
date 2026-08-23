@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ExternalValuesTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ExternalValuesTest[1]_tests.cmake")
+else()
+  add_test(ExternalValuesTest_NOT_BUILT ExternalValuesTest_NOT_BUILT)
+endif()

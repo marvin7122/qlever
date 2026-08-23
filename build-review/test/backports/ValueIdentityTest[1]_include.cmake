@@ -1,0 +1,5 @@
+if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/backports/ValueIdentityTest[1]_tests.cmake")
+  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/backports/ValueIdentityTest[1]_tests.cmake")
+else()
+  add_test(ValueIdentityTest_NOT_BUILT ValueIdentityTest_NOT_BUILT)
+endif()
