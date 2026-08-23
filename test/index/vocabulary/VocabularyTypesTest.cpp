@@ -158,8 +158,7 @@ class VocabBatchLookupDataVocabTest : public ::testing::Test {
  protected:
   // Build a vocabulary containing exactly `word` at index 0 and open it.
   VocabularyInMemoryBinSearch buildVocab(std::string_view word) {
-    const std::string filename =
-        ::testing::UnitTest::GetInstance()->current_test_info()->name();
+    const std::string filename = gtestCurrentTestName();
     ad_utility::deleteFile(filename, false);
     ad_utility::deleteFile(filename + ".ids", false);
     VocabularyInMemoryBinSearch vocabulary;
