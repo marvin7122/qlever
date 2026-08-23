@@ -49,8 +49,7 @@ VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
     views.push_back(word.value());
   }
 
-  auto data =
-      std::make_shared<BatchLookupData>(words_, std::move(views));
+  auto data = std::make_shared<BatchLookupData>(words_, std::move(views));
   return BatchLookupData::asResult(std::move(data));
 }
 
