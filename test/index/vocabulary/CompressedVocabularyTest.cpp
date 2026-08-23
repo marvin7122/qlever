@@ -11,7 +11,6 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
-#include "../../util/GTestHelpers.h"
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -332,10 +331,8 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
       words, [](const auto& word) { return word.size() <= 15; }));
   auto vocab = this->createCompressedVocabulary()(words);
 
-  std::vector<size_t> indices(words.size());
-  for (size_t i = 0; i < words.size(); ++i) {
-    indices[i] = i;
-  }
+  const auto indices =
+      ::ranges::to<std::vector>(ql::views::iota(size_t{0}, words.size()));
   auto result = vocab.lookupBatch(indices);
   ASSERT_EQ(result.size(), indices.size());
 
