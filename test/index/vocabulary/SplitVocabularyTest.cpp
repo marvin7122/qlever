@@ -548,7 +548,7 @@ class SplitVocabularyWithDataTest : public ::testing::Test {
 TwoSplitVocabulary SplitVocabularyWithDataTest::sv_;
 
 // _____________________________________________________________________________
-// Test the private lookupBatch helpers directly via FRIEND_TEST.
+// Test the lookupBatch partitioning and merging algorithms directly.
 TEST_F(SplitVocabularyWithDataTest,
        SplitVocabularyPartitionMarkerIndicesAndPositions) {
   // Use marker `0` for plain words and marker `1` for words starting with `"a`.
@@ -588,7 +588,7 @@ TEST_F(SplitVocabularyWithDataTest,
         return std::pair{TwoSplitVocabulary::getMarker(markedIndex),
                          TwoSplitVocabulary::getVocabIndex(markedIndex)};
       });
-  TwoSplitVocabulary::MarkerBatchLookups markerLookups;
+  MarkerBatchLookups<2> markerLookups;
   const std::array<size_t, 2> markerZeroIndices{
       static_cast<size_t>(sv_.addMarker(1, 0)),
       static_cast<size_t>(sv_.addMarker(0, 0)),
@@ -599,15 +599,15 @@ TEST_F(SplitVocabularyWithDataTest,
   };
   markerLookups[0] = sv_.lookupBatch(markerZeroIndices);
   markerLookups[1] = sv_.lookupBatch(markerOneIndices);
-  auto merged = TwoSplitVocabulary::mergeMarkerBatchesInInputOrder(
+  auto merged = ::mergeMarkerBatchesInInputOrder(
       std::move(markerLookups), partitions);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv_, merged,
                                                                 indices);
 }
 
 // _____________________________________________________________________________
-TEST(TwoSplitVocabulary, MarkerBatchLookupsDoubleReleaseThrows) {
-  TwoSplitVocabulary::MarkerBatchLookups lookups;
+TEST(VocabularyTypes, MarkerBatchLookupsDoubleReleaseThrows) {
+  MarkerBatchLookups<2> lookups;
   auto first = lookups.release(0);
   AD_EXPECT_THROW_WITH_MESSAGE(lookups.release(0),
                                ::testing::HasSubstr("!released_[marker]"));

@@ -142,58 +142,7 @@ class SplitVocabulary {
   }
 
  public:
-  // ___________________________________________________________________________
-  // Batch lookup results for each underlying vocabulary, indexed by vocabulary
-  // marker. Stores results only from vocabularies with lookup indices in this
-  // batch. Single-release invariant guarantees each slot is consumed at most
-  // once.
-  class MarkerBatchLookups {
-   private:
-    std::array<VocabBatchLookupResult, numberOfVocabs> results_{};
-    std::array<bool, numberOfVocabs> released_{};
 
-   public:
-    MarkerBatchLookups() = default;
-
-    // Access the lookup result for the given vocabulary marker.
-    VocabBatchLookupResult& operator[](size_t marker) {
-      AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
-      AD_CORRECTNESS_CHECK(!released_[marker]);
-      return results_[marker];
-    }
-    const VocabBatchLookupResult& operator[](size_t marker) const {
-      AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
-      AD_CORRECTNESS_CHECK(!released_[marker]);
-      return results_[marker];
-    }
-
-    // Move out the lookup result for the given vocabulary marker exactly once.
-    VocabBatchLookupResult release(size_t marker) {
-      AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
-      AD_CORRECTNESS_CHECK(!released_[marker]);
-      released_[marker] = true;
-      return std::move(results_[marker]);
-    }
-  };
-
-  // ___________________________________________________________________________
-  // Merge the per-vocabulary batches into one result in input order.
-  // The result size is derived structurally from the position counts of the
-  // marker groups.
-  static VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
-      MarkerBatchLookups markerLookups,
-      const IndicesAndPositionsByMarker<numberOfVocabs>&
-          markerIndicesAndPositions) {
-    return ::mergeMarkerBatchesInInputOrder(
-        markerIndicesAndPositions,
-        [&](size_t marker) { return markerLookups.release(marker); });
-  }
-
-  // Grant unit tests access to the private `lookupBatch` helpers.
-  FRIEND_TEST(SplitVocabularyWithDataTest,
-              SplitVocabularyPartitionMarkerIndicesAndPositions);
-  FRIEND_TEST(SplitVocabularyWithDataTest,
-              SplitVocabularyMergeMarkerBatchesInInputOrder);
 
  public:
   // ___________________________________________________________________________
@@ -288,7 +237,7 @@ class SplitVocabulary {
                                getVocabIndex(markedIndex)};
             });
 
-    MarkerBatchLookups markerLookups;
+    MarkerBatchLookups<numberOfVocabs> markerLookups;
     for (const auto& [marker, markerIndicesAndPositionsForMarker] :
          ::ranges::views::enumerate(markerIndicesAndPositions)) {
       if (markerIndicesAndPositionsForMarker.empty()) {
@@ -304,8 +253,8 @@ class SplitVocabulary {
                            markerIndicesAndPositionsForMarker.size());
     }
 
-    return mergeMarkerBatchesInInputOrder(std::move(markerLookups),
-                                          markerIndicesAndPositions);
+    return ::mergeMarkerBatchesInInputOrder(std::move(markerLookups),
+                                            markerIndicesAndPositions);
   }
 
   //____________________________________________________________________________

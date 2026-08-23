@@ -472,6 +472,41 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
 }
 
 // _____________________________________________________________________________
+// Batch lookup results for each underlying vocabulary, indexed by vocabulary
+// marker. Stores results only from vocabularies with lookup indices in this
+// batch. Single-release invariant guarantees each slot is consumed at most
+// once.
+template <size_t NumVocabs>
+class MarkerBatchLookups {
+ private:
+  std::array<VocabBatchLookupResult, NumVocabs> results_{};
+  std::array<bool, NumVocabs> released_{};
+
+ public:
+  MarkerBatchLookups() = default;
+
+  // Access the lookup result for the given vocabulary marker.
+  VocabBatchLookupResult& operator[](size_t marker) {
+    AD_CORRECTNESS_CHECK(marker < NumVocabs);
+    AD_CORRECTNESS_CHECK(!released_[marker]);
+    return results_[marker];
+  }
+  const VocabBatchLookupResult& operator[](size_t marker) const {
+    AD_CORRECTNESS_CHECK(marker < NumVocabs);
+    AD_CORRECTNESS_CHECK(!released_[marker]);
+    return results_[marker];
+  }
+
+  // Move out the lookup result for the given vocabulary marker exactly once.
+  VocabBatchLookupResult release(size_t marker) {
+    AD_CORRECTNESS_CHECK(marker < NumVocabs);
+    AD_CORRECTNESS_CHECK(!released_[marker]);
+    released_[marker] = true;
+    return std::move(results_[marker]);
+  }
+};
+
+// _____________________________________________________________________________
 // Merge per-vocabulary lookup batches into a single combined
 // `VocabBatchLookupResult` where each word is at the position of its original
 // input index.
@@ -495,6 +530,17 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
         std::move(lookupResult), markerIndices.getResultPositions());
   }
   return std::move(assembler).finalizeVocabBatchLookupResult();
+}
+
+// _____________________________________________________________________________
+// Convenient overload accepting `MarkerBatchLookups`.
+template <size_t NumVocabs>
+VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
+    MarkerBatchLookups<NumVocabs> markerLookups,
+    const IndicesAndPositionsByMarker<NumVocabs>& markerIndicesAndPositions) {
+  return mergeMarkerBatchesInInputOrder(
+      markerIndicesAndPositions,
+      [&](size_t marker) { return markerLookups.release(marker); });
 }
 
 // _____________________________________________________________________________
