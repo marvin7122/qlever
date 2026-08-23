@@ -408,7 +408,7 @@ TYPED_TEST(CompressedVocabularyF, ScanAllViewInvalidAfterNextPull) {
 
   // The stale view must no longer represent the first word: the underlying
   // buffer was reused for the second decompression.
-  EXPECT_NE(first.word_.data(), firstData);
+  EXPECT_EQ(first.word_.data(), firstData);
   EXPECT_NE(first.word_, words[0]);
 }
 
