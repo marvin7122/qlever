@@ -19,8 +19,8 @@
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/Exception.h"
-#include "util/Serializer/ByteBufferSerializer.h"
 #include "util/GTestHelpers.h"
+#include "util/Serializer/ByteBufferSerializer.h"
 
 namespace {
 
@@ -420,9 +420,9 @@ TYPED_TEST(CompressedVocabularyF, ScanAllViewInvalidAfterNextPull) {
 // `operator[]` exactly and appear in request order, with all views staying
 // valid while the returned result object lives.
 TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
-  const std::vector<std::string> words{"alpha", "beta",   "gamma", "delta",
-                                       "epsi",  "zeta",   "eta",   "theta",
-                                       "iota",  "kappa",  "",      "lambda"};
+  const std::vector<std::string> words{"alpha", "beta",  "gamma", "delta",
+                                       "epsi",  "zeta",  "eta",   "theta",
+                                       "iota",  "kappa", "",      "lambda"};
 
   ad_utility::deleteFile("lookup-batch-blocks-tmp", false);
   CompressedVocabulary<VocabularyInMemory, TypeParam, 2> vocab;

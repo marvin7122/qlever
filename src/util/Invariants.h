@@ -9,11 +9,11 @@
 #ifndef QLEVER_SRC_UTIL_INVARIANTS_H
 #define QLEVER_SRC_UTIL_INVARIANTS_H
 
+#include <exception>
 #include <utility>
 
 #include "backports/concepts.h"
 #include "util/Exception.h"
-#include <exception>
 
 namespace ad_utility {
 
