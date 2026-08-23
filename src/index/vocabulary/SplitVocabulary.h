@@ -293,6 +293,7 @@ class SplitVocabulary {
                 markerIndicesAndPositionsForMarker.getUnderlyingIndices());
           },
           underlying_[marker]);
+      AD_CORRECTNESS_CHECK(markerLookups[marker] != nullptr);
       AD_CORRECTNESS_CHECK(markerLookups[marker]->size() ==
                            markerIndicesAndPositionsForMarker.size());
     }

@@ -148,6 +148,7 @@ CPP_template(typename UnderlyingVocabulary,
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(compressedWords != nullptr);
     AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
 
     ArenaVocabBatchBuilder builder(indices.size());
