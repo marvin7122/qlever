@@ -4,6 +4,9 @@
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gmock/gmock.h>
 
@@ -506,8 +509,6 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   ad_utility::deleteFile(absl::StrCat(filename, ".a"));
 }
 
-}  // namespace
-
 using namespace splitVocabTestHelpers;
 
 // Share common SplitVocabulary setup across multiple tests.
@@ -632,3 +633,5 @@ TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   ASSERT_TRUE(wordWriter2->finishWasCalled());
   wordWriter2.reset();
 }
+
+}  // namespace

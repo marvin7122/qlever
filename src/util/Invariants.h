@@ -43,7 +43,11 @@ CPP_template(typename T)(
     self_->checkInvariants();
   }
 
-  ~InvariantGuard() { self_->checkInvariants(); }
+  ~InvariantGuard() {
+    if (!std::uncaught_exceptions()) {
+      self_->checkInvariants();
+    }
+  }
 
   InvariantGuard(const InvariantGuard&) = delete;
   InvariantGuard& operator=(const InvariantGuard&) = delete;
