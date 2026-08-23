@@ -434,7 +434,8 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   ASSERT_EQ(vocab.size(), words.size());
 
   // Single-element batch: boundary case with exactly one requested index.
-  auto single = vocab.lookupBatch(ql::span<const size_t>{7});
+  const std::array<size_t, 1> singleIdx{7};
+  auto single = vocab.lookupBatch(singleIdx);
   ASSERT_EQ(single.size(), 1u);
   EXPECT_EQ(single[0], "theta");
 
@@ -449,8 +450,9 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   // All views yielded by the result must stay intact while the result object
   // is alive, even after unrelated allocations have run in between.
   std::string unrelatedAllocation(64, 'x');
-  for (const auto& [view, idx] : ::ranges::views::zip(result, indices)) {
-    EXPECT_EQ(view, std::string{vocab[idx]}) << "at vocabulary index " << idx;
+  for (size_t i = 0; i < indices.size(); ++i) {
+    const size_t idx = indices[i];
+    EXPECT_EQ(result[i], vocab[idx]) << "at vocabulary index " << idx;
   }
   EXPECT_EQ(unrelatedAllocation.size(), 64u);
 
