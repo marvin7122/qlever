@@ -517,8 +517,7 @@ using namespace splitVocabTestHelpers;
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
   static std::string getFilename() {
-    return absl::StrCat(ad_utility::testing::gtestCurrentTestSuiteName(),
-                        ".dat");
+    return absl::StrCat(ad_utility::gtestCurrentTestSuiteName(), ".dat");
   }
 
   static void SetUpTestSuite() {
@@ -558,8 +557,11 @@ TEST_F(SplitVocabularyWithDataTest,
       static_cast<size_t>(TwoSplitVocabulary::addMarker(1, 1)),
       static_cast<size_t>(TwoSplitVocabulary::addMarker(2, 0)),
   };
-  auto partitions =
-      TwoSplitVocabulary::partitionMarkerIndicesAndPositions(indices);
+  auto partitions = ::partitionMarkerIndicesAndPositions<2>(
+      indices, [](uint64_t markedIndex) {
+        return std::pair{TwoSplitVocabulary::getMarker(markedIndex),
+                         TwoSplitVocabulary::getVocabIndex(markedIndex)};
+      });
   EXPECT_THAT(partitions[0].getUnderlyingIndices(),
               ::testing::ElementsAre(3u, 0u, 2u));
   EXPECT_THAT(partitions[0].getResultPositions(),
@@ -579,8 +581,11 @@ TEST_F(SplitVocabularyWithDataTest,
       static_cast<size_t>(sv_.addMarker(1, 1)),
       static_cast<size_t>(sv_.addMarker(0, 0)),
   };
-  auto partitions =
-      TwoSplitVocabulary::partitionMarkerIndicesAndPositions(indices);
+  auto partitions = ::partitionMarkerIndicesAndPositions<2>(
+      indices, [](uint64_t markedIndex) {
+        return std::pair{TwoSplitVocabulary::getMarker(markedIndex),
+                         TwoSplitVocabulary::getVocabIndex(markedIndex)};
+      });
   TwoSplitVocabulary::MarkerBatchLookups markerLookups;
   const std::array<size_t, 2> markerZeroIndices{
       static_cast<size_t>(sv_.addMarker(1, 0)),
