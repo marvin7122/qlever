@@ -14,6 +14,7 @@
 
 #include "backports/concepts.h"
 #include "util/Exception.h"
+#include <exception>
 
 namespace ad_utility {
 
