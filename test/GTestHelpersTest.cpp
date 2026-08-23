@@ -6,10 +6,6 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-//   Copyright 2026, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Marvin Stötzel <stoetzem@informatik.uni-freiburg.de>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
