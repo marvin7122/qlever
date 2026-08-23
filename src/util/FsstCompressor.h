@@ -182,8 +182,7 @@ class FsstRepeatedDecoder {
       if (scratch.size() < out.size()) {
         scratch.resize(out.size());
       }
-      std::array<ql::span<char>, 2> buffers{
-          out, ql::span<char>{scratch}};
+      std::array<ql::span<char>, 2> buffers{out, ql::span<char>{scratch}};
       // For even `N`, write the first stage to `scratch` and the last to `out`.
       // For odd `N`, write the first and last stages to `out`.
       size_t dest = (N % 2 == 0) ? 1 : 0;
