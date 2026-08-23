@@ -43,6 +43,7 @@
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
 #include "util/Serializer/ByteBufferSerializer.h"
+#include "util/GTestHelpers.h"
 
 namespace {
 
