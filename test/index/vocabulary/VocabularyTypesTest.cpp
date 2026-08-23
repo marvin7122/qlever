@@ -81,7 +81,7 @@ TEST(VocabBatchLookupData, ContiguousBuilderExposesViewsAndKeepsDataAlive) {
   std::memcpy(builder.targets()[1], "bar", 3);
 
   VocabBatchLookupResult result = std::move(builder).finalize();
-  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "bar"));
+  EXPECT_THAT(result, ::testing::ElementsAre("foo", "bar"));
 }
 
 // _____________________________________________________________________________
@@ -89,7 +89,7 @@ TEST(VocabBatchLookupData, ContiguousBuilderExposesViewsAndKeepsDataAlive) {
 TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
   ContiguousVocabBatchBuilder builder({});
   VocabBatchLookupResult result = std::move(builder).finalize();
-  EXPECT_TRUE(result->empty());
+  EXPECT_TRUE(result.empty());
 }
 
 // _____________________________________________________________________________
@@ -97,7 +97,7 @@ TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
 TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
   auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
 
-  EXPECT_THAT(*result, ::testing::ElementsAre("alpha", "beta"));
+  EXPECT_THAT(result, ::testing::ElementsAre("alpha", "beta"));
 }
 
 // _____________________________________________________________________________
@@ -113,7 +113,7 @@ TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   assembler.scatterSubBatchResultAtPositions(std::move(second), secondPos);
 
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
-  EXPECT_THAT(*result, ::testing::ElementsAre("apple", "cherry", "banana"));
+  EXPECT_THAT(result, ::testing::ElementsAre("apple", "cherry", "banana"));
 }
 
 // _____________________________________________________________________________
@@ -123,8 +123,8 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
   auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
   auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
 
-  const char* alphaData = (*first)[0].data();
-  const char* gammaData = (*second)[0].data();
+  const char* alphaData = first[0].data();
+  const char* gammaData = second[0].data();
 
   MultiSourceVocabBatchAssembler assembler(3);
   const std::array<size_t, 2> firstPos{0, 2};
@@ -133,9 +133,9 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
   assembler.scatterSubBatchResultAtPositions(std::move(second), secondPos);
 
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
-  EXPECT_THAT(*result, ::testing::ElementsAre("alpha", "gamma", "beta"));
-  EXPECT_EQ((*result)[0].data(), alphaData);
-  EXPECT_EQ((*result)[1].data(), gammaData);
+  EXPECT_THAT(result, ::testing::ElementsAre("alpha", "gamma", "beta"));
+  EXPECT_EQ(result[0].data(), alphaData);
+  EXPECT_EQ(result[1].data(), gammaData);
 }
 
 // _____________________________________________________________________________
@@ -187,8 +187,8 @@ TEST_F(VocabBatchLookupDataVocabTest, MultiSourceAssemblerOutlivesClose) {
 
   vocabulary.close();
   EXPECT_EQ(vocabulary.size(), 0u);
-  EXPECT_THAT(*result, ::testing::ElementsAre("ram-word"));
-  EXPECT_EQ((*result)[0].data(), wordData);
+  EXPECT_THAT(result, ::testing::ElementsAre("ram-word"));
+  EXPECT_EQ(result[0].data(), wordData);
 }
 
 // _____________________________________________________________________________
@@ -207,16 +207,10 @@ TEST_F(VocabBatchLookupDataVocabTest,
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
 
   vocabulary.reset();
-  EXPECT_THAT(*result, ::testing::ElementsAre("other-word"));
-  EXPECT_EQ((*result)[0].data(), wordData);
+  EXPECT_THAT(result, ::testing::ElementsAre("other-word"));
+  EXPECT_EQ(result[0].data(), wordData);
 }
 
-// _____________________________________________________________________________
-// Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
-// used when words are produced incrementally with sizes not known up front
-// (e.g. decompressing one word at a time in `CompressedVocabulary`). Each word
-// gets a pointer-stable allocation, so appending a later (differently sized)
-// word never invalidates an earlier `string_view`, unlike the single growing
 // _____________________________________________________________________________
 // Tests for `ArenaVocabBatchBuilder`: monotonic memory resource ensures
 // pointer-stable allocations across incremental word appends.
@@ -226,7 +220,7 @@ TEST(PmrVocabBatchLookupData, ArenaBuilderPointerStableAcrossAppends) {
   builder.appendWord("barbaz");
 
   VocabBatchLookupResult result = std::move(builder).finalize();
-  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "barbaz"));
+  EXPECT_THAT(result, ::testing::ElementsAre("foo", "barbaz"));
 }
 
 // _____________________________________________________________________________
@@ -237,7 +231,7 @@ TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
   // Two positions but one word in the batch.
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.scatterSubBatchResultAtPositions(std::move(batch), positions),
-      ::testing::HasSubstr("subBatchResult->size() == resultPositions.size()"));
+      ::testing::HasSubstr("subBatchResult.size() == targetPositions.size()"));
 }
 
 // _____________________________________________________________________________
@@ -246,13 +240,13 @@ TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
   builder.appendWord("one");
   builder.appendWord("two");
   auto result = std::move(builder).finalize();
-  EXPECT_THAT(*result, ::testing::ElementsAre("one", "two"));
+  EXPECT_THAT(result, ::testing::ElementsAre("one", "two"));
 }
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, MakePmrVocabBatchLookupResultCopiesWords) {
   auto result = makePmrVocabBatchLookupResult({"first", "second"});
-  EXPECT_THAT(*result, ::testing::ElementsAre("first", "second"));
+  EXPECT_THAT(result, ::testing::ElementsAre("first", "second"));
 }
 
 // _____________________________________________________________________________
@@ -279,7 +273,7 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerToleratesEmptyWord) {
   assembler.scatterSubBatchResultAtPositions(std::move(batch), positions);
 
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
-  EXPECT_THAT(*result, ::testing::ElementsAre("x", ""));
+  EXPECT_THAT(result, ::testing::ElementsAre("x", ""));
 }
 
 // _____________________________________________________________________________
@@ -296,8 +290,8 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
 
   // Finalize and check results:
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
-  ASSERT_NE(result, nullptr);
-  EXPECT_THAT(*result, ::testing::ElementsAre("first", "middle", "last"));
+  ASSERT_FALSE(result.empty());
+  EXPECT_THAT(result, ::testing::ElementsAre("first", "middle", "last"));
 }
 
 // _____________________________________________________________________________

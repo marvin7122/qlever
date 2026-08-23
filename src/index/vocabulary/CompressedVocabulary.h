@@ -148,13 +148,12 @@ CPP_template(typename UnderlyingVocabulary,
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
-    AD_CORRECTNESS_CHECK(compressedWords != nullptr);
-    AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
+    AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
 
     ArenaVocabBatchBuilder builder(indices.size());
     std::string scratch;
     for (const auto& [idx, compressedWord] :
-         ::ranges::views::zip(indices, *compressedWords)) {
+         ::ranges::views::zip(indices, compressedWords)) {
       const size_t decoderIdx = getDecoderIdx(idx);
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),

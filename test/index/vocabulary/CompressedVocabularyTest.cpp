@@ -189,12 +189,12 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchEmptyWordInVocabulary) {
   const std::array<size_t, 6> indices{1, 0, 3, 2, 4, 1};
   auto result = vocab.lookupBatch(indices);
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
-  EXPECT_TRUE((*result)[0].empty());
-  EXPECT_EQ((*result)[1], "alpha");
-  EXPECT_TRUE((*result)[2].empty());
-  EXPECT_EQ((*result)[3], "beta");
-  EXPECT_EQ((*result)[4], "gamma");
-  EXPECT_TRUE((*result)[5].empty());
+  EXPECT_TRUE(result[0].empty());
+  EXPECT_EQ(result[1], "alpha");
+  EXPECT_TRUE(result[2].empty());
+  EXPECT_EQ(result[3], "beta");
+  EXPECT_EQ(result[4], "gamma");
+  EXPECT_TRUE(result[5].empty());
 }
 
 // _____________________________________________________________________________
@@ -342,7 +342,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
     indices[i] = i;
   }
   auto result = vocab.lookupBatch(indices);
-  ASSERT_EQ(result->size(), indices.size());
+  ASSERT_EQ(result.size(), indices.size());
 
   // Clobber the stack region a dangling SSO view would point into. Two deep
   // frames of sentinel bytes leave no plausible intact copy behind.
@@ -351,7 +351,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
   churn();
 
   for (size_t i = 0; i < indices.size(); ++i) {
-    ASSERT_EQ((*result)[i], words[i]);
+    ASSERT_EQ(result[i], words[i]);
   }
 }
 

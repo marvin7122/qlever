@@ -77,21 +77,6 @@ class VocabBatchLookupResult {
 
   // Implicit conversion to VocabBatchOwner for storage tracking:
   operator VocabBatchOwner() const noexcept { return owner_; }
-
-  // Pointer-like access for full backward compatibility:
-  [[nodiscard]] const ql::span<const std::string_view>* operator->()
-      const noexcept {
-    return &span_;
-  }
-  [[nodiscard]] ql::span<const std::string_view> operator*() const noexcept {
-    return span_;
-  }
-  [[nodiscard]] bool operator==(std::nullptr_t) const noexcept {
-    return empty() && owner_ == nullptr;
-  }
-  [[nodiscard]] bool operator!=(std::nullptr_t) const noexcept {
-    return !(*this == nullptr);
-  }
 };
 
 // Type-erased input range of batches (each batch consists of a vector of
@@ -365,12 +350,11 @@ class MultiSourceVocabBatchAssembler
   void scatterSubBatchResultAtPositions(
       VocabBatchLookupResult subBatchResult,
       ql::span<const size_t> targetPositions) {
-    AD_CONTRACT_CHECK(subBatchResult != nullptr);
-    AD_CONTRACT_CHECK(subBatchResult->size() == targetPositions.size());
+    AD_CONTRACT_CHECK(subBatchResult.size() == targetPositions.size());
     auto guard = makeInvariantGuard();
 
     for (auto [targetPosition, word] :
-         ::ranges::views::zip(targetPositions, *subBatchResult)) {
+         ::ranges::views::zip(targetPositions, subBatchResult)) {
       AD_CORRECTNESS_CHECK(targetPosition < assembledWordViews_.size());
       AD_CORRECTNESS_CHECK(!slotFilledTracking_[targetPosition]);
       slotFilledTracking_[targetPosition] = true;
