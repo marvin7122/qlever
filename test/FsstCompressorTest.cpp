@@ -416,7 +416,7 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
     for (size_t stage = 0; stage < N; ++stage) {
       auto [buffer, nextViews, decoder] = FsstEncoder::compressAll(compressed);
       compressed.assign(nextViews.begin(), nextViews.end());
-      decoders[stage] = decoder;
+      decoders[stage] = std::move(decoder);
       buffers.push_back(std::move(buffer));
     }
 
