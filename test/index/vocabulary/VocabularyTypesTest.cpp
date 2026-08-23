@@ -327,3 +327,19 @@ TEST(VocabBatchLookupData,
       (void)std::move(assembler).finalizeVocabBatchLookupResult(),
       ::testing::HasSubstr("std::all_of(slotFilledTracking_"));
 }
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData,
+     MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
+  MultiSourceVocabBatchAssembler assembler(2);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      assembler.assignWordAtPosition(2, "out-of-bounds"),
+      ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
+
+  auto subBatch = makeStringVectorVocabBatchLookupResult({"out-of-bounds"});
+  const std::array<size_t, 1> invalidPos{5};
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      assembler.scatterSubBatchResultAtPositions(std::move(subBatch),
+                                                 invalidPos),
+      ::testing::HasSubstr("targetPosition < assembledWordViews_.size()"));
+}
