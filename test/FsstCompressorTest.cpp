@@ -371,11 +371,11 @@ TEST(FsstEncoder, firstTest) {
   }
 }
 
+// _____________________________________________________________________________
 // Goal: `decompressInto` (the arena-bound path used by `lookupBatch`) must
 // produce byte-for-byte the same output as the string-returning `decompress`.
 // Method: compress the words, decode each compressed word through both
 // interfaces, and compare the results against each other and the original.
-// _____________________________________________________________________________
 TEST(FsstEncoder, DecompressIntoMatchesDecompress) {
   const std::vector<std::string> words{"alpha", "beta", "gamma"};
   auto [buffer, compressedViews, decoder] = FsstEncoder::compressAll(words);

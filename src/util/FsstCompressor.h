@@ -27,6 +27,7 @@
 #include "util/TypeTraits.h"
 
 namespace detail {
+// _____________________________________________________________________________
 // A helper function to cast `char*` to `unsigned char*` and `const char*` to
 // `const unsigned char*` which is used below because FSST always works on
 // unsigned character types. Note that this is one of the few cases where a
@@ -42,6 +43,7 @@ struct CastToUnsignedPtr {
 };
 constexpr CastToUnsignedPtr castToUnsignedPtr{};
 
+// _____________________________________________________________________________
 // Allocate `bound` bytes without initializing them, run `decode` into that
 // buffer, and copy the decoded bytes into the resulting string.
 CPP_template(typename Decode)(
@@ -80,6 +82,7 @@ class FsstDecoder {
   // Use the FSST library guarantee: expansion is at most this factor.
   static constexpr size_t maxExpansionFactor = 8;
 
+  // ___________________________________________________________________________
   // Return an upper bound on the decompressed size of `str`.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
     AD_CONTRACT_CHECK(str.size() <=
@@ -87,6 +90,7 @@ class FsstDecoder {
     return maxExpansionFactor * str.size();
   }
 
+  // ___________________________________________________________________________
   // Decompress `str` into `out`. `out.size()` must be at least
   // `maxDecompressedSize(str)`. Return the number of bytes written.
   [[nodiscard]] size_t decompressInto(std::string_view str,
