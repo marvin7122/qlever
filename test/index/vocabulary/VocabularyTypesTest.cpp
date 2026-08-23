@@ -339,5 +339,5 @@ TEST(VocabBatchLookupData,
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.scatterSubBatchResultAtPositions(std::move(subBatch),
                                                  invalidPos),
-      ::testing::HasSubstr("targetPosition < assembledWordViews_.size()"));
+      ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
 }
