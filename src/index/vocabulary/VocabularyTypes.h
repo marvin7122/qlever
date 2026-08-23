@@ -277,7 +277,7 @@ class ArenaVocabBatchBuilder {
     }
     ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
     char* mem = allocator.allocate(word.size());
-    std::memcpy(mem, word.data(), word.size());
+    ql::ranges::copy(word, mem);
     views_.emplace_back(mem, word.size());
   }
 
