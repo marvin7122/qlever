@@ -20,7 +20,6 @@
 #include <string>
 #include <vector>
 
-#include "backports/memory.h"
 #include "backports/span.h"
 #include "util/Concepts.h"
 #include "util/Exception.h"
@@ -56,10 +55,10 @@ CPP_template(typename Decode)(
   if (bound == 0) {
     return {};
   }
-  auto buffer = ql::make_unique_for_overwrite<char[]>(bound);
-  const size_t size = decode(ql::span<char>{buffer.get(), bound});
+  std::vector<char> buffer(bound);
+  const size_t size = decode(ql::span<char>{buffer});
   AD_CONTRACT_CHECK(size <= bound);
-  return std::string{buffer.get(), size};
+  return std::string{buffer.data(), size};
 }
 }  // namespace detail
 
@@ -184,7 +183,7 @@ class FsstRepeatedDecoder {
         scratch.resize(out.size());
       }
       std::array<ql::span<char>, 2> buffers{
-          out, ql::span<char>{scratch.data(), scratch.size()}};
+          out, ql::span<char>{scratch}};
       // For even `N`, write the first stage to `scratch` and the last to `out`.
       // For odd `N`, write the first and last stages to `out`.
       size_t dest = (N % 2 == 0) ? 1 : 0;
