@@ -399,7 +399,6 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
   template <size_t N>
   static void expectRepeatedDecompressIntoMatches(
       const std::vector<std::string>& words) {
-
     std::vector<std::string_view> compressed;
     compressed.reserve(words.size());
     for (const auto& w : words) {
