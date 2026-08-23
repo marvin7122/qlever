@@ -76,9 +76,11 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     intermediateCapacity_ = outputCapacity_ / FsstDecoder::maxExpansionFactor;
   }
 
-  BenchmarkResults run() const override {
+  std::string name() const final { return "FSST scratch buffer strategies"; }
+
+  BenchmarkResults runAllBenchmarks() final {
     BenchmarkResults results;
-    auto& group = results.addResultGroup(
+    auto& group = results.addGroup(
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
 
     group.addMeasurement("full-size std::string scratch", [&] {
