@@ -51,7 +51,8 @@ class VocabBatchLookupResult {
   VocabBatchLookupResult() = default;
 
   // Explicit constructor: binds backing storage owner and span.
-  // Empty batch results are invalid: every lookup result must represent >= 1 words.
+  // Empty batch results are invalid: every lookup result must represent >= 1
+  // words.
   VocabBatchLookupResult(VocabBatchOwner owner,
                          ql::span<const std::string_view> span)
       : owner_{std::move(owner)}, span_{span} {
