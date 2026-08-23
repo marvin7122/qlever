@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include "./VocabularyTestHelpers.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "util/Forward.h"
@@ -122,6 +124,23 @@ TEST(VocabularyInMemoryBinSearch, AccessOperatorWithNonContiguousIds) {
       createVocabulary("AccessOperatorWithNonContiguousIds1"));
   testAccessOperatorForUnorderedVocabulary(
       createVocabularyFromDisk("AccessOperatorWithNonContiguousIds2"));
+}
+
+TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
+  VocabBatchLookupResult result;
+  {
+    auto vocab = createVocabulary("LookupBatchOutlivesVocabulary")(
+        std::vector<std::string>{"alpha", "beta", "gamma"});
+    const std::array<size_t, 4> indices{2, 0, 2, 1};
+    result = vocab.lookupBatch(indices);
+    vocab.close();
+  }
+
+  ASSERT_EQ(result.size(), 4);
+  EXPECT_EQ(result[0], "gamma");
+  EXPECT_EQ(result[1], "alpha");
+  EXPECT_EQ(result[2], "gamma");
+  EXPECT_EQ(result[3], "beta");
 }
 
 TEST(VocabularyInMemoryBinSearch, ErrorOnNonAscendingIds) {
