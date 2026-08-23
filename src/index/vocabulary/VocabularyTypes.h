@@ -75,6 +75,9 @@ class VocabBatchLookupResult {
   }
   [[nodiscard]] const VocabBatchOwner& owner() const noexcept { return owner_; }
 
+  // Implicit conversion to VocabBatchOwner for storage tracking:
+  operator VocabBatchOwner() const noexcept { return owner_; }
+
   // Pointer-like access for full backward compatibility:
   [[nodiscard]] const ql::span<const std::string_view>* operator->()
       const noexcept {
@@ -373,7 +376,9 @@ class MultiSourceVocabBatchAssembler
       slotFilledTracking_[targetPosition] = true;
       assembledWordViews_[targetPosition] = word;
     }
-    storageOwners_.push_back(std::move(subBatchResult));
+    if (subBatchResult.owner() != nullptr) {
+      storageOwners_.push_back(subBatchResult.owner());
+    }
   }
 
   // ___________________________________________________________________________
