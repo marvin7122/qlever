@@ -15,7 +15,6 @@
 #include <utility>
 #include <vector>
 
-#include "../benchmark/infrastructure/Benchmark.h"
 #include "backports/span.h"
 #include "benchmark/infrastructure/Benchmark.h"
 #include "util/FsstCompressor.h"
