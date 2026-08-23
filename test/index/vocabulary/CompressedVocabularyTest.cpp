@@ -167,7 +167,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
                                        "epsilon"};
   auto vocab = this->createCompressedVocabulary()(words);
   const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
-  auto result = vocab.lookupBatch(indices);
+  const auto result = vocab.lookupBatch(indices);
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
@@ -181,7 +181,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchEmptyWordInVocabulary) {
   const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
   auto vocab = this->createCompressedVocabulary()(words);
   const std::array<size_t, 6> indices{1, 0, 3, 2, 4, 1};
-  auto result = vocab.lookupBatch(indices);
+  const auto result = vocab.lookupBatch(indices);
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
   EXPECT_TRUE(result[0].empty());
   EXPECT_EQ(result[1], "alpha");
@@ -333,7 +333,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
 
   const auto indices =
       ::ranges::to<std::vector>(ql::views::iota(size_t{0}, words.size()));
-  auto result = vocab.lookupBatch(indices);
+  const auto result = vocab.lookupBatch(indices);
   ASSERT_EQ(result.size(), indices.size());
 
   // Clobber the stack region a dangling SSO view would point into. Two deep
@@ -442,7 +442,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   // Multi-block batch containing repeated indices and the empty-string word:
   // every entry must match the per-word `operator[]`, in request order.
   const std::array<size_t, 8> indices{10, 0, 11, 5, 5, 2, 10, 9};
-  auto result = vocab.lookupBatch(indices);
+  const auto result = vocab.lookupBatch(indices);
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
   EXPECT_TRUE(result[0].empty());
   EXPECT_EQ(result[6], "");
