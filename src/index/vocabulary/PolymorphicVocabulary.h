@@ -40,7 +40,7 @@ class PolymorphicVocabulary {
   // 1. Add an enum value to the `VocabularyTypeEnum`.
   // 2. Add an alias below for the vocabulary that has the same name as the enum
   // value.
-  // 3. Add the alias type to the `Variant` below.
+  // 3. Add the alias type to the `VocabularyVariant` below.
   // 4. Add the corresponding line to the `resetToType` function in
   // `PolymorphicVocabulary.cpp`.
   using InMemoryUncompressed = VocabularyInMemory;
@@ -48,12 +48,12 @@ class PolymorphicVocabulary {
   using InMemoryCompressed = CompressedVocabulary<InMemoryUncompressed>;
   using OnDiskCompressed = CompressedVocabulary<OnDiskUncompressed>;
   using OnDiskCompressedGeoSplit = SplitGeoVocabulary<OnDiskCompressed>;
-  using Variant =
+  using VocabularyVariant =
       std::variant<InMemoryUncompressed, OnDiskUncompressed, OnDiskCompressed,
                    InMemoryCompressed, OnDiskCompressedGeoSplit>;
 
   // In this variant we store the actual vocabulary.
-  Variant vocab_;
+  VocabularyVariant vocab_;
 
  public:
   // Read a vocabulary with the given `type` from the file with the `filename`.
@@ -90,8 +90,8 @@ class PolymorphicVocabulary {
 
   // Return a reference to currently underlying vocabulary, as a variant of the
   // possible types.
-  Variant& getUnderlyingVocabulary() { return vocab_; }
-  const Variant& getUnderlyingVocabulary() const { return vocab_; }
+  VocabularyVariant& getUnderlyingVocabulary() { return vocab_; }
+  const VocabularyVariant& getUnderlyingVocabulary() const { return vocab_; }
 
   // Apply `function` to the currently active vocabulary, provided that this
   // vocabulary supports zero-copy (de)serialization (see
