@@ -47,7 +47,7 @@ CPP_template(typename T)(
 
   InvariantGuard(const InvariantGuard&) = delete;
   InvariantGuard& operator=(const InvariantGuard&) = delete;
-  InvariantGuard(InvariantGuard&&) noexcept = default;
+  InvariantGuard(InvariantGuard&&) noexcept = delete;
   InvariantGuard& operator=(InvariantGuard&&) noexcept = delete;
 };
 

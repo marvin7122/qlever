@@ -503,7 +503,7 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
       sv, sv.lookupBatch(oneMarker), oneMarker);
   sv.close();
   ad_utility::deleteFile(filename);
-  ad_utility::deleteFile(absl::StrCat(filename, ".a"), false);
+  ad_utility::deleteFile(absl::StrCat(filename, ".a"));
 }
 
 }  // namespace

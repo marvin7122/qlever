@@ -55,7 +55,7 @@ CPP_template(typename Decode)(
   if (bound == 0) {
     return {};
   }
-  auto buffer = std::make_unique<char[]>(bound);
+  std::unique_ptr<char[]> buffer{new char[bound]};
   const size_t size = decode(ql::span<char>{buffer.get(), bound});
   AD_CONTRACT_CHECK(size <= bound);
   return std::string{buffer.get(), size};
