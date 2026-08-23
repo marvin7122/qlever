@@ -377,7 +377,7 @@ TEST(FsstEncoder, firstTest) {
 // Method: compress the words, decode each compressed word through both
 // interfaces, and compare the results against each other and the original.
 TEST(FsstEncoder, DecompressIntoMatchesDecompress) {
-  const std::vector<std::string> words{"alpha", "beta", "gamma"};
+  const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
   auto [buffer, compressedViews, decoder] = FsstEncoder::compressAll(words);
   for (const auto& [word, compressed] :
        ::ranges::views::zip(words, compressedViews)) {
