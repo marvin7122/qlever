@@ -280,20 +280,12 @@ TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabBatchLookupData, MakePmrResultKeepsViewsAlive) {
-  auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-  auto* resource = buffer.get();
-  auto allocCopy = [&](std::string_view word) {
-    char* p = static_cast<char*>(resource->allocate(word.size()));
-    std::memcpy(p, word.data(), word.size());
-    return std::string_view{p, word.size()};
-  };
-  std::vector<std::string_view> views{allocCopy("one"), allocCopy("two")};
-  const char* firstData = views[0].data();
-  auto result =
-      makePmrVocabBatchLookupResult(std::move(buffer), std::move(views));
+TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
+  ArenaVocabBatchBuilder builder(2);
+  builder.appendWord("one");
+  builder.appendWord("two");
+  auto result = std::move(builder).finalize();
   EXPECT_THAT(*result, ::testing::ElementsAre("one", "two"));
-  EXPECT_EQ((*result)[0].data(), firstData);
 }
 
 // _____________________________________________________________________________

@@ -148,21 +148,16 @@ CPP_template(typename UnderlyingVocabulary,
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
-
     AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
 
-    auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-    std::vector<std::string_view> views;
-    views.reserve(indices.size());
-    std::string scratch;
-
+    ArenaVocabBatchBuilder<CompressionWrapper> builder(indices.size());
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, *compressedWords)) {
-      views.push_back(decompressWordIntoArena(
-          compressedWord, getDecoderIdx(idx), *buffer, scratch));
+      builder.decompressAndAppendWord(compressionWrapper_, compressedWord,
+                                      getDecoderIdx(idx));
     }
 
-    return makePmrVocabBatchLookupResult(std::move(buffer), std::move(views));
+    return std::move(builder).finalize();
   }
 
   //____________________________________________________________________________
@@ -405,47 +400,6 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
  private:
-  // Decompress `compressedWord` with the decoder at `decoderIdx` into fresh
-  // storage allocated from the PMR arena `buffer`, and return a
-  // `string_view` over the decompressed bytes. The view is valid as long as
-  // `buffer` is alive. Words whose decompressed size bound is 0 (e.g. an
-  // empty word) yield an empty view with a non-null `data()` pointer (into
-  // `buffer`), because `VocabBatchLookupResult` consumers use
-  // `data() == nullptr` as the "slot unwritten" sentinel; see
-  // `scatterVocabBatchLookupResult` in `VocabularyTypes.h`.
-  std::string_view decompressWordIntoArena(
-      const auto& compressedWord, size_t decoderIdx,
-      ql::pmr::monotonic_buffer_resource& buffer, std::string& scratch) const {
-    AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
-
-    // All allocations for the decompressed words go through the
-    // allocator-aware `ql::pmr::polymorphic_allocator` rather than calling
-    // `memory_resource::allocate` on the raw resource.
-    ql::pmr::polymorphic_allocator<char> allocator{&buffer};
-
-    const size_t boundOnDecompressedWordSize =
-        compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx);
-    if (boundOnDecompressedWordSize == 0) {
-      return std::string_view{allocator.allocate(1), size_t{0}};
-    }
-
-    // The allocator hands out storage we own for `boundOnDecompressedWordSize`
-    // bytes, which we treat as a byte buffer: the selected decoder writes into
-    // it, then we form a `string_view` over the used prefix. Alignment is at
-    // least `alignof(std::max_align_t)` for this resource, which is sufficient
-    // for an array of `char`.
-    char* mem = allocator.allocate(boundOnDecompressedWordSize);
-    const size_t numBytesWritten = compressionWrapper_.decompressInto(
-        compressedWord, decoderIdx,
-        ql::span<char>{mem, boundOnDecompressedWordSize}, scratch);
-
-    // Any valid lossless decompressor must write at least 1 byte and at most
-    // the allocated upper bound.
-    AD_CORRECTNESS_CHECK(numBytesWritten > 0 &&
-                         numBytesWritten <= boundOnDecompressedWordSize);
-    return std::string_view{mem, numBytesWritten};
-  }
-
   // Get the correct decoder for the given `idx`.
   size_t getDecoderIdx(size_t idx) const { return idx / NumWordsPerBlock; }
 

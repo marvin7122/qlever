@@ -139,7 +139,7 @@ struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {};
 
 // _____________________________________________________________________________
- with result from owning strings and expose views into their storage.
+// Construct a result from owning strings and expose views into their storage.
 inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
     std::vector<std::string> words) {
   auto data = std::make_shared<StringVectorVocabBatchLookupData>();
@@ -151,16 +151,102 @@ inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
 }
 
 // _____________________________________________________________________________
-// Construct a PMR-backed result and expose views into its monotonic allocator.
-// `views` must all point into `buffer`, else we get UB.
-inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
-    std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
-    std::vector<std::string_view> views) {
-  auto data = std::make_shared<PmrVocabBatchLookupData>();
-  data->buffer() = std::move(buffer);
-  data->views() = std::move(views);
-  return PmrVocabBatchLookupData::asResult(std::move(data));
-}
+// Builder for a PMR arena-backed `VocabBatchLookupResult`.
+// Encapsulates the `monotonic_buffer_resource`, allocates decompressed word
+// storage directly in the arena, and automatically manages scratch buffers for
+// multi-stage decompression wrappers without leaking accounting to callers.
+template <typename CompressionWrapper = void>
+class ArenaVocabBatchBuilder {
+ private:
+  std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
+  std::vector<std::string_view> views_;
+
+  // Conditionally hold a scratch buffer if the CompressionWrapper's Decoder
+  // requires it; otherwise 0 memory overhead via an empty struct.
+  struct Empty {};
+
+  template <typename CW>
+  struct DetectScratch {
+    static constexpr bool value = false;
+  };
+
+  template <typename CW>
+  requires requires { typename CW::Decoder; } struct DetectScratch<CW> {
+    template <typename D>
+    static auto test(int) -> decltype(std::declval<const D&>().decompressInto(
+                                          std::declval<std::string_view>(),
+                                          std::declval<ql::span<char>>(),
+                                          std::declval<std::string&>()),
+                                      std::true_type{});
+    template <typename D>
+    static auto test(...) -> std::false_type;
+
+    static constexpr bool value =
+        decltype(test<typename CW::Decoder>(0))::value;
+  };
+
+  using ScratchStorage =
+      std::conditional_t<DetectScratch<CompressionWrapper>::value, std::string,
+                         Empty>;
+
+  [[no_unique_address]] ScratchStorage scratch_{};
+
+ public:
+  explicit ArenaVocabBatchBuilder(size_t expectedSize)
+      : buffer_{std::make_unique<ql::pmr::monotonic_buffer_resource>()} {
+    views_.reserve(expectedSize);
+  }
+
+  // Decompress a single word directly into arena storage, automatically
+  // handling empty words and scratch buffers:
+  void decompressAndAppendWord(const CompressionWrapper& compressionWrapper,
+                               const auto& compressedWord, size_t decoderIdx) {
+    AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper.numDecoders());
+    const size_t bound =
+        compressionWrapper.maxDecompressedSize(compressedWord, decoderIdx);
+    if (bound == 0) {
+      views_.emplace_back("");
+      return;
+    }
+
+    ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
+    char* mem = allocator.allocate(bound);
+
+    size_t bytesWritten = 0;
+    if constexpr (DetectScratch<CompressionWrapper>::value) {
+      bytesWritten = compressionWrapper.decompressInto(
+          compressedWord, decoderIdx, ql::span<char>{mem, bound}, scratch_);
+    } else {
+      std::string dummy;
+      bytesWritten = compressionWrapper.decompressInto(
+          compressedWord, decoderIdx, ql::span<char>{mem, bound}, dummy);
+    }
+
+    AD_CORRECTNESS_CHECK(bytesWritten > 0 && bytesWritten <= bound);
+    views_.emplace_back(mem, bytesWritten);
+  }
+
+  // Allocate storage inside the arena and copy the given word into it:
+  void appendWord(std::string_view word) {
+    if (word.empty()) {
+      views_.emplace_back("");
+      return;
+    }
+    ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
+    char* mem = allocator.allocate(word.size());
+    std::memcpy(mem, word.data(), word.size());
+    views_.emplace_back(mem, word.size());
+  }
+
+  // Atomically finalize and return the immutable batch result:
+  [[nodiscard]] VocabBatchLookupResult finalize() && {
+    AD_CONTRACT_CHECK(!views_.empty());
+    auto data = std::make_shared<PmrVocabBatchLookupData>();
+    data->buffer() = std::move(buffer_);
+    data->views() = std::move(views_);
+    return PmrVocabBatchLookupData::asResult(std::move(data));
+  }
+};
 
 // _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
