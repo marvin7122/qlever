@@ -298,6 +298,12 @@ TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
 }
 
 // _____________________________________________________________________________
+TEST(VocabBatchLookupData, MakePmrVocabBatchLookupResultCopiesWords) {
+  auto result = makePmrVocabBatchLookupResult({"first", "second"});
+  EXPECT_THAT(*result, ::testing::ElementsAre("first", "second"));
+}
+
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
   auto batch1 = makeStringVectorVocabBatchLookupResult({"first"});
   auto batch2 = makeStringVectorVocabBatchLookupResult({"second"});

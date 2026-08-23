@@ -166,7 +166,6 @@ class ArenaVocabBatchBuilder {
       : buffer_{std::make_unique<ql::pmr::monotonic_buffer_resource>()} {
     views_.reserve(expectedSize);
   }
-
   // Allocate storage inside the arena for up to `bound` bytes, invoke
   // `decompress(destinationSpan)` to write the bytes, and register the view.
   template <typename DecompressFunc>
@@ -205,6 +204,24 @@ class ArenaVocabBatchBuilder {
     return PmrVocabBatchLookupData::asResult(std::move(data));
   }
 };
+
+// _____________________________________________________________________________
+// Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
+// monotonic buffer arena.
+inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
+    ql::span<const std::string_view> words) {
+  ArenaVocabBatchBuilder builder(words.size());
+  for (std::string_view word : words) {
+    builder.appendWord(word);
+  }
+  return std::move(builder).finalize();
+}
+
+inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
+    std::initializer_list<std::string_view> words) {
+  return makePmrVocabBatchLookupResult(
+      ql::span<const std::string_view>{words.begin(), words.size()});
+}
 
 // _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
