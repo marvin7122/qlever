@@ -517,7 +517,7 @@ using namespace splitVocabTestHelpers;
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
   static std::string getFilename() {
-    return absl::StrCat(ad_utility::gtestCurrentTestSuiteName(), ".dat");
+    return absl::StrCat(gtestCurrentTestSuiteName(), ".dat");
   }
 
   static void SetUpTestSuite() {
