@@ -50,7 +50,7 @@ TEST(InvariantsTest, InvariantGuardChecksOnEntryAndExit) {
   EXPECT_EQ(instance.checkCount_, 0u);
 
   {
-    auto guard = ad_utility::makeInvariantGuard(&instance);
+    ad_utility::InvariantGuard guard{&instance};
     // Checked once on entry
     EXPECT_EQ(instance.checkCount_, 1u);
   }

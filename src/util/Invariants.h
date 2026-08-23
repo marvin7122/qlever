@@ -56,16 +56,9 @@ CPP_template(typename T)(
 };
 
 // _____________________________________________________________________________
-// Standalone deduction factory for InvariantGuard.
-CPP_template(typename T)(requires InvariantStatefulClass<T>)
-    [[nodiscard]] InvariantGuard<T> makeInvariantGuard(const T* instance) {
-  return InvariantGuard<T>{instance};
-}
-
-// _____________________________________________________________________________
- member function, which checks the derived instance`Checked when ` member function
-// while enforcing at compile-time that `Derived` satisfies
-// `InvariantStatefulClass`.
+// CRTP mixin that provides a parameterless `makeInvariantGuard()` member
+// function, which checks the derived instance upon entry and exit while
+// enforcing at compile-time that `Derived` satisfies `InvariantStatefulClass`.
 template <typename Derived>
 class WithInvariants {
  public:
