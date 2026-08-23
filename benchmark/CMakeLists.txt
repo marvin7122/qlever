@@ -45,4 +45,6 @@ if (NOT _NO_BENCHMARK)
         SimdEscapeClassifierBenchmark.cpp)
 
 
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
+
 endif()
