@@ -183,11 +183,11 @@ class VocabBatchLookupDataVocabTest : public ::testing::Test {
   }
 };
 
+// _____________________________________________________________________________
 // A view obtained from `VocabularyInMemoryBinSearch` stays valid when the
 // vocabulary is `close()`d afterwards: the batch result retains
 // `wordStorage()` shared ownership of the bytes, and `close()` only installs a
 // fresh empty buffer instead of mutating the old one.
-// _____________________________________________________________________________
 TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesClose) {
   auto vocabulary = buildVocab("ram-word");
   auto maybeWord = vocabulary[0];
@@ -203,10 +203,10 @@ TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesClose) {
   EXPECT_EQ((*result)[0].data(), wordData);
 }
 
+// _____________________________________________________________________________
 // Same guarantee when the vocabulary object is destroyed entirely while the
 // batch result still lives: shared ownership of the word storage keeps the
 // bytes alive past the destructor.
-// _____________________________________________________________________________
 TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesVocabularyDestruction) {
   auto vocabulary = std::make_optional(buildVocab("other-word"));
   auto maybeWord = (*vocabulary)[0];

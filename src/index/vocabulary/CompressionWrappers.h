@@ -108,7 +108,7 @@ struct DecoderMultiplexer {
     ENABLE_CLANG_WARNINGS
   }
 
-  // ______________________
+  // ___________________________________________________________________________
   // Return the maximum number of output bytes needed to decompress
   // `compressed` with `decoderIndex`.
   [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed,
@@ -116,7 +116,7 @@ struct DecoderMultiplexer {
     return decoders_.at(decoderIndex).maxDecompressedSize(compressed);
   }
 
-  // ______________________________________________________________
+  // ___________________________________________________________________________
   // Decode `compressed` with decoder at `decoderIndex` in `decoders_` into
   // the `out` buffer. `scratch` is used only by multi-stage FSST; single-stage
   // decoders ignore it. Return the number of bytes written to `out`.

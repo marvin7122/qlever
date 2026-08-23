@@ -88,14 +88,12 @@ CPP_template(typename UnderlyingVocabulary,
     return result;
   }
 
-  //____________________________________________________________________________
   // Get the uncompressed word at the given index.
   std::string operator[](uint64_t idx) const {
     return compressionWrapper_.decompress(
         toStringView(underlyingVocabulary_[idx]), getDecoderIdx(idx));
   }
 
-  //____________________________________________________________________________
   // Wrap the underlying vocabulary's `scanAll` (which reads the compressed
   // words in batches) and decompress each word. `scanAll()` is expected to
   // yield `IndexAndWord` elements, so we have to apply a transformation at the

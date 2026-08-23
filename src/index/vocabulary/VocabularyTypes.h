@@ -138,6 +138,7 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {};
 
+// _____________________________________________________________________________
 // Construct a result from owning strings and expose views into their storage.
 inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
     std::vector<std::string> words) {
@@ -149,6 +150,7 @@ inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
   return StringVectorVocabBatchLookupData::asResult(std::move(data));
 }
 
+// _____________________________________________________________________________
 // Construct a PMR-backed result and expose views into its monotonic allocator.
 // `views` must all point into `buffer`, else we get UB.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
@@ -160,12 +162,14 @@ inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
   return PmrVocabBatchLookupData::asResult(std::move(data));
 }
 
+// _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
 // to store child `VocabBatchLookupResult`s or references to vocabulary state
 // (e.g., shared ownership of a vocabulary's in-memory word storage).
 // See the usage below.
 using VocabBatchOwner = std::shared_ptr<const void>;
 
+// _____________________________________________________________________________
 // `VocabBatchLookupResult` that owns multiple independent storage sources.
 // Stores a list of `VocabBatchOwner`s that back the `string_view`s. Because
 // every view is backed by an owner stored here, the result is self-contained:
@@ -241,7 +245,7 @@ class MultiSourceVocabBatchAssembler
   }
 
   // ___________________________________________________________________________
-  // Finalize assembly into a self-contained VocabBatchLookupResult,
+  // Finalize assembly into a self-contained `VocabBatchLookupResult`,
   // verifying that every slot has been populated exactly once.
   [[nodiscard]] VocabBatchLookupResult finalizeVocabBatchLookupResult() && {
     checkInvariants();
@@ -258,6 +262,7 @@ class MultiSourceVocabBatchAssembler
   }
 };
 
+// _____________________________________________________________________________
 // Scatter string_views from `result` into `viewsInInputOrder` at positions
 // given by `resultPositions`, and keep `result` in `owners` to retain storage.
 inline void scatterVocabBatchLookupResult(
@@ -267,6 +272,7 @@ inline void scatterVocabBatchLookupResult(
   AD_CONTRACT_CHECK(result != nullptr);
   AD_CONTRACT_CHECK(result->size() == resultPositions.size());
   AD_CONTRACT_CHECK(filledSlots.size() == viewsInInputOrder.size());
+
   for (auto [resultPosition, word] :
        ::ranges::views::zip(resultPositions, *result)) {
     AD_CORRECTNESS_CHECK(resultPosition < viewsInInputOrder.size());
@@ -277,6 +283,7 @@ inline void scatterVocabBatchLookupResult(
   owners.push_back(std::move(result));
 }
 
+// _____________________________________________________________________________
 // Create a `VocabBatchLookupResult` for the given `words`.
 inline VocabBatchLookupResult keepAliveVocabBatch(
     std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words,
@@ -286,12 +293,14 @@ inline VocabBatchLookupResult keepAliveVocabBatch(
   AD_CONTRACT_CHECK(filledSlots.size() == words.size());
   AD_CORRECTNESS_CHECK(
       ql::ranges::all_of(filledSlots, [](bool filled) { return filled; }));
+
   auto data = std::make_shared<MultiOwnerVocabBatchLookupData>();
   data->buffer() = std::move(owners);
   data->views() = std::move(words);
   return MultiOwnerVocabBatchLookupData::asResult(std::move(data));
 }
 
+// _____________________________________________________________________________
 // Compatibility overload for callers that already know every output slot is
 // filled and whose views are non-null.
 inline VocabBatchLookupResult keepAliveVocabBatch(
@@ -301,6 +310,7 @@ inline VocabBatchLookupResult keepAliveVocabBatch(
                              std::move(filledSlots));
 }
 
+// _____________________________________________________________________________
 // Paired lookup data for one vocabulary marker: for each position `i` in the
 // arrays, `underlyingIndices[i]` is the index to look up, and
 // `resultPositions[i]` is where the result goes in the final output. The
@@ -311,45 +321,52 @@ struct MarkerIndicesAndPositions {
   std::vector<size_t> resultPositions_;
 
  public:
+  // ___________________________________________________________________________
   // Reserve capacity for the given number of pairs.
   void reserve(size_t capacity) {
     underlyingIndices_.reserve(capacity);
     resultPositions_.reserve(capacity);
   }
 
+  // ___________________________________________________________________________
   // Add a (`underlyingIndex`, `resultPosition`) pair.
   void addPair(size_t underlyingIndex, size_t resultPosition) {
     underlyingIndices_.push_back(underlyingIndex);
     resultPositions_.push_back(resultPosition);
   }
 
+  // ___________________________________________________________________________
   // Access the underlying indices for batch-lookup.
   ql::span<const size_t> getUnderlyingIndices() const {
     return underlyingIndices_;
   }
 
+  // ___________________________________________________________________________
   // Access the result positions for scatter-back.
   ql::span<const size_t> getResultPositions() const { return resultPositions_; }
 
+  // ___________________________________________________________________________
   // Check if this marker has any pairs.
   bool empty() const { return underlyingIndices_.empty(); }
 
+  // ___________________________________________________________________________
   // Number of pairs.
   size_t size() const { return underlyingIndices_.size(); }
 };
 
+// _____________________________________________________________________________
 // Paired lookup data for each of `NumVocabs` underlying vocabularies, indexed
 // by the marker that identifies the vocabulary.
 template <size_t NumVocabs>
 using IndicesAndPositionsByMarker =
     std::array<MarkerIndicesAndPositions, NumVocabs>;
 
+// _____________________________________________________________________________
 // Partition marked indices into paired (`underlyingIndex`, `resultPosition`)
 // lists per marker. For each input index, `getMarkerAndVocabIndex` extracts
 // the marker that identifies the underlying vocabulary and the unmarked vocab
 // index; the index is paired with its position in the input, and both are
 // grouped by marker.
-// _____________________________________________________________________________
 template <size_t NumVocabs, typename GetMarkerAndVocabIndex>
 IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
     ql::span<const size_t> indices, GetMarkerAndVocabIndex getMarkerAndIndex) {
@@ -363,10 +380,10 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
   return out;
 }
 
+// _____________________________________________________________________________
 // Merge per-vocabulary lookup batches into a single combined
 // `VocabBatchLookupResult` where each word is at the position of its original
 // input index.
-// _____________________________________________________________________________
 template <size_t NumVocabs, typename ReleaseLookupResultForMarker>
 VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
     const IndicesAndPositionsByMarker<NumVocabs>& markerIndicesAndPositions,
@@ -385,12 +402,14 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
   return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 
+// _____________________________________________________________________________
 // Generic sequential fallback implementations of the batch-lookup interface,
 // used by all vocabularies that do not provide a specialized (e.g. io_uring)
 // implementation. They simply loop over the indices and issue the ordinary
 // single-word `operator[]` lookups one after another.
 namespace ad_utility::vocabulary {
 
+// _____________________________________________________________________________
 // Sequential fallback for `lookupBatch`: look up each index individually via
 // `vocab[idx]`, returning one `string_view` per index. Works for any vocabulary
 // whose `operator[]` yields something convertible to `std::string`.
@@ -411,6 +430,7 @@ VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
   return makeStringVectorVocabBatchLookupResult(std::move(words));
 }
 
+// _____________________________________________________________________________
 // Streamed version of `lookupBatch`: lazily apply `vocab.lookupBatch` for the
 // passed `vocab` to each batch of the (type-erased) input range.
 // The referenced `vocab` must outlive the returned range.
@@ -425,6 +445,7 @@ VocabLookupOutput lookupBatchesStreamed(const Vocab& vocab,
 
 }  // namespace ad_utility::vocabulary
 
+// _____________________________________________________________________________
 // A word and its index in the vocabulary from which it was obtained. Also
 // contains a special state `end()` which can be queried by the `isEnd()`
 // function. This can be used to represent words that are larger than the
@@ -436,26 +457,30 @@ class WordAndIndex {
   std::optional<uint64_t> previousIndex_ = std::nullopt;
 
  public:
+  // ___________________________________________________________________________
   // Query for the special `end` semantics.
   bool isEnd() const { return !wordAndIndex_.has_value(); }
 
+  // ___________________________________________________________________________
   // Return the word. Throws if `isEnd() == true`.
   const std::string& word() const {
     AD_CONTRACT_CHECK(wordAndIndex_.has_value());
     return wordAndIndex_.value().first;
   }
 
+  // ___________________________________________________________________________
   // Return the index. Throws if `isEnd() == true`.
   uint64_t index() const {
     AD_CONTRACT_CHECK(wordAndIndex_.has_value());
     return wordAndIndex_.value().second;
   }
 
-  // _______________________________________________________
+  // ___________________________________________________________________________
   uint64_t indexOrDefault(uint64_t defaultValue) const {
     return isEnd() ? defaultValue : index();
   }
 
+  // ___________________________________________________________________________
   // The next valid index before `index()`. If `nullopt` either no
   // such index exists (because `index()` is already the first valid index),
   // or the `previousIndex_` simply wasn't set. This member is currently used to
@@ -463,6 +488,7 @@ class WordAndIndex {
   // `InternalExternalVocabulary`.
   std::optional<uint64_t>& previousIndex() { return previousIndex_; }
 
+  // ___________________________________________________________________________
   // Assuming this object holds a `lower_bound` result, check whether the word
   // is stored at this position and return an upper bound accordingly.
   template <typename T>
@@ -476,12 +502,15 @@ class WordAndIndex {
     return std::pair<uint64_t, uint64_t>{lower, upper};
   }
 
+  // ___________________________________________________________________________
   // The default constructor creates a `WordAndIndex` with `isEnd() == true`.
   WordAndIndex() = default;
 
+  // ___________________________________________________________________________
   // Explicit factory function for the end state.
   static WordAndIndex end() { return {}; }
 
+  // ___________________________________________________________________________
   // Constructors for the ordinary non-end case.
   WordAndIndex(std::string word, uint64_t index)
       : wordAndIndex_{std::in_place, std::move(word), index} {}
@@ -489,6 +518,7 @@ class WordAndIndex {
       : wordAndIndex_{std::in_place, std::string{word}, index} {}
 };
 
+// _____________________________________________________________________________
 // A common base class for the `WordWriter` types of different vocabulary
 // implementations. It has to be called for each of the words (in the correct
 // order).
@@ -499,11 +529,13 @@ class WordWriterBase {
   std::atomic_bool finishWasCalled_ = false;
 
  public:
+  // ___________________________________________________________________________
   // Write the next word. The `isExternal` flag is ignored for all the
   // vocabulary implementations but the `VocabularyInternalExternal`. Return the
   // index that was assigned to the word.
   virtual uint64_t operator()(std::string_view word, bool isExternal) = 0;
 
+  // ___________________________________________________________________________
   // Destructor. If `finish` hasn't been called, an exception is thrown if it is
   // safe to do so. Derived classes have to make sure that their destructors
   // call `finish` if necessary. Note: It is unfortunately not possible to call
@@ -524,6 +556,7 @@ class WordWriterBase {
     }
   }
 
+  // ___________________________________________________________________________
   // Calling this function will signal that the last word has been pushed.
   // Implementations might e.g. flush all buffers to disk and close underlying
   // files. After calling `finish`, no more calls to `operator()` are allowed.
@@ -535,13 +568,16 @@ class WordWriterBase {
     finishImpl();
   }
 
+  // ___________________________________________________________________________
   bool finishWasCalled() const { return finishWasCalled_; }
 
+  // ___________________________________________________________________________
   // Access to a `readableName` of the vocabulary that is written. Some
   // implementations use it to customize log messages.
   virtual std::string& readableName() { return readableName_; }
 
  private:
+  // ___________________________________________________________________________
   // The base classes have to implement the actual logic for `finish` here.
   virtual void finishImpl() = 0;
 };

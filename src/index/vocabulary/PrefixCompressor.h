@@ -60,8 +60,7 @@ class PrefixCompressor {
   }
 
  public:
-  // _________________________
-
+  // ___________________________________________________________________________
   // Compress the given `word`. Note: This iterates over all prefixes in the
   // codebook, and it is currently not a bottleneck in the IndexBuilder.
   [[nodiscard]] std::string compress(std::string_view word) const {
@@ -73,10 +72,7 @@ class PrefixCompressor {
     return static_cast<char>(NO_PREFIX_CHAR) + word;
   }
 
-  // _________________________
-
-  // _________________________
-
+  // ___________________________________________________________________________
   // Return the index in `prefixToCode_` if the word was stored with a valid
   // compression prefix, or `std::nullopt` if it was stored uncompressed.
   [[nodiscard]] static std::optional<size_t> prefixIndex(
@@ -92,6 +88,7 @@ class PrefixCompressor {
     return std::nullopt;
   }
 
+  // ___________________________________________________________________________
   // Return an upper bound on the decompressed size of `compressedWord`.
   [[nodiscard]] size_t maxDecompressedSize(
       std::string_view compressedWord) const {
@@ -104,6 +101,7 @@ class PrefixCompressor {
     return rest;
   }
 
+  // ___________________________________________________________________________
   // Decompress `compressedWord` into `out`. `out.size()` must be at least
   // `maxDecompressedSize(compressedWord)`. Return the number of bytes written.
   [[nodiscard]] size_t decompressInto(std::string_view compressedWord,
@@ -128,6 +126,7 @@ class PrefixCompressor {
     return numBytesWritten;
   }
 
+  // ___________________________________________________________________________
   // Decompress the given `compressedWord`.
   [[nodiscard]] std::string decompress(std::string_view compressedWord) const {
     const auto idx = prefixIndex(compressedWord);
@@ -137,6 +136,7 @@ class PrefixCompressor {
     return std::string(compressedWord.substr(1));
   }
 
+  // ___________________________________________________________________________
   // From the given list of prefixes, build the internal data structure for
   // efficient lookup. The prefixes do not have to be in any specific order. The
   // type of `prefixes` can be any type for which `for (const string& el :
@@ -169,6 +169,7 @@ class PrefixCompressor {
     std::sort(codeToPrefix_.begin(), codeToPrefix_.end(), pred);
   }
 
+  // ___________________________________________________________________________
   const auto& prefixToCode() const { return prefixToCode_; }
 };
 
