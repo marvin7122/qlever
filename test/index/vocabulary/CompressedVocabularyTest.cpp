@@ -387,9 +387,12 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
 // deterministic rather than UB-dependent.
 TYPED_TEST(CompressedVocabularyF, ScanAllViewInvalidAfterNextPull) {
   auto createVocab = TestFixture::createCompressedVocabulary();
-  // Two distinct, differently-sized words so the reused decode buffer is
-  // guaranteed to be rewritten (and possibly reallocated) by the second pull.
-  const std::vector<std::string> words{"firstWord", "secondMuchLongerWord"};
+  // The first word is longer than the second so the decode buffer allocated on
+  // the first pull is guaranteed to have enough capacity for the second word
+  // without reallocating, ensuring the buffer pointer remains stable and
+  // well-defined while its contents are overwritten.
+  const std::vector<std::string> words{"firstMuchLongerWordPreallocatingBuffer",
+                                       "secondShort"};
   auto vocab = createVocab(words);
 
   auto range = vocab.scanAll();
