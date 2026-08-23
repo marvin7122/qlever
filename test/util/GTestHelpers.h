@@ -360,10 +360,11 @@ inline void assertPmrStringUsesSso(size_t maxSize = 15) {
 // contents (e.g. from a destroyed local object that a dangling view still
 // points into) become implausible to survive. Call it multiple times to also
 // clobber deeper frames.
-inline void clobberStack(size_t numBytes = 2048, char sentinel = '#') {
-  // `volatile` prevents the compiler from optimizing the write away.
-  std::unique_ptr<volatile char[]> buffer{new volatile char[numBytes]};
-  for (size_t i = 0; i < numBytes; ++i) {
+template <size_t NumBytes = 4096>
+inline void clobberStack(char sentinel = '#') {
+  // `volatile` prevents the compiler from optimizing the stack writes away.
+  volatile char buffer[NumBytes];
+  for (size_t i = 0; i < NumBytes; ++i) {
     buffer[i] = sentinel;
   }
 }
