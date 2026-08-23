@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -87,39 +88,67 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     auto& group = results.addGroup(
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
 
-    group.addMeasurement("full-size std::string scratch", [&] {
-      std::string output(outputCapacity_, '\0');
-      std::string scratch(outputCapacity_, '\0');
-      size_t totalBytes = 0;
-      for (std::string_view compressed : compressed_) {
-        totalBytes += decodeRepeated(decoders_, compressed, output, scratch);
-      }
-      return totalBytes;
-    });
+    auto addFullSizeStringScratch = [&] {
+      group.addMeasurement("full-size std::string scratch", [&] {
+        std::string output(outputCapacity_, '\0');
+        std::string scratch(outputCapacity_, '\0');
+        size_t totalBytes = 0;
+        for (std::string_view compressed : compressed_) {
+          totalBytes += decodeRepeated(decoders_, compressed, output, scratch);
+        }
+        return totalBytes;
+      });
+    };
+    auto addFullSizeUninitializedScratch = [&] {
+      group.addMeasurement("full-size uninitialized scratch", [&] {
+        auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
+        auto scratch = std::unique_ptr<char[]>{new char[outputCapacity_]};
+        size_t totalBytes = 0;
+        for (std::string_view compressed : compressed_) {
+          totalBytes += decodeRepeated(decoders_, compressed,
+                                       {output.get(), outputCapacity_},
+                                       {scratch.get(), outputCapacity_});
+        }
+        return totalBytes;
+      });
+    };
+    auto addStageAwareUninitializedScratch = [&] {
+      group.addMeasurement("stage-aware uninitialized scratch", [&] {
+        auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
+        auto scratch = std::unique_ptr<char[]>{new char[intermediateCapacity_]};
+        size_t totalBytes = 0;
+        for (std::string_view compressed : compressed_) {
+          totalBytes += decodeRepeated(decoders_, compressed,
+                                       {output.get(), outputCapacity_},
+                                       {scratch.get(), intermediateCapacity_});
+        }
+        return totalBytes;
+      });
+    };
 
-    group.addMeasurement("full-size uninitialized scratch", [&] {
-      auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
-      auto scratch = std::unique_ptr<char[]>{new char[outputCapacity_]};
-      size_t totalBytes = 0;
-      for (std::string_view compressed : compressed_) {
-        totalBytes += decodeRepeated(decoders_, compressed,
-                                     {output.get(), outputCapacity_},
-                                     {scratch.get(), outputCapacity_});
+    constexpr std::array<std::array<size_t, 3>, 6> orders{{
+        {0, 1, 2},
+        {0, 2, 1},
+        {1, 0, 2},
+        {1, 2, 0},
+        {2, 0, 1},
+        {2, 1, 0},
+    }};
+    const char* orderEnv = std::getenv("FSST_SCRATCH_ORDER");
+    const size_t orderIndex =
+        orderEnv == nullptr
+            ? 0
+            : std::strtoul(orderEnv, nullptr, 10) % orders.size();
+    for (size_t strategy : orders[orderIndex]) {
+      if (strategy == 0) {
+        addFullSizeStringScratch();
+      } else if (strategy == 1) {
+        addFullSizeUninitializedScratch();
+      } else {
+        AD_CORRECTNESS_CHECK(strategy == 2);
+        addStageAwareUninitializedScratch();
       }
-      return totalBytes;
-    });
-
-    group.addMeasurement("stage-aware uninitialized scratch", [&] {
-      auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
-      auto scratch = std::unique_ptr<char[]>{new char[intermediateCapacity_]};
-      size_t totalBytes = 0;
-      for (std::string_view compressed : compressed_) {
-        totalBytes += decodeRepeated(decoders_, compressed,
-                                     {output.get(), outputCapacity_},
-                                     {scratch.get(), intermediateCapacity_});
-      }
-      return totalBytes;
-    });
+    }
 
     return results;
   }
