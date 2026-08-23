@@ -22,9 +22,11 @@ namespace ql {
 // function that takes the string as the first parameter.
 CPP_template(typename CharT, typename Traits, typename Allocator,
              typename Operation)(
-    requires ql::concepts::invocable<Operation, CharT*, size_t>) void
-resize_and_overwrite(std::basic_string<CharT, Traits, Allocator>& str,
-                     size_t count, Operation&& op) {
+    requires ql::concepts::invocable<
+        Operation, CharT*,
+        size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
+                                                             Allocator>& str,
+                                           size_t count, Operation&& op) {
 #if defined(__cpp_lib_string_resize_and_overwrite) && \
     __cpp_lib_string_resize_and_overwrite >= 202110L
   str.resize_and_overwrite(count, std::forward<Operation>(op));

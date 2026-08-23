@@ -43,9 +43,7 @@ TEST(StringTest, ResizeAndOverwriteSmallerSize) {
 // _____________________________________________________________________________
 TEST(StringTest, ResizeAndOverwriteZeroSize) {
   std::string s = "not empty";
-  ql::resize_and_overwrite(s, 20, [](char*, size_t) {
-    return 0u;
-  });
+  ql::resize_and_overwrite(s, 20, [](char*, size_t) { return 0u; });
   EXPECT_TRUE(s.empty());
   EXPECT_EQ(s.size(), 0u);
 }
