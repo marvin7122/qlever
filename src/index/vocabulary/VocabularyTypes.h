@@ -191,7 +191,7 @@ class MultiSourceVocabBatchAssembler
         slotFilledTracking_(totalExpectedWords, false) {}
 
   // ___________________________________________________________________________
-  // Structural invariant enforcement mandated by WithInvariants<Derived>.
+  // Structural invariant enforcement mandated by `WithInvariants<Derived>`.
   void checkInvariants() const {
     AD_CORRECTNESS_CHECK(assembledWordViews_.size() ==
                          slotFilledTracking_.size());

@@ -32,8 +32,8 @@ CPP_concept InvariantStatefulClass =
 // _____________________________________________________________________________
 // Generic RAII Guard that asserts class invariants on scope entry and scope
 // exit for ANY class that satisfies the `InvariantStatefulClass` concept.
-CPP_template(typename T)(requires InvariantStatefulClass<T>)
-class InvariantGuard {
+CPP_template(typename T)(
+    requires InvariantStatefulClass<T>) class InvariantGuard {
  private:
   const T* self_;
 
@@ -54,7 +54,7 @@ class InvariantGuard {
 // _____________________________________________________________________________
 // Standalone deduction factory for InvariantGuard.
 CPP_template(typename T)(requires InvariantStatefulClass<T>)
-[[nodiscard]] InvariantGuard<T> makeInvariantGuard(const T* instance) {
+    [[nodiscard]] InvariantGuard<T> makeInvariantGuard(const T* instance) {
   return InvariantGuard<T>{instance};
 }
 
