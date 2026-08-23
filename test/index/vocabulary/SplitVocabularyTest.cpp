@@ -599,8 +599,8 @@ TEST_F(SplitVocabularyWithDataTest,
   };
   markerLookups[0] = sv_.lookupBatch(markerZeroIndices);
   markerLookups[1] = sv_.lookupBatch(markerOneIndices);
-  auto merged = ::mergeMarkerBatchesInInputOrder(
-      std::move(markerLookups), partitions);
+  auto merged =
+      ::mergeMarkerBatchesInInputOrder(std::move(markerLookups), partitions);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv_, merged,
                                                                 indices);
 }
