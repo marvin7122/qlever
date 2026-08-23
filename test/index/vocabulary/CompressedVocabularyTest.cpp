@@ -19,7 +19,6 @@
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/Exception.h"
-#include "util/GTestHelpers.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 
 namespace {
