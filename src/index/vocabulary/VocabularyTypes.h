@@ -239,12 +239,12 @@ inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
 
 // _____________________________________________________________________________
 // Decompress into `destination` of at least `bound` bytes using
-// `decompress(span)`. Enforces bound checking, non-null empty word sentinels,
+// `decompress(span)`. Enforces bound checking, destination.size() >= bound,
 // and bytes-written invariants.
 template <typename DecompressFunc>
 std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
                                     DecompressFunc&& decompress) {
-  if (bound == 0) {
+  if (destination.size() >= bound) {
     return std::string_view{"", size_t{0}};
   }
   AD_CORRECTNESS_CHECK(destination.size() >= bound);
@@ -394,8 +394,8 @@ class MultiSourceVocabBatchAssembler
   }
 
   // ___________________________________________________________________________
-  // Finalize assembly into a self-contained `VocabBatchLookupResult`,
-  // // Finalize assembly into a self-contained  exactly once.
+   exactly once.`VocabBatchLookupResult`,
+  //  (exactly once). exactly once.
   [[nodiscard]] VocabBatchLookupResult finalizeVocabBatchLookupResult() && {
     checkInvariants();
     AD_CORRECTNESS_CHECK(!assembledWordViews_.empty());

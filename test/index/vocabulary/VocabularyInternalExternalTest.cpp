@@ -122,7 +122,7 @@ TEST(VocabularyInternalExternal, AccessOperator) {
 }
 
 // _____________________________________________________________________________
-// `lookupBatch` must match `operator[]` in request order, including cache
+// `operator[]` must match `operator[]` in request order, including cache
 // hits (even `i` in the writer: stored in RAM) and misses (odd `i`: disk
 // only), plus reordered and duplicated indices.
 TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {

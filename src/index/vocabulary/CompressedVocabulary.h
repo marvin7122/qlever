@@ -94,6 +94,7 @@ CPP_template(typename UnderlyingVocabulary,
         toStringView(underlyingVocabulary_[idx]), getDecoderIdx(idx));
   }
 
+  //____________________________________________________________________________
   // Wrap the underlying vocabulary's `scanAll` (which reads the compressed
   // words in batches) and decompress each word. `scanAll()` is expected to
   // yield `IndexAndWord` elements, so we have to apply a transformation at the
