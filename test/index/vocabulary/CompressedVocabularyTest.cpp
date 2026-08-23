@@ -42,8 +42,8 @@
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
-#include "util/GTestHelpers.h"
 #include "util/Serializer/ByteBufferSerializer.h"
+#include "../../util/GTestHelpers.h"
 
 namespace {
 
