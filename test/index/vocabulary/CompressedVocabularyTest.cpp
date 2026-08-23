@@ -382,7 +382,8 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
 // _____________________________________________________________________________
 TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
   std::vector<DummyDecoder> decoders{DummyDecoder{}, DummyDecoder{}};
-  detail::DecoderMultiplexer<DummyDecoder> mux{std::move(decoders)};
+  ad_utility::vocabulary::detail::DecoderMultiplexer<DummyDecoder> mux{
+      std::move(decoders)};
   ASSERT_EQ(mux.numDecoders(), 2u);
 
   const std::string compressed = DummyCompressionWrapper::compress("testword");
