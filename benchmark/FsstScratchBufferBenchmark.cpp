@@ -15,7 +15,6 @@
 #include <vector>
 
 #include "../benchmark/infrastructure/Benchmark.h"
-#include "backports/memory.h"
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
 #include "util/Random.h"
@@ -93,8 +92,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     });
 
     group.addMeasurement("full-size uninitialized scratch", [&] {
-      auto output = ql::make_unique_for_overwrite<char[]>(outputCapacity_);
-      auto scratch = ql::make_unique_for_overwrite<char[]>(outputCapacity_);
+      auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
+      auto scratch = std::unique_ptr<char[]>{new char[outputCapacity_]};
       size_t totalBytes = 0;
       for (std::string_view compressed : compressed_) {
         totalBytes += decodeRepeated(decoders_, compressed,
@@ -105,9 +104,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     });
 
     group.addMeasurement("stage-aware uninitialized scratch", [&] {
-      auto output = ql::make_unique_for_overwrite<char[]>(outputCapacity_);
-      auto scratch =
-          ql::make_unique_for_overwrite<char[]>(intermediateCapacity_);
+      auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
+      auto scratch = std::unique_ptr<char[]>{new char[intermediateCapacity_]};
       size_t totalBytes = 0;
       for (std::string_view compressed : compressed_) {
         totalBytes += decodeRepeated(decoders_, compressed,
