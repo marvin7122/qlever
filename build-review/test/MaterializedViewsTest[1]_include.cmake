@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/MaterializedViewsTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/MaterializedViewsTest[1]_tests.cmake")
-else()
-  add_test(MaterializedViewsTest_NOT_BUILT MaterializedViewsTest_NOT_BUILT)
-endif()

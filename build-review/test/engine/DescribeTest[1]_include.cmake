@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/DescribeTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/DescribeTest[1]_tests.cmake")
-else()
-  add_test(DescribeTest_NOT_BUILT DescribeTest_NOT_BUILT)
-endif()

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/TupleHelpersTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/TupleHelpersTest[1]_tests.cmake")
-else()
-  add_test(TupleHelpersTest_NOT_BUILT TupleHelpersTest_NOT_BUILT)
-endif()

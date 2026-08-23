@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/SetOfIntervalsTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/SetOfIntervalsTest[1]_tests.cmake")
-else()
-  add_test(SetOfIntervalsTest_NOT_BUILT SetOfIntervalsTest_NOT_BUILT)
-endif()

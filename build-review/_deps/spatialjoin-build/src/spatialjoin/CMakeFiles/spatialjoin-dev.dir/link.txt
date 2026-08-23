@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../../../lib/libspatialjoin-dev.a "CMakeFiles/spatialjoin-dev.dir/GeometryCache.cpp.o" "CMakeFiles/spatialjoin-dev.dir/SpatialJoinMain.cpp.o" "CMakeFiles/spatialjoin-dev.dir/Sweeper.cpp.o" "CMakeFiles/spatialjoin-dev.dir/WKTParse.cpp.o"
-/usr/bin/ranlib ../../../../lib/libspatialjoin-dev.a

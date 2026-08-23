@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/CopyableUniquePtrTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/CopyableUniquePtrTest[1]_tests.cmake")
-else()
-  add_test(CopyableUniquePtrTest_NOT_BUILT CopyableUniquePtrTest_NOT_BUILT)
-endif()

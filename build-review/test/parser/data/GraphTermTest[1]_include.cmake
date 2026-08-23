@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/data/GraphTermTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/data/GraphTermTest[1]_tests.cmake")
-else()
-  add_test(GraphTermTest_NOT_BUILT GraphTermTest_NOT_BUILT)
-endif()

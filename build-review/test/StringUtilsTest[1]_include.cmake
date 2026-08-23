@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/StringUtilsTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/StringUtilsTest[1]_tests.cmake")
-else()
-  add_test(StringUtilsTest_NOT_BUILT StringUtilsTest_NOT_BUILT)
-endif()

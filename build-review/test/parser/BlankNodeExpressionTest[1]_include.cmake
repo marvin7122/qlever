@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/BlankNodeExpressionTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/BlankNodeExpressionTest[1]_tests.cmake")
-else()
-  add_test(BlankNodeExpressionTest_NOT_BUILT BlankNodeExpressionTest_NOT_BUILT)
-endif()

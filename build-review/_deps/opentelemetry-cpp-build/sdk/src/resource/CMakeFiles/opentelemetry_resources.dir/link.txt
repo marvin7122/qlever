@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../../../../lib/libopentelemetry_resources.a CMakeFiles/opentelemetry_resources.dir/resource.cc.o CMakeFiles/opentelemetry_resources.dir/resource_detector.cc.o
-/usr/bin/ranlib ../../../../../lib/libopentelemetry_resources.a

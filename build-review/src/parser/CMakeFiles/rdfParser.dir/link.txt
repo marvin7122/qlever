@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../lib/librdfParser.a CMakeFiles/rdfParser.dir/RdfParser.cpp.o CMakeFiles/rdfParser.dir/AsyncFileBlockDriver.cpp.o
-/usr/bin/ranlib ../../lib/librdfParser.a

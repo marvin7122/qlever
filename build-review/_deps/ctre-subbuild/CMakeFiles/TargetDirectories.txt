@@ -1,3 +1,0 @@
-/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/ctre-subbuild/CMakeFiles/ctre-populate.dir
-/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/ctre-subbuild/CMakeFiles/edit_cache.dir
-/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/ctre-subbuild/CMakeFiles/rebuild_cache.dir

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/LocalVocabTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/LocalVocabTest[1]_tests.cmake")
-else()
-  add_test(LocalVocabTest_NOT_BUILT LocalVocabTest_NOT_BUILT)
-endif()

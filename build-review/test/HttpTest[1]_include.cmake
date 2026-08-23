@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/HttpTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/HttpTest[1]_tests.cmake")
-else()
-  add_test(HttpTest_NOT_BUILT HttpTest_NOT_BUILT)
-endif()

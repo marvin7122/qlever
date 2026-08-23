@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/LambdaHelpersTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/LambdaHelpersTest[1]_tests.cmake")
-else()
-  add_test(LambdaHelpersTest_NOT_BUILT LambdaHelpersTest_NOT_BUILT)
-endif()

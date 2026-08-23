@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/StreamableBodyTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/StreamableBodyTest[1]_tests.cmake")
-else()
-  add_test(StreamableBodyTest_NOT_BUILT StreamableBodyTest_NOT_BUILT)
-endif()

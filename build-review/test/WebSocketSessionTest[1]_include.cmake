@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/WebSocketSessionTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/WebSocketSessionTest[1]_tests.cmake")
-else()
-  add_test(WebSocketSessionTest_NOT_BUILT WebSocketSessionTest_NOT_BUILT)
-endif()

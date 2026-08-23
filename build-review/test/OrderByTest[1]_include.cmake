@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/OrderByTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/OrderByTest[1]_tests.cmake")
-else()
-  add_test(OrderByTest_NOT_BUILT OrderByTest_NOT_BUILT)
-endif()

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/GeometryInfoTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/GeometryInfoTest[1]_tests.cmake")
-else()
-  add_test(GeometryInfoTest_NOT_BUILT GeometryInfoTest_NOT_BUILT)
-endif()

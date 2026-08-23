@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/BindTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/BindTest[1]_tests.cmake")
-else()
-  add_test(BindTest_NOT_BUILT BindTest_NOT_BUILT)
-endif()

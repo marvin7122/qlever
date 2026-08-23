@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/GetPrefilterExpressionFromSparqlExpressionTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/GetPrefilterExpressionFromSparqlExpressionTest[1]_tests.cmake")
-else()
-  add_test(GetPrefilterExpressionFromSparqlExpressionTest_NOT_BUILT GetPrefilterExpressionFromSparqlExpressionTest_NOT_BUILT)
-endif()

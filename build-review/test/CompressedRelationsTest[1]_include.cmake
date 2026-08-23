@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/CompressedRelationsTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/CompressedRelationsTest[1]_tests.cmake")
-else()
-  add_test(CompressedRelationsTest_NOT_BUILT CompressedRelationsTest_NOT_BUILT)
-endif()

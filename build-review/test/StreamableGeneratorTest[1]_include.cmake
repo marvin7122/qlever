@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/StreamableGeneratorTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/StreamableGeneratorTest[1]_tests.cmake")
-else()
-  add_test(StreamableGeneratorTest_NOT_BUILT StreamableGeneratorTest_NOT_BUILT)
-endif()

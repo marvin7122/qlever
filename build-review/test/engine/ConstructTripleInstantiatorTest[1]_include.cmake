@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/ConstructTripleInstantiatorTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/ConstructTripleInstantiatorTest[1]_tests.cmake")
-else()
-  add_test(ConstructTripleInstantiatorTest_NOT_BUILT ConstructTripleInstantiatorTest_NOT_BUILT)
-endif()

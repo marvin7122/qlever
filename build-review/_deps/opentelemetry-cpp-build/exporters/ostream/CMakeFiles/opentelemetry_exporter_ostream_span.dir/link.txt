@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../../../lib/libopentelemetry_exporter_ostream_span.a CMakeFiles/opentelemetry_exporter_ostream_span.dir/src/span_exporter.cc.o CMakeFiles/opentelemetry_exporter_ostream_span.dir/src/span_exporter_factory.cc.o
-/usr/bin/ranlib ../../../../lib/libopentelemetry_exporter_ostream_span.a

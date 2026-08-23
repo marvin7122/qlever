@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/InstrumentedExecutorTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/InstrumentedExecutorTest[1]_tests.cmake")
-else()
-  add_test(InstrumentedExecutorTest_NOT_BUILT InstrumentedExecutorTest_NOT_BUILT)
-endif()

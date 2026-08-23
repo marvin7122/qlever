@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ChunkedForLoopTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ChunkedForLoopTest[1]_tests.cmake")
-else()
-  add_test(ChunkedForLoopTest_NOT_BUILT ChunkedForLoopTest_NOT_BUILT)
-endif()

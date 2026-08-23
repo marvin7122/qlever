@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../lib/libsortPerformanceEstimator.a CMakeFiles/sortPerformanceEstimator.dir/SortPerformanceEstimator.cpp.o
-/usr/bin/ranlib ../../lib/libsortPerformanceEstimator.a

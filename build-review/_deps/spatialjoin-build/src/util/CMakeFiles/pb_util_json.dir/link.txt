@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../../../lib/libpb_util_json.a CMakeFiles/pb_util_json.dir/json/Writer.cpp.o
-/usr/bin/ranlib ../../../../lib/libpb_util_json.a

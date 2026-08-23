@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstexprSmallStringTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstexprSmallStringTest[1]_tests.cmake")
-else()
-  add_test(ConstexprSmallStringTest_NOT_BUILT ConstexprSmallStringTest_NOT_BUILT)
-endif()

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/JoinAlgorithmsTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/JoinAlgorithmsTest[1]_tests.cmake")
-else()
-  add_test(JoinAlgorithmsTest_NOT_BUILT JoinAlgorithmsTest_NOT_BUILT)
-endif()

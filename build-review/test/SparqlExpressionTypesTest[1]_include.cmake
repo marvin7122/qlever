@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/SparqlExpressionTypesTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/SparqlExpressionTypesTest[1]_tests.cmake")
-else()
-  add_test(SparqlExpressionTypesTest_NOT_BUILT SparqlExpressionTypesTest_NOT_BUILT)
-endif()

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/QueryPlannerTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/QueryPlannerTest[1]_tests.cmake")
-else()
-  add_test(QueryPlannerTest_NOT_BUILT QueryPlannerTest_NOT_BUILT)
-endif()

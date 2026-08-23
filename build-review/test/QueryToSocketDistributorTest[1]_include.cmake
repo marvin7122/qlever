@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/QueryToSocketDistributorTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/QueryToSocketDistributorTest[1]_tests.cmake")
-else()
-  add_test(QueryToSocketDistributorTest_NOT_BUILT QueryToSocketDistributorTest_NOT_BUILT)
-endif()

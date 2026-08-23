@@ -1,1 +1,0 @@
-/usr/bin/c++   -Wall -Wextra  -O3 -DNDEBUG -O3 -Wl,--dependency-file=CMakeFiles/AlgorithmBackportTests.dir/link.d CMakeFiles/AlgorithmBackportTests.dir/algorithmTest.cpp.o -o AlgorithmBackportTests  -ljemalloc -luring -lzstd ../../lib/libgtest.a ../../lib/libgmock_main.a ../../lib/libgmock.a ../../lib/libgtest.a -ljemalloc -luring -lzstd

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/EnumWithStringsTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/EnumWithStringsTest[1]_tests.cmake")
-else()
-  add_test(EnumWithStringsTest_NOT_BUILT EnumWithStringsTest_NOT_BUILT)
-endif()

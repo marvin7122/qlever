@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/BlankNodeManagerTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/BlankNodeManagerTest[1]_tests.cmake")
-else()
-  add_test(BlankNodeManagerTest_NOT_BUILT BlankNodeManagerTest_NOT_BUILT)
-endif()

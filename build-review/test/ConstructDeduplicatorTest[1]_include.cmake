@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstructDeduplicatorTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstructDeduplicatorTest[1]_tests.cmake")
-else()
-  add_test(ConstructDeduplicatorTest_NOT_BUILT ConstructDeduplicatorTest_NOT_BUILT)
-endif()

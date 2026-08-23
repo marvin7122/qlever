@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/TextIndexScanForEntityTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/TextIndexScanForEntityTest[1]_tests.cmake")
-else()
-  add_test(TextIndexScanForEntityTest_NOT_BUILT TextIndexScanForEntityTest_NOT_BUILT)
-endif()

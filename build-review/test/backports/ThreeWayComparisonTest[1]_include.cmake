@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/backports/ThreeWayComparisonTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/backports/ThreeWayComparisonTest[1]_tests.cmake")
-else()
-  add_test(ThreeWayComparisonTest_NOT_BUILT ThreeWayComparisonTest_NOT_BUILT)
-endif()

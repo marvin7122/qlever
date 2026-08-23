@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../../../lib/libpb_util_graph.a CMakeFiles/pb_util_graph.dir/graph/BiDijkstra.cpp.o CMakeFiles/pb_util_graph.dir/graph/Dijkstra.cpp.o CMakeFiles/pb_util_graph.dir/graph/EDijkstra.cpp.o
-/usr/bin/ranlib ../../../../lib/libpb_util_graph.a

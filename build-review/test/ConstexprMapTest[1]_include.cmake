@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstexprMapTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ConstexprMapTest[1]_tests.cmake")
-else()
-  add_test(ConstexprMapTest_NOT_BUILT ConstexprMapTest_NOT_BUILT)
-endif()

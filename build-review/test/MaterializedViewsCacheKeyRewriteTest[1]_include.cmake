@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/MaterializedViewsCacheKeyRewriteTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/MaterializedViewsCacheKeyRewriteTest[1]_tests.cmake")
-else()
-  add_test(MaterializedViewsCacheKeyRewriteTest_NOT_BUILT MaterializedViewsCacheKeyRewriteTest_NOT_BUILT)
-endif()

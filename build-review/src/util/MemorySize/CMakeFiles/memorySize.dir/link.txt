@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../../lib/libmemorySize.a CMakeFiles/memorySize.dir/MemorySize.cpp.o
-/usr/bin/ranlib ../../../lib/libmemorySize.a

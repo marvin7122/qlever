@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/HttpProxyConfigTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/HttpProxyConfigTest[1]_tests.cmake")
-else()
-  add_test(HttpProxyConfigTest_NOT_BUILT HttpProxyConfigTest_NOT_BUILT)
-endif()

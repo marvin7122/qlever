@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ValueIdTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ValueIdTest[1]_tests.cmake")
-else()
-  add_test(ValueIdTest_NOT_BUILT ValueIdTest_NOT_BUILT)
-endif()

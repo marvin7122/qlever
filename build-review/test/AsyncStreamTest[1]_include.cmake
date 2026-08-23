@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/AsyncStreamTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/AsyncStreamTest[1]_tests.cmake")
-else()
-  add_test(AsyncStreamTest_NOT_BUILT AsyncStreamTest_NOT_BUILT)
-endif()

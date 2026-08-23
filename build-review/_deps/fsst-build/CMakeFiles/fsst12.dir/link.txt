@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../lib/libfsst12.a CMakeFiles/fsst12.dir/libfsst12.cpp.o
-/usr/bin/ranlib ../../lib/libfsst12.a

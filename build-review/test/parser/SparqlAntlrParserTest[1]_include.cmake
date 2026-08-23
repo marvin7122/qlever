@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/SparqlAntlrParserTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/SparqlAntlrParserTest[1]_tests.cmake")
-else()
-  add_test(SparqlAntlrParserTest_NOT_BUILT SparqlAntlrParserTest_NOT_BUILT)
-endif()

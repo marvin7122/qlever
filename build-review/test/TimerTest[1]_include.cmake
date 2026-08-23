@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/TimerTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/TimerTest[1]_tests.cmake")
-else()
-  add_test(TimerTest_NOT_BUILT TimerTest_NOT_BUILT)
-endif()

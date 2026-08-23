@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/ExplicitIdTableOperationTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/ExplicitIdTableOperationTest[1]_tests.cmake")
-else()
-  add_test(ExplicitIdTableOperationTest_NOT_BUILT ExplicitIdTableOperationTest_NOT_BUILT)
-endif()

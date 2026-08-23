@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/IoUringManagerTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/IoUringManagerTest[1]_tests.cmake")
-else()
-  add_test(IoUringManagerTest_NOT_BUILT IoUringManagerTest_NOT_BUILT)
-endif()

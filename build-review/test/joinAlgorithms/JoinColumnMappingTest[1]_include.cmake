@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/joinAlgorithms/JoinColumnMappingTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/joinAlgorithms/JoinColumnMappingTest[1]_tests.cmake")
-else()
-  add_test(JoinColumnMappingTest_NOT_BUILT JoinColumnMappingTest_NOT_BUILT)
-endif()

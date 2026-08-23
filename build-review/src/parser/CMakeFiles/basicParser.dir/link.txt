@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../lib/libbasicParser.a CMakeFiles/basicParser.dir/Tokenizer.cpp.o CMakeFiles/basicParser.dir/LiteralOrIri.cpp.o CMakeFiles/basicParser.dir/WordsAndDocsFileParser.cpp.o CMakeFiles/basicParser.dir/AsyncBlockSource.cpp.o CMakeFiles/basicParser.dir/TripleComponent.cpp.o CMakeFiles/basicParser.dir/PropertyPath.cpp.o CMakeFiles/basicParser.dir/PayloadVariables.cpp.o
-/usr/bin/ranlib ../../lib/libbasicParser.a

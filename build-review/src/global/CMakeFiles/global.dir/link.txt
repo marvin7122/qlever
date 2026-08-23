@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../lib/libglobal.a CMakeFiles/global.dir/RuntimeParameters.cpp.o
-/usr/bin/ranlib ../../lib/libglobal.a

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/TripleComponentTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/TripleComponentTest[1]_tests.cmake")
-else()
-  add_test(TripleComponentTest_NOT_BUILT TripleComponentTest_NOT_BUILT)
-endif()

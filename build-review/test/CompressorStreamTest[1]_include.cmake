@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/CompressorStreamTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/CompressorStreamTest[1]_tests.cmake")
-else()
-  add_test(CompressorStreamTest_NOT_BUILT CompressorStreamTest_NOT_BUILT)
-endif()

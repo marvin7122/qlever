@@ -1,3 +1,0 @@
-/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/uriparser-subbuild/CMakeFiles/uriparser-populate.dir
-/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/uriparser-subbuild/CMakeFiles/edit_cache.dir
-/home/userNoPriv/code/qlever/qlever-code/build-review/_deps/uriparser-subbuild/CMakeFiles/rebuild_cache.dir

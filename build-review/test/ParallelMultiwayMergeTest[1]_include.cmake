@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ParallelMultiwayMergeTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ParallelMultiwayMergeTest[1]_tests.cmake")
-else()
-  add_test(ParallelMultiwayMergeTest_NOT_BUILT ParallelMultiwayMergeTest_NOT_BUILT)
-endif()

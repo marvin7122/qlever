@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/InputFileSpecificationTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/InputFileSpecificationTest[1]_tests.cmake")
-else()
-  add_test(InputFileSpecificationTest_NOT_BUILT InputFileSpecificationTest_NOT_BUILT)
-endif()

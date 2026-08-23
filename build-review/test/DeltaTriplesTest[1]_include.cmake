@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/DeltaTriplesTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/DeltaTriplesTest[1]_tests.cmake")
-else()
-  add_test(DeltaTriplesTest_NOT_BUILT DeltaTriplesTest_NOT_BUILT)
-endif()

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/VocabularyTypeTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/index/vocabulary/VocabularyTypeTest[1]_tests.cmake")
-else()
-  add_test(VocabularyTypeTest_NOT_BUILT VocabularyTypeTest_NOT_BUILT)
-endif()

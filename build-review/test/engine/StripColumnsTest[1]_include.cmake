@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/StripColumnsTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/StripColumnsTest[1]_tests.cmake")
-else()
-  add_test(StripColumnsTest_NOT_BUILT StripColumnsTest_NOT_BUILT)
-endif()

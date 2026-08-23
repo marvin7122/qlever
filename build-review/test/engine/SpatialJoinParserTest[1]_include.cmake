@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/SpatialJoinParserTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/SpatialJoinParserTest[1]_tests.cmake")
-else()
-  add_test(SpatialJoinParserTest_NOT_BUILT SpatialJoinParserTest_NOT_BUILT)
-endif()

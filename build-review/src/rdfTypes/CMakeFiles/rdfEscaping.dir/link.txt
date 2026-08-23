@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../lib/librdfEscaping.a CMakeFiles/rdfEscaping.dir/RdfEscaping.cpp.o
-/usr/bin/ranlib ../../lib/librdfEscaping.a

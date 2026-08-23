@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/idTable/CompressedExternalIdTableTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/idTable/CompressedExternalIdTableTest[1]_tests.cmake")
-else()
-  add_test(CompressedExternalIdTableTest_NOT_BUILT CompressedExternalIdTableTest_NOT_BUILT)
-endif()

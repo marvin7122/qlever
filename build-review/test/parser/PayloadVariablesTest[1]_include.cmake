@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/PayloadVariablesTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/parser/PayloadVariablesTest[1]_tests.cmake")
-else()
-  add_test(PayloadVariablesTest_NOT_BUILT PayloadVariablesTest_NOT_BUILT)
-endif()

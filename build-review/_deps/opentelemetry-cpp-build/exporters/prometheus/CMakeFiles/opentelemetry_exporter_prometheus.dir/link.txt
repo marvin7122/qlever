@@ -1,2 +1,0 @@
-/usr/bin/ar qc ../../../../lib/libopentelemetry_exporter_prometheus.a CMakeFiles/opentelemetry_exporter_prometheus.dir/src/exporter.cc.o CMakeFiles/opentelemetry_exporter_prometheus.dir/src/exporter_options.cc.o CMakeFiles/opentelemetry_exporter_prometheus.dir/src/exporter_factory.cc.o CMakeFiles/opentelemetry_exporter_prometheus.dir/src/collector.cc.o CMakeFiles/opentelemetry_exporter_prometheus.dir/src/exporter_utils.cc.o
-/usr/bin/ranlib ../../../../lib/libopentelemetry_exporter_prometheus.a

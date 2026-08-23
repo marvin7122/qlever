@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/SynchronizedTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/SynchronizedTest[1]_tests.cmake")
-else()
-  add_test(SynchronizedTest_NOT_BUILT SynchronizedTest_NOT_BUILT)
-endif()

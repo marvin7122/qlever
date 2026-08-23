@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ParallelExecutorTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ParallelExecutorTest[1]_tests.cmake")
-else()
-  add_test(ParallelExecutorTest_NOT_BUILT ParallelExecutorTest_NOT_BUILT)
-endif()

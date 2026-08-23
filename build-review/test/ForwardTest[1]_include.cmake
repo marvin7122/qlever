@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/ForwardTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/ForwardTest[1]_tests.cmake")
-else()
-  add_test(ForwardTest_NOT_BUILT ForwardTest_NOT_BUILT)
-endif()

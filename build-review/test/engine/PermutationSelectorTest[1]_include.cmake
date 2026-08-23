@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/PermutationSelectorTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/engine/PermutationSelectorTest[1]_tests.cmake")
-else()
-  add_test(PermutationSelectorTest_NOT_BUILT PermutationSelectorTest_NOT_BUILT)
-endif()

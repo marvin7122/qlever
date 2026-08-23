@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/LruCacheWithStatisticsTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/LruCacheWithStatisticsTest[1]_tests.cmake")
-else()
-  add_test(LruCacheWithStatisticsTest_NOT_BUILT LruCacheWithStatisticsTest_NOT_BUILT)
-endif()

@@ -1,5 +1,0 @@
-if(EXISTS "/home/userNoPriv/code/qlever/qlever-code/build-review/test/CallFixedSizeTest[1]_tests.cmake")
-  include("/home/userNoPriv/code/qlever/qlever-code/build-review/test/CallFixedSizeTest[1]_tests.cmake")
-else()
-  add_test(CallFixedSizeTest_NOT_BUILT CallFixedSizeTest_NOT_BUILT)
-endif()
