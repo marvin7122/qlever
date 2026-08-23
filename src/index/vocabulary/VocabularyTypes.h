@@ -394,32 +394,6 @@ class MultiSourceVocabBatchAssembler
 };
 
 // _____________________________________________________________________________
-// A mapping from an underlying vocabulary index to its target position in the
-// assembled output batch. All internal representation is private.
-class VocabIndexMapping {
- private:
-  size_t underlyingIndex_{};
-  size_t resultPosition_{};
-
- public:
-  VocabIndexMapping() = default;
-  VocabIndexMapping(size_t underlyingIndex, size_t resultPosition)
-      : underlyingIndex_{underlyingIndex}, resultPosition_{resultPosition} {}
-
-  [[nodiscard]] size_t underlyingIndex() const noexcept {
-    return underlyingIndex_;
-  }
-  [[nodiscard]] size_t resultPosition() const noexcept {
-    return resultPosition_;
-  }
-
-  void setUnderlyingIndex(size_t index) noexcept { underlyingIndex_ = index; }
-  void setResultPosition(size_t position) noexcept {
-    resultPosition_ = position;
-  }
-};
-
-// _____________________________________________________________________________
 // Paired lookup data for one vocabulary marker: for each position `i` in the
 // arrays, `underlyingIndices[i]` is the index to look up, and
 // `resultPositions[i]` is where the result goes in the final output. The
@@ -438,22 +412,10 @@ class MarkerIndicesAndPositions {
   }
 
   // ___________________________________________________________________________
-  // Add a mapped (underlyingIndex, resultPosition) entry.
-  void add(VocabIndexMapping mapping) {
-    underlyingIndices_.push_back(mapping.underlyingIndex());
-    resultPositions_.push_back(mapping.resultPosition());
-  }
-
-  // ___________________________________________________________________________
-  // Add a (underlyingIndex, resultPosition) pair directly.
-  void add(size_t underlyingIndex, size_t resultPosition) {
-    add(VocabIndexMapping{underlyingIndex, resultPosition});
-  }
-
-  // ___________________________________________________________________________
-  // Legacy alias for compatibility.
+  // Add a (`underlyingIndex`, `resultPosition`) pair.
   void addPair(size_t underlyingIndex, size_t resultPosition) {
-    add(underlyingIndex, resultPosition);
+    underlyingIndices_.push_back(underlyingIndex);
+    resultPositions_.push_back(resultPosition);
   }
 
   // ___________________________________________________________________________
@@ -502,8 +464,7 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
        ::ranges::views::enumerate(indices)) {
     auto [marker, underlyingIndex] = getMarkerAndIndex(markedIndex);
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
-    out[marker].add(VocabIndexMapping{underlyingIndex,
-                                      static_cast<size_t>(resultPosition)});
+    out[marker].addPair(underlyingIndex, static_cast<size_t>(resultPosition));
   }
   return out;
 }
