@@ -32,8 +32,9 @@
 #include "util/TypeTraits.h"
 
 namespace detail {
-// Return a decoder, that can be used to decompress strings that have been__________________________________________________________________
-// A helper function to cast `char*` to `unsigned char*` and `const char*` to
+// Return a decoder, that can be used to decompress strings that have
+// been__________________________________________________________________ A
+// helper function to cast `char*` to `unsigned char*` and `const char*` to
 // `const unsigned char*` which is used below because FSST always works on
 // unsigned character types. Note that this is one of the few cases where a
 // `reinterpret_cast` is safe.
