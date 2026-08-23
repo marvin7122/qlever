@@ -18,12 +18,14 @@
 #include "util/File.h"
 
 namespace {
+// _____________________________________________________________________________
 // A class that executes a passed function in its constructor.
 class Caller {
  public:
   explicit Caller(absl::FunctionRef<void()> f) { std::invoke(f); }
 };
 
+// _____________________________________________________________________________
 // A class inheriting from `WordWriterBase` that throws when initializing a
 // member.
 class WordWriterThrowing : public WordWriterBase {
@@ -31,12 +33,14 @@ class WordWriterThrowing : public WordWriterBase {
   Caller caller_;
 
  public:
+  // ___________________________________________________________________________
   WordWriterThrowing()
       : caller_{[]() { throw std::runtime_error("Constructor failed"); }} {}
   uint64_t operator()(std::string_view, bool) override { return 0; }
   void finishImpl() override {}
 };
 
+// _____________________________________________________________________________
 // A class inheriting from `WordWriterBase` that doesn't call finish.
 class WordWriterNoFinish : public WordWriterBase {
  public:
@@ -110,18 +114,14 @@ TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   const char* alphaData = (*first)[0].data();
   const char* gammaData = (*second)[0].data();
 
-  std::vector<std::string_view> viewsInInputOrder(3);
-  std::vector<bool> filledSlots(3, false);
-  std::vector<VocabBatchOwner> owners;
+  MultiSourceVocabBatchAssembler assembler(3);
   const std::array<size_t, 2> firstPositions{2, 0};
   const std::array<size_t, 1> secondPositions{1};
-  scatterVocabBatchLookupResult(std::move(first), firstPositions,
-                                viewsInInputOrder, filledSlots, owners);
-  scatterVocabBatchLookupResult(std::move(second), secondPositions,
-                                viewsInInputOrder, filledSlots, owners);
+  assembler.scatterSubBatchResultAtPositions(std::move(first), firstPositions);
+  assembler.scatterSubBatchResultAtPositions(std::move(second),
+                                             secondPositions);
 
-  auto result = keepAliveVocabBatch(
-      std::move(owners), std::move(viewsInInputOrder), std::move(filledSlots));
+  auto result = std::move(assembler).finalizeVocabBatchLookupResult();
   EXPECT_THAT(*result, ::testing::ElementsAre("beta", "gamma", "alpha"));
   EXPECT_EQ((*result)[2].data(), alphaData);
   EXPECT_EQ((*result)[1].data(), gammaData);
@@ -161,6 +161,7 @@ TEST(VocabBatchLookupData, KeepAliveRequiresAnOwner) {
                                ::testing::HasSubstr("owners"));
 }
 
+// _____________________________________________________________________________
 // Fixture for the "batch result outlives its vocabulary" tests: provides a
 // one-word `VocabularyInMemoryBinSearch` built via a `WordWriter`, with
 // per-test filenames so the suites are independent.
@@ -221,6 +222,7 @@ TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesVocabularyDestruction) {
   EXPECT_EQ((*result)[0].data(), wordData);
 }
 
+// _____________________________________________________________________________
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
 // used when words are produced incrementally with sizes not known up front
 // (e.g. decompressing one word at a time in `CompressedVocabulary`). Each word
@@ -256,6 +258,7 @@ TEST(PmrVocabBatchLookupData, PmrAsResultPointerStableAcrossAppends) {
   EXPECT_THAT(*result, ::testing::ElementsAre("foo", "barbaz"));
 }
 
+// _____________________________________________________________________________
 // An empty pmr lookup result is valid: no views, empty span (matches the
 // `VocabBatchLookupData` `AsResultEmpty` case).
 TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
@@ -266,17 +269,14 @@ TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabBatchLookupData, ScatterBatchResultSizeMismatchThrows) {
+TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
   auto batch = makeStringVectorVocabBatchLookupResult({"only-one"});
-  std::vector<std::string_view> views(2);
-  std::vector<bool> filledSlots(2, false);
-  std::vector<VocabBatchOwner> owners;
+  MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 2> positions{0, 1};
   // Two positions but one word in the batch.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      scatterVocabBatchLookupResult(std::move(batch), positions, views,
-                                    filledSlots, owners),
-      ::testing::HasSubstr("result->size() == resultPositions.size()"));
+      assembler.scatterSubBatchResultAtPositions(std::move(batch), positions),
+      ::testing::HasSubstr("subBatchResult->size() == resultPositions.size()"));
 }
 
 // _____________________________________________________________________________
@@ -297,54 +297,29 @@ TEST(VocabBatchLookupData, MakePmrResultKeepsViewsAlive) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabBatchLookupData, ScatterBatchDoubleWriteThrows) {
+TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
   auto batch1 = makeStringVectorVocabBatchLookupResult({"first"});
   auto batch2 = makeStringVectorVocabBatchLookupResult({"second"});
-  std::vector<std::string_view> views(2);
-  std::vector<bool> filledSlots(2, false);
-  std::vector<VocabBatchOwner> owners;
+  MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 1> pos0{0};
-  scatterVocabBatchLookupResult(std::move(batch1), pos0, views, filledSlots,
-                                owners);
+  assembler.scatterSubBatchResultAtPositions(std::move(batch1), pos0);
   // Attempting to scatter to position 0 again must throw because it was already
   // written.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      scatterVocabBatchLookupResult(std::move(batch2), pos0, views, filledSlots,
-                                    owners),
-      ::testing::HasSubstr("!filledSlots[resultPosition]"));
-}
-
-// _____________________________________________________________________________
-TEST(VocabBatchLookupData, KeepAliveVocabBatchIncompleteCoverageThrows) {
-  auto batch = makeStringVectorVocabBatchLookupResult({"first"});
-  std::vector<std::string_view> views(2);
-  std::vector<bool> filledSlots(2, false);  // Slot 1 remains unfilled.
-  std::vector<VocabBatchOwner> owners;
-  const std::array<size_t, 1> pos0{0};
-  scatterVocabBatchLookupResult(std::move(batch), pos0, views, filledSlots,
-                                owners);
-  // Slot 1 was never written, so keepAliveVocabBatch must throw.
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      keepAliveVocabBatch(std::move(owners), std::move(views),
-                          std::move(filledSlots)),
-      ::testing::HasSubstr("all_of(filledSlots"));
+      assembler.scatterSubBatchResultAtPositions(std::move(batch2), pos0),
+      ::testing::HasSubstr("!slotFilledTracking_[targetPosition]"));
 }
 
 // _____________________________________________________________________________
 // Verify that a legitimately empty word does not trip any correctness check:
 // the filled/unfilled invariant is structural, not based on the view contents.
-TEST(VocabBatchLookupData, ScatterAndKeepAliveTolerateEmptyWord) {
+TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerToleratesEmptyWord) {
   auto batch = makeStringVectorVocabBatchLookupResult({"", "x"});
-
-  std::vector<std::string_view> views(2);
-  std::vector<bool> filledSlots(2, false);
-  std::vector<VocabBatchOwner> owners;
+  MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 2> positions{1, 0};
-  scatterVocabBatchLookupResult(std::move(batch), positions, views, filledSlots,
-                                owners);
+  assembler.scatterSubBatchResultAtPositions(std::move(batch), positions);
 
-  auto result = keepAliveVocabBatch(std::move(owners), std::move(views),
-                                    std::move(filledSlots));
+  auto result = std::move(assembler).finalizeVocabBatchLookupResult();
   EXPECT_THAT(*result, ::testing::ElementsAre("x", ""));
 }
 

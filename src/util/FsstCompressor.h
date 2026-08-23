@@ -107,6 +107,7 @@ class FsstDecoder {
     return size;
   }
 
+  // ___________________________________________________________________________
   // Decompress a single string. Callers that already own an output buffer
   // should use `decompressInto` instead.
   std::string decompress(std::string_view str) const {
@@ -114,6 +115,8 @@ class FsstDecoder {
         maxDecompressedSize(str),
         [this, str](ql::span<char> out) { return decompressInto(str, out); });
   }
+
+  // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
   CPP_template(typename T, typename U)(
       requires ql::concepts::same_as<T, FsstDecoder>) friend std::true_type
@@ -122,6 +125,7 @@ class FsstDecoder {
   }
 };
 
+// _____________________________________________________________________________
 // A sequence of `N` `FsstDecoder` s that are chained in inverted order (the
 // last one first) when decompressing a string. The inverted order is chosen,
 // because it is the correct way to decompress a string that was compressed by
@@ -137,15 +141,18 @@ class FsstRepeatedDecoder {
   Decoders decoders_;
 
  public:
+  // ___________________________________________________________________________
   // The default constructor does lead to an invalid decoder, but is required
   // for the serialization module. Don't use it.
   FsstRepeatedDecoder() = default;
 
+  // ___________________________________________________________________________
   // Construct from the internal `fsst_decoder_t`. Note that the typical way to
   // obtain an `FsstDecoder` is by first creating a `FsstEncoder` and calling
   // `getDecoder()` on that encoder.
   explicit FsstRepeatedDecoder(Decoders decoders) : decoders_{decoders} {}
 
+  // ___________________________________________________________________________
   // Return an upper bound on the size after all `N` decoding stages.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
     size_t bound = str.size();
@@ -157,6 +164,7 @@ class FsstRepeatedDecoder {
     return bound;
   }
 
+  // ___________________________________________________________________________
   // Decompress `str` into `out`. `out.size()` must be at least
   // `maxDecompressedSize(str)`. For `N >= 2`, grow `scratch` to `out.size()`
   // if it is smaller, then ping-pong stages between `out` and `scratch` so
@@ -184,6 +192,7 @@ class FsstRepeatedDecoder {
     return n;
   }
 
+  // ___________________________________________________________________________
   // Decompress a single string. Callers that already own an output buffer
   // should use `decompressInto` instead.
   std::string decompress(std::string_view str) const {
@@ -192,6 +201,7 @@ class FsstRepeatedDecoder {
         maxDecompressedSize(str),
         [&](ql::span<char> out) { return decompressInto(str, out, scratch); });
   }
+  // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
   CPP_template_2(typename T, typename U)(
       requires ql::concepts::same_as<T, FsstRepeatedDecoder>)

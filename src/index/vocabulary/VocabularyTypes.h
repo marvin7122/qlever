@@ -263,54 +263,6 @@ class MultiSourceVocabBatchAssembler
 };
 
 // _____________________________________________________________________________
-// Scatter string_views from `result` into `viewsInInputOrder` at positions
-// given by `resultPositions`, and keep `result` in `owners` to retain storage.
-inline void scatterVocabBatchLookupResult(
-    VocabBatchLookupResult result, ql::span<const size_t> resultPositions,
-    ql::span<std::string_view> viewsInInputOrder,
-    std::vector<bool>& filledSlots, std::vector<VocabBatchOwner>& owners) {
-  AD_CONTRACT_CHECK(result != nullptr);
-  AD_CONTRACT_CHECK(result->size() == resultPositions.size());
-  AD_CONTRACT_CHECK(filledSlots.size() == viewsInInputOrder.size());
-
-  for (auto [resultPosition, word] :
-       ::ranges::views::zip(resultPositions, *result)) {
-    AD_CORRECTNESS_CHECK(resultPosition < viewsInInputOrder.size());
-    AD_CORRECTNESS_CHECK(!filledSlots[resultPosition]);
-    filledSlots[resultPosition] = true;
-    viewsInInputOrder[resultPosition] = word;
-  }
-  owners.push_back(std::move(result));
-}
-
-// _____________________________________________________________________________
-// Create a `VocabBatchLookupResult` for the given `words`.
-inline VocabBatchLookupResult keepAliveVocabBatch(
-    std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words,
-    std::vector<bool> filledSlots) {
-  AD_CONTRACT_CHECK(!owners.empty());
-  AD_CONTRACT_CHECK(!words.empty());
-  AD_CONTRACT_CHECK(filledSlots.size() == words.size());
-  AD_CORRECTNESS_CHECK(
-      ql::ranges::all_of(filledSlots, [](bool filled) { return filled; }));
-
-  auto data = std::make_shared<MultiOwnerVocabBatchLookupData>();
-  data->buffer() = std::move(owners);
-  data->views() = std::move(words);
-  return MultiOwnerVocabBatchLookupData::asResult(std::move(data));
-}
-
-// _____________________________________________________________________________
-// Compatibility overload for callers that already know every output slot is
-// filled and whose views are non-null.
-inline VocabBatchLookupResult keepAliveVocabBatch(
-    std::vector<VocabBatchOwner> owners, std::vector<std::string_view> words) {
-  std::vector<bool> filledSlots(words.size(), true);
-  return keepAliveVocabBatch(std::move(owners), std::move(words),
-                             std::move(filledSlots));
-}
-
-// _____________________________________________________________________________
 // Paired lookup data for one vocabulary marker: for each position `i` in the
 // arrays, `underlyingIndices[i]` is the index to look up, and
 // `resultPositions[i]` is where the result goes in the final output. The
