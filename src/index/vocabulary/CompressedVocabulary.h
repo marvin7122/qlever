@@ -109,21 +109,18 @@ CPP_template(typename UnderlyingVocabulary,
           const auto& [index, word] = compressed;
           const size_t decoderIdx = getDecoderIdx(index);
           AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
-          const size_t boundOnDecompressedWordSize =
+          const size_t bound =
               compressionWrapper_.maxDecompressedSize(word, decoderIdx);
-          if (boundOnDecompressedWordSize == 0) {
-            // Non-null `data()` so consumers that use `data() == nullptr` as
-            // the "unwritten" sentinel never mistake this word for one.
-            return IndexAndWord{index, std::string_view{"", size_t{0}}};
+          if (buffer.size() < bound) {
+            buffer.resize(bound);
           }
-          buffer.resize(boundOnDecompressedWordSize);
-          const size_t numBytesWritten = compressionWrapper_.decompressInto(
-              word, decoderIdx, ql::span<char>{buffer.data(), buffer.size()},
-              scratch);
-          AD_CORRECTNESS_CHECK(numBytesWritten > 0 &&
-                               numBytesWritten <= boundOnDecompressedWordSize);
-          return IndexAndWord{index,
-                              std::string_view{buffer.data(), numBytesWritten}};
+          std::string_view decompressed = decompressIntoSpan(
+              ql::span<char>{buffer.data(), buffer.size()}, bound,
+              [&](ql::span<char> span) {
+                return compressionWrapper_.decompressInto(word, decoderIdx,
+                                                          span, scratch);
+              });
+          return IndexAndWord{index, decompressed};
         });
   }
 

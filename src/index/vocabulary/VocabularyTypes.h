@@ -238,6 +238,22 @@ inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
 }
 
 // _____________________________________________________________________________
+// Decompress into `destination` of at least `bound` bytes using `decompress(span)`.
+// Enforces bound checking, non-null empty word sentinels, and bytes-written invariants.
+template <typename DecompressFunc>
+std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
+                                    DecompressFunc&& decompress) {
+  if (bound == 0) {
+    return std::string_view{"", size_t{0}};
+  }
+  AD_CORRECTNESS_CHECK(destination.size() >= bound);
+  const size_t bytesWritten =
+      decompress(ql::span<char>{destination.data(), bound});
+  AD_CORRECTNESS_CHECK(bytesWritten > 0 && bytesWritten <= bound);
+  return std::string_view{destination.data(), bytesWritten};
+}
+
+// _____________________________________________________________________________
 // Builder for a PMR arena-backed `VocabBatchLookupResult`.
 // Encapsulates the `monotonic_buffer_resource`, allocates decompressed word
 // storage directly in the arena, and guarantees that all exposed `string_view`s
@@ -265,10 +281,8 @@ class ArenaVocabBatchBuilder {
 
     ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
     char* mem = allocator.allocate(bound);
-    const size_t bytesWritten = decompress(ql::span<char>{mem, bound});
-
-    AD_CORRECTNESS_CHECK(bytesWritten > 0 && bytesWritten <= bound);
-    views_.emplace_back(mem, bytesWritten);
+    views_.push_back(
+        decompressIntoSpan(ql::span<char>{mem, bound}, bound, decompress));
   }
 
   // Allocate storage inside the arena and copy the given word into it:
