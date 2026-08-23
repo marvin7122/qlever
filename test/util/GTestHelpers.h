@@ -375,7 +375,7 @@ template <size_t NumBytes = 4096>
 }
 
 // _____________________________________________________________________________
-// Returns "<TestSuiteName>" for the currently running test suite, with any '/'
+// Return "<TestSuiteName>" for the currently running test suite, with any '/'
 // replaced by '_' (parameterized test suites embed '/' in their names).
 // Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
 // test.

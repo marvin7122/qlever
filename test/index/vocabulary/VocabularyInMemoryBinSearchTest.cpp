@@ -28,8 +28,12 @@ class VocabularyCreator {
   explicit VocabularyCreator(std::string filename)
       : vocabFilename_{filename + suffix} {
     ad_utility::deleteFile(vocabFilename_, false);
+    ad_utility::deleteFile(vocabFilename_ + ".ids", false);
   }
-  ~VocabularyCreator() { ad_utility::deleteFile(vocabFilename_); }
+  ~VocabularyCreator() {
+    ad_utility::deleteFile(vocabFilename_, false);
+    ad_utility::deleteFile(vocabFilename_ + ".ids", false);
+  }
 
   // Create and return a `VocabularyInMemoryBinSearch` from words and ids.
   // `words` and `ids` must have the same size. If `ids` is `nullopt`, then

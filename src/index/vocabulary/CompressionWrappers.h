@@ -46,7 +46,7 @@ CPP_requires(
     requires(const T& t, std::string& scratch, ql::span<char> out)(
         // Return the number of decoders that are stored.
         concepts::same_as<decltype(t.numDecoders()), size_t>,
-        // Decompress the given string with the decoder specified by the second
+         with the decoder at the given string with the decoder specified by the second
         // argument.
         concepts::same_as<decltype(t.decompress(std::string_view{}, size_t{0})),
                           std::string>,

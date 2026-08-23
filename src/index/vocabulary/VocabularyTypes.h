@@ -47,16 +47,16 @@ class VocabBatchLookupResult {
   ql::span<const std::string_view> span_{};
 
  public:
-  // Default constructor: creates an empty, valid batch result.
+  // Default constructor: creates an empty, uninitialized batch result.
   VocabBatchLookupResult() = default;
 
   // Explicit constructor: binds backing storage owner and span.
+  // Empty batch results are invalid: every lookup result must represent >= 1 words.
   VocabBatchLookupResult(VocabBatchOwner owner,
                          ql::span<const std::string_view> span)
       : owner_{std::move(owner)}, span_{span} {
-    if (!span_.empty()) {
-      AD_CORRECTNESS_CHECK(owner_ != nullptr);
-    }
+    AD_CONTRACT_CHECK(!span_.empty());
+    AD_CORRECTNESS_CHECK(owner_ != nullptr);
   }
 
   // Container & Range Interface:
@@ -122,6 +122,7 @@ class ContiguousVocabBatchBuilder {
  public:
   explicit ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes)
       : data_{std::make_shared<ContiguousVocabBatchLookupData>()} {
+    AD_CONTRACT_CHECK(!wordSizes.empty());
     const size_t totalBytes = ::ranges::accumulate(wordSizes, size_t{0});
     data_->buffer_.resize(totalBytes);
     data_->views_.reserve(wordSizes.size());
@@ -142,6 +143,7 @@ class ContiguousVocabBatchBuilder {
   }
 
   [[nodiscard]] VocabBatchLookupResult finalize() && {
+    AD_CONTRACT_CHECK(!data_->views_.empty());
     return ContiguousVocabBatchLookupData::asResult(std::move(data_));
   }
 };
@@ -232,19 +234,20 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 // Construct a result from owning strings and expose views into their storage.
 inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
     std::vector<std::string> words) {
+  AD_CONTRACT_CHECK(!words.empty());
   auto data =
       std::make_shared<StringVectorVocabBatchLookupData>(std::move(words));
   return StringVectorVocabBatchLookupData::asResult(std::move(data));
 }
 
 // _____________________________________________________________________________
-// Decompress into `destination` of at least `bound` bytes using
-// `decompress(span)`. Enforces bound checking, destination.size() >= bound,
-// and bytes-written invariants.
+// Decompress a single word into `destination` (which must hold at least `bound`
+// bytes) using `decompress(span)`. Returns a string_view to the decompressed
+// word.
 template <typename DecompressFunc>
 std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
                                     DecompressFunc&& decompress) {
-  if (destination.size() >= bound) {
+  if (bound == 0) {
     return std::string_view{"", size_t{0}};
   }
   AD_CORRECTNESS_CHECK(destination.size() >= bound);
@@ -268,6 +271,7 @@ class ArenaVocabBatchBuilder {
  public:
   explicit ArenaVocabBatchBuilder(size_t expectedSize)
       : buffer_{std::make_unique<ql::pmr::monotonic_buffer_resource>()} {
+    AD_CONTRACT_CHECK(expectedSize > 0);
     views_.reserve(expectedSize);
   }
 
@@ -298,7 +302,8 @@ class ArenaVocabBatchBuilder {
     views_.emplace_back(mem, word.size());
   }
 
-  // Atomically finalize and return the immutable batch result:
+  // ___________________________________________________________________________
+  // Finalize and return the immutable batch result.
   [[nodiscard]] VocabBatchLookupResult finalize() && {
     AD_CONTRACT_CHECK(!views_.empty());
     auto data = std::make_shared<PmrVocabBatchLookupData>(std::move(buffer_),
@@ -312,6 +317,7 @@ class ArenaVocabBatchBuilder {
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
     ql::span<const std::string_view> words) {
+  AD_CONTRACT_CHECK(!words.empty());
   ArenaVocabBatchBuilder builder(words.size());
   for (std::string_view word : words) {
     builder.appendWord(word);
