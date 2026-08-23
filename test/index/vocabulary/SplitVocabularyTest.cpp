@@ -14,12 +14,10 @@
 #include <utility>
 #include <variant>
 
-#include "../../util/GTestHelpers.h"
-#include "./VocabularyTestHelpers.h"
+#include "VocabularyTestHelpers.h"
 #include "backports/StartsWithAndEndsWith.h"
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
-#include "index/vocabulary/VocabularyTestHelpers.h"
 #include "index/vocabulary/VocabularyType.h"
 #include "util/GTestHelpers.h"
 
