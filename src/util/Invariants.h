@@ -45,7 +45,7 @@ CPP_template(typename T)(
     self_->checkInvariants();
   }
 
-  ~InvariantGuard() {
+  ~InvariantGuard() noexcept(false) {
     if (!std::uncaught_exceptions()) {
       self_->checkInvariants();
     }
