@@ -147,7 +147,8 @@ CPP_template(typename UnderlyingVocabulary,
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
 
-    PmrVocabBatchBuilder builder(indices.size());
+    ArenaVocabBatchBuilder builder(indices.size());
+    std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
       const size_t decoderIdx = getDecoderIdx(idx);
@@ -155,8 +156,8 @@ CPP_template(typename UnderlyingVocabulary,
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
           [&](ql::span<char> outSpan) {
-            return compressionWrapper_.decompressInto(compressedWord,
-                                                      decoderIdx, outSpan);
+            return compressionWrapper_.decompressInto(
+                compressedWord, decoderIdx, outSpan, scratch);
           });
     }
 
