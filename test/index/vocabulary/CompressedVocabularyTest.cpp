@@ -453,13 +453,18 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   EXPECT_EQ(result[6], "");
 
   // All views yielded by the result must stay intact while the result object
-  // is alive, even after unrelated allocations have run in between.
-  std::string unrelatedAllocation(64, 'x');
+  // is alive, even after unrelated allocations have run in between. The
+  // append forces a real heap reallocation of `unrelatedAllocation` after
+  // `lookupBatch` produced the views, so a dangling view would be exposed
+  // by the comparison loop below.
+  std::string unrelatedAllocation;
+  unrelatedAllocation.append(64, 'x');
+  ASSERT_EQ(unrelatedAllocation.size(), 64u);
+  EXPECT_EQ(unrelatedAllocation, std::string(64, 'x'));
   for (size_t i = 0; i < indices.size(); ++i) {
     const size_t idx = indices[i];
     EXPECT_EQ(result[i], vocab[idx]) << "at vocabulary index " << idx;
   }
-  EXPECT_EQ(unrelatedAllocation.size(), 64u);
 
   ad_utility::deleteFile(filename);
 }
