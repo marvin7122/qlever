@@ -315,7 +315,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
   // Platform premise: an intermediate local `std::pmr::string` would indeed
   // use the Small String Optimization (SSO), so short words would end up
   // inside a destroyed stack object rather than the arena.
-  requirePmrStringInlineStorage();
+  requirePmrStringInlineStorage(15);
 
   // All words deliberately short (<= 15 chars): every one takes the SSO
   // path in a `pmr::string`-based implementation, and none would end up in
@@ -493,7 +493,7 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
   // contract check (`out.size() >= maxDecompressedSize`).
   ql::span<char> undersized{outputBuffer.data(), bound - 1};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      static_cast<void>(mux.decompressInto(compressed, 0, undersized)),
+      static_cast<void>(mux.decompressInto(compressed, 0, undersized, scratch)),
       ::testing::HasSubstr("out.size() >= maxDecompressedSize"));
 
   // Out-of-range decoder indices must be rejected for all dispatching
@@ -505,7 +505,7 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       static_cast<void>(mux.decompressInto(
           compressed, invalidIndex,
-          ql::span<char>{outputBuffer.data(), outputBuffer.size()})),
+          ql::span<char>{outputBuffer.data(), outputBuffer.size()}, scratch)),
       ::testing::HasSubstr("vector::_M_range_check"));
   AD_EXPECT_THROW_WITH_MESSAGE(
       static_cast<void>(mux.decompress(compressed, invalidIndex)),
