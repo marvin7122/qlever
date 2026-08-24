@@ -26,6 +26,9 @@ template <size_t N>
 size_t decodeRepeated(const std::array<FsstDecoder, N>& decoders,
                       std::string_view compressed, ql::span<char> output,
                       ql::span<char> scratch) {
+  AD_CONTRACT_CHECK(N > 0);
+  AD_CONTRACT_CHECK(!output.empty());
+  AD_CONTRACT_CHECK(!scratch.empty());
   size_t destination = (N % 2 == 0) ? 1 : 0;
   std::array<ql::span<char>, 2> buffers{output, scratch};
   std::string_view input = compressed;
@@ -33,19 +36,27 @@ size_t decodeRepeated(const std::array<FsstDecoder, N>& decoders,
   for (size_t stage = 0; stage < N; ++stage) {
     bytesWritten =
         decoders[N - 1 - stage].decompressInto(input, buffers[destination]);
+    AD_CONTRACT_CHECK(bytesWritten <= buffers[destination].size());
     input = {buffers[destination].data(), bytesWritten};
     destination ^= 1;
   }
+  AD_CONTRACT_CHECK(bytesWritten <= output.size() || bytesWritten <= scratch.size());
   return bytesWritten;
 }
 
 class FsstScratchBufferBenchmark : public BenchmarkInterface {
  private:
+  // The benchmark models a fixed three-stage repeated-FSST decode pipeline.
   static constexpr size_t numberOfStages = 3;
+  // These views refer to the compressed strings retained by decoderStorage_.
   std::vector<std::string_view> compressed_;
+  // One decoder is retained for each stage of the repeated pipeline.
   std::array<FsstDecoder, numberOfStages> decoders_;
+  // Owns the compressed-string backing storage, keeping compressed_ valid.
   std::vector<std::shared_ptr<std::string>> decoderStorage_;
+  // Maximum final decoded size; bounds the output buffer for every word.
   size_t outputCapacity_ = 0;
+  // Bounds intermediate stages, which have a smaller expansion requirement.
   size_t intermediateCapacity_ = 0;
 
  public:
@@ -87,60 +98,56 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     BenchmarkResults results;
     auto& group = results.addGroup(
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
-    const char* selectedStrategyEnv = std::getenv("FSST_SCRATCH_ONLY");
+    const auto parseEnvironmentSize = [](const char* value,
+                                          size_t defaultValue) {
+      if (value == nullptr) {
+        return defaultValue;
+      }
+      errno = 0;
+      char* end = nullptr;
+      const unsigned long parsed = std::strtoul(value, &end, 10);
+      AD_CONTRACT_CHECK(end != value && *end == '\0' && errno != ERANGE);
+      return static_cast<size_t>(parsed);
+    };
     const size_t selectedStrategy =
-        selectedStrategyEnv == nullptr
-            ? 3
-            : std::strtoul(selectedStrategyEnv, nullptr, 10);
-    const char* repetitionsEnv = std::getenv("FSST_SCRATCH_INNER_REPETITIONS");
-    const size_t repetitions = repetitionsEnv == nullptr
-                                   ? 1
-                                   : std::strtoul(repetitionsEnv, nullptr, 10);
+        parseEnvironmentSize(std::getenv("FSST_SCRATCH_ONLY"), 3);
+    const size_t repetitions = parseEnvironmentSize(
+        std::getenv("FSST_SCRATCH_INNER_REPETITIONS"), 1);
     AD_CONTRACT_CHECK(selectedStrategy <= 3);
     AD_CONTRACT_CHECK(repetitions > 0);
 
+    auto runDecodeMeasurement = [&](ql::span<char> output,
+                                    ql::span<char> scratch) {
+      size_t totalBytes = 0;
+      for (size_t repetition = 0; repetition < repetitions; ++repetition) {
+        for (std::string_view compressed : compressed_) {
+          totalBytes += decodeRepeated(decoders_, compressed, output, scratch);
+        }
+      }
+      return totalBytes;
+    };
     auto addFullSizeStringScratch = [&] {
       group.addMeasurement("full-size std::string scratch", [&] {
         std::string output(outputCapacity_, '\0');
         std::string scratch(outputCapacity_, '\0');
-        size_t totalBytes = 0;
-        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
-          for (std::string_view compressed : compressed_) {
-            totalBytes +=
-                decodeRepeated(decoders_, compressed, output, scratch);
-          }
-        }
-        return totalBytes;
+        return runDecodeMeasurement({output.data(), output.size()},
+                                    {scratch.data(), scratch.size()});
       });
     };
     auto addFullSizeUninitializedScratch = [&] {
       group.addMeasurement("full-size uninitialized scratch", [&] {
         auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
         auto scratch = std::unique_ptr<char[]>{new char[outputCapacity_]};
-        size_t totalBytes = 0;
-        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
-          for (std::string_view compressed : compressed_) {
-            totalBytes += decodeRepeated(decoders_, compressed,
-                                         {output.get(), outputCapacity_},
-                                         {scratch.get(), outputCapacity_});
-          }
-        }
-        return totalBytes;
+        return runDecodeMeasurement({output.get(), outputCapacity_},
+                                    {scratch.get(), outputCapacity_});
       });
     };
     auto addStageAwareUninitializedScratch = [&] {
       group.addMeasurement("stage-aware uninitialized scratch", [&] {
         auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
         auto scratch = std::unique_ptr<char[]>{new char[intermediateCapacity_]};
-        size_t totalBytes = 0;
-        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
-          for (std::string_view compressed : compressed_) {
-            totalBytes += decodeRepeated(
-                decoders_, compressed, {output.get(), outputCapacity_},
-                {scratch.get(), intermediateCapacity_});
-          }
-        }
-        return totalBytes;
+        return runDecodeMeasurement({output.get(), outputCapacity_},
+                                    {scratch.get(), intermediateCapacity_});
       });
     };
 
