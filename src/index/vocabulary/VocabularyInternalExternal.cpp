@@ -88,7 +88,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   }
 
   // 3. Finalize and return self-contained result.
-  return std::move(assembler).finalizeVocabBatchLookupResult();
+  return std::move(assembler).finalize();
 }
 
 // _____________________________________________________________________________

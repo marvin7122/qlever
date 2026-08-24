@@ -66,7 +66,9 @@ class WithInvariants {
  public:
   // ___________________________________________________________________________
   // Instantiate an InvariantGuard verifying the derived instance on entry/exit.
-  [[nodiscard]] auto makeInvariantGuard() const {
+  // Lvalue-qualified so the guard can never be created for a temporary:
+  // it stores a raw pointer to `this`, which must outlive the guard's scope.
+  [[nodiscard]] auto makeInvariantGuard() const& {
     static_assert(
         InvariantStatefulClass<Derived>,
         "Class inheriting from WithInvariants<T> must satisfy the "
@@ -74,6 +76,11 @@ class WithInvariants {
         "checkInvariants() const`).");
     return InvariantGuard<Derived>{static_cast<const Derived*>(this)};
   }
+
+  // Deleted rvalue overload: calling on a temporary would leave the guard
+  // holding a pointer to an object destroyed at the end of the full
+  // expression, so reject this at compile time.
+  [[nodiscard]] auto makeInvariantGuard() const&& = delete;
 };
 
 }  // namespace ad_utility

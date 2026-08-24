@@ -37,31 +37,9 @@ class VocabularyInMemoryBinSearch
   using Indices = std::vector<uint64_t>;
 
  private:
-  // Own the in-memory word storage together with the string views into it.
-  // The enclosing vocabulary can be closed or destroyed while a batch result
-  // is still alive.
-  class BatchLookupData {
-   private:
-    std::shared_ptr<const Words> storage_;
-    std::vector<std::string_view> views_;
-
-   public:
-    BatchLookupData(std::shared_ptr<const Words> storage,
-                    std::vector<std::string_view> views)
-        : storage_{std::move(storage)}, views_{std::move(views)} {
-      AD_CORRECTNESS_CHECK(storage_ != nullptr);
-    }
-
-    static VocabBatchLookupResult asResult(
-        std::shared_ptr<BatchLookupData> self) {
-      auto span = ql::span<const std::string_view>{self->views_};
-      return VocabBatchLookupResult(VocabBatchOwner{std::move(self)}, span);
-    }
-  };
-
-  // Store the word data through a `shared_ptr` so a
-  // `BatchLookupData` can keep the referenced bytes alive after `close()` and
-  // destruction of the vocabulary. Keep the pointer non-null.
+  // The word data, held through a `shared_ptr` so outstanding batch-lookup
+  // results can keep the referenced bytes alive after `close()` and
+  // destruction of the vocabulary. The pointer is always non-null.
   std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
   Indices indices_;
 

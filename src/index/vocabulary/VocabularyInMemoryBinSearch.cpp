@@ -1,6 +1,12 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024        Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 
@@ -9,21 +15,21 @@ using std::string;
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::open(const string& fileName) {
   AD_CORRECTNESS_CHECK(
-      words().size() == 0 && indices_.empty(),
+      words().empty() && indices_.empty(),
       "Calling open on the same vocabulary twice is probably a bug");
+  auto words = std::make_shared<Words>();
   {
-    // Deserialize into a mutable buffer first (`words_` stores `const Words`
-    // for immutable sharing with batch results, and moving on success ensures
-    // strong exception safety).
-    auto words = std::make_shared<Words>();
     ad_utility::serialization::FileReadSerializer file(fileName);
     file >> *words;
-    words_ = std::move(words);
   }
+  Indices indices;
   {
     ad_utility::serialization::FileReadSerializer idFile(fileName + ".ids");
-    idFile >> indices_;
+    idFile >> indices;
   }
+  AD_CORRECTNESS_CHECK(indices.size() == words->size());
+  words_ = std::move(words);
+  indices_ = std::move(indices);
 }
 
 // _____________________________________________________________________________

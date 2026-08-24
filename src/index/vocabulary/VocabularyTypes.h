@@ -1,6 +1,6 @@
 // Copyright 2022 - 2026, The QLever Authors, in particular:
 //
-// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
@@ -47,12 +47,8 @@ class VocabBatchLookupResult {
   ql::span<const std::string_view> span_{};
 
  public:
-  // Default constructor: creates an empty, uninitialized batch result.
-  VocabBatchLookupResult() = default;
-
-  // Explicit constructor: binds backing storage owner and span.
-  // Empty batch results are invalid: every lookup result must represent >= 1
-  // words.
+  // Construct a batch lookup result with non-empty word views and an owning
+  // pointer keeping the backing word storage alive.
   VocabBatchLookupResult(VocabBatchOwner owner,
                          ql::span<const std::string_view> span)
       : owner_{std::move(owner)}, span_{span} {

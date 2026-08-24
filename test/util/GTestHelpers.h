@@ -328,6 +328,13 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 // outside a running gtest (i.e. when `current_test_info()` returns nullptr).
 // Pass false when the caller is also used by non-test code (e.g. benchmarks),
 // in which case an empty string is returned instead.
+// Return the given raw gtest name with any '/' replaced by '_' (parameterized
+// tests embed '/' in their names). Shared implementation of
+// `gtestCurrentTestName` and `gtestCurrentTestSuiteName`.
+inline std::string sanitizeGtestName(const std::string& name) {
+  return absl::StrReplaceAll(name, {{"/", "_"}});
+}
+
 inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   const auto* testInfo =
       ::testing::UnitTest::GetInstance()->current_test_info();
@@ -337,46 +344,105 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   if (testInfo == nullptr) {
     return "";
   }
-  return absl::StrReplaceAll(
-      absl::StrCat(testInfo->test_suite_name(), "_", testInfo->name()),
-      {{"/", "_"}});
+  return sanitizeGtestName(
+      absl::StrCat(testInfo->test_suite_name(), "_", testInfo->name()));
 }
 
 // _____________________________________________________________________________
-// Check that `std::pmr::string` uses the Small String Optimization (SSO) on
-// this platform for strings of up to `maxSize` characters, i.e. that `data()`
-// points into the string object's own storage rather than memory allocated via
-// the allocator. Tests that rely on short `pmr::string`s keeping their content
-// inside the object (e.g. to construct dangling-view regression tests) can use
-// this as an explicit platform premise.
-inline void assertPmrStringUsesSso(size_t maxSize = 15) {
-  const std::string sample(maxSize, 's');
-  std::pmr::string pmrSample{sample};
-  const auto* objStart = reinterpret_cast<const char*>(&pmrSample);
-  const auto* objEnd = objStart + sizeof(pmrSample);
-  AD_CORRECTNESS_CHECK(pmrSample.data() >= objStart &&
-                       pmrSample.data() < objEnd);
+// Return the largest number of characters that a `ql::pmr::string` is
+// guaranteed by this helper to store inside its own object storage (SSO).
+// NOTE: Used by test/GTestHelpersTest.cpp, test/index/vocabulary/
+// CompressedVocabularyTest.cpp (via requirePmrStringInlineStorage) and
+// SplitVocabularyTest.cpp (gtestCurrentTestSuiteName); see also `clobberStack`
+// below. The SSO capacity of `std::basic_string` is implementation-defined (e.g. 15
+// characters for libstdc++ and 22 for libc++), so it is determined here by
+// probing rather than hardcoded.
+inline size_t pmrStringSsoCapacity() {
+  // A counting memory resource lets us detect an allocation directly instead of
+  // guessing from pointer addresses: a string uses SSO exactly when constructing
+  // it performs no allocation through its allocator.
+  struct CountingMemoryResource : public std::pmr::memory_resource {
+   private:
+    std::pmr::memory_resource* upstream_ = std::pmr::get_default_resource();
+    size_t numAllocations_ = 0;
+
+    void* do_allocate(size_t bytes, size_t alignment) override {
+      ++numAllocations_;
+      return upstream_->allocate(bytes, alignment);
+    }
+    void do_deallocate(void* ptr, size_t bytes, size_t alignment) override {
+      upstream_->deallocate(ptr, bytes, alignment);
+    }
+    bool do_is_equal(
+        const std::pmr::memory_resource& other) const noexcept override {
+      return this == &other;
+    }
+
+   public:
+    size_t numAllocations() const { return numAllocations_; }
+  };
+  CountingMemoryResource resource;
+  // A string whose content fits the SSO buffer must be at most as large as the
+  // string object itself, so probing above that size is pointless.
+  const std::string sample(sizeof(ql::pmr::string), 's');
+  for (size_t size = sample.size();; --size) {
+    ql::pmr::string pmrSample{sample.substr(0, size), &resource};
+    if (resource.numAllocations() == 0) {
+      return size;
+    }
+    AD_CORRECTNESS_CHECK(size > 0);  // Some storage must always be used.
+  }
 }
 
 // _____________________________________________________________________________
+// Check the explicit platform premise that `ql::pmr::string` stores strings of
+// up to `maxSize` characters inside its own object storage (Small String
+// Optimization), i.e. that constructing such a string performs no allocation
+// through its allocator. Tests whose logic depends on short strings keeping
+// their content inline (e.g. dangling-view regression tests) should state
+// exactly the sizes they rely on by passing `maxSize`; the failure message
+// then points at the platform premise rather than at the test's own logic.
+// Preconditions:
+// - `maxSize > 0`: there are callers only for non-empty test words.
+// NOTE: There is deliberately no default for `maxSize`: the SSO capacity of
+// `std::pmr::string` is implementation-defined (e.g. 15 characters for
+// libstdc++ and 22 for libc++), so every caller must state exactly the size
+// it relies on instead of silently depending on one STL's limit.
+inline void requirePmrStringInlineStorage(size_t maxSize) {
+  AD_CONTRACT_CHECK(maxSize > 0);
+  const size_t capacity = pmrStringSsoCapacity();
+  AD_CORRECTNESS_CHECK(
+      capacity >= maxSize,
+      absl::StrCat("Platform premise violated: std::pmr::string does not "
+                   "store ",
+                   maxSize, " characters on this platform (capacity: ",
+                   pmrStringSsoCapacity(), ")"));
+}
+
+// _____________________________________________________________________________
+// STRICTLY TEST-LOCAL BEST-EFFORT TRIPWIRE — NOT A CORRECTNESS MECHANISM.
 // Overwrite the current stack frame with sentinel bytes, so that stale stack
 // contents (e.g. from a destroyed local object that a dangling view still
 // points into) become implausible to survive. Call it multiple times to also
-// clobber deeper frames.
+// clobber deeper frames. Returns the last byte written, read back through the
+// `volatile` buffer, so callers can assert that the stack was actually
+// overwritten with the sentinel.
 template <size_t NumBytes = 4096>
-[[gnu::noinline]] void clobberStack(char sentinel = '#') {
+[[gnu::noinline]] char clobberStack(char sentinel = '#') {
   // `volatile` prevents the compiler from optimizing the stack writes away.
   volatile char buffer[NumBytes];
   for (size_t i = 0; i < NumBytes; ++i) {
     buffer[i] = sentinel;
   }
-  // Memory barrier to ensure writes complete before function returns.
+  // Compiler barrier: prevents the optimizer from eliding the stack writes or
+  // reordering them past the return. Not a hardware memory fence.
   asm volatile("" : : "r"(buffer) : "memory");
+  return buffer[NumBytes - 1];
 }
 
 // _____________________________________________________________________________
-// Return "<TestSuiteName>" for the currently running test suite, with any '/'
-// replaced by '_' (parameterized test suites embed '/' in their names).
+// Returns the name of the currently running test suite, with any '/' replaced
+// by '_' (parameterized test suites embed '/' in their names).
 // Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
 // test.
 inline std::string gtestCurrentTestSuiteName(
@@ -389,7 +455,7 @@ inline std::string gtestCurrentTestSuiteName(
   if (testSuite == nullptr) {
     return "";
   }
-  return absl::StrReplaceAll(testSuite->name(), {{"/", "_"}});
+  return sanitizeGtestName(testSuite->name());
 }
 
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H

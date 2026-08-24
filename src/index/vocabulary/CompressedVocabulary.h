@@ -136,28 +136,27 @@ CPP_template(typename UnderlyingVocabulary,
   // buffer resource alive and providing `string_view`s for each requested index
   // in `indices`. `indices` must not be empty.
   //
-  // TODO<marvin7122>: Because `ql::pmr::monotonic_buffer_resource` does not
-  // support reclaiming or shrinking individual allocations in place, any unused
-  // memory between the actual decompressed length and `maxDecompressedSize`
-  // remains allocated in the allocation arena until the entire batch result is
-  // destroyed. Measure the empirical bound-vs-used memory waste on large-scale
-  // workloads to determine whether a custom bump allocator with in-place tail
-  // trimming or batch compaction is worthwhile.
+  // Note: each word reserves its full `maxDecompressedSize` bound in the
+  // arena, so for FSST the slack between the worst-case expansion bound and
+  // the actually decoded size is retained until the returned result dies.
+  // No compaction or tail-trimming pass exists yet: peak batch memory stays
+  // proportional to the sum of the per-word bounds, not of the decoded
+  // payload sizes.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
 
-    ArenaVocabBatchBuilder builder(indices.size());
-    std::string scratch;
+    PmrVocabBatchBuilder builder(indices.size());
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
       const size_t decoderIdx = getDecoderIdx(idx);
+      AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
           [&](ql::span<char> outSpan) {
-            return compressionWrapper_.decompressInto(
-                compressedWord, decoderIdx, outSpan, scratch);
+            return compressionWrapper_.decompressInto(compressedWord,
+                                                      decoderIdx, outSpan);
           });
     }
 
