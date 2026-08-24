@@ -58,6 +58,7 @@
 #include "util/TransparentFunctors.h"
 #include "util/TypeTraits.h"
 #include "util/Views.h"
+#include <initializer_list>
 
 namespace ad_utility::vocabulary {
 
