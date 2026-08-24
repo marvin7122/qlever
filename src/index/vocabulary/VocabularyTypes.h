@@ -32,6 +32,7 @@
 #include "util/Iterators.h"
 #include "util/TransparentFunctors.h"
 #include "util/Views.h"
+#include <initializer_list>
 
 // _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
