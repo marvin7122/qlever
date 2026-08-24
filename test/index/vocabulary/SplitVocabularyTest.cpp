@@ -607,9 +607,12 @@ TEST_F(SplitVocabularyWithDataTest,
 // _____________________________________________________________________________
 TEST(VocabularyTypes, MarkerBatchLookupsDoubleReleaseThrows) {
   MarkerBatchLookups<2> lookups;
+  lookups[0] = makeStringVectorVocabBatchLookupResult({"a"});
   auto first = lookups.release(0);
-  AD_EXPECT_THROW_WITH_MESSAGE(lookups.release(0),
-                               ::testing::HasSubstr("!released_[marker]"));
+  EXPECT_EQ(first[0], "a");
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      lookups.release(0),
+      ::testing::HasSubstr("results_[marker].has_value()"));
 }
 
 // _____________________________________________________________________________
