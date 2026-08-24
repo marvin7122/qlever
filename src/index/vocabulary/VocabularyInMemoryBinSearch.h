@@ -44,12 +44,20 @@ class VocabularyInMemoryBinSearch
   static constexpr bool replaceOptionalByPlaceholderOnExport = true;
 
  private:
+<<<<<<< HEAD
   // The actual storage. The indices are stored either as an owned vector
   // (after `open()`, or after reading from a regular, non-zero-copy
   // serializer), or as a non-owning view into externally-owned memory (after
   // `fromZeroCopyDeserializer`).
   Words words_;
   std::variant<Indices, IndicesView> indices_;
+=======
+  // The word data, held through a `shared_ptr` so outstanding batch-lookup
+  // results can keep the referenced bytes alive after `close()` and
+  // destruction of the vocabulary. The pointer is always non-null.
+  std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
+  Indices indices_;
+>>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
 
  public:
   // Construct an empty vocabulary

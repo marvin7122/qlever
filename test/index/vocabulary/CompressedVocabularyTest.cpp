@@ -362,10 +362,17 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 //    verify content byte-for-byte, which makes corruption overwhelmingly
 //    likely but not formally guaranteed.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
+<<<<<<< HEAD
   // Verify that this platform uses inline storage for `std::pmr::string`;
   // short words therefore use the Small String Optimization (SSO) and would
   // otherwise end up inside a destroyed stack object rather than the arena.
   requirePmrStringInlineStorage(15);
+=======
+  // Platform premise: an intermediate local `std::pmr::string` would indeed
+  // use the Small String Optimization (SSO), so short words would end up
+  // inside a destroyed stack object rather than the arena.
+  requirePmrStringInlineStorage();
+>>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
 
   // All words deliberately short (<= 15 chars): every one takes the SSO
   // path in a `pmr::string`-based implementation, and none would end up in
@@ -797,15 +804,24 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
   EXPECT_EQ(mux.decompress(compressed, 0), "testword");
 
   // An undersized output buffer must be rejected by the underlying decoder's
+<<<<<<< HEAD
   // contract check (`out.size() >= compressed.size()`).
   ql::span<char> undersized{outputBuffer.data(), bound - 1};
   AD_EXPECT_THROW_WITH_MESSAGE(
       static_cast<void>(mux.decompressInto(compressed, 0, undersized, scratch)),
       ::testing::HasSubstr("out.size() >= compressed.size()"));
+=======
+  // contract check (`out.size() >= maxDecompressedSize`).
+  ql::span<char> undersized{outputBuffer.data(), bound - 1};
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      static_cast<void>(mux.decompressInto(compressed, 0, undersized)),
+      ::testing::HasSubstr("out.size() >= maxDecompressedSize"));
+>>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
 
   // Out-of-range decoder indices must be rejected for all dispatching
   // methods rather than silently reading out of bounds.
   const size_t invalidIndex = mux.numDecoders();
+<<<<<<< HEAD
   EXPECT_THROW(
       static_cast<void>(mux.maxDecompressedSize(compressed, invalidIndex)),
       std::out_of_range);
@@ -816,4 +832,17 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
       std::out_of_range);
   EXPECT_THROW(static_cast<void>(mux.decompress(compressed, invalidIndex)),
                std::out_of_range);
+=======
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      static_cast<void>(mux.maxDecompressedSize(compressed, invalidIndex)),
+      ::testing::HasSubstr("vector::_M_range_check"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      static_cast<void>(mux.decompressInto(compressed, invalidIndex,
+                                           ql::span<char>{outputBuffer.data(),
+                                                          outputBuffer.size()})),
+      ::testing::HasSubstr("vector::_M_range_check"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      static_cast<void>(mux.decompress(compressed, invalidIndex)),
+      ::testing::HasSubstr("vector::_M_range_check"));
+>>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
 }

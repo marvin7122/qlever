@@ -6,8 +6,12 @@
 =======
 // Copyright 2022 - 2026, The QLever Authors, in particular:
 //
+<<<<<<< HEAD
 // 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 >>>>>>> 5ac86bedf (style: apply QLever Authors copyright header format across changed files)
+=======
+// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+>>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
@@ -67,6 +71,7 @@ namespace ad_utility::vocabulary {
 class VocabBatchStorage {
   std::vector<std::string_view> views_;
 
+<<<<<<< HEAD
  protected:
   explicit VocabBatchStorage(std::vector<std::string_view> views)
       : views_{std::move(views)} {}
@@ -76,6 +81,16 @@ class VocabBatchStorage {
   // final storage location, never at a moved-from temporary).
   void setViews(std::vector<std::string_view> views) {
     views_ = std::move(views);
+=======
+ public:
+  // Construct a batch lookup result with non-empty word views and an owning
+  // pointer keeping the backing word storage alive.
+  VocabBatchLookupResult(VocabBatchOwner owner,
+                         ql::span<const std::string_view> span)
+      : owner_{std::move(owner)}, span_{span} {
+    AD_CONTRACT_CHECK(!span_.empty());
+    AD_CORRECTNESS_CHECK(owner_ != nullptr);
+>>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
   }
 
  public:

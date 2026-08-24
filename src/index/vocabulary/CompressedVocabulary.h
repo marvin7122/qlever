@@ -199,6 +199,7 @@ CPP_template(typename UnderlyingVocabulary,
   // the actually decoded size is retained until the returned result dies.
   // No compaction or tail-trimming pass exists yet: peak batch memory stays
   // proportional to the sum of the per-word bounds, not of the decoded
+<<<<<<< HEAD
   // payload sizes. When the caller passes an `ArenaVocabBatchBuilder` that
   // was constructed with the Index/query `AllocatorWithLimit`, those
   // allocations charge `--memory-max` and throw
@@ -206,11 +207,19 @@ CPP_template(typename UnderlyingVocabulary,
   // Decompress into `builder`. The caller owns the arena and the allocator.
   void lookupBatch(ql::span<const size_t> indices,
                    ArenaVocabBatchBuilder& builder) const {
+=======
+  // payload sizes.
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+>>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
 
+<<<<<<< HEAD
     std::string scratch;
+=======
+    PmrVocabBatchBuilder builder(indices.size());
+>>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
       // Like `operator[]`, report holes directly via the placeholder: there
@@ -227,8 +236,8 @@ CPP_template(typename UnderlyingVocabulary,
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
           [&](ql::span<char> outSpan) {
-            return compressionWrapper_.decompressInto(
-                compressedWord, decoderIdx, outSpan, scratch);
+            return compressionWrapper_.decompressInto(compressedWord,
+                                                      decoderIdx, outSpan);
           });
     }
   }
