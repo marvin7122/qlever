@@ -490,11 +490,11 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
   EXPECT_EQ(mux.decompress(compressed, 0), "testword");
 
   // An undersized output buffer must be rejected by the underlying decoder's
-  // contract check (`out.size() >= maxDecompressedSize`).
+  // contract check (`out.size() >= compressed.size()`).
   ql::span<char> undersized{outputBuffer.data(), bound - 1};
   AD_EXPECT_THROW_WITH_MESSAGE(
       static_cast<void>(mux.decompressInto(compressed, 0, undersized, scratch)),
-      ::testing::HasSubstr("out.size() >= maxDecompressedSize"));
+      ::testing::HasSubstr("out.size() >= compressed.size()"));
 
   // Out-of-range decoder indices must be rejected for all dispatching
   // methods rather than silently reading out of bounds.

@@ -381,11 +381,9 @@ inline size_t pmrStringSsoCapacity() {
    public:
     size_t numAllocations() const { return numAllocations_; }
   };
-  CountingMemoryResource resource;
-  // A string whose content fits the SSO buffer must be at most as large as the
-  // string object itself, so probing above that size is pointless.
   const std::string sample(sizeof(ql::pmr::string), 's');
   for (size_t size = sample.size();; --size) {
+    CountingMemoryResource resource;
     ql::pmr::string pmrSample{sample.substr(0, size), &resource};
     if (resource.numAllocations() == 0) {
       return size;
