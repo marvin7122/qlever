@@ -210,9 +210,11 @@ TEST_F(VocabBatchLookupDataVocabTest,
 }
 
 // _____________________________________________________________________________
-// Tests for `ArenaVocabBatchBuilder`: monotonic memory resource ensures
-// pointer-stable allocations across incremental word appends.
-TEST(PmrVocabBatchLookupData, ArenaBuilderPointerStableAcrossAppends) {
+// Verify that `ArenaVocabBatchBuilder` supports incremental word appends:
+// each word is copied into the arena-backed storage in order, and the
+// finalized batch result exposes all appended words with their contents
+// intact.
+TEST(PmrVocabBatchLookupData, IncrementalAppendsProduceWordsInOrder) {
   ArenaVocabBatchBuilder builder(2);
   builder.appendWord("foo");
   builder.appendWord("barbaz");
