@@ -73,12 +73,12 @@ class FsstDecoder {
   fsst_decoder_t decoder_;
 
  public:
-  // ____________________________________________________________________________
+  // _____________________________________________________________________________
   // The default constructor does lead to an invalid decoder, but is required
   // for the serialization module. Don't use it.
   FsstDecoder() = default;
 
-  // ____________________________________________________________________________
+  // _____________________________________________________________________________
   // Construct from the internal `fsst_decoder_t`. Note that the typical way to
   // obtain an `FsstDecoder` is by first creating a `FsstEncoder` and calling
   // `getDecoder()` on that encoder.
