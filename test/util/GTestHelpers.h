@@ -354,13 +354,13 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
 // NOTE: Used by test/GTestHelpersTest.cpp, test/index/vocabulary/
 // CompressedVocabularyTest.cpp (via requirePmrStringInlineStorage) and
 // SplitVocabularyTest.cpp (gtestCurrentTestSuiteName); see also `clobberStack`
-// below. The SSO capacity of `std::basic_string` is implementation-defined (e.g. 15
-// characters for libstdc++ and 22 for libc++), so it is determined here by
-// probing rather than hardcoded.
+// below. The SSO capacity of `std::basic_string` is implementation-defined
+// (e.g. 15 characters for libstdc++ and 22 for libc++), so it is determined
+// here by probing rather than hardcoded.
 inline size_t pmrStringSsoCapacity() {
   // A counting memory resource lets us detect an allocation directly instead of
-  // guessing from pointer addresses: a string uses SSO exactly when constructing
-  // it performs no allocation through its allocator.
+  // guessing from pointer addresses: a string uses SSO exactly when
+  // constructing it performs no allocation through its allocator.
   struct CountingMemoryResource : public std::pmr::memory_resource {
    private:
     std::pmr::memory_resource* upstream_ = std::pmr::get_default_resource();

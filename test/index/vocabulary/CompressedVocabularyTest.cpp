@@ -496,9 +496,9 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
       static_cast<void>(mux.maxDecompressedSize(compressed, invalidIndex)),
       ::testing::HasSubstr("vector::_M_range_check"));
   AD_EXPECT_THROW_WITH_MESSAGE(
-      static_cast<void>(mux.decompressInto(compressed, invalidIndex,
-                                           ql::span<char>{outputBuffer.data(),
-                                                          outputBuffer.size()})),
+      static_cast<void>(mux.decompressInto(
+          compressed, invalidIndex,
+          ql::span<char>{outputBuffer.data(), outputBuffer.size()})),
       ::testing::HasSubstr("vector::_M_range_check"));
   AD_EXPECT_THROW_WITH_MESSAGE(
       static_cast<void>(mux.decompress(compressed, invalidIndex)),
