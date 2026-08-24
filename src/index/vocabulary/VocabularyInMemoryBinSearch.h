@@ -19,6 +19,8 @@
 #include "util/Serializer/FileSerializer.h"
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
+#include <vector>
+#include <utility>
 
 namespace ad_utility::vocabulary {
 
