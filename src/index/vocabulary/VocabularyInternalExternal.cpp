@@ -42,12 +42,13 @@ static IndexPartition partitionIndicesBySource(
   result.internalSlots_.reserve(indices.size());
   result.diskSlots_.reserve(indices.size());
 
-  for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
+  for (size_t i = 0; i < indices.size(); ++i) {
+    const size_t idx = indices[i];
     auto fromInternal = internalVocab[idx];
     if (fromInternal.has_value()) {
-      result.internalSlots_.addPair(idx, static_cast<size_t>(i));
+      result.internalSlots_.addPair(idx, i);
     } else {
-      result.diskSlots_.addPair(idx, static_cast<size_t>(i));
+      result.diskSlots_.addPair(idx, i);
     }
   }
   return result;

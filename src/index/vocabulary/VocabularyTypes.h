@@ -471,11 +471,12 @@ template <size_t NumVocabs, typename GetMarkerAndVocabIndex>
 IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
     ql::span<const size_t> indices, GetMarkerAndVocabIndex getMarkerAndIndex) {
   IndicesAndPositionsByMarker<NumVocabs> out;
-  for (auto [resultPosition, markedIndex] :
-       ::ranges::views::enumerate(indices)) {
+  for (size_t resultPosition = 0; resultPosition < indices.size();
+       ++resultPosition) {
+    const size_t markedIndex = indices[resultPosition];
     auto [marker, underlyingIndex] = getMarkerAndIndex(markedIndex);
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
-    out[marker].addPair(underlyingIndex, static_cast<size_t>(resultPosition));
+    out[marker].addPair(underlyingIndex, resultPosition);
   }
   return out;
 }
@@ -529,8 +530,8 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
   }
   MultiSourceVocabBatchAssembler assembler(totalPositions);
 
-  for (const auto& [vocabMarker, markerIndices] :
-       ::ranges::views::enumerate(markerIndicesAndPositions)) {
+  for (size_t vocabMarker = 0; vocabMarker < NumVocabs; ++vocabMarker) {
+    const auto& markerIndices = markerIndicesAndPositions[vocabMarker];
     if (markerIndices.empty()) {
       continue;
     }
