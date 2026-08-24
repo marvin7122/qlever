@@ -15,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include <range/v3/view/enumerate.hpp>
+
 #include "backports/algorithm.h"
 
 // _____________________________________________________________________________
@@ -42,8 +44,7 @@ static IndexPartition partitionIndicesBySource(
   result.internalSlots_.reserve(indices.size());
   result.diskSlots_.reserve(indices.size());
 
-  for (size_t i = 0; i < indices.size(); ++i) {
-    const size_t idx = indices[i];
+  for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
     auto fromInternal = internalVocab[idx];
     if (fromInternal.has_value()) {
       result.internalSlots_.addPair(idx, i);

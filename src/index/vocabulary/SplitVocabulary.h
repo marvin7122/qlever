@@ -23,6 +23,8 @@
 #include <variant>
 #include <vector>
 
+#include <range/v3/view/enumerate.hpp>
+
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
 #include "backports/functional.h"
@@ -236,7 +238,8 @@ class SplitVocabulary {
             });
 
     MarkerBatchLookups<numberOfVocabs> markerLookups;
-    for (size_t marker = 0; marker < numberOfVocabs; ++marker) {
+    for (auto&& [marker, vocabVariant] :
+         ::ranges::views::enumerate(underlying_)) {
       const auto& markerIndices = markerIndicesAndPositions[marker];
       if (markerIndices.empty()) {
         continue;
@@ -245,7 +248,7 @@ class SplitVocabulary {
           [&](const auto& vocab) {
             return vocab.lookupBatch(markerIndices.getUnderlyingIndices());
           },
-          underlying_[marker]);
+          vocabVariant);
       AD_CORRECTNESS_CHECK(markerLookups[marker]->size() ==
                            markerIndices.size());
     }

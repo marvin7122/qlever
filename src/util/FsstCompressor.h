@@ -20,6 +20,9 @@
 #include <string>
 #include <vector>
 
+#include <range/v3/view/iota.hpp>
+#include <range/v3/view/reverse.hpp>
+
 #include "backports/span.h"
 #include "backports/string.h"
 #include "util/Concepts.h"
@@ -162,7 +165,8 @@ class FsstRepeatedDecoder {
   // Return an upper bound on the size after all `N` decoding stages.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
     size_t bound = str.size();
-    for (size_t stage = 0; stage < N; ++stage) {
+    for ([[maybe_unused]] size_t stage :
+         ::ranges::views::iota(size_t{0}, N)) {
       AD_CONTRACT_CHECK(bound <= std::numeric_limits<size_t>::max() /
                                      FsstDecoder::MAX_EXPANSION_FACTOR);
       bound *= FsstDecoder::MAX_EXPANSION_FACTOR;
@@ -190,9 +194,9 @@ class FsstRepeatedDecoder {
       size_t targetBufferIdx = (N % 2 == 0) ? 1 : 0;
       std::string_view input = str;
       size_t bytesWritten = 0;
-      for (size_t stage = 0; stage < N; ++stage) {
-        bytesWritten = decoders_[N - 1 - stage].decompressInto(
-            input, buffers[targetBufferIdx]);
+      for (const auto& decoder : decoders_ | ::ranges::views::reverse) {
+        bytesWritten =
+            decoder.decompressInto(input, buffers[targetBufferIdx]);
         input = std::string_view{buffers[targetBufferIdx].data(), bytesWritten};
         targetBufferIdx ^= 1;
       }

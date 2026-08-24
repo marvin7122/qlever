@@ -21,6 +21,8 @@
 #include <utility>
 #include <vector>
 
+#include <range/v3/view/enumerate.hpp>
+
 #include "backports/algorithm.h"
 #include "backports/memory_resource.h"
 #include "backports/span.h"
@@ -471,9 +473,8 @@ template <size_t NumVocabs, typename GetMarkerAndVocabIndex>
 IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
     ql::span<const size_t> indices, GetMarkerAndVocabIndex getMarkerAndIndex) {
   IndicesAndPositionsByMarker<NumVocabs> out;
-  for (size_t resultPosition = 0; resultPosition < indices.size();
-       ++resultPosition) {
-    const size_t markedIndex = indices[resultPosition];
+  for (const auto& [resultPosition, markedIndex] :
+       ::ranges::views::enumerate(indices)) {
     auto [marker, underlyingIndex] = getMarkerAndIndex(markedIndex);
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
     out[marker].addPair(underlyingIndex, resultPosition);
@@ -528,8 +529,8 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
   }
   MultiSourceVocabBatchAssembler assembler(totalPositions);
 
-  for (size_t vocabMarker = 0; vocabMarker < NumVocabs; ++vocabMarker) {
-    const auto& markerIndices = markerIndicesAndPositions[vocabMarker];
+  for (const auto& [vocabMarker, markerIndices] :
+       ::ranges::views::enumerate(markerIndicesAndPositions)) {
     if (markerIndices.empty()) {
       continue;
     }
