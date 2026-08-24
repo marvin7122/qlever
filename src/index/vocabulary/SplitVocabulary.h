@@ -246,7 +246,8 @@ class SplitVocabulary {
             return vocab.lookupBatch(markerIndices.getUnderlyingIndices());
           },
           underlying_[marker]);
-      AD_CORRECTNESS_CHECK(markerLookups[marker].size() == markerIndices.size());
+      AD_CORRECTNESS_CHECK(markerLookups[marker]->size() ==
+                           markerIndices.size());
     }
 
     return ::mergeMarkerBatchesInInputOrder(std::move(markerLookups),

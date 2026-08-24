@@ -427,13 +427,15 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
                                        "epsi",  "zeta",  "eta",   "theta",
                                        "iota",  "kappa", "",      "lambda"};
 
-  ad_utility::deleteFile("lookup-batch-blocks-tmp", false);
+  const std::string filename =
+      std::string{gtestCurrentTestName()} + "-blocks";
+  ad_utility::deleteFile(filename, false);
   CompressedVocabulary<VocabularyInMemory, TypeParam, 2> vocab;
   {
-    auto writerPtr = vocab.makeDiskWriterPtr("lookup-batch-blocks-tmp");
+    auto writerPtr = vocab.makeDiskWriterPtr(filename);
     writeWordsAndFinish(*writerPtr, words);
   }
-  vocab.open("lookup-batch-blocks-tmp");
+  vocab.open(filename);
   ASSERT_EQ(vocab.size(), words.size());
 
   // Single-element batch: boundary case with exactly one requested index.
@@ -459,7 +461,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   }
   EXPECT_EQ(unrelatedAllocation.size(), 64u);
 
-  ad_utility::deleteFile("lookup-batch-blocks-tmp");
+  ad_utility::deleteFile(filename);
 }
 
 // _____________________________________________________________________________

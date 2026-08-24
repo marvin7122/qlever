@@ -254,8 +254,6 @@ TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
   MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 1> pos0{0};
   assembler.scatterSubBatchResultAtPositions(std::move(batch1), pos0);
-  // Attempting to scatter to position 0 again must throw because it was already
-  // written.
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.scatterSubBatchResultAtPositions(std::move(batch2), pos0),
       ::testing::HasSubstr("!slotFilledTracking_[resultPosition]"));
@@ -278,15 +276,12 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerToleratesEmptyWord) {
 TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
   MultiSourceVocabBatchAssembler assembler(3);
 
-  // Direct word assignment at position 1:
   assembler.assignWordAtPosition(1, "middle");
 
-  // Scatter sub-batch at positions 0 and 2:
   auto subBatch = makeStringVectorVocabBatchLookupResult({"first", "last"});
   const std::array<size_t, 2> subPositions{0, 2};
   assembler.scatterSubBatchResultAtPositions(std::move(subBatch), subPositions);
 
-  // Finalize and check results:
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
   ASSERT_FALSE(result.empty());
   EXPECT_THAT(result, ::testing::ElementsAre("first", "middle", "last"));
@@ -340,4 +335,20 @@ TEST(VocabBatchLookupData,
       assembler.scatterSubBatchResultAtPositions(std::move(subBatch),
                                                  invalidPos),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
+}
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, MarkerBatchLookupsAndMergeInInputOrder) {
+  MarkerBatchLookups<2> lookups;
+  lookups[0] = makeStringVectorVocabBatchLookupResult({"apple", "cherry"});
+  lookups[1] = makeStringVectorVocabBatchLookupResult({"banana"});
+
+  IndicesAndPositionsByMarker<2> partitions;
+  partitions[0].addPair(0, 0);  // apple -> pos 0
+  partitions[1].addPair(0, 1);  // banana -> pos 1
+  partitions[0].addPair(1, 2);  // cherry -> pos 2
+
+  auto result =
+      mergeMarkerBatchesInInputOrder(std::move(lookups), partitions);
+  EXPECT_THAT(result, ::testing::ElementsAre("apple", "banana", "cherry"));
 }

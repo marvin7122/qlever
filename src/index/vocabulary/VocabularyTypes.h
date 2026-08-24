@@ -489,30 +489,28 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
 template <size_t NumVocabs>
 class MarkerBatchLookups {
  private:
-  std::array<VocabBatchLookupResult, NumVocabs> results_{};
-  std::array<bool, NumVocabs> released_{};
+  std::array<std::optional<VocabBatchLookupResult>, NumVocabs> results_{};
 
  public:
   MarkerBatchLookups() = default;
 
   // Access the lookup result for the given vocabulary marker.
-  VocabBatchLookupResult& operator[](size_t marker) {
+  std::optional<VocabBatchLookupResult>& operator[](size_t marker) {
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
-    AD_CORRECTNESS_CHECK(!released_[marker]);
     return results_[marker];
   }
-  const VocabBatchLookupResult& operator[](size_t marker) const {
+  const std::optional<VocabBatchLookupResult>& operator[](size_t marker) const {
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
-    AD_CORRECTNESS_CHECK(!released_[marker]);
     return results_[marker];
   }
 
   // Move out the lookup result for the given vocabulary marker exactly once.
   VocabBatchLookupResult release(size_t marker) {
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
-    AD_CORRECTNESS_CHECK(!released_[marker]);
-    released_[marker] = true;
-    return std::move(results_[marker]);
+    AD_CORRECTNESS_CHECK(results_[marker].has_value());
+    auto result = std::move(results_[marker].value());
+    results_[marker].reset();
+    return result;
   }
 };
 
