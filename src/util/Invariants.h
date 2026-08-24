@@ -11,7 +11,6 @@
 #define QLEVER_SRC_UTIL_INVARIANTS_H
 
 #include <exception>
-#include <utility>
 
 #include "backports/concepts.h"
 #include "util/Exception.h"
@@ -33,7 +32,8 @@ CPP_concept InvariantStatefulClass =
 
 // _____________________________________________________________________________
 // Generic RAII Guard that asserts class invariants on scope entry and scope
-// exit for ANY class that satisfies the `InvariantStatefulClass` concept.
+// exit (unless exiting via an active exception) for any class that satisfies
+// the `InvariantStatefulClass` concept.
 CPP_template(typename T)(
     requires InvariantStatefulClass<T>) class InvariantGuard {
  private:
@@ -71,7 +71,7 @@ class WithInvariants {
   [[nodiscard]] auto makeInvariantGuard() const& {
     static_assert(
         InvariantStatefulClass<Derived>,
-        "Class inheriting from WithInvariants<T> must satisfy the "
+        "Class inheriting from WithInvariants<Derived> must satisfy the "
         "`ad_utility::InvariantStatefulClass` concept (implement `void "
         "checkInvariants() const`).");
     return InvariantGuard<Derived>{static_cast<const Derived*>(this)};

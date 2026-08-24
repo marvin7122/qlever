@@ -28,9 +28,8 @@
 #include "util/TypeTraits.h"
 
 namespace detail {
-// Return a decoder, that can be used to decompress strings that have
-// been__________________________________________________________________ A
-// helper function to cast `char*` to `unsigned char*` and `const char*` to
+// _____________________________________________________________________________
+// A helper function to cast `char*` to `unsigned char*` and `const char*` to
 // `const unsigned char*` which is used below because FSST always works on
 // unsigned character types. Note that this is one of the few cases where a
 // `reinterpret_cast` is safe.
@@ -85,15 +84,16 @@ class FsstDecoder {
   explicit FsstDecoder(const fsst_decoder_t& decoder) : decoder_{decoder} {}
 
   // ____________________________________________________________________________
-  // Use the FSST library guarantee: expansion is at most this factor.
-  static constexpr size_t maxExpansionFactor = 8;
+  // The maximum factor by which a string can expand during FSST decompression.
+  static constexpr size_t MAX_EXPANSION_FACTOR = 8;
+  static constexpr size_t maxExpansionFactor = MAX_EXPANSION_FACTOR;
 
   // ___________________________________________________________________________
   // Return an upper bound on the decompressed size of `str`.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
     AD_CONTRACT_CHECK(str.size() <=
-                      std::numeric_limits<size_t>::max() / maxExpansionFactor);
-    return maxExpansionFactor * str.size();
+                      std::numeric_limits<size_t>::max() / MAX_EXPANSION_FACTOR);
+    return MAX_EXPANSION_FACTOR * str.size();
   }
 
   // ___________________________________________________________________________
@@ -164,8 +164,8 @@ class FsstRepeatedDecoder {
     size_t bound = str.size();
     for (size_t stage = 0; stage < N; ++stage) {
       AD_CONTRACT_CHECK(bound <= std::numeric_limits<size_t>::max() /
-                                     FsstDecoder::maxExpansionFactor);
-      bound *= FsstDecoder::maxExpansionFactor;
+                                     FsstDecoder::MAX_EXPANSION_FACTOR);
+      bound *= FsstDecoder::MAX_EXPANSION_FACTOR;
     }
     return bound;
   }
@@ -187,15 +187,16 @@ class FsstRepeatedDecoder {
       std::array<ql::span<char>, 2> buffers{out, ql::span<char>{scratch}};
       // For even `N`, write the first stage to `scratch` and the last to `out`.
       // For odd `N`, write the first and last stages to `out`.
-      size_t dest = (N % 2 == 0) ? 1 : 0;
+      size_t targetBufferIdx = (N % 2 == 0) ? 1 : 0;
       std::string_view input = str;
-      size_t n = 0;
+      size_t bytesWritten = 0;
       for (size_t stage = 0; stage < N; ++stage) {
-        n = decoders_[N - 1 - stage].decompressInto(input, buffers[dest]);
-        input = std::string_view{buffers[dest].data(), n};
-        dest ^= 1;
+        bytesWritten = decoders_[N - 1 - stage].decompressInto(
+            input, buffers[targetBufferIdx]);
+        input = std::string_view{buffers[targetBufferIdx].data(), bytesWritten};
+        targetBufferIdx ^= 1;
       }
-      return n;
+      return bytesWritten;
     }
   }
 
