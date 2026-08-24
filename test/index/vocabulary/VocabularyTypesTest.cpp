@@ -145,7 +145,7 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
   MultiSourceVocabBatchAssembler assembler(1);
   assembler.assignWordAtPosition(0, "orphan");
   AD_EXPECT_THROW_WITH_MESSAGE(
-      std::move(assembler).finalizeVocabBatchLookupResult(),
+      (void)std::move(assembler).finalizeVocabBatchLookupResult(),
       ::testing::HasSubstr("!storageOwners_.empty()"));
 }
 
