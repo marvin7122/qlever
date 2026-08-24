@@ -21,6 +21,8 @@
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/Exception.h"
 #include "util/Serializer/ByteBufferSerializer.h"
+#include <array>
+#include "util/GTestHelpers.h"
 
 namespace {
 

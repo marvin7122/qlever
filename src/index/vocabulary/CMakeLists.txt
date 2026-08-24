@@ -3,7 +3,7 @@
 # compresses/decompresses IRIs and literals.
 #
 # TODO<joka921> This is currently compiled as a separate library because of
-# circular dependencies. It should be part of the `index` library. `PrefixHeuristic.cpp` is only used by
+# circular dependencies. It should be part of the `index` library. `VocabularyInMemory` is only used by
 # the `VocabularyInMemory` and should be moved there.
 
 add_library(vocabulary VocabularyInMemory.h VocabularyInMemory.cpp

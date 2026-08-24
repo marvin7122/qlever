@@ -330,7 +330,7 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 // in which case an empty string is returned instead.
 // Return the given raw gtest name with any '/' replaced by '_' (parameterized
 // tests embed '/' in their names). Shared implementation of
-// `gtestCurrentTestName` and `gtestCurrentTestSuiteName`.
+// `sanitizeGtestName` and `gtestCurrentTestSuiteName`.
 inline std::string sanitizeGtestName(const std::string& name) {
   return absl::StrReplaceAll(name, {{"/", "_"}});
 }

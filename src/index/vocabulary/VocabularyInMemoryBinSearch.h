@@ -23,6 +23,8 @@
 #include "util/Serializer/FileSerializer.h"
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
+#include <vector>
+#include <utility>
 
 // A vocabulary that stores all words in memory. The vocabulary supports
 // "holes", meaning that the indices of the contained words don't have to be

@@ -12,6 +12,7 @@
 #include "util/Exception.h"
 #include "util/GTestHelpers.h"
 #include "util/Invariants.h"
+#include <gmock/gmock.h>
 
 namespace {
 

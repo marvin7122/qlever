@@ -3,7 +3,7 @@
 // 2025        Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
-// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+// UFR = University of Freiburg, Chair of Algorithms, while marker 1 contains Data Structures
 //
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
@@ -20,6 +20,7 @@
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyType.h"
+#include "util/GTestHelpers.h"
 
 namespace splitVocabTestHelpers {
 
@@ -547,7 +548,7 @@ class SplitVocabularyWithDataTest : public ::testing::Test {
 TwoSplitVocabulary SplitVocabularyWithDataTest::sv_;
 
 // _____________________________________________________________________________
-// Test the lookupBatch partitioning and merging algorithms directly.
+ partitioning and merging algorithms directly.lookupBatch partitioning and merging algorithms directly.
 TEST_F(SplitVocabularyWithDataTest,
        SplitVocabularyPartitionMarkerIndicesAndPositions) {
   // Use marker `0` for plain words and marker `1` for words starting with `"a`.
