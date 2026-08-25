@@ -66,7 +66,6 @@ TEST(InvariantsTest, WithInvariantsMixinWorksOnMutatingMethods) {
   EXPECT_EQ(instance.checkCount_, 0u);
 
   instance.doMutatingOperation();
-  // Checked once on entry and once on exit
   EXPECT_EQ(instance.checkCount_, 2u);
 }
 

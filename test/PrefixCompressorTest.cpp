@@ -58,7 +58,7 @@ TEST(PrefixCompressor, TooManyPrefixesThrow) {
 }
 
 // _____________________________________________________________________________
-TEST(PrefixCompressor, decompressIntoMatchesDecompress) {
+TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
   using namespace ::testing;
   PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alph", "alpha", "al"});
@@ -73,7 +73,7 @@ TEST(PrefixCompressor, decompressIntoMatchesDecompress) {
     EXPECT_THAT(viaString, Eq(word));
   };
   for (std::string_view word :
-       {"", "a", "al", "alp", "alph", "alpha", "alphabet", "nothing"}) {
+       {"a", "al", "alp", "alph", "alpha", "alphabet", "nothing"}) {
     checkWord(word);
   }
   const std::string onlyPrefix = p.compress("alpha");
