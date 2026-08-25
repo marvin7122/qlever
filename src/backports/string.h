@@ -1,4 +1,4 @@
-// Copyright 2026 The QLever Authors, in particular:
+// Copyright 2026, The QLever Authors, in particular:
 //
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
@@ -18,12 +18,15 @@
 
 namespace ql {
 
-// Backport of C++23's `std::basic_string::resize_and_overwrite` as a free
+// Provide a C++17-compatible backport of C++23's `std::basic_string::resize_and_overwrite` as a free
 // function that takes the string as the first parameter.
 CPP_template(typename CharT, typename Traits, typename Allocator,
              typename Operation)(
     requires ql::concepts::invocable<
-        Operation, CharT*,
+        Operation, CharT*, size_t> &&
+    ql::concepts::convertible_to<
+        decltype(std::declval<Operation>()(std::declval<CharT*>(),
+                                           std::declval<size_t>())),
         size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
                                                              Allocator>& str,
                                            size_t count, Operation&& op) {
