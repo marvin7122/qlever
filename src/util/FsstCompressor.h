@@ -123,12 +123,11 @@ class FsstDecoder {
   // should use `decompressInto` instead.
   [[nodiscard]] std::string decompress(std::string_view str) const {\n    const size_t bound = maxDecompressedSize(str);\n    std::string result = detail::decompressToOwnedString(\n        bound, [this, str](ql::span<char> out) {\n          return decompressInto(str, out);\n        });\n    AD_CORRECTNESS_CHECK(result.size() <= bound);\n    return result;\n  }
 
-// In src/util/FsstCompressor.cpp, add:
-std::string FsstDecoder::decompress(std::string_view str) const {
-  return detail::decompressToOwnedString(
-      maxDecompressedSize(str),
-      [this, str](ql::span<char> out) { return decompressInto(str, out); });
-}
+[[nodiscard]] std::string decompress(std::string_view str) const {
+    return detail::decompressToOwnedString(
+        maxDecompressedSize(str),
+        [this, str](ql::span<char> out) { return decompressInto(str, out); });
+  }
 
   // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
