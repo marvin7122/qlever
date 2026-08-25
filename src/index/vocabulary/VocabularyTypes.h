@@ -119,8 +119,12 @@ class ContiguousVocabBatchBuilder {
   explicit ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes)
       : data_{std::make_shared<ContiguousVocabBatchLookupData>()} {
     AD_CONTRACT_CHECK(!wordSizes.empty());
-    const size_t totalBytes = ::ranges::accumulate(wordSizes, size_t{0});
-    data_->buffer_.resize(totalBytes);
+    size_t totalBytes = 0;
+    for (size_t size : wordSizes) {
+      AD_CONTRACT_CHECK(size <= SIZE_MAX - totalBytes);
+      totalBytes += size;
+    }
+    data_->buffer_.resize(totalBytes == 0 ? 1 : totalBytes);
     data_->views_.reserve(wordSizes.size());
     targets_.reserve(wordSizes.size());
 
@@ -133,6 +137,11 @@ class ContiguousVocabBatchBuilder {
     }
   }
 
+  // Return the precomputed destination for each requested word. The pointer at
+  // index i corresponds to the size supplied at index i to the constructor.
+  // The pointers refer to the builder's backing character buffer and must only
+  // be used while the builder and its backing storage remain valid; do not use
+  // them after the builder has been finalized or destroyed.
   [[nodiscard]] ql::span<char*> targets() noexcept { return targets_; }
   [[nodiscard]] ql::span<char* const> targets() const noexcept {
     return targets_;
