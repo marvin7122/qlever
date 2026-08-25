@@ -52,7 +52,7 @@ class VocabBatchLookupResult {
 
  public:
   // Construct an empty result. An empty result has no owner and no views.
-  VocabBatchLookupResult() noexcept = default;
+  VocabBatchLookupResult() = delete;
 
   // Construct a batch lookup result with non-empty word views and an owning
   // pointer keeping the backing word storage alive.
@@ -78,6 +78,7 @@ class VocabBatchLookupResult {
   // Storage ownership is intentionally private. Callers may access only the
   // immutable range interface; builders and result assemblers propagate
   // ownership internally.
+  [[nodiscard]] VocabBatchOwner owner() const noexcept { return owner_; }
 };
 
 // Type-erased input range of batches (each batch consists of a vector of
