@@ -129,8 +129,10 @@ class ContiguousVocabBatchBuilder {
     targets_.reserve(wordSizes.size());
 
     size_t offset = 0;
+    static char emptyWordTarget = 0;
     for (size_t size : wordSizes) {
-      char* target = data_->buffer_.data() + offset;
+      char* target = size == 0 ? &emptyWordTarget
+                               : data_->buffer_.data() + offset;
       targets_.push_back(target);
       data_->views_.emplace_back(target, size);
       offset += size;
