@@ -28,8 +28,9 @@
 #include "util/Concepts.h"
 #include "util/Exception.h"
 #include "util/Log.h"
-#include "util/TypeTraits.h"
 #include <string_view>
+
+#include "util/TypeTraits.h"
 
 namespace detail {
 // _____________________________________________________________________________
@@ -69,7 +70,7 @@ CPP_template(typename Decode)(
 
 // _____________________________________________________________________________
 // A simple C++ wrapper around the C-API of the `FSST` library. It consists of
-// two types, a thredsafe `FsstDecoder` that can be used to perform
+// two types, a thread-safe `FsstDecoder` that can be used to perform
 // decompression, and a single-threaded `FsstEncoder` for compression.
 class FsstDecoder {
  private:
@@ -90,6 +91,7 @@ class FsstDecoder {
   // ____________________________________________________________________________
   // The maximum factor by which a string can expand during FSST decompression.
   static constexpr size_t MAX_EXPANSION_FACTOR = 8;
+  // Lower-camel-case public alias retained for callers following QLever naming conventions.
   static constexpr size_t maxExpansionFactor = MAX_EXPANSION_FACTOR;
 
   // ___________________________________________________________________________
