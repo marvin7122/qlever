@@ -252,7 +252,7 @@ TEST(VocabularyTest, LookupBatch) {
   // Duplicate indices: each position resolved independently.
   std::vector<size_t> dup{1, 1, 0};
   auto dupResult = v->lookupBatch(dup);
-  EXPECT_THAT(dupResult, ::testing::ElementsAre("ab", "ab", "a"));
+  EXPECT_THAT((*dupResult), ::testing::ElementsAre("ab", "ab", "a"));
 }
 
 // Each streamed result must equal the eager `lookupBatch` for that batch's
