@@ -12,9 +12,10 @@
 
 #include <string>
 
-#include "util/GTestHelpers.h"
-#include <memory_resource>
 #include <cstdint>
+#include <memory_resource>
+
+#include "util/GTestHelpers.h"
 
 TEST(GTestHelpersTest, CurrentTestSuiteAndTestName) {
   EXPECT_EQ(gtestCurrentTestSuiteName(), "GTestHelpersTest");
@@ -52,8 +53,8 @@ static bool pointsIntoObject(const void* pointer, const T& object) {
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, PmrStringSsoCapacity) {
-  // The discovered capacity must be usable: strings up to that size are stored
-  // inside the object, and one character more is not.
+  // Ensure that the discovered capacity is usable: strings up to that size are
+  // stored inside the object, and one character more is not.
   size_t capacity = pmrStringSsoCapacity();
   requirePmrStringInlineStorage(capacity);
   std::pmr::string atCapacity(capacity, 'x');
@@ -75,17 +76,16 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
     EXPECT_TRUE(pointsIntoObject(shortString.data(), shortString));
     EXPECT_EQ(shortString.size(), size);
   }
-  // Sanity check of the observation itself: a string above the SSO threshold
-  // must NOT be stored inside the object.
+  // Verify that a string above the SSO threshold is not stored inside the
+  // object.
   std::pmr::string longString(64, 'y');
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
 }
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, ClobberStack) {
-  // The helper returns the last byte it wrote after reading it back through a
-  // volatile access, so we assert that the stack was actually written with the
-  // given sentinel.
+  // Verify that the helper writes the given sentinel to the stack and reads it
+  // back through a volatile access.
   EXPECT_EQ(clobberStack<512>('X'), 'X');
   EXPECT_EQ(clobberStack<4096>('#'), '#');
 }
