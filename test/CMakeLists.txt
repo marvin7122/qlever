@@ -133,6 +133,9 @@ add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
 
+addLinkAndDiscoverTest(GTestHelpersTest)
+addLinkAndDiscoverTest(InvariantsTest)
+
 addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 addLinkAndDiscoverTestNoLibs(InvariantsTest)
 add_subdirectory(backports)

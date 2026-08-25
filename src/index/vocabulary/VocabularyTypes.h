@@ -561,7 +561,7 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
     }
     auto lookupResult = releaseLookupResult(vocabMarker);
     assembler.scatterSubBatchResultAtPositions(
-        std::move(lookupResult), markerIndices.getResultPositions());
+        lookupResult, markerIndices.getResultPositions());
   }
   return std::move(assembler).finalizeVocabBatchLookupResult();
 }
