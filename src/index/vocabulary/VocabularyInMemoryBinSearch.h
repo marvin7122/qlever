@@ -14,6 +14,8 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
@@ -21,9 +23,6 @@
 #include "util/CompactStringVector.h"
 #include "util/Exception.h"
 #include "util/Serializer/FileSerializer.h"
-#include <utility>
-#include <vector>
-
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
 
@@ -57,6 +56,8 @@ class VocabularyInMemoryBinSearch
 
     static VocabBatchLookupResult asResult(
         std::shared_ptr<BatchLookupData> self) {
+      // Keep the BatchLookupData owner in the result so its storage and string
+      // views remain valid while the result is alive.
       auto span = ql::span<const std::string_view>{self->views_};
       return VocabBatchLookupResult(VocabBatchOwner{std::move(self)}, span);
     }
