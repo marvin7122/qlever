@@ -24,16 +24,15 @@ CPP_requires(is_invariant_stateful_class_,
 }  // namespace detail
 
 // _____________________________________________________________________________
-// Concept satisfied by any class that provides an invariant
-// verification method: `Concept satisfied by any class for which  checkInvariants() const`.
+// Require a class for which `t.checkInvariants()` is a valid const expression.
 template <typename T>
 CPP_concept InvariantStatefulClass =
     CPP_requires_ref(detail::is_invariant_stateful_class_, T);
 
 // _____________________________________________________________________________
-// Generic RAII Guard that asserts class invariants on scope entry and scope
-// exit (unless exiting via an active exception) for any class that satisfies
-// the `InvariantStatefulClass` concept.
+// Assert class invariants on scope entry and scope exit, unless exiting via an
+// active exception, for any class that satisfies the `InvariantStatefulClass`
+// concept.
 CPP_template(typename T)(
     requires InvariantStatefulClass<T>) class InvariantGuard {
  private:

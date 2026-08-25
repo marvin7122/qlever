@@ -89,7 +89,7 @@ class FsstDecoder {
   explicit FsstDecoder(const fsst_decoder_t& decoder) : decoder_{decoder} {}
 
   // ____________________________________________________________________________
-  // The maximum factor by which a string can expand during FSST decompression.
+  // Set the maximum factor by which a string can expand during FSST decompression.
   static constexpr size_t MAX_EXPANSION_FACTOR = 8;
   // Lower-camel-case public alias retained for callers following QLever naming conventions.
   static constexpr size_t maxExpansionFactor = MAX_EXPANSION_FACTOR;
