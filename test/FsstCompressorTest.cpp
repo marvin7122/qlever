@@ -17,6 +17,7 @@
 
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
+#include <range/v3/view/zip.hpp>
 
 TEST(FsstEncoder, firstTest) {
   std::vector<std::string> s{

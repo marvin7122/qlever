@@ -31,6 +31,7 @@
 #include <string_view>
 
 #include "util/TypeTraits.h"
+#include <utility>
 
 namespace detail {
 // _____________________________________________________________________________

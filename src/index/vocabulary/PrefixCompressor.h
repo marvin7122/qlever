@@ -25,6 +25,7 @@
 #include "util/Serializer/SerializeArrayOrTuple.h"
 #include "util/Serializer/SerializeVector.h"
 #include "util/StringUtils.h"
+#include <limits>
 
 // TODO<joka921> Include the relevant constants directly here.
 
