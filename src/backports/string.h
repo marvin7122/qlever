@@ -35,9 +35,9 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
   str.resize_and_overwrite(count, std::forward<Operation>(op));
 #else
   str.resize(count);
-  const size_t newSize = op(str.data(), count);
+  const size_t newSize = std::forward<Operation>(op)(str.data(), count);
   AD_CONTRACT_CHECK(newSize <= count);
-  str.erase(newSize);
+  str.resize(newSize);
 #endif
 }
 
