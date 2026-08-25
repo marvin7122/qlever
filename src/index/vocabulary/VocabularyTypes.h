@@ -60,15 +60,16 @@ class VocabBatchLookupResult {
 
  public:
   // Construct an empty result. An empty result has no owner and no views.
-  VocabBatchLookupResult() = delete;
+  VocabBatchLookupResult() = default;
 
-  // Construct a batch lookup result with non-empty word views and an owning
-  // pointer keeping the backing word storage alive.
+  // Construct a batch lookup result with an owning pointer keeping the
+  // backing word storage alive. Empty results do not require an owner.
   VocabBatchLookupResult(VocabBatchOwner owner,
                          ql::span<const std::string_view> span)
       : owner_{std::move(owner)}, span_{span} {
-    AD_CONTRACT_CHECK(!span_.empty());
-    AD_CORRECTNESS_CHECK(owner_ != nullptr);
+    if (!span_.empty()) {
+      AD_CORRECTNESS_CHECK(owner_ != nullptr);
+    }
   }
 
   // Provide the container and range interface.
