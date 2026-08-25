@@ -56,11 +56,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   std::vector<std::string_view> compressed_;
   // Retain one decoder for each stage of the repeated pipeline.
   std::array<FsstDecoder, numberOfStages> decoders_;
-  // Own the compressed-string backing storage and keep compressed_ valid.
   std::vector<std::shared_ptr<std::string>> decoderStorage_;
-  // Bound the output buffer for every word by the maximum final decoded size.
   size_t outputCapacity_ = 0;
-  // Bound intermediate stages, which require less expansion.
   size_t intermediateCapacity_ = 0;
 
  public:
@@ -88,7 +85,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
       decoderStorage_.push_back(std::move(storage));
     }
 
-    for (std::string_view compressed : compressed_) {
+    for (const std::string_view& compressed : compressed_) {
       outputCapacity_ = std::max(
           outputCapacity_,
           FsstRepeatedDecoder<numberOfStages>::maxDecompressedSize(compressed));
