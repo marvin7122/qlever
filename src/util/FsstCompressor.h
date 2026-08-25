@@ -160,7 +160,7 @@ class FsstRepeatedDecoder {
   // Construct from the internal `fsst_decoder_t`. Note that the typical way to
   // obtain an `FsstDecoder` is by first creating a `FsstEncoder` and calling
   // `getDecoder()` on that encoder.
-  explicit FsstRepeatedDecoder(const Decoders& decoders) : decoders_{decoders} {}
+  explicit FsstRepeatedDecoder(Decoders decoders) : decoders_{std::move(decoders)} {}
 
   // ___________________________________________________________________________
   // Return an upper bound on the size after all `N` decoding stages.
@@ -187,7 +187,7 @@ class FsstRepeatedDecoder {
       return decoders_[0].decompressInto(str, out);
     } else {
       if (scratch.size() < out.size()) {
-        scratch.resize(FsstDecoder::maxDecompressedSize(str) / FsstDecoder::MAX_EXPANSION_FACTOR);
+        scratch.resize(out.size());
       }
       std::array<ql::span<char>, 2> buffers{out, ql::span<char>{scratch}};
       // For even `N`, write the first stage to `scratch` and the last to `out`.
