@@ -422,7 +422,7 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
       buffers.push_back(std::move(buffer));
     }
 
-    FsstRepeatedDecoder<N> repeated{decoders};
+    FsstRepeatedDecoder<N> repeated{std::move(decoders)};
     std::string scratch;
     for (size_t i = 0; i < words.size(); ++i) {
       const std::string viaString = repeated.decompress(compressed[i]);

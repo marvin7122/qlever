@@ -40,7 +40,7 @@ TEST_P(GTestHelpersParameterizedTest, SlashesAreReplaced) {
 }
 
 INSTANTIATE_TEST_SUITE_P(CustomInstantiation, GTestHelpersParameterizedTest,
-                         ::testing::Values("param1"));
+                         ::testing::Values("param/1"));
 
 // _____________________________________________________________________________
 // Return true iff `pointer` points inside the object storage of `object`.
