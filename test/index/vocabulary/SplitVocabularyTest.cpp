@@ -3,7 +3,7 @@
 // 2025        Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
-// UFR = University of Freiburg, Chair of Algorithms, while marker 1 contains Data Structures
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures.
 //
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
@@ -164,7 +164,7 @@ TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   ASSERT_EQ(sv[1], "\"xyz\"");
   ASSERT_EQ(sv[(1ULL << 59) | 1], "\"axyz\"");
 
-  // Test access to, and marker 1 with content of underlying vocabs
+  // Test access to and content of the underlying vocabs
   std::visit(
       [](auto& vocab) {
         ASSERT_EQ(vocab.size(), 2);
