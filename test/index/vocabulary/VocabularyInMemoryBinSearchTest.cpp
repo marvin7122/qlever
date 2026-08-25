@@ -24,16 +24,17 @@ class VocabularyCreator {
  private:
   std::string vocabFilename_;
 
+  void removeVocabularyFiles() {
+    ad_utility::deleteFile(vocabFilename_, false);
+    ad_utility::deleteFile(vocabFilename_ + ".ids", false);
+  }
+
  public:
   explicit VocabularyCreator(std::string filename)
       : vocabFilename_{filename + suffix} {
-    ad_utility::deleteFile(vocabFilename_, false);
-    ad_utility::deleteFile(vocabFilename_ + ".ids", false);
+    removeVocabularyFiles();
   }
-  ~VocabularyCreator() {
-    ad_utility::deleteFile(vocabFilename_, false);
-    ad_utility::deleteFile(vocabFilename_ + ".ids", false);
-  }
+  ~VocabularyCreator() { removeVocabularyFiles(); }
 
   // Create and return a `VocabularyInMemoryBinSearch` from words and ids.
   // `words` and `ids` must have the same size. If `ids` is `nullopt`, then
@@ -140,11 +141,7 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
     vocab.close();
   }
 
-  ASSERT_EQ(result.size(), 4);
-  EXPECT_EQ(result[0], "gamma");
-  EXPECT_EQ(result[1], "alpha");
-  EXPECT_EQ(result[2], "gamma");
-  EXPECT_EQ(result[3], "beta");
+  EXPECT_THAT(result, ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
 TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
