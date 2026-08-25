@@ -59,7 +59,6 @@ TEST(PrefixCompressor, TooManyPrefixesThrow) {
 
 // _____________________________________________________________________________
 TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
-  using namespace ::testing;
   PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alph", "alpha", "al"});
   auto checkWord = [&](std::string_view word) {
@@ -109,7 +108,7 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
             5u);
   EXPECT_EQ(output, "alpha");
 
-  // Contract checks are covered by DecompressIntoMatchesDecompress.
+  // Cover contract checks in `DecompressIntoMatchesDecompress`.
 
 }
 

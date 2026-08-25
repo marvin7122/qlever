@@ -30,7 +30,7 @@ class MockInvariantClass
 
   void doMutatingOperation() {
     auto guard = makeInvariantGuard();
-    // Enter and leave the operation without changing the object state..
+    // Enter and leave the operation without changing the object state.
   }
 
   void doBrokenOperation() {
@@ -58,6 +58,16 @@ TEST(InvariantsTest, InvariantGuardChecksOnEntryAndExit) {
   }
 
   EXPECT_EQ(instance.checkCount_, 2u);
+}
+
+// _____________________________________________________________________________
+TEST(InvariantsTest, InvariantGuardRejectsViolatedEntryInvariant) {
+  MockInvariantClass instance;
+  instance.failInvariants_ = true;
+
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      (void)ad_utility::InvariantGuard<MockInvariantClass>{&instance},
+      ::testing::HasSubstr("!failInvariants_"));
 }
 
 // _____________________________________________________________________________
