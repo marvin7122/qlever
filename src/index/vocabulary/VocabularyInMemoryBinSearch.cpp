@@ -55,6 +55,14 @@ VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
     views.push_back(word.value());
   }
 
+  AD_CORRECTNESS_CHECK(views.size() == indices.size());
+  for (size_t i = 0; i < indices.size(); ++i) {
+    auto expected = words()[ql::ranges::lower_bound(indices_, indices[i]) -
+                            indices_.begin()];
+    AD_CORRECTNESS_CHECK(views[i].data() == expected.data());
+    AD_CORRECTNESS_CHECK(views[i].size() == expected.size());
+  }
+
   auto data = std::make_shared<BatchLookupData>(words_, std::move(views));
   return BatchLookupData::asResult(std::move(data));
 }
