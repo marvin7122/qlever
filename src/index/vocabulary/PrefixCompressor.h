@@ -97,7 +97,7 @@ class PrefixCompressor {
   }
 
   // ___________________________________________________________________________
-  // Return an upper bound on the decompressed size of `compressedWord`.
+  // Return the exact decompressed size of `compressedWord`.
   [[nodiscard]] size_t maxDecompressedSize(
       std::string_view compressedWord) const {
     if (compressedWord.empty()) {
