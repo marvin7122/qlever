@@ -1,4 +1,5 @@
 // Copyright 2026, The QLever Authors, in particular:
+//
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
