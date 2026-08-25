@@ -192,6 +192,7 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     fileOffset = offsetPair.offset();
   }
 
+  AD_CORRECTNESS_CHECK(!sizes.empty());
   ContiguousVocabBatchBuilder builder(sizes);
   manager.wait(
       manager.addBatch(file_.fd(), sizes, fileOffsets, builder.targets()));
