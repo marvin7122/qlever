@@ -122,9 +122,9 @@ TEST(VocabularyInternalExternal, AccessOperator) {
 }
 
 // _____________________________________________________________________________
-// `operator[]` must match `operator[]` in request order, including cache
-// hits (even `i` in the writer: stored in RAM) and misses (odd `i`: disk
-// only), plus reordered and duplicated indices.
+// Batch lookup must match `operator[]` in request order, including cache
+// hits (even IDs in the test writer are stored in RAM) and misses (odd IDs
+// are read from disk), plus reordered and duplicated indices.
 TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
                                        "epsilon"};
@@ -135,7 +135,8 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
 
-  // Even writer indices are RAM-cached; odd indices are disk-only.
+  // The test writer keeps words with even IDs in the RAM cache; words with odd
+// IDs are read from disk.
   const std::array<size_t, 3> ramOnly{0, 2, 4};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(ramOnly), ramOnly);

@@ -307,7 +307,7 @@ inline constexpr std::array<std::string_view, 4> defaultTestWords{
 template <typename Writer, typename Range = ql::span<const std::string_view>>
 void writeWordsAndFinish(Writer& writer,
                          const Range& words = defaultTestWords) {
-  for (std::string_view word : words) {
+  for (const auto& word : words) {
     writer(word, false);
   }
   writer.finish();
