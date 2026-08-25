@@ -37,7 +37,11 @@
 // _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
 // to store child `VocabBatchLookupResult`s or references to vocabulary state
-// (e.g., shared ownership of a vocabulary's in-memory word storage).
+// (e.g., shared ownership of a vocabulary's in-memory word storage). When
+// results from multiple sources are assembled, every such owner must be
+// retained until the finalized result is destroyed because its
+// `assembledWordViews_` may refer to child-result storage or external
+// vocabulary storage.
 using VocabBatchOwner = std::shared_ptr<const void>;
 
 // _____________________________________________________________________________
