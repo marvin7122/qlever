@@ -91,6 +91,35 @@ TEST(PrefixCompressor, decompressIntoMatchesDecompress) {
       ::testing::HasSubstr("out.size() >= maxDecompressedSize"));
 }
 
+TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
+  PrefixCompressor p;
+  p.buildCodebook(std::vector<std::string>{"alpha"});
+
+  EXPECT_EQ(p.prefixIndex(p.compress("alpha")), 0u);
+  EXPECT_FALSE(p.prefixIndex(p.compress("beta")).has_value());
+  EXPECT_FALSE(p.prefixIndex(std::string(1, static_cast<char>(NO_PREFIX_CHAR))).has_value());
+  EXPECT_FALSE(p.prefixIndex(std::string(1, '\0')).has_value());
+  EXPECT_EQ(p.maxDecompressedSize(p.compress("alpha")), 5u);
+  EXPECT_EQ(p.maxDecompressedSize(p.compress("beta")), 4u);
+
+  std::string output(p.maxDecompressedSize(p.compress("alpha")), '\0');
+  EXPECT_EQ(p.decompressInto(p.compress("alpha"),
+                             ql::span<char>{output.data(), output.size()}),
+            5u);
+  EXPECT_EQ(output, "alpha");
+
+  const std::string compressed = p.compress("alphabet");
+  std::string undersized(p.maxDecompressedSize(compressed) - 1, '\0');
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      static_cast<void>(p.decompressInto(
+          compressed, ql::span<char>{undersized.data(), undersized.size()})),
+      ::testing::HasSubstr("out.size() >= maxDecompressedSize"));
+
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      static_cast<void>(p.maxDecompressedSize("")),
+      ::testing::HasSubstr("!compressedWord.empty()"));
+}
+
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
   PrefixCompressor p;
   std::vector<std::string> maximalNumberOfPrefixes;
