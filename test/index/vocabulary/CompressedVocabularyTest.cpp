@@ -11,7 +11,7 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
-#include "../../util/GTestHelpers.h"
+#include "util/GTestHelpers.h"
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -45,10 +45,8 @@ struct DummyDecoder {
   }
 
   static std::string decompress(std::string_view compressed) {
-    std::string result{compressed};
-    for (char& c : result) {
-      c -= 2;
-    }
+    std::string result{compressed.size(), '\0'};
+    decompressInto(compressed, ql::span<char>{result.data(), result.size()});
     return result;
   }
   // This class has no state, but it still needs to be serialized.
