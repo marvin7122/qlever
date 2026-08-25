@@ -74,12 +74,10 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
 
   // 1. Look up internal hits with their storage owner and scatter them into
   // their positions.
-  if (!partition.internalSlots_.empty()) {
-    auto internal = internalVocab_.lookupBatch(
-        partition.internalSlots_.getUnderlyingIndices());
-    assembler.scatterSubBatchResultAtPositions(
-        std::move(internal), partition.internalSlots_.getResultPositions());
-  }
+  auto internal = internalVocab_.lookupBatch(
+      partition.internalSlots_.getUnderlyingIndices());
+  assembler.scatterSubBatchResultAtPositions(
+      std::move(internal), partition.internalSlots_.getResultPositions());
 
   // 2. Scatter disk results into their positions and retain their ownership.
   if (!partition.diskSlots_.empty()) {

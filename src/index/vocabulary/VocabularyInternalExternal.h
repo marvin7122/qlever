@@ -61,7 +61,7 @@ class VocabularyInternalExternal {
   auto scanAll() const { return externalVocab_.scanAll(); }
 
   //____________________________________________________________________________
-  // Look up words for `indices` in batch, returning string views in request
+  // Look up words for `indices` in a batch, returning string views in request
   // order. `indices` must not be empty.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
