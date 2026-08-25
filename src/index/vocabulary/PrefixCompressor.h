@@ -83,7 +83,9 @@ class PrefixCompressor {
   // compression prefix, or `std::nullopt` if it was stored uncompressed.
   [[nodiscard]] static std::optional<size_t> prefixIndex(
       std::string_view compressedWord) {
-    AD_CONTRACT_CHECK(!compressedWord.empty());
+    if (compressedWord.empty()) {
+      return std::nullopt;
+    }
     const auto leadingByte = static_cast<uint8_t>(compressedWord.front());
 
     if (leadingByte >= MIN_COMPRESSION_PREFIX &&
@@ -98,6 +100,9 @@ class PrefixCompressor {
   // Return an upper bound on the decompressed size of `compressedWord`.
   [[nodiscard]] size_t maxDecompressedSize(
       std::string_view compressedWord) const {
+    if (compressedWord.empty()) {
+      return 0;
+    }
     const auto idx = prefixIndex(compressedWord);
     const size_t rest = compressedWord.size() - 1;
 
@@ -113,6 +118,9 @@ class PrefixCompressor {
   [[nodiscard]] size_t decompressInto(std::string_view compressedWord,
                                       ql::span<char> out) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(compressedWord));
+    if (compressedWord.empty()) {
+      return 0;
+    }
 
     const auto idx = prefixIndex(compressedWord);
     const std::string_view rest = compressedWord.substr(1);
@@ -129,12 +137,16 @@ class PrefixCompressor {
       std::memcpy(out.data() + numBytesWritten, rest.data(), rest.size());
       numBytesWritten += rest.size();
     }
+    AD_CONTRACT_CHECK(numBytesWritten <= out.size());
     return numBytesWritten;
   }
 
   // ___________________________________________________________________________
   // Decompress the given `compressedWord`.
   [[nodiscard]] std::string decompress(std::string_view compressedWord) const {
+    if (compressedWord.empty()) {
+      return {};
+    }
     const auto idx = prefixIndex(compressedWord);
     if (idx.has_value()) {
       return prefixToCode_[idx.value()] + compressedWord.substr(1);
