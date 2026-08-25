@@ -516,7 +516,7 @@ using namespace splitVocabTestHelpers;
 
 // Share common SplitVocabulary setup across multiple tests.
 // Populates the vocabulary once per test suite with:
-//    (marker 0) and "" (marker 0); index 1: "xyz" (marker 1)
+//    Populates marker 0 with index 0: "" and index 1: "abc"; marker 1 with index 0: "xyz" and index 1: "axyz".
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
@@ -550,7 +550,7 @@ class SplitVocabularyWithDataTest : public ::testing::Test {
 TwoSplitVocabulary SplitVocabularyWithDataTest::sv_;
 
 // _____________________________________________________________________________
- partitioning and merging algorithms directly.lookupBatch partitioning and merging algorithms directly.
+// Partitioning and merging algorithms directly: lookupBatch partitioning and merging algorithms directly.
 TEST_F(SplitVocabularyWithDataTest,
        SplitVocabularyPartitionMarkerIndicesAndPositions) {
   // Use marker `0` for plain words and marker `1` for words starting with `"a`.
