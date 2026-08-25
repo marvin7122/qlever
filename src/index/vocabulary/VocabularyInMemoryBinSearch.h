@@ -128,9 +128,9 @@ class VocabularyInMemoryBinSearch
   auto end() const { return words().end(); }
 
  private:
-  // Access the words for internal use.  to avoid cascading changes ...words_->
-  // to avoid cascading changes if the storage representation changes in the
-  // future.
+  // Access the word storage through one helper, so callers do not depend on
+  // the shared_ptr representation and future storage changes do not require
+  // cascading updates.
   const Words& words() const { return *words_; }
 
  public:
