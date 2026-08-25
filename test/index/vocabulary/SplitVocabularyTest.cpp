@@ -14,15 +14,15 @@
 #include <utility>
 #include <variant>
 
-#include "../../util/GTestHelpers.h"
+#include <absl/strings/str_cat.h>
+
 #include "VocabularyTestHelpers.h"
 #include "backports/StartsWithAndEndsWith.h"
+#include "backports/span.h"
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyType.h"
 #include "util/GTestHelpers.h"
-#include <absl/strings/str_cat.h>
-#include "backports/span.h"
 
 namespace splitVocabTestHelpers {
 
@@ -550,7 +550,7 @@ class SplitVocabularyWithDataTest : public ::testing::Test {
 TwoSplitVocabulary SplitVocabularyWithDataTest::sv_;
 
 // _____________________________________________________________________________
-// Partitioning and merging algorithms directly: lookupBatch partitioning and merging algorithms directly.
+// Test lookupBatch partitioning and result merging directly.
 TEST_F(SplitVocabularyWithDataTest,
        SplitVocabularyPartitionMarkerIndicesAndPositions) {
   // Use marker `0` for plain words and marker `1` for words starting with `"a`.

@@ -79,8 +79,6 @@ struct DummyCompressionWrapper
 };
 
 // _____________________________________________________________________________
-// The compressed vocabulary must actually compress: identical uncompressed
-// and on-disk sizes would mean the compression layer is a no-op.
 TEST(CompressedVocabulary, CompressionIsActuallyApplied) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
