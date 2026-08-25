@@ -56,7 +56,7 @@ class PrefixCompressor {
 
   // ___________________________________________________________________________
   // maps (numeric) keys to the prefix they encode.
-  // currently only 128 prefixes are supported.
+  // currently NUM_COMPRESSION_PREFIXES prefixes are supported.
   std::array<std::string, NUM_COMPRESSION_PREFIXES> prefixToCode_{""};
 
   // ___________________________________________________________________________
@@ -79,8 +79,9 @@ class PrefixCompressor {
   }
 
   // ___________________________________________________________________________
-  // Return the index in `prefixToCode_` if the word was stored with a valid
-  // compression prefix, or `std::nullopt` if it was stored uncompressed.
+  // Return the `prefixToCode_` index when the first byte is in the range
+  // [MIN_COMPRESSION_PREFIX, MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES);
+  // otherwise return `std::nullopt`.
   [[nodiscard]] static std::optional<size_t> prefixIndex(
       std::string_view compressedWord) {
     if (compressedWord.empty()) {
@@ -90,7 +91,12 @@ class PrefixCompressor {
 
     if (leadingByte >= MIN_COMPRESSION_PREFIX &&
         leadingByte < MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES) {
-      return leadingByte - MIN_COMPRESSION_PREFIX;
+      const size_t index = leadingByte - MIN_COMPRESSION_PREFIX;
+      AD_CONTRACT_CHECK(leadingByte >= MIN_COMPRESSION_PREFIX);
+      AD_CONTRACT_CHECK(leadingByte <
+                       MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES);
+      AD_CONTRACT_CHECK(index < NUM_COMPRESSION_PREFIXES);
+      return index;
     }
 
     return std::nullopt;
