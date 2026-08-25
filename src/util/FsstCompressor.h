@@ -120,11 +120,14 @@ class FsstDecoder {
   // ___________________________________________________________________________
   // Decompress a single string. Callers that already own an output buffer
   // should use `decompressInto` instead.
-  std::string decompress(std::string_view str) const {
-    return detail::decompressToOwnedString(
-        maxDecompressedSize(str),
-        [this, str](ql::span<char> out) { return decompressInto(str, out); });
-  }
+  [[nodiscard]] std::string decompress(std::string_view str) const;
+
+// In src/util/FsstCompressor.cpp, add:
+std::string FsstDecoder::decompress(std::string_view str) const {
+  return detail::decompressToOwnedString(
+      maxDecompressedSize(str),
+      [this, str](ql::span<char> out) { return decompressInto(str, out); });
+}
 
   // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
