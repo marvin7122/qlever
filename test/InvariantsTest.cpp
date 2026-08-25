@@ -16,7 +16,7 @@
 
 namespace {
 
-// A mock stateful class that counts invocations of `checkInvariants()`.
+// Define a mock stateful class that counts invocations of `checkInvariants()`.
 class MockInvariantClass
     : public ad_utility::WithInvariants<MockInvariantClass> {
  public:
@@ -39,10 +39,10 @@ class MockInvariantClass
   }
 };
 
-// A class that lacks `checkInvariants() const` to verify concept failure.
+// Define a class that lacks `checkInvariants() const` to verify concept failure.
 struct ClassWithoutInvariants {};
 
-// Formal compile-time concept verification.
+// Verify the concept at compile time.
 static_assert(ad_utility::InvariantStatefulClass<MockInvariantClass>);
 static_assert(!ad_utility::InvariantStatefulClass<ClassWithoutInvariants>);
 
@@ -53,10 +53,10 @@ TEST(InvariantsTest, InvariantGuardChecksOnEntryAndExit) {
 
   {
     ad_utility::InvariantGuard guard{&instance};
-    // Checked once on entry
+
     EXPECT_EQ(instance.checkCount_, 1u);
   }
-  // Checked again on scope exit (destructor)
+
   EXPECT_EQ(instance.checkCount_, 2u);
 }
 
