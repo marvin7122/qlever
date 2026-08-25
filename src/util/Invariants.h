@@ -24,7 +24,7 @@ CPP_requires(is_invariant_stateful_class_,
 }  // namespace detail
 
 // _____________________________________________________________________________
-// Require a class for which `t.checkInvariants()` is a valid const expression.
+//  is valid when called on a const object.`t.checkInvariants()` is a a valid expression callable on a const object.
 template <typename T>
 CPP_concept InvariantStatefulClass =
     CPP_requires_ref(detail::is_invariant_stateful_class_, T);

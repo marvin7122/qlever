@@ -14,6 +14,7 @@
 
 #include "util/GTestHelpers.h"
 #include <memory_resource>
+#include <cstdint>
 
 TEST(GTestHelpersTest, CurrentTestSuiteAndTestName) {
   EXPECT_EQ(gtestCurrentTestSuiteName(), "GTestHelpersTest");

@@ -379,7 +379,7 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
 
 // _____________________________________________________________________________
 // Direct test of the documented lifetime semantics of `scanAll`: each yielded
-// `string_view` points into a caller-owned decode buffer that is REUSED for
+// `string_view` points into a the range object that is REUSED for
 // the next element, so a previously yielded view must no longer hold the old
 // word once the next element has been pulled. Because the buffer outlives the
 // whole range (it lives in the range adaptor's closure), reading the stale

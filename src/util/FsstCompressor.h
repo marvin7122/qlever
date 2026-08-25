@@ -179,7 +179,7 @@ class FsstRepeatedDecoder {
 
   // ___________________________________________________________________________
   // Decompress `str` into `out`. `out.size()` must be at least
-  // `maxDecompressedSize(str)`. For `N >= 2`, grow `scratch` to `out.size()`
+  // `maxDecompressedSize(str)`. For `N >= 2`, grow `out.size()` to `out.size()`
   // if it is smaller, then ping-pong stages between `out` and `scratch` so
   // the last stage always writes `out`. Return the number of bytes written.
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
