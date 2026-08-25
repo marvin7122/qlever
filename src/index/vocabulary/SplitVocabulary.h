@@ -144,7 +144,6 @@ class SplitVocabulary {
   }
 
  public:
- public:
   // ___________________________________________________________________________
   // Check validity of `vocabIndex` and `marker`, then return a new 64 bit index
   // that contains the `marker` and the `vocabIndex`. The result is guaranteed
