@@ -17,10 +17,11 @@
 #include <utility>
 #include <vector>
 
+#include <cerrno>
+
 #include "benchmark/infrastructure/Benchmark.h"
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
-#include <cerrno>
 
 namespace ad_benchmark {
 namespace {
@@ -49,17 +50,17 @@ size_t decodeRepeated(const std::array<FsstDecoder, N>& decoders,
 
 class FsstScratchBufferBenchmark : public BenchmarkInterface {
  private:
-  // The benchmark models a fixed three-stage repeated-FSST decode pipeline.
+  // Model a fixed three-stage repeated-FSST decode pipeline.
   static constexpr size_t numberOfStages = 3;
-  // These views refer to the compressed strings retained by decoderStorage_.
+  // Keep views into the compressed strings retained by decoderStorage_.
   std::vector<std::string_view> compressed_;
-  // One decoder is retained for each stage of the repeated pipeline.
+  // Retain one decoder for each stage of the repeated pipeline.
   std::array<FsstDecoder, numberOfStages> decoders_;
-  // Owns the compressed-string backing storage, keeping compressed_ valid.
+  // Own the compressed-string backing storage and keep compressed_ valid.
   std::vector<std::shared_ptr<std::string>> decoderStorage_;
-  // Maximum final decoded size; bounds the output buffer for every word.
+  // Bound the output buffer for every word by the maximum final decoded size.
   size_t outputCapacity_ = 0;
-  // Bounds intermediate stages, which have a smaller expansion requirement.
+  // Bound intermediate stages, which require less expansion.
   size_t intermediateCapacity_ = 0;
 
  public:
@@ -126,7 +127,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
                                     ql::span<char> scratch) {
       size_t totalBytes = 0;
       for (size_t repetition = 0; repetition < repetitions; ++repetition) {
-        for (std::string_view compressed : compressed_) {
+        for (const auto& compressed : compressed_) {
           totalBytes += decodeRepeated(decoders_, compressed, output, scratch);
         }
       }
@@ -142,8 +143,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     };
     auto addFullSizeUninitializedScratch = [&] {
       group.addMeasurement("full-size uninitialized scratch", [&] {
-        auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
-        auto scratch = std::unique_ptr<char[]>{new char[outputCapacity_]};
+        auto output = std::make_unique<char[]>(outputCapacity_);
+        auto scratch = std::make_unique<char[]>(outputCapacity_);
         return runDecodeMeasurement({output.get(), outputCapacity_},
                                     {scratch.get(), outputCapacity_});
       });
