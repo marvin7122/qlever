@@ -134,7 +134,6 @@ class FsstDecoder {
     return result;
   }
 
-  // Duplicate decompress(std::string_view) definition removed.
 
   // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
