@@ -97,8 +97,8 @@ class FsstDecoder {
   // Return an upper bound on the decompressed size of `str`.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
     AD_CONTRACT_CHECK(str.size() <=
-                      std::numeric_limits<size_t>::max() / MAX_EXPANSION_FACTOR);
-    return MAX_EXPANSION_FACTOR * str.size();
+                      std::numeric_limits<size_t>::max() / maxExpansionFactor);
+    return maxExpansionFactor * str.size();
   }
 
   // ___________________________________________________________________________
