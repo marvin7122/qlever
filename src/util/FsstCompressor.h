@@ -136,7 +136,7 @@ class FsstDecoder {
 };
 
 // _____________________________________________________________________________
-// A sequence of `N` `FsstDecoder` s that are chained in inverted order (the
+// A sequence of `N` `FsstDecoder` objects that are chained in inverted order (the
 // last one first) when decompressing a string. The inverted order is chosen,
 // because it is the correct way to decompress a string that was compressed by
 // the N corresponding encoders in the "normal" order (first encoder first).
@@ -160,7 +160,7 @@ class FsstRepeatedDecoder {
   // Construct from the internal `fsst_decoder_t`. Note that the typical way to
   // obtain an `FsstDecoder` is by first creating a `FsstEncoder` and calling
   // `getDecoder()` on that encoder.
-  explicit FsstRepeatedDecoder(Decoders decoders) : decoders_{decoders} {}
+  explicit FsstRepeatedDecoder(const Decoders& decoders) : decoders_{decoders} {}
 
   // ___________________________________________________________________________
   // Return an upper bound on the size after all `N` decoding stages.
