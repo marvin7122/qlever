@@ -130,7 +130,7 @@ TEST(VocabularyInMemoryBinSearch, AccessOperatorWithNonContiguousIds) {
       createVocabularyFromDisk("AccessOperatorWithNonContiguousIds2"));
 }
 
-TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
+TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
   VocabBatchLookupResult result;
   {
     auto vocab = createVocabulary("LookupBatchOutlivesVocabulary")(
