@@ -30,7 +30,7 @@ class MockInvariantClass
 
   void doMutatingOperation() {
     auto guard = makeInvariantGuard();
-    // Simulate mutating work
+    // Enter and leave the operation without changing the object state..
   }
 
   void doBrokenOperation() {
@@ -42,7 +42,7 @@ class MockInvariantClass
 // Define a class that lacks `checkInvariants() const` to verify concept failure.
 struct ClassWithoutInvariants {};
 
-// Verify the concept at compile time.
+// Check the invariant-stateful-class concept for supported and unsupported types.
 static_assert(ad_utility::InvariantStatefulClass<MockInvariantClass>);
 static_assert(!ad_utility::InvariantStatefulClass<ClassWithoutInvariants>);
 

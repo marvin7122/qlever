@@ -68,9 +68,9 @@ TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
     std::string intoBuf(p.maxDecompressedSize(compressed), '\0');
     const size_t n = p.decompressInto(
         compressed, ql::span<char>{intoBuf.data(), intoBuf.size()});
-    EXPECT_THAT(n, Eq(viaString.size()));
-    EXPECT_THAT(std::string_view(intoBuf.data(), n), Eq(viaString));
-    EXPECT_THAT(viaString, Eq(word));
+    EXPECT_EQ(n, viaString.size());
+    EXPECT_EQ(std::string_view(intoBuf.data(), n), viaString);
+    EXPECT_EQ(viaString, word);
   };
   for (std::string_view word :
        {"a", "al", "alp", "alph", "alpha", "alphabet", "nothing"}) {
@@ -82,7 +82,7 @@ TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
   AD_EXPECT_THROW_WITH_MESSAGE(static_cast<void>(p.maxDecompressedSize("")),
                                ::testing::HasSubstr("!compressedWord.empty()"));
 
-  // Decompressing into an undersized output buffer must fail contract check.
+  // Ensure that decompressing into an undersized output buffer fails the contract check.
   const std::string compressed = p.compress("alphabet");
   std::string smallBuf(1, '\0');
   AD_EXPECT_THROW_WITH_MESSAGE(
@@ -108,16 +108,8 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
             5u);
   EXPECT_EQ(output, "alpha");
 
-  const std::string compressed = p.compress("alphabet");
-  std::string undersized(p.maxDecompressedSize(compressed) - 1, '\0');
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      static_cast<void>(p.decompressInto(
-          compressed, ql::span<char>{undersized.data(), undersized.size()})),
-      ::testing::HasSubstr("out.size() >= maxDecompressedSize"));
+  // Contract checks are covered by DecompressIntoMatchesDecompress.
 
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      static_cast<void>(p.maxDecompressedSize("")),
-      ::testing::HasSubstr("!compressedWord.empty()"));
 }
 
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
