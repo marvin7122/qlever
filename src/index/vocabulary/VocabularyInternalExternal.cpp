@@ -89,7 +89,6 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   assembler.scatterSubBatchResultAtPositions(
       std::move(disk), partition.diskSlots_.getResultPositions());
 
-  // 3. Finalize and return self-contained result.
   return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 
