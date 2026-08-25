@@ -145,6 +145,15 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   const std::array<size_t, 3> diskOnly{1, 3, 1};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(diskOnly), diskOnly);
+
+  // Keep a mixed result alive while another lookup is performed, exercising
+  // ownership of the backing storage returned by both vocabulary sources.
+  auto retainedMixedResult = vocab.lookupBatch(indices);
+  auto subsequentResult = vocab.lookupBatch(ramOnly);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, retainedMixedResult,
+                                               indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, subsequentResult,
+                                               ramOnly);
 }
 
 // _____________________________________________________________________________

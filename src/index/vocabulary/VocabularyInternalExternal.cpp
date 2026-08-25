@@ -41,10 +41,9 @@ static IndexPartition partitionIndicesBySource(
     const VocabularyInMemoryBinSearch& internalVocab) {
   IndexPartition result;
   result.internalSlots_.reserve(indices.size());
-  result.diskSlots_.reserve(indices.size());
 
   for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
-    auto fromInternal = internalVocab[idx];
+    const auto& fromInternal = internalVocab[idx];
     if (fromInternal.has_value()) {
       result.internalSlots_.addPair(idx, i);
     } else {
@@ -85,12 +84,10 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
 
   // 2. Move the disk sub-result into the assembler at the original request
   // positions, preserving the backing storage for its returned string views.
-  if (!partition.diskSlots_.empty()) {
-    auto disk =
-        externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
-    assembler.scatterSubBatchResultAtPositions(
-        std::move(disk), partition.diskSlots_.getResultPositions());
-  }
+  auto disk =
+      externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
+  assembler.scatterSubBatchResultAtPositions(
+      std::move(disk), partition.diskSlots_.getResultPositions());
 
   // 3. Finalize and return self-contained result.
   return std::move(assembler).finalizeVocabBatchLookupResult();
