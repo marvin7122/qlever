@@ -44,8 +44,9 @@ INSTANTIATE_TEST_SUITE_P(CustomInstantiation, GTestHelpersParameterizedTest,
 // Return true iff `pointer` points inside the object storage of `object`.
 template <typename T>
 static bool pointsIntoObject(const void* pointer, const T& object) {
-  const auto* start = reinterpret_cast<const char*>(&object);
-  return pointer >= start && pointer < start + sizeof(object);
+  const auto start = reinterpret_cast<std::uintptr_t>(&object);
+  const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+  return address >= start && address - start < sizeof(object);
 }
 
 // _____________________________________________________________________________
@@ -62,8 +63,8 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
-  // SSO should hold for empty and small strings: the data must lie inside the
-  // string object itself, not in allocator-provided memory.
+  // Verify that empty and small strings use inline storage: the data must lie
+  // inside the string object itself, not in allocator-provided memory.
   for (size_t size : {size_t{0}, size_t{7}, size_t{15}}) {
     // `maxSize == 0` is a rejected precondition, so probe from 1 on.
     if (size > 0) {
