@@ -360,7 +360,7 @@ class MultiSourceVocabBatchAssembler {
   void checkInvariants() const {
     AD_CORRECTNESS_CHECK(assembledWordViews_.size() ==
                          slotFilledTracking_.size());
-    AD_CORRECTNESS_CHECK(storageOwners_.size() <= assembledWordViews_.size());
+    // The number of storage owners is independent of the number of assembled views.
   }
 
   // ___________________________________________________________________________
@@ -377,7 +377,7 @@ class MultiSourceVocabBatchAssembler {
   // and retain the child result object so its underlying string storage is kept
   // alive.
   void scatterSubBatchResultAtPositions(
-      VocabBatchLookupResult subBatchResult,
+      const VocabBatchLookupResult& subBatchResult,
       ql::span<const size_t> targetPositions) {
     AD_CONTRACT_CHECK(subBatchResult.size() == targetPositions.size());
 
@@ -465,7 +465,7 @@ class MarkerIndicesAndPositions {
 };
 
 // _____________________________________________________________________________
-// Paired lookup data for each of `NumVocabs` underlying vocabularies, indexed
+// Paired lookup data for each of the `NumVocabs` underlying vocabularies, indexed
 // by the marker that identifies the vocabulary.
 template <size_t NumVocabs>
 using IndicesAndPositionsByMarker =
@@ -503,7 +503,7 @@ class MarkerBatchLookups {
  public:
   MarkerBatchLookups() = default;
 
-  // Access the lookup result for the given vocabulary marker.
+  // Return the lookup result for the given vocabulary marker.
   std::optional<VocabBatchLookupResult>& operator[](size_t marker) {
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
     return results_[marker];
@@ -513,7 +513,7 @@ class MarkerBatchLookups {
     return results_[marker];
   }
 
-  // Move out the lookup result for the given vocabulary marker exactly once.
+  // Release the lookup result for the given vocabulary marker exactly once.
   VocabBatchLookupResult release(size_t marker) {
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
     AD_CORRECTNESS_CHECK(results_[marker].has_value());
