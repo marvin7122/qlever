@@ -30,8 +30,6 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
-#include <string_view>
-
 namespace detail {
 
 template <typename Vocabulary, typename Iterator>
