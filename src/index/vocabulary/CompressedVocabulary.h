@@ -99,10 +99,11 @@ CPP_template(typename UnderlyingVocabulary,
   // Wrap the underlying vocabulary's `scanAll` (which reads the compressed
   // words in batches) and decompress each word. `scanAll()` is expected to
   // yield `IndexAndWord` elements, so we have to apply a transformation at the
-  // end. The words are decoded via `decompressInto` into a single caller-owned
-  // buffer that is reused across elements (sized to `maxDecompressedSize` for
-  // each word); like all `scanAll()` results, the yielded `string_view`s are
-  // only valid until the next element is pulled from the range.
+  // end. The words are decoded via `decompressInto` into one reusable buffer
+  // owned by the transformation. The buffer grows as needed to accommodate
+  // the largest bound seen so far, and each word is decoded into a span of
+  // `maxDecompressedSize` bytes; yielded `string_view`s are only valid until
+  // the next element is pulled from the range.
   auto scanAll() const {
     return ad_utility::CachingTransformInputRange(
         underlyingVocabulary_.scanAll(),

@@ -1,7 +1,6 @@
 # All vocabulary implementations, including `RdfsVocabulary` (`Vocabulary.cpp`)
 # and `EncodedIriManager` (`EncodedIriManager.cpp`), are compiled into this
-# library. The separate library boundary is currently required by circular
-# dependencies between the vocabulary and index libraries.
+# library. Keep this as a separate target from the index library.
 
 add_library(vocabulary VocabularyInMemory.h VocabularyInMemory.cpp
                        VocabularyInMemoryBinSearch.cpp VocabularyInternalExternal.cpp
