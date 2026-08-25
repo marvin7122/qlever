@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -93,10 +94,7 @@ class PrefixCompressor {
     if (leadingByte >= MIN_COMPRESSION_PREFIX &&
         leadingByte < MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES) {
       const size_t index = leadingByte - MIN_COMPRESSION_PREFIX;
-      AD_CONTRACT_CHECK(leadingByte >= MIN_COMPRESSION_PREFIX);
-      AD_CONTRACT_CHECK(leadingByte <
-                       MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES);
-      AD_CONTRACT_CHECK(index < NUM_COMPRESSION_PREFIXES);
+      // The surrounding range check establishes that index is a valid prefix code.
       return index;
     }
 
