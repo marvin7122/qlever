@@ -22,7 +22,6 @@
 #include "util/Exception.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 #include <array>
-#include "util/GTestHelpers.h"
 
 namespace {
 
@@ -83,9 +82,9 @@ TEST(CompressedVocabulary, CompressionIsActuallyApplied) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
 
-  CompressedVocabulary<VocabularyInMemory, DummyCompressionWrapper> v;
+  CompressedVocabulary<VocabularyInMemory, DummyCompressionWrapper> vocab;
   {
-    auto writerPtr = v.makeDiskWriterPtr("vocabtmp.txt");
+    auto writerPtr = vocab.makeDiskWriterPtr("vocabtmp.txt");
     auto& writer = *writerPtr;
     for (const auto& [i, word] : ::ranges::views::enumerate(words)) {
       ASSERT_EQ(writer(word, false), static_cast<uint64_t>(i));

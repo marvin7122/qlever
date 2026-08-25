@@ -95,15 +95,18 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
   PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alpha"});
 
-  EXPECT_EQ(p.prefixIndex(p.compress("alpha")), 0u);
-  EXPECT_FALSE(p.prefixIndex(p.compress("beta")).has_value());
+  const std::string compressedAlpha = p.compress("alpha");
+  const std::string compressedBeta = p.compress("beta");
+
+  EXPECT_EQ(p.prefixIndex(compressedAlpha), 0u);
+  EXPECT_FALSE(p.prefixIndex(compressedBeta).has_value());
   EXPECT_FALSE(p.prefixIndex(std::string(1, static_cast<char>(NO_PREFIX_CHAR))).has_value());
   EXPECT_FALSE(p.prefixIndex(std::string(1, '\0')).has_value());
-  EXPECT_EQ(p.maxDecompressedSize(p.compress("alpha")), 5u);
-  EXPECT_EQ(p.maxDecompressedSize(p.compress("beta")), 4u);
+  EXPECT_EQ(p.maxDecompressedSize(compressedAlpha), 5u);
+  EXPECT_EQ(p.maxDecompressedSize(compressedBeta), 4u);
 
-  std::string output(p.maxDecompressedSize(p.compress("alpha")), '\0');
-  EXPECT_EQ(p.decompressInto(p.compress("alpha"),
+  std::string output(p.maxDecompressedSize(compressedAlpha), '\0');
+  EXPECT_EQ(p.decompressInto(compressedAlpha,
                              ql::span<char>{output.data(), output.size()}),
             5u);
   EXPECT_EQ(output, "alpha");
