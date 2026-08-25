@@ -430,7 +430,7 @@ class MarkerIndicesAndPositions {
 
  public:
   // ___________________________________________________________________________
-  // Reserve capacity for the given number of pairs.
+
   void reserve(size_t capacity) {
     underlyingIndices_.reserve(capacity);
     resultPositions_.reserve(capacity);
@@ -444,13 +444,13 @@ class MarkerIndicesAndPositions {
   }
 
   // ___________________________________________________________________________
-  // Access the underlying indices for batch-lookup.
+
   [[nodiscard]] ql::span<const size_t> getUnderlyingIndices() const noexcept {
     return underlyingIndices_;
   }
 
   // ___________________________________________________________________________
-  // Access the result positions for scatter-back.
+
   [[nodiscard]] ql::span<const size_t> getResultPositions() const noexcept {
     return resultPositions_;
   }
@@ -462,7 +462,7 @@ class MarkerIndicesAndPositions {
   }
 
   // ___________________________________________________________________________
-  // Number of pairs.
+
   [[nodiscard]] size_t size() const noexcept {
     return underlyingIndices_.size();
   }
