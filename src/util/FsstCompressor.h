@@ -187,7 +187,7 @@ class FsstRepeatedDecoder {
       return decoders_[0].decompressInto(str, out);
     } else {
       if (scratch.size() < out.size()) {
-        scratch.resize(out.size());
+        scratch.resize(FsstDecoder::maxDecompressedSize(str) / FsstDecoder::MAX_EXPANSION_FACTOR);
       }
       std::array<ql::span<char>, 2> buffers{out, ql::span<char>{scratch}};
       // For even `N`, write the first stage to `scratch` and the last to `out`.
@@ -235,7 +235,7 @@ class FsstRepeatedDecoder {
 
   // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
-  CPP_template_2(typename T, typename U)(
+  CPP_template(typename T, typename U)(
       requires ql::concepts::same_as<T, FsstRepeatedDecoder>)
       [[maybe_unused]] friend std::true_type allowTrivialSerialization(T, U&&) {
     return {};
