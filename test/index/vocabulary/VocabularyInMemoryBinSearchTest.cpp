@@ -24,6 +24,8 @@ class VocabularyCreator {
  private:
   std::string vocabFilename_;
 
+  // Remove both the vocabulary and its .ids sidecar before setup and after
+  // teardown so stale data cannot affect another test using the same filename.
   void removeVocabularyFiles() {
     ad_utility::deleteFile(vocabFilename_, false);
     ad_utility::deleteFile(vocabFilename_ + ".ids", false);
@@ -132,16 +134,14 @@ TEST(VocabularyInMemoryBinSearch, AccessOperatorWithNonContiguousIds) {
 }
 
 TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
-  VocabBatchLookupResult result;
-  {
-    auto vocab = createVocabulary("LookupBatchOutlivesVocabulary")(
-        std::vector<std::string>{"alpha", "beta", "gamma"});
-    const std::array<size_t, 4> indices{2, 0, 2, 1};
-    result = vocab.lookupBatch(indices);
-    vocab.close();
-  }
+  auto vocab = createVocabulary("LookupBatchOutlivesVocabulary")(
+      std::vector<std::string>{"alpha", "beta", "gamma"});
+  const std::array<size_t, 4> indices{2, 0, 2, 1};
+  auto result = vocab.lookupBatch(indices);
+  vocab.close();
 
-  EXPECT_THAT(result, ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
 TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
