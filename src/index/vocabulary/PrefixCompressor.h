@@ -144,14 +144,11 @@ class PrefixCompressor {
   // ___________________________________________________________________________
   // Decompress the given `compressedWord`.
   [[nodiscard]] std::string decompress(std::string_view compressedWord) const {
-    if (compressedWord.empty()) {
-      return {};
-    }
-    const auto idx = prefixIndex(compressedWord);
-    if (idx.has_value()) {
-      return prefixToCode_[idx.value()] + compressedWord.substr(1);
-    }
-    return std::string(compressedWord.substr(1));
+    std::string result(maxDecompressedSize(compressedWord), '\0');
+    const size_t numBytesWritten = decompressInto(
+        compressedWord, ql::span<char>{result.data(), result.size()});
+    result.resize(numBytesWritten);
+    return result;
   }
 
   // ___________________________________________________________________________
