@@ -48,7 +48,9 @@ using VocabBatchOwner = std::shared_ptr<const void>;
 // Strong value type representing the result of a batch vocabulary lookup.
 // Holds a `span<const string_view>` and keeps the backing word storage alive
 // via an internal `VocabBatchOwner`. Provides a read-only range interface over
-// the string views.
+// the string views. Assemblers use the `owner()` accessor as the single
+// ownership-propagation interface: they retain the returned token for every
+// child result whose views are copied into an assembled result.
 class VocabBatchLookupResult {
  private:
   VocabBatchOwner owner_{};
