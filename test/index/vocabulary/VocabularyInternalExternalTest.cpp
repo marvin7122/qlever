@@ -138,7 +138,7 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
                                ::testing::HasSubstr("!indices.empty()"));
 
   // The test writer keeps words with even IDs in the RAM cache; words with odd
-// IDs are read from disk.
+  // Use the test writer's RAM cache for even IDs; read odd IDs from disk.
   const std::array<size_t, 3> ramOnly{0, 2, 4};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(ramOnly), ramOnly);
