@@ -24,7 +24,6 @@ CPP_requires(is_invariant_stateful_class_,
 }  // namespace detail
 
 // _____________________________________________________________________________
-// Require a class for which `t.checkInvariants()` can be called on a const object.
 template <typename T>
 CPP_concept InvariantStatefulClass =
     CPP_requires_ref(detail::is_invariant_stateful_class_, T);
@@ -69,7 +68,6 @@ template <typename Derived>
 class WithInvariants {
  public:
   // ___________________________________________________________________________
-  // Instantiate an InvariantGuard verifying the derived instance on entry/exit.
   // Lvalue-qualified so the guard can never be created for a temporary:
   // it stores a raw pointer to `this`, which must outlive the guard's scope.
   [[nodiscard]] auto makeInvariantGuard() const& {

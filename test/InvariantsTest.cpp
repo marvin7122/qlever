@@ -84,4 +84,29 @@ TEST(InvariantsTest, GuardRejectsNullInstanceOnConstruction) {
       ::testing::HasSubstr("self_ != nullptr"));
 }
 
+// Verify that the exit check is skipped while the guarded scope is unwinding.
+TEST(InvariantsTest, InvariantGuardSkipsExitCheckDuringExceptionUnwinding) {
+  MockInvariantClass instance;
+
+  EXPECT_THROW(
+      [&] {
+        ad_utility::InvariantGuard guard{&instance};
+        throw std::runtime_error{"failure"};
+      }(),
+      std::runtime_error);
+
+  EXPECT_EQ(instance.checkCount_, 1u);
+}
+
+// Verify at compile time that a guard cannot be created from a temporary.
+template <typename T, typename = void>
+struct HasRvalueInvariantGuard : std::false_type {};
+
+template <typename T>
+struct HasRvalueInvariantGuard<
+    T, std::void_t<decltype(std::declval<T&&>().makeInvariantGuard())>>
+    : std::true_type {};
+
+static_assert(!HasRvalueInvariantGuard<MockInvariantClass>::value);
+
 }  // namespace
