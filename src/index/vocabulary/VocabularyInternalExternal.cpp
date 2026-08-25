@@ -67,18 +67,24 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
         partition.diskSlots_.getUnderlyingIndices());
   }
 
+  if (partition.diskSlots_.empty()) {
+    return internalVocab_.lookupBatch(
+        partition.internalSlots_.getUnderlyingIndices());
+  }
+
   // Handle mixed internal and external indices by assembling results from both
   // sources.
   MultiSourceVocabBatchAssembler assembler(indices.size());
 
-  // 1. Look up internal hits with their storage owner and scatter them into
-  // their positions.
+  // 1. Look up internal hits and move their sub-result, including its backing
+  // storage, into the assembler at the original request positions.
   auto internal = internalVocab_.lookupBatch(
       partition.internalSlots_.getUnderlyingIndices());
   assembler.scatterSubBatchResultAtPositions(
       std::move(internal), partition.internalSlots_.getResultPositions());
 
-  // 2. Scatter disk results into their positions and retain their ownership.
+  // 2. Move the disk sub-result into the assembler at the original request
+  // positions, preserving the backing storage for its returned string views.
   if (!partition.diskSlots_.empty()) {
     auto disk =
         externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
