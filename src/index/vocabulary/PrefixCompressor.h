@@ -107,6 +107,7 @@ class PrefixCompressor {
   // Return the exact decompressed size of `compressedWord`.
   [[nodiscard]] size_t maxDecompressedSize(
       std::string_view compressedWord) const {
+    AD_CONTRACT_CHECK(!compressedWord.empty());
     if (compressedWord.empty()) {
       return 0;
     }
@@ -134,18 +135,16 @@ class PrefixCompressor {
 
     const auto idx = prefixIndex(compressedWord);
     const std::string_view rest = compressedWord.substr(1);
-
-    std::string decompressed;
+    size_t outputSize = 0;
     if (idx.has_value()) {
-      AD_CORRECTNESS_CHECK(*idx < prefixToCode_.size());
-      decompressed += prefixToCode_[*idx];
+      const std::string& prefix = prefixToCode_[*idx];
+      AD_CORRECTNESS_CHECK(prefix.size() <= out.size());
+      std::memcpy(out.data(), prefix.data(), prefix.size());
+      outputSize = prefix.size();
     }
-    decompressed.append(rest);
-    AD_CORRECTNESS_CHECK(decompressed.size() <= out.size());
-    if (!decompressed.empty()) {
-      std::memcpy(out.data(), decompressed.data(), decompressed.size());
-    }
-    return decompressed.size();
+    AD_CORRECTNESS_CHECK(rest.size() <= out.size() - outputSize);
+    std::memcpy(out.data() + outputSize, rest.data(), rest.size());
+    return outputSize + rest.size();
   }
 
   // ___________________________________________________________________________
