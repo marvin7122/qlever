@@ -128,6 +128,8 @@ TEST(VocabularyInternalExternal, AccessOperator) {
 TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
                                        "epsilon"};
+  // The batch result must preserve request order across all-internal,
+  // all-external, and mixed-source requests, including duplicates.
   auto vocab = createVocabulary("LookupBatch")(words);
   const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
   auto result = vocab[indices];
