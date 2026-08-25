@@ -105,9 +105,9 @@ using VocabLookupOutput =
     ad_utility::InputRangeTypeErased<VocabBatchLookupResult>;
 
 // _____________________________________________________________________________
-// Strong, self-contained batch-lookup result backed by a contiguous character
-// buffer (used for reading fixed-size chunks from disk). All storage is
-// private.
+// Represent a strong, self-contained batch-lookup result backed by a
+// contiguous character buffer (used for reading fixed-size chunks from disk).
+// Keep all storage private.
 class ContiguousVocabBatchLookupData {
  private:
   std::vector<char> buffer_;
