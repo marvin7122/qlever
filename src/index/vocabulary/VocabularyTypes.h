@@ -75,6 +75,10 @@ class VocabBatchLookupResult {
   [[nodiscard]] const std::string_view* data() const noexcept {
     return span_.data();
   }
+  // Return the type-erased owner so assemblers can preserve the lifetime of
+  // backing storage without exposing mutable access to the stored views.
+  [[nodiscard]] VocabBatchOwner owner() const noexcept { return owner_; }
+
   // Storage ownership is intentionally private. Callers may access only the
   // immutable range interface; builders and result assemblers propagate
   // ownership internally.
