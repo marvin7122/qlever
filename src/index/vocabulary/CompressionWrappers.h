@@ -21,6 +21,7 @@
 #include "index/vocabulary/PrefixHeuristic.h"
 #include "util/CompilerWarnings.h"
 #include "util/FsstCompressor.h"
+#include <string>
 
 namespace ad_utility::vocabulary {
 

@@ -30,6 +30,7 @@
 #include "util/Exception.h"
 #include "util/Log.h"
 #include "util/TypeTraits.h"
+#include <utility>
 
 namespace detail {
 // Return a decoder, that can be used to decompress strings that have
