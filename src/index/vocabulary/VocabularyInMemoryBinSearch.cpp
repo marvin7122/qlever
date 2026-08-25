@@ -28,8 +28,8 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
     idFile >> indices;
   }
   AD_CORRECTNESS_CHECK(indices.size() == words->size());
-  // Binary search requires a strictly ascending index sequence. Validate the
-  // deserialized data before publishing either buffer to the vocabulary.
+  // Ensure that the deserialized indices are strictly ascending because binary
+  // search relies on this property before publishing either buffer.
   for (size_t i = 1; i < indices.size(); ++i) {
     AD_CORRECTNESS_CHECK(
         indices[i - 1] < indices[i],
