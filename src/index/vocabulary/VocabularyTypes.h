@@ -88,9 +88,9 @@ class VocabBatchLookupResult {
   // backing storage without exposing mutable access to the stored views.
   [[nodiscard]] VocabBatchOwner owner() const noexcept { return owner_; }
 
-  // Storage ownership is intentionally private. Callers may access only the
-  // immutable range interface; builders and result assemblers propagate
-  // ownership internally.
+  // Stored views and backing bytes are not exposed for mutation. Callers may
+  // inspect the immutable range and may retrieve the shared ownership token
+  // through owner() when an assembler must preserve the result lifetime.
   [[nodiscard]] VocabBatchOwner owner() const noexcept { return owner_; }
 };
 
