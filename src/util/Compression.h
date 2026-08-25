@@ -24,16 +24,8 @@ namespace ad_utility {
 // at least `maxNumBytes` bytes. A zero upper bound is rejected because words
 // without payload are handled by callers without this helper. Writing zero
 // bytes remains valid when `maxNumBytes` is positive.
-template <typename DecompressFunc>
-std::string_view decompressIntoSpan(ql::span<char> destination,
-                                    size_t maxNumBytes,
-                                    DecompressFunc&& decompress) {
-  AD_CONTRACT_CHECK(maxNumBytes > 0);
-  AD_CONTRACT_CHECK(destination.size() >= maxNumBytes);
-  size_t bytesWritten = decompress(destination);
-  AD_CORRECTNESS_CHECK(bytesWritten <= maxNumBytes);
-  return std::string_view{destination.data(), bytesWritten};
-}
+// No generic decompression helper is provided until it has a concrete caller
+// and a repository-level ownership contract.
 
 }  // namespace ad_utility
 
