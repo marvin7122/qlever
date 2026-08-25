@@ -53,6 +53,8 @@ using VocabBatchOwner = std::shared_ptr<const void>;
 // child result whose views are copied into an assembled result.
 class VocabBatchLookupResult {
  private:
+  // Must retain every allocation referenced by span_; the views are valid only
+  // while this result, and therefore owner_, remains alive.
   VocabBatchOwner owner_{};
   ql::span<const std::string_view> span_{};
 
