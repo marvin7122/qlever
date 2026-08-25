@@ -61,9 +61,9 @@ CPP_template(typename Decode)(
   }
   std::string result;
   ql::resize_and_overwrite(result, bound, [&](char* buf, size_t count) {
-    const size_t size = decode(ql::span<char>{buf, count});
-    AD_CONTRACT_CHECK(size <= bound);
-    return size;
+    const size_t bytesWritten = decode(ql::span<char>{buf, count});
+    AD_CONTRACT_CHECK(bytesWritten <= bound);
+    return bytesWritten;
   });
   return result;
 }
