@@ -37,15 +37,18 @@ CPP_template(typename T)(
     requires InvariantStatefulClass<T>) class InvariantGuard {
  private:
   const T* self_;
+  int uncaughtExceptionsAtConstruction_;
 
  public:
-  explicit InvariantGuard(const T* self) : self_{self} {
+  explicit InvariantGuard(const T* self)
+      : self_{self},
+        uncaughtExceptionsAtConstruction_{std::uncaught_exceptions()} {
     AD_CORRECTNESS_CHECK(self_ != nullptr);
     self_->checkInvariants();
   }
 
   ~InvariantGuard() noexcept(false) {
-    if (!std::uncaught_exceptions()) {
+    if (std::uncaught_exceptions() <= uncaughtExceptionsAtConstruction_) {
       self_->checkInvariants();
     }
   }
@@ -57,9 +60,8 @@ CPP_template(typename T)(
 };
 
 // _____________________________________________________________________________
-// CRTP mixin that provides a parameterless `makeInvariantGuard()` member
-// function, which checks the derived instance upon entry and exit while
-// enforcing at compile-time that `Derived` satisfies `InvariantStatefulClass`.
+// Provide a parameterless `makeInvariantGuard()` member function and enforce
+// `InvariantStatefulClass` for the derived type.
 template <typename Derived>
 class WithInvariants {
  public:
