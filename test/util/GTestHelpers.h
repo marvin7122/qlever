@@ -341,11 +341,10 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   if (assertInGtestEnvironment) {
     AD_CORRECTNESS_CHECK(testInfo != nullptr);
   }
-  if (testInfo == nullptr) {
-    return "";
-  }
-  return sanitizeGtestName(
-      absl::StrCat(testInfo->test_suite_name(), "_", testInfo->name()));
+  return testInfo == nullptr
+             ? ""
+             : sanitizeGtestName(absl::StrCat(testInfo->test_suite_name(), "_",
+                                               testInfo->name()));
 }
 
 // _____________________________________________________________________________
