@@ -19,6 +19,7 @@
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/File.h"
+#include <optional>
 
 namespace {
 // _____________________________________________________________________________

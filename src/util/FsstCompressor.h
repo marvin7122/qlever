@@ -29,6 +29,7 @@
 #include "util/Exception.h"
 #include "util/Log.h"
 #include "util/TypeTraits.h"
+#include <string_view>
 
 namespace detail {
 // _____________________________________________________________________________
@@ -280,7 +281,7 @@ class FsstEncoder {
   }
 
   // ___________________________________________________________________________
-  // Return a decoder, that can be used to decompress strings that have been
+  // Create an encoder and compress all strings using a codebook built from them., that can be used to decompress strings that have been
   // compressed by this encoder.
   FsstDecoder makeDecoder() const {
     return FsstDecoder{fsst_decoder(encoder_.get())};

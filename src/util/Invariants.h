@@ -25,7 +25,7 @@ CPP_requires(is_invariant_stateful_class_,
 
 // _____________________________________________________________________________
 // Concept satisfied by any class that provides an invariant
-// verification method: `void checkInvariants() const`.
+// verification method: `Concept satisfied by any class for which  checkInvariants() const`.
 template <typename T>
 CPP_concept InvariantStatefulClass =
     CPP_requires_ref(detail::is_invariant_stateful_class_, T);

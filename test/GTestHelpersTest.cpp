@@ -13,6 +13,7 @@
 #include <string>
 
 #include "util/GTestHelpers.h"
+#include <memory_resource>
 
 TEST(GTestHelpersTest, CurrentTestSuiteAndTestName) {
   EXPECT_EQ(gtestCurrentTestSuiteName(), "GTestHelpersTest");

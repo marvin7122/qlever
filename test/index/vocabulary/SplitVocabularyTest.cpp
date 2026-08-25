@@ -21,6 +21,8 @@
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyType.h"
 #include "util/GTestHelpers.h"
+#include <absl/strings/str_cat.h>
+#include "backports/span.h"
 
 namespace splitVocabTestHelpers {
 

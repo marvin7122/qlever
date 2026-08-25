@@ -18,6 +18,7 @@
 #include "benchmark/infrastructure/Benchmark.h"
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
+#include <cerrno>
 
 namespace ad_benchmark {
 namespace {
