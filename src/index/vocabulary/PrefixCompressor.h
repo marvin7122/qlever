@@ -107,7 +107,10 @@ class PrefixCompressor {
     const size_t rest = compressedWord.size() - 1;
 
     if (idx.has_value()) {
-      return prefixToCode_[idx.value()].size() + rest;
+      AD_CORRECTNESS_CHECK(*idx < prefixToCode_.size());
+      const size_t prefixSize = prefixToCode_[*idx].size();
+      AD_CORRECTNESS_CHECK(prefixSize <= std::numeric_limits<size_t>::max() - rest);
+      return prefixSize + rest;
     }
     return rest;
   }
@@ -125,20 +128,17 @@ class PrefixCompressor {
     const auto idx = prefixIndex(compressedWord);
     const std::string_view rest = compressedWord.substr(1);
 
-    size_t numBytesWritten = 0;
+    std::string decompressed;
     if (idx.has_value()) {
-      const std::string& prefix = prefixToCode_[idx.value()];
-      if (!prefix.empty()) {
-        std::memcpy(out.data(), prefix.data(), prefix.size());
-        numBytesWritten = prefix.size();
-      }
+      AD_CORRECTNESS_CHECK(*idx < prefixToCode_.size());
+      decompressed += prefixToCode_[*idx];
     }
-    if (!rest.empty()) {
-      std::memcpy(out.data() + numBytesWritten, rest.data(), rest.size());
-      numBytesWritten += rest.size();
+    decompressed.append(rest);
+    AD_CORRECTNESS_CHECK(decompressed.size() <= out.size());
+    if (!decompressed.empty()) {
+      std::memcpy(out.data(), decompressed.data(), decompressed.size());
     }
-    AD_CONTRACT_CHECK(numBytesWritten <= out.size());
-    return numBytesWritten;
+    return decompressed.size();
   }
 
   // ___________________________________________________________________________

@@ -69,10 +69,9 @@ CPP_concept CompressionWrapper = CPP_requires_ref(CompressionWrapper_, T);
 
 namespace detail {
 
-// Detect whether a decoder requires a 3rd `scratch` buffer for multi-stage
-// decoding (e.g. `FsstRepeatedDecoder<N>`). Single-stage decoders (e.g.
-// `FsstDecoder` and `PrefixCompressor`) decode directly into `out` in a single
-// pass via `decompressInto(compressed, out)`.
+// Detect whether a decoder provides a `decompressInto` overload that accepts
+// compressed input, an output span, and a scratch string, as required by
+// multi-stage decoders such as `FsstRepeatedDecoder<N>`.
 template <typename Decoder>
 CPP_requires(RequiresScratchDecompressInto_,
              requires(const Decoder& decoder, std::string_view compressed,
@@ -83,10 +82,10 @@ template <typename Decoder>
 CPP_concept RequiresScratchDecompressInto =
     CPP_requires_ref(RequiresScratchDecompressInto_, Decoder);
 
-// A class that holds a `vector<DecoderT>` and forwards `decompress`,
-// `maxDecompressedSize`, and `decompressInto` to `decoders_[index]`. It is
-// used as a building block for types that fulfill the `CompressionWrapper`
-// concept above.
+// Hold a `vector<DecoderT>` and forward `decompress`,
+// `maxDecompressedSize`, and `decompressInto` to `decoders_[index]`. Use this
+// as a building block for types that fulfill the `CompressionWrapper` concept
+// above.
 template <typename DecoderT>
 struct DecoderMultiplexer {
   using Decoder = DecoderT;
