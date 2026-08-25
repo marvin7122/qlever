@@ -100,7 +100,7 @@ CPP_template(typename UnderlyingVocabulary,
   // Wrap the underlying vocabulary's `scanAll` (which reads the compressed
   // words in batches) and decompress each word. `scanAll()` is expected to
   // yield `IndexAndWord` elements, so we have to apply a transformation at the
-  // end. The words are decoded via `decompressInto` into one reusable buffer
+  // end. Decode the words via `decompressInto` into one reusable buffer
   // owned by the transformation. The buffer grows as needed to accommodate
   // the largest bound seen so far, and each word is decoded into a span of
   // `maxDecompressedSize` bytes; yielded `string_view`s are only valid until
