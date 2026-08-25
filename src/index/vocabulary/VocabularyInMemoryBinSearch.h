@@ -17,10 +17,11 @@
 #include "util/CompactStringVector.h"
 #include "util/Exception.h"
 #include "util/Serializer/FileSerializer.h"
+#include <utility>
+#include <vector>
+
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
-#include <vector>
-#include <utility>
 
 namespace ad_utility::vocabulary {
 
