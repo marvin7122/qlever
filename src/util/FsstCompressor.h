@@ -90,7 +90,8 @@ class FsstDecoder {
   explicit FsstDecoder(const fsst_decoder_t& decoder) : decoder_{decoder} {}
 
   // ____________________________________________________________________________
-  // Set the maximum factor by which a string can expand during FSST decompression.
+  // FSST guarantees that decompression expands data by at most a factor of 8.
+  // This value is used to safely size caller-provided output buffers.
   static constexpr size_t maxExpansionFactor = 8;
 
   // ___________________________________________________________________________
@@ -284,7 +285,7 @@ class FsstEncoder {
   }
 
   // ___________________________________________________________________________
-  // Create an encoder and compress all strings using a codebook built from them., that can be used to decompress strings that have been
+  // Return a decoder for strings compressed by this encoder.
   // compressed by this encoder.
   FsstDecoder makeDecoder() const {
     return FsstDecoder{fsst_decoder(encoder_.get())};
