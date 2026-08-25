@@ -152,6 +152,19 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
   EXPECT_THROW(vocab.lookupBatch(missingIndex), ad_utility::Exception);
 }
 
+TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
+  VocabBatchLookupResult result;
+  {
+    auto vocab = createVocabulary("LookupBatchOutlivesVocabularyOnly")(
+        std::vector<std::string>{"alpha", "beta", "gamma"});
+    const std::array<size_t, 4> indices{2, 0, 2, 1};
+    result = vocab.lookupBatch(indices);
+  }
+
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
+}
+
 TEST(VocabularyInMemoryBinSearch, ErrorOnNonAscendingIds) {
   std::vector<std::string> words{"game", "4", "nobody"};
   std::vector<uint64_t> ids{2, 4, 3};

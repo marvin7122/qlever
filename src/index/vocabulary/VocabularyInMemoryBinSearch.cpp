@@ -28,6 +28,13 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
     idFile >> indices;
   }
   AD_CORRECTNESS_CHECK(indices.size() == words->size());
+  // Binary search requires a strictly ascending index sequence. Validate the
+  // deserialized data before publishing either buffer to the vocabulary.
+  for (size_t i = 1; i < indices.size(); ++i) {
+    AD_CORRECTNESS_CHECK(
+        indices[i - 1] < indices[i],
+        "Deserialized vocabulary indices must be strictly ascending");
+  }
   words_ = std::move(words);
   indices_ = std::move(indices);
 }
@@ -52,7 +59,7 @@ VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
   for (size_t index : indices) {
     auto word = (*this)[index];
     AD_CONTRACT_CHECK(word.has_value());
-    views.push_back(word.value());
+    views.push_back(*word);
   }
 
   AD_CORRECTNESS_CHECK(views.size() == indices.size());
