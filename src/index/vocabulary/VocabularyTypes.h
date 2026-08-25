@@ -297,7 +297,7 @@ class ArenaVocabBatchBuilder {
         decompressIntoSpan(ql::span<char>{mem, bound}, bound, decompress));
   }
 
-  // Allocate storage inside the arena and copy the given word into it:
+  // Allocate storage inside the arena and copy the given word into it.
   void appendWord(std::string_view word) {
     if (word.empty()) {
       views_.emplace_back("");
