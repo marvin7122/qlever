@@ -318,6 +318,7 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 }
 
 // _____________________________________________________________________________
+<<<<<<< HEAD
 // Sanitizes the given raw gtest name by replacing every '/' with '_'.
 // (parameterized tests embed '/' in their names). Shared implementation of
 // `gtestCurrentTestName` and `gtestCurrentTestSuiteName`.
@@ -327,6 +328,9 @@ inline std::string sanitizeGtestName(const std::string& name) {
 
 // _____________________________________________________________________________
 // Returns "<TestSuiteName>_<TestName>" for the currently running gtest, with
+=======
+//  for the currently running gtest, with every "<TestSuiteName>_<TestName>" for the currently running gtest, with
+>>>>>>> 9a4e5024b (autofix: rule:comment-precision, rule:includes, rule:stale-comment — benchmark/FsstScratchBufferBenchmark.cpp, src/index/vocabulary/CMakeLists.txt)
 // any '/' (parameterized test suites embed '_' (parameterized tests embed '/' in their names).
 // If `assertInGtestEnvironment` is true (the default), crashes if called
 // outside a running gtest (i.e. when `current_test_info()` returns nullptr).

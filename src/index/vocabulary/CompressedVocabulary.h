@@ -33,6 +33,7 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
+#include <string_view>
 
 namespace ad_utility::vocabulary {
 namespace detail {
