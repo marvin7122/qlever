@@ -456,7 +456,7 @@ class MarkerIndicesAndPositions {
   }
 
   // ___________________________________________________________________________
-  // Check if this marker has any pairs.
+
   [[nodiscard]] bool empty() const noexcept {
     return underlyingIndices_.empty();
   }
