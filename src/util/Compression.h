@@ -17,21 +17,20 @@
 
 namespace ad_utility {
 
-// Decompress a single word into `destination` using `decompress(span)`. The
-// caller guarantees that `decompress` writes at most `bound` bytes, so
-// `destination` must hold at least `bound` bytes (precondition), and at least
-// one byte (`bound > 0`, precondition): words with a zero upper bound carry no
-// payload, so callers register their empty views directly instead of routing
-// them through this helper. Writing zero bytes is still legitimate here:
-// e.g. the FSST decoder emits nothing for an empty stored word even when it
-// is invoked with a positive bound.
+// Decompress a single word into `destination` using `decompress(span)`. All
+// size values below are measured in bytes. The caller guarantees that
+// `decompress` writes at most `maxNumBytes` bytes, so `destination` must hold
+// at least `maxNumBytes` bytes. A zero upper bound is rejected because words
+// without payload are handled by callers without this helper. Writing zero
+// bytes remains valid when `maxNumBytes` is positive.
 template <typename DecompressFunc>
-std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
+std::string_view decompressIntoSpan(ql::span<char> destination,
+                                    size_t maxNumBytes,
                                     DecompressFunc&& decompress) {
-  AD_CONTRACT_CHECK(bound > 0);
-  AD_CONTRACT_CHECK(destination.size() >= bound);
+  AD_CONTRACT_CHECK(maxNumBytes > 0);
+  AD_CONTRACT_CHECK(destination.size() >= maxNumBytes);
   size_t bytesWritten = decompress(destination);
-  AD_CORRECTNESS_CHECK(bytesWritten <= bound);
+  AD_CORRECTNESS_CHECK(bytesWritten <= maxNumBytes);
   return std::string_view{destination.data(), bytesWritten};
 }
 

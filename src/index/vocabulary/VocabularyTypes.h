@@ -71,13 +71,9 @@ class VocabBatchLookupResult {
   [[nodiscard]] const std::string_view* data() const noexcept {
     return span_.data();
   }
-  [[nodiscard]] ql::span<const std::string_view> span() const noexcept {
-    return span_;
-  }
-  [[nodiscard]] const VocabBatchOwner& owner() const noexcept { return owner_; }
-
-  // Implicit conversion to VocabBatchOwner for storage tracking:
-  operator VocabBatchOwner() const noexcept { return owner_; }
+  // Storage ownership is intentionally private. Callers may access only the
+  // immutable range interface; builders and result assemblers propagate
+  // ownership internally.
 };
 
 // Type-erased input range of batches (each batch consists of a vector of
