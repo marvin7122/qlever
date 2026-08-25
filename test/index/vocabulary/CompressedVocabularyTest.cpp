@@ -130,7 +130,7 @@ struct CompressedVocabularyF : public testing::Test {
     return [](const std::vector<std::string>& words,
               std::string filename = gtestCurrentTestName()) {
       ad_utility::deleteFile(filename, false);
-      CompressedVocabulary<VocabularyInMemory, Compressor, 4> v;
+      CompressedVocabulary<VocabularyOnDisk, Compressor, 4> v;
       auto writerPtr = v.makeDiskWriterPtr(filename);
       writeWordsAndFinish(*writerPtr, words);
       v.open(filename);

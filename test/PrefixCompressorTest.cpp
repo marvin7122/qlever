@@ -91,6 +91,7 @@ TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
       ::testing::HasSubstr("out.size() >= maxDecompressedSize"));
 }
 
+// _____________________________________________________________________________
 TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
   PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alpha"});
