@@ -153,8 +153,6 @@ TYPED_TEST(CompressedVocabularyF, LowerUpperBoundNumeric) {
 }
 
 // _____________________________________________________________________________
-// Single-word access via `operator[]` must return exactly the stored word for
-// every index (and nullopt behavior stays with the underlying vocabulary).
 TYPED_TEST(CompressedVocabularyF, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(this->createCompressedVocabulary());
 }
