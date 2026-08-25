@@ -112,10 +112,13 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     };
     const size_t selectedStrategy =
         parseEnvironmentSize(std::getenv("FSST_SCRATCH_ONLY"), 3);
+    // Bound the benchmark workload even when configured through the environment.
+    constexpr size_t maxRepetitions = 1'000'000;
     const size_t repetitions = parseEnvironmentSize(
         std::getenv("FSST_SCRATCH_INNER_REPETITIONS"), 1);
     AD_CONTRACT_CHECK(selectedStrategy <= 3);
     AD_CONTRACT_CHECK(repetitions > 0);
+    AD_CONTRACT_CHECK(repetitions <= maxRepetitions);
 
     auto runDecodeMeasurement = [&](ql::span<char> output,
                                     ql::span<char> scratch) {
