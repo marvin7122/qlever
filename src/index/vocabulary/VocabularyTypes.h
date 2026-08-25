@@ -43,13 +43,17 @@ using VocabBatchOwner = std::shared_ptr<const void>;
 // _____________________________________________________________________________
 // Strong value type representing the result of a batch vocabulary lookup.
 // Holds a `span<const string_view>` and keeps the backing word storage alive
-// via an internal `VocabBatchOwner`. Acts as a standard C++ range/container.
+// via an internal `VocabBatchOwner`. Provides a read-only range interface over
+// the string views.
 class VocabBatchLookupResult {
  private:
   VocabBatchOwner owner_{};
   ql::span<const std::string_view> span_{};
 
  public:
+  // Construct an empty result. An empty result has no owner and no views.
+  VocabBatchLookupResult() noexcept = default;
+
   // Construct a batch lookup result with non-empty word views and an owning
   // pointer keeping the backing word storage alive.
   VocabBatchLookupResult(VocabBatchOwner owner,
@@ -59,7 +63,7 @@ class VocabBatchLookupResult {
     AD_CORRECTNESS_CHECK(owner_ != nullptr);
   }
 
-  // Container & Range Interface:
+  // Provide the container and range interface.
   [[nodiscard]] size_t size() const noexcept { return span_.size(); }
   [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
   [[nodiscard]] std::string_view operator[](size_t index) const {
