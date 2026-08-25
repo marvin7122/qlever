@@ -12,6 +12,7 @@
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "backports/algorithm.h"

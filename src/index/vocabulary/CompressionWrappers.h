@@ -114,7 +114,6 @@ struct DecoderMultiplexer {
                                            size_t decoderIndex) const {
     AD_CORRECTNESS_CHECK(decoderIndex < decoders_.size());
     const size_t bound = decoders_[decoderIndex].maxDecompressedSize(compressed);
-    AD_CORRECTNESS_CHECK(bound <= std::numeric_limits<size_t>::max());
     return bound;
   }
 
