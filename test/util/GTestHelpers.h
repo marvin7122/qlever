@@ -428,7 +428,8 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
 template <size_t NumBytes = 4096>
 [[gnu::noinline]] char clobberStack(char sentinel = '#') {
   // `volatile` prevents the compiler from optimizing the stack writes away.
-  volatile char buffer[NumBytes];
+  volatile static_assert(NumBytes > 0, "clobberStack requires a non-empty buffer");
+  char buffer[NumBytes];
   for (size_t i = 0; i < NumBytes; ++i) {
     buffer[i] = sentinel;
   }
@@ -439,7 +440,7 @@ template <size_t NumBytes = 4096>
 }
 
 // _____________________________________________________________________________
-// Returns the name of the currently running test suite, with any '/' replaced
+// Return the name of the currently running test suite, with any '/' replaced
 // by '_' (parameterized test suites embed '/' in their names).
 // Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
 // test.
@@ -450,10 +451,7 @@ inline std::string gtestCurrentTestSuiteName(
   if (assertInGtestEnvironment) {
     AD_CORRECTNESS_CHECK(testSuite != nullptr);
   }
-  if (testSuite == nullptr) {
-    return "";
-  }
-  return sanitizeGtestName(testSuite->name());
+  return testSuite == nullptr ? "" : sanitizeGtestName(testSuite->name());
 }
 
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H
