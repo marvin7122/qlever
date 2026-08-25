@@ -151,8 +151,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     };
     auto addStageAwareUninitializedScratch = [&] {
       group.addMeasurement("stage-aware uninitialized scratch", [&] {
-        auto output = std::unique_ptr<char[]>{new char[outputCapacity_]};
-        auto scratch = std::unique_ptr<char[]>{new char[intermediateCapacity_]};
+        auto output = std::make_unique<char[]>(outputCapacity_);
+        auto scratch = std::make_unique<char[]>(intermediateCapacity_);
         return runDecodeMeasurement({output.get(), outputCapacity_},
                                     {scratch.get(), intermediateCapacity_});
       });
