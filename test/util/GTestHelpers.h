@@ -428,7 +428,7 @@ template <size_t NumBytes = 4096>
 [[gnu::noinline]] char clobberStack(char sentinel = '#') {
   // `volatile` prevents the compiler from optimizing the stack writes away.
   static_assert(NumBytes > 0, "clobberStack requires a non-empty buffer");
-  char buffer[NumBytes];
+  volatile char buffer[NumBytes];
   for (size_t i = 0; i < NumBytes; ++i) {
     buffer[i] = sentinel;
   }
