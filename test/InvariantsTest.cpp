@@ -10,6 +10,10 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
 #include "util/Exception.h"
 #include "util/GTestHelpers.h"
 #include "util/Invariants.h"
