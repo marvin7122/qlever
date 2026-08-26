@@ -36,11 +36,14 @@ struct IndexPartition {
   MarkerIndicesAndPositions diskSlots_;
 };
 
+// _____________________________________________________________________________
+// _____________________________________________________________________________
 static IndexPartition partitionIndicesBySource(
     ql::span<const size_t> indices,
     const VocabularyInMemoryBinSearch& internalVocab) {
   IndexPartition result;
   result.internalSlots_.reserve(indices.size());
+  result.diskSlots_.reserve(indices.size());
 
   for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
     const auto& fromInternal = internalVocab[idx];
@@ -53,6 +56,7 @@ static IndexPartition partitionIndicesBySource(
   return result;
 }
 
+// _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
