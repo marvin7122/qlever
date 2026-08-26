@@ -52,12 +52,14 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
  private:
   // Model a fixed three-stage repeated-FSST decode pipeline.
   static constexpr size_t numberOfStages = 3;
-  // Keep views into the compressed strings retained by decoderStorage_.
+  // Keep views into the compressed strings retained by `decoderStorage_`.
   std::vector<std::string_view> compressed_;
-  // Retain one decoder for each stage of the repeated pipeline.
   std::array<FsstDecoder, numberOfStages> decoders_;
+  // Retain ownership of the compressed strings for the lifetime of the views in `compressed_`.
   std::vector<std::shared_ptr<std::string>> decoderStorage_;
+  // Maximum fully decompressed size across the benchmark inputs; sizes the final output buffer.
   size_t outputCapacity_ = 0;
+  // Bound required for intermediate repeated-FSST stages, avoiding a full-size scratch allocation.
   size_t intermediateCapacity_ = 0;
 
  public:
@@ -101,9 +103,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
     const auto parseEnvironmentSize = [](const char* value,
                                           size_t defaultValue) {
-      if (value == nullptr) {
-        return defaultValue;
-      }
+      if (value == nullptr) return defaultValue;
       errno = 0;
       char* end = nullptr;
       const unsigned long parsed = std::strtoul(value, &end, 10);
