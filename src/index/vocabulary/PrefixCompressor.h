@@ -107,9 +107,6 @@ class PrefixCompressor {
   [[nodiscard]] size_t maxDecompressedSize(
       std::string_view compressedWord) const {
     AD_CONTRACT_CHECK(!compressedWord.empty());
-    if (compressedWord.empty()) {
-      return 0;
-    }
     const auto idx = prefixIndex(compressedWord);
     const size_t rest = compressedWord.size() - 1;
 

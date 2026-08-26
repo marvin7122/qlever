@@ -109,8 +109,9 @@ CPP_template(typename UnderlyingVocabulary,
   // end. Decode the words via `decompressInto` into one reusable buffer
   // owned by the transformation. The buffer grows as needed to accommodate
   // the largest bound seen so far, and each word is decoded into a span of
-  // `maxDecompressedSize` bytes; yielded `string_view`s are only valid until
-  // the next element is pulled from the range.
+  // `maxDecompressedSize` bytes. The transformation returns an owning
+  // `std::string` in each `IndexAndWord`, so returned words remain valid
+  // independently of subsequent range elements.
   auto scanAll() const {
     return ad_utility::CachingTransformInputRange(
         underlyingVocabulary_.scanAll(),
