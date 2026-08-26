@@ -22,6 +22,7 @@
 
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
+#include "backports/span.h"
 
 namespace ad_utility::vocabulary {
 
