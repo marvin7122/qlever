@@ -15,12 +15,12 @@
 #include <array>
 #include <cstring>
 #include <optional>
+#include <utility>
 
 #include "../../util/GTestHelpers.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/File.h"
-#include <utility>
 
 namespace {
 // _____________________________________________________________________________
