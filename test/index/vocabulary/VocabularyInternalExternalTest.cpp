@@ -1,12 +1,6 @@
-// Copyright 2024 - 2026, The QLever Authors, in particular:
-//
-// 2024 - 2026 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
-// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
-//
-// UFR = University of Freiburg, Chair of Algorithms and Data Structures
-//
-// You may not use this file except in compliance with the Apache 2.0 License,
-// which can be found in the `LICENSE` file at the root of the QLever project.
+// Copyright 2024, University of Freiburg,
+// Chair of Algorithms and Data Structures.
+// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
 
 #include <gtest/gtest.h>
 
@@ -122,7 +116,6 @@ TEST(VocabularyInternalExternal, AccessOperator) {
 }
 
 // _____________________________________________________________________________
-// Ensure that batch lookup matches `operator[]` in request order, including cache hits, misses, reordered indices, and duplicates.
 TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
                                        "epsilon"};
@@ -135,8 +128,7 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
 
-  // The test writer stores words with even IDs in the RAM cache; words with odd IDs are read from disk.
-  // Use the test writer's RAM cache for even IDs; read odd IDs from disk.
+  // Use the test writer's RAM cache for even IDs and read odd IDs from disk.
   const std::array<size_t, 3> ramOnly{0, 2, 4};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(ramOnly), ramOnly);

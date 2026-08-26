@@ -150,6 +150,8 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
   const std::array<size_t, 1> missingIndex{2};
 
   EXPECT_THROW(vocab.lookupBatch(missingIndex), ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
+                               ::testing::HasSubstr("!indices.empty()"));
 }
 
 TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsEmptyBatch) {
