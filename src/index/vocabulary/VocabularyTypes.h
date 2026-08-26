@@ -59,7 +59,7 @@ class VocabBatchLookupResult {
   ql::span<const std::string_view> span_{};
 
  public:
-  // Construct an empty result. An empty result has no owner and no views.
+
   VocabBatchLookupResult() = default;
 
   // Construct a batch lookup result with an owning pointer keeping the
