@@ -105,7 +105,6 @@ TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
 }
 
 // _____________________________________________________________________________
-// Verify that scattering multiple batch results retains their backing storage.
 TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   auto first = makeStringVectorVocabBatchLookupResult({"apple", "banana"});
   auto second = makeStringVectorVocabBatchLookupResult({"cherry"});
@@ -121,8 +120,6 @@ TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
 }
 
 // _____________________________________________________________________________
-// Verify that keeping child batches alive preserves their original string
-// storage.
 TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
   auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
   auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
