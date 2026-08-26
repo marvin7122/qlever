@@ -111,8 +111,6 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
             5u);
   EXPECT_EQ(output, "alpha");
 
-  // Cover contract checks in `DecompressIntoMatchesDecompress`.
-
 }
 
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {

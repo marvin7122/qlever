@@ -20,11 +20,14 @@
 
 namespace {
 
+// _____________________________________________________________________________
 // Define a mock stateful class that counts invocations of `checkInvariants()`.
 class MockInvariantClass
     : public ad_utility::WithInvariants<MockInvariantClass> {
  public:
+  // Counts invariant-check invocations; mutable for use in checkInvariants() const.
   mutable size_t checkCount_{0};
+  // Test control state used to simulate violated entry or exit invariants.
   bool failInvariants_{false};
 
   void checkInvariants() const {
@@ -43,6 +46,7 @@ class MockInvariantClass
   }
 };
 
+// _____________________________________________________________________________
 // Define a class that lacks `checkInvariants() const` to verify concept failure.
 struct ClassWithoutInvariants {};
 
@@ -98,7 +102,6 @@ TEST(InvariantsTest, GuardRejectsNullInstanceOnConstruction) {
       ::testing::HasSubstr("self_ != nullptr"));
 }
 
-// Verify that the exit check is skipped while the guarded scope is unwinding.
 TEST(InvariantsTest, InvariantGuardSkipsExitCheckDuringExceptionUnwinding) {
   MockInvariantClass instance;
 
@@ -112,7 +115,6 @@ TEST(InvariantsTest, InvariantGuardSkipsExitCheckDuringExceptionUnwinding) {
   EXPECT_EQ(instance.checkCount_, 1u);
 }
 
-// Verify at compile time that a guard cannot be created from a temporary.
 template <typename T, typename = void>
 struct HasRvalueInvariantGuard : std::false_type {};
 
