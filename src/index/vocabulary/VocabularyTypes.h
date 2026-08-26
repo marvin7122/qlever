@@ -159,7 +159,7 @@ class ContiguousVocabBatchBuilder {
 
   // Return the precomputed destination for each requested word. The pointer at
   // index i corresponds to the size supplied at index i to the constructor.
-  // The pointers refer to the builder's backing character buffer and must only
+  // The pointers refer to the builder's backing character buffer for non-empty words; zero-sized words use the shared static empty-word sentinel and must only
   // be used while the builder and its backing storage remain valid; do not use
   // them after the builder has been finalized or destroyed.
   [[nodiscard]] ql::span<char*> targets() noexcept { return targets_; }
