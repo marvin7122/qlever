@@ -12,10 +12,12 @@
 #define QLEVER_PREFIXCOMPRESSOR_H
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
@@ -26,7 +28,6 @@
 #include "util/Serializer/SerializeArrayOrTuple.h"
 #include "util/Serializer/SerializeVector.h"
 #include "util/StringUtils.h"
-#include <limits>
 #include <cstdint>
 
 // TODO<joka921> Include the relevant constants directly here.
@@ -125,9 +126,6 @@ class PrefixCompressor {
   [[nodiscard]] size_t decompressInto(std::string_view compressedWord,
                                       ql::span<char> out) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(compressedWord));
-    if (compressedWord.empty()) {
-      return 0;
-    }
 
     const auto idx = prefixIndex(compressedWord);
     const std::string_view rest = compressedWord.substr(1);
