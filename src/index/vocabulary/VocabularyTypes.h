@@ -551,7 +551,7 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
   size_t totalPositions = 0;
   for (const auto& markerIndices : markerIndicesAndPositions) {
     AD_CONTRACT_CHECK(markerIndices.size() <= SIZE_MAX - totalPositions);
-totalPositions += markerIndices.size();
+      totalPositions += markerIndices.size();
   }
   MultiSourceVocabBatchAssembler assembler(totalPositions);
 
