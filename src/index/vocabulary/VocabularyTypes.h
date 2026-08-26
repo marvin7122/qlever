@@ -91,7 +91,6 @@ class VocabBatchLookupResult {
   // Stored views and backing bytes are not exposed for mutation. Callers may
   // inspect the immutable range and may retrieve the shared ownership token
   // through owner() when an assembler must preserve the result lifetime.
-  [[nodiscard]] VocabBatchOwner owner() const noexcept { return owner_; }
 };
 
 // Type-erased input range of batches (each batch consists of a vector of
