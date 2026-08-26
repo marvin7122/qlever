@@ -8,6 +8,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <array>
+
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
@@ -125,11 +127,11 @@ struct CompressedVocabularyF : public testing::Test {
     return [](const std::vector<std::string>& words,
               std::string filename = gtestCurrentTestName()) {
       ad_utility::deleteFile(filename, false);
-      CompressedVocabulary<VocabularyOnDisk, Compressor, 4> v;
-      auto writerPtr = v.makeDiskWriterPtr(filename);
+      CompressedVocabulary<VocabularyOnDisk, Compressor, 4> vocab;
+      auto writerPtr = vocab.makeDiskWriterPtr(filename);
       writeWordsAndFinish(*writerPtr, words);
-      v.open(filename);
-      return v;
+      vocab.open(filename);
+      return vocab;
     };
   }
 };
