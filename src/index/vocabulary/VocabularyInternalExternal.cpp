@@ -79,15 +79,17 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // sources.
   MultiSourceVocabBatchAssembler assembler(indices.size());
 
-  // 1. Look up internal hits and move their sub-result, including its backing
-  // storage, into the assembler at the original request positions.
+  // 1. Pass the internal sub-result to the assembler, which takes ownership of
+  // the result data so its string views remain valid, and place the values at
+  // their original request positions.
   auto internal = internalVocab_.lookupBatch(
       partition.internalSlots_.getUnderlyingIndices());
   assembler.scatterSubBatchResultAtPositions(
       std::move(internal), partition.internalSlots_.getResultPositions());
 
-  // 2. Move the disk sub-result into the assembler at the original request
-  // positions, preserving the backing storage for its returned string views.
+  // 2. Pass the external sub-result to the assembler and retain its result data
+  // so the returned string views remain valid, placing the values at their
+  // original request positions.
   auto disk =
       externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
   assembler.scatterSubBatchResultAtPositions(
