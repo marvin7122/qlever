@@ -75,7 +75,7 @@ const VocabularyType geoSplitVocabType{
 
 // _____________________________________________________________________________
 TEST(Vocabulary, SplitGeoVocab) {
-  // Test check: Is a geo literal?
+   partitioning and result merging directly.check: Is a geo literal?
   ASSERT_EQ(SGV::getMarkerForWord(
                 "\"POLYGON((1 2, 3 4))\""
                 "^^<http://www.opengis.net/ont/geosparql#wktLiteral>"),
@@ -516,7 +516,7 @@ using namespace splitVocabTestHelpers;
 
 // Share common SplitVocabulary setup across multiple tests.
 // Populates the vocabulary once per test suite with:
-//    Populates marker 0 with index 0: "" and index 1: "abc"; marker 1 with index 0: "xyz" and index 1: "axyz".
+//     and index 1: "" and index 1: "abc"; marker 1 with index 0: "xyz" and index 1: "axyz".
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:

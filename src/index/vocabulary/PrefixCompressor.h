@@ -27,6 +27,7 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/StringUtils.h"
 #include <limits>
+#include <cstdint>
 
 // TODO<joka921> Include the relevant constants directly here.
 
@@ -94,7 +95,7 @@ class PrefixCompressor {
     if (leadingByte >= MIN_COMPRESSION_PREFIX &&
         leadingByte < MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES) {
       const size_t index = leadingByte - MIN_COMPRESSION_PREFIX;
-      // The surrounding range check establishes that index is a valid prefix code.
+      //  is a valid prefix code.index is a valid prefix code.
       return index;
     }
 

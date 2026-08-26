@@ -155,7 +155,7 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
 }
 
 // _____________________________________________________________________________
-// Ensure that batch lookup results from `VocabularyInternalExternal` retain valid storage after `close()`. must retain valid storage after `close()`.
+//  retain valid storage after `VocabularyInternalExternal` retain valid storage after `close()`. must retain valid storage after `close()`.
 TEST(VocabularyInternalExternal, LookupBatchOutlivesClose) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
   auto vocab = createVocabulary("LookupBatchOutlivesClose")(words);

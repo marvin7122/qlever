@@ -307,7 +307,7 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 //    verify content byte-for-byte, which makes corruption overwhelmingly
 //    likely but not formally guaranteed.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
-  // Platform premise:  uses...`std::pmr::string` would indeed
+  //  verifies that this platform uses...`std::pmr::string` would indeed
   // use the Small String Optimization (SSO), so short words would end up
   // inside a destroyed stack object rather than the arena.
   requirePmrStringInlineStorage(15);
