@@ -50,6 +50,7 @@ CPP_template(typename T)(
   }
 
   ~InvariantGuard() noexcept(false) {
+    AD_CORRECTNESS_CHECK(self_ != nullptr);
     if (std::uncaught_exceptions() <= uncaughtExceptionsAtConstruction_) {
       self_->checkInvariants();
     }
