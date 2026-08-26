@@ -15,8 +15,9 @@
 #include <utility>
 
 #include "backports/concepts.h"
-#include "util/Exception.h"
 #include <cstddef>
+
+#include "util/Exception.h"
 
 namespace ql {
 
