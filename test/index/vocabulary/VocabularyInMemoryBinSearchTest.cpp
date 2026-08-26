@@ -152,6 +152,14 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
   EXPECT_THROW(vocab.lookupBatch(missingIndex), ad_utility::Exception);
 }
 
+TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsEmptyBatch) {
+  auto vocab = createVocabulary("LookupBatchRejectsEmptyBatch")(
+      std::vector<std::string>{"alpha", "beta"});
+  const std::array<size_t, 0> indices{};
+
+  EXPECT_THROW(vocab.lookupBatch(indices), ad_utility::Exception);
+}
+
 TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
   VocabBatchLookupResult result;
   {
