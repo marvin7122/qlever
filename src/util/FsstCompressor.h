@@ -60,11 +60,14 @@ CPP_template(typename Decode)(
     return {};
   }
   std::string result;
+  size_t bytesWritten = 0;
   ql::resize_and_overwrite(result, bound, [&](char* buf, size_t count) {
-    const size_t bytesWritten = decode(ql::span<char>{buf, count});
+    bytesWritten = decode(ql::span<char>{buf, count});
     AD_CONTRACT_CHECK(bytesWritten <= bound);
     return bytesWritten;
   });
+  AD_CORRECTNESS_CHECK(result.size() <= bound);
+  AD_CORRECTNESS_CHECK(result.size() == bytesWritten);
   return result;
 }
 }  // namespace detail
