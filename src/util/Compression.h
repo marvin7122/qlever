@@ -18,14 +18,7 @@
 
 namespace ad_utility {
 
-// Decompress a single word into `destination` using `decompress(span)`. All
-// size values below are measured in bytes. The caller guarantees that
-// `decompress` writes at most `maxNumBytes` bytes, so `destination` must hold
-// at least `maxNumBytes` bytes. A zero upper bound is rejected because words
-// without payload are handled by callers without this helper. Writing zero
-// bytes remains valid when `maxNumBytes` is positive.
-// No generic decompression helper is provided until it has a concrete caller
-// and a repository-level ownership contract.
+// Compression functionality is intentionally not declared in this header.
 
 }  // namespace ad_utility
 
