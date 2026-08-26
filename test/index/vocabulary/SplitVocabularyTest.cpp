@@ -164,7 +164,7 @@ TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   ASSERT_EQ(sv[1], "\"xyz\"");
   ASSERT_EQ(sv[(1ULL << 59) | 1], "\"axyz\"");
 
-  // Test access to and content of the underlying vocabs
+  // Test access to and the content of the underlying vocabularies.
   std::visit(
       [](auto& vocab) {
         ASSERT_EQ(vocab.size(), 2);
