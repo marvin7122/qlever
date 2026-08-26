@@ -272,7 +272,7 @@ template <typename DecompressFunc>
 std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
                                     DecompressFunc&& decompress) {
   if (bound == 0) {
-    return std::string_view{"", size_t{0}};
+    return {};
   }
   AD_CORRECTNESS_CHECK(destination.size() >= bound);
   const size_t bytesWritten =
