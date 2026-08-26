@@ -96,7 +96,7 @@ class PrefixCompressor {
     if (leadingByte >= MIN_COMPRESSION_PREFIX &&
         leadingByte < MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES) {
       const size_t index = leadingByte - MIN_COMPRESSION_PREFIX;
-      //  is a valid prefix code.index is a valid prefix code.
+      // The surrounding range check establishes that `index` is a valid prefix code.
       return index;
     }
 
