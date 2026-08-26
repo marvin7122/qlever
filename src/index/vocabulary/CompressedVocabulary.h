@@ -95,6 +95,14 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   //____________________________________________________________________________
+  // Resource sketch: this hot path performs one decompression per vocabulary
+  // entry and reuses the decode and scratch buffers. It retains only the
+  // current decoded word, but the owning IndexAndWord conversion performs one
+  // allocation and copy per result. CPU and allocation costs are proportional
+  // to the decoded payload; compressed-word I/O remains delegated to the
+  // underlying vocabulary. Validate CPU, peak memory, disk, and network
+  // effects with the CompressedVocabulary.scanAll benchmark before changing
+  // this path.
   // Wrap the underlying vocabulary's `scanAll` (which reads the compressed
   // words in batches) and decompress each word. `scanAll()` is expected to
   // yield `IndexAndWord` elements, so we have to apply a transformation at the
@@ -122,11 +130,13 @@ CPP_template(typename UnderlyingVocabulary,
                                    return compressionWrapper_.decompressInto(
                                        word, decoderIdx, span, scratch);
                                  });
-          return IndexAndWord{index, std::string{decompressed}};
+          return IndexAndWord{index, decompressed};
         });
   }
 
   //____________________________________________________________________________
+  // TODO: Compact or tail-trim the PMR arena allocations so batch memory
+  // tracks decoded payload sizes rather than maxDecompressedSize bounds.
   // Batch-read the compressed words from the underlying vocabulary, then
   // decompress each word with the decoder of its block into memory owned by the
   // returned result. Unlike `sequentialLookupBatch` (still used by
