@@ -76,8 +76,7 @@ TEST(VocabularyTypes, verifyWordWriterBaseDestructorBehavesAsExpected) {
 }
 
 // _____________________________________________________________________________
-// Verify that a contiguous batch builder allocates storage, writes targets,
-// and produces a valid, self-contained batch result.
+
 TEST(VocabBatchLookupData, ContiguousBuilderExposesViewsAndKeepsDataAlive) {
   const std::array<size_t, 2> sizes{3, 3};
   ContiguousVocabBatchBuilder builder(sizes);
@@ -90,14 +89,14 @@ TEST(VocabBatchLookupData, ContiguousBuilderExposesViewsAndKeepsDataAlive) {
 }
 
 // _____________________________________________________________________________
-// Empty contiguous batches are rejected because a batch must contain words.
+
 TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
   AD_EXPECT_THROW_WITH_MESSAGE(ContiguousVocabBatchBuilder({}),
                                ::testing::HasSubstr("!wordSizes.empty()"));
 }
 
 // _____________________________________________________________________________
-// Verify that an owning string batch exposes all input words as valid views.
+
 TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
   auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
 
