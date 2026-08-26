@@ -139,8 +139,10 @@ add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
 
-# GTestHelpersTest is registered once with addLinkAndDiscoverTestNoLibs below.
-# InvariantsTest is registered exactly once with addLinkAndDiscoverTestNoLibs.
+
+.
+
+.
 
 addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
