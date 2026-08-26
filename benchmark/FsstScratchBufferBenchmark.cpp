@@ -44,7 +44,7 @@ size_t decodeRepeated(const std::array<FsstDecoder, N>& decoders,
     input = {buffers[destination].data(), bytesWritten};
     destination ^= 1;
   }
-  AD_CONTRACT_CHECK(bytesWritten <= output.size() || bytesWritten <= scratch.size());
+  AD_CONTRACT_CHECK(bytesWritten <= output.size());
   return bytesWritten;
 }
 
