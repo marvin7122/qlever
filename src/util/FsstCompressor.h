@@ -285,7 +285,7 @@ class FsstEncoder {
   }
 
   // ___________________________________________________________________________
-  // Return a decoder for strings compressed by this encoder.
+  // Compress all input strings using a codebook built from those strings and return the compressed strings and decoder.
   // compressed by this encoder.
   FsstDecoder makeDecoder() const {
     return FsstDecoder{fsst_decoder(encoder_.get())};

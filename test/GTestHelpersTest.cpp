@@ -84,8 +84,7 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, ClobberStack) {
-  // Verify that the helper writes the given sentinel to the stack and reads it
-  // back through a volatile access.
+  // Verify that the helper returns the supplied sentinel value.
   EXPECT_EQ(clobberStack<512>('X'), 'X');
   EXPECT_EQ(clobberStack<4096>('#'), '#');
 }
