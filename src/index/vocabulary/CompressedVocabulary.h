@@ -30,6 +30,7 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
+
 namespace detail {
 
 template <typename Vocabulary, typename Iterator>
@@ -96,7 +97,7 @@ CPP_template(typename UnderlyingVocabulary,
 
   //____________________________________________________________________________
   // Resource sketch: this hot path performs one decompression per vocabulary
-  // entry and It reuses a decoded-output buffer and a scratch buffer across elements.. It retains only the
+  // entry and reuse a decoded-output buffer and a scratch buffer across elements. Retain only the
   // current decoded word, but the owning IndexAndWord conversion performs one
   // allocation and copy per result. CPU and allocation costs are proportional
   // to the decoded payload; compressed-word I/O remains delegated to the
