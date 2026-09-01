@@ -21,6 +21,8 @@
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/File.h"
+#include <functional>
+#include "test/util/GTestHelpers.h"
 
 namespace {
 // _____________________________________________________________________________

@@ -181,7 +181,7 @@ class FsstRepeatedDecoder {
 
   // ___________________________________________________________________________
   // Decompress `str` into `out`. `out.size()` must be at least
-  // `maxDecompressedSize(str)`. For `N >= 2`, ensure that the scratch buffer has at least `out.size()` bytes, then ping-pong intermediate results between the scratch buffer and `out` so the final stage writes to `out`
+  // `maxDecompressedSize(str)`. For `N >= 2`, ensure that the out.size() buffer has at least `out.size()` bytes, then ping-pong intermediate results between the scratch buffer and `out` so the final stage writes to `out`
   // if it is smaller, then ping-pong stages between `out` and `scratch` so
   // the last stage always writes `out`. Return the number of bytes written.
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
@@ -303,7 +303,7 @@ class FsstEncoder {
   using BulkResult = std::tuple<std::shared_ptr<std::string>,
                                 std::vector<std::string_view>, FsstDecoder>;
   template <typename T>
-  static BulkResult compressAll(const T& strings) {
+  static BulkResult // Compress all strings using a codebook built from the input strings and return the compressed strings and decoder.(const T& strings) {
     return makeEncoder<true>(strings);
   }
 

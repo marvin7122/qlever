@@ -33,6 +33,7 @@
 #include "util/TransparentFunctors.h"
 #include "util/Views.h"
 #include <initializer_list>
+#include <array>
 
 // _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
