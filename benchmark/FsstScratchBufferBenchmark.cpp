@@ -92,7 +92,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
           outputCapacity_,
           FsstRepeatedDecoder<numberOfStages>::maxDecompressedSize(compressed));
     }
-    intermediateCapacity_ = outputCapacity_ / FsstDecoder::maxExpansionFactor;
+    intermediateCapacity_ = outputCapacity_;
   }
 
   std::string name() const final { return "FSST scratch buffer strategies"; }
@@ -103,7 +103,9 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
     const auto parseEnvironmentSize = [](const char* value,
                                           size_t defaultValue) {
-      if (value == nullptr) return defaultValue;
+      if (value == nullptr) {
+        return defaultValue;
+      }
       errno = 0;
       char* end = nullptr;
       const unsigned long parsed = std::strtoul(value, &end, 10);
