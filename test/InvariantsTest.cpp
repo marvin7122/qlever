@@ -27,7 +27,7 @@ class MockInvariantClass
  public:
   // Count invariant-check invocations; keep this member `mutable` for use in `checkInvariants() const`.
   mutable size_t checkCount_{0};
-  // Test control state used to simulate violated entry or exit invariants.
+  // Use this test control state to simulate violated entry or exit invariants.
   bool failInvariants_{false};
 
   void checkInvariants() const {
@@ -50,7 +50,7 @@ class MockInvariantClass
 // Define a class that lacks `checkInvariants() const` to verify concept failure.
 struct ClassWithoutInvariants {};
 
-//  concept for supported and unsupported types.invariant-stateful-class concept for supported and unsupported types.
+// Check the `InvariantStatefulClass` concept for supported and unsupported types.
 static_assert(ad_utility::InvariantStatefulClass<MockInvariantClass>);
 static_assert(!ad_utility::InvariantStatefulClass<ClassWithoutInvariants>);
 

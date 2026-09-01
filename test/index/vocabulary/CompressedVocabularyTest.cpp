@@ -23,7 +23,6 @@
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/Exception.h"
 #include "util/Serializer/ByteBufferSerializer.h"
-#include <array>
 
 namespace {
 
