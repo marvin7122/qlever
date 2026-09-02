@@ -1,6 +1,12 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (kalmbach@cs.uni-freiburg.de)
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINTERNALEXTERNAL_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINTERNALEXTERNAL_H
@@ -55,40 +61,9 @@ class VocabularyInternalExternal {
   auto scanAll() const { return externalVocab_.scanAll(); }
 
   //____________________________________________________________________________
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    AD_CONTRACT_CHECK(!indices.empty());
-    // Serve every index from the in-RAM vocabulary when present; batch all
-    // remaining indices into a single lookup on the external (on-disk)
-    // vocabulary, which serves them from its io_uring ring pool. Results keep
-    // input order, exactly like sequential single lookups.
-    auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-    data->buffer().resize(indices.size());
-    std::vector<size_t> missPositions;
-    std::vector<size_t> missIndices;
-    missPositions.reserve(indices.size());
-    missIndices.reserve(indices.size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-      if (auto hit = internalVocab_[indices[i]]; hit.has_value()) {
-        data->buffer()[i] = std::string{hit.value()};
-      } else {
-        missPositions.push_back(i);
-        missIndices.push_back(indices[i]);
-      }
-    }
-    if (!missIndices.empty()) {
-      auto external = externalVocab_.lookupBatch(missIndices);
-      for (size_t m = 0; m < missIndices.size(); ++m) {
-        data->buffer()[missPositions[m]] = std::string{(*external)[m]};
-      }
-    }
-    // Build the views after the buffer is complete, so no reallocation can
-    // move the bytes the views point into.
-    data->views().reserve(data->buffer().size());
-    for (const auto& word : data->buffer()) {
-      data->views().emplace_back(word);
-    }
-    return StringVectorVocabBatchLookupData::asResult(std::move(data));
-  }
+  // Look up words for `indices` in a batch, returning string views in request
+  // order. `indices` must not be empty.
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {
