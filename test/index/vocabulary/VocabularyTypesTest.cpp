@@ -256,10 +256,13 @@ TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
-  ArenaVocabBatchBuilder builder(2);
-  builder.appendWord("one");
-  builder.appendWord("two");
-  auto result = std::move(builder).finalize();
+  VocabBatchLookupResult result;
+  {
+    ArenaVocabBatchBuilder builder(2);
+    builder.appendWord("one");
+    builder.appendWord("two");
+    result = std::move(builder).finalize();
+  }
   EXPECT_THAT(result, ::testing::ElementsAre("one", "two"));
 }
 
