@@ -88,6 +88,68 @@ class WithInvariants {
   [[nodiscard]] auto makeInvariantGuard() const&& = delete;
 };
 
+// _____________________________________________________________________________
+// C++26 Contracts emulation: Preconditions, Postconditions, and Assertions.
+//
+// In native C++26 (P2900 / GCC 16+), `pre(...)`, `post(...)`, and
+// `contract_assert(...)` are first-class language keywords on function
+// declarations and bodies. In C++20, we emulate them at the top of function
+// bodies:
+// - `QL_PRE(cond)`: Checks the precondition immediately upon entry.
+// - `QL_CONTRACT_ASSERT(cond)`: Checks internal contract assertions at specific checkpoints.
+// - `QL_POST(predicate)`: Registers an RAII scope-exit check that verifies the
+//   predicate automatically upon normal function exit, while safely bypassing the check
+//   if the scope is exiting due to stack unwinding from an in-flight exception.
+
+namespace detail {
+
+template <typename Predicate>
+class PostconditionGuard {
+ private:
+  Predicate predicate_;
+  int uncaughtExceptionsAtConstruction_;
+
+ public:
+  explicit PostconditionGuard(Predicate&& predicate)
+      : predicate_{std::forward<Predicate>(predicate)},
+        uncaughtExceptionsAtConstruction_{std::uncaught_exceptions()} {}
+
+  ~PostconditionGuard() noexcept(false) {
+    if (std::uncaught_exceptions() <= uncaughtExceptionsAtConstruction_) {
+      AD_CONTRACT_CHECK(predicate_());
+    }
+  }
+
+  PostconditionGuard(const PostconditionGuard&) = delete;
+  PostconditionGuard& operator=(const PostconditionGuard&) = delete;
+  PostconditionGuard(PostconditionGuard&&) = delete;
+  PostconditionGuard& operator=(PostconditionGuard&&) = delete;
+};
+
+template <typename Predicate>
+[[nodiscard]] auto makePostconditionGuard(Predicate&& predicate) {
+  return PostconditionGuard<std::decay_t<Predicate>>{
+      std::forward<Predicate>(predicate)};
+}
+
+}  // namespace detail
+
 }  // namespace ad_utility
+
+#define QLEVER_CONCAT_IMPL(a, b) a##b
+#define QLEVER_CONCAT(a, b) QLEVER_CONCAT_IMPL(a, b)
+
+// Precondition check: evaluated immediately upon execution.
+#define QL_PRE(condition) AD_CONTRACT_CHECK(condition)
+
+// Internal contract assertion: evaluated immediately at the checkpoint.
+#define QL_CONTRACT_ASSERT(condition) AD_CONTRACT_CHECK(condition)
+
+// Postcondition check: registered at function entry and evaluated upon normal scope exit.
+#define QL_POST(...)                                                           \
+  auto QLEVER_CONCAT(ql_postcondition_guard_, __LINE__) =                      \
+      ::ad_utility::detail::makePostconditionGuard([&]() -> bool {             \
+        return static_cast<bool>(__VA_ARGS__);                                 \
+      })
 
 #endif  // QLEVER_SRC_UTIL_INVARIANTS_H
