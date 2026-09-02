@@ -18,7 +18,7 @@
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "../benchmark/infrastructure/BenchmarkMeasurementContainer.h"
 #include "../benchmark/infrastructure/BenchmarkMetadata.h"
-#include "engine/export_prototypes/AsyncChunkPipeline.h"
+#include "engine/AsyncChunkPipeline.h"
 #include "util/Exception.h"
 #include "util/Log.h"
 #include "util/Random.h"
@@ -286,6 +286,6 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
 };
 
 // Register the benchmark with the QLever benchmark infrastructure.
-AD_BENCHMARK_REGISTER(std::make_unique<ChunkStreamingBenchmark>());
+AD_REGISTER_BENCHMARK(ChunkStreamingBenchmark);
 
 }  // namespace ad_benchmark
