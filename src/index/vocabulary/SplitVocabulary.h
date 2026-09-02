@@ -24,8 +24,6 @@
 #include <variant>
 #include <vector>
 
-#include <range/v3/view/enumerate.hpp>
-
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
 #include "backports/functional.h"
