@@ -23,7 +23,6 @@
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/Exception.h"
 #include "util/Serializer/ByteBufferSerializer.h"
-#include <array>
 
 namespace {
 
@@ -309,9 +308,9 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 //    verify content byte-for-byte, which makes corruption overwhelmingly
 //    likely but not formally guaranteed.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
-  //  verifies that this platform uses...`std::pmr::string` would indeed
-  // use the Small String Optimization (SSO), so short words would end up
-  // inside a destroyed stack object rather than the arena.
+  // Verify that this platform uses inline storage for `std::pmr::string`;
+  // short words therefore use the Small String Optimization (SSO) and would
+  // otherwise end up inside a destroyed stack object rather than the arena.
   requirePmrStringInlineStorage(15);
 
   // All words deliberately short (<= 15 chars): every one takes the SSO
@@ -496,15 +495,14 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
   // Out-of-range decoder indices must be rejected for all dispatching
   // methods rather than silently reading out of bounds.
   const size_t invalidIndex = mux.numDecoders();
-  AD_EXPECT_THROW_WITH_MESSAGE(
+  EXPECT_THROW(
       static_cast<void>(mux.maxDecompressedSize(compressed, invalidIndex)),
-      ::testing::HasSubstr("vector::_M_range_check"));
-  AD_EXPECT_THROW_WITH_MESSAGE(
+      std::out_of_range);
+  EXPECT_THROW(
       static_cast<void>(mux.decompressInto(
           compressed, invalidIndex,
           ql::span<char>{outputBuffer.data(), outputBuffer.size()}, scratch)),
-      ::testing::HasSubstr("vector::_M_range_check"));
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      static_cast<void>(mux.decompress(compressed, invalidIndex)),
-      ::testing::HasSubstr("vector::_M_range_check"));
+      std::out_of_range);
+  EXPECT_THROW(static_cast<void>(mux.decompress(compressed, invalidIndex)),
+               std::out_of_range);
 }
