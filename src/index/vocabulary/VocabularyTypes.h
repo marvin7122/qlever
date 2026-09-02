@@ -63,6 +63,8 @@ class VocabBatchStorage {
 // for every child whose views they copy.
 using VocabBatchOwner = std::shared_ptr<const VocabBatchStorage>;
 
+class MultiSourceVocabBatchAssembler;
+
 // _____________________________________________________________________________
 // Batch lookup result: views are always `storage_->viewSpan()`. There is no
 // constructor that takes an owner and a span independently.
@@ -70,6 +72,10 @@ class VocabBatchLookupResult {
  private:
   VocabBatchOwner storage_{};
   ql::span<const std::string_view> span_{};
+
+  friend class MultiSourceVocabBatchAssembler;
+  // Frozen storage accessed only by assemblers to keep child views alive.
+  [[nodiscard]] VocabBatchOwner owner() const noexcept { return storage_; }
 
  public:
   VocabBatchLookupResult() = default;
@@ -95,12 +101,9 @@ class VocabBatchLookupResult {
   [[nodiscard]] const std::string_view* data() const noexcept {
     return span_.data();
   }
-  // Frozen storage so assemblers can keep child views alive.
-  [[nodiscard]] VocabBatchOwner owner() const noexcept { return storage_; }
 
   // Stored views and backing bytes are not exposed for mutation. Callers may
-  // inspect the immutable range and may retrieve the shared ownership token
-  // through owner() when an assembler must preserve the result lifetime.
+  // inspect the immutable range.
 };
 
 // Type-erased input range of batches (each batch consists of a vector of
@@ -117,14 +120,17 @@ using VocabLookupOutput =
 // Represent a strong, self-contained batch-lookup result backed by a
 // contiguous character buffer (used for reading fixed-size chunks from disk).
 // Keep all storage private.
+class ContiguousVocabBatchBuilder;
+
 class ContiguousVocabBatchLookupData : public VocabBatchStorage {
- private:
-  std::vector<char> buffer_;
-
-  friend class ContiguousVocabBatchBuilder;
-
  public:
-  ContiguousVocabBatchLookupData(std::vector<char> buffer,
+  class Passkey {
+   private:
+    friend class ContiguousVocabBatchBuilder;
+    explicit Passkey() = default;
+  };
+
+  ContiguousVocabBatchLookupData(Passkey, std::vector<char> buffer,
                                  std::vector<std::string_view> views)
       : VocabBatchStorage(std::move(views)), buffer_{std::move(buffer)} {}
 
@@ -133,6 +139,9 @@ class ContiguousVocabBatchLookupData : public VocabBatchStorage {
     return VocabBatchLookupResult{
         std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
   }
+
+ private:
+  std::vector<char> buffer_;
 };
 
 // _____________________________________________________________________________
@@ -159,9 +168,8 @@ class ContiguousVocabBatchBuilder {
     targets_.reserve(wordSizes.size());
 
     size_t offset = 0;
-    static char emptyWordTarget = 0;
     for (size_t size : wordSizes) {
-      char* target = size == 0 ? &emptyWordTarget : buffer_.data() + offset;
+      char* target = buffer_.data() + offset;
       targets_.push_back(target);
       views_.emplace_back(target, size);
       offset += size;
@@ -170,10 +178,8 @@ class ContiguousVocabBatchBuilder {
 
   // Return the precomputed destination for each requested word. The pointer at
   // index i corresponds to the size supplied at index i to the constructor.
-  // The pointers refer to the builder's backing character buffer for non-empty
-  // words; zero-sized words use the shared static empty-word sentinel and must
-  // only be used while the builder and its backing storage remain valid; do not
-  // use them after the builder has been finalized or destroyed.
+  // The pointers refer to the builder's backing character buffer; for
+  // zero-sized words, the pointer remains valid within the allocated buffer.
   [[nodiscard]] ql::span<char*> targets() noexcept { return targets_; }
   [[nodiscard]] ql::span<char* const> targets() const noexcept {
     return targets_;
@@ -182,7 +188,8 @@ class ContiguousVocabBatchBuilder {
   [[nodiscard]] VocabBatchLookupResult finalize() && {
     AD_CONTRACT_CHECK(!views_.empty());
     auto data = std::make_shared<ContiguousVocabBatchLookupData>(
-        std::move(buffer_), std::move(views_));
+        ContiguousVocabBatchLookupData::Passkey{}, std::move(buffer_),
+        std::move(views_));
     return ContiguousVocabBatchLookupData::asResult(std::move(data));
   }
 };
@@ -214,15 +221,18 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
 // Strong, self-contained batch-lookup result backed by a PMR monotonic buffer
 // resource. `upstream_` (if set) must outlive `buffer_` so deallocation can
 // still charge the memory tracker; members are destroyed in reverse order.
+class ArenaVocabBatchBuilder;
+
 class PmrVocabBatchLookupData : public VocabBatchStorage {
- private:
-  std::unique_ptr<ql::pmr::memory_resource> upstream_;
-  std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
-
-  friend class ArenaVocabBatchBuilder;
-
  public:
+  class Passkey {
+   private:
+    friend class ArenaVocabBatchBuilder;
+    explicit Passkey() = default;
+  };
+
   PmrVocabBatchLookupData(
+      Passkey,
       std::unique_ptr<ql::pmr::memory_resource> upstream,
       std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
       std::vector<std::string_view> views)
@@ -235,6 +245,10 @@ class PmrVocabBatchLookupData : public VocabBatchStorage {
     return VocabBatchLookupResult{
         std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
   }
+
+ private:
+  std::unique_ptr<ql::pmr::memory_resource> upstream_;
+  std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
 };
 
 // _____________________________________________________________________________
@@ -268,11 +282,15 @@ class StringVectorVocabBatchLookupData : public VocabBatchStorage {
 // Strong, self-contained batch-lookup result that owns multiple independent
 // storage owners.
 class MultiOwnerVocabBatchLookupData : public VocabBatchStorage {
- private:
-  std::vector<VocabBatchOwner> owners_;
-
  public:
-  MultiOwnerVocabBatchLookupData(std::vector<VocabBatchOwner> owners,
+  class Passkey {
+   private:
+    friend class MultiSourceVocabBatchAssembler;
+    explicit Passkey() = default;
+  };
+
+  MultiOwnerVocabBatchLookupData(Passkey,
+                                 std::vector<VocabBatchOwner> owners,
                                  std::vector<std::string_view> views)
       : VocabBatchStorage(std::move(views)), owners_{std::move(owners)} {}
 
@@ -281,6 +299,9 @@ class MultiOwnerVocabBatchLookupData : public VocabBatchStorage {
     return VocabBatchLookupResult{
         std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
   }
+
+ private:
+  std::vector<VocabBatchOwner> owners_;
 };
 
 // _____________________________________________________________________________
@@ -320,13 +341,14 @@ template <typename DecompressFunc>
 std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
                                     DecompressFunc&& decompress) {
   if (bound == 0) {
-    return {};
+    return "";
   }
   AD_CORRECTNESS_CHECK(destination.size() >= bound);
   const size_t bytesWritten =
       decompress(ql::span<char>{destination.data(), bound});
-  AD_CORRECTNESS_CHECK(bytesWritten > 0 && bytesWritten <= bound);
-  return std::string_view{destination.data(), bytesWritten};
+  AD_CORRECTNESS_CHECK(bytesWritten <= bound);
+  return bytesWritten == 0 ? ""
+                           : std::string_view{destination.data(), bytesWritten};
 }
 
 // _____________________________________________________________________________
@@ -396,7 +418,8 @@ class ArenaVocabBatchBuilder {
   [[nodiscard]] VocabBatchLookupResult finalize() && {
     AD_CONTRACT_CHECK(!views_.empty());
     auto data = std::make_shared<PmrVocabBatchLookupData>(
-        std::move(upstream_), std::move(buffer_), std::move(views_));
+        PmrVocabBatchLookupData::Passkey{}, std::move(upstream_),
+        std::move(buffer_), std::move(views_));
     return PmrVocabBatchLookupData::asResult(std::move(data));
   }
 };
@@ -424,7 +447,8 @@ inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
 // Helper struct that encapsulates assembling string_views from multiple
 // independent vocabulary sources, verifying collision-free total coverage, and
 // aggregating storage ownership into a self-contained `VocabBatchLookupResult`.
-class MultiSourceVocabBatchAssembler {
+class MultiSourceVocabBatchAssembler
+    : public ad_utility::WithInvariants<MultiSourceVocabBatchAssembler> {
  private:
   std::vector<std::string_view> assembledWordViews_;
   std::vector<bool> slotFilledTracking_;
@@ -449,6 +473,7 @@ class MultiSourceVocabBatchAssembler {
   // ___________________________________________________________________________
   // Place a single resolved string_view into its corresponding output position.
   void assignWordAtPosition(size_t resultPosition, std::string_view word) {
+    auto guard = makeInvariantGuard();
     AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
     AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
     slotFilledTracking_[resultPosition] = true;
@@ -462,6 +487,7 @@ class MultiSourceVocabBatchAssembler {
   void scatterSubBatchResultAtPositions(
       const VocabBatchLookupResult& subBatchResult,
       ql::span<const size_t> targetPositions) {
+    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(subBatchResult.size() == targetPositions.size());
 
     for (auto [targetPosition, word] :
@@ -477,6 +503,7 @@ class MultiSourceVocabBatchAssembler {
   // Register a shared storage owner (e.g. an in-memory vocabulary buffer)
   // that must outlive the assembled string_views.
   void registerStorageOwner(VocabBatchOwner storageOwner) {
+    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(storageOwner != nullptr);
     storageOwners_.push_back(std::move(storageOwner));
   }
@@ -492,25 +519,35 @@ class MultiSourceVocabBatchAssembler {
         slotFilledTracking_, [](bool isFilled) { return isFilled; }));
 
     auto multiOwnerData = std::make_shared<MultiOwnerVocabBatchLookupData>(
-        std::move(storageOwners_), std::move(assembledWordViews_));
+        MultiOwnerVocabBatchLookupData::Passkey{}, std::move(storageOwners_),
+        std::move(assembledWordViews_));
     return MultiOwnerVocabBatchLookupData::asResult(std::move(multiOwnerData));
   }
 };
+
+static_assert(
+    ad_utility::InvariantStatefulClass<MultiSourceVocabBatchAssembler>);
 
 // _____________________________________________________________________________
 // Paired lookup data for one vocabulary marker: for each position `i` in the
 // arrays, `underlyingIndices[i]` is the index to look up, and
 // `resultPositions[i]` is where the result goes in the final output. The
 // arrays are always kept in sync (same size).
-class MarkerIndicesAndPositions {
+class MarkerIndicesAndPositions
+    : public ad_utility::WithInvariants<MarkerIndicesAndPositions> {
  private:
   std::vector<size_t> underlyingIndices_;
   std::vector<size_t> resultPositions_;
 
  public:
   // ___________________________________________________________________________
+  void checkInvariants() const {
+    AD_CORRECTNESS_CHECK(underlyingIndices_.size() == resultPositions_.size());
+  }
 
+  // ___________________________________________________________________________
   void reserve(size_t capacity) {
+    auto guard = makeInvariantGuard();
     underlyingIndices_.reserve(capacity);
     resultPositions_.reserve(capacity);
   }
@@ -518,34 +555,33 @@ class MarkerIndicesAndPositions {
   // ___________________________________________________________________________
   // Add a (`underlyingIndex`, `resultPosition`) pair.
   void addPair(size_t underlyingIndex, size_t resultPosition) {
+    auto guard = makeInvariantGuard();
     underlyingIndices_.push_back(underlyingIndex);
     resultPositions_.push_back(resultPosition);
   }
 
   // ___________________________________________________________________________
-
   [[nodiscard]] ql::span<const size_t> getUnderlyingIndices() const noexcept {
     return underlyingIndices_;
   }
 
   // ___________________________________________________________________________
-
   [[nodiscard]] ql::span<const size_t> getResultPositions() const noexcept {
     return resultPositions_;
   }
 
   // ___________________________________________________________________________
-
   [[nodiscard]] bool empty() const noexcept {
     return underlyingIndices_.empty();
   }
 
   // ___________________________________________________________________________
-
   [[nodiscard]] size_t size() const noexcept {
     return underlyingIndices_.size();
   }
 };
+
+static_assert(ad_utility::InvariantStatefulClass<MarkerIndicesAndPositions>);
 
 // _____________________________________________________________________________
 // Paired lookup data for each of the `NumVocabs` underlying vocabularies,

@@ -100,6 +100,25 @@ TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
 
 // _____________________________________________________________________________
 
+TEST(VocabBatchLookupData, ContiguousBuilderZeroSizedWordsAndMixed) {
+  const std::array<size_t, 4> sizes{0, 3, 0, 4};
+  ContiguousVocabBatchBuilder builder(sizes);
+  ASSERT_EQ(builder.targets().size(), 4u);
+  for (char* target : builder.targets()) {
+    EXPECT_NE(target, nullptr);
+  }
+  std::memcpy(builder.targets()[1], "cat", 3);
+  std::memcpy(builder.targets()[3], "bird", 4);
+
+  VocabBatchLookupResult result = std::move(builder).finalize();
+  EXPECT_THAT(result, ::testing::ElementsAre("", "cat", "", "bird"));
+  for (size_t i = 0; i < result.size(); ++i) {
+    EXPECT_NE(result[i].data(), nullptr);
+  }
+}
+
+// _____________________________________________________________________________
+
 TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
   auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
 
