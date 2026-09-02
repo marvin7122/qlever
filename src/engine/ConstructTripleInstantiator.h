@@ -28,7 +28,8 @@ class ConstructDeduplicator;
 // Instantiates a single preprocessed term for a specific row.
 // For constants: returns a pointer into the precomputed term (no shared_ptr
 //   copy). For variables: one shared_ptr copy from the batch/cache so the
-//   term outlives `batchResult`. For blank nodes: allocates a new term.
+//   term outlives `batchResult`. For blank nodes: owns a unique
+//   EvaluatedTermData (no atomic refcount).
 std::optional<EvaluatedTermRef> instantiateTerm(
     const PreprocessedTerm& term, const BatchEvaluationResult& batchResult,
     size_t rowIdxInBatch, size_t rowIdxTotal);

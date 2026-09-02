@@ -38,10 +38,9 @@ std::optional<EvaluatedTermRef> instantiateTerm(
           }
           return EvaluatedTermRef{bound->get(), *bound};
         } else if constexpr (std::is_same_v<T, PrecomputedBlankNode>) {
-          EvaluatedTerm owned = std::make_shared<const EvaluatedTermData>(
+          return EvaluatedTermRef{std::make_unique<EvaluatedTermData>(
               EvaluatedTermData{
-                  absl::StrCat(t.prefix_, rowIdxTotal, t.suffix_), nullptr});
-          return EvaluatedTermRef{owned.get(), std::move(owned)};
+                  absl::StrCat(t.prefix_, rowIdxTotal, t.suffix_), nullptr})};
         } else {
           static_assert(ad_utility::alwaysFalse<T>, "Unhandled variant type");
         }
