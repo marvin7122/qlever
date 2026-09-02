@@ -19,7 +19,7 @@
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/ConstructTypes.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/http/MediaTypes.h"
