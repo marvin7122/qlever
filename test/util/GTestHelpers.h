@@ -381,14 +381,14 @@ inline size_t pmrStringSsoCapacity() {
     size_t numAllocations() const { return numAllocations_; }
   };
   const std::string sample(sizeof(ql::pmr::string), 's');
-  for (size_t size = sample.size();; --size) {
+  for (size_t size = sample.size(); size > 0; --size) {
     CountingMemoryResource resource;
     ql::pmr::string pmrSample{sample.data(), size, &resource};
     if (resource.numAllocations() == 0) {
       return size;
     }
-    AD_CORRECTNESS_CHECK(size > 0);  // Some storage must always be used.
   }
+  return 0;
 }
 
 // _____________________________________________________________________________
