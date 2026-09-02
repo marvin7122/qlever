@@ -28,7 +28,6 @@
 #include "util/Serializer/SerializeArrayOrTuple.h"
 #include "util/Serializer/SerializeVector.h"
 #include "util/StringUtils.h"
-#include <cstdint>
 
 // TODO<joka921> Include the relevant constants directly here.
 
