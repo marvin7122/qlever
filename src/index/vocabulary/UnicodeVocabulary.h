@@ -39,6 +39,17 @@ class UnicodeVocabulary {
     return _underlyingVocabulary.lookupBatch(indices);
   }
 
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder& builder) const {
+    if constexpr (requires {
+                    _underlyingVocabulary.lookupBatch(indices, builder);
+                  }) {
+      return _underlyingVocabulary.lookupBatch(indices, builder);
+    } else {
+      return _underlyingVocabulary.lookupBatch(indices);
+    }
+  }
+
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {
     return _underlyingVocabulary.lookupBatchesStreamed(std::move(input));
