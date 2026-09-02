@@ -255,18 +255,18 @@ class PmrVocabBatchLookupData : public VocabBatchStorage {
 // Strong, self-contained batch-lookup result backed by owning std::strings.
 class StringVectorVocabBatchLookupData : public VocabBatchStorage {
  private:
-  std::vector<std::string> buffer_;
+  std::vector<std::string> words_;
 
   static std::vector<std::string_view> viewsInto(
-      const std::vector<std::string>& buffer) {
+      const std::vector<std::string>& words) {
     return ::ranges::to_vector(
-        buffer |
+        words |
         ql::views::transform(ad_utility::staticCast<std::string_view>));
   }
 
  public:
   explicit StringVectorVocabBatchLookupData(std::vector<std::string> words)
-      : VocabBatchStorage(viewsInto(words)), buffer_{std::move(words)} {
+      : VocabBatchStorage(viewsInto(words)), words_{std::move(words)} {
     // viewsInto ran on `words` before the move; moving std::string does not
     // relocate the character buffer, so the views stay valid.
   }
@@ -494,8 +494,8 @@ class MultiSourceVocabBatchAssembler
          ::ranges::views::zip(targetPositions, subBatchResult)) {
       assignWordAtPosition(targetPosition, word);
     }
-    if (subBatchResult.owner() != nullptr) {
-      storageOwners_.push_back(subBatchResult.owner());
+    if (auto owner = subBatchResult.owner(); owner != nullptr) {
+      storageOwners_.push_back(std::move(owner));
     }
   }
 
@@ -546,6 +546,8 @@ class MarkerIndicesAndPositions
   }
 
   // ___________________________________________________________________________
+  // Pre-allocate capacity for both paired vectors, preserving their 1:1
+  // correspondence.
   void reserve(size_t capacity) {
     auto guard = makeInvariantGuard();
     underlyingIndices_.reserve(capacity);
@@ -561,11 +563,15 @@ class MarkerIndicesAndPositions
   }
 
   // ___________________________________________________________________________
+  // Return the span of underlying vocabulary indices to look up. Element `i`
+  // corresponds to position `i` in `getResultPositions()`.
   [[nodiscard]] ql::span<const size_t> getUnderlyingIndices() const noexcept {
     return underlyingIndices_;
   }
 
   // ___________________________________________________________________________
+  // Return the span of target output positions. Element `i` corresponds to
+  // underlying index `i` in `getUnderlyingIndices()`.
   [[nodiscard]] ql::span<const size_t> getResultPositions() const noexcept {
     return resultPositions_;
   }
@@ -612,14 +618,16 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
 // _____________________________________________________________________________
 // Batch lookup results for each underlying vocabulary, indexed by vocabulary
 // marker. Stores results only from vocabularies with lookup indices in this
-// batch. Single-release invariant guarantees each slot is consumed at most
-// once.
+// batch. The single-release invariant guarantees that each slot is consumed at
+// most once.
 template <size_t NumVocabs>
 class MarkerBatchLookups {
  private:
   std::array<std::optional<VocabBatchLookupResult>, NumVocabs> results_{};
 
  public:
+  // Create an empty set of per-marker lookup-result slots to be populated
+  // before single-release consumption.
   MarkerBatchLookups() = default;
 
   // Return the lookup result for the given vocabulary marker.
