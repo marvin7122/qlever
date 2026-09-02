@@ -485,17 +485,17 @@ class IoUringDirectBenchmark : public BenchmarkInterface {
     IoUringDirectBenchmarkRunner runner(vocabFile.path());
 
     group.addMeasurement("1. Sync pread (Page Cache)",
-                         [&]() { return runner.runSyncPread().totalBytes; });
+                         [&]() { return runner.runSyncPread().elapsedSeconds; });
     group.addMeasurement("2. Sync pread (O_DIRECT)",
-                         [&]() { return runner.runSyncDirectPread().totalBytes; });
+                         [&]() { return runner.runSyncDirectPread().elapsedSeconds; });
     group.addMeasurement("3. io_uring (Unpinned)",
-                         [&]() { return runner.runIoUringUnpinned().totalBytes; });
+                         [&]() { return runner.runIoUringUnpinned().elapsedSeconds; });
     group.addMeasurement("4. io_uring (O_DIRECT)",
-                         [&]() { return runner.runIoUringDirectUnpinned().totalBytes; });
+                         [&]() { return runner.runIoUringDirectUnpinned().elapsedSeconds; });
     group.addMeasurement("5. io_uring (Registered Files)",
-                         [&]() { return runner.runIoUringRegisteredFiles().totalBytes; });
+                         [&]() { return runner.runIoUringRegisteredFiles().elapsedSeconds; });
     group.addMeasurement("6. io_uring (Fully Registered DMA)",
-                         [&]() { return runner.runIoUringFullyRegistered().totalBytes; });
+                         [&]() { return runner.runIoUringFullyRegistered().elapsedSeconds; });
 
     return results;
   }
