@@ -126,7 +126,14 @@ class FsstDecoder {
   // Decompress a single string. Callers that already own an output buffer
   // should use `decompressInto` instead.
   [[nodiscard]] std::string decompress(std::string_view str) const {
-    const size_t bound = maxDecompressedSize(str);\n    std::string result = detail::decompressToOwnedString(\n        bound, [this, str](ql::span<char> out) {\n          return decompressInto(str, out);\n        });\n    AD_CORRECTNESS_CHECK(result.size() <= bound);\n    return result;\n  }
+    const size_t bound = maxDecompressedSize(str);
+    std::string result = detail::decompressToOwnedString(
+        bound, [this, str](ql::span<char> out) {
+          return decompressInto(str, out);
+        });
+    AD_CORRECTNESS_CHECK(result.size() <= bound);
+    return result;
+  }
 
   // Duplicate decompress(std::string_view) definition removed.
 
