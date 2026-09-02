@@ -168,10 +168,9 @@ class FsstRepeatedDecoder {
   FsstRepeatedDecoder() = default;
 
   // ___________________________________________________________________________
-  // Construct from the internal `fsst_decoder_t`. Note that the typical way to
-  // obtain an `FsstDecoder` is by first creating a `FsstEncoder` and calling
-  // `getDecoder()` on that encoder.
-  explicit FsstRepeatedDecoder(Decoders decoders) : decoders_{std::move(decoders)} {}
+  // Construct from the array of `FsstDecoder` objects for each stage.
+  explicit FsstRepeatedDecoder(Decoders decoders)
+      : decoders_{std::move(decoders)} {}
 
   // ___________________________________________________________________________
   // Return an upper bound on the size after all `N` decoding stages.
@@ -180,17 +179,18 @@ class FsstRepeatedDecoder {
     for ([[maybe_unused]] size_t stage :
          ::ranges::views::iota(size_t{0}, N)) {
       AD_CONTRACT_CHECK(bound <= std::numeric_limits<size_t>::max() /
-                                     FsstDecoder::MAX_EXPANSION_FACTOR);
-      bound *= FsstDecoder::MAX_EXPANSION_FACTOR;
+                                     FsstDecoder::maxExpansionFactor);
+      bound *= FsstDecoder::maxExpansionFactor;
     }
     return bound;
   }
 
   // ___________________________________________________________________________
   // Decompress `str` into `out`. `out.size()` must be at least
-  // `maxDecompressedSize(str)`. For `N >= 2`, ensure that the scratch buffer has at least `out.size()` bytes, then ping-pong intermediate results between the scratch buffer and `out` so the final stage writes to `out`
-  // if it is smaller, then ping-pong stages between `out` and `scratch` so
-  // the last stage always writes `out`. Return the number of bytes written.
+  // `maxDecompressedSize(str)`. For `N >= 2`, ensure `scratch` has at least
+  // `out.size()` bytes and alternate writes between `out` and `scratch` such
+  // that the final stage always writes to `out`. Return the number of bytes
+  // written.
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
                                       std::string& scratch) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(str));
@@ -293,18 +293,16 @@ class FsstEncoder {
 
   // ___________________________________________________________________________
   // Return a decoder for strings compressed by this encoder.
-  // compressed by this encoder.
   FsstDecoder makeDecoder() const {
     return FsstDecoder{fsst_decoder(encoder_.get())};
   }
 
   // ___________________________________________________________________________
-  // Return a decoder, that can be used to decompress strings that have been
   // Interface for the case that all the strings that shall ever be compressed
   // using the same codebook shall also contribute to that codebook. Build a
   // codebook from the `strings`, and then use that codebook to compress each of
   // the `strings`. The result consists of a large `std::string` that contains
-  // all the compressed strings concatenated, a `vector<string_view` that points
+  // all the compressed strings concatenated, a `vector<string_view>` that points
   // to the compressed strings, and a decoder that can be used to decompress the
   // strings again.
   using BulkResult = std::tuple<std::shared_ptr<std::string>,
