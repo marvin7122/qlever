@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdlib>
 #include <limits>
 #include <memory>
@@ -17,10 +18,8 @@
 #include <utility>
 #include <vector>
 
-#include <cerrno>
-
-#include "benchmark/infrastructure/Benchmark.h"
 #include "backports/span.h"
+#include "benchmark/infrastructure/Benchmark.h"
 #include "util/FsstCompressor.h"
 
 namespace ad_benchmark {
@@ -55,11 +54,14 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   // Keep views into the compressed strings retained by `decoderStorage_`.
   std::vector<std::string_view> compressed_;
   std::array<FsstDecoder, numberOfStages> decoders_;
-  // Retain ownership of the compressed strings for the lifetime of the views in `compressed_`.
+  // Retain ownership of the compressed strings for the lifetime of the views in
+  // `compressed_`.
   std::vector<std::shared_ptr<std::string>> decoderStorage_;
-  // Maximum fully decompressed size across the benchmark inputs; sizes the final output buffer.
+  // Maximum fully decompressed size across the benchmark inputs; sizes the
+  // final output buffer.
   size_t outputCapacity_ = 0;
-  // Bound required for intermediate repeated-FSST stages, avoiding a full-size scratch allocation.
+  // Bound required for intermediate repeated-FSST stages, avoiding a full-size
+  // scratch allocation.
   size_t intermediateCapacity_ = 0;
 
  public:
@@ -102,7 +104,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     auto& group = results.addGroup(
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
     const auto parseEnvironmentSize = [](const char* value,
-                                          size_t defaultValue) {
+                                         size_t defaultValue) {
       if (value == nullptr) return defaultValue;
       errno = 0;
       char* end = nullptr;
@@ -112,10 +114,11 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     };
     const size_t selectedStrategy =
         parseEnvironmentSize(std::getenv("FSST_SCRATCH_ONLY"), 3);
-    // Bound the benchmark workload even when configured through the environment.
+    // Bound the benchmark workload even when configured through the
+    // environment.
     constexpr size_t maxRepetitions = 1'000'000;
-    const size_t repetitions = parseEnvironmentSize(
-        std::getenv("FSST_SCRATCH_INNER_REPETITIONS"), 1);
+    const size_t repetitions =
+        parseEnvironmentSize(std::getenv("FSST_SCRATCH_INNER_REPETITIONS"), 1);
     AD_CONTRACT_CHECK(selectedStrategy <= 3);
     AD_CONTRACT_CHECK(repetitions > 0);
     AD_CONTRACT_CHECK(repetitions <= maxRepetitions);
@@ -163,11 +166,9 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
         {2, 0, 1},
         {2, 1, 0},
     }};
-    const char* orderEnv = std::getenv("FSST_SCRATCH_ORDER");
     const size_t orderIndex =
-        orderEnv == nullptr
-            ? 0
-            : std::strtoul(orderEnv, nullptr, 10) % orders.size();
+        parseEnvironmentSize(std::getenv("FSST_SCRATCH_ORDER"), 0);
+    AD_CONTRACT_CHECK(orderIndex < orders.size());
     for (size_t strategy : orders[orderIndex]) {
       if (strategy != selectedStrategy && selectedStrategy != 3) {
         continue;
