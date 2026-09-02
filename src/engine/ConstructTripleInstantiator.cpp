@@ -21,20 +21,27 @@
 namespace qlever::constructExport {
 
 // _____________________________________________________________________________
-std::optional<EvaluatedTerm> instantiateTerm(
+std::optional<EvaluatedTermRef> instantiateTerm(
     const PreprocessedTerm& term, const BatchEvaluationResult& batchResult,
     size_t rowIdxInBatch, size_t rowIdxTotal) {
   return std::visit(
-      [&](const auto& t) -> std::optional<EvaluatedTerm> {
+      [&](const auto& t) -> std::optional<EvaluatedTermRef> {
         using T = std::decay_t<decltype(t)>;
 
         if constexpr (std::is_same_v<T, PrecomputedConstant>) {
-          return t.evaluatedTerm_;
+          return EvaluatedTermRef{t.evaluatedTerm_.get(), {}};
         } else if constexpr (std::is_same_v<T, PrecomputedVariable>) {
-          return batchResult.getVariable(t.columnIndex_, rowIdxInBatch);
+          const std::optional<EvaluatedTerm>& bound =
+              batchResult.getVariable(t.columnIndex_, rowIdxInBatch);
+          if (!bound) {
+            return std::nullopt;
+          }
+          return EvaluatedTermRef{bound->get(), *bound};
         } else if constexpr (std::is_same_v<T, PrecomputedBlankNode>) {
-          return std::make_shared<const EvaluatedTermData>(EvaluatedTermData{
-              absl::StrCat(t.prefix_, rowIdxTotal, t.suffix_), nullptr});
+          EvaluatedTerm owned = std::make_shared<const EvaluatedTermData>(
+              EvaluatedTermData{
+                  absl::StrCat(t.prefix_, rowIdxTotal, t.suffix_), nullptr});
+          return EvaluatedTermRef{owned.get(), std::move(owned)};
         } else {
           static_assert(ad_utility::alwaysFalse<T>, "Unhandled variant type");
         }
@@ -70,7 +77,8 @@ std::optional<EvaluatedTriple> tryInstantiateTriple(
       return std::nullopt;
     }
   }
-  return EvaluatedTriple{*subject, *predicate, *object};
+  return EvaluatedTriple{std::move(*subject), std::move(*predicate),
+                         std::move(*object)};
 }
 }  // namespace
 

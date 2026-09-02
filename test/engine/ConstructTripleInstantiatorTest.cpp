@@ -31,14 +31,16 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
       EvaluatedTermData{std::move(str), type});
 }
 
-// Matches an `EvaluatedTerm` (shared_ptr<const EvaluatedTermData>) by
-// dereferencing it and checking both fields. `type` uses pointer equality,
-// matching the compile-time constants (e.g. XSD_INT_TYPE) or nullptr.
+// Matches an `EvaluatedTermRef` by checking the pointed-to term data.
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
-  return ::testing::Pointee(::testing::AllOf(
-      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
-      AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type))));
+  return ::testing::AllOf(
+      ::testing::ResultOf(
+          [](const EvaluatedTermRef& r) { return r.data_->rdfTermString_; },
+          std::string(str)),
+      ::testing::ResultOf(
+          [](const EvaluatedTermRef& r) { return r.data_->rdfTermDataType_; },
+          ::testing::Eq(type)));
 };
 
 // Matches an `EvaluatedTriple` by applying `matchesEvaluatedTerm` with
@@ -72,6 +74,9 @@ TEST(InstantiateTerm, PrecomputedConstantIsReturnedAsIs) {
 
   EXPECT_THAT(result, Optional(matchesEvaluatedTerm(
                           "<http://example.org/subject>", nullptr)));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->data_, term.get());
+  EXPECT_EQ(result->keepAlive_, nullptr);
 }
 
 // _____________________________________________________________________________
@@ -126,6 +131,9 @@ TEST(InstantiateTerm, PrecomputedVariableBound) {
 
   EXPECT_THAT(result, Optional(matchesEvaluatedTerm(
                           "<http://example.org/value>", nullptr)));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->data_, term.get());
+  EXPECT_EQ(result->keepAlive_, term);
 }
 
 // _____________________________________________________________________________
