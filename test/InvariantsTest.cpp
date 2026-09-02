@@ -115,6 +115,49 @@ TEST(InvariantsTest, InvariantGuardSkipsExitCheckDuringExceptionUnwinding) {
   EXPECT_EQ(instance.checkCount_, 1u);
 }
 
+TEST(InvariantsTest, ContractsPreConditionEnforcement) {
+  auto compute = [](int x) {
+    QL_PRE(x > 0);
+    return x * 2;
+  };
+
+  EXPECT_EQ(compute(5), 10);
+  AD_EXPECT_THROW_WITH_MESSAGE(compute(0), ::testing::HasSubstr("x > 0"));
+}
+
+TEST(InvariantsTest, ContractsAssertEnforcement) {
+  auto checkCheckpoint = [](int x) {
+    QL_CONTRACT_ASSERT(x != 42);
+    return x;
+  };
+
+  EXPECT_EQ(checkCheckpoint(10), 10);
+  AD_EXPECT_THROW_WITH_MESSAGE(checkCheckpoint(42),
+                               ::testing::HasSubstr("x != 42"));
+}
+
+TEST(InvariantsTest, ContractsPostConditionNormalExit) {
+  auto succeed = [](int val) {
+    int result = 0;
+    QL_POST(result > 0);
+    result = val;
+    return result;
+  };
+
+  EXPECT_EQ(succeed(5), 5);
+  AD_EXPECT_THROW_WITH_MESSAGE(succeed(-1), ::testing::HasSubstr("result > 0"));
+}
+
+TEST(InvariantsTest, ContractsPostConditionSkipsDuringExceptionUnwinding) {
+  EXPECT_THROW(
+      [&] {
+        int result = -1;
+        QL_POST(result > 0);  // Would fail if checked on exit!
+        throw std::runtime_error{"operation failed"};
+      }(),
+      std::runtime_error);
+}
+
 template <typename T, typename = void>
 struct HasRvalueInvariantGuard : std::false_type {};
 
