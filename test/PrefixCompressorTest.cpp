@@ -10,6 +10,8 @@
 
 #include <gmock/gmock.h>
 
+#include <string_view>
+
 #include "backports/span.h"
 #include "index/vocabulary/PrefixCompressor.h"
 #include "index/vocabulary/PrefixHeuristic.h"
