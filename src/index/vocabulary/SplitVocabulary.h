@@ -17,13 +17,12 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <range/v3/view/enumerate.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
-
-#include <range/v3/view/enumerate.hpp>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
@@ -159,7 +158,10 @@ class SplitVocabulary {
   // Extract the marker from a full 64 bit index.
   static constexpr uint8_t getMarker(uint64_t indexWithMarker) {
     uint64_t marker = (indexWithMarker & markerBitMask) >> markerShift;
-    AD_CORRECTNESS_CHECK(marker < numberOfVocabs);
+    // Public `operator[]` / `lookupBatch` take caller indices; a marker bit
+    // pattern can exceed `numberOfVocabs` when that count is not a power of
+    // two (the bit-field is then wider than the legal range).
+    AD_CONTRACT_CHECK(marker < numberOfVocabs);
     return static_cast<uint8_t>(marker);
   }
 

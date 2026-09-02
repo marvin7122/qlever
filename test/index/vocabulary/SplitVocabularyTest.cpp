@@ -8,13 +8,12 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
 #include <array>
 #include <utility>
 #include <variant>
-
-#include <absl/strings/str_cat.h>
 
 #include "VocabularyTestHelpers.h"
 #include "backports/StartsWithAndEndsWith.h"
@@ -75,11 +74,11 @@ const VocabularyType geoSplitVocabType{
 
 // _____________________________________________________________________________
 TEST(Vocabulary, SplitGeoVocab) {
-   partitioning and result merging directly.check: Is a geo literal?
-  ASSERT_EQ(SGV::getMarkerForWord(
-                "\"POLYGON((1 2, 3 4))\""
-                "^^<http://www.opengis.net/ont/geosparql#wktLiteral>"),
-            1);
+  partitioning and result merging directly.check : Is a geo literal
+      ? ASSERT_EQ(SGV::getMarkerForWord(
+                      "\"POLYGON((1 2, 3 4))\""
+                      "^^<http://www.opengis.net/ont/geosparql#wktLiteral>"),
+                  1);
   ASSERT_EQ(SGV::getMarkerForWord(
                 "\"LINESTRING(1 2, 3 4)\""
                 "^^<http://www.opengis.net/ont/geosparql#wktLiteral>"),
@@ -512,11 +511,23 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   ad_utility::deleteFile(absl::StrCat(filename, ".a"));
 }
 
+// _____________________________________________________________________________
+TEST(Vocabulary, SplitVocabularyLookupBatchRejectsOutOfRangeMarker) {
+  // Three vocabs use a 2-bit marker field, so raw value 3 is representable
+  // but illegal. `getMarker` / `lookupBatch` must reject it.
+  ThreeSplitVocabulary sv;
+  const std::array<size_t, 1> illegalMarker{
+      static_cast<size_t>(3ull << ThreeSplitVocabulary::markerShift)};
+  AD_EXPECT_THROW_WITH_MESSAGE(sv.lookupBatch(illegalMarker),
+                               ::testing::HasSubstr("marker < numberOfVocabs"));
+}
+
 using namespace splitVocabTestHelpers;
 
 // Share common SplitVocabulary setup across multiple tests.
 // Populates the vocabulary once per test suite with:
-//     and index 1: "" and index 1: "abc"; marker 1 with index 0: "xyz" and index 1: "axyz".
+//     and index 1: "" and index 1: "abc"; marker 1 with index 0: "xyz" and
+//     index 1: "axyz".
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
@@ -614,8 +625,7 @@ TEST(VocabularyTypes, MarkerBatchLookupsDoubleReleaseThrows) {
   auto first = lookups.release(0);
   EXPECT_EQ(first[0], "a");
   AD_EXPECT_THROW_WITH_MESSAGE(
-      lookups.release(0),
-      ::testing::HasSubstr("results_[marker].has_value()"));
+      lookups.release(0), ::testing::HasSubstr("results_[marker].has_value()"));
 }
 
 // _____________________________________________________________________________
