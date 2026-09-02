@@ -95,23 +95,16 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   //____________________________________________________________________________
-  // Resource sketch: this hot path performs one decompression per vocabulary
-  // entry and reuses the decode and scratch buffers. It retains only the
-  // current decoded word, but the owning IndexAndWord conversion performs one
-  // allocation and copy per result. CPU and allocation costs are proportional
-  // to the decoded payload; compressed-word I/O remains delegated to the
-  // underlying vocabulary. Validate CPU, peak memory, disk, and network
-  // effects with the CompressedVocabulary.scanAll benchmark before changing
-  // this path.
-  // Wrap the underlying vocabulary's `scanAll` (which reads the compressed
-  // words in batches) and decompress each word. `scanAll()` is expected to
-  // yield `IndexAndWord` elements, so we have to apply a transformation at the
-  // end. Decode the words via `decompressInto` into one reusable buffer
-  // owned by the transformation. The buffer grows as needed to accommodate
-  // the largest bound seen so far, and each word is decoded into a span of
-  // `maxDecompressedSize` bytes. The transformation returns an owning
-  // `std::string` in each `IndexAndWord`, so returned words remain valid
-  // independently of subsequent range elements.
+  // Wrap the underlying `scanAll` and decompress each word. Decode into one
+  // reusable `buffer` owned by the transformation (plus `scratch` for the
+  // decoder). The buffer grows to the largest `maxDecompressedSize` bound
+  // seen so far. `IndexAndWord::word_` is a `string_view` into that buffer.
+  // It is valid only until the next element is pulled; copy the bytes if
+  // they must outlive the current iterator position. See `IndexAndWord`.
+  // `CachingTransformInputRange` caches the current `IndexAndWord` object, so
+  // repeated dereference of the same iterator is stable. It does not copy
+  // the decoded bytes. A view retained from a previous element is stale
+  // once the range advances (`ScanAllViewInvalidAfterNextPull`).
   auto scanAll() const {
     return ad_utility::CachingTransformInputRange(
         underlyingVocabulary_.scanAll(),
