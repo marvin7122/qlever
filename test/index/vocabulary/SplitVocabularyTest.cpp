@@ -74,11 +74,11 @@ const VocabularyType geoSplitVocabType{
 
 // _____________________________________________________________________________
 TEST(Vocabulary, SplitGeoVocab) {
-  partitioning and result merging directly.check : Is a geo literal
-      ? ASSERT_EQ(SGV::getMarkerForWord(
-                      "\"POLYGON((1 2, 3 4))\""
-                      "^^<http://www.opengis.net/ont/geosparql#wktLiteral>"),
-                  1);
+  // Check: Is a geo literal?
+  ASSERT_EQ(SGV::getMarkerForWord(
+                "\"POLYGON((1 2, 3 4))\""
+                "^^<http://www.opengis.net/ont/geosparql#wktLiteral>"),
+            1);
   ASSERT_EQ(SGV::getMarkerForWord(
                 "\"LINESTRING(1 2, 3 4)\""
                 "^^<http://www.opengis.net/ont/geosparql#wktLiteral>"),
