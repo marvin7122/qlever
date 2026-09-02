@@ -1,7 +1,13 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Julian Mundhahs (mundhahj@informatik.uni-freiburg.de)
-//          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022        Julian Mundhahs <mundhahj@informatik.uni-freiburg.de>, UFR
+// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_TEST_UTIL_GTESTHELPERS_H
 #define QLEVER_TEST_UTIL_GTESTHELPERS_H
@@ -13,10 +19,14 @@
 #include <re2/re2.h>
 
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <sstream>
+#include <vector>
 
+#include "backports/algorithm.h"
 #include "backports/concepts.h"
+#include "backports/memory_resource.h"
 #include "backports/three_way_comparison.h"
 #include "util/Log.h"
 #include "util/SourceLocation.h"
@@ -312,24 +322,135 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 }
 
 // _____________________________________________________________________________
-// Returns "<TestSuiteName>_<TestName>" for the currently running gtest, with
+//  for the currently running gtest, with every "<TestSuiteName>_<TestName>" for the currently running gtest, with
 // any '/' replaced by '_' (parameterized tests embed '/' in their names).
 // If `assertInGtestEnvironment` is true (the default), crashes if called
 // outside a running gtest (i.e. when `current_test_info()` returns nullptr).
 // Pass false when the caller is also used by non-test code (e.g. benchmarks),
 // in which case an empty string is returned instead.
+//  for the currently running gtest, Sanitizes the given raw gtest name by replacing every '/' with '_'. (parameterized
+// tests embed '/' in their names). Shared implementation of
+// `sanitizeGtestName` and `gtestCurrentTestSuiteName`.
+inline std::string sanitizeGtestName(const std::string& name) {
+  return absl::StrReplaceAll(name, {{"/", "_"}});
+}
+
 inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   const auto* testInfo =
       ::testing::UnitTest::GetInstance()->current_test_info();
   if (assertInGtestEnvironment) {
     AD_CORRECTNESS_CHECK(testInfo != nullptr);
   }
-  if (testInfo == nullptr) {
-    return "";
+  return testInfo == nullptr
+             ? ""
+             : sanitizeGtestName(absl::StrCat(testInfo->test_suite_name(), "_",
+                                               testInfo->name()));
+}
+
+// _____________________________________________________________________________
+// Return the largest number of characters that a `ql::pmr::string` is
+// guaranteed by this helper to store inside its own object storage (SSO).
+// NOTE: Used by test/GTestHelpersTest.cpp, test/index/vocabulary/
+// CompressedVocabularyTest.cpp (via requirePmrStringInlineStorage) and
+// SplitVocabularyTest.cpp (gtestCurrentTestSuiteName); see also `clobberStack`
+// below. The SSO capacity of `std::basic_string` is implementation-defined
+// (e.g. 15 characters for libstdc++ and 22 for libc++), so it is determined
+// here by probing rather than hardcoded.
+inline size_t pmrStringSsoCapacity() {
+  // A counting memory resource lets us detect an allocation directly instead of
+  // guessing from pointer addresses: a string uses SSO exactly when
+  // constructing it performs no allocation through its allocator.
+  struct CountingMemoryResource : public std::pmr::memory_resource {
+   private:
+    std::pmr::memory_resource* upstream_ = std::pmr::get_default_resource();
+    size_t numAllocations_ = 0;
+
+    void* do_allocate(size_t bytes, size_t alignment) override {
+      ++numAllocations_;
+      return upstream_->allocate(bytes, alignment);
+    }
+    void do_deallocate(void* ptr, size_t bytes, size_t alignment) override {
+      upstream_->deallocate(ptr, bytes, alignment);
+    }
+    bool do_is_equal(
+        const std::pmr::memory_resource& other) const noexcept override {
+      return this == &other;
+    }
+
+   public:
+    size_t numAllocations() const { return numAllocations_; }
+  };
+  const std::string sample(sizeof(ql::pmr::string), 's');
+  for (size_t size = sample.size();; --size) {
+    CountingMemoryResource resource;
+    ql::pmr::string pmrSample{sample.data(), size, &resource};
+    if (resource.numAllocations() == 0) {
+      return size;
+    }
+    AD_CORRECTNESS_CHECK(size > 0);  // Some storage must always be used.
   }
-  return absl::StrReplaceAll(
-      absl::StrCat(testInfo->test_suite_name(), "_", testInfo->name()),
-      {{"/", "_"}});
+}
+
+// _____________________________________________________________________________
+// Check the explicit platform premise that `ql::pmr::string` stores strings of
+// up to `maxSize` characters inside its own object storage (Small String
+// Optimization), i.e. that constructing such a string performs no allocation
+// through its allocator. Tests whose logic depends on short strings keeping
+// their content inline (e.g. dangling-view regression tests) should state
+// exactly the sizes they rely on by passing `maxSize`; the failure message
+// then points at the platform premise rather than at the test's own logic.
+// Preconditions:
+// - `maxSize > 0`: there are callers only for non-empty test words.
+// NOTE: There is deliberately no default for `maxSize`: the SSO capacity of
+// `std::pmr::string` is implementation-defined (e.g. 15 characters for
+// libstdc++ and 22 for libc++), so every caller must state exactly the size
+// it relies on instead of silently depending on one STL's limit.
+inline void requirePmrStringInlineStorage(size_t maxSize) {
+  AD_CONTRACT_CHECK(maxSize > 0);
+  const size_t capacity = pmrStringSsoCapacity();
+  AD_CORRECTNESS_CHECK(
+      capacity >= maxSize,
+      absl::StrCat("Platform premise violated: std::pmr::string does not "
+                   "store ",
+                   maxSize, " characters on this platform (capacity: ",
+                   pmrStringSsoCapacity(), ")"));
+}
+
+// _____________________________________________________________________________
+// STRICTLY TEST-LOCAL BEST-EFFORT TRIPWIRE — NOT A CORRECTNESS MECHANISM.
+// Overwrite the current stack frame with sentinel bytes, so that stale stack
+// contents (e.g. from a destroyed local object that a dangling view still
+// points into) become implausible to survive. Call it multiple times to also
+// clobber deeper frames. Returns the last byte written, read back through the
+// `volatile` buffer, so callers can assert that the stack was actually
+// overwritten with the sentinel.
+template <size_t NumBytes = 4096>
+[[gnu::noinline]] char clobberStack(char sentinel = '#') {
+  // `volatile` prevents the compiler from optimizing the stack writes away.
+  static_assert(NumBytes > 0, "clobberStack requires a non-empty buffer");
+  volatile char buffer[NumBytes];
+  for (size_t i = 0; i < NumBytes; ++i) {
+    buffer[i] = sentinel;
+  }
+  // Compiler barrier: prevents the optimizer from eliding the stack writes or
+  // reordering them past the return. Not a hardware memory fence.
+  asm volatile("" : : "r"(buffer) : "memory");
+  return buffer[NumBytes - 1];
+}
+
+// _____________________________________________________________________________
+// Return the name of the currently running test suite, with any '/' replaced
+// by '_' (parameterized test suites embed '/' in their names).
+// Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
+// test.
+inline std::string gtestCurrentTestSuiteName(
+    bool assertInGtestEnvironment = true) {
+  const auto* testSuite =
+      ::testing::UnitTest::GetInstance()->current_test_suite();
+  if (assertInGtestEnvironment) {
+    AD_CORRECTNESS_CHECK(testSuite != nullptr);
+  }
+  return testSuite == nullptr ? "" : sanitizeGtestName(testSuite->name());
 }
 
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H

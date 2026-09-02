@@ -1,13 +1,23 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORYBINSEARCH_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORYBINSEARCH_H
 
+#include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
+#include "backports/span.h"
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
@@ -30,8 +40,31 @@ class VocabularyInMemoryBinSearch
   using Indices = std::vector<uint64_t>;
 
  private:
-  // The actual storage.
-  Words words_;
+  // Own the in-memory word storage together with the string views into it.
+  // The enclosing vocabulary can be closed or destroyed while a batch result
+  // is still alive.
+  class BatchLookupData : public VocabBatchStorage {
+   private:
+    std::shared_ptr<const Words> storage_;
+
+   public:
+    BatchLookupData(std::shared_ptr<const Words> storage,
+                    std::vector<std::string_view> views)
+        : VocabBatchStorage(std::move(views)), storage_{std::move(storage)} {
+      AD_CORRECTNESS_CHECK(storage_ != nullptr);
+    }
+
+    static VocabBatchLookupResult asResult(
+        std::shared_ptr<BatchLookupData> self) {
+      return VocabBatchLookupResult{
+          std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
+    }
+  };
+
+  // The word data, held through a `shared_ptr` so outstanding batch-lookup
+  // results can keep the referenced bytes alive after `close()` and
+  // destruction of the vocabulary. The pointer is always non-null.
+  std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
   Indices indices_;
 
  public:
@@ -52,13 +85,18 @@ class VocabularyInMemoryBinSearch
 
   // Return the total number of words
   [[nodiscard]] size_t size() const {
-    AD_CORRECTNESS_CHECK(indices_.size() == words_.size());
-    return words_.size();
+    AD_CORRECTNESS_CHECK(indices_.size() == words().size());
+    return words().size();
   }
 
   // Return the word with index `index`. If this index is not part of the
   // vocabulary, return `std::nullopt`.
   std::optional<std::string_view> operator[](uint64_t index) const;
+
+  // Look up a non-empty batch of indices that are present in the vocabulary.
+  // The returned views remain valid after this vocabulary is closed or
+  // destroyed.
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   // Convert an iterator to a `WordAndIndex`. Required for the mixin.
   WordAndIndex iteratorToWordAndIndex(ql::ranges::iterator_t<Words> it) const;
@@ -86,10 +124,16 @@ class VocabularyInMemoryBinSearch
   void close();
 
   // Const access to the underlying words.
-  auto begin() const { return words_.begin(); }
-  auto end() const { return words_.end(); }
+  auto begin() const { return words().begin(); }
+  auto end() const { return words().end(); }
 
-  // Generic serialization support.
+ private:
+  // Access the word storage through one helper, so callers do not depend on
+  // the shared_ptr representation and future storage changes do not require
+  // cascading updates.
+  const Words& words() const { return *words_; }
+
+ public:
   AD_SERIALIZE_FRIEND_FUNCTION(VocabularyInMemoryBinSearch) {
     (void)serializer;
     (void)arg;

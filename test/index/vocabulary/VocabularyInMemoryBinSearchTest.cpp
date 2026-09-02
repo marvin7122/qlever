@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include "./VocabularyTestHelpers.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "util/Forward.h"
@@ -22,12 +24,19 @@ class VocabularyCreator {
  private:
   std::string vocabFilename_;
 
+  // Remove both the vocabulary and its .ids sidecar before setup and after
+  // teardown so stale data cannot affect another test using the same filename.
+  void removeVocabularyFiles() {
+    ad_utility::deleteFile(vocabFilename_, false);
+    ad_utility::deleteFile(vocabFilename_ + ".ids", false);
+  }
+
  public:
   explicit VocabularyCreator(std::string filename)
       : vocabFilename_{filename + suffix} {
-    ad_utility::deleteFile(vocabFilename_, false);
+    removeVocabularyFiles();
   }
-  ~VocabularyCreator() { ad_utility::deleteFile(vocabFilename_); }
+  ~VocabularyCreator() { removeVocabularyFiles(); }
 
   // Create and return a `VocabularyInMemoryBinSearch` from words and ids.
   // `words` and `ids` must have the same size. If `ids` is `nullopt`, then
@@ -122,6 +131,48 @@ TEST(VocabularyInMemoryBinSearch, AccessOperatorWithNonContiguousIds) {
       createVocabulary("AccessOperatorWithNonContiguousIds1"));
   testAccessOperatorForUnorderedVocabulary(
       createVocabularyFromDisk("AccessOperatorWithNonContiguousIds2"));
+}
+
+TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
+  auto vocab = createVocabulary("LookupBatchOutlivesVocabulary")(
+      std::vector<std::string>{"alpha", "beta", "gamma"});
+  const std::array<size_t, 4> indices{2, 0, 2, 1};
+  auto result = vocab.lookupBatch(indices);
+  vocab.close();
+
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
+}
+
+TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
+  auto vocab = createVocabulary("LookupBatchRejectsMissingIndex")(
+      std::vector<std::string>{"alpha", "beta"});
+  const std::array<size_t, 1> missingIndex{2};
+
+  EXPECT_THROW(vocab.lookupBatch(missingIndex), ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
+                               ::testing::HasSubstr("!indices.empty()"));
+}
+
+TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsEmptyBatch) {
+  auto vocab = createVocabulary("LookupBatchRejectsEmptyBatch")(
+      std::vector<std::string>{"alpha", "beta"});
+  const std::array<size_t, 0> indices{};
+
+  EXPECT_THROW(vocab.lookupBatch(indices), ad_utility::Exception);
+}
+
+TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
+  VocabBatchLookupResult result;
+  {
+    auto vocab = createVocabulary("LookupBatchOutlivesVocabularyOnly")(
+        std::vector<std::string>{"alpha", "beta", "gamma"});
+    const std::array<size_t, 4> indices{2, 0, 2, 1};
+    result = vocab.lookupBatch(indices);
+  }
+
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
 TEST(VocabularyInMemoryBinSearch, ErrorOnNonAscendingIds) {

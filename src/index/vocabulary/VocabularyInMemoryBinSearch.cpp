@@ -1,6 +1,12 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024        Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 
@@ -9,16 +15,28 @@ using std::string;
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::open(const string& fileName) {
   AD_CORRECTNESS_CHECK(
-      words_.size() == 0 && indices_.empty(),
+      words().empty() && indices_.empty(),
       "Calling open on the same vocabulary twice is probably a bug");
+  auto words = std::make_shared<Words>();
   {
     ad_utility::serialization::FileReadSerializer file(fileName);
-    file >> words_;
+    file >> *words;
   }
+  Indices indices;
   {
     ad_utility::serialization::FileReadSerializer idFile(fileName + ".ids");
-    idFile >> indices_;
+    idFile >> indices;
   }
+  AD_CORRECTNESS_CHECK(indices.size() == words->size());
+  // Ensure that the deserialized indices are strictly ascending because binary
+  // search relies on this property before publishing either buffer.
+  for (size_t i = 1; i < indices.size(); ++i) {
+    AD_CORRECTNESS_CHECK(
+        indices[i - 1] < indices[i],
+        "Deserialized vocabulary indices must be strictly ascending");
+  }
+  words_ = std::move(words);
+  indices_ = std::move(indices);
 }
 
 // _____________________________________________________________________________
@@ -26,19 +44,38 @@ std::optional<std::string_view> VocabularyInMemoryBinSearch::operator[](
     uint64_t index) const {
   auto it = ql::ranges::lower_bound(indices_, index);
   if (it != indices_.end() && *it == index) {
-    return words_[it - indices_.begin()];
+    return words()[it - indices_.begin()];
   }
   return std::nullopt;
 }
 
 // _____________________________________________________________________________
+VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
+    ql::span<const size_t> indices) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+
+  std::vector<std::string_view> views;
+  views.reserve(indices.size());
+  for (size_t index : indices) {
+    auto word = (*this)[index];
+    AD_CONTRACT_CHECK(word.has_value());
+    views.push_back(*word);
+  }
+
+  AD_CORRECTNESS_CHECK(views.size() == indices.size());
+
+  auto data = std::make_shared<BatchLookupData>(words_, std::move(views));
+  return BatchLookupData::asResult(std::move(data));
+}
+
+// _____________________________________________________________________________
 WordAndIndex VocabularyInMemoryBinSearch::iteratorToWordAndIndex(
     ql::ranges::iterator_t<Words> it) const {
-  if (it == words_.end()) {
+  if (it == words().end()) {
     return WordAndIndex::end();
   }
-  auto idx = static_cast<uint64_t>(it - words_.begin());
-  WordAndIndex result{words_[idx], indices_[idx]};
+  auto idx = static_cast<uint64_t>(it - words().begin());
+  WordAndIndex result{words()[idx], indices_[idx]};
   if (idx > 0) {
     result.previousIndex() = indices_[idx - 1];
   }
@@ -47,7 +84,12 @@ WordAndIndex VocabularyInMemoryBinSearch::iteratorToWordAndIndex(
 
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::close() {
-  words_.clear();
+  // Install a fresh empty buffer instead of clearing the existing one in place:
+  // outstanding `VocabBatchLookupResult`s hold non-owning string_views into the
+  // old character buffer along with a shared_ptr to it. Mutating the old buffer
+  // in place would invalidate those views; replacing the pointer lets the old
+  // buffer remain valid until all downstream results are destroyed.
+  words_ = std::make_shared<const Words>();
   indices_.clear();
 }
 

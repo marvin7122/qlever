@@ -132,6 +132,8 @@ endfunction()
 add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
+
+addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
@@ -401,6 +403,8 @@ addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpr
 
 addLinkAndDiscoverTest(ExceptionTest)
 
+addLinkAndDiscoverTestNoLibs(InvariantsTest)
+
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
 addLinkAndDiscoverTest(NowDatetimeExpressionTest index)
@@ -456,6 +460,8 @@ addLinkAndDiscoverTest(ComparisonWithNanTest)
 addLinkAndDiscoverTestNoLibs(ThreadSafeQueueTest)
 
 addLinkAndDiscoverTest(IdTableHelpersTest)
+
+# GTestHelpersTest is registered exactly once above.
 
 addLinkAndDiscoverTest(GeneratorTest)
 
