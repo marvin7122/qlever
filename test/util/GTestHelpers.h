@@ -413,7 +413,7 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
       absl::StrCat("Platform premise violated: std::pmr::string does not "
                    "store ",
                    maxSize, " characters on this platform (capacity: ",
-                   pmrStringSsoCapacity(), ")"));
+                   capacity, ")"));
 }
 
 // _____________________________________________________________________________
