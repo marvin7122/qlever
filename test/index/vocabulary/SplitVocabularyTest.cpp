@@ -555,6 +555,8 @@ class SplitVocabularyWithDataTest : public ::testing::Test {
     ad_utility::deleteFile(absl::StrCat(filename, ".a"));
   }
 
+  // Shared across the suite because the vocabulary files are created once in
+  // SetUpTestSuite and closed in TearDownTestSuite.
   static TwoSplitVocabulary sv_;
 };
 
