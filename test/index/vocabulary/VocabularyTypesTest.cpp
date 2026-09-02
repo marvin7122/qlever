@@ -21,6 +21,9 @@
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/File.h"
+#include "util/MemorySize/MemorySize.h"
+
+using namespace ad_utility::memory_literals;
 
 namespace {
 // _____________________________________________________________________________
@@ -242,6 +245,15 @@ TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
 }
 
 // _____________________________________________________________________________
+TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsWhenArenaExceedsBudget) {
+  auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
+  ArenaVocabBatchBuilder builder(1, alloc);
+  EXPECT_THROW(
+      builder.appendWord("this string is definitely more than eight bytes"),
+      ad_utility::detail::AllocationExceedsLimitException);
+}
+
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, MakePmrVocabBatchLookupResultCopiesWords) {
   auto result = makePmrVocabBatchLookupResult({"first", "second"});
   EXPECT_THAT(result, ::testing::ElementsAre("first", "second"));
@@ -348,7 +360,6 @@ TEST(VocabBatchLookupData, MarkerBatchLookupsAndMergeInInputOrder) {
   partitions[1].addPair(0, 1);  // banana -> pos 1
   partitions[0].addPair(1, 2);  // cherry -> pos 2
 
-  auto result =
-      mergeMarkerBatchesInInputOrder(std::move(lookups), partitions);
+  auto result = mergeMarkerBatchesInInputOrder(std::move(lookups), partitions);
   EXPECT_THAT(result, ::testing::ElementsAre("apple", "banana", "cherry"));
 }

@@ -146,13 +146,17 @@ CPP_template(typename UnderlyingVocabulary,
   // the actually decoded size is retained until the returned result dies.
   // No compaction or tail-trimming pass exists yet: peak batch memory stays
   // proportional to the sum of the per-word bounds, not of the decoded
-  // payload sizes.
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+  // payload sizes. When the caller passes an `ArenaVocabBatchBuilder` that
+  // was constructed with the Index/query `AllocatorWithLimit`, those
+  // allocations charge `--memory-max` and throw
+  // `AllocationExceedsLimitException` instead of growing the process heap.
+  // Decompress into `builder`. The caller owns the arena and the allocator.
+  void lookupBatch(ql::span<const size_t> indices,
+                   ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
 
-    ArenaVocabBatchBuilder builder(indices.size());
     std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
@@ -165,7 +169,11 @@ CPP_template(typename UnderlyingVocabulary,
                 compressedWord, decoderIdx, outSpan, scratch);
           });
     }
+  }
 
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    ArenaVocabBatchBuilder builder(indices.size());
+    lookupBatch(indices, builder);
     return std::move(builder).finalize();
   }
 

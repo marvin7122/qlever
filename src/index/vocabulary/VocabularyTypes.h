@@ -14,25 +14,26 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <memory>
 #include <optional>
+#include <range/v3/view/enumerate.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include <range/v3/view/enumerate.hpp>
-
 #include "backports/algorithm.h"
 #include "backports/memory_resource.h"
 #include "backports/span.h"
+#include "global/Id.h"
+#include "util/AllocatorWithLimit.h"
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
 #include "util/Invariants.h"
 #include "util/Iterators.h"
 #include "util/TransparentFunctors.h"
 #include "util/Views.h"
-#include <initializer_list>
 
 // _____________________________________________________________________________
 // Type-erased smart pointer holding whatever keeps word storage alive. Used
@@ -59,7 +60,6 @@ class VocabBatchLookupResult {
   ql::span<const std::string_view> span_{};
 
  public:
-
   VocabBatchLookupResult() = default;
 
   // Construct a batch lookup result with an owning pointer keeping the
@@ -148,8 +148,8 @@ class ContiguousVocabBatchBuilder {
     size_t offset = 0;
     static char emptyWordTarget = 0;
     for (size_t size : wordSizes) {
-      char* target = size == 0 ? &emptyWordTarget
-                               : data_->buffer_.data() + offset;
+      char* target =
+          size == 0 ? &emptyWordTarget : data_->buffer_.data() + offset;
       targets_.push_back(target);
       data_->views_.emplace_back(target, size);
       offset += size;
@@ -158,9 +158,10 @@ class ContiguousVocabBatchBuilder {
 
   // Return the precomputed destination for each requested word. The pointer at
   // index i corresponds to the size supplied at index i to the constructor.
-  // The pointers refer to the builder's backing character buffer for non-empty words; zero-sized words use the shared static empty-word sentinel and must only
-  // be used while the builder and its backing storage remain valid; do not use
-  // them after the builder has been finalized or destroyed.
+  // The pointers refer to the builder's backing character buffer for non-empty
+  // words; zero-sized words use the shared static empty-word sentinel and must
+  // only be used while the builder and its backing storage remain valid; do not
+  // use them after the builder has been finalized or destroyed.
   [[nodiscard]] ql::span<char*> targets() noexcept { return targets_; }
   [[nodiscard]] ql::span<char* const> targets() const noexcept {
     return targets_;
@@ -173,18 +174,46 @@ class ContiguousVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// PMR `memory_resource` that charges an `AllocatorWithLimit`. Copies of the
+// allocator share the same `MemoryLimitTracker` as query `IdTable`s.
+class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
+  ad_utility::AllocatorWithLimit<std::byte> alloc_;
+
+ public:
+  explicit AllocatorAsMemoryResource(
+      ad_utility::AllocatorWithLimit<std::byte> alloc)
+      : alloc_{std::move(alloc)} {}
+
+ protected:
+  void* do_allocate(std::size_t bytes, std::size_t) override {
+    return alloc_.allocate(bytes);
+  }
+  void do_deallocate(void* p, std::size_t bytes, std::size_t) override {
+    alloc_.deallocate(static_cast<std::byte*>(p), bytes);
+  }
+  bool do_is_equal(
+      const ql::pmr::memory_resource& other) const noexcept override {
+    return this == &other;
+  }
+};
+
 // Strong, self-contained batch-lookup result backed by a PMR monotonic buffer
-// resource.
+// resource. `upstream_` (if set) must outlive `buffer_` so deallocation can
+// still charge the memory tracker; members are destroyed in reverse order.
 class PmrVocabBatchLookupData {
  private:
+  std::unique_ptr<ql::pmr::memory_resource> upstream_;
   std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
   std::vector<std::string_view> views_;
 
  public:
   PmrVocabBatchLookupData(
+      std::unique_ptr<ql::pmr::memory_resource> upstream,
       std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
       std::vector<std::string_view> views)
-      : buffer_{std::move(buffer)}, views_{std::move(views)} {}
+      : upstream_{std::move(upstream)},
+        buffer_{std::move(buffer)},
+        views_{std::move(views)} {}
 
   static VocabBatchLookupResult asResult(
       std::shared_ptr<PmrVocabBatchLookupData> self) {
@@ -283,20 +312,37 @@ std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
 
 // _____________________________________________________________________________
 // Builder for a PMR arena-backed `VocabBatchLookupResult`.
-// Encapsulates the `monotonic_buffer_resource`, allocates decompressed word
-// storage directly in the arena, and guarantees that all exposed `string_view`s
-// are safely backed by the arena storage without leaking memory resource
-// accounting to callers.
+// Owns the arena and, when constructed with `AllocatorWithLimit`, the
+// memory-limit tracker. Vocabularies only append decompressed bytes.
 class ArenaVocabBatchBuilder {
  private:
+  std::unique_ptr<ql::pmr::memory_resource> upstream_;
   std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
   std::vector<std::string_view> views_;
 
+  void initBuffer(ql::pmr::memory_resource* resource) {
+    buffer_ = std::make_unique<ql::pmr::monotonic_buffer_resource>(resource);
+  }
+
  public:
-  explicit ArenaVocabBatchBuilder(size_t expectedSize)
-      : buffer_{std::make_unique<ql::pmr::monotonic_buffer_resource>()} {
+  // Unlimited default PMR resource (tests and vocabs that do not see a query
+  // allocator).
+  explicit ArenaVocabBatchBuilder(size_t expectedSize) {
     AD_CONTRACT_CHECK(expectedSize > 0);
     views_.reserve(expectedSize);
+    initBuffer(ql::pmr::get_default_resource());
+  }
+
+  // Charge `allocator`'s shared memory tracker (same object as the Index /
+  // query `AllocatorWithLimit`).
+  explicit ArenaVocabBatchBuilder(
+      size_t expectedSize,
+      const ad_utility::AllocatorWithLimit<Id>& allocator) {
+    AD_CONTRACT_CHECK(expectedSize > 0);
+    views_.reserve(expectedSize);
+    upstream_ =
+        std::make_unique<AllocatorAsMemoryResource>(allocator.as<std::byte>());
+    initBuffer(upstream_.get());
   }
 
   // Allocate storage inside the arena for up to `bound` bytes, invoke
@@ -330,8 +376,8 @@ class ArenaVocabBatchBuilder {
   // Finalize and return the immutable batch result.
   [[nodiscard]] VocabBatchLookupResult finalize() && {
     AD_CONTRACT_CHECK(!views_.empty());
-    auto data = std::make_shared<PmrVocabBatchLookupData>(std::move(buffer_),
-                                                          std::move(views_));
+    auto data = std::make_shared<PmrVocabBatchLookupData>(
+        std::move(upstream_), std::move(buffer_), std::move(views_));
     return PmrVocabBatchLookupData::asResult(std::move(data));
   }
 };
@@ -377,7 +423,8 @@ class MultiSourceVocabBatchAssembler {
   void checkInvariants() const {
     AD_CORRECTNESS_CHECK(assembledWordViews_.size() ==
                          slotFilledTracking_.size());
-    // The number of storage owners is independent of the number of assembled views.
+    // The number of storage owners is independent of the number of assembled
+    // views.
   }
 
   // ___________________________________________________________________________
@@ -482,8 +529,8 @@ class MarkerIndicesAndPositions {
 };
 
 // _____________________________________________________________________________
-// Paired lookup data for each of the `NumVocabs` underlying vocabularies, indexed
-// by the marker that identifies the vocabulary.
+// Paired lookup data for each of the `NumVocabs` underlying vocabularies,
+// indexed by the marker that identifies the vocabulary.
 template <size_t NumVocabs>
 using IndicesAndPositionsByMarker =
     std::array<MarkerIndicesAndPositions, NumVocabs>;
@@ -551,7 +598,7 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
   size_t totalPositions = 0;
   for (const auto& markerIndices : markerIndicesAndPositions) {
     AD_CONTRACT_CHECK(markerIndices.size() <= SIZE_MAX - totalPositions);
-      totalPositions += markerIndices.size();
+    totalPositions += markerIndices.size();
   }
   MultiSourceVocabBatchAssembler assembler(totalPositions);
 
