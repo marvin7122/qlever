@@ -42,4 +42,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ChunkStreamingBenchmark engine testUtil)
 
+    addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
+
 endif()
