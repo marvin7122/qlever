@@ -139,11 +139,6 @@ add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
 
-
-.
-
-.
-
 addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
