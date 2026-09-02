@@ -36,39 +36,50 @@
 #include "util/Views.h"
 
 // _____________________________________________________________________________
-// Type-erased smart pointer holding whatever keeps word storage alive. Used
-// to store child `VocabBatchLookupResult`s or references to vocabulary state
-// (e.g., shared ownership of a vocabulary's in-memory word storage). When
-// results from multiple sources are assembled, every such owner must be
-// retained until the finalized result is destroyed because its
-// `assembledWordViews_` may refer to child-result storage or external
-// vocabulary storage.
-using VocabBatchOwner = std::shared_ptr<const void>;
+// Frozen owner of a batch's `string_view`s. Builders allocate and write;
+// `finalize() &&` produces a `shared_ptr<const VocabBatchStorage>` with no
+// mutators. `viewSpan()` is not virtual: it always returns this object's
+// `views_`, which only a builder may fill via a derived constructor.
+class VocabBatchStorage {
+  std::vector<std::string_view> views_;
+
+ protected:
+  explicit VocabBatchStorage(std::vector<std::string_view> views)
+      : views_{std::move(views)} {}
+
+ public:
+  virtual ~VocabBatchStorage() = default;
+  VocabBatchStorage(const VocabBatchStorage&) = delete;
+  VocabBatchStorage& operator=(const VocabBatchStorage&) = delete;
+  VocabBatchStorage(VocabBatchStorage&&) = delete;
+  VocabBatchStorage& operator=(VocabBatchStorage&&) = delete;
+
+  [[nodiscard]] ql::span<const std::string_view> viewSpan() const noexcept {
+    return views_;
+  }
+};
+
+// Shared ownership of frozen batch storage. Assemblers retain these tokens
+// for every child whose views they copy.
+using VocabBatchOwner = std::shared_ptr<const VocabBatchStorage>;
 
 // _____________________________________________________________________________
-// Represent a strong value type for a batch vocabulary lookup result.
-// Hold a `span<const string_view>` and keep the backing word storage alive via
-// an internal `VocabBatchOwner`. Provide a read-only range interface over the
-// string views. Assemblers use the `owner()` accessor as the single
-// ownership-propagation interface: they retain the returned token for every
-// child result whose views are copied into an assembled result.
+// Batch lookup result: views are always `storage_->viewSpan()`. There is no
+// constructor that takes an owner and a span independently.
 class VocabBatchLookupResult {
  private:
-  // Must retain every allocation referenced by span_; the views are valid only
-  // while this result, and therefore owner_, remains alive.
-  VocabBatchOwner owner_{};
+  VocabBatchOwner storage_{};
   ql::span<const std::string_view> span_{};
 
  public:
   VocabBatchLookupResult() = default;
 
-  // Construct a batch lookup result with an owning pointer keeping the
-  // backing word storage alive. Empty results do not require an owner.
-  VocabBatchLookupResult(VocabBatchOwner owner,
-                         ql::span<const std::string_view> span)
-      : owner_{std::move(owner)}, span_{span} {
+  explicit VocabBatchLookupResult(VocabBatchOwner storage)
+      : storage_{std::move(storage)},
+        span_{storage_ ? storage_->viewSpan()
+                       : ql::span<const std::string_view>{}} {
     if (!span_.empty()) {
-      AD_CORRECTNESS_CHECK(owner_ != nullptr);
+      AD_CONTRACT_CHECK(storage_ != nullptr);
     }
   }
 
@@ -84,9 +95,8 @@ class VocabBatchLookupResult {
   [[nodiscard]] const std::string_view* data() const noexcept {
     return span_.data();
   }
-  // Return the type-erased owner so assemblers can preserve the lifetime of
-  // backing storage without exposing mutable access to the stored views.
-  [[nodiscard]] VocabBatchOwner owner() const noexcept { return owner_; }
+  // Frozen storage so assemblers can keep child views alive.
+  [[nodiscard]] VocabBatchOwner owner() const noexcept { return storage_; }
 
   // Stored views and backing bytes are not exposed for mutation. Callers may
   // inspect the immutable range and may retrieve the shared ownership token
@@ -107,18 +117,21 @@ using VocabLookupOutput =
 // Represent a strong, self-contained batch-lookup result backed by a
 // contiguous character buffer (used for reading fixed-size chunks from disk).
 // Keep all storage private.
-class ContiguousVocabBatchLookupData {
+class ContiguousVocabBatchLookupData : public VocabBatchStorage {
  private:
   std::vector<char> buffer_;
-  std::vector<std::string_view> views_;
 
   friend class ContiguousVocabBatchBuilder;
 
  public:
+  ContiguousVocabBatchLookupData(std::vector<char> buffer,
+                                 std::vector<std::string_view> views)
+      : VocabBatchStorage(std::move(views)), buffer_{std::move(buffer)} {}
+
   static VocabBatchLookupResult asResult(
       std::shared_ptr<ContiguousVocabBatchLookupData> self) {
-    auto span = ql::span<const std::string_view>{self->views_};
-    return VocabBatchLookupResult(std::move(self), span);
+    return VocabBatchLookupResult{
+        std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
   }
 };
 
@@ -129,29 +142,28 @@ class ContiguousVocabBatchLookupData {
 // word at its fixed offset before any I/O happens.
 class ContiguousVocabBatchBuilder {
  private:
-  std::shared_ptr<ContiguousVocabBatchLookupData> data_;
+  std::vector<char> buffer_;
+  std::vector<std::string_view> views_;
   std::vector<char*> targets_;
 
  public:
-  explicit ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes)
-      : data_{std::make_shared<ContiguousVocabBatchLookupData>()} {
+  explicit ContiguousVocabBatchBuilder(ql::span<const size_t> wordSizes) {
     AD_CONTRACT_CHECK(!wordSizes.empty());
     size_t totalBytes = 0;
     for (size_t size : wordSizes) {
       AD_CONTRACT_CHECK(size <= SIZE_MAX - totalBytes);
       totalBytes += size;
     }
-    data_->buffer_.resize(totalBytes == 0 ? 1 : totalBytes);
-    data_->views_.reserve(wordSizes.size());
+    buffer_.resize(totalBytes == 0 ? 1 : totalBytes);
+    views_.reserve(wordSizes.size());
     targets_.reserve(wordSizes.size());
 
     size_t offset = 0;
     static char emptyWordTarget = 0;
     for (size_t size : wordSizes) {
-      char* target =
-          size == 0 ? &emptyWordTarget : data_->buffer_.data() + offset;
+      char* target = size == 0 ? &emptyWordTarget : buffer_.data() + offset;
       targets_.push_back(target);
-      data_->views_.emplace_back(target, size);
+      views_.emplace_back(target, size);
       offset += size;
     }
   }
@@ -168,8 +180,10 @@ class ContiguousVocabBatchBuilder {
   }
 
   [[nodiscard]] VocabBatchLookupResult finalize() && {
-    AD_CONTRACT_CHECK(!data_->views_.empty());
-    return ContiguousVocabBatchLookupData::asResult(std::move(data_));
+    AD_CONTRACT_CHECK(!views_.empty());
+    auto data = std::make_shared<ContiguousVocabBatchLookupData>(
+        std::move(buffer_), std::move(views_));
+    return ContiguousVocabBatchLookupData::asResult(std::move(data));
   }
 };
 
@@ -200,67 +214,72 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
 // Strong, self-contained batch-lookup result backed by a PMR monotonic buffer
 // resource. `upstream_` (if set) must outlive `buffer_` so deallocation can
 // still charge the memory tracker; members are destroyed in reverse order.
-class PmrVocabBatchLookupData {
+class PmrVocabBatchLookupData : public VocabBatchStorage {
  private:
   std::unique_ptr<ql::pmr::memory_resource> upstream_;
   std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
-  std::vector<std::string_view> views_;
+
+  friend class ArenaVocabBatchBuilder;
 
  public:
   PmrVocabBatchLookupData(
       std::unique_ptr<ql::pmr::memory_resource> upstream,
       std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
       std::vector<std::string_view> views)
-      : upstream_{std::move(upstream)},
-        buffer_{std::move(buffer)},
-        views_{std::move(views)} {}
+      : VocabBatchStorage(std::move(views)),
+        upstream_{std::move(upstream)},
+        buffer_{std::move(buffer)} {}
 
   static VocabBatchLookupResult asResult(
       std::shared_ptr<PmrVocabBatchLookupData> self) {
-    auto span = ql::span<const std::string_view>{self->views_};
-    return VocabBatchLookupResult(std::move(self), span);
+    return VocabBatchLookupResult{
+        std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
   }
 };
 
 // _____________________________________________________________________________
 // Strong, self-contained batch-lookup result backed by owning std::strings.
-class StringVectorVocabBatchLookupData {
+class StringVectorVocabBatchLookupData : public VocabBatchStorage {
  private:
   std::vector<std::string> buffer_;
-  std::vector<std::string_view> views_;
+
+  static std::vector<std::string_view> viewsInto(
+      const std::vector<std::string>& buffer) {
+    return ::ranges::to_vector(
+        buffer |
+        ql::views::transform(ad_utility::staticCast<std::string_view>));
+  }
 
  public:
   explicit StringVectorVocabBatchLookupData(std::vector<std::string> words)
-      : buffer_{std::move(words)} {
-    views_ = ::ranges::to_vector(
-        buffer_ |
-        ql::views::transform(ad_utility::staticCast<std::string_view>));
+      : VocabBatchStorage(viewsInto(words)), buffer_{std::move(words)} {
+    // viewsInto ran on `words` before the move; moving std::string does not
+    // relocate the character buffer, so the views stay valid.
   }
 
   static VocabBatchLookupResult asResult(
       std::shared_ptr<StringVectorVocabBatchLookupData> self) {
-    auto span = ql::span<const std::string_view>{self->views_};
-    return VocabBatchLookupResult(std::move(self), span);
+    return VocabBatchLookupResult{
+        std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
   }
 };
 
 // _____________________________________________________________________________
 // Strong, self-contained batch-lookup result that owns multiple independent
 // storage owners.
-class MultiOwnerVocabBatchLookupData {
+class MultiOwnerVocabBatchLookupData : public VocabBatchStorage {
  private:
   std::vector<VocabBatchOwner> owners_;
-  std::vector<std::string_view> views_;
 
  public:
   MultiOwnerVocabBatchLookupData(std::vector<VocabBatchOwner> owners,
                                  std::vector<std::string_view> views)
-      : owners_{std::move(owners)}, views_{std::move(views)} {}
+      : VocabBatchStorage(std::move(views)), owners_{std::move(owners)} {}
 
   static VocabBatchLookupResult asResult(
       std::shared_ptr<MultiOwnerVocabBatchLookupData> self) {
-    auto span = ql::span<const std::string_view>{self->views_};
-    return VocabBatchLookupResult(std::move(self), span);
+    return VocabBatchLookupResult{
+        std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
   }
 };
 

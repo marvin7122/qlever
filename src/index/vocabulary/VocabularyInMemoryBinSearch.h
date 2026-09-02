@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "backports/span.h"
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
@@ -25,7 +26,6 @@
 #include "util/Serializer/FileSerializer.h"
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
-#include "backports/span.h"
 
 // A vocabulary that stores all words in memory. The vocabulary supports
 // "holes", meaning that the indices of the contained words don't have to be
@@ -43,24 +43,21 @@ class VocabularyInMemoryBinSearch
   // Own the in-memory word storage together with the string views into it.
   // The enclosing vocabulary can be closed or destroyed while a batch result
   // is still alive.
-  class BatchLookupData {
+  class BatchLookupData : public VocabBatchStorage {
    private:
     std::shared_ptr<const Words> storage_;
-    std::vector<std::string_view> views_;
 
    public:
     BatchLookupData(std::shared_ptr<const Words> storage,
                     std::vector<std::string_view> views)
-        : storage_{std::move(storage)}, views_{std::move(views)} {
+        : VocabBatchStorage(std::move(views)), storage_{std::move(storage)} {
       AD_CORRECTNESS_CHECK(storage_ != nullptr);
     }
 
     static VocabBatchLookupResult asResult(
         std::shared_ptr<BatchLookupData> self) {
-      // Keep the BatchLookupData owner in the result so its storage and string
-      // views remain valid while the result is alive.
-      auto span = ql::span<const std::string_view>{self->views_};
-      return VocabBatchLookupResult(VocabBatchOwner{std::move(self)}, span);
+      return VocabBatchLookupResult{
+          std::shared_ptr<const VocabBatchStorage>{std::move(self)}};
     }
   };
 
