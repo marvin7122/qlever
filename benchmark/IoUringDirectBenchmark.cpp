@@ -29,7 +29,7 @@
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/Log.h"
-#include "util/export_prototypes/RegisteredIoUringReader.h"
+#include "util/RegisteredIoUringReader.h"
 
 // Optional inclusion of QLever benchmark infrastructure
 #if __has_include("../benchmark/infrastructure/Benchmark.h")

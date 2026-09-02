@@ -18,7 +18,7 @@
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "../benchmark/infrastructure/BenchmarkMeasurementContainer.h"
 #include "../benchmark/infrastructure/BenchmarkMetadata.h"
-#include "engine/export_prototypes/AsyncChunkPipeline.h"
+#include "engine/AsyncChunkPipeline.h"
 #include "util/Exception.h"
 #include "util/Log.h"
 #include "util/Random.h"
