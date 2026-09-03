@@ -44,16 +44,17 @@ TEST(ExportEngineV2Test, SerializeTableChunkTsv) {
 }
 
 TEST(ExportEngineV2Test, PipelineMorselIntegration) {
-  AsyncChunkPipeline pipeline{8};
+  AsyncChunkPipeline<std::string> pipeline{
+      AsyncChunkPipelineConfig{.capacity_ = 8, .runtimeEnabled_ = true}};
   ScatterGatherArenaStreamer streamer{64 * 1024};
 
   auto chunk1 = streamer.allocateChunk(64);
   chunk1.append("chunk_1\n");
-  pipeline.push(0, std::string(chunk1.view()));
+  pipeline.push(std::string(chunk1.view()));
 
   auto chunk2 = streamer.allocateChunk(64);
   chunk2.append("chunk_2\n");
-  pipeline.push(1, std::string(chunk2.view()));
+  pipeline.push(std::string(chunk2.view()));
 
   EXPECT_EQ(pipeline.pop(), "chunk_1\n");
   EXPECT_EQ(pipeline.pop(), "chunk_2\n");
