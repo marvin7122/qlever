@@ -429,7 +429,7 @@ class InPlaceHttpChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Write std::string_view slice.
+  
   void write(std::string_view sv) { write(sv.data(), sv.size()); }
 
   // ___________________________________________________________________________
