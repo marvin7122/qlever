@@ -95,7 +95,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
       totalBytes += currentChunk.size();
       ++chunksEmitted;
 
-      // First chunk completed: record Time-To-First-Byte
+            // First chunk constructed: record time to first constructed chunk.
       if (chunksEmitted == 1) {
         ttfbTimer.stop();
         ttfbMs = ad_utility::timer::Timer::toSeconds(ttfbTimer.value()) * 1000.0;
