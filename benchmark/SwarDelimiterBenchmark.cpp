@@ -203,7 +203,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
       auto& group = results.addGroup(
           "2. CSV 3-Column Quoted Row Serialization (5,000,000 rows)");
 
-      // 2.1 Scalar CSV
+      
       {
         size_t totalBytesWritten = 0;
         uint64_t startCycles = readCpuCycles();
