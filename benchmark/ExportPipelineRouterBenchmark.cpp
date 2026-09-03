@@ -32,9 +32,9 @@ int main(int argc, char** argv) {
   std::cout << " Iterations: " << numQueries << " routing evaluations\n";
   std::cout << "================================================================================\n\n";
 
-  auto selectQuery = SparqlParser::parseQuery("SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
-  auto constructQuery = SparqlParser::parseQuery("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
-  auto askQuery = SparqlParser::parseQuery("ASK WHERE { ?s ?p ?o }");
+  auto selectQuery = SparqlParser::parseQuery(nullptr, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
+  auto constructQuery = SparqlParser::parseQuery(nullptr, "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
+  auto askQuery = SparqlParser::parseQuery(nullptr, "ASK WHERE { ?s ?p ?o }");
 
   ParamValueMap fastParams;
   fastParams["fast-export"] = {"1"};
