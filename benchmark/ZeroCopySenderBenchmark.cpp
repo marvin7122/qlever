@@ -252,7 +252,7 @@ class ZeroCopySenderBenchmarkRunner {
                            cpuPercent, totalBytes_, numChunks);
   }
 
-  // 3. io_uring Zero-Copy Send (IORING_OP_SEND_ZC with Registered Buffers)
+  // Run the zero-copy `io_uring` send with registered buffers using `IORING_OP_SEND_ZC`.
   BenchmarkMetric runIoUringZeroCopySend() {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
