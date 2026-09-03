@@ -136,7 +136,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
   }
 
   // ___________________________________________________________________________
-  // Execute asynchronous double-buffered export using `AsyncChunkPipeline`.
+  
   BenchmarkRunResult runAsyncDoubleBuffered(size_t chunkSize,
                                             size_t latencyMs) const {
     const size_t numChunks = (totalTriples_ + chunkSize - 1) / chunkSize;
