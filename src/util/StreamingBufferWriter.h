@@ -208,7 +208,6 @@ class StreamingBufferWriter
     return *this;
   }
 
-  // Disable copy semantics to prevent unintended buffer duplications.
   StreamingBufferWriter(const StreamingBufferWriter&) = delete;
   StreamingBufferWriter& operator=(const StreamingBufferWriter&) = delete;
 
