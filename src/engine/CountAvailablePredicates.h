@@ -98,12 +98,11 @@ class CountAvailablePredicates : public Operation {
                                   size_t patternColumnIdx,
                                   RuntimeInformation& runtimeInfo);
 
-  // Special implementation for the full pattern trick. Count and expand the
-  // patterns in the `patternColumn` of the `subresult`, which is the (possibly
-  // lazy) result of a scan of the full `ql:has-pattern` relation.
+  // Special implementation for the full pattern trick.
+  // Perform a lazy scan over the full `ql:has-pattern` relation,
+  // and then count and expand the patterns.
   void computePatternTrickAllEntities(
-      IdTable* result, const CompactVectorOfStrings<Id>& patterns,
-      const Result& subresult, ColumnIndex patternColumn) const;
+      IdTable* result, const CompactVectorOfStrings<Id>& patterns) const;
 
   Result computeResult([[maybe_unused]] bool requestLaziness) override;
   [[nodiscard]] VariableToColumnMap computeVariableToColumnMap() const override;
