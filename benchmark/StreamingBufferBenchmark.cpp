@@ -124,8 +124,8 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     return "StreamingBufferWriter vs std::memcpy (256 MB Non-Temporal Export Streaming)";
   }
 
-  // ___________________________________________________________________________
-  // Warm up vocabulary probe cache lines into L1/L2/L3 CPU caches.
+    // ___________________________________________________________________________
+  // Touch one word per cache line in the vocabulary working set.
   static void warmCache(std::vector<uint32_t>& vocabData) {
     uint64_t sum = 0;
     for (size_t i = 0; i < vocabData.size(); i += 16) {
