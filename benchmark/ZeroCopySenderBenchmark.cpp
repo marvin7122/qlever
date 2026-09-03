@@ -68,7 +68,7 @@ class CpuTimeTimer {
     startWall_ = std::chrono::steady_clock::now();
   }
 
-  // Returns {wallSeconds, cpuSeconds, cpuPercentage}
+  // Return `{wallSeconds, cpuSeconds, cpuPercentage}`.
   [[nodiscard]] std::tuple<double, double, double> elapsed() const {
     auto endWall = std::chrono::steady_clock::now();
     struct timespec endCpu {};
