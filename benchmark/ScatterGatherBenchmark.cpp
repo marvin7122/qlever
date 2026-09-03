@@ -118,8 +118,8 @@ struct ScatterGatherBenchmarkMetric {
 // Compare contiguous copying with zero-copy scatter-gather streaming.
 class ScatterGatherBenchmarkRunner {
  public:
-  // 1. Contiguous Chunk Copy (Baseline):
-  // Copies every byte of subject, predicate, and large literal into chunk buffer.
+    // 1. Perform the contiguous chunk copy baseline.
+  // Copy every byte of the subject, predicate, and large literal into the chunk buffer.
   static ScatterGatherBenchmarkMetric runContiguousCopy(
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = 1024 * 1024) {
