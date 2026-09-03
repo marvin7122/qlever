@@ -34,7 +34,7 @@ namespace qlever::export_streaming {
 // Starts with a 64 KB buffer for sub-millisecond Time-To-First-Byte (TTFB),
 // doubling buffer size on each flush until reaching 4 MB bulk throughput capacity.
 struct AdaptiveChunkConfig {
-  // Initial chunk buffer capacity in bytes (64 KB). Ensures immediate first byte.
+    // Initial chunk buffer capacity in bytes; the default is 64 KB.
   size_t initialChunkBytes_ = 64 * 1024;
 
   // Maximum chunk buffer capacity in bytes (4 MB) for sustained bulk streaming.
