@@ -178,11 +178,9 @@ class ExportPipelineRouter {
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
   }
 
-  // Inspects query AST for constructs that require full relational Volcano fallback.
-  [[nodiscard]] static bool hasUnsupportedConstructs(const ParsedQuery& query) noexcept {
-    (void)query;
-    // Current fast-path streaming supports standard graph pattern scans and joins.
-    // Deep recursive AST inspection can easily add new operator checks here.
+    // Unsupported-construct detection is not implemented yet; all SELECT and
+  // CONSTRUCT queries are currently treated as eligible for the fast path.
+  [[nodiscard]] static bool hasUnsupportedConstructs(const ParsedQuery&) noexcept {
     return false;
   }
 };
