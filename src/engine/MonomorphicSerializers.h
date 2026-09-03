@@ -624,7 +624,7 @@ decltype(auto) dispatch3Col(ColumnType c0, ColumnType c1, ColumnType c2,
         std::forward<Args>(args)...);
   }
 
-  // Fallback to dynamic serializer for rare 3-column combinations
+    // Fallback to the dynamic serializer for combinations without a specialization.
   DynamicRowSerializer dynamicSerializer({c0, c1, c2});
   return visitor(dynamicSerializer, std::forward<Args>(args)...);
 }
