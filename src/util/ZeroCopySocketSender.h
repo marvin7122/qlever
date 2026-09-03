@@ -51,7 +51,7 @@
 
 namespace ad_utility {
 
-// 4KB memory page alignment constant for DMA and zero-copy kernel pinning.
+// 4KB memory page alignment for zero-copy buffers.
 inline constexpr size_t kZeroCopyPageAlignment = 4096;
 
 // _____________________________________________________________________________
