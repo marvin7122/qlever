@@ -273,7 +273,7 @@ int main(int argc, char** argv) {
             << " triples (avg 500 triples / subject)...\n";
   auto dataset = WikidataStreamDataset::generate(numTriples, 500);
 
-  // Allocate 512 MB buffer for formatted outputs
+    // Allocate 256 bytes per triple for formatted outputs.
   std::vector<char> outputBuffer(numTriples * 256);
 
   std::vector<BenchmarkResult> results;
