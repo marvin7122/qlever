@@ -111,7 +111,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
     size_t kind = i % 5;
     switch (kind) {
       case 0:
-        // Plain IRI
+                // Generate a plain IRI.
         obj = std::make_shared<EvaluatedTermData>(
             "<http://example.org/entity/Q" + std::to_string(i * 3 + 7) + ">",
             nullptr);
