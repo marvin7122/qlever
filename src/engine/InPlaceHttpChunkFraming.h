@@ -322,7 +322,7 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
   }
 
   // ___________________________________________________________________________
-  // Accessors
+  // Provide accessors.
   [[nodiscard]] size_t maxPayloadCapacity() const noexcept {
     return maxPayloadCapacity_;
   }
