@@ -46,7 +46,7 @@ inline uint64_t readCpuCycles() noexcept {
 // Benchmark suite comparing scalar byte-by-byte writes vs SWAR 64-bit delimiter packing
 class SwarDelimiterBenchmark : public BenchmarkInterface {
  private:
-  // Pre-allocated recycling streaming buffer (64 MB) to prevent cache thrashing
+  // Reusable 64 MB output buffer to avoid repeated allocation and bound memory usage
   std::vector<char> outputBuffer_;
 
  public:
