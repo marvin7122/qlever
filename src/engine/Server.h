@@ -172,8 +172,8 @@ class Server {
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<void> process(RequestT& request, ResponseT&& send);
 
-  // Helper function for unit tests, calls `process` with the given request and
-  // returns the response that would have been sent.
+    // Call `process` with the given request and return the response that would
+  // have been sent.
   CPP_template(typename RequestT, typename ResponseT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<ResponseT> onlyForTestingProcess(RequestT& request);
