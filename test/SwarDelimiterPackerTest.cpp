@@ -293,7 +293,7 @@ TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
   scalarBuf.assign(256, 0);
   swarBuf.assign(256, 0);
 
-  // Scalar CSV
+  // Write the CSV row with scalar operations.
   sPtr = scalarBuf.data();
   *sPtr++ = '"';
   std::memcpy(sPtr, c1.data(), c1.size());
