@@ -70,7 +70,7 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
   auto baselineResults = ql::exportIds::idsToStringAndType(
       index, testIds, localVocab, ql::identity{});
 
-  // Prefetched resolution with various prefetch distances
+  // Resolve IDs with prefetching at various distances.
   for (size_t distance : {1, 2, 4, 8, 16}) {
     PrefetchingBatchResolver resolver(
         PrefetchConfig{.prefetchDistance = distance});
