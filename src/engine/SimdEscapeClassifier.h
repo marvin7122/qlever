@@ -357,7 +357,7 @@ class SimdEscapeClassifier {
       offset += 32;
     }
 
-    // Secondary path: 16-byte SSE2 vector block
+        // Process a 16-byte block with SSE2 on the secondary path.
     if (len >= 16) {
       ChunkEscapeMask16 mask = scanChunk16<Format>(ptr);
       if (mask.hasEscape()) {
