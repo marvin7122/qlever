@@ -86,7 +86,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
       auto& group = results.addGroup(
           "1. N-Triples IRI Row Serialization (5,000,000 rows, <s> <p> <o> .\\n)");
 
-      // 1.1 Scalar byte-by-byte writes (11 scalar stores per row)
+      // Write scalar bytes one by one (11 scalar stores per row).
       {
         size_t totalBytesWritten = 0;
         uint64_t startCycles = readCpuCycles();
