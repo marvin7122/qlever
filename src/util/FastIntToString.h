@@ -117,7 +117,6 @@ inline void format4Digits(uint32_t v, char* dst) noexcept {
 }
 
 // _____________________________________________________________________________
-// Fast 2-digit formatting
 inline void format2Digits(uint32_t v, char* dst) noexcept {
   AD_CONTRACT_CHECK(dst != nullptr);
   AD_CONTRACT_CHECK(v < 100U);
