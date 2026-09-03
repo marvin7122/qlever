@@ -125,7 +125,7 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
   EXPECT_EQ(next, buffer.data() + 1);
   EXPECT_EQ(buffer[0], '\t');
 
-  // Test writing 0-byte delimiter (no pointer advance)
+  // Test writing a 0-byte delimiter without advancing the pointer.
   buffer.fill('W');
   next = SwarDelimiterPacker::writeDelim64(buffer.data(), 0, 0);
   EXPECT_EQ(next, buffer.data());
