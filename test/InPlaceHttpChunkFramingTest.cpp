@@ -41,7 +41,7 @@ TEST(InPlaceHttpChunkFramingTest, ConceptComplianceAndBasicFraming) {
   EXPECT_TRUE(chunk.isFinalized());
   EXPECT_EQ(chunk.lastPayloadBytes(), payload.size());
 
-  // payload size in hex: 34 bytes = 0x22
+  // Verify that the payload size is 0x22 (34 bytes).
   std::string_view framed(framedSpan.data(), framedSpan.size());
   EXPECT_EQ(framed, "22\r\nHello, QLever Chunked HTTP Stream!\r\n");
 
