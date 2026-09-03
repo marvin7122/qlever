@@ -68,6 +68,5 @@ if (NOT _NO_BENCHMARK)
     add_executable(SimdEscapeBenchmark SimdEscapeBenchmark.cpp)
     linkBenchmark(SimdEscapeBenchmark engine sparqlParser qlever_util)
 
-endif()
     addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
 endif()
