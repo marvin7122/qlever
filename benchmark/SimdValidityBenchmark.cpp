@@ -129,7 +129,7 @@ struct OptionalColumnDataset {
     std::bernoulli_distribution isUnboundDist(unboundFraction);
     std::uniform_int_distribution<size_t> strDist(0, ds.stringTable_.size() - 1);
 
-    // Generate in blocks representing realistic SPARQL OPTIONAL matches
+        // Generate randomized rows representing realistic SPARQL OPTIONAL matches.
     for (size_t i = 0; i < numRows; ++i) {
       if (isUnboundDist(gen)) {
         ds.columnData_[i] = ValueId::makeUndefined();
