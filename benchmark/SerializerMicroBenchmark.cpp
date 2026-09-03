@@ -106,7 +106,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
                          : (i % 3 == 1) ? predType
                                         : predProp;
 
-    // Object: realistic mixture
+        // Generate a realistic mixture of objects.
     EvaluatedTerm obj;
     size_t kind = i % 5;
     switch (kind) {
