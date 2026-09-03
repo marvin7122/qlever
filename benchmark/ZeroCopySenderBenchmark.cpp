@@ -87,7 +87,7 @@ class CpuTimeTimer {
 };
 
 // _____________________________________________________________________________
-// RAII wrapper managing a connected TCP loopback or socketpair endpoint.
+// RAII wrapper managing a connected Unix-domain socketpair endpoint.
 class SocketPairConnection {
  private:
   int sendFd_ = -1;
