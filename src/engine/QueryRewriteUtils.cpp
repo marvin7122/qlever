@@ -107,6 +107,6 @@ std::shared_ptr<SpatialJoin> rewriteFilterToSpatialJoin(
       SpatialJoinConfiguration{
           std::move(config), std::move(left.variable_),
           std::move(right.variable_), std::nullopt, PayloadVariables::all(),
-          SpatialJoinAlgorithm::LIBSPATIALJOIN, std::nullopt},
+          SpatialJoinAlgorithm::LIBSPATIALJOIN, std::nullopt, std::nullopt},
       std::move(left.child_), std::move(right.child_), true);
 }
