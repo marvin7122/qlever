@@ -159,7 +159,7 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
   }
 
   // ___________________________________________________________________________
-  // Move constructors and assignment.
+  
   InPlaceHttpChunk(InPlaceHttpChunk&& other) noexcept
       : buffer_{other.buffer_},
         totalCapacity_{other.totalCapacity_},
