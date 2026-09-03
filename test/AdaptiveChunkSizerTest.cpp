@@ -54,45 +54,45 @@ TEST(AdaptiveChunkSizerTest, DefaultConstructionAndInitialState) {
 TEST(AdaptiveChunkSizerTest, ExponentialRampUpProgression) {
   AdaptiveChunkSizer sizer;
 
-  // Initial: 64 KB
+    // Start with a 64 KiB chunk.
   EXPECT_EQ(sizer.currentChunkBytes(), 64 * 1024);
 
-  // Flush 1: 64 KB -> 128 KB
+  // Flush the first chunk and grow from 64 KiB to 128 KiB.
   sizer.recordChunk(64 * 1024, 500);
   EXPECT_EQ(sizer.currentChunkBytes(), 128 * 1024);
   EXPECT_EQ(sizer.chunksFlushed(), 1);
 
-  // Flush 2: 128 KB -> 256 KB
+  // Flush the second chunk and grow from 128 KiB to 256 KiB.
   sizer.recordChunk(128 * 1024, 1000);
   EXPECT_EQ(sizer.currentChunkBytes(), 256 * 1024);
   EXPECT_EQ(sizer.chunksFlushed(), 2);
 
-  // Flush 3: 256 KB -> 512 KB
+  // Flush the third chunk and grow from 256 KiB to 512 KiB.
   sizer.recordChunk(256 * 1024, 2000);
   EXPECT_EQ(sizer.currentChunkBytes(), 512 * 1024);
   EXPECT_EQ(sizer.chunksFlushed(), 3);
 
-  // Flush 4: 512 KB -> 1 MB
+  // Flush the fourth chunk and grow from 512 KiB to 1 MiB.
   sizer.recordChunk(512 * 1024, 4000);
   EXPECT_EQ(sizer.currentChunkBytes(), 1024 * 1024);
   EXPECT_EQ(sizer.chunksFlushed(), 4);
 
-  // Flush 5: 1 MB -> 2 MB
+  // Flush the fifth chunk and grow from 1 MiB to 2 MiB.
   sizer.recordChunk(1024 * 1024, 8000);
   EXPECT_EQ(sizer.currentChunkBytes(), 2 * 1024 * 1024);
   EXPECT_EQ(sizer.chunksFlushed(), 5);
 
-  // Flush 6: 2 MB -> 4 MB (Cap reached)
+  // Flush the sixth chunk and grow from 2 MiB to the 4 MiB cap.
   sizer.recordChunk(2 * 1024 * 1024, 16000);
   EXPECT_EQ(sizer.currentChunkBytes(), 4 * 1024 * 1024);
   EXPECT_EQ(sizer.chunksFlushed(), 6);
 
-  // Flush 7: Remains at 4 MB max cap
+  // Keep the chunk size at the 4 MiB cap after the seventh flush.
   sizer.recordChunk(4 * 1024 * 1024, 32000);
   EXPECT_EQ(sizer.currentChunkBytes(), 4 * 1024 * 1024);
   EXPECT_EQ(sizer.chunksFlushed(), 7);
 
-  // Flush 8: Sustained bulk streaming at 4 MB
+  // Sustain bulk streaming at 4 MiB for the eighth flush.
   sizer.recordChunk(4 * 1024 * 1024, 32000);
   EXPECT_EQ(sizer.currentChunkBytes(), 4 * 1024 * 1024);
   EXPECT_EQ(sizer.chunksFlushed(), 8);
