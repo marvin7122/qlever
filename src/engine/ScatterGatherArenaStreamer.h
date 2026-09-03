@@ -245,7 +245,7 @@ class ScatterGatherChunkStreamer
   size_t currentZeroCopySpans_ = 0;
   size_t currentZeroCopyBytes_ = 0;
 
-  // Aggregated export lifetime metrics
+  // Aggregate export lifetime metrics.
   uint64_t totalTriples_ = 0;
   uint64_t totalBytesWritten_ = 0;
   uint64_t chunksEmitted_ = 0;
