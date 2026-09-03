@@ -46,4 +46,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
 
+    addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
+
 endif()
