@@ -303,7 +303,7 @@ class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter>
 // _____________________________________________________________________________
 // Deep Module: RleTripleFormatter
 //
-// Specializes RLE constant folding for sorted RDF triple streams (SPO / PSO scans).
+// Specialize RLE constant folding for sorted RDF triple streams (SPO/PSO scans).
 // Folds repeated Subject and Predicate column runs into cached prefix slices,
 // formatting the full triple `<s> <p> <o> .\n` (or TSV/CSV format) by splicing
 // the cached prefixes into the output.
