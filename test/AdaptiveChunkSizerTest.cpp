@@ -192,15 +192,15 @@ TEST(AdaptiveChunkSizerTest, CustomConfiguration) {
   EXPECT_EQ(sizer.currentChunkBytes(), 32 * 1024);
   EXPECT_EQ(sizer.targetRowCount(), 512);
 
-  // 32 KB * 4 = 128 KB
+    // Verify that 32 KiB multiplied by 4 produces 128 KiB.
   sizer.recordChunk(32 * 1024, 500);
   EXPECT_EQ(sizer.currentChunkBytes(), 128 * 1024);
 
-  // 128 KB * 4 = 512 KB (Max cap reached)
+  // Verify that 128 KiB multiplied by 4 reaches the 512 KiB cap.
   sizer.recordChunk(128 * 1024, 2000);
   EXPECT_EQ(sizer.currentChunkBytes(), 512 * 1024);
 
-  // Next flush stays at 512 KB
+  // Verify that the next flush remains at 512 KiB.
   sizer.recordChunk(512 * 1024, 8000);
   EXPECT_EQ(sizer.currentChunkBytes(), 512 * 1024);
 }
