@@ -459,7 +459,7 @@ class SimdEscapeClassifier {
         }
         dest = detail::emitEscape<Format>(ptr[next], dest);
         current = next + 1;
-        mask &= (mask - 1);  // Clear lowest set bit
+                mask &= (mask - 1);  // Clear the lowest set bit in `mask`.
       }
       if (current < 32) {
         std::memcpy(dest, ptr + current, 32 - current);
