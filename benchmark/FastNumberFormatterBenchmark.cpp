@@ -63,7 +63,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
     {
       auto& group = results.addGroup("Sequential Integer Formatting (1..1,000,000)");
 
-      // 1. std::to_string (baseline: dynamic allocation + standard division loop)
+      // 1. Format with `std::to_string` (baseline: dynamic allocation and standard division loop).
       {
         size_t totalBytes = 0;
         auto start = std::chrono::high_resolution_clock::now();
