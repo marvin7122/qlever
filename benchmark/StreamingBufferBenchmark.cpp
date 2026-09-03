@@ -116,7 +116,7 @@ struct BenchmarkMetricResult {
 class StreamingBufferBenchmark : public BenchmarkInterface {
  private:
   static constexpr size_t BufferSizeBytes = 256 * 1024 * 1024;  // 256 MB
-  static constexpr size_t VocabWorkingSetSize = 8 * 1024 * 1024; // 8 MB L3 cache warm set
+  static constexpr size_t VocabWorkingSetSize = 8 * 1024 * 1024; // 8 MB vocabulary working set for cache probes
   static constexpr size_t NumProbes = 100'000;
 
  public:
