@@ -356,7 +356,7 @@ void assertLookupResultMatchesVocabularyAtIndices(
 
   for (const auto& [resultWord, idx] :
        ::ranges::views::zip(lookupResult, indices)) {
-    EXPECT_EQ(resultWord, at(idx)) << " at vocabulary index " << idx;
+        EXPECT_EQ(resultWord, at(idx)) << " at  vocabulary index " << idx;
   }
 }
 
