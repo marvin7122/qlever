@@ -286,7 +286,7 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) n
 }
 
 // _____________________________________________________________________________
-// Convenient string-returning wrappers with exact string pre-sizing
+// Provide convenient string-returning wrappers with exact string pre-sizing.
 [[nodiscard]] inline std::string formatUIntToString(uint64_t val) {
   const uint32_t len = numDigits(val);
   std::string s;
