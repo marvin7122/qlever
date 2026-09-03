@@ -96,7 +96,7 @@ class AsyncChunkPipeline
     AD_CONTRACT_CHECK(capacity_ >= 1);
   }
 
-  // Non-copyable, non-movable to ensure synchronized thread-safety.
+  // Make the pipeline non-copyable and non-movable to ensure synchronized thread safety.
   AsyncChunkPipeline(const AsyncChunkPipeline&) = delete;
   AsyncChunkPipeline& operator=(const AsyncChunkPipeline&) = delete;
   AsyncChunkPipeline(AsyncChunkPipeline&&) = delete;
