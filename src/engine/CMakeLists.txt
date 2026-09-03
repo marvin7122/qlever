@@ -22,7 +22,7 @@ add_library(engine
         ConstructTemplatePreprocessor.cpp ConstructTripleInstantiator.cpp ConstructBatchEvaluator.cpp
         ConstructDeduplicator.cpp MaterializedViewsQueryAnalysis.cpp UpdateMetadata.cpp ExternalValues.cpp)
 if (QLEVER_ENABLE_EXPORT_V2)
-    target_sources(engine PRIVATE export_v2/ElasticExportScheduler.cpp)
+    target_sources(engine PRIVATE export_v2/ElasticExportScheduler.cpp export_v2/ExportEngineV2.cpp)
 endif ()
 add_subdirectory(spatialJoinAlgorithms)
 
