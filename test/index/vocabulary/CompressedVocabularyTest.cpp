@@ -298,10 +298,10 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 }
 
 // _____________________________________________________________________________
-// Regression test for a dangling-view bug this lookup path once had: an
-// intermediate local `std::pmr::string` uses the small-string optimization
-// regardless of its allocator, so for short words a saved `string_view`
-// pointed into the destroyed local object instead of the arena.
+// Detect a dangling-view bug this lookup path once had: an intermediate local
+// `std::pmr::string` uses the small-string optimization regardless of its
+// allocator, so for short words a saved `string_view` pointed into the
+// destroyed local object instead of the arena.
 //
 // Detection strength:
 //  - Under AddressSanitizer builds (CMAKE_BUILD_TYPE=Asan), reading through a
