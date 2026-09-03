@@ -65,8 +65,7 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
-  // Verify that empty and small strings use inline storage: the data must lie
-  // inside the string object itself, not in allocator-provided memory.
+  
   for (size_t size : {size_t{0}, size_t{7}, size_t{15}}) {
     // `maxSize == 0` is a rejected precondition, so probe from 1 on.
     if (size > 0) {
