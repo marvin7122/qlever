@@ -136,7 +136,7 @@ class SocketPairConnection {
 };
 
 // _____________________________________________________________________________
-// Benchmark result metrics struct.
+// Store the benchmark result metrics.
 struct BenchmarkMetric {
   std::string name;
   double elapsedSeconds = 0.0;
