@@ -8,7 +8,8 @@
 
 #include <gtest/gtest.h>
 
-#include "engine/export_v2/ExportEngineV2.h"
+#include "engine/export_v2/AsyncChunkPipeline.h"
+#include "engine/export_v2/ExportEngineV2Serialize.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
 #include "util/AllocatorTestHelpers.h"
@@ -26,7 +27,7 @@ TEST(ExportEngineV2Test, SerializeTableChunkCsv) {
   LocalVocab localVocab;
   ScatterGatherChunkBuilder builder;
 
-  auto chunk = ExportEngineV2::serializeTableChunk(table, localVocab, RowFormat::Csv, builder);
+  auto chunk = serializeTableChunk(table, localVocab, RowFormat::Csv, builder);
   EXPECT_EQ(chunk.toString(), "42,100\n7,999\n");
 }
 
@@ -39,7 +40,7 @@ TEST(ExportEngineV2Test, SerializeTableChunkTsv) {
   LocalVocab localVocab;
   ScatterGatherChunkBuilder builder;
 
-  auto chunk = ExportEngineV2::serializeTableChunk(table, localVocab, RowFormat::Tsv, builder);
+  auto chunk = serializeTableChunk(table, localVocab, RowFormat::Tsv, builder);
   EXPECT_EQ(chunk.toString(), "1\t2\n3\t4\n");
 }
 

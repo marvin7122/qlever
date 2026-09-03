@@ -622,5 +622,7 @@ addLinkAndDiscoverTest(AsyncChunkPipelineTest)
 target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
 addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
 
-addLinkAndDiscoverTest(ExportEngineV2Test engine sparqlParser)
+# Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
+# range-v3 fails in IndexImpl / CompressedExternalIdTable).
+addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
 target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
