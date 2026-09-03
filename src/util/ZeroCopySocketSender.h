@@ -607,9 +607,7 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
       return;
     }
 
-    // CQE 1: Transmission completion result.
     if (res < 0) {
-      // Send error occurred
       bufferPool_.releaseSlot(entry.bufferIndex);
       AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
       AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
@@ -617,7 +615,7 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
       --numInFlightRequests_;
       entry.active = false;
       AD_THROW(absl::StrCat("io_uring send error (res: ", res,
-                            ", errno: ", -res, ")"));
+                            ", errno: ", -res, ": ", std::strerror(-res), ")"));
     }
 
     totalBytesSent_ += static_cast<size_t>(res);
