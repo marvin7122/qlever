@@ -382,7 +382,7 @@ class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter>
     (void)objId;
     AD_CONTRACT_CHECK(out != nullptr);
 
-    // 1. Spliced Subject prefix (RLE folded)
+    
     char* curr = subjectFormatter_.formatPrefix(subjId, subjTerm, out);
 
     // 2. Spliced Predicate prefix (RLE folded)
