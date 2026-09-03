@@ -39,7 +39,7 @@ enum class ExportFormat {
   Tsv
 };
 
-// Summary metrics returned upon finalizing an export stream.
+// Return summary metrics when finalizing an export stream.
 struct ExportStreamSummary {
   uint64_t totalTriples_ = 0;
   uint64_t totalBytesWritten_ = 0;
