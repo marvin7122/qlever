@@ -327,7 +327,7 @@ class AdaptiveChunkBuffer
   }
 
   // ___________________________________________________________________________
-  // Non-owning view of the currently written bytes in the active chunk.
+  // Return a non-owning view of the currently written bytes in the active chunk.
   [[nodiscard]] std::string_view currentView() const noexcept {
     return std::string_view(buffer_.data(), writePos_);
   }
