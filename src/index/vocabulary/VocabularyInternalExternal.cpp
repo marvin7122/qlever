@@ -78,10 +78,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // sources.
   MultiSourceVocabBatchAssembler assembler(indices.size());
 
-  // 1. Pass the internal sub-result to the assembler, which takes ownership of
-  // the result data so its string views remain valid, and place the values at
-  // their original request positions.
-  auto internal = internalVocab_.lookupBatch(
+    auto internal = internalVocab_.lookupBatch(
       partition.internalSlots_.getUnderlyingIndices());
   assembler.scatterSubBatchResultAtPositions(
       std::move(internal), partition.internalSlots_.getResultPositions());
