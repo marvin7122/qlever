@@ -78,10 +78,10 @@ struct HttpStreamSummary {
 // HTTP 1.1 chunked encoding (RFC 7230 / RFC 9112) frames payload chunks as:
 //   <hex-length>\r\n<payload>\r\n
 //
-// Traditional web servers allocate an intermediate buffer for the payload and
-// then copy every byte into an HTTP framed buffer. InPlaceHttpChunk eliminates
-// all payload copies by pre-reserving 16 bytes at the head of the buffer and
-// 2 bytes at the tail:
+// The chunk buffer reserves space for the framing bytes, so payload data can
+// be framed in place without an additional copy when the completed chunk is
+// emitted. The streaming wrapper copies input data into this buffer and
+// pre-reserves 16 bytes at the head and 2 bytes at the tail:
 //
 //   [ Head: 16 bytes ] [ Payload: N bytes ] [ Tail: 2 bytes ]
 //          ^                   ^                   ^
