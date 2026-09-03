@@ -139,8 +139,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
   }
 
   // ___________________________________________________________________________
-  // Accessors
-  [[nodiscard]] ql::span<const struct iovec> iovecs() const noexcept {
+    [[nodiscard]] ql::span<const struct iovec> iovecs() const noexcept {
     return {iovecs_.data(), iovecs_.size()};
   }
   [[nodiscard]] size_t totalBytes() const noexcept { return totalBytes_; }
