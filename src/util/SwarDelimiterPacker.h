@@ -57,8 +57,8 @@ namespace ad_utility {
 class SwarDelimiterPacker;
 
 // _____________________________________________________________________________
-// Strongly-typed immutable descriptor for a packed delimiter pattern.
-// Holds the 64-bit packed bit pattern and the exact byte length (0 to 8).
+// Strongly-typed descriptor for a packed delimiter pattern.
+// Holds a packed bit pattern and its byte length.
 struct PackedDelimiter {
   uint64_t pattern_ = 0;
   uint8_t len_ = 0;
