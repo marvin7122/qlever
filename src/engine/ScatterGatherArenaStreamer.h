@@ -30,7 +30,7 @@
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/Invariants.h"

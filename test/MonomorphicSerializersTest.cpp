@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "engine/MonomorphicSerializers.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 
 using namespace ql::serialization;
 using namespace ql::export_formatting;
