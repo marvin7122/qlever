@@ -110,7 +110,7 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
   EXPECT_EQ(buffer[2], '<');
   EXPECT_EQ(std::string_view(buffer.data(), 3), "> <");
 
-  // Test writing 4-byte delimiter
+  // Test writing a 4-byte delimiter.
   buffer.fill('Z');
   next = SwarDelimiterPacker::writeDelim64(buffer.data(),
                                           SwarDelimiterPacker::TRIPLE_O_IRI_END.pattern(),
