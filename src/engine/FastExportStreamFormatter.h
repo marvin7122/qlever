@@ -231,8 +231,8 @@ class FastExportStreamFormatter
   void writeIri(std::string_view iri) {
     if (ql::starts_with(iri, '<') && ql::ends_with(iri, '>')) {
       writeRaw(iri);
-    } else if (ql::starts_with(iri, "_:")) {
-      // Blank node IRI
+        } else if (ql::starts_with(iri, "_:")) {
+      // Blank node identifier
       writeRaw(iri);
     } else {
       writeChar('<');
