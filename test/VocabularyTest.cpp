@@ -243,7 +243,7 @@ TEST(VocabularyTest, LookupBatch) {
   auto v = createExampleVocabulary();
   std::vector<size_t> indices{2, 0, 3, 1};
   auto result = v->lookupBatch(indices);
-  EXPECT_THAT(*result, ::testing::ElementsAre("ba", "a", "car", "ab"));
+    EXPECT_THAT((*result), ::testing::ElementsAre("ba", "a", "car", "ab"));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*v, result,
                                                                 indices);
   // An empty batch is an invalid request and must throw.
