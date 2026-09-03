@@ -185,9 +185,7 @@ BenchmarkResult runBenchmark(const std::string& name,
                              const WikidataStreamDataset& ds,
                              std::vector<char>& outputBuffer,
                              size_t iterations = 5) {
-  // Warmup
-  size_t dummyLookups = 0;
-  Serializer::serializeTriples(ds, outputBuffer.data(), dummyLookups);
+  
 
   double totalMs = 0.0;
   size_t totalLookups = 0;
