@@ -9,46 +9,141 @@
 #include <chrono>
 #include <iostream>
 #include <vector>
+#include <algorithm>
 
 #include "engine/SimdStreamCompactor.h"
 #include "global/Id.h"
 
 using namespace ql::engine::vector;
 
+template <typename T>
+inline void escape(T&& val) {
+#if defined(__GNUC__) || defined(__clang__)
+  asm volatile("" : "+r,m"(val) : : "memory");
+#endif
+}
+
 int main() {
-  constexpr size_t NUM_ROWS = 10'000'000;
-  std::cout << "Benchmarking SimdStreamCompactor with " << NUM_ROWS << " rows...\n";
+  constexpr size_t NUM_REPS = 5;
 
-  std::vector<Id> input(NUM_ROWS);
-  for (size_t i = 0; i < NUM_ROWS; ++i) {
-    input[i] = Id::makeFromInt(static_cast<int>(i));
-  }
-  std::vector<Id> output(NUM_ROWS);
+  // =========================================================================
+  // Benchmark 1: Single-Column Filter Selection (50,000,000 rows x 5 reps)
+  // =========================================================================
+  {
+    constexpr size_t NUM_ROWS = 50'000'000;
+    std::cout << "=================================================================\n";
+    std::cout << "Microbenchmark: Single-Column Filter Compaction (" << NUM_ROWS << " rows x " << NUM_REPS << " reps, 50% selectivity)\n";
+    std::cout << "=================================================================\n";
 
-  // Measure scalar branching filter
-  auto t0 = std::chrono::high_resolution_clock::now();
-  size_t scalarCount = 0;
-  for (size_t i = 0; i < NUM_ROWS; ++i) {
-    if (input[i].getInt() % 2 == 0) {
-      output[scalarCount++] = input[i];
+    std::vector<Id> input(NUM_ROWS);
+    for (size_t i = 0; i < NUM_ROWS; ++i) {
+      input[i] = Id::makeFromInt(static_cast<int>(i));
     }
+    std::vector<Id> output(NUM_ROWS);
+
+    std::vector<double> scalarTimes;
+    std::vector<double> vectorTimes;
+
+    for (size_t rep = 0; rep < NUM_REPS; ++rep) {
+      // Scalar filter
+      auto t0 = std::chrono::high_resolution_clock::now();
+      size_t scalarCount = 0;
+      for (size_t i = 0; i < NUM_ROWS; ++i) {
+        if (input[i].getInt() % 2 == 0) {
+          output[scalarCount++] = input[i];
+          escape(output[scalarCount - 1]);
+        }
+      }
+      auto t1 = std::chrono::high_resolution_clock::now();
+      scalarTimes.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+
+      // SIMD Stream Compactor
+      auto t2 = std::chrono::high_resolution_clock::now();
+      size_t vectorCount = SimdStreamCompactor::compact(input, output, [](Id id) {
+        return id.getInt() % 2 == 0;
+      });
+      escape(vectorCount);
+      auto t3 = std::chrono::high_resolution_clock::now();
+      vectorTimes.push_back(std::chrono::duration<double, std::milli>(t3 - t2).count());
+    }
+
+    std::sort(scalarTimes.begin(), scalarTimes.end());
+    std::sort(vectorTimes.begin(), vectorTimes.end());
+
+    double medScalar = scalarTimes[NUM_REPS / 2];
+    double medVector = vectorTimes[NUM_REPS / 2];
+
+    std::cout << "Scalar Filter Latency (Median):  " << medScalar << " ms ("
+              << (NUM_ROWS / (medScalar / 1000.0)) / 1e6 << " M rows/sec)\n";
+    std::cout << "SIMD Compactor Latency (Median): " << medVector << " ms ("
+              << (NUM_ROWS / (medVector / 1000.0)) / 1e6 << " M rows/sec)\n";
+    std::cout << "Speedup (Median):                " << (medScalar / medVector) << "x\n\n";
   }
-  auto t1 = std::chrono::high_resolution_clock::now();
-  double scalarMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-  std::cout << "Scalar Filter Throughput: " << (NUM_ROWS / (scalarMs / 1000.0)) / 1e6
-            << " M rows/sec (" << scalarMs << " ms, matches: " << scalarCount << ")\n";
 
-  // Measure branchless vector compaction
-  auto t2 = std::chrono::high_resolution_clock::now();
-  size_t vectorCount = SimdStreamCompactor::compact(input, output, [](Id id) {
-    return id.getInt() % 2 == 0;
-  });
-  auto t3 = std::chrono::high_resolution_clock::now();
-  double vectorMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
-  std::cout << "SIMD Compactor Throughput: " << (NUM_ROWS / (vectorMs / 1000.0)) / 1e6
-            << " M rows/sec (" << vectorMs << " ms, matches: " << vectorCount << ")\n";
+  // =========================================================================
+  // Benchmark 2: Multi-Column Tabular Compaction (20,000,000 rows x 3 columns x 5 reps)
+  // =========================================================================
+  {
+    constexpr size_t NUM_ROWS = 20'000'000;
+    std::cout << "=================================================================\n";
+    std::cout << "Macrobenchmark: 3-Column Tabular Compaction (" << NUM_ROWS << " rows x 3 cols x " << NUM_REPS << " reps)\n";
+    std::cout << "=================================================================\n";
 
-  std::cout << "Speedup: " << (scalarMs / vectorMs) << "x\n";
+    std::vector<Id> col0(NUM_ROWS), col1(NUM_ROWS), col2(NUM_ROWS);
+    std::vector<Id> out0(NUM_ROWS), out1(NUM_ROWS), out2(NUM_ROWS);
+
+    for (size_t i = 0; i < NUM_ROWS; ++i) {
+      col0[i] = Id::makeFromInt(static_cast<int>(i));
+      col1[i] = Id::makeFromInt(static_cast<int>(i * 3));
+      col2[i] = Id::makeFromInt(static_cast<int>(i * 7 + 1));
+    }
+
+    std::vector<double> scalarTimes;
+    std::vector<double> vectorTimes;
+
+    for (size_t rep = 0; rep < NUM_REPS; ++rep) {
+      auto t0 = std::chrono::high_resolution_clock::now();
+      size_t count = 0;
+      for (size_t i = 0; i < NUM_ROWS; ++i) {
+        if (col0[i].getInt() % 2 == 0) {
+          out0[count] = col0[i];
+          out1[count] = col1[i];
+          out2[count] = col2[i];
+          ++count;
+          escape(out2[count - 1]);
+        }
+      }
+      auto t1 = std::chrono::high_resolution_clock::now();
+      scalarTimes.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+
+      auto t2 = std::chrono::high_resolution_clock::now();
+      size_t countVec = SimdStreamCompactor::compact(col0, out0, [](Id id) {
+        return id.getInt() % 2 == 0;
+      });
+      SimdStreamCompactor::compact(col1, out1, [](Id id) {
+        return id.getInt() % 2 == 0;
+      });
+      SimdStreamCompactor::compact(col2, out2, [](Id id) {
+        return id.getInt() % 2 == 0;
+      });
+      escape(countVec);
+      auto t3 = std::chrono::high_resolution_clock::now();
+      vectorTimes.push_back(std::chrono::duration<double, std::milli>(t3 - t2).count());
+    }
+
+    std::sort(scalarTimes.begin(), scalarTimes.end());
+    std::sort(vectorTimes.begin(), vectorTimes.end());
+
+    double medScalar = scalarTimes[NUM_REPS / 2];
+    double medVector = vectorTimes[NUM_REPS / 2];
+
+    std::cout << "Scalar 3-Col Latency (Median):   " << medScalar << " ms ("
+              << (NUM_ROWS / (medScalar / 1000.0)) / 1e6 << " M rows/sec)\n";
+    std::cout << "SIMD 3-Col Latency (Median):     " << medVector << " ms ("
+              << (NUM_ROWS / (medVector / 1000.0)) / 1e6 << " M rows/sec)\n";
+    std::cout << "Speedup (Median):                " << (medScalar / medVector) << "x\n";
+    std::cout << "=================================================================\n";
+  }
 
   return 0;
 }
