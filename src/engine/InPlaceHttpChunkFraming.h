@@ -345,9 +345,9 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
 // _____________________________________________________________________________
 // Deep Module: InPlaceHttpChunkStreamer
 //
-// High-level zero-copy streaming engine that accumulates arbitrary writes,
-// automatically frames full chunks in-place, and emits ready-to-transmit
-// contiguous `ql::span<const char>` buffers to a sink callback.
+// High-level streaming engine that buffers arbitrary writes, automatically
+// frames full chunks in-place, and emits ready-to-transmit contiguous
+// `ql::span<const char>` buffers to a sink callback.
 class InPlaceHttpChunkStreamer
     : public WithInvariants<InPlaceHttpChunkStreamer> {
  public:
