@@ -359,8 +359,9 @@ std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
 
 // _____________________________________________________________________________
 // Builder for a PMR arena-backed `VocabBatchLookupResult`.
-// Owns the arena and, when constructed with `AllocatorWithLimit`, the
-// memory-limit tracker. Vocabularies only append decompressed bytes.
+// Owns the arena and, when constructed with `AllocatorWithLimit`, retains an
+// allocator copy that charges the shared memory-limit tracker. Words can be
+// appended either by copying existing bytes or by decompressing into the arena.
 class ArenaVocabBatchBuilder {
  private:
   std::unique_ptr<ql::pmr::memory_resource> upstream_;
