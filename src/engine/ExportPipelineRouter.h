@@ -12,7 +12,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <string_view>
 
 #include "parser/ParsedQuery.h"
 #include "util/Invariants.h"
