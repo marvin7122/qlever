@@ -219,8 +219,7 @@ class HttpFramingBenchmarkRunner {
 
             std::memcpy(chunk.payloadData(), src + offset, currentChunkSize);
 
-      // Zero-copy in-place framing (branchless hex header + CRLF in-place)
-      auto framedSpan = chunk.finalizeChunk(currentChunkSize);
+            auto framedSpan = chunk.finalizeChunk(currentChunkSize);
       totalPayloadWritten += currentChunkSize;
       totalFramedWritten += framedSpan.size();
       ++chunksEmitted;
