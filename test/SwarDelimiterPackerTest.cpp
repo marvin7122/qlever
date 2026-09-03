@@ -311,7 +311,7 @@ TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
   *sPtr++ = '"';
   *sPtr++ = '\n';
 
-  // SWAR CSV
+  // Write the CSV row using SWAR.
   wPtr = swarBuf.data();
   *wPtr++ = '"';
   std::memcpy(wPtr, c1.data(), c1.size());
