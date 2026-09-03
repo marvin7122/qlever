@@ -25,7 +25,7 @@ using namespace ql::engine::rle;
 namespace {
 
 // _____________________________________________________________________________
-// Mock Vocabulary Index for fast ID-to-string lookup simulation.
+// Provide a mock vocabulary index for fast ID-to-string lookup simulation.
 class MockVocabulary {
  private:
   std::vector<std::string> words_;
