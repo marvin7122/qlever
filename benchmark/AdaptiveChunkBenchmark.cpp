@@ -332,6 +332,6 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
   }
 };
 
-AD_BENCHMARK_REGISTER(std::make_unique<AdaptiveChunkBenchmark>());
+AD_REGISTER_BENCHMARK(AdaptiveChunkBenchmark);
 
 }  // namespace ad_benchmark
