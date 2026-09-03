@@ -356,8 +356,7 @@ int main(int argc, char** argv) {
             << " rows (50% unbound)...\n";
   auto dataset = OptionalColumnDataset::generate(numRows, 0.50);
 
-  // Allocate buffer for formatted output
-  std::vector<char> outputBuffer(numRows * 16);
+    std::vector<char> outputBuffer(numRows * 16);
 
   HardwarePerfCounter perf;
   if (perf.isSupported()) {
