@@ -53,7 +53,7 @@ TEST(ZeroCopyBufferPoolTest, BasicAcquireAndRelease) {
     EXPECT_EQ(static_cast<unsigned char>(span[0]), 0xAB);
   }
 
-  // Release all slots
+  // Release all slots.
   for (uint32_t slot : acquired) {
     pool.releaseSlot(slot);
     EXPECT_FALSE(pool.isSlotInUse(slot));
