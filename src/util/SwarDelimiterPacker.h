@@ -141,7 +141,7 @@ class SwarDelimiterPacker {
     return out + len;
   }
 
-  // 16-bit store intrinsic (writes 2 bytes unaligned, advances by `len` <= 2)
+  // Write a 16-bit value unaligned and advance by `len` (at most 2 bytes).
   [[nodiscard]] static inline char* writeDelim16(char* out, uint16_t delimPattern,
                                                  size_t len) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
