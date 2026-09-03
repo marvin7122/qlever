@@ -47,7 +47,7 @@ TEST(SwarDelimiterPackerTest, PackDelimPatternBasic) {
   EXPECT_EQ(packDelimPattern("\" .\n"), 0x0A2E2022ULL);
   EXPECT_EQ(packDelimPattern(" .\r\n"), 0x0A0D2E20ULL);
 
-  // 8-byte full pattern
+  // Test the full 8-byte pattern.
   EXPECT_EQ(packDelimPattern("12345678"), 0x3837363534333231ULL);
 
   // Strings longer than 8 bytes truncate to first 8 bytes
