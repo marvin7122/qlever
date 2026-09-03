@@ -83,7 +83,7 @@ TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
   AD_EXPECT_THROW_WITH_MESSAGE(static_cast<void>(p.maxDecompressedSize("")),
                                ::testing::HasSubstr("!compressedWord.empty()"));
 
-  // Ensure that decompressing into an undersized output buffer fails the contract check.
+  
   const std::string compressed = p.compress("alphabet");
   std::string smallBuf(1, '\0');
   AD_EXPECT_THROW_WITH_MESSAGE(
