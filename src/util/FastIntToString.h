@@ -218,7 +218,7 @@ inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
 }
 
 // _____________________________________________________________________________
-// Branchless, zero-allocation conversion of int64_t to ASCII.
+// Zero-allocation conversion of int64_t to ASCII.
 // Writes sign (if negative) and digits directly to `out`.
 // Returns a pointer to one-past-the-end.
 // Precondition: `out` must point to a buffer of at least 21 bytes.
