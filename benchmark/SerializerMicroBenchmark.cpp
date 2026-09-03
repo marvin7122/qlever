@@ -135,7 +135,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
         break;
       case 4:
       default:
-        // Encoded decimal literal
+                // Generate an encoded decimal literal.
         obj = std::make_shared<EvaluatedTermData>(
             std::to_string(i) + ".75", XSD_DECIMAL_TYPE);
         break;
