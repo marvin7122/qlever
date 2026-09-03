@@ -902,8 +902,7 @@ class WordWriterBase {
   std::atomic_bool finishWasCalled_ = false;
 
  public:
-  // ___________________________________________________________________________
-  // Write the next word. The `isExternal` flag is ignored for all the
+    // Write the next word. The `isExternal` flag is ignored for all the
   // vocabulary implementations but the `VocabularyInternalExternal`. Return the
   // index that was assigned to the word.
   virtual uint64_t operator()(std::string_view word, bool isExternal) = 0;
