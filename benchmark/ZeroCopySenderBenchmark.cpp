@@ -37,8 +37,11 @@
 #include "util/Log.h"
 #include "util/ZeroCopySocketSender.h"
 
-// Optional inclusion of QLever benchmark infrastructure
-#if __has_include("../benchmark/infrastructure/Benchmark.h")
+// Optional inclusion of QLever benchmark infrastructure.
+// Standalone CMake builds set QLEVER_ZEROCOPY_BENCH_STANDALONE to avoid
+// linking benchmark → sparqlParser → IndexImpl (Wolga GCC 11 / range-v3).
+#if !defined(QLEVER_ZEROCOPY_BENCH_STANDALONE) && \
+    __has_include("../benchmark/infrastructure/Benchmark.h")
 #include "../benchmark/infrastructure/Benchmark.h"
 #define QLEVER_HAS_BENCHMARK_INFRASTRUCTURE 1
 #endif
