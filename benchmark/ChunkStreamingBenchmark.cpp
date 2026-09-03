@@ -31,9 +31,8 @@ using qlever::export_pipeline::AsyncChunkPipeline;
 using qlever::export_pipeline::PipelineStats;
 
 // _____________________________________________________________________________
-// Helper to simulate CPU-bound chunk generation:
-// Generates a chunk of serialized RDF N-Triples/Turtle triples, including
-// mock IRI/literal formatting, string escaping, and buffer population.
+// Generate a CPU-bound chunk of serialized RDF N-Triples/Turtle triples,
+// including mock IRI/literal formatting, string escaping, and buffer population.
 static std::string generateRdfChunk(size_t numTriples, size_t chunkIndex) {
   std::string chunk;
   // Pre-allocate approximately 120 bytes per triple
