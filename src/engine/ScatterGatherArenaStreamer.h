@@ -531,8 +531,8 @@ class ScatterGatherChunkStreamer
               : static_cast<const void*>(currentHeaderBuffer_.data() +
                                          slice.headerOffset);
       iovecs.push_back(
-          struct iovec{.iov_base = const_cast<void*>(ptr),
-                       .iov_len = slice.len});
+          iovec{.iov_base = const_cast<void*>(ptr),
+                .iov_len = slice.len});
     }
 
     ScatterGatherChunk chunk(

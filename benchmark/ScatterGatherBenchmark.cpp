@@ -262,7 +262,7 @@ class ScatterGatherBenchmarkRunner {
         [&](ScatterGatherChunk chunk) {
           totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
-          chunk.writeToFd(nullFd);
+          [[maybe_unused]] auto bytes = chunk.writeToFd(nullFd);
         },
         config);
 
