@@ -8,62 +8,15 @@
 
 #include "engine/export_v2/ExportEngineV2.h"
 
-#include <array>
-#include <chrono>
-#include <iostream>
-#include <string>
-
 #include "engine/ExportQueryExecutionTrees.h"
 #include "util/Exception.h"
+#include "util/Timer.h"
 
 namespace ql::engine::export_v2 {
 
 // _____________________________________________________________________________
-ScatterGatherChunk ExportEngineV2::serializeTableChunk(
-    const IdTable& idTable,
-    [[maybe_unused]] const LocalVocab& localVocab,
-    RowFormat format,
-    ScatterGatherChunkBuilder& builder) {
-  const size_t numRows = idTable.numRows();
-  const size_t numCols = idTable.numColumns();
-
-  for (size_t row = 0; row < numRows; ++row) {
-    for (size_t col = 0; col < numCols; ++col) {
-      if (col > 0) {
-        builder.appendCopy(format == RowFormat::Csv ? "," : "\t");
-      }
-      Id id = idTable(row, col);
-      if (id.getDatatype() == Datatype::Int) {
-        builder.appendCopy(std::to_string(id.getInt()));
-      } else if (id.getDatatype() == Datatype::Double) {
-        builder.appendCopy(std::to_string(id.getDouble()));
-      } else if (id.getDatatype() == Datatype::Undefined) {
-        // empty string for undef
-      } else {
-        // Fallback literal representation
-        std::string raw = "<val>";
-        std::array<char, 256> buf;
-        if (format == RowFormat::Csv) {
-          auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Csv>(
-              raw, {buf.data(), buf.size()});
-          builder.appendCopy(std::string_view(escaped.data(), escaped.size()));
-        } else {
-          auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Tsv>(
-              raw, {buf.data(), buf.size()});
-          builder.appendCopy(std::string_view(escaped.data(), escaped.size()));
-        }
-      }
-    }
-    builder.appendCopy("\n");
-  }
-
-  return std::move(builder).finalize();
-}
-
-// _____________________________________________________________________________
 cppcoro::generator<std::string> ExportEngineV2::computeResult(
-    const ParsedQuery& parsedQuery,
-    const QueryExecutionTree& qet,
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
     ad_utility::MediaType mediaType,
     ad_utility::SharedCancellationHandle cancellationHandle,
     [[maybe_unused]] ad_utility::export_v2::ElasticExportScheduler* scheduler) {
