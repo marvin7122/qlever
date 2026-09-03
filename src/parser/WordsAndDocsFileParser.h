@@ -153,10 +153,10 @@ inline auto tokenizeAndNormalizeText(std::string_view text,
                                      const LocaleManager& localeManager) {
   std::vector<std::string_view> split{
       absl::StrSplit(text, LiteralsTokenizationDelimiter{}, absl::SkipEmpty{})};
-  return ql::views::transform(std::move(split),
-                              [&localeManager](const auto& str) {
-                                return localeManager.getLowercaseUtf8(str);
-                              });
+  return ad_utility::OwningView{std::move(split)} |
+         ql::views::transform([&localeManager](const auto& str) {
+           return localeManager.getLowercaseUtf8(str);
+         });
 }
 
 // Strip the surrounding quotes (and, for a literal with a datatype like a
