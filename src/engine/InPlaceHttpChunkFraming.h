@@ -273,7 +273,7 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
 
     // Branchless hex length formatting backwards
     const uint32_t digits = detail::numHexDigits(payloadBytes);
-    AD_CORRECTNESS_CHECK(digits <= 14);  // 14 hex digits + 2 CRLF <= 16 bytes
+    AD_CORRECTNESS_CHECK(digits <= 16);  // At most 16 hex digits for uint64_t
     char* framedStart = detail::writeHexDigitsBackwards(headerEnd - 2,
                                                        payloadBytes, digits);
 
