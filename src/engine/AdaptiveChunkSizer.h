@@ -279,8 +279,8 @@ class AdaptiveChunkSizer
 // _____________________________________________________________________________
 // Self-Managing Adaptive Chunk Buffer.
 // Combines an `AdaptiveChunkSizer` with an underlying memory buffer,
-// automatically resizing its allocated memory on flush and providing
-// zero-allocation direct formatting utilities.
+// dynamically resizing the buffer as needed and returning the written bytes
+// when the active chunk is flushed.
 class AdaptiveChunkBuffer
     : public ad_utility::WithInvariants<AdaptiveChunkBuffer> {
  private:
