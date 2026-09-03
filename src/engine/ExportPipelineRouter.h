@@ -52,7 +52,7 @@ enum class ExportEngineMode {
 class ExportPipelineRouter {
  public:
   // ___________________________________________________________________________
-  // Determines the appropriate export engine mode based on request metadata,
+  // Determine the appropriate export engine mode based on request metadata,
   // query AST eligibility, and server configuration defaults.
   [[nodiscard]] static ExportEngineMode selectEngine(
       const ParsedQuery& query,
