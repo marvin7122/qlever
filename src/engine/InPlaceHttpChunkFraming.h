@@ -267,7 +267,7 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
 
     char* headerEnd = buffer_ + HEADER_RESERVE_BYTES;
 
-    // Header CRLF
+    
     *(headerEnd - 2) = '\r';
     *(headerEnd - 1) = '\n';
 
