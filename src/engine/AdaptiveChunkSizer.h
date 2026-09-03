@@ -206,9 +206,8 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Feedback callback invoked whenever a chunk is flushed.
-  // Updates running empirical row-size statistics and exponentially scales up
-  // chunk capacity for the next batch up to `maxChunkBytes_`.
+  // Record a flushed chunk, update the empirical row-size statistics, and scale
+  // up the capacity for the next batch up to `maxChunkBytes_`.
   void recordChunk(size_t bytesWritten, size_t rowCount) {
     auto guard = makeInvariantGuard();
 
