@@ -269,7 +269,7 @@ class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter>
   // ___________________________________________________________________________
   // Batch format a sorted column slice.
   // Precondition: `ids` and `rawTerms` must have identical sizes.
-  // Returns: Pointer past the last byte written.
+  // Return a pointer past the last byte written.
   inline char* formatBatch(ql::span<const ValueId> ids,
                            ql::span<const std::string_view> rawTerms,
                            char* out) noexcept {
