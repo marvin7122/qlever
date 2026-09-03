@@ -199,8 +199,8 @@ TYPED_TEST(CompressedVocabularyF, EmptyVocabulary) {
 }
 
 // _____________________________________________________________________________
-// Serialization round trip: write the compressed vocabulary to disk with the
-// serializer, read it back, and verify every word survives identically.
+// Test the serialization round trip by writing the compressed vocabulary to
+// disk with the serializer, reading it back, and verifying every word identically.
 TYPED_TEST(CompressedVocabularyF, WriteAndReadWithSerializer) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
