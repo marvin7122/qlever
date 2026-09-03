@@ -284,7 +284,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
   }
 };
 
-// Register the benchmark with the QLever benchmark infrastructure.
+
 AD_REGISTER_BENCHMARK(ChunkStreamingBenchmark);
 
 }  // namespace ad_benchmark
