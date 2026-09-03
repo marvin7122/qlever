@@ -149,7 +149,7 @@ inline char* formatGeoPoint(ValueId id, std::string_view, char* out,
   return out;
 }
 
-// No-op formatter for undefined or unmapped datatype slots.
+
 inline char* formatUndefined(ValueId, std::string_view, char* out,
                              std::string_view, std::string_view) noexcept {
   return out;
