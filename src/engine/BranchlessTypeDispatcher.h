@@ -287,7 +287,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
 
 }  // namespace detail
 
-// Global constexpr lookup tables.
+
 inline constexpr auto kDefaultTypeFormatLut = detail::makeDefaultLut();
 inline constexpr auto kTurtleTypeFormatLut = detail::makeTurtleLut();
 inline constexpr auto kRawVocabTypeFormatLut = detail::makeRawVocabLut();
