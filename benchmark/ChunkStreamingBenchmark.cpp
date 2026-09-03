@@ -246,7 +246,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
                 ? (syncRes.durationSeconds / asyncRes.durationSeconds)
                 : 1.0;
 
-        // Print formatted summary row
+        
         std::cout << std::left
                   << std::setw(24) << syncRes.mode
                   << std::setw(14) << (std::to_string(chunkSize) + " trp")
