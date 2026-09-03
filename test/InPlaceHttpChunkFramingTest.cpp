@@ -80,8 +80,7 @@ TEST(InPlaceHttpChunkFramingTest, HexLengthFormattingExhaustive) {
     auto framedSpan = chunk.finalizeChunk(size);
     std::string_view framed(framedSpan.data(), framedSpan.size());
 
-    // Extract hex header before first \r\n
-    size_t crlfPos = framed.find("\r\n");
+        size_t crlfPos = framed.find("\r\n");
     ASSERT_NE(crlfPos, std::string_view::npos);
     std::string_view hexHeader = framed.substr(0, crlfPos);
 
