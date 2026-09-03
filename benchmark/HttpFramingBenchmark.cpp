@@ -217,8 +217,7 @@ class HttpFramingBenchmarkRunner {
       const size_t currentChunkSize =
           std::min(chunkSize, totalStreamBytes - offset);
 
-      // Direct write into pre-reserved payload buffer (zero intermediate buffer)
-      std::memcpy(chunk.payloadData(), src + offset, currentChunkSize);
+            std::memcpy(chunk.payloadData(), src + offset, currentChunkSize);
 
       // Zero-copy in-place framing (branchless hex header + CRLF in-place)
       auto framedSpan = chunk.finalizeChunk(currentChunkSize);
