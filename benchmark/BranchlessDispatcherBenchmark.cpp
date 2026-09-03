@@ -440,14 +440,15 @@ void printResults(const std::vector<BenchmarkResult>& results) {
               << ((speedup - 1.0) * 100.0) << "% throughput)\n";
   }
   std::cout << "========================================================================================================\n\n";
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
   size_t numTerms = 5'000'000;
-  if (argc > 1) {
-    numTerms = std::stoull(argv[1]);
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg != "-p" && !arg.empty() && std::isdigit(static_cast<unsigned char>(arg[0]))) {
+      numTerms = std::stoull(arg);
+    }
   }
 
   std::cout << "Generating synthetic mixed RDF dataset with " << numTerms
