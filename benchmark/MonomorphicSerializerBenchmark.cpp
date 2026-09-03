@@ -244,7 +244,7 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
     data.stringPool_.push_back("\"Metropolitan City Name " + std::to_string(i) + "\"@en");
     std::string_view literal = data.stringPool_.back();
 
-    // Objects
+    
     data.stringPool_.push_back("<http://example.org/class/City>");
     std::string_view classCity = data.stringPool_.back();
 
