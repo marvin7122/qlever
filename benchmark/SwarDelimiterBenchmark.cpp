@@ -32,6 +32,9 @@ constexpr size_t NUM_ROWS = 5'000'000;
 
 // Read a cycle counter on x86; use a monotonic nanosecond timestamp elsewhere.
 inline uint64_t readCpuCycles() noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+  asm volatile("" ::: "memory");
+#endif
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
   return __rdtsc();
 #else
