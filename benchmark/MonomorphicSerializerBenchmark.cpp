@@ -407,9 +407,9 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
               FastExportStreamFormatter formatter(nullSink);
 
-              auto visitor = [&]<typename... T>(auto&&... args) {
-                if constexpr (sizeof...(T) > 0) {
-                  using Serializer = MonomorphicRowSerializer<T...>;
+              auto visitor = [&]<ColumnType... Types>(auto&&... args) {
+                if constexpr (sizeof...(Types) > 0) {
+                  using Serializer = MonomorphicRowSerializer<Types...>;
                   for (const auto& row : data_.tripleRows_) {
                     Serializer::template serializeRow<ExportFormat::Csv>(
                         formatter, ql::span<const CellValue>(row));
