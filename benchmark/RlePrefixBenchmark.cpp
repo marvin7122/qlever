@@ -143,8 +143,7 @@ struct StandardRowSerializer {
       curr += o.size();
       *curr++ = '>';
 
-      // Terminator
-      std::memcpy(curr, " .\n", 3);
+            std::memcpy(curr, " .\n", 3);
       curr += 3;
     }
     return static_cast<size_t>(curr - out);
