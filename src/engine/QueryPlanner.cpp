@@ -1585,6 +1585,13 @@ QueryPlanner::runDynamicProgrammingOnConnectedComponent(
   dpTab.push_back(std::move(connectedComponent));
   size_t numSeeds = findUniqueNodeIds(dpTab.back(), false);
 
+  if (numSeeds < 2) {
+    // Apply filter substitutes also in cases with less than two seeds
+    // (currently used for `SpatialJoin` with a fixed-value side).
+    applyFiltersIfPossible<FilterMode::SeedSubstitutesOnly>(dpTab.back(),
+                                                            filters);
+  }
+
   for (size_t k = 2; k <= numSeeds; ++k) {
     AD_LOG_TRACE << "Producing plans that unite " << k << " triples."
                  << std::endl;
@@ -1616,11 +1623,6 @@ QueryPlanner::runDynamicProgrammingOnConnectedComponent(
     checkCancellation();
   }
   auto& result = dpTab.back();
-  // Apply enforced filter substitutes (currently `SpatialJoin` with a
-  // fixed-value side). Both a connected component with a single seed and a
-  // full-cover replacement plan land in the final row without passing through
-  // a DP round that may apply substitutes, so they are handled here.
-  applyFiltersIfPossible<FilterMode::SeedSubstitutesOnly>(result, filters);
   applyFiltersIfPossible<FilterMode::ReplaceUnfilteredNoSubstitutes>(result,
                                                                      filters);
   applyTextLimitsIfPossible(result, textLimits, true);
@@ -1958,6 +1960,18 @@ std::vector<std::vector<SubtreePlan>> QueryPlanner::fillDpTab(
       result.at(0), filtersAndOptSubstitutes);
   applyTextLimitsIfPossible(result.at(0), textLimitVec, true);
   return result;
+}
+
+// _____________________________________________________________________________
+bool QueryPlanner::TripleGraph::isTextNode(size_t i) const {
+  auto it = _nodeMap.find(i);
+  if (it == _nodeMap.end()) {
+    return false;
+  }
+  const auto& triple = it->second->triple_;
+  auto predicate = triple.getSimplePredicate();
+  return predicate == CONTAINS_ENTITY_PREDICATE ||
+         predicate == CONTAINS_WORD_PREDICATE;
 }
 
 // _____________________________________________________________________________
@@ -2697,13 +2711,11 @@ auto QueryPlanner::createMaterializedViewJoinReplacements(
   // Convert all the `IndexScan`s to `SubtreePlan`s with the appropriate ids
   // set.
   for (const auto& [scan, coveredTriples] : scans) {
-    auto plan = makeSubtreePlan<IndexScan>(*scan);
+    auto plan = makeSubtreePlan<IndexScan>(scan);
     // This is equivalent to a join between the covered triples, so we must mark
     // all included nodes.
-    for (size_t idx : coveredTriples) {
-      plan._idsOfIncludedNodes |= (1ULL << idx);
-    }
-    size_t numCoveredTriples = coveredTriples.size();
+    plan._idsOfIncludedNodes |= coveredTriples;
+    size_t numCoveredTriples = absl::popcount(coveredTriples);
     // Empty vectors of replacement plans for smaller numbers of triples.
     for (size_t i = plans.size(); i < numCoveredTriples; ++i) {
       plans.push_back({});
@@ -2892,7 +2904,7 @@ void QueryPlanner::QueryGraph::setupGraph(
         // Add additional edges to the graph representing the connections
         // between variables given by joins substituting cartesian product +
         // filter.
-        for (auto& [filter, substitute] :
+        for (auto& [filter, substitute, forceSubstitution] :
              filtersAndOptionalSubstitutes) {
           if (!substitute.has_value()) {
             // This filter cannot be substituted: add no edges.
