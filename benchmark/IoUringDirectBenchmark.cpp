@@ -140,7 +140,9 @@ class IoUringDirectBenchmarkRunner {
  public:
   explicit IoUringDirectBenchmarkRunner(
       std::string filePath, size_t batchBlocks = kDefaultBatchBlocks)
-      : filePath_{std::move(filePath)}, batchBlocks_{batchBlocks} {}
+      : filePath_{std::move(filePath)}, batchBlocks_{batchBlocks} {
+    AD_CONTRACT_CHECK(batchBlocks > 0 && batchBlocks <= kTotalBlocks);
+  }
 
   // 1. Baseline: Synchronous pread() with standard page cache
   BenchmarkMetric runSyncPread(bool randomAccess = false) {
