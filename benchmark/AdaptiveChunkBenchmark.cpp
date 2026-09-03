@@ -33,7 +33,7 @@ using qlever::AdaptiveChunkSizer;
 
 // _____________________________________________________________________________
 // Generate a realistic RDF N-Triples row in the target buffer.
-// Appends `<http://qlever.cs.uni-freiburg.de/entity/ID> <http://www.w3.org/2000/01/rdf-schema#label> "Label for entity ID with description text"@en .\n`
+// Appends an N-Triples row with the entity ID in the URI and label, plus escaped characters.
 static inline void formatTripleToBuffer(size_t entityId, std::string& buffer) {
   buffer.append("<http://qlever.cs.uni-freiburg.de/entity/");
   buffer.append(std::to_string(entityId));
