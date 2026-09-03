@@ -127,6 +127,9 @@ class CompressedExternalIdTableWriter {
   // contents.
   size_t numActiveGenerators_ = 0;
 
+  template <size_t NumCols, typename Writer>
+  friend struct compressedExternalIdTable::detail::ReadBlockFunctor;
+
  public:
   // Constructor. The file at `filename` will be overwritten. Each of the
   // `IdTables` that will be passed in has to have exactly `numCols` columns.
