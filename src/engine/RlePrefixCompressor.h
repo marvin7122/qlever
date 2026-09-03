@@ -101,7 +101,7 @@ class RlePrefixSlice : public ad_utility::WithInvariants<RlePrefixSlice<MaxBuffe
     return spliceSlice(buffer_.data(), length_, dest);
   }
 
-  // Store new pre-formatted content into slice cache.
+  // Store new pre-formatted content in the slice cache.
   void assign(ValueId id, std::string_view formattedContent) noexcept {
     AD_CONTRACT_CHECK(formattedContent.size() <= MaxBufferSize);
     length_ = formattedContent.size();
