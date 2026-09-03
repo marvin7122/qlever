@@ -50,7 +50,7 @@ static std::string generateRdfChunk(size_t numTriples, size_t chunkIndex) {
 }
 
 // _____________________________________________________________________________
-// Helper to simulate network socket transmission delay (latency + bandwidth delay).
+// Simulate network socket transmission delay (latency and bandwidth delay).
 static void simulateNetworkTransmission(size_t chunkBytes,
                                         std::chrono::milliseconds latency) {
   if (latency > 0ms) {
