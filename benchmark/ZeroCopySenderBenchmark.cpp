@@ -95,15 +95,59 @@ class SocketPairConnection {
 
  public:
   SocketPairConnection() {
-    int sv[2];
-    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
-      AD_THROW("socketpair failed");
+    int listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listenFd < 0) {
+      AD_THROW("socket failed");
     }
-    sendFd_ = sv[0];
-    recvFd_ = sv[1];
 
-    // Enlarge socket buffer limits to avoid kernel socket buffer choking
-    int bufSize = 4 * 1024 * 1024;  // 4MB socket buffer
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+
+    int enable = 1;
+    ::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+    if (::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+      ::close(listenFd);
+      AD_THROW("bind failed");
+    }
+
+    socklen_t addrLen = sizeof(addr);
+    if (::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr), &addrLen) != 0) {
+      ::close(listenFd);
+      AD_THROW("getsockname failed");
+    }
+
+    if (::listen(listenFd, 1) != 0) {
+      ::close(listenFd);
+      AD_THROW("listen failed");
+    }
+
+    sendFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (sendFd_ < 0) {
+      ::close(listenFd);
+      AD_THROW("client socket failed");
+    }
+
+    if (::connect(sendFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+      ::close(listenFd);
+      ::close(sendFd_);
+      AD_THROW("connect failed");
+    }
+
+    recvFd_ = ::accept(listenFd, nullptr, nullptr);
+    if (recvFd_ < 0) {
+      ::close(listenFd);
+      ::close(sendFd_);
+      AD_THROW("accept failed");
+    }
+    ::close(listenFd);
+
+    int flag = 1;
+    ::setsockopt(sendFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    ::setsockopt(recvFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+
+    int bufSize = 4 * 1024 * 1024;
     ::setsockopt(sendFd_, SOL_SOCKET, SO_SNDBUF, &bufSize, sizeof(bufSize));
     ::setsockopt(recvFd_, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
   }
