@@ -147,10 +147,10 @@ class FsstDecoder {
 };
 
 // _____________________________________________________________________________
-// A sequence of `N` `FsstDecoder` objects that are chained in inverted order (the
-// last one first) when decompressing a string. The inverted order is chosen,
-// because it is the correct way to decompress a string that was compressed by
-// the N corresponding encoders in the "normal" order (first encoder first).
+// Decompress a string with `N` `FsstDecoder` objects chained in inverted order
+// (the last one first). Use the inverted order to correctly decompress a string
+// compressed by the `N` corresponding encoders in the normal order (first encoder
+// first).
 template <size_t N = 2>
 class FsstRepeatedDecoder {
   static_assert(N >= 1, "FsstRepeatedDecoder needs at least one stage");
