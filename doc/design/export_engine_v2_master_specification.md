@@ -20,9 +20,9 @@ This master specification deepens the design of the **Fast-Path Streaming Export
 │ 1. HTTP Ingress & Adaptive Route Gate (`src/engine/ExportPipelineRouter.h`)                 │
 │    • Query-time parameters (?fast-export=1), headers, plan capability check                 │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 2. Traffic-Aware Elastic Scheduler (`src/engine/export_v2/ElasticConcurrencyManager.h`)    │
-│    • Strict single-core execution when concurrent queries exist (zero head-of-line blocking)│
-│    • Dynamic work-stealing thread leasing when server is idle (instant yield on new queries)│
+│ 2. Traffic-Aware Elastic Scheduler (`src/engine/export_v2/ElasticExportScheduler.h`)       │
+│    • Strict single-core execution when concurrent queries exist                            │
+│    • Bounded helper leasing when the V2 export is the only registered query                │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 3. Push-Based Vector Stream Source (`src/engine/export_v2/VectorStreamSource.h`)           │
 │    • 64KB morsel streaming directly from NVMe index blocks (zero intermediate IdTables)     │
@@ -90,8 +90,8 @@ This master specification deepens the design of the **Fast-Path Streaming Export
               │ Incoming Export Request                               │
               └───────────────────────────┬───────────────────────────┘
                                           │
-                            Is Server Under Load?
-                           (Queue > 0 or CPU > 50%)
+                         Is Another Query Active?
+                      (`QueryRegistry` active count > 1)
                                           │
                          ┌────────────────┴────────────────┐
                          │ YES                             │ NO (Server Idle)
@@ -100,33 +100,60 @@ This master specification deepens the design of the **Fast-Path Streaming Export
           │ Strict Single-Core Execution │  │ Elastic Work-Stealing Lease  │
           ├──────────────────────────────┤  ├──────────────────────────────┤
           │ • 1 Thread for compute & I/O │  │ • Leases N worker threads    │
-          │ • Zero starvation of queries │  │ • Parallel morsel evaluation │
-          │ • Supervisor rule satisfied  │  │ • Instant yield on new query │
+          │ • No helper work admitted    │  │ • Parallel CPU morsels       │
+          │ • Primary path continues     │  │ • Cooperative revocation     │
           └──────────────────────────────┘  └──────────────────────────────┘
 ```
 
 ### Addressing the Supervisor Constraint
 The supervisor's constraint is critical: **a heavy multi-threaded query must never monopolize the server and cause head-of-line blocking for interactive queries.**
 
-### How the Elastic Controller Solves This:
-1. **Single-Core by Default:** The export pipeline is fundamentally designed to achieve **8M–15M triples/sec on a SINGLE CPU core**.
-2. **Morsel-Driven Task Granularity (200–500 μs Atomic Units):**
-   - Work is partitioned into discrete, self-contained units called **Morsels** (e.g. a 64 KB vector chunk or 4,096 rows).
-   - A single CPU core processes one morsel in approximately **200 to 500 microseconds**.
-3. **Atomic Token Lease Protocol (`TaskScheduler`):**
-   - While the server request queue is empty, the export coordinator leases helper tokens from the global server `TaskScheduler` (e.g. up to $N-1$ helper threads on an $N$-core system).
-4. **Preemptive Core-Yielding Mechanism on New Query Arrival:**
-   - **Step 1 (Ingress Notification):** The instant a new HTTP request hits the server’s socket accept queue, `Server::handleRequest` increments the priority request counter (`priorityQueueDepth.fetch_add(1)`).
-   - **Step 2 (Cooperative Boundary Check):** At the completion of each atomic morsel, helper threads execute a single branchless atomic check:
-     ```cpp
-     if (scheduler.priorityQueueDepth() > 0 || !leaseActive_) {
-       // Instantly surrender core back to global server pool
-       return;
-     }
-     ```
-   - **Step 3 (Immediate Thread Surrender in <1 ms):** Because morsels are strictly bounded to 200–500 μs, all helper threads cleanly exit and return to the global pool in **less than 1 millisecond**.
-   - **Step 4 (Zero Query Disruption):** The primary export coordinator continues running uninterrupted on its dedicated single core. The newly arrived interactive query immediately receives the full set of CPU cores without waiting.
-   - **Step 5 (Dynamic Scale-Out Recovery):** Once the interactive query completes and the queue returns to 0, helper threads can once again assist with morsel formatting.
+### How the Elastic Controller Solves This
+
+1. **Single-core baseline:** The primary export coordinator can complete every export without helpers.
+2. **Measured morsels:** CPU work is partitioned into owned morsels. Their size and duration remain experimental parameters until measured.
+3. **Isolated helper pool:** V2 helpers use `ElasticExportScheduler`. They never enqueue work on `Server::queryThreadPool_`.
+4. **Foreground signal:** Runtime-enabled `QueryRegistry` callbacks update the active-query count and demand epoch.
+5. **Cooperative revocation:** A new registered query invalidates helper leases. Running helpers finish one CPU morsel before yielding.
+6. **Recovery:** Helper admission resumes when the V2 export is again the only registered query.
+
+The design makes no fixed preemption claim. WP7 instrumentation must establish p50, p99, and p99.9 latency under the specified adversarial workloads.
+
+### Amendment (2026-09-03): Isolation, Safety, and Verification Requirements
+
+Review of this section surfaced three unresolved concerns. This amendment converts them into implementation requirements and verification tasks.
+
+The detailed prerequisite design is in `export_engine_v2_wp7_prerequisites.md`. It grounds WP7 in QLever's current `QueryRegistry`, `queryThreadPool_`, and HTTP coroutine architecture.
+
+**1. Isolation from V1 and non-V2 queries**
+
+- `ElasticExportScheduler` exists only on the V2 code path. V1 queries never submit work to it or consume its helper pool.
+- Runtime-enabled V2 observes existing query registration through `QueryRegistry` callbacks. Runtime-disabled V2 registers no callbacks and constructs no scheduler.
+- `QLEVER_ENABLE_EXPORT_V2=OFF` excludes the scheduler and every V2 production source.
+- A startup flag disables V2 routing in binaries that include it.
+- The isolation test compares output, request latency, and retired instructions across excluded and runtime-disabled builds.
+
+**2. Lease and revocation safety**
+
+The scheduler owns every lease identity, epoch, task state, and result slot.
+
+- Revocation occurs only between morsels. No thread cancels another thread during a morsel.
+- Every morsel owns its job state through a keep-alive handle.
+- Private job and epoch identifiers reject stale work.
+- TSAN stress tests cover concurrent admission, revocation, cancellation, completion, and destruction.
+
+**3. Preemption latency verification**
+
+The specification defines no preemption bound before measurement.
+
+- Instrument every morsel kind and report p50, p99, and p99.9 wall time.
+- Keep socket operations and completion waits outside leased helper threads.
+- Inject CPU pressure, page faults, delayed output, and concurrent query arrivals.
+- Publish measurements before selecting the acceptance threshold.
+
+Implement the scheduler core and server integration as separate changes. The first change uses a fake demand source and contains no `Server` modification.
+
+The first backend is a bounded mutex queue. Compare MPMC and Chase-Lev alternatives only after the correctness baseline passes.
 
 ---
 
@@ -225,12 +252,15 @@ To enable independent implementation and clean reviewability, the V2 engine is d
 ---
 
 ### Work Package 7: Elastic Traffic-Aware Concurrency Controller
-* **Artifact Target:** `src/engine/export_v2/ElasticConcurrencyManager.h` & `test/ElasticConcurrencyTest.cpp`
+* **Design prerequisite:** `doc/design/export_engine_v2_wp7_prerequisites.md`
+* **Artifact Target:** `src/engine/export_v2/ElasticExportScheduler.h`, its implementation file, and focused scheduler tests.
 * **Task Description:**
+  - Build an isolated V2 helper pool. Do not enqueue V2 helper work on `Server::queryThreadPool_`.
+  - Observe foreground demand through runtime-enabled `QueryRegistry` callbacks. QLever has no `Server::handleRequest` function.
   - Enforce single-core execution when concurrent queries exist.
-  - Implement dynamic work-stealing morsel leasing when server is completely idle.
-  - Implement immediate preemption and worker thread surrender on new query arrival (<500μs latency).
-* **Definition of Done:** Multi-client concurrency tests verify zero head-of-line blocking or latency degradation for interactive queries.
+  - Implement dynamic work-stealing morsel leasing when server is completely idle, using cooperative-only revocation and refcounted keep-alive state per the Amendment's lease-safety requirements.
+  - Implement immediate preemption and worker thread surrender on new query arrival.
+* **Definition of Done:** See the amendment and prerequisite design. Required evidence includes isolation tests, TSAN results, and measured p99.9 preemption and first-byte latency.
 
 ---
 
