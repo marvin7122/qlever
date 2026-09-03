@@ -40,10 +40,10 @@
 namespace ad_utility::simd {
 
 // _____________________________________________________________________________
-// ValidityBitmask64: Invariant-bearing 64-bit column validity tracker.
-// Semantic convention (matching DuckDB validity_t):
-// - Bit value 1 represents a VALID (bound / defined) row value.
-// - Bit value 0 represents an UNBOUND (undefined / null) row value.
+// Track validity for a 64-bit column with `ValidityBitmask64`.
+// Use the following semantic convention, matching DuckDB's `validity_t`:
+// - Bit value 1 represents a valid (bound / defined) row value.
+// - Bit value 0 represents an unbound (undefined / null) row value.
 class ValidityBitmask64 {
  private:
   uint64_t mask_ = 0;
