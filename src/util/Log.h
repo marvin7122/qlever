@@ -121,6 +121,21 @@ inline void setRuntimeLogLevel(LogLevel level) {
   detail::runtimeLogLevel.store(level.value(), std::memory_order_relaxed);
 }
 
+// RAII helper to temporarily set a runtime log level and restore it on scope exit.
+class ScopedLogLevel {
+ private:
+  LogLevel::Enum previousLevel_;
+
+ public:
+  explicit ScopedLogLevel(LogLevel level)
+      : previousLevel_{detail::runtimeLogLevel.load(std::memory_order_relaxed)} {
+    setRuntimeLogLevel(level);
+  }
+  ~ScopedLogLevel() {
+    detail::runtimeLogLevel.store(previousLevel_, std::memory_order_relaxed);
+  }
+};
+
 // A singleton that holds a pointer to a single `std::ostream`. This enables us
 // to globally redirect the `AD_LOG_...` macros to another output stream.
 struct LogstreamChoice {
