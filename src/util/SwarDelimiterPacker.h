@@ -54,7 +54,6 @@ namespace ad_utility {
   return val;
 }
 
-// Forward declaration
 class SwarDelimiterPacker;
 
 // _____________________________________________________________________________
