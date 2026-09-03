@@ -352,8 +352,7 @@ BenchmarkResult runBenchmark(const std::string& name,
                              const BenchmarkDataset& ds,
                              std::vector<char>& outputBuffer,
                              HardwarePerfCounter& perf, size_t iterations = 5) {
-  // Warmup
-  Dispatcher::dispatchBatchTermFormat(ds.ids_, ds.rawTerms_,
+    Dispatcher::dispatchBatchTermFormat(ds.ids_, ds.rawTerms_,
                                       outputBuffer.data());
 
   double totalMs = 0.0;
