@@ -577,7 +577,7 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch3Col(ColumnType c0, ColumnType c1, ColumnType c2,
                             Visitor&& visitor, Args&&... args) {
-  // Check common 3-column SPARQL schemas first for lightning-fast branch prediction
+  // Handle the explicitly listed 3-column schemas without constructing a dynamic serializer
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Iri) {
     return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Iri>(
         std::forward<Args>(args)...);
