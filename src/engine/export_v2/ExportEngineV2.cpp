@@ -12,7 +12,6 @@
 #include <absl/strings/str_join.h>
 
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -88,19 +87,6 @@ std::vector<std::optional<ColumnIndex>> selectedColumnIndices(
     }
   }
   return columns;
-}
-
-template <typename Sink>
-void forEachResultBlock(const Result& result, Sink&& sink) {
-  if (result.isFullyMaterialized()) {
-    Result::IdTableVocabPair pair{result.cloneIdTable(),
-                                  result.localVocab().clone()};
-    std::invoke(sink, std::move(pair));
-    return;
-  }
-  for (auto& pair : result.idTables()) {
-    std::invoke(sink, std::move(pair));
-  }
 }
 
 }  // namespace
@@ -199,59 +185,43 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
-  VectorStreamSource source{VectorStreamConfig{RowsPerChunk{8192}}};
-
-  AsyncChunkPipeline<std::string> pipeline{AsyncChunkPipelineConfig{
-      .capacity_ = 2,
-      .runtimeEnabled_ = true,
-  }};
-
-  // Optional scheduler reserved for WP7 morsel offload; overnight slice uses a
-  // dedicated producer thread so the HTTP coroutine can stream.
+  // Synchronous vertical slice: VectorStreamSource → escape → ScatterGather →
+  // co_yield. A producer-thread + AsyncChunkPipeline nested in this coroutine
+  // fails to compile under GCC (coroutine frame rewrite); async ring is a
+  // follow-up seam. `co_yield` cannot appear inside the forEach/run lambdas, so
+  // we buffer one Result block's serialized chunks then yield them here.
   (void)scheduler;
+  VectorStreamSource source{VectorStreamConfig{RowsPerChunk{8192}}};
+  std::vector<Result::IdTableVocabPair> pendingBlocks;
+  std::vector<std::string> pendingChunks;
 
-  std::exception_ptr producerError;
-  std::thread producer{[&]() {
-    try {
-      std::vector<Result::IdTableVocabPair> pendingBlocks;
-      forEachResultBlock(*result, [&](Result::IdTableVocabPair block) {
-        cancellationHandle->throwIfCancelled();
-        pendingBlocks.clear();
-        pendingBlocks.push_back(std::move(block));
-        source.run(pendingBlocks, [&](const Result::IdTableVocabPair& chunk) {
-          cancellationHandle->throwIfCancelled();
-          ScatterGatherChunkBuilder builder;
-          auto sgChunk =
-              serializeTableChunk(chunk.idTable_, chunk.localVocab_, format,
-                                  builder, index, columns);
-          if (pipeline.push(sgChunk.toString()) ==
-              qlever::export_v2::PushResult::Closed) {
-            throw std::runtime_error{
-                "ExportEngineV2: async chunk pipeline closed while producing"};
-          }
-        });
-      });
-      pipeline.finish();
-    } catch (...) {
-      producerError = std::current_exception();
-      pipeline.fail(producerError);
-    }
-  }};
-
-  try {
-    while (auto chunk = pipeline.pop()) {
+  auto serializeBlock = [&](Result::IdTableVocabPair block) {
+    cancellationHandle->throwIfCancelled();
+    pendingBlocks.clear();
+    pendingBlocks.push_back(std::move(block));
+    pendingChunks.clear();
+    source.run(pendingBlocks, [&](const Result::IdTableVocabPair& chunk) {
       cancellationHandle->throwIfCancelled();
-      co_yield std::move(*chunk);
-    }
-  } catch (...) {
-    pipeline.cancel();
-    producer.join();
-    throw;
-  }
+      ScatterGatherChunkBuilder builder;
+      auto sgChunk = serializeTableChunk(chunk.idTable_, chunk.localVocab_,
+                                         format, builder, index, columns);
+      pendingChunks.push_back(sgChunk.toString());
+    });
+  };
 
-  producer.join();
-  if (producerError) {
-    std::rethrow_exception(producerError);
+  if (result->isFullyMaterialized()) {
+    serializeBlock(Result::IdTableVocabPair{result->cloneIdTable(),
+                                            result->localVocab().clone()});
+    for (auto& serialized : pendingChunks) {
+      co_yield std::move(serialized);
+    }
+  } else {
+    for (auto& pair : result->idTables()) {
+      serializeBlock(std::move(pair));
+      for (auto& serialized : pendingChunks) {
+        co_yield std::move(serialized);
+      }
+    }
   }
 }
 
