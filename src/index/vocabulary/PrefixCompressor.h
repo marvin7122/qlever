@@ -52,12 +52,10 @@ class PrefixCompressor {
     }
   };
 
-  // ___________________________________________________________________________
-  // List of all prefixes, sorted descending by the length
+    // List of all prefixes, sorted descending by the length
   // of the prefixes. Used for lookup when compressing.
   std::vector<PrefixCode> codeToPrefix_{};
 
-  // ___________________________________________________________________________
   // maps (numeric) keys to the prefix they encode.
   // currently NUM_COMPRESSION_PREFIXES prefixes are supported.
   std::array<std::string, NUM_COMPRESSION_PREFIXES> prefixToCode_{""};
