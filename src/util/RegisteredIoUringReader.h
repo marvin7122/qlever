@@ -244,8 +244,7 @@ class PinnedArena : public WithInvariants<PinnedArena> {
     return static_cast<const char*>(rawBuffer_);
   }
 
-  // Access a specific block slot as a span.
-  [[nodiscard]] ql::span<char> getSlotSpan(size_t slotIndex) {
+    [[nodiscard]] ql::span<char> getSlotSpan(size_t slotIndex) {
     AD_CONTRACT_CHECK(slotIndex < numSlots_);
     auto* slotPtr = static_cast<char*>(rawBuffer_) + (slotIndex * slotSize_);
     return {slotPtr, slotSize_};
