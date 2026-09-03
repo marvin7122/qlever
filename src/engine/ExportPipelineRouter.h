@@ -58,8 +58,8 @@ class ExportPipelineRouter {
       const ParsedQuery& query,
       const ad_utility::httpUtils::UrlParser::ParamValueMap& parameters,
       std::optional<std::string_view> exportHeader = std::nullopt,
-      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) noexcept {
-    
+            ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) noexcept {
+
     // 1. Check explicit query parameter overrides
     const auto optFastExport = getParameterValue(parameters, "fast-export");
     const auto optExportEngine = getParameterValue(parameters, "export-engine");
