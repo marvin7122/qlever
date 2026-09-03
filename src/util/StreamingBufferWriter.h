@@ -182,7 +182,6 @@ class StreamingBufferWriter
   }
 
   // ___________________________________________________________________________
-  // Move constructors and assignment.
   StreamingBufferWriter(StreamingBufferWriter&& other) noexcept
       : buffer_{other.buffer_},
         capacity_{other.capacity_},
