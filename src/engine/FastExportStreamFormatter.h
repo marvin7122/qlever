@@ -330,8 +330,7 @@ class FastExportStreamFormatter
       return;
     }
 
-    // Write opening quote
-    writeChar('"');
+        writeChar('"');
     std::string_view content = normLiteral.substr(1, posLastQuote - 1);
     for (char c : content) {
       if (c == '\\') {
