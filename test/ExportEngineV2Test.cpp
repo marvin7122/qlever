@@ -11,12 +11,14 @@
 #include "engine/export_v2/ExportEngineV2.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
+#include "util/AllocatorTestHelpers.h"
 
 using namespace ql::engine::export_v2;
+using namespace qlever::export_v2;
+using ad_utility::testing::makeAllocator;
 
 TEST(ExportEngineV2Test, SerializeTableChunkCsv) {
-  ad_utility::AllocatorWithLimit<Id> allocator{
-      ad_utility::makeAllocationMemoryLimit<Id>()};
+  auto allocator = makeAllocator();
   IdTable table{2, allocator};
   table.push_back({Id::makeFromInt(42), Id::makeFromInt(100)});
   table.push_back({Id::makeFromInt(7), Id::makeFromInt(999)});
@@ -29,8 +31,7 @@ TEST(ExportEngineV2Test, SerializeTableChunkCsv) {
 }
 
 TEST(ExportEngineV2Test, SerializeTableChunkTsv) {
-  ad_utility::AllocatorWithLimit<Id> allocator{
-      ad_utility::makeAllocationMemoryLimit<Id>()};
+  auto allocator = makeAllocator();
   IdTable table{2, allocator};
   table.push_back({Id::makeFromInt(1), Id::makeFromInt(2)});
   table.push_back({Id::makeFromInt(3), Id::makeFromInt(4)});
