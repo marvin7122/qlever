@@ -61,7 +61,7 @@ class ValidityBitmask64 {
     return ValidityBitmask64{0ULL};
   }
 
-  // Row-level query and manipulation
+  // Provide row-level queries and manipulation.
   [[nodiscard]] constexpr bool isRowValid(size_t index) const noexcept {
     AD_EXPENSIVE_CHECK(index < 64);
     return (mask_ & (1ULL << index)) != 0;
