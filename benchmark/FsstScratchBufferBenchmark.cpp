@@ -57,8 +57,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   // Retain ownership of the compressed strings for the lifetime of the views in
   // `compressed_`.
   std::vector<std::shared_ptr<std::string>> decoderStorage_;
-  // Maximum fully decompressed size across the benchmark inputs; sizes the
-  // final output buffer.
+  // Size the final output buffer to the maximum fully decompressed size across
+  // the benchmark inputs.
   size_t outputCapacity_ = 0;
   // Bound required for intermediate repeated-FSST stages, avoiding a full-size
   // scratch allocation.
