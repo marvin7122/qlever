@@ -173,9 +173,9 @@ class ScatterGatherBenchmarkRunner {
     };
   }
 
-  // 2. Zero-Copy Scatter-Gather Arena Streaming:
-  // Delimiters are written to local header buffer, while large literal spans
-  // are referenced directly from arena memory without copying.
+    // 2. Perform zero-copy scatter-gather arena streaming.
+  // Write delimiters to the local header buffer and reference large literal spans
+  // directly from arena memory without copying.
   static ScatterGatherBenchmarkMetric runScatterGatherStream(
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = 1024 * 1024,
