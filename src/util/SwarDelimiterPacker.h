@@ -125,7 +125,7 @@ class SwarDelimiterPacker {
     return out + Len;
   }
 
-  // Write a strongly typed PackedDelimiter
+  // Write a strongly typed `PackedDelimiter`.
   [[nodiscard]] static inline char* writeDelim(char* out,
                                                const PackedDelimiter& delim) noexcept {
     return writeDelim64(out, delim.pattern(), delim.len());
