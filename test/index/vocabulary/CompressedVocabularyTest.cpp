@@ -234,9 +234,9 @@ TYPED_TEST(CompressedVocabularyF, WriteAndReadWithSerializer) {
 }
 
 // _____________________________________________________________________________
-// Zero-copy deserialization: opening a vocabulary serialized by this same
-// process must map/reference the existing buffers instead of decompressing
-// everything anew, and lookups must still return the correct words.
+// Test zero-copy deserialization by opening a vocabulary serialized by this
+// same process and verifying that lookups return the correct words without
+// decompressing everything anew.
 TYPED_TEST(CompressedVocabularyF, ZeroCopyDeserialization) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
