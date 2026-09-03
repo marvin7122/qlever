@@ -297,7 +297,7 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
   BenchmarkResults runAllBenchmarks() final {
     BenchmarkResults results;
 
-    // Output buffer sink
+        // Byte-counting sink that discards serialized output.
     size_t bytesSink = 0;
     auto nullSink = [&](std::string_view chunk) { bytesSink += chunk.size(); };
 
