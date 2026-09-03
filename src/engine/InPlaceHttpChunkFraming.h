@@ -359,7 +359,7 @@ class InPlaceHttpChunkStreamer
   size_t currentPayloadBytes_ = 0;
   bool emitTerminatingChunkOnFinalize_ = true;
 
-  // Aggregated stream metrics
+  // Aggregate stream metrics.
   uint64_t totalPayloadBytes_ = 0;
   uint64_t totalFramedBytes_ = 0;
   uint64_t chunksEmitted_ = 0;
