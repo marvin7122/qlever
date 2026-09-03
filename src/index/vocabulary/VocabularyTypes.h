@@ -640,7 +640,7 @@ class MarkerBatchLookups {
     return results_[marker];
   }
 
-  // Release the lookup result for the given vocabulary marker exactly once.
+    // Move out and reset the lookup result for the given vocabulary marker.
   VocabBatchLookupResult release(size_t marker) {
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
     AD_CORRECTNESS_CHECK(results_[marker].has_value());
