@@ -55,8 +55,7 @@ struct RleStats {
 };
 
 // _____________________________________________________________________________
-// Fast word-aligned slice splicing helper.
-// Copies formatted prefix bytes to destination using 64-bit/128-bit chunks.
+// Copy a formatted prefix slice to the destination buffer.
 inline char* spliceSlice(const char* src, size_t len, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr || len == 0);
   if (len == 0) {
