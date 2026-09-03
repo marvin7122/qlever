@@ -377,13 +377,11 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
 }
 
 // _____________________________________________________________________________
-// Direct test of the documented lifetime semantics of `scanAll`: each yielded
-// `string_view` points into the range object that is REUSED for
-// the next element, so a previously yielded view must no longer hold the old
-// word once the next element has been pulled. Because the buffer outlives the
-// whole range (it lives in the range adaptor's closure), reading the stale
-// view afterwards is well-defined memory access -- which makes the assertion
-// deterministic rather than UB-dependent.
+// Test the documented reuse semantics of `scanAll`: each yielded
+// `string_view` points into storage that is reused for the next element, so a
+// previously yielded view must no longer represent the old word after the next
+// element has been pulled. The pointer is expected to remain stable while the
+// range is alive, while its contents are overwritten.
 TYPED_TEST(CompressedVocabularyF, ScanAllViewInvalidAfterNextPull) {
   auto createVocab = TestFixture::createCompressedVocabulary();
   // The first word is longer than the second so the decode buffer allocated on
