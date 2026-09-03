@@ -34,7 +34,14 @@ namespace ql::engine::export_v2 {
 // and ElasticExportScheduler into a single zero-allocation pipeline.
 class ExportEngineV2 {
  public:
-  // Compute streamed query export results using the V2 pipeline.
+  // Serialize a single tabular block into a ScatterGatherChunk using SIMD escaping.
+  static ScatterGatherChunk serializeTableChunk(
+      const IdTable& idTable,
+      const LocalVocab& localVocab,
+      RowFormat format,
+      ScatterGatherArenaStreamer& arenaStreamer);
+
+  // Compute streamed query export results using the push-driven V2 pipeline.
   static cppcoro::generator<std::string> computeResult(
       const ParsedQuery& parsedQuery,
       const QueryExecutionTree& qet,
