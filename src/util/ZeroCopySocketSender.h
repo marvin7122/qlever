@@ -405,7 +405,7 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
 
     if (config_.useZeroCopy) {
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
-        // Zero-Copy Send with Registered Fixed Buffer (Opcode: IORING_OP_SEND_ZC)
+        // Use zero-copy sending with a registered fixed buffer (`IORING_OP_SEND_ZC`).
         io_uring_prep_send_zc_fixed(sqe, sockfd, slotSpan.data(), numBytes,
                                     flags, zcFlags, bufferIndex);
       } else {
