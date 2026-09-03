@@ -45,7 +45,7 @@ TEST(InPlaceHttpChunkFramingTest, ConceptComplianceAndBasicFraming) {
   std::string_view framed(framedSpan.data(), framedSpan.size());
   EXPECT_EQ(framed, "22\r\nHello, QLever Chunked HTTP Stream!\r\n");
 
-  // Zero-copy verification: framed span must point directly into pre-reserved header
+  // Zero-copy verification: the framed span starts in the header immediately before the payload.
   EXPECT_EQ(framedSpan.data(), chunk.payloadData() - 4);  // "22\r\n" = 4 bytes
   EXPECT_EQ(chunk.lastFinalizedSpan().data(), framedSpan.data());
   EXPECT_EQ(chunk.lastFinalizedSpan().size(), framedSpan.size());
