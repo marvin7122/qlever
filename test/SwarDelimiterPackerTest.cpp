@@ -235,7 +235,7 @@ TEST(SwarDelimiterPackerTest, AllPredefinedDelimitersMatchStringViews) {
 
 // _____________________________________________________________________________
 TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
-  // Test N-Triples row serialization: <s> <p> <o> .\n
+  // Test N-Triples row serialization: `<s> <p> <o> .\n`.
   std::string_view sub = "http://example.org/entity/Q42";
   std::string_view pred = "http://example.org/prop/P31";
   std::string_view obj = "http://example.org/entity/Q5";
