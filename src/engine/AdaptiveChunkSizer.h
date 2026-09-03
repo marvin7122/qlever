@@ -322,7 +322,7 @@ class AdaptiveChunkBuffer
   void recordRow() noexcept { ++rowsInCurrentChunk_; }
 
   // ___________________________________________________________________________
-  // Check whether the active buffer has reached the current adaptive threshold.
+  
   [[nodiscard]] bool isReadyToFlush() const noexcept {
     return sizer_.isChunkFull(writePos_, rowsInCurrentChunk_);
   }
