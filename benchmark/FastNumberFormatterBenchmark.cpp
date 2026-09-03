@@ -38,7 +38,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
   BenchmarkResults runAllBenchmarks() final {
     BenchmarkResults results{};
 
-    // Generate test data: 1,000,000 integers
+    // Generate test data: 1,000,000 integers.
     std::vector<int64_t> sequentialInts;
     sequentialInts.reserve(NUM_INTEGERS);
     for (size_t i = 1; i <= NUM_INTEGERS; ++i) {
