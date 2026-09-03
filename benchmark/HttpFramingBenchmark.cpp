@@ -87,8 +87,7 @@ class Standard2BufferCopyHttpFraming {
     *dst++ = '\r';
     *dst++ = '\n';
 
-    // 3. FULL PAYLOAD COPY: copy from source payload buffer into framed buffer
-    if (payloadBytes > 0) {
+        if (payloadBytes > 0) {
       std::memcpy(dst, payloadData, payloadBytes);
       dst += payloadBytes;
     }
