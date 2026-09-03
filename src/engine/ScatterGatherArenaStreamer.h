@@ -57,9 +57,10 @@ struct ScatterGatherConfig {
 };
 
 // _____________________________________________________________________________
-// An invariant-proven assembled scatter-gather chunk containing an array of
-// `struct iovec` descriptors referencing external arena memory pages alongside
-// an owned local header buffer for formatting delimiters and short tokens.
+// An assembled scatter-gather chunk containing an array of `struct iovec`
+// descriptors referencing externally owned memory alongside an owned local
+// header buffer for formatting delimiters and short tokens. The external memory
+// must remain valid until the chunk has been consumed.
 class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk> {
  public:
   // Architecture Standard § 3.1: Passkey Idiom for restricted construction.
