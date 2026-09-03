@@ -37,7 +37,7 @@
 #include "util/Log.h"
 #include "util/ZeroCopySocketSender.h"
 
-// Optional inclusion of QLever benchmark infrastructure
+// Optionally include the QLever benchmark infrastructure.
 #if __has_include("../benchmark/infrastructure/Benchmark.h")
 #include "../benchmark/infrastructure/Benchmark.h"
 #define QLEVER_HAS_BENCHMARK_INFRASTRUCTURE 1
