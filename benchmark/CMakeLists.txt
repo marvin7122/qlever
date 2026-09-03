@@ -45,5 +45,7 @@ if (NOT _NO_BENCHMARK)
     # second main via benchmarkWithMain.
     add_executable(SimdEscapeClassifierBenchmark SimdEscapeClassifierBenchmark.cpp)
     qlever_target_link_libraries(SimdEscapeClassifierBenchmark engine sparqlParser qlever_util)
+    addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
+    addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
 
 endif()
