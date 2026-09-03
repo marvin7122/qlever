@@ -40,6 +40,7 @@ enum class PushResult { Accepted, Closed };
 struct AsyncChunkPipelineStats {
   size_t chunksProduced_ = 0;
   size_t chunksConsumed_ = 0;
+  size_t chunksDiscarded_ = 0;
   size_t bytesProduced_ = 0;
   size_t bytesConsumed_ = 0;
   size_t producerWaits_ = 0;
@@ -94,7 +95,8 @@ class AsyncChunkPipeline
     AD_CORRECTNESS_CHECK(capacity_ > 0);
     std::lock_guard lock{mutex_};
     AD_CORRECTNESS_CHECK(chunks_.size() <= capacity_);
-    AD_CORRECTNESS_CHECK(stats_.chunksConsumed_ <= stats_.chunksProduced_);
+    AD_CORRECTNESS_CHECK(stats_.chunksConsumed_ + stats_.chunksDiscarded_ <=
+                         stats_.chunksProduced_);
     AD_CORRECTNESS_CHECK((state_ == State::Failed) == (exception_ != nullptr));
   }
 
@@ -185,6 +187,10 @@ class AsyncChunkPipeline
       std::lock_guard lock{mutex_};
       if (state_ == State::Running) {
         state_ = State::Cancelled;
+        stats_.chunksDiscarded_ += chunks_.size();
+        while (!chunks_.empty()) {
+          chunks_.pop();
+        }
       }
     }
     notEmpty_.notify_all();
