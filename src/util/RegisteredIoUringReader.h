@@ -51,7 +51,7 @@
 
 namespace ad_utility::export_prototypes {
 
-// Direct I/O block alignment constants for NVMe and modern Linux kernels.
+// Define the direct-I/O block-alignment constants for NVMe and modern Linux kernels.
 inline constexpr size_t kDirectIoBlockSize = 4096;
 inline constexpr size_t kDirectIoAlignment = 4096;
 
