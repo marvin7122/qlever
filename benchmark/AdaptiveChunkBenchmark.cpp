@@ -190,7 +190,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
   }
 
   // ___________________________________________________________________________
-  // Benchmark 3: AdaptiveChunkBuffer integrated self-managing stream.
+  // Benchmark the integrated self-managing `AdaptiveChunkBuffer` stream.
   ChunkBenchmarkResult runAdaptiveChunkBuffer() const {
     AdaptiveChunkBuffer buffer(AdaptiveChunkConfig{
         .initialChunkBytes_ = 64 * 1024,
