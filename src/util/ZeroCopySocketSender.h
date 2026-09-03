@@ -609,7 +609,7 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
 
     // CQE 1: Transmission completion result.
     if (res < 0) {
-      // Send error occurred
+      // Handle the send error.
       bufferPool_.releaseSlot(entry.bufferIndex);
       AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
       AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
