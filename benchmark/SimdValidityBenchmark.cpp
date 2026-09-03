@@ -208,8 +208,8 @@ struct SimdValidityBitmaskExporter {
   }
 };
 
-// _____________________________________________________________________________
-// Method 3: SIMD Direct Bitmask forEachValid Exporter
+ // _____________________________________________________________________________
+// Method 3: SIMD Direct Bitmask Scan Exporter
 struct SimdForEachBitmaskExporter {
   static char* exportCsv(ql::span<const ValueId> column, char* out) noexcept {
     const size_t numRows = column.size();
