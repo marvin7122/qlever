@@ -2711,13 +2711,11 @@ auto QueryPlanner::createMaterializedViewJoinReplacements(
   // Convert all the `IndexScan`s to `SubtreePlan`s with the appropriate ids
   // set.
   for (const auto& [scan, coveredTriples] : scans) {
-    auto plan = makeSubtreePlan(scan);
+    auto plan = makeSubtreePlan<IndexScan>(scan);
     // This is equivalent to a join between the covered triples, so we must mark
     // all included nodes.
-    for (size_t idx : coveredTriples) {
-      plan._idsOfIncludedNodes |= (1ULL << idx);
-    }
-    size_t numCoveredTriples = coveredTriples.size();
+    plan._idsOfIncludedNodes |= coveredTriples;
+    size_t numCoveredTriples = absl::popcount(coveredTriples);
     // Empty vectors of replacement plans for smaller numbers of triples.
     for (size_t i = plans.size(); i < numCoveredTriples; ++i) {
       plans.push_back({});
