@@ -70,8 +70,9 @@ using VocabBatchOwner = std::shared_ptr<const VocabBatchStorage>;
 class MultiSourceVocabBatchAssembler;
 
 // _____________________________________________________________________________
-// Batch lookup result: views are always `storage_->viewSpan()`. There is no
-// constructor that takes an owner and a span independently.
+// Batch lookup result: when storage is present, the views are initialized
+// from `storage_->viewSpan()`. There is no constructor that takes an owner and
+// a span independently.
 class VocabBatchLookupResult {
  private:
   VocabBatchOwner storage_{};
