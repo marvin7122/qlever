@@ -284,8 +284,14 @@ class FsstEncoder {
     return FsstDecoder{fsst_decoder(encoder_.get())};
   }
 
-  // ___________________________________________________________________________
+    // ___________________________________________________________________________
   // Return a decoder, that can be used to decompress strings that have been
+  // compressed by this encoder.
+  FsstDecoder makeDecoder() const {
+    return FsstDecoder{fsst_decoder(encoder_.get())};
+  }
+
+  // ___________________________________________________________________________
   // Interface for the case that all the strings that shall ever be compressed
   // using the same codebook shall also contribute to that codebook. Build a
   // codebook from the `strings`, and then use that codebook to compress each of
