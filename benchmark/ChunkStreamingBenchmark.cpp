@@ -109,11 +109,11 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
       const size_t currentChunkSize =
           std::min(chunkSize, totalTriples_ - c * chunkSize);
 
-      // Phase 1: CPU evaluates and formats chunk (lockstep: network sits idle)
+      // Phase 1: Evaluate and format the chunk (the network sits idle in lockstep).
       std::string chunk = generateRdfChunk(currentChunkSize, c);
       totalBytes += chunk.size();
 
-      // Phase 2: Socket transmits chunk (lockstep: CPU sits idle)
+      // Phase 2: Transmit the chunk (the CPU sits idle in lockstep).
       simulateNetworkTransmission(chunk.size(), latency);
     }
 
