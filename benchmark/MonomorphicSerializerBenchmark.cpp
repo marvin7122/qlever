@@ -190,7 +190,7 @@ class PerfCounterMonitor {
 };
 
 // _____________________________________________________________________________
-// Synthetic dataset generators for 1,000,000 rows across diverse query schemas.
+// Generate synthetic datasets for 1,000,000 rows across diverse query schemas.
 constexpr size_t NUM_BENCHMARK_ROWS = 1'000'000;
 
 struct DatasetStorage {
