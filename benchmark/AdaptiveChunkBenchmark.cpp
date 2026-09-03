@@ -43,7 +43,7 @@ static inline void formatTripleToBuffer(size_t entityId, std::string& buffer) {
 }
 
 // _____________________________________________________________________________
-// Benchmark Result Record
+// Store the result of a chunk benchmark.
 struct ChunkBenchmarkResult {
   std::string mode;
   size_t totalTriples{0};
