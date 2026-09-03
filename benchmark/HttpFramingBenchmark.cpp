@@ -145,8 +145,7 @@ class HttpFramingBenchmarkRunner {
 
     Standard2BufferCopyHttpFraming framer(chunkSize);
 
-    // Intermediate payload buffer allocated to hold generated chunk payload
-    std::vector<char> intermediatePayloadBuffer(chunkSize);
+        std::vector<char> intermediatePayloadBuffer(chunkSize);
 
     size_t totalPayloadWritten = 0;
     size_t totalFramedWritten = 0;
