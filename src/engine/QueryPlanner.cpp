@@ -2711,7 +2711,7 @@ auto QueryPlanner::createMaterializedViewJoinReplacements(
   // Convert all the `IndexScan`s to `SubtreePlan`s with the appropriate ids
   // set.
   for (const auto& [scan, coveredTriples] : scans) {
-    auto plan = makeSubtreePlan<IndexScan>(*scan);
+    auto plan = makeSubtreePlan(scan);
     // This is equivalent to a join between the covered triples, so we must mark
     // all included nodes.
     for (size_t idx : coveredTriples) {
