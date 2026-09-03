@@ -75,8 +75,7 @@ class Standard2BufferCopyHttpFraming {
     AD_CONTRACT_CHECK(payloadData != nullptr || payloadBytes == 0);
     AD_CONTRACT_CHECK(payloadBytes + 32 <= framedBuffer_.size());
 
-    // 1. Format hex size header
-    char hexBuf[16];
+        char hexBuf[16];
     auto [ptr, ec] = std::to_chars(hexBuf, hexBuf + sizeof(hexBuf),
                                    payloadBytes, 16);
     AD_CONTRACT_CHECK(ec == std::errc{});
