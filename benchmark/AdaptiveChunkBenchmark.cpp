@@ -286,7 +286,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
       fixedRes = runFixed100kTriples();
     });
 
-    // Run Adaptive Sizer
+    // Run the adaptive sizer.
     ChunkBenchmarkResult adaptiveRes{};
     results.addMeasurement("Adaptive Chunk Sizer (64KB -> 4MB)", [this, &adaptiveRes]() {
       adaptiveRes = runAdaptiveChunkSizer();
