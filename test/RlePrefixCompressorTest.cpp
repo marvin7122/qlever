@@ -34,7 +34,7 @@ TEST(RlePrefixCompressorTest, BasicRunLengthConstantFolding) {
   std::array<char, 4096> buffer{};
   char* curr = buffer.data();
 
-  // 100 identical rows
+  // Format 100 identical rows.
   for (size_t i = 0; i < 100; ++i) {
     curr = formatter.formatPrefix(id, rawTerm, curr);
   }
