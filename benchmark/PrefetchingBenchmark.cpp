@@ -46,8 +46,8 @@ namespace {
 using namespace ql::engine::prefetch;
 
 // _____________________________________________________________________________
-// Hardware Performance Counter Monitor for L1/L2/L3 cache misses and cycles.
-// Encapsulates Linux `perf_event_open` syscalls with RAII lifecycle.
+// Monitor `L1`, `L2`, and `L3` cache misses and CPU cycles.
+// Encapsulate Linux `perf_event_open` syscalls with an RAII lifecycle.
 class HardwarePerformanceMonitor {
  public:
   struct CounterSample {
