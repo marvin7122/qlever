@@ -197,7 +197,7 @@ struct DatasetStorage {
   // String pool keeping views valid across runs
   std::vector<std::string> stringPool_;
 
-  // Pre-allocated rows for each schema
+    // Reserved capacity for rows of each schema
   std::vector<std::array<CellValue, 3>> tripleRows_;
   std::vector<std::array<CellValue, 3>> metricRows_;
   std::vector<std::array<CellValue, 4>> relationalRows_;
