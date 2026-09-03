@@ -243,7 +243,7 @@ TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
   std::vector<char> scalarBuf(256, 0);
   std::vector<char> swarBuf(256, 0);
 
-  // Scalar byte-by-byte writer
+    // Scalar reference writer: copy payloads and write delimiters byte by byte
   char* sPtr = scalarBuf.data();
   *sPtr++ = '<';
   std::memcpy(sPtr, sub.data(), sub.size());
