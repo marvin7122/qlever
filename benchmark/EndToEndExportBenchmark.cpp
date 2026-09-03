@@ -24,8 +24,6 @@
 #include "engine/PrefetchingBatchResolver.h"
 #include "engine/ScatterGatherArenaStreamer.h"
 #include "engine/SimdEscapeClassifier.h"
-#include "engine/export_prototypes/AlignedBatchBuffer.h"
-#include "engine/export_prototypes/VectorizedPrefixSlicer.h"
 #include "util/FastIntToString.h"
 #include "util/StreamingBufferWriter.h"
 #include "util/ZeroCopySocketSender.h"
