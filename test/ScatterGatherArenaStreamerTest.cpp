@@ -56,7 +56,7 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
   EXPECT_EQ(chunk.zeroCopySpansCount(), 1);
   EXPECT_EQ(chunk.zeroCopyBytes(), arenaLiteral.size());
 
-  // Coalescing check:
+  // Verify coalescing:
   // 1: "<http://example.org/sub> <http://example.org/pred> \"" (header)
   // 2: arenaLiteral (zero-copy arena pointer)
   // 3: "\"^^<http://www.w3.org/2001/XMLSchema#string> .\n" (header)
