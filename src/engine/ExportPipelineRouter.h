@@ -153,7 +153,7 @@ class ExportPipelineRouter {
     return std::nullopt;
   }
 
-  // Evaluates eligibility and returns FastStreamingV2 if eligible, else fallback to LegacyV1.
+  
   [[nodiscard]] static ExportEngineMode evaluateEligibility(
       const ParsedQuery& query, ExportEngineMode targetMode) noexcept {
     if (targetMode == ExportEngineMode::FastStreamingV2) {
