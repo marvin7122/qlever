@@ -275,7 +275,6 @@ QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
 
 #endif  // QLEVER_SIMD_X86
 
-// Portable scalar fallback for 32-byte chunks.
 template <EscapeFormat Format>
 [[nodiscard]] inline uint32_t scanChunk32Scalar(const char* data) noexcept {
   uint32_t mask = 0;
