@@ -43,7 +43,7 @@ inline uint64_t readCpuCycles() noexcept {
 }
 
 // _____________________________________________________________________________
-// Benchmark suite comparing scalar byte-by-byte writes vs SWAR 64-bit delimiter packing
+// Compare scalar byte-by-byte writes with SWAR 64-bit delimiter packing.
 class SwarDelimiterBenchmark : public BenchmarkInterface {
  private:
   // Reusable 64 MB output buffer to avoid repeated allocation and bound memory usage
