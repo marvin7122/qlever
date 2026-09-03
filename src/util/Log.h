@@ -179,8 +179,7 @@ class Log {
  public:
   template <LogLevel::Enum LEVEL>
   static std::ostream& getLog() {
-    // use the singleton logging stream as target.
-    return LogstreamChoice::get().getStream()
+        return LogstreamChoice::get().getStream()
            << getTimeStamp() << " - " << LogLevel{LEVEL}.toString() << ": ";
   }
 
