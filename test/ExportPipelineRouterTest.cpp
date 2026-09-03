@@ -103,7 +103,7 @@ TEST(ExportPipelineRouterTest, AskQueryNotEligibleForFastStreaming) {
   UrlParser::ParamValueMap params;
   params["fast-export"] = "1";
 
-  // ASK query is not eligible for streaming export -> transparent fallback to LegacyV1
+  // Fall back transparently to `LegacyV1` for an `ASK` query, which is not eligible for streaming export.
   EXPECT_FALSE(ExportPipelineRouter::isEligibleForFastStreaming(query));
   EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params), ExportEngineMode::LegacyV1);
 }
