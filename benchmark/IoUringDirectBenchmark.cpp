@@ -372,7 +372,7 @@ class IoUringDirectBenchmarkRunner {
         if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
           blockOffset = 0;
         }
-        // Zero-copy DMA fixed buffer request
+        // Create a zero-copy DMA request for a fixed buffer.
         requests[i] = BlockReadRequest(
             /*fileIndex=*/0, blockOffset, /*bufferIndex=*/static_cast<uint32_t>(i),
             /*bufferOffset=*/0, kBlockSizeBytes,
