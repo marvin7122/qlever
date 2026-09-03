@@ -346,7 +346,7 @@ class SimdEscapeClassifier {
     size_t offset = 0;
 
 #if defined(QLEVER_SIMD_X86)
-    // Fast path: 32-byte AVX2 vector blocks
+        // Process 32-byte blocks with AVX2 on the fast path.
     while (len >= 32) {
       ChunkEscapeMask32 mask = scanChunk32<Format>(ptr);
       if (mask.hasEscape()) {
