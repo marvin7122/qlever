@@ -50,7 +50,7 @@ class MockInvariantClass
 
 struct ClassWithoutInvariants {};
 
-// Check the invariant-stateful-class concept for supported and unsupported types.
+
 static_assert(ad_utility::InvariantStatefulClass<MockInvariantClass>);
 static_assert(!ad_utility::InvariantStatefulClass<ClassWithoutInvariants>);
 
