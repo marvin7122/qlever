@@ -45,7 +45,7 @@ TEST(ZeroCopyBufferPoolTest, BasicAcquireAndRelease) {
   EXPECT_EQ(pool.availableSlots(), 0u);
   EXPECT_FALSE(pool.acquireSlot().has_value());
 
-  // Test span access
+  // Test span access.
   for (uint32_t slot : acquired) {
     auto span = pool.getSlotSpan(slot);
     EXPECT_EQ(span.size(), bufferSize);
