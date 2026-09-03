@@ -182,8 +182,7 @@ struct SimdValidityBitmaskExporter {
           *out++ = ',';
           *out++ = '\n';
         }
-      } else {
-        // Mixed: iterate through bitmask
+            } else {
         for (size_t i = 0; i < 64; ++i) {
           if (mask.isRowValid(i)) {
             *out++ = '1';
