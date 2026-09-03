@@ -193,26 +193,7 @@ inline char* formatUIntBranchless(uint64_t val, char* out) noexcept {
 // _____________________________________________________________________________
 // Zero-allocation conversion of uint32_t to ASCII.
 inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
-  AD_CONTRACT_CHECK(out != nullptr);
-  const uint32_t len = numDigits(val);
-  char* p = out + len;
-
-  while (val >= 100) {
-    uint32_t rem = val % 100;
-    val /= 100;
-    p -= 2;
-    std::memcpy(p, &detail::DIGIT_PAIRS[rem * 2], 2);
-  }
-
-  if (val < 10) {
-    --p;
-    *p = static_cast<char>('0' + val);
-  } else {
-    p -= 2;
-    std::memcpy(p, &detail::DIGIT_PAIRS[val * 2], 2);
-  }
-
-  return out + len;
+  return formatUIntBranchless(val, out);
 }
 
 // _____________________________________________________________________________
