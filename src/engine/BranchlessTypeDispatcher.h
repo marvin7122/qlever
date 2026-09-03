@@ -304,7 +304,7 @@ class BranchlessTypeDispatcher {
   // ___________________________________________________________________________
   // Format a single RDF term branchlessly into `out`.
   // Precondition: `out` must point to sufficient pre-allocated memory.
-  // Returns: Pointer past the last byte written.
+  // Return a pointer past the last byte written.
   static inline char* dispatchTermFormat(
       ValueId id, std::string_view rawTerm, char* out,
       const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
