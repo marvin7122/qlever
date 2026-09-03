@@ -49,7 +49,7 @@ static bool pointsIntoObject(const void* pointer, const T& object) {
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, PmrStringSsoCapacity) {
-  // The discovered capacity must be usable: strings up to that size are stored
+    // Verify that the discovered capacity is usable: strings up to that size are stored
   // inside the object, and one character more is not.
   size_t capacity = pmrStringSsoCapacity();
   requirePmrStringInlineStorage(capacity);
