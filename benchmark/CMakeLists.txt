@@ -60,7 +60,7 @@ if (NOT _NO_BENCHMARK)
     linkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser qlever_util)
 
     add_executable(BranchlessDispatcherBenchmark BranchlessDispatcherBenchmark.cpp)
-    linkBenchmark(BranchlessDispatcherBenchmark engine sparqlParser qlever_util)
+    qlever_target_link_libraries(BranchlessDispatcherBenchmark engine sparqlParser qlever_util)
 
     add_executable(ScatterGatherBenchmark ScatterGatherBenchmark.cpp)
     linkBenchmark(ScatterGatherBenchmark engine sparqlParser qlever_util)
@@ -75,10 +75,10 @@ if (NOT _NO_BENCHMARK)
     linkBenchmark(AdaptiveChunkBenchmark engine sparqlParser qlever_util)
 
     add_executable(SimdValidityBenchmark SimdValidityBenchmark.cpp)
-    linkBenchmark(SimdValidityBenchmark engine sparqlParser qlever_util)
+    qlever_target_link_libraries(SimdValidityBenchmark engine sparqlParser qlever_util)
 
     add_executable(RlePrefixBenchmark RlePrefixBenchmark.cpp)
-    linkBenchmark(RlePrefixBenchmark engine sparqlParser qlever_util)
+    qlever_target_link_libraries(RlePrefixBenchmark engine sparqlParser qlever_util)
 
     add_executable(HttpFramingBenchmark HttpFramingBenchmark.cpp)
     linkBenchmark(HttpFramingBenchmark engine sparqlParser qlever_util)
