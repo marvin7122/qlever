@@ -99,10 +99,7 @@ struct WikidataStreamDataset {
         size_t pIndex = (r / 20) % predicateIds.size();
         ds.predicates_.push_back(predicateIds[pIndex]);
 
-        // Object
-        uint64_t objIdx = ds.vocab_.insert(
-            "http://www.wikidata.org/entity/Q" + std::to_string(objDist(gen)));
-        ds.objects_.push_back(ValueId::makeFromVocabIndex(VocabIndex::make(objIdx)));
+        
       }
     }
 
