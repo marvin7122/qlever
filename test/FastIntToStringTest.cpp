@@ -237,7 +237,7 @@ TEST(FastIntToStringTest, FormatQidAndPid) {
     EXPECT_EQ(std::string_view(buf, end - buf), "http://www.wikidata.org/entity/Q115858349");
   }
 
-  // PID tests
+    // Test PID formatting.
   {
     char* end = formatPid(31ULL, buf);
     EXPECT_EQ(std::string_view(buf, end - buf), "http://www.wikidata.org/prop/direct/P31");
