@@ -316,9 +316,9 @@ struct RegisteredReaderConfig {
 // Deep Module: RegisteredIoUringReader
 //
 // Encapsulates kernel fixed-file table registration (`IORING_REGISTER_FILES`),
-// fixed-buffer DMA page-pinning (`IORING_REGISTER_BUFFERS`), Direct I/O
-// alignment enforcement (`O_DIRECT`), submission queue batching, and completion
-// queue reaping behind a clean, zero-bookkeeping interface.
+// fixed-buffer registration (`IORING_REGISTER_BUFFERS`), Direct I/O alignment
+// enforcement (`O_DIRECT`), submission queue batching, and completion queue
+// reaping behind an interface that manages the associated request bookkeeping.
 class RegisteredIoUringReader
     : public WithInvariants<RegisteredIoUringReader> {
  public:
