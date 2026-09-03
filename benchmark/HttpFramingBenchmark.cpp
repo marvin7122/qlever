@@ -198,7 +198,7 @@ class HttpFramingBenchmarkRunner {
     };
   }
 
-  // 2. Optimization 25: Zero-Copy InPlaceHttpChunk across 500 MB
+  // 2. In-place HTTP framing with InPlaceHttpChunk (no additional copy during framing)
   static HttpFramingBenchmarkMetric runInPlaceHttpChunk(
       const SyntheticExportStreamGenerator& streamGen, size_t chunkSize) {
     const size_t totalStreamBytes = streamGen.totalBytes();
