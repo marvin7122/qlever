@@ -67,8 +67,9 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
     ad_utility::MediaType mediaType,
     ad_utility::SharedCancellationHandle cancellationHandle,
     [[maybe_unused]] ad_utility::export_v2::ElasticExportScheduler* scheduler) {
-  return ExportQueryExecutionTrees::computeResult(parsedQuery, qet, mediaType,
-                                                  cancellationHandle);
+  ad_utility::Timer timer{ad_utility::Timer::Started};
+  return ExportQueryExecutionTrees::computeResult(
+      parsedQuery, qet, mediaType, timer, std::move(cancellationHandle));
 }
 
 }  // namespace ql::engine::export_v2
