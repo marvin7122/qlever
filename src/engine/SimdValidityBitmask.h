@@ -49,8 +49,7 @@ class ValidityBitmask64 {
   uint64_t mask_ = 0;
 
  public:
-  // Default constructor: creates an all-unbound bitmask (mask = 0).
-  constexpr explicit ValidityBitmask64(uint64_t mask = 0) noexcept
+    constexpr explicit ValidityBitmask64(uint64_t mask = 0) noexcept
       : mask_{mask} {}
 
   // Factory methods for clear intent
