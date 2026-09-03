@@ -33,7 +33,7 @@
 #include "util/Log.h"
 #include "util/Timer.h"
 
-// Optional inclusion of QLever benchmark infrastructure
+// Include the QLever benchmark infrastructure when it is available.
 #if __has_include("../benchmark/infrastructure/Benchmark.h")
 #include "../benchmark/infrastructure/Benchmark.h"
 #define QLEVER_HAS_BENCHMARK_INFRASTRUCTURE 1
