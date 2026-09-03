@@ -114,10 +114,10 @@ struct DecoderMultiplexer {
   }
 
   // ___________________________________________________________________________
-  // Decompress `compressed` with the decoder at `decoderIndex` in `decoders_`
-  // into the `out` buffer. `scratch` is used only by multi-stage FSST;
-  // single-stage decoders ignore it. Return the number of bytes written to
-  // `out`.
+    // Decompress `compressed` with the decoder at `decoderIndex` in `decoders_`
+  // into the `out` buffer. Decoders that provide the scratch-taking overload
+  // receive `scratch`; the other decoders ignore it. Return the number of bytes
+  // written to `out`.
   [[nodiscard]] size_t decompressInto(std::string_view compressed,
                                       size_t decoderIndex, ql::span<char> out,
                                       std::string& scratch) const {
