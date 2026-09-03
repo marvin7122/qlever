@@ -125,7 +125,7 @@ The supervisor's constraint is critical: **a heavy multi-threaded query must nev
      }
      ```
    - **Step 3 (Immediate Thread Surrender in <1 ms):** Because morsels are strictly bounded to 200–500 μs, all helper threads cleanly exit and return to the global pool in **less than 1 millisecond**.
-   - **Step 4 (Zero Query Disruption):** The primary export coordinator continues running uninterrupted on its dedicated single core. The newly arrived interactive query immediately receives the full set of CPU cores without waiting.
+      - **Step 4 (Bounded Query Impact):** The primary export coordinator continues using its assigned core, while helper workers stop at their next morsel boundary. Interactive queries can therefore contend with the primary coordinator, but do not wait for helper workers to finish an unbounded unit of work.
    - **Step 5 (Dynamic Scale-Out Recovery):** Once the interactive query completes and the queue returns to 0, helper threads can once again assist with morsel formatting.
 
 ---
