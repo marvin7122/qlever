@@ -257,7 +257,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);
       }
 
-      // 2.2 SwarDelimiterPacker CSV
+      
       {
         size_t totalBytesWritten = 0;
         uint64_t startCycles = readCpuCycles();
