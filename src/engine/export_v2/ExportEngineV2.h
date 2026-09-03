@@ -8,21 +8,13 @@
 
 #pragma once
 
-#include <memory>
 #include <string>
-#include <string_view>
-#include <vector>
 
-#include "engine/ExportPipelineRouter.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/export_v2/AsyncChunkPipeline.h"
 #include "engine/export_v2/ElasticExportScheduler.h"
-#include "engine/export_v2/MonomorphicSerializers.h"
-#include "engine/export_v2/ScatterGatherArenaStreamer.h"
-#include "engine/export_v2/SimdEscapeClassifier.h"
+#include "engine/export_v2/ExportEngineV2Serialize.h"
 #include "engine/export_v2/VectorStreamSource.h"
-#include "engine/idTable/IdTable.h"
-#include "index/LocalVocab.h"
 #include "parser/ParsedQuery.h"
 #include "util/CancellationHandle.h"
 #include "util/http/MediaTypes.h"
@@ -31,26 +23,24 @@
 namespace ql::engine::export_v2 {
 
 using qlever::export_v2::AsyncChunkPipeline;
-using qlever::export_v2::ScatterGatherChunk;
-using qlever::export_v2::ScatterGatherChunkBuilder;
 
 // _____________________________________________________________________________
 // Unified Export Engine V2 (WP8): Coordinates push-based streaming export
-// by wiring VectorStreamSource, SIMD escaping, ScatterGatherArenaStreamer,
-// and ElasticExportScheduler into a single zero-allocation pipeline.
+// by wiring VectorStreamSource, SIMD escaping, ScatterGather chunk builders,
+// and ElasticExportScheduler into a single pipeline.
 class ExportEngineV2 {
  public:
-  // Serialize a single tabular block into a ScatterGatherChunk using SIMD escaping.
+  // Serialize a single tabular block into a ScatterGatherChunk.
   static ScatterGatherChunk serializeTableChunk(
-      const IdTable& idTable,
-      const LocalVocab& localVocab,
-      RowFormat format,
-      ScatterGatherChunkBuilder& builder);
+      const IdTable& idTable, const LocalVocab& localVocab, RowFormat format,
+      ScatterGatherChunkBuilder& builder) {
+    return ql::engine::export_v2::serializeTableChunk(idTable, localVocab,
+                                                      format, builder);
+  }
 
   // Compute streamed query export results using the push-driven V2 pipeline.
   static cppcoro::generator<std::string> computeResult(
-      const ParsedQuery& parsedQuery,
-      const QueryExecutionTree& qet,
+      const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
       ad_utility::MediaType mediaType,
       ad_utility::SharedCancellationHandle cancellationHandle,
       ad_utility::export_v2::ElasticExportScheduler* scheduler = nullptr);
