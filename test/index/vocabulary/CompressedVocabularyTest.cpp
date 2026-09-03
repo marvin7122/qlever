@@ -304,13 +304,12 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 // pointed into the destroyed local object instead of the arena.
 //
 // Detection strength:
-//  - Under AddressSanitizer builds (CMAKE_BUILD_TYPE=Asan) this test is a
-//    DETERMINISTIC detector: ASan poisons returned stack frames, so any read
-//    through the dangling view is reported as stack-use-after-return.
+//  - Under AddressSanitizer builds (CMAKE_BUILD_TYPE=Asan), reading through a
+//    dangling view is expected to produce a stack-use-after-return diagnostic.
 //  - In normal builds it is a practical tripwire, not a proof: reading a
 //    dangling view is UB, so we clobber the stack with sentinel bytes and
-//    verify content byte-for-byte, which makes corruption overwhelmingly
-//    likely but not formally guaranteed.
+//    verify content byte-for-byte, which makes corruption likely but not
+//    formally guaranteed.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
   // Verify that this platform uses inline storage for `std::pmr::string`;
   // short words therefore use the Small String Optimization (SSO) and would
