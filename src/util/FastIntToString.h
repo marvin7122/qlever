@@ -138,8 +138,8 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
     "http://www.wikidata.org/prop/direct/P";
 
 // _____________________________________________________________________________
-// Branchless determination of the exact number of decimal digits in `val`.
-// Uses fast log2 approximation via `countl_zero` and a single conditional move.
+// Determine the exact number of decimal digits in `val`.
+// Estimates the decimal digit count from the bit width and corrects it using a power-of-ten comparison.
 [[nodiscard]] inline constexpr uint32_t numDigits(uint64_t val) noexcept {
   if (val == 0) {
     return 1;
