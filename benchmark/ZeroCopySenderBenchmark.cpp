@@ -54,7 +54,7 @@ constexpr size_t kChunkSizeBytes = 64 * 1024;                       // 64 KB
 constexpr size_t kTotalChunks = kTotalSendSizeBytes / kChunkSizeBytes;
 
 // _____________________________________________________________________________
-// Helper to measure thread/process CPU time using POSIX clock_gettime.
+// Helper to measure the current thread's CPU time using POSIX clock_gettime.
 class CpuTimeTimer {
  private:
   struct timespec startCpu_ {};
