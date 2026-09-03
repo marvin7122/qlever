@@ -475,8 +475,8 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Finalizing typestate transition (Law 2 / Law 3).
-  // Consumes the formatter, flushes remaining content, and returns summary.
+    // Flushes remaining content, invalidates this formatter's buffer, and
+  // returns the export summary. This method is only available on an rvalue.
   [[nodiscard]] ExportStreamSummary finalize() && {
     flush();
     ExportStreamSummary summary{totalTriples_, totalBytesWritten_,
