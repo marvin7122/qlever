@@ -208,7 +208,7 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
   ~InPlaceHttpChunk() = default;
 
   // ___________________________________________________________________________
-  // Structural Invariant Verification (Law 3 & Architecture Standard § 3).
+  // Structural Invariant Verification (Law 7 & Architecture Standard § 3).
   void checkInvariants() const {
     if (totalCapacity_ == 0) {
       AD_CORRECTNESS_CHECK(buffer_ == nullptr);
