@@ -277,7 +277,7 @@ class HttpFramingBenchmarkRunner {
         },
         chunkSize, true);
 
-    // Stream in realistic record slices (e.g. 1 KB records)
+        // Stream in fixed-size slices of 1 KB.
     constexpr size_t recordSliceSize = 1024;
     size_t offset = 0;
     while (offset < totalStreamBytes) {
