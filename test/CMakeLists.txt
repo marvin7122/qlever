@@ -177,6 +177,8 @@ addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
 addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
 
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
+
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
 addLinkAndDiscoverTest(CacheTest)
