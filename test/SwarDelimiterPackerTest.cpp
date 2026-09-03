@@ -100,7 +100,7 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
   std::array<char, 32> buffer;
   buffer.fill('X');
 
-  // Test writing 3-byte delimiter
+  
   char* next = SwarDelimiterPacker::writeDelim64(buffer.data(),
                                                 SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.pattern(),
                                                 SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.len());
