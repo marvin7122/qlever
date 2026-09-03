@@ -129,7 +129,7 @@ class ValidityBitmask64 {
     return mask_ == 0ULL ? 64 : static_cast<size_t>(std::countr_zero(mask_));
   }
 
-  // Iteration helpers over set/unset bits
+  // Provide iteration helpers over set and unset bits.
   template <typename Func>
   void forEachValid(Func&& func) const {
     uint64_t remaining = mask_;
