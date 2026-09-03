@@ -119,7 +119,7 @@ class ExportPipelineRouter {
   }
 
   // ___________________________________________________________________________
-  // Returns a detailed diagnostic string explaining the routing decision.
+  // Return a detailed diagnostic string explaining the routing decision.
   [[nodiscard]] static std::string describeDecision(
       const ParsedQuery& query,
       const ad_utility::httpUtils::UrlParser::ParamValueMap& parameters,
