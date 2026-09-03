@@ -21,12 +21,18 @@
 #include "engine/export_v2/ScatterGatherArenaStreamer.h"
 #include "engine/export_v2/SimdEscapeClassifier.h"
 #include "engine/export_v2/VectorStreamSource.h"
+#include "engine/idTable/IdTable.h"
+#include "index/LocalVocab.h"
 #include "parser/ParsedQuery.h"
 #include "util/CancellationHandle.h"
 #include "util/http/MediaTypes.h"
 #include "util/stream_generator.h"
 
 namespace ql::engine::export_v2 {
+
+using qlever::export_v2::RowFormat;
+using qlever::export_v2::ScatterGatherArenaStreamer;
+using qlever::export_v2::ScatterGatherChunk;
 
 // _____________________________________________________________________________
 // Unified Export Engine V2 (WP8): Coordinates push-based streaming export
