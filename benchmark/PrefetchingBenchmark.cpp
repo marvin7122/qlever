@@ -299,7 +299,7 @@ class PrefetchingBenchmark : public BenchmarkInterface {
 
     HardwarePerformanceMonitor perfMonitor;
 
-    // 1. Baseline: Standard sequential lookup without software prefetching
+    // 1. Measure the baseline with standard sequential lookup without software prefetching.
     {
       std::vector<std::string_view> resolved(NUM_LOOKUP_IDS);
       HardwarePerformanceMonitor::CounterSample sample;
