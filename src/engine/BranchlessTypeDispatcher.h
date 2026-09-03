@@ -91,7 +91,7 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
   return out;
 }
 
-// Branchless boolean lookup table.
+
 inline constexpr std::array<std::string_view, 2> kBoolStrings{"false", "true"};
 
 // Fast branchless formatter for boolean values.
