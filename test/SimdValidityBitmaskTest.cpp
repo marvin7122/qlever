@@ -300,7 +300,7 @@ TEST(SimdValidityBitmaskTest, VectorizedStoreCsvAndTsv) {
 
 // _____________________________________________________________________________
 TEST(SimdValidityBitmaskTest, UnalignedMemorySafety) {
-    // Test that unaligned pointers do not cause faults or bad stores.
+      // Test that unaligned destinations receive 64 delimiters and return dest + 64.
   std::vector<char> buffer(256, '0');
   for (size_t offset = 1; offset < 32; ++offset) {
     char* dest = buffer.data() + offset;
