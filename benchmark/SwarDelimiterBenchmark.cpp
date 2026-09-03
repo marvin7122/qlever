@@ -197,7 +197,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
     }
 
     // =========================================================================
-    // Group 2: CSV 3-Column Quoted Serialization ("col1","col2","col3"\n)
+    
     // =========================================================================
     {
       auto& group = results.addGroup(
