@@ -611,7 +611,7 @@ class RegisteredIoUringReader
   }
 
   // ___________________________________________________________________________
-  // Synchronous pread fallback (supporting both Direct I/O and buffered I/O).
+    // Use `pread` as a synchronous fallback for Direct I/O and buffered I/O.
   static void readSync(int fd, uint64_t offset, ql::span<char> dest,
                        bool directIo = true) {
     AD_CONTRACT_CHECK(fd >= 0);
