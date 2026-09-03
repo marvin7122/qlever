@@ -39,13 +39,13 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
 
-    add_executable(SerializerMicroBenchmark export/SerializerMicroBenchmark.cpp)
+    add_executable(SerializerMicroBenchmark SerializerMicroBenchmark.cpp)
     linkBenchmark(SerializerMicroBenchmark engine sparqlParser qlever_util)
 
-    add_executable(ChunkStreamingBenchmark "export/ChunkStreamingBenchmark.cpp")
+    add_executable(ChunkStreamingBenchmark ChunkStreamingBenchmark.cpp)
     linkBenchmark(ChunkStreamingBenchmark engine testUtil)
 
-    add_executable(IoUringDirectBenchmark export/IoUringDirectBenchmark.cpp)
+    add_executable(IoUringDirectBenchmark IoUringDirectBenchmark.cpp)
     linkBenchmark(IoUringDirectBenchmark engine sparqlParser qlever_util)
 
     add_executable(StreamingBufferBenchmark StreamingBufferBenchmark.cpp)
