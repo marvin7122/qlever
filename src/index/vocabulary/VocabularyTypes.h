@@ -269,10 +269,12 @@ class StringVectorVocabBatchLookupData : public VocabBatchStorage {
   }
 
  public:
-  explicit StringVectorVocabBatchLookupData(std::vector<std::string> words)
-      : VocabBatchStorage(viewsInto(words)), words_{std::move(words)} {
-    // viewsInto ran on `words` before the move; moving std::string does not
-    // relocate the character buffer, so the views stay valid.
+    explicit StringVectorVocabBatchLookupData(std::vector<std::string> words)
+      : VocabBatchStorage(/* initialize with empty views */),
+        words_{std::move(words)} {
+    // Generate views only after `words_` has been constructed. A move of an
+    // SSO string may relocate its character buffer.
+    setViews(viewsInto(words_));
   }
 
   static VocabBatchLookupResult asResult(
