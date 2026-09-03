@@ -439,7 +439,8 @@ void printResults(const std::vector<BenchmarkResult>& results) {
               << std::fixed << std::setprecision(2) << speedup << "x (+"
               << ((speedup - 1.0) * 100.0) << "% throughput)\n";
   }
-  std::cout << "========================================================================================================\n\n";
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
