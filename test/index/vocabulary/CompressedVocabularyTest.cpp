@@ -449,11 +449,10 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   EXPECT_TRUE(result[0].empty());
   EXPECT_EQ(result[6], "");
 
-  // All views yielded by the result must stay intact while the result object
-  // is alive, even after unrelated allocations have run in between. The
-  // append forces a real heap reallocation of `unrelatedAllocation` after
-  // `lookupBatch` produced the views, so a dangling view would be exposed
-  // by the comparison loop below.
+    // All views yielded by the result must stay intact while the result object
+  // is alive, including after an unrelated allocation has occurred. This
+  // exercises the result's ownership of the decompressed storage; the
+  // comparison loop below verifies that the returned words remain unchanged.
   std::string unrelatedAllocation;
   unrelatedAllocation.append(64, 'x');
   ASSERT_EQ(unrelatedAllocation.size(), 64u);
