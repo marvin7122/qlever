@@ -104,11 +104,11 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
       if (ptr - buffer > 1024 * 1000) {
         ptr = buffer; // Flush buffer
       }
-      ptr = qlever::util::formatQid(i, ptr);
+      ptr = ad_utility::formatQid(i, ptr);
       *ptr++ = '\t';
-      ptr = qlever::util::formatPid(31, ptr);
+      ptr = ad_utility::formatPid(31, ptr);
       *ptr++ = '\t';
-      ptr = qlever::util::formatQid(5, ptr);
+      ptr = ad_utility::formatQid(5, ptr);
       *ptr++ = '\n';
     }
     auto end = std::chrono::steady_clock::now();
@@ -145,10 +145,10 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
       if (ptr - buffer > 1024 * 1000) {
         ptr = buffer; // Flush buffer
       }
-      ptr = qlever::util::formatQid(42, ptr);
+      ptr = ad_utility::formatQid(42, ptr);
       *ptr++ = ',';
       *ptr++ = '"';
-      ptr = qlever::export_pipeline::SimdEscapeClassifier::copyAndEscape<qlever::export_pipeline::EscapeFormat::CsvQuote>(rawLabel, ptr);
+      ptr = ad_utility::simd::SimdEscapeClassifier::copyAndEscape<ad_utility::simd::EscapeFormat::CsvQuote>(rawLabel, ptr);
       *ptr++ = '"';
       *ptr++ = '\n';
     }
@@ -184,22 +184,22 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
       }
       if (i % 3 == 0) {
         *ptr++ = '<';
-        ptr = qlever::util::formatQid(i, ptr);
-        ptr = qlever::util::formatPrefixedInt(" <http://www.wikidata.org/prop/direct/P1082> ", i * 100, ptr);
+        ptr = ad_utility::formatQid(i, ptr);
+        ptr = ad_utility::formatPrefixedInt(" <http://www.wikidata.org/prop/direct/P1082> ", i * 100, ptr);
         *ptr++ = ' ';
         *ptr++ = '.';
         *ptr++ = '\n';
       } else if (i % 3 == 1) {
         *ptr++ = '<';
-        ptr = qlever::util::formatQid(i, ptr);
+        ptr = ad_utility::formatQid(i, ptr);
         std::memcpy(ptr, "> <http://www.w3.org/2000/01/rdf-schema#label> \"Label ", 49);
         ptr += 49;
-        ptr = qlever::util::formatUIntBranchless(i, ptr);
+        ptr = ad_utility::formatUIntBranchless(i, ptr);
         std::memcpy(ptr, "\"@en .\n", 7);
         ptr += 7;
       } else {
         *ptr++ = '<';
-        ptr = qlever::util::formatQid(i, ptr);
+        ptr = ad_utility::formatQid(i, ptr);
         std::memcpy(ptr, "> <http://www.wikidata.org/prop/direct/P31> <http://www.wikidata.org/entity/Q5> .\n", 83);
         ptr += 83;
       }
