@@ -1585,9 +1585,7 @@ QueryPlanner::runDynamicProgrammingOnConnectedComponent(
   dpTab.push_back(std::move(connectedComponent));
   size_t numSeeds = findUniqueNodeIds(dpTab.back(), false);
 
-  if (numSeeds < 2) {
-    // Apply filter substitutes also in cases with less than two seeds
-    // (currently used for `SpatialJoin` with a fixed-value side).
+    if (numSeeds < 2) {
     applyFiltersIfPossible<FilterMode::SeedSubstitutesOnly>(dpTab.back(),
                                                             filters);
   }
