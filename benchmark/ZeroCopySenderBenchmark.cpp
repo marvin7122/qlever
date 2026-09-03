@@ -48,8 +48,8 @@ namespace {
 
 using namespace ad_utility;
 
-// Benchmark payload constants (100 MB transmission)
-constexpr size_t kTotalSendSizeBytes = 100ULL * 1024ULL * 1024ULL;  // 100 MB
+// Benchmark payload constants (100 MiB transmission)
+constexpr size_t kTotalSendSizeBytes = 100ULL * 1024ULL * 1024ULL;  // 100 MiB
 constexpr size_t kChunkSizeBytes = 64 * 1024;                       // 64 KB
 constexpr size_t kTotalChunks = kTotalSendSizeBytes / kChunkSizeBytes;
 
