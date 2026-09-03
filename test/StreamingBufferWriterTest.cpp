@@ -68,8 +68,8 @@ TEST(StreamingBufferWriterTest, OwningBufferConstructor) {
 
 // _____________________________________________________________________________
 TEST(StreamingBufferWriterTest, VariousSizesAndUnalignedOffsets) {
-    // Test combinations of unaligned destination offsets and varied chunk sizes
-  // across small (<16), medium (<64), and large (>64) boundaries.
+      // Test combinations of unaligned destination offsets and varied chunk sizes,
+  // including sizes below, at, and above the 16- and 64-byte boundaries.
   constexpr size_t totalBuffer = 4096;
   std::vector<char> destMemory(totalBuffer, 0);
   std::vector<char> srcMemory(totalBuffer);
