@@ -496,9 +496,8 @@ class MonomorphicRowSerializer {
 };
 
 // _____________________________________________________________________________
-// Schema dispatch infrastructure:
-// Maps a runtime schema (ql::span<const ColumnType>) to specialized
-// compile-time MonomorphicRowSerializer<...> functions.
+// Dispatch runtime schemas to specialized `MonomorphicRowSerializer<...>` functions.
+// Fall back to `DynamicRowSerializer` when no specialization is available.
 
 namespace detail {
 
