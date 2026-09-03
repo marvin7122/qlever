@@ -82,7 +82,7 @@ class SimulatedVocabularyFile {
     auto* bytePtr = static_cast<char*>(writeBuf);
     std::mt19937_64 rng(42);
 
-    // Populate with simulated vocabulary entries: prefix IDs, string tokens, offsets
+        // Fill the file with deterministic pseudo-random data.
     size_t bytesWritten = 0;
     while (bytesWritten < kTotalFileSizeBytes) {
       for (size_t i = 0; i < writeChunkSize; i += sizeof(uint64_t)) {
