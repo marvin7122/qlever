@@ -419,7 +419,7 @@ class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter>
                                       char* out) {
     AD_CONTRACT_CHECK(out != nullptr);
 
-    // 1. Spliced Subject prefix with lazy lookup
+    
     char* curr =
         subjectFormatter_.formatPrefixWithLookup(subjId, lookupFunc, out);
 
