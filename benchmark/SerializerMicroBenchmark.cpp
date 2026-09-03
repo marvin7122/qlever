@@ -117,7 +117,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
             nullptr);
         break;
       case 1:
-        // Plain literal
+                // Generate a plain literal.
         obj = std::make_shared<EvaluatedTermData>(
             "\"Simple Label " + std::to_string(i) + "\"@en", nullptr);
         break;
