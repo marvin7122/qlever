@@ -229,7 +229,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       }
     }
 
-    // Benchmark Group 3: RDF Wikidata QID Formatting ("http://www.wikidata.org/entity/Q" + id)
+    // Benchmark Wikidata entity IRI formatting using `"http://www.wikidata.org/entity/Q"` and an ID.
     {
       auto& group = results.addGroup("RDF Wikidata Entity QID Formatting (1,000,000 QIDs)");
 
