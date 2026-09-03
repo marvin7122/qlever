@@ -23,7 +23,8 @@ add_library(sparqlExpressions
         PrefilterExpressionIndex.cpp
         GeoExpression.cpp
         BlankNodeExpression.cpp
-        GroupConcatExpression.cpp)
+        GroupConcatExpression.cpp
+        JitExpressionBytecodeVm.cpp)
 
 qlever_target_link_libraries(sparqlExpressions qlever_util index sortPerformanceEstimator)
 if (NOT REDUCED_FEATURE_SET_FOR_CPP17)

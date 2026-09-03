@@ -593,4 +593,4 @@ addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 
-addLinkAndDiscoverTest(JitExpressionBytecodeVmTest global qlever_util)
+addLinkAndDiscoverTest(JitExpressionBytecodeVmTest engine sparqlExpressions global qlever_util)
