@@ -90,7 +90,7 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
 
   std::vector<char> receivedData(numChunks * chunkSize, 0);
 
-  // Background thread to receive data
+  // Receive data in a background thread.
   std::thread receiverThread([&]() {
     size_t totalReceived = 0;
     while (totalReceived < expectedData.size()) {
