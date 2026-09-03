@@ -277,7 +277,7 @@ class FastExportStreamFormatter
       return;
     }
 
-    // Must be quoted and double-quoted
+        // Quote the field and double every embedded quote.
     writeChar('"');
     size_t i = 0;
     while (i < field.size()) {
