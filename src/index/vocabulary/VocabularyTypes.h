@@ -219,8 +219,9 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
 };
 
 // Strong, self-contained batch-lookup result backed by a PMR monotonic buffer
-// resource. `upstream_` (if set) must outlive `buffer_` so deallocation can
-// still charge the memory tracker; members are destroyed in reverse order.
+// resource. If set, `upstream_` contains an `AllocatorWithLimit` copy whose
+// allocations charge the shared memory-limit tracker. Members are destroyed in
+// reverse order, so `buffer_` is released before `upstream_`.
 class ArenaVocabBatchBuilder;
 
 class PmrVocabBatchLookupData : public VocabBatchStorage {
