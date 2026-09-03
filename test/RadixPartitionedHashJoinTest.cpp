@@ -11,12 +11,13 @@
 #include "engine/RadixPartitionedHashJoin.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
+#include "util/AllocatorTestHelpers.h"
 
 using namespace ql::engine::join;
+using ad_utility::testing::makeAllocator;
 
 TEST(RadixPartitionedHashJoinTest, BasicPartitionAndJoin) {
-  ad_utility::AllocatorWithLimit<Id> allocator{
-      ad_utility::makeAllocationMemoryLimit<Id>()};
+  auto allocator = makeAllocator();
 
   IdTable leftTable{2, allocator};
   IdTable rightTable{2, allocator};
@@ -39,8 +40,7 @@ TEST(RadixPartitionedHashJoinTest, BasicPartitionAndJoin) {
 }
 
 TEST(RadixPartitionedHashJoinTest, DisjointTablesZeroMatches) {
-  ad_utility::AllocatorWithLimit<Id> allocator{
-      ad_utility::makeAllocationMemoryLimit<Id>()};
+  auto allocator = makeAllocator();
 
   IdTable leftTable{1, allocator};
   IdTable rightTable{1, allocator};
