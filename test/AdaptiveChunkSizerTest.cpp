@@ -216,8 +216,7 @@ TEST(AdaptiveChunkBufferTest, WriteAndFlushRampUp) {
   EXPECT_EQ(buffer.rowsBuffered(), 0);
   EXPECT_FALSE(buffer.isReadyToFlush());
 
-  // Write small slice
-  buffer.write("Hello, World!\n");
+    buffer.write("Hello, World!\n");
   buffer.recordRow();
   EXPECT_EQ(buffer.bytesBuffered(), 14);
   EXPECT_EQ(buffer.rowsBuffered(), 1);
