@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "../benchmark/infrastructure/Benchmark.h"
+#include "benchmark/infrastructure/Benchmark.h"
 #include "util/FastIntToString.h"
 
 namespace ad_benchmark {
