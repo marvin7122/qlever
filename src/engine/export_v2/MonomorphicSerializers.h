@@ -31,7 +31,6 @@ enum class ColumnType {
   Undefined
 };
 
-// The row oriented formats supported by the V2 serializer.
 enum class RowFormat { Csv, Tsv, Turtle, NTriples };
 
 namespace detail {
