@@ -219,7 +219,8 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
 // Assembles export chunks as a combination of fixed-size formatting headers and
 // direct zero-copy `ql::span<const char>` pointers to existing arena memory pages.
 // Automatically coalesces adjacent formatting tokens into unified header iovecs,
-// manages chunk limits (bytes & max iovecs), and emits `ScatterGatherChunk`s.
+// flushes before appending when the current chunk would exceed its configured
+// limits, and emits `ScatterGatherChunk`s. Individual inputs are not split.
 class ScatterGatherChunkStreamer
     : public ad_utility::WithInvariants<ScatterGatherChunkStreamer> {
  public:
