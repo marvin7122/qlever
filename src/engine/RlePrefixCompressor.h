@@ -338,7 +338,7 @@ class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter>
   }
 
   // ___________________________________________________________________________
-  // Factory methods for standard export formats.
+  // Provide factory methods for standard export formats.
   [[nodiscard]] static RleTripleFormatter makeNTriplesFormatter() {
     return RleTripleFormatter(
         RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
