@@ -526,7 +526,7 @@ class SimdEscapeClassifier {
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
 
-    // If there are only two quotes and no internal special characters, pass through
+        // Return the input directly if it contains only two quotes and no internal special characters.
     if (posSecondQuote == posLastQuote &&
         !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
       return std::string{normLiteral};
