@@ -126,21 +126,18 @@ struct StandardRowSerializer {
       std::string_view o = ds.vocab_.lookup(ds.objects_[i]);
       totalLookups += 3;
 
-      // Subject
-      *curr++ = '<';
+            *curr++ = '<';
       std::memcpy(curr, s.data(), s.size());
       curr += s.size();
       *curr++ = '>';
       *curr++ = ' ';
 
-      // Predicate
       *curr++ = '<';
       std::memcpy(curr, p.data(), p.size());
       curr += p.size();
       *curr++ = '>';
       *curr++ = ' ';
 
-      // Object
       *curr++ = '<';
       std::memcpy(curr, o.data(), o.size());
       curr += o.size();
