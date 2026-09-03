@@ -406,7 +406,7 @@ class MonomorphicRowSerializer {
     return SCHEMA[Index];
   }
 
-  // Compile-time unrolled cell serialization from variadic arguments
+  // Serialize variadic arguments with compile-time loop unrolling.
   template <ExportFormat Format, typename Writer, size_t Index, typename FirstArg,
             typename... RestArgs>
   static void serializeVariadicCells(Writer& writer, const FirstArg& first,
