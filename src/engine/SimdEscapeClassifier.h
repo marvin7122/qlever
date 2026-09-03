@@ -286,7 +286,6 @@ template <EscapeFormat Format>
   return mask;
 }
 
-// Portable scalar fallback for 16-byte chunks.
 template <EscapeFormat Format>
 [[nodiscard]] inline uint16_t scanChunk16Scalar(const char* data) noexcept {
   uint16_t mask = 0;
