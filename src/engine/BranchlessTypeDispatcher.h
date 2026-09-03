@@ -323,8 +323,11 @@ class BranchlessTypeDispatcher {
   static inline size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
       char* out, const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
-    AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
-    AD_CONTRACT_CHECK(out != nullptr || ids.empty());
+        AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
+    if (ids.empty()) {
+      return 0;
+    }
+    AD_CONTRACT_CHECK(out != nullptr);
 
     char* curr = out;
     const size_t numTerms = ids.size();
