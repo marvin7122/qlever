@@ -469,7 +469,7 @@ class InPlaceHttpChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Metrics & State Inspection
+  // Provide metrics and state inspection.
   [[nodiscard]] size_t currentBufferedBytes() const noexcept {
     return currentPayloadBytes_;
   }
