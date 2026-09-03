@@ -105,7 +105,7 @@ class SwarDelimiterPacker {
   // - `out` must point to a buffer with at least 8 bytes of writable capacity.
   // - `len` must be <= 8.
   //
-  // Compiles to a single unaligned 64-bit store instruction (e.g. `mov [rdi], rsi`)
+  // Compile to a single unaligned 64-bit store instruction (e.g. `mov [rdi], rsi`)
   // with zero branching.
   [[nodiscard]] static inline char* writeDelim64(char* out, uint64_t delimPattern,
                                                  size_t len) noexcept {
