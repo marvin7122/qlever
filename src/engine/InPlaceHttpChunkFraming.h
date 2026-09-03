@@ -437,7 +437,7 @@ class InPlaceHttpChunkStreamer
   void write(ql::span<const char> span) { write(span.data(), span.size()); }
 
   // ___________________________________________________________________________
-  // Write a single character.
+  
   void writeChar(char c) { write(&c, 1); }
 
   // ___________________________________________________________________________
