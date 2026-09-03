@@ -132,7 +132,7 @@ class SwarDelimiterPacker {
     return writeDelim64(out, delim.pattern(), delim.len());
   }
 
-  // 32-bit store intrinsic (writes 4 bytes unaligned, advances by `len` <= 4)
+  // Write a 32-bit value unaligned and advance by `len` (at most 4 bytes).
   [[nodiscard]] static inline char* writeDelim32(char* out, uint32_t delimPattern,
                                                  size_t len) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
