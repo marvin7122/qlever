@@ -142,7 +142,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);
       }
 
-      // 1.2 SwarDelimiterPacker 64-bit branchless stores (4 stores per row)
+      // Use `SwarDelimiterPacker` for branchless 64-bit delimiter stores (4 stores per row).
       {
         size_t totalBytesWritten = 0;
         uint64_t startCycles = readCpuCycles();
