@@ -17,6 +17,13 @@
 
 using namespace ql::engine::prefetch;
 
+template <typename T>
+inline void escape(T&& val) {
+#if defined(__GNUC__) || defined(__clang__)
+  asm volatile("" : "+r,m"(val) : : "memory");
+#endif
+}
+
 int main() {
   std::mt19937_64 rng(42);
 
@@ -44,6 +51,7 @@ int main() {
     uint64_t sumNoPrefetch = 0;
     for (size_t i = 0; i < ACCESSES; ++i) {
       sumNoPrefetch += *ptrs[i];
+      escape(sumNoPrefetch);
     }
     auto t1 = std::chrono::high_resolution_clock::now();
     double noPrefetchMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -53,6 +61,7 @@ int main() {
     SoftwarePipelinedPrefetcher<16>::processWithPrefetch(
         ptrs, ACCESSES, [&sumWithPrefetch](const int* ptr) {
           sumWithPrefetch += *ptr;
+          escape(sumWithPrefetch);
         });
     auto t3 = std::chrono::high_resolution_clock::now();
     double withPrefetchMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
@@ -96,6 +105,7 @@ int main() {
     uint64_t joinMatchesNoPrefetch = 0;
     for (size_t i = 0; i < NUM_PROBES; ++i) {
       joinMatchesNoPrefetch += probeBuckets[i]->value;
+      escape(joinMatchesNoPrefetch);
     }
     auto t1 = std::chrono::high_resolution_clock::now();
     double noPrefetchMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -105,6 +115,7 @@ int main() {
     SoftwarePipelinedPrefetcher<16>::processWithPrefetch(
         probeBuckets, NUM_PROBES, [&joinMatchesWithPrefetch](const HashBucket* bucket) {
           joinMatchesWithPrefetch += bucket->value;
+          escape(joinMatchesWithPrefetch);
         });
     auto t3 = std::chrono::high_resolution_clock::now();
     double withPrefetchMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
@@ -138,6 +149,7 @@ int main() {
     uint64_t charSumNoPrefetch = 0;
     for (size_t i = 0; i < NUM_RESOLUTIONS; ++i) {
       charSumNoPrefetch += static_cast<uint8_t>(*stringOffsets[i]);
+      escape(charSumNoPrefetch);
     }
     auto t1 = std::chrono::high_resolution_clock::now();
     double noPrefetchMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -147,6 +159,7 @@ int main() {
     SoftwarePipelinedPrefetcher<16>::processWithPrefetch(
         stringOffsets, NUM_RESOLUTIONS, [&charSumWithPrefetch](const char* ptr) {
           charSumWithPrefetch += static_cast<uint8_t>(*ptr);
+          escape(charSumWithPrefetch);
         });
     auto t3 = std::chrono::high_resolution_clock::now();
     double withPrefetchMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
