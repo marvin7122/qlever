@@ -35,6 +35,9 @@ else()
 endif()
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Cluster GCC+range-v3: local types in transform_view / jthread are "used but
+# never defined" without -fpermissive (same unblock as other export-v2 branches).
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     # will not take effect without FORCE
     set(CMAKE_INSTALL_PREFIX ${CMAKE_BINARY_DIR} CACHE PATH "Install top-level directory" FORCE)
@@ -262,6 +265,9 @@ else ()
     add_compile_definitions(RANGE_V3_COMBINE_WITH_STD)
     set(QLEVER_CPP_17_BACKPORTS_ENABLED OFF)
 endif ()
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+    add_compile_options(-fpermissive)
+endif()
 
 ###############################################################################
 ##### Essential settings #####
