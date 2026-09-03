@@ -167,12 +167,12 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
       }
     });
 
-    // Consumer loop: transmits chunks over simulated network socket.
+    // Consume chunks and transmit each over the simulated network socket.
     size_t totalBytes = 0;
     while (auto chunkOpt = pipeline->pop()) {
       std::string chunk = std::move(*chunkOpt);
       totalBytes += chunk.size();
-      // Socket transmits chunk while worker concurrently prepares next chunk
+      // Transmit the chunk while the worker concurrently prepares the next one.
       simulateNetworkTransmission(chunk.size(), latency);
     }
 
