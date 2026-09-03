@@ -92,7 +92,7 @@ TEST(InPlaceHttpChunkFramingTest, HexLengthFormattingExhaustive) {
     EXPECT_EQ(ptr, hexHeader.data() + hexHeader.size());
     EXPECT_EQ(parsedSize, size);
 
-    // Verify payload and tail CRLF
+    // Verify the payload and trailing `CRLF`.
     std::string_view extractedPayload = framed.substr(crlfPos + 2, size);
     for (size_t i = 0; i < size; ++i) {
       EXPECT_EQ(extractedPayload[i], static_cast<char>('a' + (i % 26)));
