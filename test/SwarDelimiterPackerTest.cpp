@@ -50,7 +50,7 @@ TEST(SwarDelimiterPackerTest, PackDelimPatternBasic) {
   // Test the full 8-byte pattern.
   EXPECT_EQ(packDelimPattern("12345678"), 0x3837363534333231ULL);
 
-  // Strings longer than 8 bytes truncate to first 8 bytes
+  // Verify that strings longer than 8 bytes are truncated to the first 8 bytes.
   EXPECT_EQ(packDelimPattern("1234567890"), 0x3837363534333231ULL);
 }
 
