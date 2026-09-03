@@ -250,8 +250,10 @@ if (${USE_CPP_17_BACKPORTS} OR ${RANGE_V3_REQUIRED_BY_COMPILER} OR (CMAKE_CXX_ST
     set(QLEVER_CPP_17_BACKPORTS_ENABLED ON)
 else ()
     add_compile_definitions(RANGE_V3_COMBINE_WITH_STD)
-    set(QLEVER_CPP_17_BACKPORTS_ENABLED OFF)
 endif ()
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+    add_compile_options(-fpermissive)
+endif()
 
 ###############################################################################
 ##### Essential settings #####
