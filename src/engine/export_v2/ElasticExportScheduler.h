@@ -1,5 +1,5 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
+// Copyright 2026, University of Freiburg,
+// Chair of Algorithms and Data Structures.
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
 #pragma once
@@ -12,11 +12,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -287,6 +289,7 @@ class ExportJobState final
     MorselStatus status_{MorselStatus::Pending};
     absl::AnyInvocable<ResultType()> task_;
     std::optional<ResultType> result_;
+    std::exception_ptr exception_{nullptr};
     MorselProfile profile_;
   };
 
@@ -382,7 +385,7 @@ class ExportJobState final
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (morselIndex >= slots_.size() ||
-          slots_[morselIndex].status_ != MorselStatus::Pending) {
+        slots_[morselIndex].status_ != MorselStatus::Pending) {
         return;
       }
       if (cancelled_ ||
@@ -400,13 +403,23 @@ class ExportJobState final
     }
 
     auto startCpu = getCpuDuration();
-    ResultType result = task();
+    std::optional<ResultType> result;
+    std::exception_ptr exceptionPtr = nullptr;
+    try {
+      result = task();
+    } catch (...) {
+      exceptionPtr = std::current_exception();
+    }
     auto endCpu = getCpuDuration();
     auto endWall = std::chrono::steady_clock::now();
 
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      slots_[morselIndex].result_ = std::move(result);
+      if (exceptionPtr) {
+        slots_[morselIndex].exception_ = std::move(exceptionPtr);
+      } else {
+        slots_[morselIndex].result_ = std::move(result);
+      }
       slots_[morselIndex].status_ = MorselStatus::Completed;
       slots_[morselIndex].profile_.completedAt_ = endWall;
       slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
@@ -481,6 +494,9 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Completed) {
+        if (slots_[index].exception_) {
+          std::rethrow_exception(slots_[index].exception_);
+        }
         AD_CORRECTNESS_CHECK(slots_[index].result_.has_value());
         return std::move(*slots_[index].result_);
       }
@@ -497,18 +513,31 @@ class ExportJobState final
 
         lock.unlock();
         auto startCpu = getCpuDuration();
-        ResultType result = primaryTask();
+        std::optional<ResultType> result;
+        std::exception_ptr exceptionPtr = nullptr;
+        try {
+          result = primaryTask();
+        } catch (...) {
+          exceptionPtr = std::current_exception();
+        }
         auto endCpu = getCpuDuration();
         auto endWall = std::chrono::steady_clock::now();
         lock.lock();
 
-        slots_[index].result_ = std::move(result);
+        if (exceptionPtr) {
+          slots_[index].exception_ = std::move(exceptionPtr);
+        } else {
+          slots_[index].result_ = std::move(result);
+        }
         slots_[index].status_ = MorselStatus::Completed;
         slots_[index].profile_.completedAt_ = endWall;
         slots_[index].profile_.wallDuration_ = endWall - startWall;
         slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
         slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
         cv_.notify_all();
+        if (slots_[index].exception_) {
+          std::rethrow_exception(slots_[index].exception_);
+        }
         return std::move(*slots_[index].result_);
       }
 

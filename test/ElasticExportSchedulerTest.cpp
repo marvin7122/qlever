@@ -1,5 +1,5 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
+// Copyright 2026, University of Freiburg,
+// Chair of Algorithms and Data Structures.
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
 #include <gmock/gmock.h>
@@ -374,3 +374,67 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
   stopQueryChanger.store(true);
   queryChanger.join();
 }
+
+// -----------------------------------------------------------------------------
+// Test 10: Worker Exception Propagates to Coordinator Without Leaks
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
+  ElasticExportScheduler scheduler(2, 64);
+  auto session = scheduler.createSession<int>();
+
+  // Slot 0 succeeds
+  session.submitMorsel([]() -> int { return 42; });
+  // Slot 1 throws an exception
+  session.submitMorsel([]() -> int {
+    throw std::runtime_error("Simulated morsel processing failure");
+  });
+  // Slot 2 succeeds
+  session.submitMorsel([]() -> int { return 100; });
+
+  // Slot 0 should return 42
+  EXPECT_EQ(session.consumeNextResult(), 42);
+
+  // Slot 1 should throw std::runtime_error
+  EXPECT_THROW(
+      {
+        try {
+          [[maybe_unused]] int r = session.consumeNextResult();
+        } catch (const std::runtime_error& e) {
+          EXPECT_STREQ(e.what(), "Simulated morsel processing failure");
+          throw;
+        }
+      },
+      std::runtime_error);
+
+  // Slot 2 should still return 100
+  EXPECT_EQ(session.consumeNextResult(), 100);
+
+  // Verify lease accounting did not leak
+  EXPECT_EQ(scheduler.totalActiveHelpers(), 0u);
+}
+
+// -----------------------------------------------------------------------------
+// Test 11: Clean Shutdown Under High Foreground Load With Pending Morsels
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
+  ElasticExportScheduler scheduler(4, 64);
+
+  // Simulate high foreground load (helpers ineligible)
+  scheduler.onForegroundQueryStarted();
+  scheduler.onForegroundQueryStarted();
+  scheduler.onForegroundQueryStarted();
+
+  // Create session and enqueue morsels
+  auto session = scheduler.createSession<int>();
+  for (int i = 0; i < 20; ++i) {
+    session.submitMorsel([i]() -> int { return i * 2; });
+  }
+
+  // Shutdown scheduler while queue may contain pending items under high load
+  // Must return promptly without deadlock or infinite spin loop
+  scheduler.shutdown();
+  EXPECT_EQ(scheduler.totalActiveHelpers(), 0u);
+}
+
