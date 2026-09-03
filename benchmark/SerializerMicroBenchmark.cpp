@@ -25,7 +25,7 @@
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________
-// Memory allocation tracker for measuring exact heap allocation counts.
+// Memory allocation tracker for measuring allocations through the instrumented operator new overload.
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
