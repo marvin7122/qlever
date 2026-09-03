@@ -44,4 +44,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
 
+    addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
+
 endif()
