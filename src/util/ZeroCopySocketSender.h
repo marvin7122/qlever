@@ -409,7 +409,7 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
         io_uring_prep_send_zc_fixed(sqe, sockfd, slotSpan.data(), numBytes,
                                     flags, zcFlags, bufferIndex);
       } else {
-        // Zero-Copy Send with Unpinned Buffer
+        // Use zero-copy sending with an unpinned buffer.
         io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, flags,
                               zcFlags);
       }
