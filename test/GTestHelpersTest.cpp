@@ -80,8 +80,8 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, ClobberStack) {
-  // The helper returns the last byte it wrote, read back `volatile`, so we
-  // assert that the stack was actually written with the given sentinel.
+    // Verify that the helper writes the stack with the given sentinel and returns
+  // the last byte it wrote, read back through `volatile`.
   EXPECT_EQ(clobberStack<512>('X'), 'X');
   EXPECT_EQ(clobberStack<4096>('#'), '#');
 }
