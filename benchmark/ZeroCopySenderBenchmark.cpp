@@ -168,7 +168,7 @@ class ZeroCopySenderBenchmarkRunner {
     }
   }
 
-  // 1. Baseline: Synchronous send() syscall in loop
+  // Run the baseline with synchronous `send()` calls in a loop.
   BenchmarkMetric runStandardSend() {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
