@@ -59,7 +59,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       qids.push_back(qidDist(rng));
     }
 
-    // Benchmark Group 1: Sequential 64-bit Integer Formatting
+    // Benchmark sequential 64-bit integer formatting.
     {
       auto& group = results.addGroup("Sequential Integer Formatting (1..1,000,000)");
 
