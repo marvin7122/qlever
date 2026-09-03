@@ -22,7 +22,7 @@
 
 using namespace ad_utility::http;
 
-// Formal Verification of Invariant Concepts (Architecture Standard § 3)
+// Compile-time verification that the classes satisfy the invariant concept.
 static_assert(ad_utility::InvariantStatefulClass<InPlaceHttpChunk>);
 static_assert(ad_utility::InvariantStatefulClass<InPlaceHttpChunkStreamer>);
 
