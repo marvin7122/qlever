@@ -952,10 +952,11 @@ std::vector<TurtleTriple> parseFromFile(
   return result;
 }
 
-// Run a function that takes a bool as the first argument (typically the
-// `useBatchInterface` argument) and possible additional args, and run this
-// function for all the different parsers that can read from a file (stream and
-// parallel parser, with all the combinations of the different tokenizers).
+// Run a function that takes a type identity of the parser and a bool
+// (typically the `useBatchInterface` argument), followed by possible additional
+// args, and run this function for all the different parsers that can read from
+// a file (stream and parallel parser, with all the combinations of the
+// different tokenizers).
 template <typename Function, typename... Args>
 auto forAllParallelParsers(const Function& function, const Args&... args) {
   function(ti<RdfParallelParser<TurtleParser<Tokenizer>>>, true, args...);
