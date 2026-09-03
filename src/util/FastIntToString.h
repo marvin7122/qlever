@@ -261,13 +261,7 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) n
 
 // _____________________________________________________________________________
 // Provide convenient string-returning wrappers with exact string pre-sizing.
-[[nodiscard]] inline std::string formatUIntToString(uint64_t val) {
-  const uint32_t len = numDigits(val);
-  std::string s;
-  s.resize(len);
-  formatUIntBranchless(val, s.data());
-  return s;
-}
+[[nodiscard]] 
 
 [[nodiscard]] inline std::string formatIntToString(int64_t val) {
   const bool negative = val < 0;
