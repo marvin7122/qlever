@@ -203,13 +203,13 @@ TEST(RlePrefixCompressorTest, MultiColumnTripleFormattingNTriples) {
   std::array<char, 2048> buffer{};
   char* curr = buffer.data();
 
-  // Triple 1: (subj, pred1, obj)
+  // Format triple 1 with `subj`, `pred1`, and `obj`.
   curr = tripleFormatter.formatTriple(subjId, subjStr, predId1, predStr1, objId,
                                       objStr, curr);
-  // Triple 2: (subj, pred1, obj) -> both S and P should hit cache
+  // Format triple 2 and verify that both `S` and `P` hit the cache.
   curr = tripleFormatter.formatTriple(subjId, subjStr, predId1, predStr1, objId,
                                       objStr, curr);
-  // Triple 3: (subj, pred2, obj) -> S hits cache, P misses
+  // Format triple 3 and verify that `S` hits the cache while `P` misses.
   curr = tripleFormatter.formatTriple(subjId, subjStr, predId2, predStr2, objId,
                                       objStr, curr);
 
