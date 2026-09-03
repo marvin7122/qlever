@@ -68,6 +68,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   FsstScratchBufferBenchmark() {
     constexpr std::string_view alphabet{
         "abcdefghijklmnopqrstuvwxyz0123456789_:/.-#"};
+        decoderStorage_.reserve(numberOfStages);
     std::vector<std::string> words;
     words.reserve(5'000);
     for (size_t i = 0; i < 5'000; ++i) {
