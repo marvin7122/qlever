@@ -313,8 +313,8 @@ inline char* write64DelimiterPairsScalar(char* dest, char delimiter,
 }  // namespace detail
 
 // _____________________________________________________________________________
-// SimdValidityScanner: Deep module providing vectorized validity scanning,
-// column-level batch classification, and fast-path vectorized unbound serialization.
+// SimdValidityScanner: Scans ValueId batches into validity bitmasks and
+// writes fixed-size delimiter sequences for serialization fast paths.
 class SimdValidityScanner {
  public:
   // ___________________________________________________________________________
