@@ -312,25 +312,21 @@ struct BenchmarkDataset {
     for (size_t i = 0; i < numTerms; ++i) {
       int roll = dist(gen);
       if (roll < 50) {
-        // 50% IRIs
-        ds.ids_.push_back(ValueId::makeFromVocabIndex(VocabIndex::make(i)));
+                ds.ids_.push_back(ValueId::makeFromVocabIndex(VocabIndex::make(i)));
         ds.stringStorage_.push_back("http://example.org/entity/resource_" +
                                     std::to_string(i % 10000));
         ds.rawTerms_.push_back(ds.stringStorage_.back());
       } else if (roll < 80) {
-        // 30% Literals
         ds.ids_.push_back(
             ValueId::makeFromTextRecordIndex(TextRecordIndex::make(i)));
         ds.stringStorage_.push_back("Sample textual literal term value " +
                                     std::to_string(i % 5000));
         ds.rawTerms_.push_back(ds.stringStorage_.back());
       } else if (roll < 90) {
-        // 10% Blank Nodes
         ds.ids_.push_back(
             ValueId::makeFromBlankNodeIndex(BlankNodeIndex::make(i % 100000)));
         ds.rawTerms_.push_back("");
       } else {
-        // 10% Integers
         ds.ids_.push_back(ValueId::makeFromInt(static_cast<int64_t>(i * 31 + 7)));
         ds.rawTerms_.push_back("");
       }
