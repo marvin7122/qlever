@@ -75,8 +75,8 @@ class ChunkSink;
 // to generate subsequent chunks while the consumer transmits earlier chunks.
 //
 // Safe Backpressure: If network transmission is slower than chunk generation,
-// the producer suspends once capacity (default 2 slots) is reached, preventing
-// unbounded memory accumulation.
+// the producer suspends once the configurable buffer capacity (default 2) is
+// reached, preventing unbounded memory accumulation.
 //
 // Invariants & Error Handling:
 //   - Bounded invariant: buffer size never exceeds capacity.
