@@ -117,10 +117,10 @@ The supervisor's constraint is critical: **a heavy multi-threaded query must nev
    - While the server request queue is empty, the export coordinator leases helper tokens from the global server `TaskScheduler` (e.g. up to $N-1$ helper threads on an $N$-core system).
 4. **Preemptive Core-Yielding Mechanism on New Query Arrival:**
    - **Step 1 (Ingress Notification):** The instant a new HTTP request hits the server’s socket accept queue, `Server::handleRequest` increments the priority request counter (`priorityQueueDepth.fetch_add(1)`).
-   - **Step 2 (Cooperative Boundary Check):** At the completion of each atomic morsel, helper threads execute a single branchless atomic check:
+      - **Step 2 (Cooperative Boundary Check):** At the completion of each atomic morsel, helper threads check the request-priority counter and lease state. If either indicates that the lease should end, the worker returns at this cooperative boundary:
      ```cpp
      if (scheduler.priorityQueueDepth() > 0 || !leaseActive_) {
-       // Instantly surrender core back to global server pool
+       // Return the worker to the global server pool at the next morsel boundary.
        return;
      }
      ```
