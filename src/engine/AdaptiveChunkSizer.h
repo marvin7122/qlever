@@ -156,7 +156,7 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Target byte capacity alias for consistency.
+  
   [[nodiscard]] size_t currentChunkSizeBytes() const noexcept {
     return currentChunkBytesTarget_;
   }
