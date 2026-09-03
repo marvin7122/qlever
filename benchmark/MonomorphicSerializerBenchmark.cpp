@@ -61,7 +61,7 @@ struct AllocationTracker {
   }
 };
 
-// Global new/delete instrumentation
+// Instrument global `new` and `delete`.
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
