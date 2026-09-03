@@ -65,7 +65,7 @@ class SimulatedDecompressionArena {
     const size_t totalArenaBytes = numTriples * literalSizeBytes;
     storage_.resize(totalArenaBytes);
 
-    // Populate arena with simulated literal strings containing text, numbers, and symbols
+    // Populate the arena with simulated literal strings containing text, numbers, and symbols.
     std::mt19937_64 rng(1337);
     static constexpr std::string_view alphabet =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-./:";
