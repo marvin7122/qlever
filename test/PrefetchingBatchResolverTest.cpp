@@ -121,7 +121,7 @@ TEST(PrefetchingBatchResolver, EmptyAndBoundaryInputs) {
       index, ql::span<const Id>{}, localVocab);
   EXPECT_TRUE(emptyResults.empty());
 
-  // Empty positions
+  // Test empty positions.
   std::vector<std::optional<std::pair<std::string, const char*>>> results(1);
   std::vector<Id> ids = {ad_utility::testing::IntId(1)};
   EXPECT_NO_THROW(resolver.resolveVocabIndexIds(
