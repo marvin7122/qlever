@@ -45,7 +45,6 @@ namespace ql::export_streaming {
 using ql::export_formatting::ExportFormat;
 using ql::export_formatting::ExportStreamSummary;
 
-// Forward declaration
 class ScatterGatherChunkStreamer;
 
 // _____________________________________________________________________________
