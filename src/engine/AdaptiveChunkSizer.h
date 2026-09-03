@@ -162,7 +162,7 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Average formatted bytes per row/triple observed so far.
+  
   [[nodiscard]] double averageRowBytes() const noexcept {
     return estimatedRowBytes_;
   }
