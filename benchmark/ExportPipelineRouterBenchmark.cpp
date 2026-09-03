@@ -16,7 +16,7 @@
 #include "parser/SparqlParser.h"
 
 using namespace ql::engine;
-using ad_utility::httpUtils::UrlParser;
+using ad_utility::url_parser::ParamValueMap;
 
 int main(int argc, char** argv) {
   size_t numQueries = 1'000'000;
@@ -36,10 +36,10 @@ int main(int argc, char** argv) {
   auto constructQuery = SparqlParser::parseQuery("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
   auto askQuery = SparqlParser::parseQuery("ASK WHERE { ?s ?p ?o }");
 
-  UrlParser::ParamValueMap fastParams;
-  fastParams["fast-export"] = "1";
+  ParamValueMap fastParams;
+  fastParams["fast-export"] = {"1"};
 
-  UrlParser::ParamValueMap defaultParams;
+  ParamValueMap defaultParams;
 
   // 1. Benchmark: Select Engine Routing
   auto start = std::chrono::high_resolution_clock::now();
