@@ -125,7 +125,7 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
     for (size_t i = 0; i < numRows; ++i) {
       out.clear();
       out += "http://www.wikidata.org/entity/Q42,";
-      // Scalar quote replace
+            // Replace scalar quotes.
       std::string escaped = "\"";
       for (char c : rawLabel) {
         if (c == '"') escaped += "\"\"";
