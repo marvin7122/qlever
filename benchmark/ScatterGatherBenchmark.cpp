@@ -49,7 +49,7 @@ using ql::export_streaming::ScatterGatherChunkStreamer;
 using ql::export_streaming::ScatterGatherConfig;
 
 // _____________________________________________________________________________
-// Memory arena simulating decompression pages for large RDF vocabulary terms.
+// Simulate decompression pages for large RDF vocabulary terms.
 class SimulatedDecompressionArena {
  private:
   std::vector<char> storage_;
