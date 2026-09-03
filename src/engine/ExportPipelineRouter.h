@@ -76,7 +76,7 @@ class ExportPipelineRouter {
     }
 
     if (optExportEngine.has_value()) {
-      const auto optVal = ad_utility::getLowercase(optExportEngine.value());
+      const auto optVal = ad_utility::getLowercase(std::string(optExportEngine.value()));
       if (optVal == "v2" || optVal == "fast") {
         return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
       } else if (optVal == "v1" || optVal == "legacy") {
@@ -86,7 +86,7 @@ class ExportPipelineRouter {
 
     // 2. Check explicit HTTP Header override (e.g. X-QLever-Export-Engine: v2)
     if (exportHeader.has_value()) {
-      const auto headerVal = ad_utility::getLowercase(exportHeader.value());
+      const auto headerVal = ad_utility::getLowercase(std::string(exportHeader.value()));
       if (headerVal == "v2" || headerVal == "fast" || headerVal == "streaming") {
         return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
       } else if (headerVal == "v1" || headerVal == "legacy") {
@@ -149,7 +149,7 @@ class ExportPipelineRouter {
       }
 
       if (optExportEngine.has_value()) {
-        const auto val = ad_utility::getLowercase(optExportEngine.value());
+        const auto val = ad_utility::getLowercase(std::string(optExportEngine.value()));
         if (val == "v2" || val == "fast") {
           explicitlyRequestedV2 = true;
         } else if (val == "v1" || val == "legacy") {
@@ -158,7 +158,7 @@ class ExportPipelineRouter {
       }
 
       if (exportHeader.has_value()) {
-        const auto val = ad_utility::getLowercase(exportHeader.value());
+        const auto val = ad_utility::getLowercase(std::string(exportHeader.value()));
         if (val == "v2" || val == "fast" || val == "streaming") {
           explicitlyRequestedV2 = true;
         } else if (val == "v1" || val == "legacy") {
@@ -205,12 +205,12 @@ class ExportPipelineRouter {
   }
 
   [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(val);
+    auto lower = ad_utility::getLowercase(std::string(val));
     return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
   }
 
   [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(val);
+    auto lower = ad_utility::getLowercase(std::string(val));
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
   }
 
