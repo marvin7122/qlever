@@ -37,7 +37,7 @@
 #include <array>
 
 // _____________________________________________________________________________
-// Memory allocation tracker for verifying zero-allocation hot loops.
+// Memory allocation tracker for counting allocations through the instrumented operator new during benchmark loops.
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
