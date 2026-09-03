@@ -77,7 +77,7 @@ namespace {
 using namespace qlever::constructExport;
 using namespace ql::export_formatting;
 
-// Generates 1,000,000 synthetic triples representing realistic SPARQL exports.
+// Generates the requested number of synthetic triples representing realistic SPARQL exports.
 std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
   std::vector<EvaluatedTriple> triples;
   triples.reserve(numTriples);
