@@ -128,7 +128,7 @@ class AsyncChunkPipeline
       return false;
     }
 
-    // Apply backpressure if buffer reached capacity.
+    
     if (buffer_.size() >= capacity_) {
       stats_.backpressureStalls++;
       cvNotFull_.wait(lock, [this]() {
