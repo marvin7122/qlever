@@ -132,7 +132,7 @@ class SyntheticExportStreamGenerator {
 // Compare standard two-buffer copying with in-place HTTP framing.
 class HttpFramingBenchmarkRunner {
  public:
-  // 1. Baseline: Standard 2-Buffer Copy HTTP Framing across 500 MB
+  // 1. Baseline: Standard 2-buffer copy HTTP framing for the supplied stream
   static HttpFramingBenchmarkMetric runStandard2BufferCopy(
       const SyntheticExportStreamGenerator& streamGen, size_t chunkSize) {
     const size_t totalStreamBytes = streamGen.totalBytes();
