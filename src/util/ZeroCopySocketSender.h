@@ -414,7 +414,7 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
                               zcFlags);
       }
     } else {
-      // Standard asynchronous io_uring send
+      // Use a standard asynchronous `io_uring` send.
       io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, flags);
     }
 
