@@ -44,7 +44,7 @@ using ad_utility::http::InPlaceHttpChunk;
 using ad_utility::http::InPlaceHttpChunkStreamer;
 
 // _____________________________________________________________________________
-// Benchmark result metrics record
+// Store the benchmark result metrics.
 struct HttpFramingBenchmarkMetric {
   std::string mode;
   size_t chunkSize = 0;
