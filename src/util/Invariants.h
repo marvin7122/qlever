@@ -31,9 +31,9 @@ CPP_concept InvariantStatefulClass =
     CPP_requires_ref(detail::is_invariant_stateful_class_, T);
 
 // _____________________________________________________________________________
-// Generic RAII Guard that asserts class invariants on scope entry and scope
-// exit (unless exiting via an active exception) for any class that satisfies
-// the `InvariantStatefulClass` concept.
+// Check class invariants on scope entry and scope exit (unless exiting via an
+// active exception) for any class that satisfies the `InvariantStatefulClass`
+// concept.
 CPP_template(typename T)(
     requires InvariantStatefulClass<T>) class InvariantGuard {
  private:
