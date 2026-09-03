@@ -530,8 +530,9 @@ class SimdEscapeClassifier {
     size_t posLastQuote = normLiteral.rfind('"');
 
     // If there are only two quotes and no internal special characters, pass through
-    if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
+        if (posSecondQuote == posLastQuote &&
+        !hasEscapes<EscapeFormat::Turtle>(
+            normLiteral.substr(1, posLastQuote - 1))) [[likely]] {
       return std::string{normLiteral};
     }
 
