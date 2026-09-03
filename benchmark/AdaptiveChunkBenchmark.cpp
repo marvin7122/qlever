@@ -280,7 +280,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
               << "\n"
               << std::string(104, '-') << "\n";
 
-    // Run Fixed 100k
+    // Run fixed 100k chunking.
     ChunkBenchmarkResult fixedRes{};
     results.addMeasurement("Fixed 100k Triples Chunking", [this, &fixedRes]() {
       fixedRes = runFixed100kTriples();
