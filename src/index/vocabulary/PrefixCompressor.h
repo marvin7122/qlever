@@ -81,8 +81,8 @@ class PrefixCompressor {
 
   // ___________________________________________________________________________
   // Return the `prefixToCode_` index when the first byte is in the range
-  // [MIN_COMPRESSION_PREFIX, MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES);
-  // otherwise return `std::nullopt`.
+  // [`MIN_COMPRESSION_PREFIX`, `MIN_COMPRESSION_PREFIX` +
+  // `NUM_COMPRESSION_PREFIXES`); otherwise return `std::nullopt`.
   [[nodiscard]] static std::optional<size_t> prefixIndex(
       std::string_view compressedWord) {
     if (compressedWord.empty()) {
