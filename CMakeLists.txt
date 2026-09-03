@@ -153,6 +153,11 @@ if (EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
     add_compile_definitions(QLEVER_EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
 endif()
 
+option(QLEVER_ENABLE_EXPORT_V2 "Enable Fast-Path Streaming Export Engine V2" ON)
+if (QLEVER_ENABLE_EXPORT_V2)
+    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2)
+endif()
+
 # Select the memory-allocator backend that `qlever::Allocator` resolves to
 # (see `src/util/Allocator.h`):
 #   * `limit` (default): the historical `ad_utility::AllocatorWithLimit`.
