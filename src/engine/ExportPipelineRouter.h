@@ -109,7 +109,7 @@ class ExportPipelineRouter {
   // federated queries or complex custom service endpoints).
   [[nodiscard]] static bool isEligibleForFastStreaming(const ParsedQuery& query) noexcept {
     // CONSTRUCT and SELECT queries are currently eligible.
-    if (query._clause.isConstructClause() || query._clause.isSelectClause()) {
+    if (query.hasConstructClause() || query.hasSelectClause()) {
       if (hasUnsupportedConstructs(query)) {
         return false;
       }
