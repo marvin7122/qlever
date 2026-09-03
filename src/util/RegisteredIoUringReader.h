@@ -265,12 +265,12 @@ class PinnedArena : public WithInvariants<PinnedArena> {
 // _____________________________________________________________________________
 // Invariant-proven descriptor for a block read request.
 struct BlockReadRequest {
-  uint32_t fileIndex = 0;    // Registered file index (or raw fd if unpinned)
-  uint64_t fileOffset = 0;   // File byte offset (4KB aligned for O_DIRECT)
-  uint32_t bufferIndex = 0;  // Registered buffer index
-  uint32_t bufferOffset = 0;  // Offset within registered buffer (4KB aligned)
-  uint32_t numBytes = 0;      // Number of bytes to read (multiple of 4KB)
-  char* destination = nullptr;  // Target memory address (4KB aligned)
+    uint32_t fileIndex = 0;    // Store the registered file index (or the raw fd if unpinned).
+  uint64_t fileOffset = 0;   // Store the file byte offset, aligned to 4 KB for `O_DIRECT`.
+  uint32_t bufferIndex = 0;  // Store the registered buffer index.
+  uint32_t bufferOffset = 0;  // Store the offset within the registered buffer, aligned to 4 KB.
+  uint32_t numBytes = 0;      // Store the number of bytes to read, as a multiple of 4 KB.
+  char* destination = nullptr;  // Store the target memory address, aligned to 4 KB.
 
   BlockReadRequest() = default;
 
