@@ -143,7 +143,7 @@ struct OptionalColumnDataset {
 };
 
 // _____________________________________________________________________________
-// Baseline 1: Traditional cell-by-cell isUndefined() checking with scalar branching.
+// Measure the traditional cell-by-cell `isUndefined()` check with scalar branching as the baseline.
 struct CellByCellScalarExporter {
   static char* exportCsv(ql::span<const ValueId> column, char* out) noexcept {
     for (const auto& id : column) {
