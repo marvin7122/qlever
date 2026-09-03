@@ -16,7 +16,7 @@
 #include <string_view>
 
 #include "parser/ParsedQuery.h"
-#include "util/Invariants.h"
+#include "util/Exception.h"
 #include "util/StringUtils.h"
 #include "util/http/MediaTypes.h"
 #include "util/http/UrlParser.h"
