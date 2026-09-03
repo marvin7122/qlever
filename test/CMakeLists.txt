@@ -411,6 +411,8 @@ addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpr
 
 addLinkAndDiscoverTest(ExceptionTest)
 
+addLinkAndDiscoverTestNoLibs(InvariantsTest)
+
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
 addLinkAndDiscoverTest(NowDatetimeExpressionTest index)
@@ -604,4 +606,7 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
 addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ScatterGatherArenaStreamerTest)
