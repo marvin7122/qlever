@@ -169,11 +169,10 @@ class ZeroCopySenderBenchmarkRunner {
   }
 
   // Run the baseline with synchronous `send()` calls in a loop.
-  BenchmarkMetric runStandardSend() {
+    BenchmarkMetric runStandardSend() {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
 
-    // Background receiver thread
     std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
       std::vector<char> buf(64 * 1024);
       size_t totalReceived = 0;
