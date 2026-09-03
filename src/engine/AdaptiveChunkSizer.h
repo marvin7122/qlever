@@ -237,7 +237,7 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Convenience alias for recordChunk.
+  
   void recordChunkFlushed(size_t bytesWritten, size_t rowCount) {
     recordChunk(bytesWritten, rowCount);
   }
