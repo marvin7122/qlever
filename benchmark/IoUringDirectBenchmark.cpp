@@ -250,7 +250,7 @@ class IoUringDirectBenchmarkRunner {
                            endTime, totalBytes, numBatches);
   }
 
-  // 4. io_uring with O_DIRECT (Unpinned buffers)
+    // 4. io_uring with O_DIRECT (Unregistered buffers)
   BenchmarkMetric runIoUringDirectUnpinned(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
