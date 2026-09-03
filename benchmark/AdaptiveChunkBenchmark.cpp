@@ -68,7 +68,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
   }
 
   // ___________________________________________________________________________
-  // Benchmark 1: Fixed 100,000 Triples per Chunk.
+  // Benchmark fixed chunks of 100,000 triples.
   ChunkBenchmarkResult runFixed100kTriples() const {
     const size_t chunkSize = 100'000;
     const size_t numChunks = (totalTriples_ + chunkSize - 1) / chunkSize;
