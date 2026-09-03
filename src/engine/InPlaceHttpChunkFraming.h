@@ -433,7 +433,7 @@ class InPlaceHttpChunkStreamer
   void write(std::string_view sv) { write(sv.data(), sv.size()); }
 
   // ___________________________________________________________________________
-  // Write ql::span<const char> slice.
+  
   void write(ql::span<const char> span) { write(span.data(), span.size()); }
 
   // ___________________________________________________________________________
