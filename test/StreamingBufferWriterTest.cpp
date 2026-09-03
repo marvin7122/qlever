@@ -138,7 +138,7 @@ TEST(StreamingBufferWriterTest, MoveSemantics) {
   EXPECT_EQ(writer2.capacity(), 256);
   EXPECT_EQ(std::string_view(writer2.data(), 10), "Hello Move");
 
-  // writer1 was moved from
+    // Verify that `writer1` was moved from.
   EXPECT_EQ(writer1.capacity(), 0);
   EXPECT_EQ(writer1.bytesWritten(), 0);
 }
