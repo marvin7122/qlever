@@ -318,7 +318,7 @@ class AdaptiveChunkBuffer
   }
 
   // ___________________________________________________________________________
-  // Record the addition of a row/triple to the active chunk.
+  
   void recordRow() noexcept { ++rowsInCurrentChunk_; }
 
   // ___________________________________________________________________________
