@@ -39,7 +39,7 @@ using ad_utility::AlignedAllocator;
 using ad_utility::StreamingBufferWriter;
 
 // _____________________________________________________________________________
-// Lightweight Hardware Perf Counter wrapper using Linux perf_event_open.
+// Wrap the Linux `perf_event_open` hardware performance counter.
 class PerfCounter {
  private:
   int fd_{-1};
