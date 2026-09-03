@@ -128,6 +128,42 @@ The supervisor's constraint is critical: **a heavy multi-threaded query must nev
    - **Step 4 (Zero Query Disruption):** The primary export coordinator continues running uninterrupted on its dedicated single core. The newly arrived interactive query immediately receives the full set of CPU cores without waiting.
    - **Step 5 (Dynamic Scale-Out Recovery):** Once the interactive query completes and the queue returns to 0, helper threads can once again assist with morsel formatting.
 
+### Amendment (2026-09-03): Isolation, Safety, and Verification Requirements
+
+Review of this section surfaced three unresolved concerns before any implementation is accepted. This amendment resolves scope/blast-radius (1) with hard requirements, and converts (2) and (3) from unverified assumptions into explicit engineering tasks with concrete Definitions of Done.
+
+**1. Isolation from V1 and non-V2 queries (resolved — hard requirement, not optional)**
+
+- `TaskScheduler` and the `priorityQueueDepth`/`leaseActive_` machinery exist **only** on the V2 code path. V1 queries never touch it, never lease, never get preempted by it.
+- The `priorityQueueDepth.fetch_add(1)` in `Server::handleRequest` (Step 1 above) **must itself be gated** by the same flag that controls V2 routing — not merely "harmless if nothing reads it." If V2 is disabled at runtime, `handleRequest` must execute exactly the code it executes today, with zero added instructions, zero added atomics, on the shared request path.
+- **Compile-time exclusion**: provide a build option (e.g. `QLEVER_ENABLE_EXPORT_V2=OFF`) that removes `TaskScheduler`, `ElasticConcurrencyManager`, and all V2 export code from the binary entirely. Operators who never want this code in their process shouldn't have to trust a runtime flag — they should be able to not compile it in.
+- **Runtime kill-switch**: independent of the compile option, a startup flag (e.g. `--disable-export-v2`) must fully disable V2 routing in binaries built with it compiled in, with the guarantee in the previous bullet.
+- DoD: a test that runs the full V1 query suite with V2 compiled in but runtime-disabled, and asserts zero calls into any V2/`TaskScheduler` symbol (e.g. via a call-count instrumentation build) and no measurable latency delta on `Server::handleRequest` vs. a V2-not-compiled build.
+
+**2. Lease/revocation safety (open — must be solved by whoever implements this WP)**
+
+Thread lease lifecycle across concurrent, independently-lifetimed queries is a correctness-critical concurrency primitive, not a performance detail. Requirements:
+
+- **Cooperative-only revocation.** A helper thread's lease is never externally cancelled — it only stops at the morsel-boundary check already specified in Step 2. No other thread ever forces a helper thread to stop mid-morsel.
+- **Keep-alive ownership, not raw references.** Whatever export-coordinator state a helper thread touches during a morsel must be held via a refcounted/keep-alive handle acquired before the morsel starts. If the primary query's request finishes and its own state would otherwise be torn down while a helper is still mid-morsel, the keep-alive must delay that teardown until the helper returns. Raw pointers/references into query-owned state are not acceptable here.
+- **Opaque lease tokens, not thread handles.** `TaskScheduler` hands out a lease token (e.g. generation counter + thread id), so a stale or already-expired lease is detectable rather than silently reused against the wrong query's state.
+- DoD: a ThreadSanitizer (TSAN) stress test exercising concurrent query start/cancel/finish while helper threads are mid-lease, under high churn (rapid-fire query arrival/cancellation), with zero TSAN reports. This must be a required, checked-in test target for WP7 — not left implicit.
+
+**3. Preemption latency bound (open — currently asserted, not measured)**
+
+The "<1 ms thread surrender" and "200-500 μs morsel" figures in Steps 2-3 are architectural targets, not measurements — nothing in this spec currently verifies them, and the mechanism can fail silently under realistic conditions (a morsel that includes a blocking syscall — e.g. an `io_uring` completion wait per WP6, or a cold page fault on the vocabulary arena per WP5 — can block past its budget with no fallback).
+
+- Instrument every morsel type (SIMD scan, scatter-gather write, io_uring send) to record real p50/p99/p999 duration under load, not just CPU-bound best case.
+- Explicitly test the adversarial case: inject a blocking syscall stall (throttled `io_uring`, delayed accept) *during* an in-progress morsel, and measure actual time-to-yield.
+- If any morsel type can exceed budget under this test, the fix is either finer-grained sub-morsels with more frequent yield checks, or moving the blocking operation off the leased worker thread entirely (async completion reaped by a non-leased thread) — not a larger timeout.
+- DoD: a dedicated `ChaosPreemptionBenchmark` that runs a V2 export under synthetic adversarial load (throttled I/O, concurrent query storm) and asserts a measured p99.9 time-to-first-byte bound for a newly arriving interactive query. This benchmark, and its passing result, replaces the current unverified "<1 ms" claim as the WP7 Definition of Done.
+
+**Structural recommendation**: implement WP7 as two separately reviewable pieces — (a) the lease/scheduler core in isolation, fully TSAN-tested against concurrent V2-only workloads, and (b) its integration into `Server::handleRequest` behind the compile/runtime kill-switch from point 1. (b) should be small and mechanical if (a) is solid; do not land both in one PR.
+
+**Scheduler backend design decision**: two real precedents exist for the underlying task queue and neither is a default-obvious choice — (1) a per-thread Chase-Lev work-stealing deque (Cilk/TBB/Rayon/Go-runtime lineage: each worker owns a deque, pushes/pops locally LIFO for cache locality, idle threads steal from the far end FIFO), or (2) a single shared lock-free MPMC queue per task-type pool (DuckDB's actual `TaskScheduler`, built on `moodycamel::ConcurrentQueue`, with `ProducerToken` for fast-path locality — verified against DuckDB's real source, not assumed). Chase-Lev gives better cache locality and is the classic choice for compute-bound generic task-parallel runtimes; DuckDB's shared-queue design is simpler, avoids per-thread deque lock-free correctness risk, and is proven in a query engine (a closer analogue to QLever than Cilk/TBB's generic-workload target).
+
+**Starting choice for WP7's first implementation: the DuckDB-style shared MPMC queue.** Reasoning: less lock-free code to get right (leans on an existing well-tested queue implementation rather than a hand-rolled deque), and DuckDB is the closer domain precedent. This is not a final architectural commitment — once a working implementation exists, benchmark both approaches under QLever's actual morsel size/rate before locking in the production design. Track this as an open follow-up, not a settled decision.
+
 ---
 
 ## 4. State-of-the-Art Engine Innovations Adapted for QLever V2
@@ -225,12 +261,13 @@ To enable independent implementation and clean reviewability, the V2 engine is d
 ---
 
 ### Work Package 7: Elastic Traffic-Aware Concurrency Controller
-* **Artifact Target:** `src/engine/export_v2/ElasticConcurrencyManager.h` & `test/ElasticConcurrencyTest.cpp`
+* **Artifact Target:** `src/engine/export_v2/TaskScheduler.h`, `src/engine/export_v2/ElasticConcurrencyManager.h` & `test/ElasticConcurrencyTest.cpp` (the `TaskScheduler` referenced in Section 3 does not exist anywhere in QLever today — building it is in scope for this WP, not a pre-existing dependency).
 * **Task Description:**
+  - Build `TaskScheduler` (lease tokens, not raw thread handles) and wire its gated hook into `Server::handleRequest` per the Amendment above (compile-time + runtime kill-switch, zero footprint when disabled).
   - Enforce single-core execution when concurrent queries exist.
-  - Implement dynamic work-stealing morsel leasing when server is completely idle.
-  - Implement immediate preemption and worker thread surrender on new query arrival (<500μs latency).
-* **Definition of Done:** Multi-client concurrency tests verify zero head-of-line blocking or latency degradation for interactive queries.
+  - Implement dynamic work-stealing morsel leasing when server is completely idle, using cooperative-only revocation and refcounted keep-alive state per the Amendment's lease-safety requirements.
+  - Implement immediate preemption and worker thread surrender on new query arrival.
+* **Definition of Done:** See "Amendment (2026-09-03)" above — isolation test, TSAN stress test with zero reports, and a passing `ChaosPreemptionBenchmark` with a measured (not assumed) p99.9 time-to-first-byte bound. The original "<500μs latency" and "zero head-of-line blocking" claims are targets for that benchmark to hit, not standalone acceptance criteria.
 
 ---
 
