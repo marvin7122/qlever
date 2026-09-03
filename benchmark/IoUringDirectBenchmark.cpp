@@ -175,7 +175,7 @@ class IoUringDirectBenchmarkRunner {
                            totalBytes, numBatches);
   }
 
-  // 2. Synchronous pread() with Direct I/O (O_DIRECT)
+  // Run synchronous `pread()` with direct I/O (`O_DIRECT`).
   BenchmarkMetric runSyncDirectPread(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
