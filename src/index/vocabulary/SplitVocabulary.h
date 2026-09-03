@@ -185,8 +185,7 @@ class SplitVocabulary {
     return indexWithMarker & vocabIndexBitMask;
   }
 
-  // ___________________________________________________________________________
-  // Close all underlying vocabularies.
+    // Close all underlying vocabularies.
   void close();
 
   // ___________________________________________________________________________
