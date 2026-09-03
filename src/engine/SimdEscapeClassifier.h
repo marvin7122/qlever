@@ -431,7 +431,7 @@ class SimdEscapeClassifier {
   }
 
   // ___________________________________________________________________________
-  // High-performance branchless copier and escape serializer.
+    // High-performance copier and escape serializer.
   // Fast path copies 32-byte chunks with zero per-character checks when mask is 0.
   // Returns pointer past the last written byte in `dest`.
   template <EscapeFormat Format>
