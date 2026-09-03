@@ -155,10 +155,8 @@ class FsstRepeatedDecoder {
   // for the serialization module. Don't use it.
   FsstRepeatedDecoder() = default;
 
-  // ___________________________________________________________________________
-  // Construct from the internal `fsst_decoder_t`. Note that the typical way to
-  // obtain an `FsstDecoder` is by first creating a `FsstEncoder` and calling
-  // `getDecoder()` on that encoder.
+    // ___________________________________________________________________________
+  // Construct from an array of internal FSST decoders.
   explicit FsstRepeatedDecoder(Decoders decoders) : decoders_{decoders} {}
 
   // ___________________________________________________________________________
