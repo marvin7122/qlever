@@ -34,6 +34,7 @@
 #include "util/Algorithm.h"
 #include "util/CompactStringVector.h"
 #include "util/Exception.h"
+#include <algorithm>
 
 namespace ql::engine::prefetch {
 

@@ -31,6 +31,7 @@
 #include "util/Random.h"
 #include "util/StreamingBufferWriter.h"
 #include "util/Timer.h"
+#include <algorithm>
 
 namespace ad_benchmark {
 

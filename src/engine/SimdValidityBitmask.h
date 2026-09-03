@@ -119,7 +119,7 @@ class ValidityBitmask64 {
 
   [[nodiscard]] constexpr uint64_t rawMask() const noexcept { return mask_; }
 
-  // Returns the index of the first unbound row (0..63), or 64 if all are valid.
+  // Return the index of the first unbound row (0..63), or 64 if all are valid.
   [[nodiscard]] constexpr size_t firstUnboundIndex() const noexcept {
     return static_cast<size_t>(std::countr_one(mask_));
   }

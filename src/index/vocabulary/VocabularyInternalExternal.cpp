@@ -87,7 +87,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   assembler.scatterSubBatchResultAtPositions(
       std::move(internal), partition.internalSlots_.getResultPositions());
 
-  // 2. Pass the external sub-result to the assembler and retain its result data
+  // 2. Pass the external sub-result to the assembler and take ownership of the result data
   // so the returned string views remain valid, placing the values at their
   // original request positions.
   auto disk =
