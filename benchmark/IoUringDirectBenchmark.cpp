@@ -71,7 +71,7 @@ class SimulatedVocabularyFile {
     std::cout << "Generating 1GB simulated vocabulary data in: " << filePath_
               << " ... " << std::flush;
 
-    // Allocate 4KB aligned write buffer
+    // Allocate a 4 KB-aligned write buffer.
     void* writeBuf = nullptr;
     constexpr size_t writeChunkSize = 1024 * 1024;  // 1 MB chunks
     if (posix_memalign(&writeBuf, kDirectIoAlignment, writeChunkSize) != 0) {
