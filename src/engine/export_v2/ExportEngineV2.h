@@ -8,13 +8,17 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 
+#include "backports/span.h"
+#include "engine/ExportPipelineRouter.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/export_v2/AsyncChunkPipeline.h"
 #include "engine/export_v2/ElasticExportScheduler.h"
 #include "engine/export_v2/ExportEngineV2Serialize.h"
 #include "engine/export_v2/VectorStreamSource.h"
+#include "index/Index.h"
 #include "parser/ParsedQuery.h"
 #include "util/CancellationHandle.h"
 #include "util/http/MediaTypes.h"
@@ -30,7 +34,16 @@ using qlever::export_v2::AsyncChunkPipeline;
 // and ElasticExportScheduler into a single pipeline.
 class ExportEngineV2 {
  public:
-  // Serialize a single tabular block into a ScatterGatherChunk.
+  // True when this engine can serve `mediaType` for `parsedQuery` without
+  // falling back to Legacy V1. Currently: unconstrained SELECT + CSV/TSV.
+  [[nodiscard]] static bool canHandle(
+      const ParsedQuery& parsedQuery, ad_utility::MediaType mediaType) noexcept;
+
+  // Map CSV/TSV media types onto the V2 row format. Returns nullopt otherwise.
+  [[nodiscard]] static std::optional<RowFormat> rowFormatFor(
+      ad_utility::MediaType mediaType) noexcept;
+
+  // Integer-only / unit-test serialize path (header-only, no Index TU).
   static ScatterGatherChunk serializeTableChunk(
       const IdTable& idTable, const LocalVocab& localVocab, RowFormat format,
       ScatterGatherChunkBuilder& builder) {
@@ -38,7 +51,15 @@ class ExportEngineV2 {
                                                       format, builder);
   }
 
-  // Compute streamed query export results using the push-driven V2 pipeline.
+  // Live-path serialize with vocabulary resolution and selected columns.
+  // `selectedColumns` empty means all IdTable columns; nullopt entry = unbound.
+  static ScatterGatherChunk serializeTableChunk(
+      const IdTable& idTable, const LocalVocab& localVocab, RowFormat format,
+      ScatterGatherChunkBuilder& builder, const Index& index,
+      ql::span<const std::optional<ColumnIndex>> selectedColumns);
+
+  // Compute streamed query export results using the push-driven V2 pipeline
+  // for eligible SELECT CSV/TSV requests; otherwise delegates to Legacy V1.
   static cppcoro::generator<std::string> computeResult(
       const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
       ad_utility::MediaType mediaType,

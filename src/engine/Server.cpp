@@ -20,7 +20,9 @@
 #include <vector>
 
 #include "backports/filesystem.h"
+#include "engine/ExportPipelineRouter.h"
 #include "engine/ExportQueryExecutionTrees.h"
+#include "engine/export_v2/ExportEngineV2.h"
 #include "engine/GraphStoreProtocol.h"
 #include "engine/HttpApiHelpers.h"
 #include "engine/HttpError.h"
@@ -957,10 +959,49 @@ CPP_template_def(typename RequestT, typename SendT)(
     Awaitable<void> Server::sendStreamableResponse(
         const RequestT& request, SendT& send, MediaType mediaType,
         const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
-        SharedCancellationHandle cancellationHandle) const {
-  auto responseGenerator = ExportQueryExecutionTrees::computeResult(
-      plannedQuery.parsedQuery(), plannedQuery.queryExecutionTree(), mediaType,
-      requestTimer, std::move(cancellationHandle));
+        SharedCancellationHandle cancellationHandle,
+        const ParamValueMap& params) const {
+  using ql::engine::ExportEngineMode;
+  using ql::engine::ExportPipelineRouter;
+  using ql::engine::export_v2::ExportEngineV2;
+
+  std::optional<std::string_view> exportHeader;
+  const auto headerValue = request.base()["X-QLever-Export-Engine"];
+  if (!headerValue.empty()) {
+    exportHeader = headerValue;
+  }
+
+  const auto& parsedQuery = plannedQuery.parsedQuery();
+  const ExportEngineMode mode = ExportPipelineRouter::selectEngine(
+      parsedQuery, params, exportHeader, ExportEngineMode::LegacyV1);
+
+  AD_LOG_INFO << ExportPipelineRouter::describeDecision(
+                    parsedQuery, params, exportHeader,
+                    ExportEngineMode::LegacyV1)
+              << std::endl;
+
+  auto responseGenerator = [&]() -> cppcoro::generator<std::string> {
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+    if (mode == ExportEngineMode::FastStreamingV2 &&
+        ExportEngineV2::canHandle(parsedQuery, mediaType)) {
+      AD_LOG_INFO << "Using ExportEngineV2 for "
+                  << ad_utility::toString(mediaType) << " export" << std::endl;
+      for (auto& chunk : ExportEngineV2::computeResult(
+               parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+               cancellationHandle)) {
+        co_yield std::move(chunk);
+      }
+      co_return;
+    }
+#else
+    (void)mode;
+#endif
+    for (auto& chunk : ExportQueryExecutionTrees::computeResult(
+             parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+             requestTimer, std::move(cancellationHandle))) {
+      co_yield std::move(chunk);
+    }
+  }();
 
   auto response = ad_utility::httpUtils::createOkResponse(
       std::move(responseGenerator), request, mediaType);
@@ -1113,7 +1154,7 @@ CPP_template_def(typename RequestT, typename SendT)(
   // requested format.
   co_await sendStreamableResponse(request, AD_FWD(send), mediaType,
                                   plannedQuery.value(), requestTimer,
-                                  cancellationHandle);
+                                  cancellationHandle, params);
   // Print the runtime info. This needs to be done after the query
   // was computed.
   AD_LOG_INFO << "Done processing query and sending result"
