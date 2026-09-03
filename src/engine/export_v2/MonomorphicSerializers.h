@@ -19,7 +19,7 @@
 
 namespace ql::engine::export_v2 {
 
-// The semantic type of a column in a statically known export schema.
+// Define the semantic type of a column in a statically known export schema.
 enum class ColumnType {
   Iri,
   Literal,
