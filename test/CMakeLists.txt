@@ -177,11 +177,8 @@ addLinkAndDiscoverTest(StringUtilsTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
-<<<<<<< HEAD
 addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
-=======
 addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
->>>>>>> 9ead3fd4d (feat(export-v2): add SIMD escape classifier)
 
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
@@ -613,3 +610,5 @@ addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ScatterGatherArenaStreamerTest)
