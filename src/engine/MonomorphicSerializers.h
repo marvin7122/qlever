@@ -157,7 +157,7 @@ struct CellValue {
 };
 
 // _____________________________________________________________________________
-// High-performance low-level direct buffer serializer / writer concept wrapper.
+// Interface required from writers used by the serializers.
 template <typename Writer>
 concept FormatterWriter = requires(Writer& w, char c, std::string_view sv, int64_t i) {
   { w.writeChar(c) };
