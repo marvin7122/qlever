@@ -400,7 +400,7 @@ class MonomorphicRowSerializer {
   static constexpr std::array<ColumnType, NUM_COLUMNS> SCHEMA = {ColumnTypes...};
 
  private:
-  // Helper to extract N-th column type
+  // Extract the N-th column type from `SCHEMA`.
   template <size_t Index>
   static constexpr ColumnType getColumnType() noexcept {
     return SCHEMA[Index];
