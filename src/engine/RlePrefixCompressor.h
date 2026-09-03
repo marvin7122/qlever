@@ -147,8 +147,8 @@ struct RleFormatterConfig {
 //
 // RlePrefixFormatter:
 // 1. Detects consecutive runs of identical ValueIds in sorted columns.
-// 2. Formats the constant IRI once into a thread-local prefix slice, and splices
-//    it into subsequent output rows with a single 64-bit/128-bit word copy.
+// 2. Formats the constant IRI once into a cached prefix slice, and splices
+//    it into subsequent output rows using memcpy.
 // 3. Seamlessly switches back to dynamic formatting when the run ends.
 class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter> {
  private:
