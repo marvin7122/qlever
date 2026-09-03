@@ -276,8 +276,8 @@ class PrefetchingBenchmark : public BenchmarkInterface {
 
     vocabWords_.build(words);
 
-    // Uniform random distribution across entire 1M vocabulary to simulate
-    // DRAM/L3 cache miss pressure
+    // Use a uniform random distribution across the entire 1M vocabulary to simulate
+    // DRAM/L3 cache-miss pressure.
     std::mt19937_64 rng(42);
     std::uniform_int_distribution<uint64_t> dist(0, NUM_VOCAB_ENTRIES - 1);
 
