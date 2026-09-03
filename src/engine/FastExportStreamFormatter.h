@@ -114,12 +114,10 @@ template <const std::array<bool, 256>& Table>
 }  // namespace detail
 
 // _____________________________________________________________________________
-// A deep, zero-allocation streaming formatter that formats RDF terms, triples,
-// and tabular rows directly into pre-allocated memory chunks.
-//
-// Invariant Law: Never constructs temporary std::string objects during
-// formatting. All escaping, URI quoting, and datatype suffixes are written
-// directly into the active chunk buffer.
+// A streaming formatter that formats RDF terms, triples, and tabular rows
+// directly into a pre-allocated chunk buffer. Formatting does not construct
+// temporary std::string objects; the buffer can be enlarged for an
+// extra-large individual field.
 class FastExportStreamFormatter
     : public ad_utility::WithInvariants<FastExportStreamFormatter> {
  public:
