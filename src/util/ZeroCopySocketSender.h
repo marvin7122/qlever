@@ -55,7 +55,7 @@ namespace ad_utility {
 inline constexpr size_t kZeroCopyPageAlignment = 4096;
 
 // _____________________________________________________________________________
-// Configuration parameters for ZeroCopySocketSender.
+// Configure a `ZeroCopySocketSender`.
 struct ZeroCopySenderConfig {
   size_t ringEntries = 512;
   size_t numBuffers = 64;
