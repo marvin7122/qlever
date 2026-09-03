@@ -178,6 +178,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # which we now rely, so we fall back to `range-v3` for that compiler.
         MESSAGE(STATUS "range-v3 is used for GCC 11 because its libstdc++ doesn't yet provide `std::ranges::owning_view`")
         set(RANGE_V3_REQUIRED_BY_COMPILER ON)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fpermissive> $<$<COMPILE_LANGUAGE:CXX>:-Wno-error=permissive>)
     endif ()
 
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" )
