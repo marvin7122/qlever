@@ -335,7 +335,7 @@ class DynamicRowSerializer : public ad_utility::WithInvariants<DynamicRowSeriali
     return schema_.size();
   }
 
-  // Dynamic per-cell dispatch with inner loop branching
+  
   template <ExportFormat Format, typename Writer>
   void serializeCell(Writer& writer, ColumnType type, const CellValue& cell) const {
     switch (type) {
