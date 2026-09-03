@@ -67,7 +67,7 @@ TEST(SimdValidityBitmaskTest, ValidityBitmask64Basics) {
   }
   EXPECT_TRUE(mask.allUnbound());
 
-  // setRow helper
+  // Test the `setRow` helper.
   mask.setRow(7, true);
   EXPECT_TRUE(mask.isRowValid(7));
   EXPECT_EQ(mask.firstValidIndex(), 7u);
