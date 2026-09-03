@@ -129,7 +129,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
             nullptr);
         break;
       case 3:
-        // Encoded integer literal
+                // Generate an encoded integer literal.
         obj = std::make_shared<EvaluatedTermData>(
             std::to_string(i * 42), XSD_INT_TYPE);
         break;
