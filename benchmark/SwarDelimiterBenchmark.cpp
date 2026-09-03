@@ -318,7 +318,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
       auto& group = results.addGroup(
           "3. Pure Delimiter Writing Micro-Benchmark (5,000,000 rows, zero payload copy)");
 
-      // 3.1 Scalar pure delimiter writes
+      // Write pure delimiters with scalar stores.
       {
         size_t totalBytesWritten = 0;
         uint64_t startCycles = readCpuCycles();
