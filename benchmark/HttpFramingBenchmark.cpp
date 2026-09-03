@@ -67,8 +67,7 @@ class Standard2BufferCopyHttpFraming {
 
  public:
   explicit Standard2BufferCopyHttpFraming(size_t maxChunkSize) {
-    // Allocate buffer big enough for hex header + payload + 2x CRLF
-    framedBuffer_.resize(maxChunkSize + 32);
+        framedBuffer_.resize(maxChunkSize + 32);
   }
 
   [[nodiscard]] ql::span<const char> frameChunk(const char* payloadData,
