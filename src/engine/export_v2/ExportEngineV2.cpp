@@ -53,7 +53,7 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
     builder.appendCopy("\n");
   }
 
-  return builder.build();
+  return std::move(builder).finalize();
 }
 
 // _____________________________________________________________________________
