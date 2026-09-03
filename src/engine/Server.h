@@ -452,13 +452,15 @@ class Server {
       std::optional<std::string_view> userTimeout, bool accessTokenOk) const;
 
   /// Send response for the streamable media types (tsv, csv, octet-stream,
-  /// turtle, sparqlJson, qleverJson).
+  /// turtle, sparqlJson, qleverJson). `params` feeds ExportPipelineRouter
+  /// (`fast-export`, `export-engine`) when selecting Legacy V1 vs Export V2.
   CPP_template(typename RequestT, typename SendT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<void> sendStreamableResponse(
           const RequestT& request, SendT& send, ad_utility::MediaType mediaType,
           const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
-          SharedCancellationHandle cancellationHandle) const;
+          SharedCancellationHandle cancellationHandle,
+          const ParamValueMap& params = {}) const;
 
   FRIEND_TEST(MaterializedViewsTest, serverIntegration);
 
