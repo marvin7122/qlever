@@ -666,9 +666,9 @@ decltype(auto) dispatch4Col(ColumnType c0, ColumnType c1, ColumnType c2,
 }  // namespace detail
 
 // _____________________________________________________________________________
-// Main fast-path template dispatch entry point:
-// Inspects the runtime schema and invokes `visitor` with the specialized
-// `MonomorphicRowSerializer<Types...>` (or falls back to `DynamicRowSerializer`).
+// Dispatch the runtime schema through the fast path.
+// Invoke `visitor` with `MonomorphicRowSerializer<Types...>` when specialized;
+// otherwise use `DynamicRowSerializer`.
 template <typename Visitor, typename... Args>
 decltype(auto) dispatchMonomorphicSerializer(ql::span<const ColumnType> schema,
                                             Visitor&& visitor, Args&&... args) {
