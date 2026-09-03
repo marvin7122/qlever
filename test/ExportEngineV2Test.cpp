@@ -12,12 +12,11 @@
 #include "engine/export_v2/ExportEngineV2Serialize.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
-#include "parser/ParsedQuery.h"
 #include "util/AllocatorTestHelpers.h"
-#include "util/http/MediaTypes.h"
 
-// Light-link smoke tests (NoLibs). canHandle / rowFormatFor live in
-// ExportEngineV2.cpp and are covered via engine-linked builds / manual A/B.
+// Light-link smoke tests (NoLibs). Do not include ParsedQuery / ExportEngineV2.h
+// here — those pull GraphPatternOperation + range-v3 paths that fail on cluster
+// GCC 11. canHandle / live Server wiring are verified via qlever-server builds.
 
 using namespace ql::engine::export_v2;
 using namespace qlever::export_v2;
@@ -72,11 +71,3 @@ TEST(ExportEngineV2Test, PipelineMorselIntegration) {
   EXPECT_EQ(*res2, "chunk_2\n");
 }
 
-TEST(ExportEngineV2Test, ParsedQueryDefaultsToSelectForEligibilityDocs) {
-  // Documents the canHandle precondition used by Server routing: ParsedQuery
-  // defaults to SELECT. Full canHandle lives in ExportEngineV2.cpp (engine TU).
-  ParsedQuery query;
-  EXPECT_TRUE(query.hasSelectClause());
-  EXPECT_TRUE(query._limitOffset.isUnconstrained());
-  EXPECT_EQ(ad_utility::MediaType::csv, ad_utility::MediaType::csv);
-}
