@@ -174,7 +174,7 @@ struct SimdValidityBitmaskExporter {
       ValidityBitmask64 mask = SimdValidityScanner::scanBatch64(batchPtr);
 
       if (mask.allUnbound()) [[likely]] {
-        // Zero cell checks! 64 empty delimiter pairs written with single vectorized stores
+        // Write 64 empty delimiter pairs with a single vectorized store without checking individual cells.
         out = SimdValidityScanner::writeUnboundRowsCsv(out, ',', '\n');
             } else if (mask.allValid()) {
         for (size_t i = 0; i < 64; ++i) {
