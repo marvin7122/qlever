@@ -130,7 +130,7 @@ TEST(FastIntToStringTest, FormatUIntBranchless) {
   testValue(10000000000000000000ULL);
   testValue(std::numeric_limits<uint64_t>::max());
 
-  // Randomized tests across full 64-bit space
+    // Test randomized values across the full 64-bit space.
   std::mt19937_64 gen(42);
   for (size_t i = 0; i < 50000; ++i) {
     testValue(gen());
