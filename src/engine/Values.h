@@ -71,7 +71,7 @@ class Values : virtual public Operation {
   void writeValues(IdTable* idTablePtr, LocalVocab* localVocab);
 };
 
-// Helper to create a 1-row VALUES tree for a single variable and value.
+// Create a one-row `VALUES` tree for a single variable and value.
 std::shared_ptr<QueryExecutionTree> makeValuesForSingleValue(
     QueryExecutionContext* qec, const Variable& variable,
     const TripleComponent& value);
