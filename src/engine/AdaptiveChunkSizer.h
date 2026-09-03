@@ -227,7 +227,7 @@ class AdaptiveChunkSizer
 
     ++chunksFlushed_;
 
-    // Exponential ramp-up towards maxChunkBytes_
+        // Increase the target by growthFactor_ until maxChunkBytes_ is reached.
     if (currentChunkBytesTarget_ < config_.maxChunkBytes_) {
       const double nextBytes =
           static_cast<double>(currentChunkBytesTarget_) * config_.growthFactor_;
