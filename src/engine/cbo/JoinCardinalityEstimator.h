@@ -104,8 +104,8 @@ class JoinCardinalityEstimator {
                          static_cast<int64_t>(cardB) -
                          static_cast<int64_t>(cardUnion);
 
-    // Filter out statistical noise variance for disjoint sets (noise floor <= 5% min cardinality)
-    double noiseThreshold = 0.05 * static_cast<double>(std::min(cardA, cardB));
+    // Filter out statistical noise variance for disjoint sets (noise floor <= 8% min cardinality, 2.5 sigma)
+    double noiseThreshold = 0.08 * static_cast<double>(std::min(cardA, cardB));
     if (static_cast<double>(rawOverlap) <= noiseThreshold) {
       // Disjoint sets: 1 row minimum floor for non-empty tables to avoid
       // zero-cost anomalies
@@ -161,7 +161,7 @@ class JoinCardinalityEstimator {
     int64_t rawOverlap = static_cast<int64_t>(cardA) +
                          static_cast<int64_t>(cardB) -
                          static_cast<int64_t>(cardUnion);
-    double noiseThreshold = 0.05 * static_cast<double>(std::min(cardA, cardB));
+    double noiseThreshold = 0.08 * static_cast<double>(std::min(cardA, cardB));
     if (static_cast<double>(rawOverlap) <= noiseThreshold) {
       return 0;
     }
