@@ -184,7 +184,7 @@ inline char* formatUIntFast(uint64_t val, char* out) noexcept {
     *p = static_cast<char>('0' + val32);
   } else {
     p -= 2;
-    std::memcpy(p, &detail::DIGIT_PAIRS[val32 * 2], 2);
+    detail::format2Digits(val32, p);
   }
 
   return out + len;
