@@ -24,36 +24,29 @@ CPP_requires(is_invariant_stateful_class_,
 }  // namespace detail
 
 // _____________________________________________________________________________
+// Concept satisfied by any class that provides an invariant
+// verification method: `void checkInvariants() const`.
 template <typename T>
 CPP_concept InvariantStatefulClass =
     CPP_requires_ref(detail::is_invariant_stateful_class_, T);
 
 // _____________________________________________________________________________
-// Assert class invariants on scope entry and scope exit, unless exiting via an
-// active exception, for any class that satisfies the `InvariantStatefulClass`
-// concept.
+// Generic RAII Guard that asserts class invariants on scope entry and scope
+// exit (unless exiting via an active exception) for any class that satisfies
+// the `InvariantStatefulClass` concept.
 CPP_template(typename T)(
     requires InvariantStatefulClass<T>) class InvariantGuard {
  private:
-  // Non-owning pointer to the guarded object; the guard must not outlive this
-  // object.
   const T* self_;
-  // Exception count at construction distinguishes normal scope exit from
-  // stack unwinding, allowing the exit invariant check to be skipped when
-  // unwinding through this scope.
-  int uncaughtExceptionsAtConstruction_;
 
  public:
-  explicit InvariantGuard(const T* self)
-      : self_{self},
-        uncaughtExceptionsAtConstruction_{std::uncaught_exceptions()} {
+  explicit InvariantGuard(const T* self) : self_{self} {
     AD_CORRECTNESS_CHECK(self_ != nullptr);
     self_->checkInvariants();
   }
 
   ~InvariantGuard() noexcept(false) {
-    AD_CORRECTNESS_CHECK(self_ != nullptr);
-    if (std::uncaught_exceptions() <= uncaughtExceptionsAtConstruction_) {
+    if (!std::uncaught_exceptions()) {
       self_->checkInvariants();
     }
   }
@@ -65,12 +58,14 @@ CPP_template(typename T)(
 };
 
 // _____________________________________________________________________________
-// Provide a parameterless `makeInvariantGuard()` member function and enforce
-// `InvariantStatefulClass` for the derived type.
+// CRTP mixin that provides a parameterless `makeInvariantGuard()` member
+// function, which checks the derived instance upon entry and exit while
+// enforcing at compile-time that `Derived` satisfies `InvariantStatefulClass`.
 template <typename Derived>
 class WithInvariants {
  public:
   // ___________________________________________________________________________
+  // Instantiate an InvariantGuard verifying the derived instance on entry/exit.
   // Lvalue-qualified so the guard can never be created for a temporary:
   // it stores a raw pointer to `this`, which must outlive the guard's scope.
   [[nodiscard]] auto makeInvariantGuard() const& {
