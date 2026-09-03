@@ -78,8 +78,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
       }
     }
 
-    // Literal closing quote
-    literal.push_back('"');
+        literal.push_back('"');
 
     // 25% chance of language tag
     if (escapeProbDist(rng) < 25) {
