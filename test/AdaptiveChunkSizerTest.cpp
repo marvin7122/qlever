@@ -124,10 +124,10 @@ TEST(AdaptiveChunkSizerTest, TargetRowCountWithRemainingRowsClamping) {
   const size_t target = sizer.targetRowCount();
   EXPECT_GT(target, 100);
 
-  // If 50 rows remain, targetRowCount should clamp to 50
+    // Verify that `targetRowCount` clamps to 50 when 50 rows remain.
   EXPECT_EQ(sizer.targetRowCount(50), 50);
 
-  // If 100,000 rows remain, targetRowCount returns unconstrained target
+  // Verify that `targetRowCount` returns the unconstrained target for 100,000 remaining rows.
   EXPECT_EQ(sizer.targetRowCount(100'000), target);
 }
 
