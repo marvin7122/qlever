@@ -109,7 +109,7 @@ struct DecoderMultiplexer {
   }
 
   // ___________________________________________________________________________
-  // Return the maximum number of output bytes needed to decompress
+    // Return the exact number of output bytes needed to decompress
   // `compressed` with `decoderIndex`.
   [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed,
                                            size_t decoderIndex) const {
