@@ -37,7 +37,7 @@ class MockInvariantClass
 
   void doMutatingOperation() {
     auto guard = makeInvariantGuard();
-    // Enter and leave the operation without changing the object state.
+        // Enter and leave the operation without changing failInvariants_.
   }
 
   void doBrokenOperation() {
