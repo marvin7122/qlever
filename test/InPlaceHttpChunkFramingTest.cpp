@@ -54,7 +54,7 @@ TEST(InPlaceHttpChunkFramingTest, ConceptComplianceAndBasicFraming) {
 TEST(InPlaceHttpChunkFramingTest, TerminatingChunk) {
   InPlaceHttpChunk chunk(1024);
 
-  // Terminating chunk: 0 payload bytes -> "0\r\n\r\n" (5 bytes)
+  // Verify that a zero-payload terminating chunk is `0\r\n\r\n` (5 bytes).
   auto framedSpan = chunk.createFinalChunk();
   EXPECT_TRUE(chunk.isFinalized());
   EXPECT_EQ(chunk.lastPayloadBytes(), 0);
