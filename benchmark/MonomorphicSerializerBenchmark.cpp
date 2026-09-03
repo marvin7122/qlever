@@ -36,7 +36,7 @@
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________
-// Memory allocation tracker for verifying zero-allocation hot loops.
+// Tracks scalar operator-new allocations made during benchmark loops.
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
