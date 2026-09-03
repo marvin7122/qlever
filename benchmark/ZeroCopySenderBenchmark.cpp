@@ -251,7 +251,7 @@ class ZeroCopySenderBenchmarkRunner {
   }
 
   // Run the zero-copy `io_uring` send with registered buffers using `IORING_OP_SEND_ZC`.
-  BenchmarkMetric runIoUringZeroCopySend() {
+    BenchmarkMetric runIoUringZeroCopySend() {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
 
@@ -264,7 +264,6 @@ class ZeroCopySenderBenchmarkRunner {
 
     ZeroCopySocketSender sender(config);
 
-    // Background receiver thread
     std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
       std::vector<char> buf(64 * 1024);
       size_t totalReceived = 0;
