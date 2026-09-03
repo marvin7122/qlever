@@ -161,7 +161,11 @@ class JoinCardinalityEstimator {
     int64_t rawOverlap = static_cast<int64_t>(cardA) +
                          static_cast<int64_t>(cardB) -
                          static_cast<int64_t>(cardUnion);
-    return rawOverlap > 0 ? static_cast<uint64_t>(rawOverlap) : 0;
+    double noiseThreshold = 0.05 * static_cast<double>(std::min(cardA, cardB));
+    if (static_cast<double>(rawOverlap) <= noiseThreshold) {
+      return 0;
+    }
+    return static_cast<uint64_t>(rawOverlap);
   }
 };
 
