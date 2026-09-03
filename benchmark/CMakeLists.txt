@@ -69,4 +69,5 @@ if (NOT _NO_BENCHMARK)
     linkBenchmark(SimdEscapeBenchmark engine sparqlParser qlever_util)
 
     addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
+    addAndLinkBenchmark(EndToEndExportBenchmark engine sparqlParser qlever_util)
 endif()
