@@ -8,6 +8,7 @@
 
 #include "engine/export_v2/ExportEngineV2.h"
 
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <string>
@@ -41,12 +42,15 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
       } else {
         // Fallback literal representation
         std::string raw = "<val>";
+        std::array<char, 256> buf;
         if (format == RowFormat::Csv) {
-          auto escaped = SimdEscapeClassifier::classifyAndEscape<RowFormat::Csv>(raw);
-          builder.appendCopy(escaped);
+          auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Csv>(
+              raw, {buf.data(), buf.size()});
+          builder.appendCopy(std::string_view(escaped.data(), escaped.size()));
         } else {
-          auto escaped = SimdEscapeClassifier::classifyAndEscape<RowFormat::Tsv>(raw);
-          builder.appendCopy(escaped);
+          auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Tsv>(
+              raw, {buf.data(), buf.size()});
+          builder.appendCopy(std::string_view(escaped.data(), escaped.size()));
         }
       }
     }
@@ -63,9 +67,8 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
     ad_utility::MediaType mediaType,
     ad_utility::SharedCancellationHandle cancellationHandle,
     [[maybe_unused]] ad_utility::export_v2::ElasticExportScheduler* scheduler) {
-  // Delegate through ExportPipelineRouter
-  return ExportPipelineRouter::computeResult(parsedQuery, qet, mediaType,
-                                             cancellationHandle);
+  return ExportQueryExecutionTrees::computeResult(parsedQuery, qet, mediaType,
+                                                  cancellationHandle);
 }
 
 }  // namespace ql::engine::export_v2
