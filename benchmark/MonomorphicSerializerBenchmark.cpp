@@ -29,7 +29,7 @@
 
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "engine/MonomorphicSerializers.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/Invariants.h"
