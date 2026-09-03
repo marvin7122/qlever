@@ -41,11 +41,11 @@ namespace ad_utility::simd {
 
 // Supported serialization formats for SIMD escape classification.
 enum class EscapeFormat {
-  CsvQuote,    // Escape quotes (")
-  CsvSpecial,  // RFC 4180 special characters (", ,, \r, \n)
-  Tsv,         // IANA-TSV special characters (\t, \n, \r, \\)
-  Turtle,      // Turtle / N-Triples literal content escapes (", \\, \n, \r)
-  Xml          // XML special characters (&, <, >, ", ')
+    CsvQuote,    // Escape quotes (").
+  CsvSpecial,  // Escape RFC 4180 special characters (", ,, \r, and \n).
+  Tsv,         // Escape IANA-TSV special characters (\t, \n, \r, and \\).
+  Turtle,      // Escape Turtle / N-Triples literal content characters (", \\, \n, and \r).
+  Xml          // Escape XML special characters (&, <, >, ", and ').
 };
 
 // Invariant-bearing 32-bit classification mask for a 32-byte SIMD chunk.
