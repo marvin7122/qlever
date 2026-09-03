@@ -228,7 +228,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
             "Chunk " + std::to_string(chunkSize) + " triples, Latency " +
             std::to_string(latencyMs) + "ms";
 
-        // Measure Sync
+        
         BenchmarkRunResult syncRes{};
         results.addMeasurement("Sync: " + testDesc, [this, chunkSize, latencyMs, &syncRes]() {
           syncRes = runSyncLockstep(chunkSize, latencyMs);
