@@ -112,7 +112,7 @@ class RlePrefixSlice : public ad_utility::WithInvariants<RlePrefixSlice<MaxBuffe
     valid_ = true;
   }
 
-  // Invalidate slice cache.
+  // Invalidate the slice cache.
   void invalidate() noexcept {
     valid_ = false;
     length_ = 0;
