@@ -62,7 +62,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
       literal.push_back(' ');
     }
 
-    // 8% chance this literal contains special escape characters
+    // 8% chance this literal contains characters requiring escaping
     bool injectEscapes = (escapeProbDist(rng) < 8);
 
     for (size_t i = 0; i < length; ++i) {
