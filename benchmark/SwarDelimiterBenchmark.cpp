@@ -312,7 +312,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
     }
 
     // =========================================================================
-    // Group 3: Pure Delimiter Micro-Benchmark (5,000,000 row delimiter transitions)
+    
     // =========================================================================
     {
       auto& group = results.addGroup(
