@@ -203,7 +203,7 @@ struct DatasetStorage {
   std::vector<std::array<CellValue, 4>> relationalRows_;
   std::vector<std::array<CellValue, 3>> graphEdgeRows_;
 
-  // Typed tuples for monomorphic direct testing
+  // Store typed tuples for direct monomorphic testing.
   std::vector<std::tuple<std::string_view, std::string_view, std::string_view>>
       tripleTuples_;
   std::vector<std::tuple<std::string_view, std::string_view, int64_t>>
