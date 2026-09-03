@@ -192,7 +192,7 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Check if a buffer containing `bytesBuffered` has reached the current target.
+  
   [[nodiscard]] bool isChunkFull(size_t bytesBuffered) const noexcept {
     return bytesBuffered >= currentChunkBytesTarget_;
   }
