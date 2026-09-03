@@ -194,7 +194,7 @@ class PerfCounterMonitor {
 constexpr size_t NUM_BENCHMARK_ROWS = 1'000'000;
 
 struct DatasetStorage {
-  // String pool keeping views valid across runs
+  // Keep the string pool so that the views remain valid across runs.
   std::vector<std::string> stringPool_;
 
     // Reserved capacity for rows of each schema
