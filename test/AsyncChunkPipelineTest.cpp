@@ -96,8 +96,20 @@ TEST(AsyncChunkPipelineTest, CancellationUnblocksProducer) {
   pipeline.cancel();
 
   EXPECT_EQ(blockedPush.get(), PushResult::Closed);
-  EXPECT_EQ(pipeline.pop(), "first");
   EXPECT_FALSE(pipeline.pop().has_value());
+  EXPECT_EQ(pipeline.stats().chunksDiscarded_, 1);
+}
+
+TEST(AsyncChunkPipelineTest, CancellationReleasesQueuedBuffer) {
+  AsyncChunkPipeline<std::shared_ptr<std::string>> pipeline{
+      {.capacity_ = 1, .runtimeEnabled_ = true}};
+  auto chunk = std::make_shared<std::string>("payload");
+  std::weak_ptr<std::string> lifetime = chunk;
+  ASSERT_EQ(pipeline.push(std::move(chunk)), PushResult::Accepted);
+
+  pipeline.cancel();
+
+  EXPECT_TRUE(lifetime.expired());
 }
 
 TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
