@@ -92,8 +92,8 @@ struct PackedDelimiter {
 
 // _____________________________________________________________________________
 // SIMD Within A Register (SWAR) Delimiter Packer:
-// Packs common RDF syntax delimiter sequences into 64-bit unsigned integers
-// and performs branchless unaligned 64-bit store intrinsics.
+// Packs common RDF syntax delimiter sequences into integer patterns and
+// provides helpers for copying those patterns to unaligned output buffers.
 class SwarDelimiterPacker {
  public:
   // ___________________________________________________________________________
