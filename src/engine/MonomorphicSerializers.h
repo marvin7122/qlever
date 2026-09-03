@@ -312,7 +312,7 @@ inline void writeRowTerminator(Writer& writer) noexcept {
 
 // _____________________________________________________________________________
 // Dynamic per-cell serializer for arbitrary runtime schemas (runtime-dispatch baseline).
-// Contains runtime switch dispatch inside the per-cell loop.
+// Dispatch on the runtime type inside the per-cell loop.
 class DynamicRowSerializer : public ad_utility::WithInvariants<DynamicRowSerializer> {
  private:
   std::vector<ColumnType> schema_;
