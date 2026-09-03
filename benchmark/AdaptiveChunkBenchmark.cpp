@@ -57,7 +57,7 @@ struct ChunkBenchmarkResult {
 };
 
 // _____________________________________________________________________________
-// Benchmark Class: Fixed 100K Chunk Size vs AdaptiveChunkSizer (64 KB -> 4 MB).
+// Benchmark Class: Fixed 100K Triples per Chunk vs AdaptiveChunkSizer (64 KB -> 4 MB).
 class AdaptiveChunkBenchmark : public BenchmarkInterface {
  private:
   const size_t totalTriples_{1'000'000};
