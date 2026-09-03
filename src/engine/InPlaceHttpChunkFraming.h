@@ -379,7 +379,7 @@ class InPlaceHttpChunkStreamer
     checkInvariants();
   }
 
-  // Move-only semantics
+  // Use move-only semantics.
   InPlaceHttpChunkStreamer(InPlaceHttpChunkStreamer&&) noexcept = default;
   InPlaceHttpChunkStreamer& operator=(InPlaceHttpChunkStreamer&&) noexcept =
       default;
