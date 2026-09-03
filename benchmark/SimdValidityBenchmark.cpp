@@ -193,7 +193,7 @@ struct SimdValidityBitmaskExporter {
       }
     }
 
-    // Tail rows (< 64)
+    // Process tail rows (`< 64`).
     size_t tailStart = numBatches * 64;
     for (size_t i = tailStart; i < numRows; ++i) {
       if (!column[i].isUndefined()) {
