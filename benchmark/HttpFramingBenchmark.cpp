@@ -158,11 +158,11 @@ class HttpFramingBenchmarkRunner {
       const size_t currentChunkSize =
           std::min(chunkSize, totalStreamBytes - offset);
 
-      // Simulate export generator writing into intermediate payload buffer
+      // Simulate the export generator writing into the intermediate payload buffer.
       std::memcpy(intermediatePayloadBuffer.data(), src + offset,
                   currentChunkSize);
 
-      // Frame chunk via 2-buffer copy
+      // Frame the chunk using two-buffer copying.
       auto framedSpan = framer.frameChunk(intermediatePayloadBuffer.data(),
                                           currentChunkSize);
       totalPayloadWritten += currentChunkSize;
