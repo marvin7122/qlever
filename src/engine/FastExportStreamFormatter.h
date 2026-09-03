@@ -31,7 +31,7 @@
 
 namespace ql::export_formatting {
 
-// Export serialization formats supported by FastExportStreamFormatter.
+// Define the export serialization formats supported by `FastExportStreamFormatter`.
 enum class ExportFormat {
   Turtle,
   NTriples,
