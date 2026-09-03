@@ -22,22 +22,20 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
     const IdTable& idTable,
     [[maybe_unused]] const LocalVocab& localVocab,
     RowFormat format,
-    ScatterGatherArenaStreamer& arenaStreamer) {
-  auto chunk = arenaStreamer.allocateChunk(8192);
-
+    ScatterGatherChunkBuilder& builder) {
   const size_t numRows = idTable.numRows();
   const size_t numCols = idTable.numColumns();
 
   for (size_t row = 0; row < numRows; ++row) {
     for (size_t col = 0; col < numCols; ++col) {
       if (col > 0) {
-        chunk.append(format == RowFormat::Csv ? "," : "\t");
+        builder.appendCopy(format == RowFormat::Csv ? "," : "\t");
       }
       Id id = idTable(row, col);
       if (id.getDatatype() == Datatype::Int) {
-        chunk.append(std::to_string(id.getInt()));
+        builder.appendCopy(std::to_string(id.getInt()));
       } else if (id.getDatatype() == Datatype::Double) {
-        chunk.append(std::to_string(id.getDouble()));
+        builder.appendCopy(std::to_string(id.getDouble()));
       } else if (id.getDatatype() == Datatype::Undefined) {
         // empty string for undef
       } else {
@@ -45,17 +43,17 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
         std::string raw = "<val>";
         if (format == RowFormat::Csv) {
           auto escaped = SimdEscapeClassifier::classifyAndEscape<RowFormat::Csv>(raw);
-          chunk.append(escaped);
+          builder.appendCopy(escaped);
         } else {
           auto escaped = SimdEscapeClassifier::classifyAndEscape<RowFormat::Tsv>(raw);
-          chunk.append(escaped);
+          builder.appendCopy(escaped);
         }
       }
     }
-    chunk.append("\n");
+    builder.appendCopy("\n");
   }
 
-  return chunk;
+  return builder.build();
 }
 
 // _____________________________________________________________________________
@@ -65,16 +63,9 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
     ad_utility::MediaType mediaType,
     ad_utility::SharedCancellationHandle cancellationHandle,
     [[maybe_unused]] ad_utility::export_v2::ElasticExportScheduler* scheduler) {
-
-  ad_utility::Timer timer;
-  timer.start();
-
-  auto responseGen = ExportQueryExecutionTrees::computeResult(
-      parsedQuery, qet, mediaType, timer, std::move(cancellationHandle));
-
-  for (auto& chunk : responseGen) {
-    co_yield chunk;
-  }
+  // Delegate through ExportPipelineRouter
+  return ExportPipelineRouter::computeResult(parsedQuery, qet, mediaType,
+                                             cancellationHandle);
 }
 
 }  // namespace ql::engine::export_v2

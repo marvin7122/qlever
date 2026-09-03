@@ -3,7 +3,7 @@
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
-// You may not use this file except in compliance with the Apache 2.0 License,
+// You may not use this file except in compliance with the License,
 // which can be found in the `LICENSE` file at the root of this project.
 
 #pragma once
@@ -30,9 +30,9 @@
 
 namespace ql::engine::export_v2 {
 
-using qlever::export_v2::RowFormat;
-using qlever::export_v2::ScatterGatherArenaStreamer;
+using qlever::export_v2::AsyncChunkPipeline;
 using qlever::export_v2::ScatterGatherChunk;
+using qlever::export_v2::ScatterGatherChunkBuilder;
 
 // _____________________________________________________________________________
 // Unified Export Engine V2 (WP8): Coordinates push-based streaming export
@@ -45,7 +45,7 @@ class ExportEngineV2 {
       const IdTable& idTable,
       const LocalVocab& localVocab,
       RowFormat format,
-      ScatterGatherArenaStreamer& arenaStreamer);
+      ScatterGatherChunkBuilder& builder);
 
   // Compute streamed query export results using the push-driven V2 pipeline.
   static cppcoro::generator<std::string> computeResult(
