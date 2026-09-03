@@ -239,8 +239,7 @@ CPP_template(typename UnderlyingVocabulary,
         absl::StrCat(filename, decodersSuffix));
     std::vector<typename CompressionWrapper::Decoder> decoders;
     decoderReader >> decoders;
-    compressionWrapper_ = CompressionWrapper{{std::move(decoders)}};
-
+        compressionWrapper_ = CompressionWrapper{{std::move(decoders)}};
     AD_CORRECTNESS_CHECK((size() == 0) || (getDecoderIdx(size()) <=
                                            compressionWrapper_.numDecoders()));
   }
