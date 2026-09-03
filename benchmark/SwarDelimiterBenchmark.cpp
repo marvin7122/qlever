@@ -30,7 +30,7 @@ using namespace ad_utility;
 
 constexpr size_t NUM_ROWS = 5'000'000;
 
-// Read hardware CPU timestamp counter for precise cycles per row measurement
+// Read a platform-specific time source for per-row timing measurement
 inline uint64_t readCpuCycles() noexcept {
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
   return __rdtsc();
