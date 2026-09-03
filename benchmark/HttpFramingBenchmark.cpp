@@ -378,7 +378,7 @@ class HttpFramingBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
+// Format the benchmark results as a readable summary table.
 void printBenchmarkTable(
     size_t chunkSize,
     const std::vector<HttpFramingBenchmarkMetric>& metrics) {
