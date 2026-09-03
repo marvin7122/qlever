@@ -119,7 +119,7 @@ TEST(SimdValidityBitmaskTest, ForEachValidAndUnbound) {
 TEST(SimdValidityBitmaskTest, SimdScanBatch64AllCases) {
   std::vector<ValueId> batch(64, ValueId::makeUndefined());
 
-  // Case 1: All unbound
+    // Test the all-unbound case.
   ValidityBitmask64 maskUnbound = SimdValidityScanner::scanBatch64(batch.data());
   EXPECT_TRUE(maskUnbound.allUnbound());
   EXPECT_EQ(maskUnbound.rawMask(), 0ULL);
