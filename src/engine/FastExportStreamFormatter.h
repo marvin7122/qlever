@@ -345,8 +345,7 @@ class FastExportStreamFormatter
         writeChar(c);
       }
     }
-    // Write closing quote and any trailing lang/datatype suffix
-    writeRaw(normLiteral.substr(posLastQuote));
+        writeRaw(normLiteral.substr(posLastQuote));
   }
 
   // ___________________________________________________________________________
