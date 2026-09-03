@@ -563,7 +563,6 @@ class SplitVocabularyWithDataTest : public ::testing::Test {
 TwoSplitVocabulary SplitVocabularyWithDataTest::sv_;
 
 // _____________________________________________________________________________
-// Test `lookupBatch` partitioning and result merging directly.
 TEST_F(SplitVocabularyWithDataTest,
        SplitVocabularyPartitionMarkerIndicesAndPositions) {
   // Use marker `0` for plain words and marker `1` for words starting with `"a`.
