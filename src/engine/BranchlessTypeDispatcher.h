@@ -214,7 +214,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   return lut;
 }
 
-// Builds the 16-entry lookup table for Turtle export (compact literals/numbers).
+// Build the 16-entry lookup table for Turtle export (compact literals/numbers).
 constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   std::array<TypeFormatDescriptor, 16> lut{};
   for (size_t i = 0; i < 16; ++i) {
