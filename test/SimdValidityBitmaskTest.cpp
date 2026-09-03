@@ -23,7 +23,7 @@ using namespace ad_utility::simd;
 
 // _____________________________________________________________________________
 TEST(SimdValidityBitmaskTest, ValidityBitmask64Basics) {
-  // Default is all unbound (mask = 0)
+  // Start with an all-unbound mask (`mask = 0`).
   ValidityBitmask64 defaultMask;
   EXPECT_TRUE(defaultMask.allUnbound());
   EXPECT_FALSE(defaultMask.allValid());
