@@ -220,7 +220,7 @@ class AdaptiveChunkSizer
           static_cast<double>(bytesWritten) / static_cast<double>(rowCount);
       const double cumulativeAvg = static_cast<double>(totalBytesObserved_) /
                                    static_cast<double>(totalRowsObserved_);
-      // Weight recent chunk 30% and cumulative history 70%
+      // Weight the recent chunk by 30% and cumulative history by 70%.
       estimatedRowBytes_ = std::max(1.0, 0.7 * cumulativeAvg + 0.3 * chunkAvg);
     }
 
