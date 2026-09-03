@@ -219,7 +219,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
   }
 
   // ___________________________________________________________________________
-  // Run StreamingBufferWriter Benchmark
+  // Run the `StreamingBufferWriter` benchmark.
   BenchmarkMetricResult runStreamingWriterBenchmark(size_t chunkSize) const {
     using AlignedBuf = std::vector<char, AlignedAllocator<char, std::allocator<char>, 64>>;
     AlignedBuf srcBuffer(BufferSizeBytes, 'Q');
