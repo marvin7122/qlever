@@ -369,7 +369,7 @@ class SimdEscapeClassifier {
     }
 #endif
 
-    // Tail: 0 to 15 remaining bytes
+        // Process the remaining 0 to 15 bytes.
     while (len > 0) {
       if (detail::isEscapeChar<Format>(*ptr)) {
         return offset;
