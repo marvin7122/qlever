@@ -250,6 +250,10 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+endif ()
+
 addLinkAndDiscoverTest(IdTableTest qlever_util)
 
 addLinkAndDiscoverTest(TransitivePathTest engine)
