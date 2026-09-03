@@ -107,7 +107,7 @@ class AsyncChunkPipeline
   ~AsyncChunkPipeline() { cancel(); }
 
   // ___________________________________________________________________________
-  // Structural Invariant verification (Law 7 & Section 3 of ARCHITECTURE.md).
+  // Verify the structural invariants described in `ARCHITECTURE.md`.
   void checkInvariants() const {
     AD_CORRECTNESS_CHECK(capacity_ >= 1);
     std::lock_guard<std::mutex> lock(mutex_);
