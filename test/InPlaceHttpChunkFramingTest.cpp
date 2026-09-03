@@ -204,7 +204,7 @@ TEST(InPlaceHttpChunkFramingTest, StreamerLargeSingleWrite) {
   streamer.write(largeData);
 
   auto summary = std::move(streamer).finalize();
-  // 1000 + 1000 + 500 + 0 = 4 chunks
+  // Three payload chunks (1000 + 1000 + 500 bytes) plus one terminating chunk.
   EXPECT_EQ(emittedChunks.size(), 4);
   EXPECT_EQ(summary.totalPayloadBytes_, 2500);
 
