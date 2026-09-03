@@ -385,7 +385,7 @@ class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter>
     
     char* curr = subjectFormatter_.formatPrefix(subjId, subjTerm, out);
 
-    // 2. Spliced Predicate prefix (RLE folded)
+    
     curr = predicateFormatter_.formatPrefix(predId, predTerm, curr);
 
     // 3. Object term
