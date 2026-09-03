@@ -215,7 +215,7 @@ class AdaptiveChunkSizer
     if (rowCount > 0 && bytesWritten > 0) {
       totalBytesObserved_ += bytesWritten;
       totalRowsObserved_ += rowCount;
-      // Exponentially weighted moving average combined with cumulative average
+            // Combine the cumulative average with the current chunk average
       // to adapt smoothly to varying row lengths while maintaining stability.
       const double chunkAvg =
           static_cast<double>(bytesWritten) / static_cast<double>(rowCount);
