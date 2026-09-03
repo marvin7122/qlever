@@ -285,7 +285,7 @@ TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
   EXPECT_EQ(std::string_view(swarBuf.data(), swarLen),
             "<http://example.org/entity/Q42> <http://example.org/prop/P31> <http://example.org/entity/Q5> .\n");
 
-  // Test CSV quoted row: "col1","col2","col3"\n
+  // Test the CSV quoted row: `"col1","col2","col3"\n`.
   std::string_view c1 = "Alice";
   std::string_view c2 = "30";
   std::string_view c3 = "Freiburg";
