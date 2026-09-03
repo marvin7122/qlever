@@ -146,7 +146,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
 
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
-    // Spawn background worker to generate chunks concurrently into Slot 2.
+        // Spawn a background worker to generate and enqueue chunks concurrently with the consumer.
     std::thread producerThread([pipeline, numChunks, chunkSize,
                                 totalTriples = totalTriples_]() {
       try {
