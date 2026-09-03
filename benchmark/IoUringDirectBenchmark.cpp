@@ -431,7 +431,7 @@ class IoUringDirectBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Formatter for benchmark results table
+// Format the benchmark results table.
 void printResultsTable(std::string_view accessMode,
                        std::vector<BenchmarkMetric>& results) {
   if (results.empty()) return;
