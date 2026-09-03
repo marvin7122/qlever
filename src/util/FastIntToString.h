@@ -236,15 +236,7 @@ inline char* formatIntBranchless(int64_t val, char* out) noexcept {
 // _____________________________________________________________________________
 // Branchless, zero-allocation conversion of int32_t to ASCII.
 inline char* formatInt32Branchless(int32_t val, char* out) noexcept {
-  AD_CONTRACT_CHECK(out != nullptr);
-  uint32_t uval;
-  if (val < 0) {
-    *out++ = '-';
-    uval = static_cast<uint32_t>(0) - static_cast<uint32_t>(val);
-  } else {
-    uval = static_cast<uint32_t>(val);
-  }
-  return formatUInt32Branchless(uval, out);
+  return formatIntBranchless(static_cast<int64_t>(val), out);
 }
 
 // _____________________________________________________________________________
