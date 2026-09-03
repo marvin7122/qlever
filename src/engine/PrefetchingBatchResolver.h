@@ -153,7 +153,7 @@ class PrefetchingBatchResolver {
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
           const auto wordVocabIndex = pfId.getVocabIndex();
-          // Prefetch the underlying index entry if possible
+          // Prefetch the index implementation object.
           const auto* vocabPtr =
               reinterpret_cast<const void*>(&index.getImpl());
           prefetchVocabEntry(vocabPtr, static_cast<int>(distance));
