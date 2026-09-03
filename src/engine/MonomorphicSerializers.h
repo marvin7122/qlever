@@ -286,7 +286,7 @@ struct MonomorphicCellWriter {
   }
 };
 
-// Delimiter emitter helper
+// Emit a column delimiter.
 template <ExportFormat Format, typename Writer>
 inline void writeColumnDelimiter(Writer& writer) noexcept {
   if constexpr (Format == ExportFormat::Csv) {
