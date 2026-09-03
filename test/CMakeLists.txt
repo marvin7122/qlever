@@ -529,6 +529,8 @@ addLinkAndDiscoverTest(FilterTest engine)
 
 addLinkAndDiscoverTest(ResultTest engine)
 
+addLinkAndDiscoverTest(VectorStreamSourceTest engine)
+
 addLinkAndDiscoverTest(BlankNodeManagerTest)
 
 addLinkAndDiscoverTest(SparqlExpressionGeneratorsTest engine)
