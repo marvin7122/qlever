@@ -563,7 +563,8 @@ TwoSplitVocabulary SplitVocabularyWithDataTest::sv_;
 // _____________________________________________________________________________
 TEST_F(SplitVocabularyWithDataTest,
        SplitVocabularyPartitionMarkerIndicesAndPositions) {
-  // Use marker `0` for plain words and marker `1` for words starting with `"a`.
+  // Marker 0 contains `""` and `"abc"`; marker 1 contains `"xyz"` and
+  // `"axyz"`.
   const std::array<size_t, 5> indices{
       static_cast<size_t>(TwoSplitVocabulary::addMarker(3, 0)),
       static_cast<size_t>(TwoSplitVocabulary::addMarker(1, 1)),
