@@ -106,9 +106,8 @@ class ExportPipelineRouter {
   // Return false for queries containing unsupported constructs (e.g. distributed
   // federated queries or complex custom service endpoints).
   [[nodiscard]] static bool isEligibleForFastStreaming(const ParsedQuery& query) noexcept {
-    // 1. CONSTRUCT queries and standard SELECT * / tuple projections are eligible
+        // CONSTRUCT and SELECT queries are currently eligible.
     if (query._clause.isConstructClause() || query._clause.isSelectClause()) {
-      // Check for unsupported query features
       if (hasUnsupportedConstructs(query)) {
         return false;
       }
