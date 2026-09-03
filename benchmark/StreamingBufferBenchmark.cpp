@@ -186,7 +186,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     l1MissCounter.start();
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
-    // Stream 256 MB buffer in chunks using standard memcpy (pollutes CPU caches)
+    // Copy the 256 MB buffer in chunks using ordinary cached memcpy accesses; this may evict vocabulary data.
     for (size_t offset = 0; offset < BufferSizeBytes; offset += chunkSize) {
       const size_t currentChunk = std::min(chunkSize, BufferSizeBytes - offset);
       std::memcpy(destBuffer.data() + offset, srcBuffer.data() + offset, currentChunk);
