@@ -265,8 +265,11 @@ void printResults(const std::vector<BenchmarkResult>& results) {
 
 int main(int argc, char** argv) {
   size_t numTriples = 2'000'000;
-  if (argc > 1) {
-    numTriples = std::stoull(argv[1]);
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg != "-p" && !arg.empty() && std::isdigit(static_cast<unsigned char>(arg[0]))) {
+      numTriples = std::stoull(arg);
+    }
   }
 
   std::cout << "Generating sorted Wikidata SPO stream with " << numTriples
