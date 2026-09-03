@@ -172,7 +172,7 @@ class ExportPipelineRouter {
     return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
   }
 
-  // Checks if string value is falsy ("0", "false", "no", "off").
+  
   [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
     auto lower = ad_utility::getLowercase(val);
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
