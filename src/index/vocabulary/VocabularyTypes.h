@@ -626,9 +626,7 @@ class MarkerBatchLookups {
   std::array<std::optional<VocabBatchLookupResult>, NumVocabs> results_{};
 
  public:
-  // Create an empty set of per-marker lookup-result slots to be populated
-  // before single-release consumption.
-  MarkerBatchLookups() = default;
+    MarkerBatchLookups() = default;
 
   // Return the lookup result for the given vocabulary marker.
   std::optional<VocabBatchLookupResult>& operator[](size_t marker) {
