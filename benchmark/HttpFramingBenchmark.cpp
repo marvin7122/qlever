@@ -81,8 +81,7 @@ class Standard2BufferCopyHttpFraming {
     AD_CONTRACT_CHECK(ec == std::errc{});
     const size_t hexLen = ptr - hexBuf;
 
-    // 2. Copy hex header into output buffer
-    char* dst = framedBuffer_.data();
+        char* dst = framedBuffer_.data();
     std::memcpy(dst, hexBuf, hexLen);
     dst += hexLen;
     *dst++ = '\r';
