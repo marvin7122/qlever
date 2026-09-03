@@ -118,7 +118,7 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
   EXPECT_EQ(next, buffer.data() + 4);
   EXPECT_EQ(std::string_view(buffer.data(), 4), "> .\n");
 
-  // Test writing 1-byte delimiter
+  // Test writing a 1-byte delimiter.
   buffer.fill('Y');
   next = SwarDelimiterPacker::writeDelim64(buffer.data(),
                                           SwarDelimiterPacker::TSV_TAB, 1);
