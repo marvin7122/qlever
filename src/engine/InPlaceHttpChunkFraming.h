@@ -277,7 +277,7 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
     char* framedStart = detail::writeHexDigitsBackwards(headerEnd - 2,
                                                        payloadBytes, digits);
 
-    // Trailing CRLF
+    
     char* tailPtr = headerEnd + payloadBytes;
     *(tailPtr) = '\r';
     *(tailPtr + 1) = '\n';
