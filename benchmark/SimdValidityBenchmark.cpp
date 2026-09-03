@@ -32,7 +32,7 @@ using namespace ad_utility::simd;
 namespace {
 
 // _____________________________________________________________________________
-// Hardware branch performance counter using Linux perf_event.
+// Use Linux `perf_event` counters to measure branch performance.
 class HardwarePerfCounter {
  private:
 #if defined(__linux__)
