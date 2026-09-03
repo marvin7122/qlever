@@ -257,7 +257,7 @@ TEST(SimdValidityBitmaskTest, ScanColumnLarge) {
 
 // _____________________________________________________________________________
 TEST(SimdValidityBitmaskTest, VectorizedStoreCsvAndTsv) {
-  // Test 64 delimiter tokens
+    // Test 64 delimiter tokens.
   std::string buffer(128, 'x');
 
   // CSV store
