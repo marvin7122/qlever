@@ -413,12 +413,12 @@ TYPED_TEST(CompressedVocabularyF, ScanAllViewInvalidAfterNextPull) {
 }
 
 // _____________________________________________________________________________
-// `lookupBatch` with several decoder blocks: a small block size (2 words per
-// block) forces multiple decoders, exercising the per-request decoder
-// selection. Covers a single-element batch, a batch with repeated indices,
-// and a mixed batch crossing block boundaries; results must match
-// `operator[]` exactly and appear in request order, with all views staying
-// valid while the returned result object lives.
+// Verify that `lookupBatch` works with several decoder blocks. A small block
+// size (2 words per block) forces multiple decoders and exercises per-request
+// decoder selection. Cover a single-element batch, repeated indices, and a
+// mixed batch crossing block boundaries; results must match `operator[]` exactly
+// and appear in request order, with all views staying valid while the returned
+// result object lives.
 TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   const std::vector<std::string> words{"alpha", "beta",  "gamma", "delta",
                                        "epsi",  "zeta",  "eta",   "theta",
