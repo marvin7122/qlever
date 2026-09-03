@@ -34,8 +34,7 @@
 namespace ad_benchmark {
 
 // _____________________________________________________________________________
-// End-to-End Export Benchmark: Simulates full server SPARQL SELECT & CONSTRUCT
-// streaming pipelines across 5,000,000 rows across all optimization layers.
+// Synthetic export-formatting benchmark over 5,000,000 rows.
 class EndToEndExportBenchmark : public BenchmarkInterface {
  public:
   std::string name() const final {
