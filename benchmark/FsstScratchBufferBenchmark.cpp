@@ -60,8 +60,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   // Size the final output buffer to the maximum fully decompressed size across
   // the benchmark inputs.
   size_t outputCapacity_ = 0;
-  // Bound required for intermediate repeated-FSST stages, avoiding a full-size
-  // scratch allocation.
+  // Size the scratch allocation for intermediate repeated-FSST stages without
+  // using the full output size.
   size_t intermediateCapacity_ = 0;
 
  public:
