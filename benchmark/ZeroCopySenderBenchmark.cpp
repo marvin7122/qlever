@@ -149,7 +149,7 @@ struct BenchmarkMetric {
 };
 
 // _____________________________________________________________________________
-// Benchmark test harness evaluating network transmission paradigms.
+// Evaluate network transmission paradigms.
 class ZeroCopySenderBenchmarkRunner {
  private:
   size_t totalBytes_ = kTotalSendSizeBytes;
