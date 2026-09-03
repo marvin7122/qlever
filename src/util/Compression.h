@@ -18,7 +18,7 @@
 
 namespace ad_utility {
 
-// Compression functionality is intentionally not declared in this header.
+// Do not declare compression functionality in this header.
 
 }  // namespace ad_utility
 
