@@ -51,7 +51,7 @@ class MockVocabulary {
 };
 
 // _____________________________________________________________________________
-// Synthetic Wikidata sorted SPO triple stream dataset.
+// Synthetic Wikidata triple stream dataset with subject-grouped runs.
 // Subject runs average 500 triples per entity.
 struct WikidataStreamDataset {
   std::vector<ValueId> subjects_;
