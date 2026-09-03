@@ -35,7 +35,7 @@ using qlever::export_pipeline::PipelineStats;
 // including mock IRI/literal formatting, string escaping, and buffer population.
 static std::string generateRdfChunk(size_t numTriples, size_t chunkIndex) {
   std::string chunk;
-  // Pre-allocate approximately 120 bytes per triple
+  // Pre-allocate approximately 120 bytes per triple.
   chunk.reserve(numTriples * 120);
 
   for (size_t i = 0; i < numTriples; ++i) {
