@@ -68,6 +68,7 @@ class Values : virtual public Operation {
   //
   // NOTE: this moves the values out of `parsedValues_` (to save a string copy
   // for those values that end up in the local vocabulary).
+  void writeValues(IdTable* idTablePtr, LocalVocab* localVocab);
 };
 
 // Helper to create a 1-row VALUES tree for a single variable and value.
