@@ -223,7 +223,7 @@ TEST(FastIntToStringTest, FormatInt32Branchless) {
 TEST(FastIntToStringTest, FormatQidAndPid) {
   char buf[128];
 
-  // QID tests
+    // Test QID formatting.
   {
     char* end = formatQid(42ULL, buf);
     EXPECT_EQ(std::string_view(buf, end - buf), "http://www.wikidata.org/entity/Q42");
