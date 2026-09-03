@@ -20,7 +20,7 @@
 
 using namespace ql::engine::rle;
 
-// Structural invariant concept checks
+
 static_assert(ad_utility::InvariantStatefulClass<RlePrefixFormatter>);
 static_assert(ad_utility::InvariantStatefulClass<RleTripleFormatter>);
 
