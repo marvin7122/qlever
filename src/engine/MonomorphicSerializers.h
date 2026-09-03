@@ -171,7 +171,7 @@ concept FormatterWriter = requires(Writer& w, char c, std::string_view sv, int64
 
 namespace detail {
 
-// Double / Float serialization without dynamic allocation
+// Serialize a double without dynamic allocation.
 template <typename Writer>
 inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   std::array<char, 32> buffer;
