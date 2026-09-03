@@ -168,7 +168,7 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Estimated row bytes alias for consistency.
+  
   [[nodiscard]] double estimatedRowBytes() const noexcept {
     return estimatedRowBytes_;
   }
