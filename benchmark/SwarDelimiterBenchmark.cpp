@@ -80,7 +80,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
     char* const bufLimit = outputBuffer_.data() + outputBuffer_.size() - 4096;
 
     // =========================================================================
-    // Group 1: N-Triples 3-Column IRI Serialization (<s> <p> <o> .\n)
+    
     // =========================================================================
     {
       auto& group = results.addGroup(
