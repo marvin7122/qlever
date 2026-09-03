@@ -66,8 +66,7 @@ inline char* spliceSlice(const char* src, size_t len, char* out) noexcept {
 }
 
 // _____________________________________________________________________________
-// Internal thread-local prefix slice storage.
-// Holds the pre-formatted bytes for the currently cached ValueId.
+// Prefix slice cache storage for the currently cached ValueId.
 template <size_t MaxBufferSize = 2048>
 class RlePrefixSlice : public ad_utility::WithInvariants<RlePrefixSlice<MaxBufferSize>> {
  private:
