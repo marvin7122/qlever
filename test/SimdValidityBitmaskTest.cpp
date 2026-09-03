@@ -47,7 +47,7 @@ TEST(SimdValidityBitmaskTest, ValidityBitmask64Basics) {
   EXPECT_EQ(allValid.firstUnboundIndex(), 64u);
   EXPECT_EQ(allValid.firstValidIndex(), 0u);
 
-  // Row inspection and mutation
+  // Inspect and mutate individual rows.
   ValidityBitmask64 mask;
   for (size_t i = 0; i < 64; ++i) {
     EXPECT_TRUE(mask.isRowUnbound(i));
