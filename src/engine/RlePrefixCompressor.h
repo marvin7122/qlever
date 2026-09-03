@@ -423,7 +423,7 @@ class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter>
     char* curr =
         subjectFormatter_.formatPrefixWithLookup(subjId, lookupFunc, out);
 
-    // 2. Spliced Predicate prefix with lazy lookup
+    
     curr =
         predicateFormatter_.formatPrefixWithLookup(predId, lookupFunc, curr);
 
