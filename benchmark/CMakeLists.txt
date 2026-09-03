@@ -43,6 +43,12 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(SimdEscapeClassifierBenchmark engine sparqlParser qlever_util)
     addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
-    addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
+    # Standalone: do not use addAndLinkBenchmark (benchmark → sparqlParser →
+    # IndexImpl). That graph fails on Wolga GCC 11 + range-v3; SEND_ZC only
+    # needs qlever_util + liburing (global).
+    add_executable(ZeroCopySenderBenchmark ZeroCopySenderBenchmark.cpp)
+    qlever_target_link_libraries(ZeroCopySenderBenchmark qlever_util)
+    target_compile_definitions(ZeroCopySenderBenchmark PRIVATE
+                               QLEVER_ZEROCOPY_BENCH_STANDALONE=1)
 
 endif()
