@@ -18,7 +18,7 @@ using ad_utility::url_parser::ParamValueMap;
 namespace {
 
 ParsedQuery parse(std::string_view queryStr) {
-  return SparqlParser::parseQuery(std::string(queryStr));
+  return SparqlParser::parseQuery(nullptr, std::string(queryStr));
 }
 
 TEST(ExportPipelineRouterTest, ToStringFunction) {
