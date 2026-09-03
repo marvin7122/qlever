@@ -619,8 +619,7 @@ IndicesAndPositionsByMarker<NumVocabs> partitionMarkerIndicesAndPositions(
 // _____________________________________________________________________________
 // Batch lookup results for each underlying vocabulary, indexed by vocabulary
 // marker. Stores results only from vocabularies with lookup indices in this
-// batch. The single-release invariant guarantees that each slot is consumed at
-// most once.
+// batch. `release()` moves out and resets the result stored for a marker.
 template <size_t NumVocabs>
 class MarkerBatchLookups {
  private:
