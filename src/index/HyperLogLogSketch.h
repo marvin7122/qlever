@@ -46,9 +46,9 @@ class HyperLogLogSketch {
 
   void insert(Id id) noexcept {
     uint64_t hash = hashValue(id);
-    size_t regIdx = static_cast<size_t>(hash & REGISTER_MASK);
-    uint64_t remaining = hash >> Precision;
-    uint8_t leadingZeros = static_cast<uint8_t>(std::countl_zero(remaining | 1ULL)) + 1;
+    size_t regIdx = static_cast<size_t>(hash >> (64 - Precision));
+    uint64_t remaining = (hash << Precision) | 1ULL;
+    uint8_t leadingZeros = static_cast<uint8_t>(std::countl_zero(remaining)) + 1;
 
     if (leadingZeros > registers_[regIdx]) {
       registers_[regIdx] = leadingZeros;
@@ -68,7 +68,7 @@ class HyperLogLogSketch {
     size_t zeroRegisters = 0;
 
     for (size_t i = 0; i < NUM_REGISTERS; ++i) {
-      sum += 1.0 / (1ULL << registers_[i]);
+      sum += 1.0 / static_cast<double>(1ULL << registers_[i]);
       if (registers_[i] == 0) {
         zeroRegisters++;
       }
