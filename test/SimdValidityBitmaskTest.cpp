@@ -266,7 +266,7 @@ TEST(SimdValidityBitmaskTest, VectorizedStoreCsvAndTsv) {
   for (size_t i = 0; i < 64; ++i) {
     EXPECT_EQ(buffer[i], ',');
   }
-  EXPECT_EQ(buffer[64], 'x');  // No buffer overflow
+    EXPECT_EQ(buffer[64], 'x');  // Verify that the buffer is not overrun.
 
   // TSV store
   std::fill(buffer.begin(), buffer.end(), 'y');
