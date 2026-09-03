@@ -293,8 +293,8 @@ struct BranchingIfElseDispatcher {
 };
 
 // _____________________________________________________________________________
-// Benchmark dataset generator for mixed RDF distribution.
-// 50% IRIs, 30% Literals, 10% Blank Nodes, 10% Integers.
+// Benchmark dataset generator with the following expected distribution:
+// 50% IRIs, 30% text-record literals, 10% blank nodes, and 10% integers.
 struct BenchmarkDataset {
   std::vector<ValueId> ids_;
   std::vector<std::string> stringStorage_;
