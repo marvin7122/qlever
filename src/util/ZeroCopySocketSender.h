@@ -67,7 +67,7 @@ struct ZeroCopySenderConfig {
 
 // _____________________________________________________________________________
 // Preallocated, page-aligned fixed memory buffer pool.
-// Manages zero-copy DMA buffers registered with the kernel via
+// Provides buffers that can optionally be registered with the kernel via
 // IORING_REGISTER_BUFFERS. Provides O(1) buffer acquisition and recycling with
 // zero runtime dynamic allocations.
 class ZeroCopyBufferPool : public WithInvariants<ZeroCopyBufferPool> {
