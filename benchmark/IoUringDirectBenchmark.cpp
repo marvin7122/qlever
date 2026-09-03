@@ -142,7 +142,7 @@ class IoUringDirectBenchmarkRunner {
       std::string filePath, size_t batchBlocks = kDefaultBatchBlocks)
       : filePath_{std::move(filePath)}, batchBlocks_{batchBlocks} {}
 
-  // 1. Baseline: Synchronous pread() with standard page cache
+  // Run the baseline with synchronous `pread()` and the standard page cache.
   BenchmarkMetric runSyncPread(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/false);
     AD_CONTRACT_CHECK(file.isOpen());
