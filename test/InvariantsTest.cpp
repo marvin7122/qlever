@@ -47,7 +47,7 @@ class MockInvariantClass
 };
 
 // _____________________________________________________________________________
-// Define a class that lacks `checkInvariants() const` to verify concept failure.
+
 struct ClassWithoutInvariants {};
 
 // Check the invariant-stateful-class concept for supported and unsupported types.
