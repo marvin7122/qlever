@@ -62,9 +62,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
 
   auto partition = partitionIndicesBySource(indices, internalVocab_);
 
-  // Take the fast path when all indices are resolved through the external
-  // (disk) vocabulary.
-  if (partition.internalSlots_.empty()) {
+    if (partition.internalSlots_.empty()) {
     return externalVocab_.lookupBatch(
         partition.diskSlots_.getUnderlyingIndices());
   }
