@@ -70,4 +70,19 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
     addAndLinkBenchmark(EndToEndExportBenchmark engine sparqlParser qlever_util)
+
+    add_executable(AdaptiveChunkBenchmark AdaptiveChunkBenchmark.cpp)
+    linkBenchmark(AdaptiveChunkBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SimdValidityBenchmark SimdValidityBenchmark.cpp)
+    linkBenchmark(SimdValidityBenchmark engine sparqlParser qlever_util)
+
+    add_executable(RlePrefixBenchmark RlePrefixBenchmark.cpp)
+    linkBenchmark(RlePrefixBenchmark engine sparqlParser qlever_util)
+
+    add_executable(HttpFramingBenchmark HttpFramingBenchmark.cpp)
+    linkBenchmark(HttpFramingBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SwarDelimiterBenchmark SwarDelimiterBenchmark.cpp)
+    linkBenchmark(SwarDelimiterBenchmark engine sparqlParser qlever_util)
 endif()
