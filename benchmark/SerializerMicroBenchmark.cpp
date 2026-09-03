@@ -50,7 +50,7 @@ struct AllocationTracker {
   }
 };
 
-// Global new/delete instrumentation for allocation counting during benchmark runs.
+// Instrument global new and delete to count allocations during benchmark runs.
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
