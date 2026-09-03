@@ -130,7 +130,7 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
   next = SwarDelimiterPacker::writeDelim64(buffer.data(), 0, 0);
   EXPECT_EQ(next, buffer.data());
 
-  // Test writing full 8-byte pattern
+  // Test writing the full 8-byte pattern.
   buffer.fill('A');
   uint64_t pat8 = SwarDelimiterPacker::pack("12345678");
   next = SwarDelimiterPacker::writeDelim64(buffer.data(), pat8, 8);
