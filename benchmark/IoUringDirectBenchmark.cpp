@@ -470,7 +470,7 @@ void printResultsTable(std::string_view accessMode,
 }  // namespace
 
 #ifdef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
-// Integration into QLever's Benchmark Framework
+// Integrate the benchmark into QLever's benchmark framework.
 class IoUringDirectBenchmark : public BenchmarkInterface {
  public:
   std::string name() const final {
