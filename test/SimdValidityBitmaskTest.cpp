@@ -102,7 +102,7 @@ TEST(SimdValidityBitmaskTest, BitwiseOperators) {
 
 // _____________________________________________________________________________
 TEST(SimdValidityBitmaskTest, ForEachValidAndUnbound) {
-  ValidityBitmask64 mask{0x1000000000000001ULL};  // Bits 0 and 60 set
+    ValidityBitmask64 mask{0x1000000000000001ULL};  // Set bits `0` and `60`.
 
   std::vector<size_t> validIndices;
   mask.forEachValid([&](size_t idx) { validIndices.push_back(idx); });
