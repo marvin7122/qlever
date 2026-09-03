@@ -323,9 +323,9 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
         adaptiveRes.ttfbMs > 0 ? (fixedRes.ttfbMs / adaptiveRes.ttfbMs) : 1.0;
 
     std::cout << std::string(104, '-') << "\n";
-    std::cout << ">> TTFB Latency Improvement: " << std::fixed
+        std::cout << ">> First-Chunk Generation Improvement: " << std::fixed
               << std::setprecision(1) << ttfbImprovement
-              << "x faster time to first byte with Adaptive Chunk Sizing!\n";
+              << "x faster first-chunk generation with Adaptive Chunk Sizing!\n";
     std::cout << "========================================================================================================\n\n";
 
     return results;
