@@ -177,7 +177,11 @@ addLinkAndDiscoverTest(StringUtilsTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
+<<<<<<< HEAD
 addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
+=======
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
+>>>>>>> 9ead3fd4d (feat(export-v2): add SIMD escape classifier)
 
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
