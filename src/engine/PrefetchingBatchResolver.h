@@ -56,7 +56,7 @@ inline void prefetchVocabEntry(const void* address,
 }
 
 // _____________________________________________________________________________
-// Helper for prefetching a typed pointer with an optional index offset.
+// Helper for prefetching the address held by a typed pointer.
 template <typename T>
 inline void prefetchAddress(const T* address) noexcept {
   prefetchVocabEntry(static_cast<const void*>(address));
