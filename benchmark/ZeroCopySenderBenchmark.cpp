@@ -209,7 +209,7 @@ class ZeroCopySenderBenchmarkRunner {
   }
 
   // Run the standard unpinned-buffer `io_uring` send.
-  BenchmarkMetric runIoUringStandardSend() {
+    BenchmarkMetric runIoUringStandardSend() {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
 
@@ -222,7 +222,6 @@ class ZeroCopySenderBenchmarkRunner {
 
     ZeroCopySocketSender sender(config);
 
-    // Background receiver thread
     std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
       std::vector<char> buf(64 * 1024);
       size_t totalReceived = 0;
