@@ -121,7 +121,7 @@ inline void setRuntimeLogLevel(LogLevel level) {
   detail::runtimeLogLevel.store(level.value(), std::memory_order_relaxed);
 }
 
-// RAII helper to temporarily set a runtime log level and restore it on scope exit.
+// Temporarily set a runtime log level and restore it on scope exit.
 class ScopedLogLevel {
  private:
   LogLevel::Enum previousLevel_;
