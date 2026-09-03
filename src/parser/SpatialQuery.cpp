@@ -251,7 +251,7 @@ SpatialJoinConfiguration SpatialQuery::toSpatialJoinConfiguration() const {
 
   return SpatialJoinConfiguration{
       task, left_.value(), right_.value(), distanceVariable_,
-      pv,   algo,          rightCacheName_};
+      pv,   algo,          joinType,       rightCacheName_};
 }
 
 // ____________________________________________________________________________
