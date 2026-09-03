@@ -82,7 +82,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
   std::vector<EvaluatedTriple> triples;
   triples.reserve(numTriples);
 
-  // Common predicates
+    // Define common predicates.
   auto predLabel = std::make_shared<EvaluatedTermData>(
       "<http://www.w3.org/2000/01/rdf-schema#label>", nullptr);
   auto predType = std::make_shared<EvaluatedTermData>(
