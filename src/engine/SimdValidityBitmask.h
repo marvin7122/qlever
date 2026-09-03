@@ -52,7 +52,7 @@ class ValidityBitmask64 {
     constexpr explicit ValidityBitmask64(uint64_t mask = 0) noexcept
       : mask_{mask} {}
 
-  // Factory methods for clear intent
+  // Provide factory methods for clear intent.
   [[nodiscard]] static constexpr ValidityBitmask64 allValidMask() noexcept {
     return ValidityBitmask64{~0ULL};
   }
