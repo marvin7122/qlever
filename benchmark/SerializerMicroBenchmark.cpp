@@ -122,7 +122,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
             "\"Simple Label " + std::to_string(i) + "\"@en", nullptr);
         break;
       case 2:
-        // Literal requiring escaping (quotes, newlines, tabs)
+                // Generate a literal requiring escaping for quotes, newlines, and tabs.
         obj = std::make_shared<EvaluatedTermData>(
             "\"Title with \\\"quotes\\\" and \nnewline and \ttab " +
                 std::to_string(i) + "\"",
