@@ -740,8 +740,7 @@ class WordAndIndex {
   std::optional<uint64_t> previousIndex_ = std::nullopt;
 
  public:
-  // ___________________________________________________________________________
-  // Query for the special `end` semantics.
+    // Query for the special `end` semantics.
   bool isEnd() const { return !wordAndIndex_.has_value(); }
 
   // ___________________________________________________________________________
