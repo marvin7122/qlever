@@ -38,9 +38,9 @@ CPP_template(typename T)(
     // Store a non-owning pointer to the guarded object. Ensure that the guard
   // does not outlive this object.
   const T* self_;
-  // Exception count at construction distinguishes normal scope exit from
-  // stack unwinding, allowing the exit invariant check to be skipped when
-  // unwinding through this scope.
+    // Record the exception count at construction to distinguish normal scope
+  // exit from stack unwinding. Skip the exit invariant check while unwinding
+  // through this scope.
   int uncaughtExceptionsAtConstruction_;
 
  public:
