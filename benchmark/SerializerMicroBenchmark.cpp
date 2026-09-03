@@ -201,7 +201,7 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
                                      static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0));
       }
 
-      // 2. FastExportStreamFormatter: zero-allocation serialization
+      // 2. FastExportStreamFormatter: chunked streaming serialization
       {
         size_t fastAllocations = 0;
         size_t totalBytesWritten = 0;
