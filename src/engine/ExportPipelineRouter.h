@@ -166,7 +166,7 @@ class ExportPipelineRouter {
     return targetMode;
   }
 
-  // Checks if string value is truthy ("1", "true", "yes", "on").
+  
   [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
     auto lower = ad_utility::getLowercase(val);
     return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
