@@ -557,8 +557,7 @@ class MarkerIndicesAndPositions
   }
 
   // ___________________________________________________________________________
-  // Add a (`underlyingIndex`, `resultPosition`) pair.
-  void addPair(size_t underlyingIndex, size_t resultPosition) {
+    void addPair(size_t underlyingIndex, size_t resultPosition) {
     auto guard = makeInvariantGuard();
     underlyingIndices_.push_back(underlyingIndex);
     resultPositions_.push_back(resultPosition);
