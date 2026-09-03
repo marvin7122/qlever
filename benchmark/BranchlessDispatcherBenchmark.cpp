@@ -449,8 +449,7 @@ int main(int argc, char** argv) {
             << " terms...\n";
   auto dataset = BenchmarkDataset::generate(numTerms);
 
-  // Allocate 512 MB buffer for formatted outputs
-  std::vector<char> outputBuffer(numTerms * 128);
+    std::vector<char> outputBuffer(numTerms * 128);
 
   HardwarePerfCounter perf;
   if (perf.isSupported()) {
