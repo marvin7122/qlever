@@ -106,7 +106,7 @@ class Standard2BufferCopyHttpFraming {
 };
 
 // _____________________________________________________________________________
-// Synthetic stream source generating realistic RDF export data
+// Synthetic stream source generating random RDF-like byte data
 class SyntheticExportStreamGenerator {
  private:
   std::vector<char> syntheticData_;
