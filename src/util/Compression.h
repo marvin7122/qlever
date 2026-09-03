@@ -11,14 +11,29 @@
 #define QLEVER_COMPRESSION_H
 
 #include <cstddef>
-#include <string_view>
 
 #include "backports/span.h"
 #include "util/Exception.h"
 
 namespace ad_utility {
 
-// Compression functionality is intentionally not declared in this header.
+// Decompress a single word into `destination` using `decompress(span)`. The
+// caller guarantees that `decompress` writes at most `bound` bytes, so
+// `destination` must hold at least `bound` bytes (precondition), and at least
+// one byte (`bound > 0`, precondition): words with a zero upper bound carry no
+// payload, so callers register their empty views directly instead of routing
+// them through this helper. Writing zero bytes is still legitimate here:
+// e.g. the FSST decoder emits nothing for an empty stored word even when it
+// is invoked with a positive bound.
+template <typename DecompressFunc>
+std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
+                                    DecompressFunc&& decompress) {
+  AD_CONTRACT_CHECK(bound > 0);
+  AD_CONTRACT_CHECK(destination.size() >= bound);
+  size_t bytesWritten = decompress(destination);
+  AD_CORRECTNESS_CHECK(bytesWritten <= bound);
+  return std::string_view{destination.data(), bytesWritten};
+}
 
 }  // namespace ad_utility
 
