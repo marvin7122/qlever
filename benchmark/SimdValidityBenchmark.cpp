@@ -260,7 +260,7 @@ BenchmarkResult runBenchmark(const std::string& name,
                              const OptionalColumnDataset& ds,
                              std::vector<char>& outputBuffer,
                              HardwarePerfCounter& perf, size_t iterations = 5) {
-  // Warmup
+  // Warm up the exporter.
   Exporter::exportCsv(ds.columnData_, outputBuffer.data());
 
   double totalMs = 0.0;
