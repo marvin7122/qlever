@@ -628,8 +628,7 @@ class MarkerBatchLookups {
  public:
     MarkerBatchLookups() = default;
 
-  // Return the lookup result for the given vocabulary marker.
-  std::optional<VocabBatchLookupResult>& operator[](size_t marker) {
+    std::optional<VocabBatchLookupResult>& operator[](size_t marker) {
     AD_CORRECTNESS_CHECK(marker < NumVocabs);
     return results_[marker];
   }
