@@ -134,7 +134,7 @@ class SyntheticExportStreamGenerator {
 };
 
 // _____________________________________________________________________________
-// Benchmark Runner comparing Standard 2-Buffer Copy vs In-Place HTTP Framing
+// Compare standard two-buffer copying with in-place HTTP framing.
 class HttpFramingBenchmarkRunner {
  public:
   // 1. Baseline: Standard 2-Buffer Copy HTTP Framing across 500 MB
