@@ -101,17 +101,17 @@ TEST(AdaptiveChunkSizerTest, ExponentialRampUpProgression) {
 TEST(AdaptiveChunkSizerTest, DynamicRowEstimation) {
   AdaptiveChunkSizer sizer;
 
-  // Suppose actual row format produces 250 bytes per row
+    // Assume that the actual row format produces 250 bytes per row.
   const size_t rows = 260;
   const size_t bytes = rows * 250;
   sizer.recordChunk(bytes, rows);
 
-  // Estimated row bytes should adjust towards 250
+  // Verify that the estimated row size moves towards 250 bytes.
   EXPECT_GT(sizer.averageRowBytes(), 150.0);
   EXPECT_LE(sizer.averageRowBytes(), 250.0);
 
-  // Next chunk target is 128 KB (131072 bytes).
-  // Target rows should reflect the updated row size estimate.
+  // Verify that the next chunk target is 128 KiB (`131072` bytes).
+  // Verify that the target row count reflects the updated row-size estimate.
   const size_t expectedTargetRows = static_cast<size_t>(
       std::ceil(static_cast<double>(128 * 1024) / sizer.averageRowBytes()));
   EXPECT_EQ(sizer.targetRowCount(), expectedTargetRows);
