@@ -1,5 +1,5 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
+// Copyright 2026, University of Freiburg,
+// Chair of Algorithms and Data Structures.
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
 #include "engine/export_v2/ElasticExportScheduler.h"
@@ -31,6 +31,9 @@ ExportWorkLease::ExportWorkLease(ExportWorkLease&& other) noexcept
       active_{other.active_} {
   other.active_ = false;
   other.scheduler_ = nullptr;
+  other.epoch_ = 0;
+  other.jobId_ = 0;
+  other.leaseId_ = 0;
 }
 
 ExportWorkLease& ExportWorkLease::operator=(ExportWorkLease&& other) noexcept {
@@ -43,6 +46,9 @@ ExportWorkLease& ExportWorkLease::operator=(ExportWorkLease&& other) noexcept {
     active_ = other.active_;
     other.active_ = false;
     other.scheduler_ = nullptr;
+    other.epoch_ = 0;
+    other.jobId_ = 0;
+    other.leaseId_ = 0;
   }
   return *this;
 }
@@ -228,7 +234,7 @@ void ElasticExportScheduler::workerLoop() {
                (!queue_.empty() && isHelperAdmissionEligibleUnsafe());
       });
 
-      if (stopping_.load(std::memory_order_relaxed) && queue_.empty()) {
+      if (stopping_.load(std::memory_order_relaxed)) {
         break;
       }
 
