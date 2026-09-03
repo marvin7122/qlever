@@ -32,11 +32,12 @@ namespace ad_utility {
 
 // _____________________________________________________________________________
 // High-throughput streaming buffer writer that utilizes non-temporal vector
-// stores (`_mm_stream_si128` / `MOVNTDQ`) for 64-byte aligned blocks.
+// stores (`_mm_stream_si128` / `MOVNTDQ`) in 64-byte blocks using 16-byte-
+// aligned stores.
 //
-// Bypasses the CPU cache hierarchy (L1/L2/L3) directly to DRAM via CPU
-// write-combining (WC) buffers. This prevents multi-gigabyte export streaming
-// chunks from evicting hot vocabulary tries, index metadata, and query caches.
+// Uses CPU write-combining (WC) buffers to reduce cache pollution from
+// multi-gigabyte export streaming chunks, helping preserve hot vocabulary
+// tries, index metadata, and query caches.
 //
 // Conforms to the Software Architecture Standard (~/ARCHITECTURE.md):
 // - Deep Module: Hides vector intrinsics, alignment math, and memory barriers.
