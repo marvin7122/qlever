@@ -35,7 +35,7 @@ TEST(SimdValidityBitmaskTest, ValidityBitmask64Basics) {
   EXPECT_EQ(defaultMask.firstUnboundIndex(), 0u);
   EXPECT_EQ(defaultMask.firstValidIndex(), 64u);
 
-  // All valid mask
+  // Test an all-valid mask.
   auto allValid = ValidityBitmask64::allValidMask();
   EXPECT_TRUE(allValid.allValid());
   EXPECT_FALSE(allValid.allUnbound());
