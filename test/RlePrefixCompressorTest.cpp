@@ -109,7 +109,7 @@ TEST(RlePrefixCompressorTest, UnsortedAlternatingIds) {
   std::array<char, 1024> buffer{};
   char* curr = buffer.data();
 
-  // Alternating: A, B, A, B
+  // Format alternating values: `A`, `B`, `A`, `B`.
   curr = formatter.formatPrefix(idA, termA, curr);
   curr = formatter.formatPrefix(idB, termB, curr);
   curr = formatter.formatPrefix(idA, termA, curr);
