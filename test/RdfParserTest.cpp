@@ -1867,8 +1867,7 @@ TEST(RdfParserTest, getLineLogsRemainingUnparsedBytesWhenInputExhausted) {
   EXPECT_EQ(triple.subject_, iri("<a>"));
   EXPECT_EQ(triple.predicate_, iri("<b>"));
   EXPECT_EQ(triple.object_, iri("<c>"));
-  // The parser logs the unparsed trailing bytes, marks itself exhausted, and
-  // returns `false` from subsequent `getLine` calls instead of throwing.
+    // The parser logs the unparsed trailing bytes and marks itself exhausted.
   EXPECT_FALSE(parser.getLine(triple));
 
   std::string log = logStream.str();
