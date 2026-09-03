@@ -73,8 +73,7 @@ TEST(InPlaceHttpChunkFramingTest, HexLengthFormattingExhaustive) {
     InPlaceHttpChunk chunk(size);
     EXPECT_EQ(chunk.maxPayloadCapacity(), size);
 
-    // Populate payload with deterministic pattern
-    for (size_t i = 0; i < size; ++i) {
+        for (size_t i = 0; i < size; ++i) {
       chunk.payloadData()[i] = static_cast<char>('a' + (i % 26));
     }
 
