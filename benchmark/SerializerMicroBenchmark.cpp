@@ -91,7 +91,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
       "<http://example.org/prop/hasValue>", nullptr);
 
   for (size_t i = 0; i < numTriples; ++i) {
-    // Subject: Entity IRI or Blank Node
+        // Generate an entity IRI or blank node as the subject.
     EvaluatedTerm subj;
     if (i % 10 == 0) {
       subj = std::make_shared<EvaluatedTermData>(
