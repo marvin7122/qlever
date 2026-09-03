@@ -21,7 +21,7 @@
 namespace {
 
 // _____________________________________________________________________________
-// Define a mock stateful class that counts invocations of `checkInvariants()`.
+
 class MockInvariantClass
     : public ad_utility::WithInvariants<MockInvariantClass> {
  public:
