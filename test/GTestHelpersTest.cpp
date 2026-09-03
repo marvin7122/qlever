@@ -72,8 +72,8 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
     EXPECT_TRUE(pointsIntoObject(shortString.data(), shortString));
     EXPECT_EQ(shortString.size(), size);
   }
-  // Sanity check of the observation itself: a string above the SSO threshold
-  // must NOT be stored inside the object.
+    // A 64-character string must not store its character data inside the
+  // string object.
   std::pmr::string longString(64, 'y');
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
 }
