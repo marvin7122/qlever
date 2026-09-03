@@ -70,15 +70,15 @@ TEST(RlePrefixCompressorTest, DynamicSwitchingWhenRunEnds) {
   std::array<char, 4096> buffer{};
   char* curr = buffer.data();
 
-  // 5 of A
+  // Format five rows with `A`.
   for (size_t i = 0; i < 5; ++i) {
     curr = formatter.formatPrefix(idA, termA, curr);
   }
-  // 3 of B
+  // Format three rows with `B`.
   for (size_t i = 0; i < 3; ++i) {
     curr = formatter.formatPrefix(idB, termB, curr);
   }
-  // 4 of C
+  // Format four rows with `C`.
   for (size_t i = 0; i < 4; ++i) {
     curr = formatter.formatPrefix(idC, termC, curr);
   }
