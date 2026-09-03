@@ -263,7 +263,7 @@ TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
   *sPtr++ = '.';
   *sPtr++ = '\n';
 
-  // SWAR writer
+  // Write the row using SWAR.
   char* wPtr = swarBuf.data();
   *wPtr++ = '<';
   std::memcpy(wPtr, sub.data(), sub.size());
