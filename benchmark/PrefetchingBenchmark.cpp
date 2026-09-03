@@ -343,7 +343,7 @@ class PrefetchingBenchmark : public BenchmarkInterface {
       }
     }
 
-    // 2. Evaluated Prefetched Lookups with varying distances (K = 4, 8, 16, 32)
+    // 2. Evaluate prefetched lookups with varying distances (`K = 4, 8, 16, 32`).
     const std::vector<size_t> testDistances = {4, 8, 16, 32};
 
     for (size_t distance : testDistances) {
