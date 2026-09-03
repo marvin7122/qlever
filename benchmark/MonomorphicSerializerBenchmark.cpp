@@ -233,7 +233,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   std::string_view predLabel = data.stringPool_[0];
   std::string_view predType = data.stringPool_[1];
   std::string_view predPop = data.stringPool_[2];
-  std::string_view predArea = data.stringPool_[3];
 
   for (size_t i = 0; i < numRows; ++i) {
     // Subjects
@@ -406,28 +405,25 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               AllocationTracker::start();
               perfMonitor_.start();
 
-              struct DispatchVisitor {
-                FastExportStreamFormatter& formatter_;
-                const BenchmarkDataset& data_;
+              FastExportStreamFormatter formatter(nullSink);
 
-                template <ColumnType... Types>
-                void operator()() const {
-                  using Serializer = MonomorphicRowSerializer<Types...>;
+              auto visitor = [&]<typename... T>(auto&&... args) {
+                if constexpr (sizeof...(T) > 0) {
+                  using Serializer = MonomorphicRowSerializer<T...>;
                   for (const auto& row : data_.tripleRows_) {
                     Serializer::template serializeRow<ExportFormat::Csv>(
-                        formatter_, ql::span<const CellValue>(row));
+                        formatter, ql::span<const CellValue>(row));
                   }
-                }
-
-                void operator()(DynamicRowSerializer& dynamicSerializer) const {
+                } else if constexpr (sizeof...(args) > 0) {
+                  auto&& [dynSerializer] = std::forward_as_tuple(args...);
                   for (const auto& row : data_.tripleRows_) {
-                    dynamicSerializer.template serializeRow<ExportFormat::Csv>(
-                        formatter_, ql::span<const CellValue>(row));
+                    dynSerializer.template serializeRow<ExportFormat::Csv>(
+                        formatter, ql::span<const CellValue>(row));
                   }
                 }
               };
 
-              dispatchMonomorphicSerializer(schema, DispatchVisitor{formatter, data_});
+              dispatchMonomorphicSerializer(schema, visitor);
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
