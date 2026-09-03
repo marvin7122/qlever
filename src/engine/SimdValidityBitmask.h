@@ -201,9 +201,9 @@ namespace detail {
 
 #if defined(QLEVER_SIMD_X86)
 
-// AVX2 implementation: Scans 64 64-bit values (512 bytes) using 16 __m256i vectors.
-// For each 4-element vector, _mm256_cmpeq_epi64 checks against 0 (undefined ValueId),
-// and _mm256_movemask_pd extracts the 4-bit comparison mask.
+// Scan 64 64-bit values (512 bytes) with 16 `__m256i` vectors.
+// For each 4-element vector, use `_mm256_cmpeq_epi64` to compare against 0
+// (undefined `ValueId`) and use `_mm256_movemask_pd` to extract the mask.
 QLEVER_AVX2_TARGET [[nodiscard]] inline uint64_t scanBatch64Avx2(
     const uint64_t* data) noexcept {
   const __m256i zero = _mm256_setzero_si256();
