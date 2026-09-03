@@ -24,9 +24,9 @@ TEST(ExportEngineV2Test, SerializeTableChunkCsv) {
   table.push_back({Id::makeFromInt(7), Id::makeFromInt(999)});
 
   LocalVocab localVocab;
-  ScatterGatherArenaStreamer streamer{64 * 1024};
+  ScatterGatherChunkBuilder builder;
 
-  auto chunk = ExportEngineV2::serializeTableChunk(table, localVocab, RowFormat::Csv, streamer);
+  auto chunk = ExportEngineV2::serializeTableChunk(table, localVocab, RowFormat::Csv, builder);
   EXPECT_EQ(chunk.view(), "42,100\n7,999\n");
 }
 
@@ -37,24 +37,24 @@ TEST(ExportEngineV2Test, SerializeTableChunkTsv) {
   table.push_back({Id::makeFromInt(3), Id::makeFromInt(4)});
 
   LocalVocab localVocab;
-  ScatterGatherArenaStreamer streamer{64 * 1024};
+  ScatterGatherChunkBuilder builder;
 
-  auto chunk = ExportEngineV2::serializeTableChunk(table, localVocab, RowFormat::Tsv, streamer);
+  auto chunk = ExportEngineV2::serializeTableChunk(table, localVocab, RowFormat::Tsv, builder);
   EXPECT_EQ(chunk.view(), "1\t2\n3\t4\n");
 }
 
 TEST(ExportEngineV2Test, PipelineMorselIntegration) {
-  AsyncChunkPipeline<std::string> pipeline{
-      AsyncChunkPipelineConfig{.capacity_ = 8, .runtimeEnabled_ = true}};
-  ScatterGatherArenaStreamer streamer{64 * 1024};
+  AsyncChunkPipeline pipeline{8};
 
-  auto chunk1 = streamer.allocateChunk(64);
-  chunk1.append("chunk_1\n");
-  pipeline.push(std::string(chunk1.view()));
+  ScatterGatherChunkBuilder builder1;
+  builder1.appendCopy("chunk_1\n");
+  auto chunk1 = builder1.build();
+  pipeline.push(0, std::string(chunk1.view()));
 
-  auto chunk2 = streamer.allocateChunk(64);
-  chunk2.append("chunk_2\n");
-  pipeline.push(std::string(chunk2.view()));
+  ScatterGatherChunkBuilder builder2;
+  builder2.appendCopy("chunk_2\n");
+  auto chunk2 = builder2.build();
+  pipeline.push(1, std::string(chunk2.view()));
 
   EXPECT_EQ(pipeline.pop(), "chunk_1\n");
   EXPECT_EQ(pipeline.pop(), "chunk_2\n");
