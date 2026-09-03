@@ -31,6 +31,7 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
+
 namespace detail {
 
 template <typename Vocabulary, typename Iterator>
