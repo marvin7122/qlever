@@ -461,7 +461,7 @@ addLinkAndDiscoverTestNoLibs(ThreadSafeQueueTest)
 
 addLinkAndDiscoverTest(IdTableHelpersTest)
 
-# GTestHelpersTest is registered exactly once above.
+
 
 addLinkAndDiscoverTest(GeneratorTest)
 
