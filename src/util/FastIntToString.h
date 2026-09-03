@@ -68,7 +68,8 @@ inline constexpr uint64_t POWERS_OF_10_64[20] = {
 };
 
 // _____________________________________________________________________________
-// Fast 8-digit radix-10000 / radix-100 decomposition with SSE2 or SWAR.
+// Fast formatting of eight digits: scalar radix decomposition followed by
+// SSE2 ASCII conversion, or a lookup-table fallback.
 inline void format8Digits(uint32_t v, char* dst) noexcept {
   AD_CONTRACT_CHECK(dst != nullptr);
   AD_CONTRACT_CHECK(v < 100000000U);
