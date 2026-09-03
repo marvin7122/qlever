@@ -93,7 +93,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
   return dataset;
 }
 
-// Baseline scalar character-by-character scanner for Turtle.
+// Scan Turtle literals character by character as the scalar baseline.
 [[nodiscard]] size_t scalarFindFirstEscapeTurtle(std::string_view text) noexcept {
   for (size_t i = 0; i < text.size(); ++i) {
     char c = text[i];
