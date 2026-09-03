@@ -602,3 +602,8 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+addLinkAndDiscoverTest(AsyncChunkPipelineTest)
+target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+
+addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
