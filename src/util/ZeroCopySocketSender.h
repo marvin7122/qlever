@@ -267,8 +267,8 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
 
   // Preallocated tracking table mapped by (requestId % tableSize)
   std::vector<InFlightRequest> inFlightTable_;
-  size_t numInFlightRequests_ = 0;  // Requests in SQ/CQ
-  size_t numInFlightBuffers_ = 0;   // Buffers currently pinned by kernel
+    size_t numInFlightRequests_ = 0;  // Requests awaiting complete processing
+  size_t numInFlightBuffers_ = 0;   // Buffers awaiting kernel release
   uint64_t nextRequestId_ = 0;
 
   size_t totalBytesSent_ = 0;
