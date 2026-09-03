@@ -154,7 +154,7 @@ TEST(RlePrefixCompressorTest, LookupFunctorAvoidance) {
     curr = formatter.formatPrefixWithLookup(idB, lookup, curr);
   }
 
-  EXPECT_EQ(lookupCount, 2u);  // Lookup called ONLY twice across 100 rows!
+  EXPECT_EQ(lookupCount, 2u);  // Verify that lookup is called only twice across 100 rows.
   EXPECT_EQ(formatter.stats().totalTerms_, 100u);
   EXPECT_EQ(formatter.stats().cacheMisses_, 2u);
   EXPECT_EQ(formatter.stats().cacheHits_, 98u);
