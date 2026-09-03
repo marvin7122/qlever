@@ -252,7 +252,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
 
     StreamingBufferWriter writer(std::span<char>{destBuffer.data(), destBuffer.size()});
 
-    // Stream 256 MB buffer in chunks using non-temporal streaming stores (bypasses CPU caches)
+    // Stream the 256 MB buffer in chunks using non-temporal streaming stores (bypasses CPU caches).
     for (size_t offset = 0; offset < BufferSizeBytes; offset += chunkSize) {
       const size_t currentChunk = std::min(chunkSize, BufferSizeBytes - offset);
       writer.write(srcBuffer.data() + offset, currentChunk);
