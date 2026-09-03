@@ -66,7 +66,7 @@ inline constexpr size_t kDirectIoAlignment = 4096;
 }
 
 // _____________________________________________________________________________
-// RAII wrapper for an open file descriptor with Direct I/O (O_DIRECT) support.
+// Wrap an open file descriptor with Direct I/O (`O_DIRECT`) support.
 class DirectIoFile {
  private:
   int fd_ = -1;
