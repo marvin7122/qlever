@@ -101,7 +101,7 @@ TEST(FastIntToStringTest, FormatUIntBranchless) {
     EXPECT_EQ(actual, expected) << "Failed on value: " << val;
   };
 
-  // Boundary cases
+    // Test the boundary cases.
   testValue(0ULL);
   testValue(1ULL);
   testValue(9ULL);
