@@ -139,7 +139,7 @@ INSTANTIATE_TEST_SUITE_P(MaterializedViewsTest,
                              RewriteTestParams{std::string{simpleStar}, 1}));
 
 // _____________________________________________________________________________
-// Regression test for #3193: an aggregate in the view's query removes one of
+// Regression test for aggregate projections in the view query, which remove one of
 // the pattern's variables from the view's columns (`?o1`/`?m` only occur inside
 // `COUNT(...)`), so neither the star nor the chain must be registered for
 // pattern-based rewriting. Covers both explicit (`GROUP BY`) and implicit
