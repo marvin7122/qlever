@@ -178,7 +178,7 @@ class PinnedArena : public WithInvariants<PinnedArena> {
       AD_THROW("posix_memalign failed to allocate pinned buffer arena");
     }
 
-    // Zero out memory to pre-fault pages before kernel DMA registration.
+        // Zero out the memory to pre-fault pages before kernel DMA registration.
     std::memset(rawBuffer_, 0, totalBytes_);
 
     iovecs_.reserve(numSlots_);
