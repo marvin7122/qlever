@@ -25,7 +25,7 @@ namespace {
 class MockInvariantClass
     : public ad_utility::WithInvariants<MockInvariantClass> {
  public:
-  // Counts invariant-check invocations; mutable for use in checkInvariants() const.
+    // Count calls to `checkInvariants() const`; keep this member mutable.
   mutable size_t checkCount_{0};
   // Test control state used to simulate violated entry or exit invariants.
   bool failInvariants_{false};
