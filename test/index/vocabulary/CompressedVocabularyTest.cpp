@@ -174,9 +174,9 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
 }
 
 // _____________________________________________________________________________
-// A vocabulary containing the empty string word ("") must decompress correctly
-// through `lookupBatch` without allocations or crashes across all compressors
-// (exercising the `boundOnDecompressedWordSize == 0` fast path).
+// Verify that a vocabulary containing the empty string word ("") decompresses
+// correctly through `lookupBatch` without allocations or crashes across all
+// compressors (exercising the `boundOnDecompressedWordSize == 0` fast path).
 TYPED_TEST(CompressedVocabularyF, LookupBatchEmptyWordInVocabulary) {
   const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
   auto vocab = this->createCompressedVocabulary()(words);
