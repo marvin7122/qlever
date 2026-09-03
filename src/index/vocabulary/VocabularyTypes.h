@@ -253,7 +253,7 @@ class PmrVocabBatchLookupData : public VocabBatchStorage {
 };
 
 // _____________________________________________________________________________
-// Strong, self-contained batch-lookup result backed by owning std::strings.
+// Strong, self-contained batch-lookup result backed by owning `std::string`s.
 class StringVectorVocabBatchLookupData : public VocabBatchStorage {
  private:
   std::vector<std::string> words_;
