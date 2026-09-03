@@ -31,7 +31,7 @@ TEST(SwarDelimiterPackerTest, PackDelimPatternBasic) {
   EXPECT_EQ(packDelimPattern("\""), 0x22ULL);
   EXPECT_EQ(packDelimPattern(","), 0x2CULL);
 
-  // 2-byte patterns
+  // Test 2-byte patterns.
   EXPECT_EQ(packDelimPattern("\r\n"), 0x0A0DULL);
   EXPECT_EQ(packDelimPattern("> "), 0x203EULL);
   EXPECT_EQ(packDelimPattern(".\n"), 0x0A2EULL);
