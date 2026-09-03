@@ -243,7 +243,7 @@ TEST(FastIntToStringTest, FormatQidAndPid) {
     EXPECT_EQ(std::string_view(buf, end - buf), "http://www.wikidata.org/prop/direct/P31");
   }
 
-  // Custom prefix tests
+    // Test custom prefixes.
   {
     char* end = formatPrefixedId("http://example.org/item/", 98765ULL, buf);
     EXPECT_EQ(std::string_view(buf, end - buf), "http://example.org/item/98765");
