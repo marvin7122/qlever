@@ -45,7 +45,7 @@ inline constexpr char HEX_DIGITS[17] = "0123456789abcdef";
 }
 
 // _____________________________________________________________________________
-// Branchless backward hex digit serialization ending at `endPtr`.
+// Backward hex digit serialization ending at `endPtr`.
 // Writes `digits` hex characters into `[endPtr - digits, endPtr)`.
 // Returns pointer to first character written (`endPtr - digits`).
 inline char* writeHexDigitsBackwards(char* endPtr, uint64_t val,
