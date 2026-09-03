@@ -59,7 +59,7 @@ static void simulateNetworkTransmission(size_t chunkBytes,
   // Simulate transmission on a 1 Gbps (125 MB/s) link: ~8 ns per byte
   if (chunkBytes > 0) {
     const auto wireNanos = std::chrono::nanoseconds(chunkBytes * 8);
-    // Only sleep if delay is non-trivial (> 100 microseconds)
+    
     if (wireNanos > 100us) {
       std::this_thread::sleep_for(wireNanos);
     }
