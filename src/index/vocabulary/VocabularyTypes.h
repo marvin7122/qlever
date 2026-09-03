@@ -881,8 +881,7 @@ class WordAndIndex {
   // Explicit factory function for the end state.
   static WordAndIndex end() { return {}; }
 
-  // ___________________________________________________________________________
-  // Constructors for the ordinary non-end case.
+    // ___________________________________________________________________________
   WordAndIndex(std::string word, uint64_t index)
       : wordAndIndex_{std::in_place, std::move(word), index} {}
   WordAndIndex(std::string_view word, uint64_t index)
