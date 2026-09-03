@@ -332,10 +332,7 @@ TEST(VocabBatchLookupData,
       ::testing::HasSubstr("!slotFilledTracking_[resultPosition]"));
 }
 
-// _____________________________________________________________________________
-// Formal architectural verification: prove that MultiSourceVocabBatchAssembler
-// strictly satisfies the `ad_utility::InvariantStatefulClass` concept at
-// compile-time.
+
 static_assert(
     ad_utility::InvariantStatefulClass<MultiSourceVocabBatchAssembler>,
     "MultiSourceVocabBatchAssembler must satisfy "
