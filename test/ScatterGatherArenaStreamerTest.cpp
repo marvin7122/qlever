@@ -35,7 +35,7 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
       [&](ScatterGatherChunk chunk) { chunks.push_back(std::move(chunk)); },
       config);
 
-  std::string arenaLiteral = "This is a large literal string residing inside the memory arena.";
+    std::string arenaLiteral = "This is a large literal string used as an external zero-copy buffer.";
   ASSERT_GE(arenaLiteral.size(), 32);
 
   streamer.writeIri(ql::span<const char>("<http://example.org/sub>"));
