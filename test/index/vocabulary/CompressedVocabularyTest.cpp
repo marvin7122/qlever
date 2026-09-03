@@ -192,8 +192,8 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchEmptyWordInVocabulary) {
 }
 
 // _____________________________________________________________________________
-// The generic framework's empty-vocabulary contract: lookups, iteration, and
-// size must all behave on a vocabulary with zero words.
+// Verify the generic framework's empty-vocabulary contract: lookups, iteration,
+// and size must all behave on a vocabulary with zero words.
 TYPED_TEST(CompressedVocabularyF, EmptyVocabulary) {
   testEmptyVocabulary(this->createCompressedVocabulary());
 }
