@@ -358,9 +358,9 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyVocabulary) {
 
 // _____________________________________________________________________________
 // A vocabulary containing the empty string word ("") must be scanned correctly
-// across all compressors (exercising the `maxDecompressedSize == 0` fast path
-// in `scanAll`'s buffered decode), and zero-length views must provide non-null
-// data pointers.
+// across all compressors, exercising the `maxDecompressedSize == 0` fast path
+// in `scanAll`'s buffered decode. The test also checks that empty yielded views
+// have non-null data pointers.
 TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
   auto createVocab = TestFixture::createCompressedVocabulary();
   const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
