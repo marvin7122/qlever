@@ -222,8 +222,7 @@ TEST(AdaptiveChunkBufferTest, WriteAndFlushRampUp) {
   EXPECT_EQ(buffer.rowsBuffered(), 1);
   EXPECT_EQ(buffer.currentView(), "Hello, World!\n");
 
-  // Flush buffer
-  std::string flushed = buffer.flush();
+    std::string flushed = buffer.flush();
   EXPECT_EQ(flushed, "Hello, World!\n");
   EXPECT_EQ(buffer.bytesBuffered(), 0);
   EXPECT_EQ(buffer.rowsBuffered(), 0);
