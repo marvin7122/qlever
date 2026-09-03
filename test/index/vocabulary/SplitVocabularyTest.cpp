@@ -525,10 +525,8 @@ TEST(Vocabulary, SplitVocabularyLookupBatchRejectsOutOfRangeMarker) {
 using namespace splitVocabTestHelpers;
 
 // Share common SplitVocabulary setup across multiple tests.
-// Populates the vocabulary once per test suite with:
-//     and index 1: "" and index 1: "abc"; marker 1 with index 0: "xyz" and
-//     index 1: "axyz".
-//   index 1: "abc" (marker 0) / "axyz" (marker 1)
+// Populate the vocabulary once per test suite with marker 0, indices 0 and 1:
+// "" and "abc"; and marker 1, indices 0 and 1: "xyz" and "axyz".
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
   static std::string getFilename() {
