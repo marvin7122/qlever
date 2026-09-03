@@ -292,7 +292,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
       adaptiveRes = runAdaptiveChunkSizer();
     });
 
-    // Run Adaptive Buffer
+    // Run the adaptive buffer.
     ChunkBenchmarkResult bufferRes{};
     results.addMeasurement("Adaptive Chunk Buffer Stream", [this, &bufferRes]() {
       bufferRes = runAdaptiveChunkBuffer();
