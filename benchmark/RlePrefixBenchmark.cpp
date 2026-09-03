@@ -120,7 +120,7 @@ struct StandardRowSerializer {
     totalLookups = 0;
 
     for (size_t i = 0; i < n; ++i) {
-      // 3 lookups per triple
+      // Perform three lookups per triple.
       std::string_view s = ds.vocab_.lookup(ds.subjects_[i]);
       std::string_view p = ds.vocab_.lookup(ds.predicates_[i]);
       std::string_view o = ds.vocab_.lookup(ds.objects_[i]);
