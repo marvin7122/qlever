@@ -209,7 +209,7 @@ class ZeroCopySenderBenchmarkRunner {
                            bytesSent, numChunks);
   }
 
-  // 2. io_uring Standard Send (Unpinned buffers)
+  // Run the standard unpinned-buffer `io_uring` send.
   BenchmarkMetric runIoUringStandardSend() {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
