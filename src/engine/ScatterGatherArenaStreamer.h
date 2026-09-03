@@ -438,7 +438,8 @@ class ScatterGatherChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Write a complete RDF triple from raw spans with zero-copy literal streaming.
+    // Write a complete RDF triple from raw spans, using zero-copy storage for
+  // sufficiently large arena-backed values.
   void writeTriple(ExportFormat format, ql::span<const char> subject,
                    ql::span<const char> predicate,
                    ql::span<const char> objectLiteral,
