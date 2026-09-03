@@ -59,8 +59,8 @@ struct HttpFramingBenchmarkMetric {
 };
 
 // _____________________________________________________________________________
-// Standard 2-buffer copy HTTP framing (Traditional web server baseline).
-// Formats hex header into separate buffer and copies payload bytes into it.
+// Format HTTP framing using the standard two-buffer copy baseline.
+// Format the hex header in a separate buffer and copy the payload bytes into it.
 class Standard2BufferCopyHttpFraming {
  private:
   std::vector<char> framedBuffer_;
