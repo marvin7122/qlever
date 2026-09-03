@@ -34,6 +34,7 @@
 #include "util/Exception.h"
 #include "util/Invariants.h"
 #include "util/http/MediaTypes.h"
+#include <array>
 
 // _____________________________________________________________________________
 // Memory allocation tracker for verifying zero-allocation hot loops.

@@ -195,7 +195,7 @@ CPP_template(typename UnderlyingVocabulary,
   // the actually decoded size is retained until the returned result dies.
   // No compaction or tail-trimming pass exists yet: peak batch memory stays
   // proportional to the sum of the per-word bounds, not of the decoded
-  // payload sizes. When the caller passes an `ArenaVocabBatchBuilder` that
+  // payload sizes. When the caller passes an `VocabBatchLookupResult` that
   // was constructed with the Index/query `AllocatorWithLimit`, those
   // allocations charge `--memory-max` and throw
   // `AllocationExceedsLimitException` instead of growing the process heap.

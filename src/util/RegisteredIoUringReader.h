@@ -47,6 +47,7 @@
 #if defined(QLEVER_HAS_IO_URING) && !defined(QLEVER_HAS_LIBURING)
 #define QLEVER_HAS_LIBURING 1
 #include <liburing.h>
+#include <cerrno>
 #endif
 
 namespace ad_utility::export_prototypes {
