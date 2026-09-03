@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <unordered_set>
 #include <vector>
 
 #include "engine/BlockedBloomFilter.h"
@@ -16,31 +17,72 @@
 using namespace ql::engine::filter;
 
 int main() {
-  constexpr size_t NUM_ELEMENTS = 1'000'000;
-  std::cout << "Benchmarking BlockedBloomFilter with " << NUM_ELEMENTS << " elements...\n";
+  constexpr size_t NUM_ELEMENTS = 2'000'000;
+  std::cout << "=================================================================\n";
+  std::cout << "Comparative Benchmark: Baseline (std::unordered_set) vs BlockedBloomFilter ("
+            << NUM_ELEMENTS << " elements)\n";
+  std::cout << "=================================================================\n";
 
-  BlockedBloomFilter filter{NUM_ELEMENTS, 0.01};
-
-  auto t0 = std::chrono::high_resolution_clock::now();
+  std::vector<Id> data(NUM_ELEMENTS);
   for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-    filter.insert(Id::fromBits(i * 3 + 1));
+    data[i] = Id::fromBits(i * 7 + 1);
   }
-  auto t1 = std::chrono::high_resolution_clock::now();
-  double insertMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-  std::cout << "Insert Throughput: " << (NUM_ELEMENTS / (insertMs / 1000.0)) / 1e6
-            << " M elements/sec (" << insertMs << " ms)\n";
 
-  size_t hits = 0;
-  auto t2 = std::chrono::high_resolution_clock::now();
+  // 1. BASELINE: std::unordered_set
+  auto b0 = std::chrono::high_resolution_clock::now();
+  std::unordered_set<uint64_t> baseSet;
+  baseSet.reserve(NUM_ELEMENTS);
   for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-    if (filter.contains(Id::fromBits(i * 3 + 1))) {
-      hits++;
+    baseSet.insert(data[i].getBits());
+  }
+  auto b1 = std::chrono::high_resolution_clock::now();
+  double baseInsertMs = std::chrono::duration<double, std::milli>(b1 - b0).count();
+
+  size_t baseHits = 0;
+  auto b2 = std::chrono::high_resolution_clock::now();
+  for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
+    if (baseSet.contains(data[i].getBits())) {
+      baseHits++;
     }
   }
-  auto t3 = std::chrono::high_resolution_clock::now();
-  double probeMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
-  std::cout << "Probe Throughput (Hits): " << (NUM_ELEMENTS / (probeMs / 1000.0)) / 1e6
-            << " M elements/sec (" << probeMs << " ms, hits: " << hits << ")\n";
+  auto b3 = std::chrono::high_resolution_clock::now();
+  double baseProbeMs = std::chrono::duration<double, std::milli>(b3 - b2).count();
+
+  // 2. PROTOTYPE: BlockedBloomFilter (Cache-Line Aligned)
+  auto p0 = std::chrono::high_resolution_clock::now();
+  BlockedBloomFilter blockedFilter{NUM_ELEMENTS, 0.01};
+  for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
+    blockedFilter.insert(data[i]);
+  }
+  auto p1 = std::chrono::high_resolution_clock::now();
+  double protoInsertMs = std::chrono::duration<double, std::milli>(p1 - p0).count();
+
+  size_t protoHits = 0;
+  auto p2 = std::chrono::high_resolution_clock::now();
+  for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
+    if (blockedFilter.contains(data[i])) {
+      protoHits++;
+    }
+  }
+  auto p3 = std::chrono::high_resolution_clock::now();
+  double protoProbeMs = std::chrono::duration<double, std::milli>(p3 - p2).count();
+
+  std::cout << "\n--- Baseline (std::unordered_set) ---\n";
+  std::cout << "Insert Time: " << baseInsertMs << " ms ("
+            << (NUM_ELEMENTS / (baseInsertMs / 1000.0)) / 1e6 << " M/s)\n";
+  std::cout << "Probe Time:  " << baseProbeMs << " ms ("
+            << (NUM_ELEMENTS / (baseProbeMs / 1000.0)) / 1e6 << " M/s, hits: " << baseHits << ")\n";
+
+  std::cout << "\n--- Prototype (BlockedBloomFilter) ---\n";
+  std::cout << "Insert Time: " << protoInsertMs << " ms ("
+            << (NUM_ELEMENTS / (protoInsertMs / 1000.0)) / 1e6 << " M/s)\n";
+  std::cout << "Probe Time:  " << protoProbeMs << " ms ("
+            << (NUM_ELEMENTS / (protoProbeMs / 1000.0)) / 1e6 << " M/s, hits: " << protoHits << ")\n";
+
+  std::cout << "\n=================================================================\n";
+  std::cout << ">>> Insert Speedup: " << (baseInsertMs / protoInsertMs) << "x faster\n";
+  std::cout << ">>> Probe Speedup:  " << (baseProbeMs / protoProbeMs) << "x faster\n";
+  std::cout << "=================================================================\n";
 
   return 0;
 }
