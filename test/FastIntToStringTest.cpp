@@ -278,7 +278,7 @@ TEST(FastIntToStringTest, FormatDetailFixedDigits) {
   detail::format4Digits(7U, buf);
   EXPECT_EQ(std::string_view(buf, 4), "0007");
 
-  // 2 digits formatting
+  
   detail::format2Digits(42U, buf);
   EXPECT_EQ(std::string_view(buf, 2), "42");
 
