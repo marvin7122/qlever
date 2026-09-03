@@ -294,7 +294,7 @@ class IoUringDirectBenchmarkRunner {
                            endTime, totalBytes, numBatches);
   }
 
-  // 5. io_uring with Registered Files (IORING_REGISTER_FILES) + Unpinned Buffers
+    // 5. io_uring with Registered Files (IORING_REGISTER_FILES) + Pinned but unregistered Buffers
   BenchmarkMetric runIoUringRegisteredFiles(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
