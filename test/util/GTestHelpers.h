@@ -356,9 +356,9 @@ inline size_t pmrStringSsoCapacity() {
   // A counting memory resource lets us detect an allocation directly instead of
   // guessing from pointer addresses: a string uses SSO exactly when
   // constructing it performs no allocation through its allocator.
-  struct CountingMemoryResource : public std::pmr::memory_resource {
+  struct CountingMemoryResource : public ql::pmr::memory_resource {
    private:
-    std::pmr::memory_resource* upstream_ = std::pmr::get_default_resource();
+    ql::pmr::memory_resource* upstream_ = ql::pmr::get_default_resource();
     size_t numAllocations_ = 0;
 
     void* do_allocate(size_t bytes, size_t alignment) override {
@@ -369,7 +369,7 @@ inline size_t pmrStringSsoCapacity() {
       upstream_->deallocate(ptr, bytes, alignment);
     }
     bool do_is_equal(
-        const std::pmr::memory_resource& other) const noexcept override {
+        const ql::pmr::memory_resource& other) const noexcept override {
       return this == &other;
     }
 
