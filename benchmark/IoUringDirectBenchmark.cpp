@@ -507,7 +507,7 @@ AD_REGISTER_BENCHMARK(IoUringDirectBenchmark);
 }  // namespace ad_benchmark
 
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
-// Standalone executable entry point
+// Provide the standalone executable entry point.
 int main(int argc, char** argv) {
   std::cout << "=================================================================\n";
   std::cout << " QLever Export Prototype: Registered io_uring & Direct I/O Benchmark\n";
