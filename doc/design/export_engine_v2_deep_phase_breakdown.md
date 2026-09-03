@@ -117,8 +117,8 @@
   3. Evaluates scan filters in-place using AVX2 SIMD equality comparisons (`_mm256_cmpeq_epi64`), directly producing active bitmasks without copying rows.
 
 ### 3. Performance Rationale
-* **DRAM Traffic Elimination:** In Legacy V1, a 10,000,000-row export writes and reads 240 MB of `IdTable` buffers to/from main DRAM. In V2, chunk vectors stay in L1/L2 CPU caches (0 DRAM roundtrips).
-* **Memory Footprint Reduction:** Memory consumption drops from $O(N)$ (proportional to total query result size) to $O(1)$ (fixed 64 KB scratch vector).
+* **Reduced DRAM Traffic:** V2 aims to avoid repeated materialization and rereading of a full `IdTable`; the actual cache residency and DRAM traffic must be established by measurement.
+* **Memory Footprint Reduction:** The streaming pipeline targets $O(1)$ additional buffering relative to the result size, subject to the configured chunk and arena storage.
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmark:** `benchmark/export_v2/VectorScanBenchmark.cpp`
