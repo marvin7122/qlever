@@ -113,7 +113,6 @@ struct BenchmarkMetricResult {
 };
 
 // _____________________________________________________________________________
-// Benchmark Suite: Standard memcpy vs Non-Temporal StreamingBufferWriter.
 class StreamingBufferBenchmark : public BenchmarkInterface {
  private:
   static constexpr size_t BufferSizeBytes = 256 * 1024 * 1024;  // 256 MB
