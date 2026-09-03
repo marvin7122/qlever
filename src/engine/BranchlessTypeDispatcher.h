@@ -26,7 +26,7 @@
 
 namespace ql::engine {
 
-// Forward declarations
+
 struct TypeFormatDescriptor;
 
 // Function pointer signature for single-pass term formatting.
