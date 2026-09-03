@@ -125,7 +125,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
   }
 
   // ___________________________________________________________________________
-  // Benchmark 2: AdaptiveChunkSizer (64 KB -> 4 MB exponential ramp-up).
+  // Benchmark the exponential 64 KB-to-4 MB ramp-up of `AdaptiveChunkSizer`.
   ChunkBenchmarkResult runAdaptiveChunkSizer() const {
     AdaptiveChunkSizer sizer(AdaptiveChunkConfig{
         .initialChunkBytes_ = 64 * 1024,
