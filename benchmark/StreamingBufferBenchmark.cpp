@@ -149,7 +149,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     timer.stop();
     asm volatile("" : : "r"(dummySink) : "memory");
 
-    const double totalNs = timer.msecs() * 1e6;
+    const double totalNs = static_cast<double>(timer.msecs().count()) * 1e6;
     return totalNs / static_cast<double>(probeIndices.size());
   }
 
@@ -194,7 +194,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     timer.stop();
     const uint64_t l1Misses = l1MissCounter.stop();
 
-    const double durationMs = timer.msecs();
+    const double durationMs = static_cast<double>(timer.msecs().count());
     const double gb = static_cast<double>(BufferSizeBytes) / (1024.0 * 1024.0 * 1024.0);
     const double throughputGBPerSec = (durationMs > 0) ? (gb / (durationMs / 1000.0)) : 0.0;
 
@@ -205,7 +205,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     const double hitRatio = std::clamp(1.0 - (latencyNs - 3.0) / 60.0, 0.05, 0.99);
 
     return BenchmarkMetricResult{
-        .method = "Standard memcpy",
+        .method = "memcpy (Baseline)",
         .bufferSizeMB = BufferSizeBytes / (1024 * 1024),
         .chunkSizeKB = chunkSize / 1024,
         .durationMs = durationMs,
@@ -260,7 +260,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     timer.stop();
     const uint64_t l1Misses = l1MissCounter.stop();
 
-    const double durationMs = timer.msecs();
+    const double durationMs = static_cast<double>(timer.msecs().count());
     const double gb = static_cast<double>(BufferSizeBytes) / (1024.0 * 1024.0 * 1024.0);
     const double throughputGBPerSec = (durationMs > 0) ? (gb / (durationMs / 1000.0)) : 0.0;
 
