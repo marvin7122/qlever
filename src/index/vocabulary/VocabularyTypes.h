@@ -486,9 +486,8 @@ class MultiSourceVocabBatchAssembler
   }
 
   // ___________________________________________________________________________
-  // Scatter a child batch lookup result across the specified output positions
-  // and retain the child result object so its underlying string storage is kept
-  // alive.
+    // Scatter a child batch lookup result across the specified output positions
+  // and retain its storage owner so the underlying string storage is kept alive.
   void scatterSubBatchResultAtPositions(
       const VocabBatchLookupResult& subBatchResult,
       ql::span<const size_t> targetPositions) {
