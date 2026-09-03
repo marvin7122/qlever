@@ -2697,11 +2697,13 @@ auto QueryPlanner::createMaterializedViewJoinReplacements(
   // Convert all the `IndexScan`s to `SubtreePlan`s with the appropriate ids
   // set.
   for (const auto& [scan, coveredTriples] : scans) {
-    auto plan = makeSubtreePlan<IndexScan>(scan);
+    auto plan = makeSubtreePlan<IndexScan>(*scan);
     // This is equivalent to a join between the covered triples, so we must mark
     // all included nodes.
-    plan._idsOfIncludedNodes |= coveredTriples;
-    size_t numCoveredTriples = absl::popcount(coveredTriples);
+    for (size_t idx : coveredTriples) {
+      plan._idsOfIncludedNodes |= (1ULL << idx);
+    }
+    size_t numCoveredTriples = coveredTriples.size();
     // Empty vectors of replacement plans for smaller numbers of triples.
     for (size_t i = plans.size(); i < numCoveredTriples; ++i) {
       plans.push_back({});
@@ -2890,7 +2892,7 @@ void QueryPlanner::QueryGraph::setupGraph(
         // Add additional edges to the graph representing the connections
         // between variables given by joins substituting cartesian product +
         // filter.
-        for (auto& [filter, substitute, forceSubstitution] :
+        for (auto& [filter, substitute] :
              filtersAndOptionalSubstitutes) {
           if (!substitute.has_value()) {
             // This filter cannot be substituted: add no edges.
