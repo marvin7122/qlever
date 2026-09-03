@@ -128,18 +128,18 @@ class FastExportStreamFormatter
   static constexpr size_t SAFETY_WATERMARK = 4096;           // 4 KB margin
 
  private:
-  // Internal managed chunk buffer (when in streaming mode)
+    // Store the managed chunk buffer used in streaming mode.
   std::vector<char> managedBuffer_;
-  // Non-owning view of current output memory
+  // Store a non-owning view of the current output memory.
   char* bufferPtr_ = nullptr;
   size_t bufferCapacity_ = 0;
   size_t writePos_ = 0;
 
-  // Stream chunk consumer
+  // Store the sink that consumes streamed chunks.
   ChunkSink sink_;
   bool isStreaming_ = false;
 
-  // Aggregated export statistics
+  // Store the aggregated export statistics.
   uint64_t totalTriples_ = 0;
   uint64_t totalBytesWritten_ = 0;
   uint64_t chunksEmitted_ = 0;
