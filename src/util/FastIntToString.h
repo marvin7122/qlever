@@ -263,16 +263,7 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) n
 // Provide convenient string-returning wrappers with exact string pre-sizing.
 [[nodiscard]] 
 
-[[nodiscard]] inline std::string formatIntToString(int64_t val) {
-  const bool negative = val < 0;
-  const uint64_t uval = negative ? (static_cast<uint64_t>(0) - static_cast<uint64_t>(val))
-                                 : static_cast<uint64_t>(val);
-  const uint32_t len = numDigits(uval) + (negative ? 1 : 0);
-  std::string s;
-  s.resize(len);
-  formatIntBranchless(val, s.data());
-  return s;
-}
+[[nodiscard]] 
 
 [[nodiscard]] inline std::string formatQidToString(uint64_t id) {
   const size_t totalLen = WIKIDATA_ENTITY_PREFIX.size() + numDigits(id);
