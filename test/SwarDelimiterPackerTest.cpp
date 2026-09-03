@@ -42,7 +42,7 @@ TEST(SwarDelimiterPackerTest, PackDelimPatternBasic) {
   EXPECT_EQ(packDelimPattern(" .\n"), 0x0A2E20ULL);
   EXPECT_EQ(packDelimPattern("\",\""), 0x222C22ULL);
 
-  // 4-byte patterns
+  // Test 4-byte patterns.
   EXPECT_EQ(packDelimPattern("> .\n"), 0x0A2E203EULL);
   EXPECT_EQ(packDelimPattern("\" .\n"), 0x0A2E2022ULL);
   EXPECT_EQ(packDelimPattern(" .\r\n"), 0x0A0D2E20ULL);
