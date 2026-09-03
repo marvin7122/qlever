@@ -387,7 +387,7 @@ class SimdValidityScanner {
 
   // ___________________________________________________________________________
   // Scan an entire column of ValueIds into a destination span of ValidityBitmask64.
-  // Returns the number of 64-row bitmask blocks written.
+  // Return the number of 64-row bitmask blocks written.
   static inline size_t scanColumn(
       ql::span<const ValueId> column,
       ql::span<ValidityBitmask64> outBitmasks) noexcept {
