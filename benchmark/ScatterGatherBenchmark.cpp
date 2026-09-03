@@ -115,7 +115,7 @@ struct ScatterGatherBenchmarkMetric {
 };
 
 // _____________________________________________________________________________
-// Benchmark Runner comparing Contiguous Copy vs Zero-Copy Scatter-Gather
+// Compare contiguous copying with zero-copy scatter-gather streaming.
 class ScatterGatherBenchmarkRunner {
  public:
   // 1. Contiguous Chunk Copy (Baseline):
