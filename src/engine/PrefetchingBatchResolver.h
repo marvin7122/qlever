@@ -199,8 +199,7 @@ class PrefetchingBatchResolver {
       }
     }
 
-    // Main pipelined loop
-    for (size_t i = 0; i < n; ++i) {
+        for (size_t i = 0; i < n; ++i) {
       // 1. Prefetch offset table line for (i + distance)
       if (i + distance < n) {
         const size_t pfIdx = indices[i + distance];
