@@ -156,6 +156,10 @@ std::string scalarEscapeTurtleLiteral(std::string_view normLiteral) {
 class SimdEscapeBenchmark : public BenchmarkInterface {
  private:
   LiteralDataset dataset_;
+  // Group 1 (scan-only) measurements are ~7-25ms per pass over the 100MB
+  // dataset, which starves `perf record` of samples in the code we're
+  // profiling. Repeat the pass to stretch each measurement to ~1-2s.
+  static constexpr int kProfileRepeats = 150;
 
  public:
   SimdEscapeBenchmark() {
@@ -187,17 +191,20 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("Scalar character-by-character scan (Turtle)", [&]() {
           size_t count = 0;
-          for (const auto& lit : dataset_.literals) {
-            if (scalarFindFirstEscapeTurtle(lit) != std::string_view::npos) {
-              ++count;
+          for (int rep = 0; rep < kProfileRepeats; ++rep) {
+            for (const auto& lit : dataset_.literals) {
+              if (scalarFindFirstEscapeTurtle(lit) != std::string_view::npos) {
+                ++count;
+              }
             }
           }
-          totalEscapesFound = count;
-          return dataset_.totalBytes;
+          totalEscapesFound = count / kProfileRepeats;
+          return dataset_.totalBytes * kProfileRepeats;
         });
         auto end = std::chrono::high_resolution_clock::now();
         double seconds = std::chrono::duration<double>(end - start).count();
-        double throughputGBs = (static_cast<double>(dataset_.totalBytes) / 1e9) / seconds;
+        double throughputGBs =
+            (static_cast<double>(dataset_.totalBytes) * kProfileRepeats / 1e9) / seconds;
 
         m.metadata().addKeyValuePair("total-bytes-mb", totalMB);
         m.metadata().addKeyValuePair("total-literals", numLiterals);
@@ -211,17 +218,20 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("SimdEscapeClassifier::findFirstEscape (Turtle AVX2)", [&]() {
           size_t count = 0;
-          for (const auto& lit : dataset_.literals) {
-            if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Turtle>(lit)) {
-              ++count;
+          for (int rep = 0; rep < kProfileRepeats; ++rep) {
+            for (const auto& lit : dataset_.literals) {
+              if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Turtle>(lit)) {
+                ++count;
+              }
             }
           }
-          totalEscapesFound = count;
-          return dataset_.totalBytes;
+          totalEscapesFound = count / kProfileRepeats;
+          return dataset_.totalBytes * kProfileRepeats;
         });
         auto end = std::chrono::high_resolution_clock::now();
         double seconds = std::chrono::duration<double>(end - start).count();
-        double throughputGBs = (static_cast<double>(dataset_.totalBytes) / 1e9) / seconds;
+        double throughputGBs =
+            (static_cast<double>(dataset_.totalBytes) * kProfileRepeats / 1e9) / seconds;
 
         m.metadata().addKeyValuePair("total-bytes-mb", totalMB);
         m.metadata().addKeyValuePair("total-literals", numLiterals);
@@ -235,17 +245,20 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("Scalar character-by-character scan (CSV)", [&]() {
           size_t count = 0;
-          for (const auto& lit : dataset_.literals) {
-            if (scalarFindFirstEscapeCsv(lit) != std::string_view::npos) {
-              ++count;
+          for (int rep = 0; rep < kProfileRepeats; ++rep) {
+            for (const auto& lit : dataset_.literals) {
+              if (scalarFindFirstEscapeCsv(lit) != std::string_view::npos) {
+                ++count;
+              }
             }
           }
-          totalEscapesFound = count;
-          return dataset_.totalBytes;
+          totalEscapesFound = count / kProfileRepeats;
+          return dataset_.totalBytes * kProfileRepeats;
         });
         auto end = std::chrono::high_resolution_clock::now();
         double seconds = std::chrono::duration<double>(end - start).count();
-        double throughputGBs = (static_cast<double>(dataset_.totalBytes) / 1e9) / seconds;
+        double throughputGBs =
+            (static_cast<double>(dataset_.totalBytes) * kProfileRepeats / 1e9) / seconds;
 
         m.metadata().addKeyValuePair("total-bytes-mb", totalMB);
         m.metadata().addKeyValuePair("throughput-gb-s", throughputGBs);
@@ -258,17 +271,20 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("SimdEscapeClassifier::findFirstEscape (CSV AVX2)", [&]() {
           size_t count = 0;
-          for (const auto& lit : dataset_.literals) {
-            if (SimdEscapeClassifier::hasEscapes<EscapeFormat::CsvSpecial>(lit)) {
-              ++count;
+          for (int rep = 0; rep < kProfileRepeats; ++rep) {
+            for (const auto& lit : dataset_.literals) {
+              if (SimdEscapeClassifier::hasEscapes<EscapeFormat::CsvSpecial>(lit)) {
+                ++count;
+              }
             }
           }
-          totalEscapesFound = count;
-          return dataset_.totalBytes;
+          totalEscapesFound = count / kProfileRepeats;
+          return dataset_.totalBytes * kProfileRepeats;
         });
         auto end = std::chrono::high_resolution_clock::now();
         double seconds = std::chrono::duration<double>(end - start).count();
-        double throughputGBs = (static_cast<double>(dataset_.totalBytes) / 1e9) / seconds;
+        double throughputGBs =
+            (static_cast<double>(dataset_.totalBytes) * kProfileRepeats / 1e9) / seconds;
 
         m.metadata().addKeyValuePair("total-bytes-mb", totalMB);
         m.metadata().addKeyValuePair("throughput-gb-s", throughputGBs);
@@ -281,17 +297,20 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("Scalar character-by-character scan (TSV)", [&]() {
           size_t count = 0;
-          for (const auto& lit : dataset_.literals) {
-            if (scalarFindFirstEscapeTsv(lit) != std::string_view::npos) {
-              ++count;
+          for (int rep = 0; rep < kProfileRepeats; ++rep) {
+            for (const auto& lit : dataset_.literals) {
+              if (scalarFindFirstEscapeTsv(lit) != std::string_view::npos) {
+                ++count;
+              }
             }
           }
-          totalEscapesFound = count;
-          return dataset_.totalBytes;
+          totalEscapesFound = count / kProfileRepeats;
+          return dataset_.totalBytes * kProfileRepeats;
         });
         auto end = std::chrono::high_resolution_clock::now();
         double seconds = std::chrono::duration<double>(end - start).count();
-        double throughputGBs = (static_cast<double>(dataset_.totalBytes) / 1e9) / seconds;
+        double throughputGBs =
+            (static_cast<double>(dataset_.totalBytes) * kProfileRepeats / 1e9) / seconds;
 
         m.metadata().addKeyValuePair("total-bytes-mb", totalMB);
         m.metadata().addKeyValuePair("throughput-gb-s", throughputGBs);
@@ -304,17 +323,20 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("SimdEscapeClassifier::findFirstEscape (TSV AVX2)", [&]() {
           size_t count = 0;
-          for (const auto& lit : dataset_.literals) {
-            if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Tsv>(lit)) {
-              ++count;
+          for (int rep = 0; rep < kProfileRepeats; ++rep) {
+            for (const auto& lit : dataset_.literals) {
+              if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Tsv>(lit)) {
+                ++count;
+              }
             }
           }
-          totalEscapesFound = count;
-          return dataset_.totalBytes;
+          totalEscapesFound = count / kProfileRepeats;
+          return dataset_.totalBytes * kProfileRepeats;
         });
         auto end = std::chrono::high_resolution_clock::now();
         double seconds = std::chrono::duration<double>(end - start).count();
-        double throughputGBs = (static_cast<double>(dataset_.totalBytes) / 1e9) / seconds;
+        double throughputGBs =
+            (static_cast<double>(dataset_.totalBytes) * kProfileRepeats / 1e9) / seconds;
 
         m.metadata().addKeyValuePair("total-bytes-mb", totalMB);
         m.metadata().addKeyValuePair("throughput-gb-s", throughputGBs);
