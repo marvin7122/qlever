@@ -54,7 +54,7 @@ struct AdaptiveChunkConfig {
 };
 
 // _____________________________________________________________________________
-// Immutable summary metrics and accounting state of an AdaptiveChunkSizer.
+// Snapshot of summary metrics and accounting state of an AdaptiveChunkSizer.
 struct AdaptiveChunkStats {
   size_t chunksFlushed_{0};
   uint64_t totalBytes_{0};
