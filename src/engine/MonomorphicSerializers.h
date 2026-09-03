@@ -229,7 +229,7 @@ struct MonomorphicCellWriter {
     }
   }
 
-  // Typed overload for raw string_view
+  // Provide a typed overload for `std::string_view`.
   template <typename Writer>
   static void write(Writer& writer, std::string_view sv) {
     if constexpr (Type == ColumnType::Iri) {
