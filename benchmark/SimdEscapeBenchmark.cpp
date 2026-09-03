@@ -67,8 +67,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
 
     for (size_t i = 0; i < length; ++i) {
       if (injectEscapes && i % 25 == 12) {
-        // Inject an escape character
-        switch (i % 4) {
+                switch (i % 4) {
           case 0: literal.push_back('"'); break;
           case 1: literal.push_back('\\'); break;
           case 2: literal.push_back('\n'); break;
