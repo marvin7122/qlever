@@ -155,7 +155,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
   }
 
   // ___________________________________________________________________________
-  // Run Standard memcpy Export Benchmark
+  // Run the standard `memcpy` export benchmark.
   BenchmarkMetricResult runMemcpyBenchmark(size_t chunkSize) const {
     using AlignedBuf = std::vector<char, AlignedAllocator<char, std::allocator<char>, 64>>;
     AlignedBuf srcBuffer(BufferSizeBytes, 'Q');
