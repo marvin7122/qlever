@@ -71,10 +71,8 @@ class ChunkSink;
 // idle during chunk generation.
 //
 // `AsyncChunkPipeline` decouples generation and transmission via a bounded
-// 2-slot ring buffer:
-//   - Slot 1: Active chunk currently being consumed / sent over the network.
-//   - Slot 2: Background worker simultaneously evaluating, decompressing, and
-//             formatting the subsequent chunk.
+// queue with configurable capacity. The consumer processes the front chunk
+// while the producer can generate and buffer subsequent chunks.
 //
 // Safe Backpressure: If network transmission is slower than chunk generation,
 // the producer suspends once capacity (default 2 slots) is reached, preventing
