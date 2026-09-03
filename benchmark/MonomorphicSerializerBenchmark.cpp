@@ -90,7 +90,7 @@ using namespace ql::export_formatting;
 
 // _____________________________________________________________________________
 // Hardware Performance Counter Monitor (Linux perf_event_open)
-// Measures Hardware CPU Cycles, Instructions, Branch Instructions, and Branch Misses.
+// Measure hardware CPU cycles, instructions, branch instructions, and branch misses.
 class PerfCounterMonitor {
  public:
   struct Metrics {
