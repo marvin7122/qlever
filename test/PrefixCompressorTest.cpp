@@ -111,8 +111,7 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
   EXPECT_EQ(p.decompressInto(compressedAlpha,
                              ql::span<char>{output.data(), output.size()}),
             5u);
-  EXPECT_EQ(output, "alpha");
-
+    EXPECT_EQ(output, "alpha");
 }
 
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
