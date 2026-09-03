@@ -178,8 +178,7 @@ TEST(InPlaceHttpChunkFramingTest, StreamerAutoChunkingAndFlush) {
   EXPECT_TRUE(emittedChunks[2].ends_with("\r\n"));
   EXPECT_EQ(emittedChunks[2].size(), 4 + 50 + 2);
 
-  // Validate chunk 4: terminating chunk
-  EXPECT_EQ(emittedChunks[3], "0\r\n\r\n");
+    EXPECT_EQ(emittedChunks[3], "0\r\n\r\n");
 
   // Reconstruct full payload
   std::string reconstructedPayload;
