@@ -433,7 +433,7 @@ class HttpFramingBenchmark : public BenchmarkInterface {
   BenchmarkResults runAllBenchmarks() final {
     BenchmarkResults results;
 
-    constexpr size_t totalBytes = 500 * 1024 * 1024;  // 500 MB
+    constexpr size_t totalBytes = 500 * 1024 * 1024;  // 500 MiB
     SyntheticExportStreamGenerator streamGen(totalBytes);
 
     const std::vector<size_t> chunkSizes = {
