@@ -52,7 +52,7 @@ class IntegerDateOperations {
   }
 
   // ___________________________________________________________________________
-  [[nodiscard]] static constexpr int64_t extractYear(Id dateId) noexcept {
+  [[nodiscard]] static int64_t extractYear(Id dateId) noexcept {
     if (dateId.getDatatype() != Datatype::Date) {
       return 0;
     }
@@ -60,19 +60,19 @@ class IntegerDateOperations {
   }
 
   // ___________________________________________________________________________
-  [[nodiscard]] static constexpr int64_t extractMonth(Id dateId) noexcept {
+  [[nodiscard]] static int64_t extractMonth(Id dateId) noexcept {
     if (dateId.getDatatype() != Datatype::Date) {
       return 0;
     }
-    return dateId.getDate().getMonth();
+    return dateId.getDate().getMonth().value_or(0);
   }
 
   // ___________________________________________________________________________
-  [[nodiscard]] static constexpr int64_t extractDay(Id dateId) noexcept {
+  [[nodiscard]] static int64_t extractDay(Id dateId) noexcept {
     if (dateId.getDatatype() != Datatype::Date) {
       return 0;
     }
-    return dateId.getDate().getDay();
+    return dateId.getDate().getDay().value_or(0);
   }
 
   // ___________________________________________________________________________
