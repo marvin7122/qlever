@@ -34,6 +34,9 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ParallelMergeBenchmark testUtil)
 
-    addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
+        addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
+
+    add_executable(ExportPipelineRouterBenchmark ExportPipelineRouterBenchmark.cpp)
+    qlever_target_link_libraries(ExportPipelineRouterBenchmark engine sparqlParser qlever_util)
 
 endif()
