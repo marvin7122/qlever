@@ -92,8 +92,7 @@ class Standard2BufferCopyHttpFraming {
       dst += payloadBytes;
     }
 
-    // 4. Trailing CRLF
-    *dst++ = '\r';
+        *dst++ = '\r';
     *dst++ = '\n';
 
     const size_t totalFramedLen = dst - framedBuffer_.data();
