@@ -57,7 +57,7 @@ class PrefixCompressor {
   std::vector<PrefixCode> codeToPrefix_{};
 
   // maps (numeric) keys to the prefix they encode.
-  // currently NUM_COMPRESSION_PREFIXES prefixes are supported.
+  // Support `NUM_COMPRESSION_PREFIXES` prefixes.
   std::array<std::string, NUM_COMPRESSION_PREFIXES> prefixToCode_{""};
 
   // ___________________________________________________________________________
