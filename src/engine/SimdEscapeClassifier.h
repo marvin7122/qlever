@@ -94,7 +94,6 @@ class ChunkEscapeMask16 {
 
 namespace detail {
 
-// Single character escape check.
 template <EscapeFormat Format>
 [[nodiscard]] constexpr inline bool isEscapeChar(char c) noexcept {
   if constexpr (Format == EscapeFormat::Turtle) {
