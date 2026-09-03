@@ -32,6 +32,46 @@ CPP_requires(HasPushBackRequires, requires(B& b, const R& r)(b.push_back(r)));
 
 template <typename B, typename R>
 CPP_concept HasPushBack = CPP_requires_ref(HasPushBackRequires, B, R);
+
+template <size_t NumCols, typename Writer>
+struct ReadBlockFunctor {
+  Writer* writer_;
+  IdTableStatic<NumCols> operator()(size_t blockIdx) const {
+    return writer_->template readBlock<NumCols>(blockIdx);
+  }
+};
+
+template <size_t N, size_t NumStaticCols, typename Allocator>
+struct ChunkToBlockFunctor {
+  const IdTableStatic<NumStaticCols>* block_;
+  size_t numColumns_;
+  Allocator allocator_;
+  template <typename Chunk>
+  IdTableStatic<N> operator()(const Chunk& chunk) const {
+    auto chunkStart = *chunk.begin();
+    auto chunkSize = ::ranges::size(chunk);
+    auto curBlock = IdTableStatic<NumStaticCols>(numColumns_, allocator_);
+    curBlock.insertAtEnd(*block_, chunkStart, chunkStart + chunkSize);
+    return IdTableStatic<N>(std::move(curBlock).template toStatic<N>());
+  }
+};
+
+template <typename Comparator>
+struct DirectSortCompFunctor {
+  Comparator comparator_;
+  template <typename A, typename B>
+  bool operator()(const A& a, const B& b) const {
+    return comparator_(*b.first, *a.first);
+  }
+};
+
+template <size_t N>
+struct ToStaticIdTableFunctor {
+  template <typename Table>
+  IdTableStatic<N> operator()(Table& table) const {
+    return std::move(table).template toStatic<N>();
+  }
+};
 }  // namespace compressedExternalIdTable::detail
 
 using namespace ad_utility::memory_literals;
@@ -216,9 +256,9 @@ class CompressedExternalIdTableWriter {
                          ? startOfSingleIdTables_.at(index + 1)
                          : blocksPerColumn_.at(0).size()};
     auto readBlocks = ql::views::iota(firstBlock, lastBlock) |
-                      ql::views::transform([this](auto blockIdx) {
-                        return this->template readBlock<NumCols>(blockIdx);
-                      });
+                      ql::views::transform(
+                          compressedExternalIdTable::detail::ReadBlockFunctor<
+                              NumCols, CompressedExternalIdTableWriter>{this});
     ++numActiveGenerators_;
     auto callback = [this]() noexcept { --numActiveGenerators_; };
     using namespace ad_utility;
@@ -834,14 +874,9 @@ class CompressedExternalIdTableSorter
       namespace rv = ::ranges::views;
       auto chunked =
           rv::chunk(rv::iota(size_t{0}, block.numRows()), blocksizeOutput) |
-          rv::transform([&](const auto& chunk) {
-            auto chunkStart = *chunk.begin();
-            auto chunkSize = ::ranges::size(chunk);
-            auto curBlock = IdTableStatic<NumStaticCols>(
-                this->numColumns_, this->writer_.allocator());
-            curBlock.insertAtEnd(block, chunkStart, chunkStart + chunkSize);
-            return IdTableStatic<N>(std::move(curBlock).template toStatic<N>());
-          });
+          rv::transform(compressedExternalIdTable::detail::ChunkToBlockFunctor<
+                        N, NumStaticCols, decltype(this->writer_.allocator())>{
+              &block, this->numColumns_, this->writer_.allocator()});
       return ad_utility::InputRangeTypeErased(std::move(chunked));
     }
 
@@ -851,25 +886,17 @@ class CompressedExternalIdTableSorter
     const size_t blockSizeOutput =
         blocksize.value_or(computeBlockSizeForMergePhase(rowGenerators.size()));
 
-    auto projection = [](const auto& el) -> decltype(auto) {
-      return *el.first;
-    };
     auto directComp = ad_utility::makeAssignableLambda(
-        [projection, comparator = this->comparator_](const auto& a,
-                                                     const auto& b) {
-          return comparator(projection(b), projection(a));
-        });
+        compressedExternalIdTable::detail::DirectSortCompFunctor<Comparator>{
+            this->comparator_});
 
-    auto toStatic = [](auto& table) -> IdTableStatic<N> {
-      return std::move(table).template toStatic<N>();
-    };
     using namespace ad_utility;
     return InputRangeTypeErased{CachingTransformInputRange{
         SortState<decltype(rowGenerators), decltype(directComp)>{
             this->writer_.numColumns(), this->writer_.allocator(),
             std::move(directComp), std::move(rowGenerators), blockSizeOutput,
             this},
-        toStatic}};
+        compressedExternalIdTable::detail::ToStaticIdTableFunctor<N>{}}};
   }
 
   // _____________________________________________________________
