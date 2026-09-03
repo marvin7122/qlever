@@ -57,7 +57,7 @@ struct PipelineStats {
   size_t consumerWaitStalls{0};
 };
 
-// Forward declaration of ChunkSink for high-level producer callbacks.
+
 template <typename ChunkType>
 class ChunkSink;
 
