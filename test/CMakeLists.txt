@@ -619,3 +619,6 @@ addLinkAndDiscoverTest(AsyncChunkPipelineTest)
 target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
 
 addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+
+addLinkAndDiscoverTest(ExportEngineV2Test engine sparqlParser)
+target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
