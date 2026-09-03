@@ -59,7 +59,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
   BenchmarkResults runAllBenchmarks() final {
     BenchmarkResults results{};
 
-    // Synthetic column payload data
+    // Define synthetic column payload data.
     const std::string sSub = "http://www.wikidata.org/entity/Q42";
     const std::string sPred = "http://www.wikidata.org/prop/direct/P31";
     const std::string sObj = "http://www.wikidata.org/entity/Q515";
