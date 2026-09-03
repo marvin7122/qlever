@@ -169,7 +169,7 @@ TEST(AdaptiveChunkSizerTest, ResetRestoresInitialState) {
 TEST(AdaptiveChunkSizerTest, ZeroRowAndZeroByteHandling) {
   AdaptiveChunkSizer sizer;
 
-  // Recording a 0-byte or 0-row chunk should not divide by zero or crash
+    // Verify that recording a 0-byte or 0-row chunk does not divide by zero or crash.
   sizer.recordChunk(0, 0);
   EXPECT_EQ(sizer.chunksFlushed(), 1);
   EXPECT_EQ(sizer.totalBytes(), 0);
