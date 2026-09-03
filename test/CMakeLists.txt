@@ -169,13 +169,13 @@ addLinkAndDiscoverTest(ValueIdComparatorsTest qlever_util)
 
 addLinkAndDiscoverTest(SparqlParserTest sparqlParser engine sparqlExpressions)
 
-addLinkAndDiscoverTest(VariableCounterTest sparqlParser engine)
-
 addLinkAndDiscoverTest(StringUtilsTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
 addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
+
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
 
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
