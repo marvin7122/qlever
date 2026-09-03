@@ -119,7 +119,7 @@ class SimulatedVocabularyFile {
 };
 
 // _____________________________________________________________________________
-// Benchmark result metrics struct.
+// Store benchmark result metrics.
 struct BenchmarkMetric {
   std::string name;
   double elapsedSeconds = 0.0;
