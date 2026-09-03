@@ -34,9 +34,8 @@ std::vector<fs::path> filesWithBaseNameAndSuffix(const fs::path& onDiskBase,
   std::string prefix =
       absl::StrCat(ql::pathFilename(onDiskBase).string(), suffix);
   namespace v = ql::views;
-  // With an InputRangeTypeErased (instead of `to_vector`), `ql::directoryRange`
-  // backed by the boost filesystem library doesn't work.
-  return ::ranges::to_vector(ql::directoryRange(directory)) |
+  auto dirEntries = ::ranges::to_vector(ql::directoryRange(directory));
+  return dirEntries |
          v::filter([](const auto& entry) { return entry.is_regular_file(); }) |
          // Return the paths in the same form as `onDiskBase` (directory part of
          // `onDiskBase` plus the file name; an empty `parent` yields the bare
