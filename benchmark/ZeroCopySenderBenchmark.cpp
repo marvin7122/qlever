@@ -360,7 +360,7 @@ void printResultsTable(std::vector<BenchmarkMetric>& results) {
 }  // namespace
 
 #ifdef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
-// Integration into QLever's Benchmark Framework
+// Integrate the benchmark into QLever's benchmark framework.
 class ZeroCopySenderBenchmark : public BenchmarkInterface {
  public:
   std::string name() const final {
