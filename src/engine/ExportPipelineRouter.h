@@ -29,7 +29,7 @@ enum class ExportEngineMode {
   FastStreamingV2 = 1  // Push-based zero-copy streaming engine
 };
 
-// Returns human-readable representation of ExportEngineMode.
+// Return a human-readable representation of `ExportEngineMode`.
 [[nodiscard]] constexpr std::string_view toString(ExportEngineMode mode) noexcept {
   switch (mode) {
     case ExportEngineMode::LegacyV1:
