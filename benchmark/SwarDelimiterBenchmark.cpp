@@ -368,7 +368,7 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);
       }
 
-      // 3.2 SWAR 64-bit pure delimiter writes
+      // Write pure delimiters with `SwarDelimiterPacker`.
       {
         size_t totalBytesWritten = 0;
         uint64_t startCycles = readCpuCycles();
