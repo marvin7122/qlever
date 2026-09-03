@@ -103,7 +103,7 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
     }
   });
 
-  // Sender thread loop
+    // Sender loop
   for (size_t i = 0; i < numChunks; ++i) {
     uint32_t slot = sender.acquireBuffer();
     auto span = sender.getSlotSpan(slot);
