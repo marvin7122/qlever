@@ -193,7 +193,7 @@ inline char* formatUIntBranchless(uint64_t val, char* out) noexcept {
 }
 
 // _____________________________________________________________________________
-// Branchless, zero-allocation conversion of uint32_t to ASCII.
+// Zero-allocation conversion of uint32_t to ASCII.
 inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
   const uint32_t len = numDigits(val);
