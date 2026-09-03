@@ -155,7 +155,7 @@ inline char* formatUndefined(ValueId, std::string_view, char* out,
   return out;
 }
 
-// Builds the default 16-entry lookup table for standard RDF N-Triples export.
+// Build the default 16-entry lookup table for standard RDF N-Triples export.
 constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   std::array<TypeFormatDescriptor, 16> lut{};
   for (size_t i = 0; i < 16; ++i) {
