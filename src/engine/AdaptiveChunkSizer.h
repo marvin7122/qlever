@@ -262,7 +262,7 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Snapshot of current statistics.
+  // Return a snapshot of the current statistics.
   [[nodiscard]] AdaptiveChunkStats stats() const noexcept {
     return AdaptiveChunkStats{
         .chunksFlushed_ = chunksFlushed_,
