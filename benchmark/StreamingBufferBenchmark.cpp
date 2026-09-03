@@ -203,7 +203,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     // Immediately measure vocabulary access latency post-export
     const double latencyNs = probeCacheLatency(vocabTable, probeIndices);
 
-    // Baseline hit ratio model: fast cache hit is ~1-4 ns, DRAM miss is ~50-80 ns
+    // Heuristic cache-hit estimate derived from aggregate random-probe latency; this is not a hardware hit-rate measurement.
     const double hitRatio = std::clamp(1.0 - (latencyNs - 3.0) / 60.0, 0.05, 0.99);
 
     return BenchmarkMetricResult{
