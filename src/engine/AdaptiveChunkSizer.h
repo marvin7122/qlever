@@ -150,7 +150,7 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Target byte capacity for the active chunk buffer.
+  
   [[nodiscard]] size_t currentChunkBytes() const noexcept {
     return currentChunkBytesTarget_;
   }
