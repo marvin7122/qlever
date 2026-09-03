@@ -191,7 +191,7 @@ class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter>
       return slice_.spliceInto(out);
     }
 
-    // Cache miss: format new prefix slice
+    // Format the new prefix slice on a cache miss.
     ++stats_.cacheMisses_;
     std::array<char, 2048> tempBuf{};
     char* curr = tempBuf.data();
