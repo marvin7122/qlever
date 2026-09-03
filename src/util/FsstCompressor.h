@@ -287,7 +287,8 @@ class FsstEncoder {
   }
 
   // ___________________________________________________________________________
-  // Return a decoder, that can be used to decompress strings that have been
+    // Return a decoder, that can be used to decompress strings that have been
+  // compressed by this encoder.
   // Interface for the case that all the strings that shall ever be compressed
   // using the same codebook shall also contribute to that codebook. Build a
   // codebook from the `strings`, and then use that codebook to compress each of
