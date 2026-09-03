@@ -237,7 +237,7 @@ class HardwarePerformanceMonitor {
 };
 
 // _____________________________________________________________________________
-// Benchmark suite measuring Software Cache Prefetching vs Baseline lookup.
+// Measure software cache prefetching against baseline lookup.
 class PrefetchingBenchmark : public BenchmarkInterface {
  private:
   static constexpr size_t NUM_VOCAB_ENTRIES = 1'000'000;
