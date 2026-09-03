@@ -18,7 +18,7 @@
 using namespace ql::serialization;
 using namespace ql::export_formatting;
 
-// Helper to serialize with string sink
+
 template <typename Fn>
 std::string captureOutput(Fn&& fn) {
   std::string out;
