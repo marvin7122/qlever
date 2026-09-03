@@ -1377,8 +1377,7 @@ TEST(RdfParserTest, noGetlineInMultifileParsers) {
     using Parser = typename decltype(t)::type;
     Parser parser{encodedIriManager()};
     TurtleTriple triple;
-    // Also test the dummy parse position member.
-    EXPECT_EQ(parser.getParsePosition(), 0u);
+        EXPECT_EQ(parser.getParsePosition(), 0u);
     EXPECT_ANY_THROW(parser.getLine(triple));
   };
   forAllMultifileParsers(runTestsForParser);
