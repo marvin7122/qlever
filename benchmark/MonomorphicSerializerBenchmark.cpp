@@ -276,7 +276,7 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
 }
 
 // _____________________________________________________________________________
-// Benchmark class comparing Dynamic Per-Cell Dispatch vs Monomorphic Template Serializers
+// Benchmark dynamic per-cell dispatch against monomorphic template serializers.
 class MonomorphicSerializerBenchmark : public BenchmarkInterface {
  private:
   DatasetStorage data_;
