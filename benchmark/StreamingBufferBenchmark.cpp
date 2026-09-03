@@ -100,7 +100,7 @@ class PerfCounter {
 };
 
 // _____________________________________________________________________________
-// Benchmark Result Record
+// Define the benchmark result record.
 struct BenchmarkMetricResult {
   std::string method;
   size_t bufferSizeMB;
