@@ -224,7 +224,7 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   data.metricTuples_.reserve(numRows);
   data.relationalTuples_.reserve(numRows);
 
-  // Common IRIs
+  // Add common IRIs.
   data.stringPool_.push_back("<http://www.w3.org/2000/01/rdf-schema#label>");
   data.stringPool_.push_back("<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>");
   data.stringPool_.push_back("<http://example.org/prop/population>");
