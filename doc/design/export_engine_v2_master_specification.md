@@ -235,7 +235,7 @@ To enable independent implementation and clean reviewability, the V2 engine is d
 ### Work Package 5: Zero-Copy Arena Scatter-Gather Streaming
 * **Artifact Target:** `src/engine/export_v2/ScatterGatherArenaStreamer.h` & `test/ScatterGatherArenaStreamerTest.cpp`
 * **Task Description:**
-  - Assemble output chunks as arrays of `struct iovec` referencing decompressed vocabulary arena spans.
+  - Assemble output chunks as arrays of `struct iovec` referencing decompressed vocabulary arena spans. Each emitted chunk must retain ownership of, or a keep-alive handle to, every arena backing its iovec entries until transmission completion, including `SEND_ZC` completion; release those arenas only after completion.
   - Integrate `InPlaceHttpChunkFraming.h` for in-place HTTP 1.1 chunk size header writing.
 * **Definition of Done:** `ScatterGatherBenchmark` passes on Ural with zero intermediate `std::string` allocations.
 
