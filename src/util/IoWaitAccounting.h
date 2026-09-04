@@ -336,7 +336,7 @@ inline void startReporter() {
   });
 }
 
-// Also reports on a normal exit, for interactive use.
+// Also report on a normal exit, for interactive use.
 struct ExitReporter {
   ~ExitReporter() { std::fprintf(stderr, "%s\n", report().c_str()); }
 };
