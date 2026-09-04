@@ -89,8 +89,8 @@ Each PR must remain independently reviewable and testable. Later PRs may depend 
 
 ### 4. Benchmarking & Verification Plan
 * **Test Target:** `test/ExportPipelineRouterTest.cpp`
-* **Coverage:** Matrix of query strings (supported vs unsupported operators), HTTP headers, and URL parameter permutations.
-* **Assertion:** Correct mode selected for 100% of cases; error-free fallback on malformed inputs.
+* **Coverage:** Dedicated router tests must cover request-option precedence, every supported and unsupported operator category, malformed inputs, and injected V2 setup failures.
+* **Assertion:** Verify both the selected mode and the absence of an HTTP error when transparently falling back to V1.
 
 ### 5. Compatibility Matrix
 * **Supported in V2:** `SELECT`, `CONSTRUCT`, SPARQL graph pattern scans (SPO, POS, PSO, etc.), join operations, value filters, and all export MIME types (`text/tab-separated-values`, `text/csv`, `text/turtle`, `application/n-triples`).
