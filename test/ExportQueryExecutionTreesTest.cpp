@@ -2428,10 +2428,9 @@ TEST(ExportQueryExecutionTrees, SplitBlockIntoChunks) {
 }
 
 // ____________________________________________________________________________
-// White-box test for `serializeConstructGroup`, the per-format serialization
-// body shared by the workers of the parallel CONSTRUCT export.  It must
-// serialize a single row range exactly as the serial path does, concatenated
-// into one output string.
+// the per-format serialization body shared by the workers of the parallel
+// CONSTRUCT export.  It must serialize a single row range exactly as the
+// serial path does, concatenated into one output string.
 TEST(ExportQueryExecutionTrees, SerializeConstructGroup) {
   using namespace qlever::constructExport;
   auto qec = ad_utility::testing::getQec("<s> <p> <o> .");
