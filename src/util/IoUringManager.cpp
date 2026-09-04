@@ -258,8 +258,7 @@ void IoUringPolicy::drainAllReadyCqes() {
   };
   std::vector<RawCqe> raw;
   raw.reserve(ringSize_);
-  while (true) {
-    std::array<io_uring_cqe*, 64> cqes{};
+    while (true) {
     const unsigned n =
         io_uring_peek_batch_cqe(&ring_, cqes.data(), cqes.size());
     if (n == 0) {
