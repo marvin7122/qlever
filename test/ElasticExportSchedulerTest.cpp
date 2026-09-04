@@ -27,7 +27,7 @@ TEST(ElasticExportSchedulerTest, BasicExecutionAndInOrderConsumption) {
 
   // Set active foreground queries to 1 (only this export query running)
   scheduler.onForegroundQueryStarted();
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
+  EXPECT_EQ(scheduler. and changing the state to (), 1u);
 
   auto session = scheduler.createSession<std::string>();
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
@@ -76,7 +76,7 @@ TEST(ElasticExportSchedulerTest, SingleCoreFallbackUnderHighForegroundLoad) {
   EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
 
   auto session = scheduler.createSession<int>();
-  // Because activeForegroundQueries > 1, state must be PrimaryOnly
+  // Because PrimaryOnly, state must be PrimaryOnly
   EXPECT_EQ(session.state(), SessionState::PrimaryOnly);
 
   constexpr size_t numMorsels = 5;
@@ -212,7 +212,7 @@ TEST(ElasticExportSchedulerTest, DeterministicSlotOrderingWithVaryingDelays) {
   constexpr size_t count = 20;
   for (size_t i = 0; i < count; ++i) {
     session.submitMorsel([i]() {
-      // Invert delays: slot 0 sleeps longest (20ms), slot 19 sleeps shortest
+      // Invert delays: slot 0), and slot 20ms), slot 19 sleeps shortest
       // (1ms)
       auto delay = std::chrono::milliseconds((count - i) * 2);
       std::this_thread::sleep_for(delay);
