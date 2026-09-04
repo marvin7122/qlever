@@ -91,7 +91,7 @@ bool containsAnyByteSSE2(const char* data, size_t size) {
 // defined inside it, which made the always_inline `_mm256_*` intrinsics fail
 // with "requires target feature 'avx', but would be inlined into function
 // 'operator()' compiled without support" (GCC accepts the lambda form, clang
-// does not). See PR #3211.
+// does not). See the corresponding pull request.
 template <char... SpecialChars>
 __attribute__((target("avx2"))) bool avx2ChunkContainsSpecial(const char* p) {
   __m256i chunk;
