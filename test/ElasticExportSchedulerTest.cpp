@@ -156,7 +156,7 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   std::shared_future<void> unblockMorsel0 =
       unblockMorsel0Promise.get_future().share();
 
-  // Submit morsel 0 which pauses while holding the helper lease
+  // Submit morsel `0`, which pauses while holding the helper lease.
   session.submitMorsel(
       [morsel0StartedPromise = std::move(morsel0StartedPromise),
        unblockMorsel0]() mutable {
