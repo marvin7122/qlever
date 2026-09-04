@@ -319,7 +319,7 @@ TEST(ElasticExportSchedulerTest, QueryRegistryLifecycleHookIntegration) {
     // Verify that destroying `q2` fires the end callback.
     EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
   }
-  // q1 destroyed -> end callback fired
+  // Verify that destroying `q1` fires the end callback.
   EXPECT_EQ(scheduler.activeForegroundQueries(), 0u);
 }
 
