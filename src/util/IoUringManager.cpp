@@ -59,7 +59,7 @@ void SyncIoPolicy::addBatch(int fd,
 IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
     // Define the idle time in ms after which the SQPOLL kernel thread goes to sleep.
   static constexpr uint32_t kSqThreadIdleMs = 15;
-  // Set up the submission and completion queues with kernel-side SQ polling.
+
   // `IORING_SETUP_SQPOLL` creates a dedicated kernel thread that continuously
   // polls the submission queue. The application calls `io_uring_submit` for
   // each batch; liburing wakes an idle SQPOLL kernel thread via
