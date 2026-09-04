@@ -14,7 +14,7 @@ namespace {
 using namespace ad_utility::simd;
 
 // Call all implementations that are available on this platform and check that
-// they agree with the scalar reference implementation. Returns the common
+// they agree with the scalar reference implementation. Return the common
 // result. This is the core of all tests below: the SIMD variants are only
 // correct if they are indistinguishable from the reference for every input.
 template <char... SpecialChars>
