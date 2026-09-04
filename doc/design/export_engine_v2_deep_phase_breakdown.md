@@ -272,7 +272,7 @@
 
 ### 3. Performance Rationale
 * **Compute/I/O Overlap:** While a submitted chunk is pending and the socket can accept data, the query thread generates the next chunk. Slow-client backpressure or a CPU-bound formatter can still leave one side idle.
-* **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
+* **Latency Hiding:** Generation of the next chunk can overlap transmission of the previous chunk; the amount of overlap is limited by the two buffer slots, socket backpressure, and the relative CPU and network rates.
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmark:** `ChunkStreamingBenchmark`
