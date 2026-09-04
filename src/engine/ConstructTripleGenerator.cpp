@@ -36,6 +36,11 @@ std::shared_ptr<ConstructDeduplicator> makeDeduplicator(
   if (std::holds_alternative<DeduplicationMode::None>(config.mode_.value_)) {
     return nullptr;
   }
+  AD_CONTRACT_CHECK(
+      std::holds_alternative<DeduplicationMode::Lru>(
+          config.mode_.value_) ||
+      std::holds_alternative<DeduplicationMode::Full>(
+          config.mode_.value_));
   return std::make_shared<ConstructDeduplicator>(config.mode_, config.qec_);
 }
 
