@@ -133,7 +133,7 @@ void benchmarkFilterSelectivity() {
   }
 }
 
-}  // namespace
+}  // namespace.
 
 int main() {
   benchmarkChunkSizeSweep();
