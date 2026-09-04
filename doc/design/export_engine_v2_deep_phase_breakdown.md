@@ -215,11 +215,12 @@
   - `src/engine/export_v2/InPlaceHttpChunkFraming.h`
 * **Mechanics:**
   1. Decompressed vocabulary terms live in a page-aligned arena buffer (`CompactStringVector` / PMR Arena).
-  2. Instead of copying strings into a formatted buffer, the serializer creates an array of `struct iovec` descriptors containing:
+  2. Instead of copying strings into a formatted buffer, the serializer creates an owning in-flight transmission record. The record contains the arena/buffer owner, the complete `struct iovec` array, the framing storage, and the current write offset. The iovec entries are constructed only inside that record, so every referenced span is retained by construction until the record is retired.
      - Direct pointers to static delimiters (`<`, `>`, `\t`, `\n`).
      - Direct pointers to the arena string spans.
-  3. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
-  4. The complete chunk is transmitted via a single `::writev()` or `io_uring_prep_send_zc` call.
+  3. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place. Finalization produces the complete transmission record; submission consumes that finalized record rather than retaining borrowed spans independently.
+  4. The transmission record is submitted via `::writev()` or `io_uring_prep_send_zc` and remains in the in-flight set until the transport reports completion. A partial write advances the current iovec/offset and resubmits only the unsent suffix; it does not recycle or mutate the referenced arena/buffer.
+  5. On a send error, cancellation, or connection close, the completion path removes the record from the in-flight set and releases its arena/buffer and iovec storage exactly once. Only successful completion or terminal cancellation/error may recycle the slot; a slot is never reused while any submitted iovec can still be observed by the kernel.
 
 ### 3. Performance Rationale
 * **Reduced Intermediate Copies:** The serializer avoids copying vocabulary spans into a temporary per-term formatting buffer; the remaining framing, kernel, and buffer-lifetime costs depend on the selected transport.
