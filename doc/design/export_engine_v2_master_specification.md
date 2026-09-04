@@ -120,7 +120,7 @@ The supervisor's constraint is critical: **a heavy multi-threaded query must nev
    - **Step 2 (Cooperative Boundary Check):** At the completion of each atomic morsel, helper threads perform an atomic check at the completion of each morsel:
      ```cpp
      if (scheduler.priorityQueueDepth() > 0 || !leaseActive_) {
-       // Instantly surrender core back to global server pool
+       // Stop this helper's work so the scheduler can reclaim its lease
        return;
      }
      ```
