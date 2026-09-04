@@ -258,12 +258,13 @@ void ElasticExportScheduler::workerLoop() {
 
     ExportWorkLease lease(this, leaseEpoch, jobId, leaseId);
 
-    if (targetJobState && !targetJobState->isCancelled()) {
-      if (submissionEpoch == leaseEpoch) {
-        targetJobState->onHelperLeaseAcquired(leaseEpoch);
+        if (targetJobState && !targetJobState->isCancelled() &&
+        submissionEpoch == leaseEpoch) {
+      targetJobState->onHelperLeaseAcquired(leaseEpoch);
+      if (demandEpoch_.load(std::memory_order_relaxed) == leaseEpoch) {
         targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
-        targetJobState->onHelperLeaseReleased(leaseEpoch);
       }
+      targetJobState->onHelperLeaseReleased(leaseEpoch);
     }
   }
 }
