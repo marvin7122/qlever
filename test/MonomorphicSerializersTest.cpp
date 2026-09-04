@@ -114,13 +114,23 @@ TEST(MonomorphicSerializersTest, DoubleMatchesLegacyEncodedCsv) {
         std::pair{-0.0, "-0.0\n"},
         std::pair{0.5, "0.5\n"},
         std::pair{153.07, "153.07\n"},
-        std::pair{1e300, "1e+300\n"},
         std::pair{std::numeric_limits<double>::quiet_NaN(), "NaN\n"},
         std::pair{std::numeric_limits<double>::infinity(), "INF\n"},
         std::pair{-std::numeric_limits<double>::infinity(), "-INF\n"}}) {
     RecordingWriter writer;
     Serializer::serializeRow<RowFormat::Csv>(writer, value);
     EXPECT_EQ(writer.output(), legacy);
+  }
+  // `1e300` is integral, so Legacy prints the full exact expansion via
+  // `%.1f` (301 digits). Pin the shape, not the digits: decimal point
+  // present with one trailing zero, far beyond any fixed buffer.
+  {
+    RecordingWriter writer;
+    Serializer::serializeRow<RowFormat::Csv>(writer, 1e300);
+    const auto& out = writer.output();
+    EXPECT_GT(out.size(), 300u);
+    EXPECT_EQ(out.substr(out.size() - 3), ".0\n");
+    EXPECT_EQ(out.find_first_not_of("0123456789", 1), out.size() - 3);
   }
 }
 
