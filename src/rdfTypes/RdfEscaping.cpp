@@ -221,11 +221,11 @@ NormalizedRDFString normalizeRDFLiteral(const std::string_view origLiteral) {
 // __________________________________________________________________________
 std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
   AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'));
-  size_t posLastQuote = normLiteral.rfind('"');
   // The contract that there is a closing quote (a quote at a position > 0)
   // is checked here; it is equivalent to the old
   // `AD_CONTRACT_CHECK(find('"', 1) != npos)`.
-  AD_CONTRACT_CHECK(posLastQuote != 0);
+  AD_CONTRACT_CHECK(normLiteral.rfind('"') != 0);
+  size_t posLastQuote = normLiteral.rfind('"');
   // Fast path: a normalized literal only needs escaping if its content (the
   // part between the first and the last quote) contains a quote, backslash,
   // newline, or carriage return. The scan is a vectorized sweep (see
