@@ -200,8 +200,10 @@ void ExportEngineV2::appendSerializedRows(
   };
 
   // Batch-resolve each bound column with the same idToStringAndType contract
-  // as Legacy (CSV quoting, vocab strings). Do not switch to the monomorphic
-  // writers here: those would change cell text.
+  // as Legacy (CSV quoting, vocab strings). MonomorphicRowSerializer is not
+  // a drop-in: it needs a compile-time column schema, does not resolve Ids,
+  // formats doubles with to_chars ("1" vs Legacy "1.0"), and keeps IRI
+  // brackets that SELECT CSV strips. See MonomorphicSerializersTest.
   const size_t n = static_cast<size_t>(rowEnd - rowBegin);
   std::vector<std::vector<ResolvedCell>> resolved(numOutputCols);
   for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
