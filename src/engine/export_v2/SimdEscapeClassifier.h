@@ -132,8 +132,9 @@ char* emitEscaped(char character, char* output) {
       *output++ = character;
     }
   } else if constexpr (Format == EscapeFormat::Tsv) {
-    if (character == '\t') {
-      *output++ = ' ';
+        if (character == '\t') {
+      *output++ = '\\';
+      *output++ = 't';
     } else if (character == '\\') {
       *output++ = '\\';
       *output++ = '\\';
