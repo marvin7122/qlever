@@ -500,7 +500,7 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Pending) {
-        // Single-core fallback: execute directly on coordinator thread
+        // Fallback: execute directly on the coordinator thread
         slots_[index].status_ = MorselStatus::Running;
         auto startWall = std::chrono::steady_clock::now();
         slots_[index].profile_.startedAt_ = startWall;
