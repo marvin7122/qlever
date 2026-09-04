@@ -324,7 +324,7 @@ class ExportJobState final
       }
       size_t maxQueries = scheduler_->maxForegroundQueriesForHelperAdmission();
       if (activeForegroundQueries <= maxQueries) {
-        // Foreground load is low; helpers are eligible
+        // Foreground load is low; helpers are eligible.
         currentEpoch_.store(newEpoch, std::memory_order_relaxed);
         state_.store(SessionState::HelpersEligible, std::memory_order_relaxed);
         // Collect pending slots to submit to helper pool
