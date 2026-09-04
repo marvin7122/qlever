@@ -186,9 +186,9 @@ class IoUringPolicy {
   unsigned ringSize_;
     size_t registeredBufferSize_;
 
-  // Total number of reads that occupy a ring slot but have not yet been reaped
+    // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
-  // not yet returned by `io_uring_wait_cqe`. Must never exceed `ringSize_`.
+  // not yet returned by `io_uring_wait_cqes`. Must never exceed `ringSize_`.
   unsigned numInFlightReadRequests_ = 0;
 
   // Maps each `BatchHandle` to the number of its read requests that are still
