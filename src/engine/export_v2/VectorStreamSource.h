@@ -22,7 +22,7 @@
 
 namespace ql::engine::export_v2 {
 
-// A positive number of rows in one output chunk.
+// The maximum number of rows in one output chunk.
 class RowsPerChunk {
  public:
   explicit RowsPerChunk(size_t value) : value_{value} {
