@@ -195,7 +195,7 @@
                                  ┌─────────────────────────┐
                                  │ struct iovec[] Vector   │
                                  ├─────────────────────────┤
-                                 │ [0] Header "\r\n1000\r\n│
+                                                                  │ [0] Header: "1a4f0\r\n"     │
                                  │ [1] Span: Q42 IRI       │
                                  │ [2] Delim: "\t"         │
                                  │ [3] Span: Literal Text  │
