@@ -309,7 +309,7 @@ class ExportJobState final
   }
 
   [[nodiscard]] SessionState state() const noexcept {
-    return state_.load(std::memory_order_relaxed);
+      return state_.load(std::memory_order_acquire);
   }
 
   [[nodiscard]] size_t activeHelpers() const noexcept {
@@ -327,8 +327,8 @@ class ExportJobState final
       size_t maxQueries = scheduler_->maxForegroundQueriesForHelperAdmission();
       if (activeForegroundQueries <= maxQueries) {
         // Foreground load is low; helpers are eligible
-        currentEpoch_.store(newEpoch, std::memory_order_relaxed);
-        state_.store(SessionState::HelpersEligible, std::memory_order_relaxed);
+        currentEpoch_.store(newEpoch, std::memory_order_release);
+        state_.store(SessionState::HelpersEligible, std::memory_order_release);
         // Collect pending slots to submit to helper pool
         for (size_t i = nextSlotToConsume_; i < slots_.size(); ++i) {
           if (slots_[i].status_ == MorselStatus::Pending) {
@@ -337,11 +337,11 @@ class ExportJobState final
         }
       } else {
         // Foreground load exceeded threshold; revoke helpers
-        currentEpoch_.store(newEpoch, std::memory_order_relaxed);
+        currentEpoch_.store(newEpoch, std::memory_order_release);
         if (activeHelpers_.load(std::memory_order_relaxed) > 0) {
-          state_.store(SessionState::Revoking, std::memory_order_relaxed);
+            state_.store(SessionState::Revoking, std::memory_order_release);
         } else {
-          state_.store(SessionState::PrimaryOnly, std::memory_order_relaxed);
+            state_.store(SessionState::PrimaryOnly, std::memory_order_release);
         }
       }
       cv_.notify_all();
@@ -365,20 +365,20 @@ class ExportJobState final
     AD_CORRECTNESS_CHECK(prev > 0, "Underflow in activeHelpers_");
     if (prev == 1) {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (state_.load(std::memory_order_relaxed) == SessionState::Revoking) {
-        state_.store(SessionState::PrimaryOnly, std::memory_order_relaxed);
+      if (state_.load(std::memory_order_acquire) == SessionState::Revoking) {
+        state_.store(SessionState::PrimaryOnly, std::memory_order_release);
       }
       cv_.notify_all();
     }
   }
 
   void executeHelperTask(size_t morselIndex, uint64_t leaseEpoch) override {
-    if (cancelled_.load(std::memory_order_relaxed) ||
-        currentEpoch_.load(std::memory_order_relaxed) != leaseEpoch ||
-        state_.load(std::memory_order_relaxed) == SessionState::Revoking ||
-        state_.load(std::memory_order_relaxed) == SessionState::Closed) {
-      return;
-    }
+      if (cancelled_.load(std::memory_order_relaxed) ||
+          currentEpoch_.load(std::memory_order_relaxed) != leaseEpoch ||
+          state_.load(std::memory_order_acquire) == SessionState::Revoking ||
+          state_.load(std::memory_order_acquire) == SessionState::Closed) {
+          return;
+      }
 
     absl::AnyInvocable<ResultType()> task;
     auto startWall = std::chrono::steady_clock::now();
