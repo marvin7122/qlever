@@ -25,7 +25,7 @@ TEST(ElasticExportSchedulerTest, BasicExecutionAndInOrderConsumption) {
   ElasticExportScheduler scheduler(2, 64);
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
-  // Set active foreground queries to 1 (only this export query running)
+  // Set the active foreground query count to `1` (only this export query is running).
   scheduler.onForegroundQueryStarted();
   EXPECT_EQ(scheduler. and changing the state to (), 1u);
 
