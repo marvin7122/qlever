@@ -347,27 +347,27 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
 // `unsigned` by the batch manager API, so values outside that range must be
 // rejected instead of silently wrapped.
 TEST(VocabularyOnDisk, BatchIoRuntimeParametersAreValidated) {
-  auto testInvalid = [](auto setInvalid) {
+  auto testInvalid = [](auto setInvalid, const std::string& expectedMessage) {
     auto cleanup = setInvalid();
-    EXPECT_ANY_THROW(createExampleVocabulary());
+    AD_EXPECT_THROW_WITH_MESSAGE(createExampleVocabulary(), expectedMessage);
   };
   // A pool of zero managers must be rejected.
   testInvalid([] {
     return setRuntimeParameterForTest<
         &RuntimeParameters::vocabBatchIoNumManagers_>(size_t{0});
-  });
+  }, "vocabBatchIoNumManagers must be greater than 0");
   // A ring size of zero must be rejected.
   testInvalid([] {
     return setRuntimeParameterForTest<
         &RuntimeParameters::vocabBatchIoRingSize_>(size_t{0});
-  });
+  }, "vocabBatchIoRingSize must be in range [1, UINT_MAX]");
   // A ring size above `UINT_MAX` must be rejected instead of being wrapped by
   // the `static_cast<unsigned>` in `open`.
   testInvalid([] {
     return setRuntimeParameterForTest<
         &RuntimeParameters::vocabBatchIoRingSize_>(
         static_cast<size_t>(std::numeric_limits<unsigned>::max()) + 1);
-  });
+  }, "vocabBatchIoRingSize must be in range [1, UINT_MAX]");
 }
 
 // With valid runtime parameter values, `open` must create a working manager
