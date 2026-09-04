@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <charconv>
+#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <string>
