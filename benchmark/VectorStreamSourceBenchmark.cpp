@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of this project.
 
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <iomanip>
@@ -71,6 +72,7 @@ void benchmarkChunkSizeSweep() {
 
     auto start = std::chrono::high_resolution_clock::now();
     source.run(blocks, sink);
+    assert(totalReceived == totalRows);
     auto end = std::chrono::high_resolution_clock::now();
 
     double elapsedMs =
@@ -119,6 +121,8 @@ void benchmarkFilterSelectivity() {
 
     auto start = std::chrono::high_resolution_clock::now();
     source.run(blocks, sink, filters);
+    const size_t expectedRows = filters.empty() ? totalRows : totalRows / 50;
+    assert(totalReceived == expectedRows);
     auto end = std::chrono::high_resolution_clock::now();
 
     double elapsedMs =
