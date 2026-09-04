@@ -25,6 +25,7 @@
 #include "engine/HasPredicateScan.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
+#include "engine/Sort.h"
 #include "engine/Values.h"
 #include "engine/export_v2/ColumnLattice.h"
 #include "engine/export_v2/ExportMorselPlanner.h"
@@ -216,8 +217,12 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
 }  // namespace
 
 // True when every operation in the tree rooted at `operation` is one the V2
-// serializer understands: triple scans, joins, filters, BIND, and inline
-// VALUES. A null or foreign child falls back to Legacy V1 (safe direction).
+// serializer understands: triple scans, joins, filters, BIND, inline VALUES,
+// and internal sorts. Internal `Sort` (e.g. over `VALUES` below a join) only
+// orders the join input; V2 formats yielded rows in order, so bytes are
+// unaffected. User `ORDER BY` never reaches this check: the router rejects it
+// at the query-shape level. A null or foreign child falls back to Legacy V1
+// (safe direction).
 static bool operationTreeIsSupported(const ::Operation& operation) {
   const bool supported =
       dynamic_cast<const ::IndexScan*>(&operation) != nullptr ||
@@ -226,6 +231,7 @@ static bool operationTreeIsSupported(const ::Operation& operation) {
       dynamic_cast<const ::CartesianProductJoin*>(&operation) != nullptr ||
       dynamic_cast<const ::Filter*>(&operation) != nullptr ||
       dynamic_cast<const ::Bind*>(&operation) != nullptr ||
+      dynamic_cast<const ::Sort*>(&operation) != nullptr ||
       dynamic_cast<const ::Values*>(&operation) != nullptr;
   if (!supported) {
     return false;
@@ -401,6 +407,12 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
   ad_utility::Timer timer{ad_utility::Timer::Started};
 
   if (!canHandle(parsedQuery, qet, mediaType)) {
+    // Backstop: the server routes op-unsupported plans to Legacy upfront, so
+    // reaching this branch means the gates disagree. Say so loudly instead of
+    // serving Legacy bytes under a V2 log line.
+    AD_LOG_INFO << "ExportEngineV2 falls back to Legacy V1 "
+                   "(operation tree not supported)"
+                << std::endl;
     for (auto& chunk : ExportQueryExecutionTrees::computeResult(
              parsedQuery, qet, mediaType, timer,
              std::move(cancellationHandle))) {
