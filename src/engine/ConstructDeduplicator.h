@@ -40,7 +40,7 @@ using ad_utility::OverloadCallOperator;
 // triples (full mode), or the N most recently used triples (lru mode). When
 // a new triple is passed to the filter (via `insert`), it stores it in the
 // cache. For a previously seen triple that is already in the cache, `insert`
-// just informs the caller that the triple is a duplicate.
+// Returns true if `key` is new (not a duplicate), false if it is a duplicate.
 class TripleDeduplicator {
  public:
   explicit TripleDeduplicator(const DeduplicationMode& mode,
