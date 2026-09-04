@@ -146,6 +146,90 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
 }
 
 // _______________________________________________________
+TYPED_TEST(CompressedVocabularyF, LookupBatchVariousIndexSequences) {
+  // Block size is 4 (set in createCompressedVocabulary), so we use words that
+  // span multiple decoder blocks to test correct decompression across block
+  // boundaries.
+  const std::vector<std::string> words{
+      "word0", "word1", "word2", "word3",  // block 0
+      "word4", "word5", "word6", "word7",  // block 1
+      "word8", "word9"                     // block 2 (partial)
+  };
+  auto vocab = this->createCompressedVocabulary()(words);
+
+  // Empty indices (std::vector, not span).
+  {
+    std::vector<size_t> emptyIndices;
+    auto result = vocab.lookupBatch(emptyIndices);
+    EXPECT_TRUE(result.empty());
+  }
+
+  // Single index.
+  {
+    auto result = vocab.lookupBatch(std::vector<size_t>{5});
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], words[5]);
+  }
+
+  // Multiple indices in order.
+  {
+    auto result = vocab.lookupBatch(std::vector<size_t>{0, 2, 4, 6});
+    ASSERT_EQ(result.size(), 4);
+    EXPECT_EQ(result[0], words[0]);
+    EXPECT_EQ(result[1], words[2]);
+    EXPECT_EQ(result[2], words[4]);
+    EXPECT_EQ(result[3], words[6]);
+  }
+
+  // Multiple indices out of order.
+  {
+    auto result = vocab.lookupBatch(std::vector<size_t>{7, 2, 9, 0});
+    ASSERT_EQ(result.size(), 4);
+    EXPECT_EQ(result[0], words[7]);
+    EXPECT_EQ(result[1], words[2]);
+    EXPECT_EQ(result[2], words[9]);
+    EXPECT_EQ(result[3], words[0]);
+  }
+
+  // Duplicate indices.
+  {
+    auto result = vocab.lookupBatch(std::vector<size_t>{1, 1, 5, 5, 1});
+    ASSERT_EQ(result.size(), 5);
+    EXPECT_EQ(result[0], words[1]);
+    EXPECT_EQ(result[1], words[1]);
+    EXPECT_EQ(result[2], words[5]);
+    EXPECT_EQ(result[3], words[5]);
+    EXPECT_EQ(result[4], words[1]);
+  }
+
+  // Indices spanning multiple decoder blocks (block size = 4).
+  {
+    // Covers block 0 (indices 0-3), block 1 (indices 4-7), block 2 (indices 8-9).
+    auto result = vocab.lookupBatch(std::vector<size_t>{0, 3, 4, 7, 8, 9});
+    ASSERT_EQ(result.size(), 6);
+    EXPECT_EQ(result[0], words[0]);
+    EXPECT_EQ(result[1], words[3]);
+    EXPECT_EQ(result[2], words[4]);
+    EXPECT_EQ(result[3], words[7]);
+    EXPECT_EQ(result[4], words[8]);
+    EXPECT_EQ(result[5], words[9]);
+  }
+
+  // All indices in reverse order.
+  {
+    std::vector<size_t> reverseIndices;
+    for (size_t i = words.size(); i > 0; --i) {
+      reverseIndices.push_back(i-1);
+    }
+    auto result = vocab.lookupBatch(reverseIndices);
+    ASSERT_EQ(result.size(), words.size());
+    for (size_t i = 0; i < words.size(); ++i) {
+      EXPECT_EQ(result[i], words[words.size() - 1 - i]);
+    }
+  }
+}
+
+// _______________________________________________________
 TYPED_TEST(CompressedVocabularyF, EmptyVocabulary) {
   testEmptyVocabulary(this->createCompressedVocabulary());
 }
