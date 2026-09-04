@@ -39,8 +39,7 @@ if (NOT _NO_BENCHMARK)
     add_executable(ExportPipelineRouterBenchmark ExportPipelineRouterBenchmark.cpp)
     qlever_target_link_libraries(ExportPipelineRouterBenchmark engine sparqlParser qlever_util)
 
-    add_executable(SimdEscapeClassifierBenchmark
-        SimdEscapeClassifierBenchmark.cpp)
+    addAndLinkBenchmark(SimdEscapeClassifierBenchmark engine sparqlParser qlever_util)
 
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
 
