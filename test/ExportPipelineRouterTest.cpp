@@ -25,6 +25,8 @@ TEST(ExportPipelineRouterTest, ToStringFunction) {
   EXPECT_EQ(toString(ExportEngineMode::LegacyV1), "LegacyV1");
   EXPECT_EQ(toString(ExportEngineMode::FastStreamingV2), "FastStreamingV2");
   EXPECT_EQ(toString(static_cast<ExportEngineMode>(999)), "Unknown");
+  EXPECT_EQ(toString(ExportSendMode::ConcatenatedString), "ConcatenatedString");
+  EXPECT_EQ(toString(ExportSendMode::ScatterGather), "ScatterGather");
 }
 
 TEST(ExportPipelineRouterTest, DefaultModeIsLegacyV1) {
@@ -169,6 +171,36 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
     EXPECT_THAT(desc,
                 testing::HasSubstr("default standard relational pipeline"));
   }
+}
+
+TEST(ExportPipelineRouterTest, SelectSendModeDefaultIsConcatenatedString) {
+  ParamValueMap params;
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
+            ExportSendMode::ConcatenatedString);
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params, "unknown"),
+            ExportSendMode::ConcatenatedString);
+}
+
+TEST(ExportPipelineRouterTest, SelectSendModeUrlParam) {
+  ParamValueMap params;
+  params["export-send"] = {"iovec"};
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
+            ExportSendMode::ScatterGather);
+  params["export-send"] = {"string"};
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
+            ExportSendMode::ConcatenatedString);
+  params["export-send"] = {"writev"};
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
+            ExportSendMode::ScatterGather);
+}
+
+TEST(ExportPipelineRouterTest, SelectSendModeHeader) {
+  ParamValueMap params;
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params, "iovec"),
+            ExportSendMode::ScatterGather);
+  params["export-send"] = {"string"};
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params, "iovec"),
+            ExportSendMode::ConcatenatedString);
 }
 
 }  // namespace

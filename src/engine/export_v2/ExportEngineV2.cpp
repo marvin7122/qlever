@@ -91,6 +91,50 @@ std::vector<std::optional<ColumnIndex>> selectedColumnIndices(
   return columns;
 }
 
+// One builder per header / 8192-row morsel. Callers choose finalizeToString
+// (default HTTP) or finalize (scatter-gather HTTP).
+cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle) {
+  const auto& selectClause = parsedQuery.selectClause();
+  const auto columns = selectedColumnIndices(qet, selectClause);
+  const Index& index = qet.getQec()->getIndex();
+
+  {
+    ScatterGatherChunkBuilder header;
+    header.appendCopy(makeHeaderLine(selectClause, format));
+    co_yield std::move(header);
+  }
+
+  std::shared_ptr<const Result> result = qet.getResult(true);
+  result->logResultSize();
+
+  constexpr uint64_t morselRows = 8192;
+  uint64_t resultSize = 0;
+  for (const auto& tableWithRange : ExportQueryExecutionTrees::getRowIndices(
+           parsedQuery._limitOffset, *result, resultSize)) {
+    cancellationHandle->throwIfCancelled();
+    if (tableWithRange.view_.empty()) {
+      continue;
+    }
+    const auto& table = tableWithRange.tableWithVocab_.idTable();
+    const auto& localVocab = tableWithRange.tableWithVocab_.localVocab();
+    const uint64_t rowBegin = tableWithRange.view_.front();
+    const uint64_t rowEnd = rowBegin + tableWithRange.view_.size();
+    for (uint64_t begin = rowBegin; begin < rowEnd; begin += morselRows) {
+      cancellationHandle->throwIfCancelled();
+      const uint64_t end = std::min(rowEnd, begin + morselRows);
+      ScatterGatherChunkBuilder builder;
+      ExportEngineV2::appendSerializedRows(table.asStaticView<0>(), localVocab,
+                                           format, builder, index, columns,
+                                           begin, end);
+      if (!builder.empty()) {
+        co_yield std::move(builder);
+      }
+    }
+  }
+}
+
 }  // namespace
 
 // _____________________________________________________________________________
@@ -214,39 +258,27 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
   }
 
   const auto format = rowFormatFor(mediaType).value();
-  const auto& selectClause = parsedQuery.selectClause();
-  const auto columns = selectedColumnIndices(qet, selectClause);
-  const Index& index = qet.getQec()->getIndex();
-
-  co_yield makeHeaderLine(selectClause, format);
-
-  std::shared_ptr<const Result> result = qet.getResult(true);
-  result->logResultSize();
-
-  // Same LIMIT/OFFSET / export-limit slicing as Legacy V1 (`getRowIndices`).
-  // VectorStream rechunk is applied per exported block (8192-row morsels).
   (void)scheduler;
-  constexpr uint64_t morselRows = 8192;
-  uint64_t resultSize = 0;
-  for (const auto& tableWithRange : ExportQueryExecutionTrees::getRowIndices(
-           parsedQuery._limitOffset, *result, resultSize)) {
-    cancellationHandle->throwIfCancelled();
-    if (tableWithRange.view_.empty()) {
-      continue;
-    }
-    const auto& table = tableWithRange.tableWithVocab_.idTable();
-    const auto& localVocab = tableWithRange.tableWithVocab_.localVocab();
-    const uint64_t rowBegin = tableWithRange.view_.front();
-    const uint64_t rowEnd = rowBegin + tableWithRange.view_.size();
-    for (uint64_t begin = rowBegin; begin < rowEnd; begin += morselRows) {
-      cancellationHandle->throwIfCancelled();
-      const uint64_t end = std::min(rowEnd, begin + morselRows);
-      ScatterGatherChunkBuilder builder;
-      appendSerializedRows(table.asStaticView<0>(), localVocab, format, builder,
-                           index, columns, begin, end);
-      if (!builder.empty()) {
-        co_yield std::move(builder).finalizeToString();
-      }
+  for (auto builder :
+       buildSerializedMorsels(parsedQuery, qet, format, cancellationHandle)) {
+    co_yield std::move(builder).finalizeToString();
+  }
+}
+
+// _____________________________________________________________________________
+cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    ad_utility::MediaType mediaType,
+    ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  AD_CONTRACT_CHECK(canHandle(parsedQuery, mediaType));
+  const auto format = rowFormatFor(mediaType).value();
+  (void)scheduler;
+  for (auto builder : buildSerializedMorsels(parsedQuery, qet, format,
+                                             std::move(cancellationHandle))) {
+    auto chunk = std::move(builder).finalize();
+    if (!chunk.empty()) {
+      co_yield std::move(chunk);
     }
   }
 }

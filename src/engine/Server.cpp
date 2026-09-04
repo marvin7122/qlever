@@ -22,7 +22,6 @@
 #include "backports/filesystem.h"
 #include "engine/ExportPipelineRouter.h"
 #include "engine/ExportQueryExecutionTrees.h"
-#include "engine/export_v2/ExportEngineV2.h"
 #include "engine/GraphStoreProtocol.h"
 #include "engine/HttpApiHelpers.h"
 #include "engine/HttpError.h"
@@ -32,6 +31,8 @@
 #include "engine/ResponseJson.h"
 #include "engine/SparqlProtocol.h"
 #include "engine/UpdateMetadata.h"
+#include "engine/export_v2/ExportEngineV2.h"
+#include "engine/export_v2/ScatterGatherHttpBody.h"
 #include "global/RuntimeParameters.h"
 #include "libqlever/Qlever.h"
 #include "parser/ParsedQuery.h"
@@ -43,6 +44,7 @@
 #include "util/QueryEventLog.h"
 #include "util/TimeTracer.h"
 #include "util/TypeTraits.h"
+#include "util/http/ContentEncodingHelper.h"
 #include "util/http/HttpServer.h"
 #include "util/http/HttpUtils.h"
 #include "util/http/UrlParser.h"
@@ -963,6 +965,7 @@ CPP_template_def(typename RequestT, typename SendT)(
         const ParamValueMap& params) const {
   using ql::engine::ExportEngineMode;
   using ql::engine::ExportPipelineRouter;
+  using ql::engine::ExportSendMode;
   using ql::engine::export_v2::ExportEngineV2;
 
   std::optional<std::string_view> exportHeader;
@@ -970,15 +973,64 @@ CPP_template_def(typename RequestT, typename SendT)(
   if (!headerValue.empty()) {
     exportHeader = headerValue;
   }
+  std::optional<std::string_view> exportSendHeader;
+  const auto sendHeaderValue = request.base()["X-QLever-Export-Send"];
+  if (!sendHeaderValue.empty()) {
+    exportSendHeader = sendHeaderValue;
+  }
 
   const auto& parsedQuery = plannedQuery.parsedQuery();
   const ExportEngineMode mode = ExportPipelineRouter::selectEngine(
       parsedQuery, params, exportHeader, ExportEngineMode::LegacyV1);
+  const ExportSendMode sendMode =
+      ExportPipelineRouter::selectSendMode(params, exportSendHeader);
 
   AD_LOG_INFO << ExportPipelineRouter::describeDecision(
-                    parsedQuery, params, exportHeader,
-                    ExportEngineMode::LegacyV1)
+                     parsedQuery, params, exportHeader,
+                     ExportEngineMode::LegacyV1)
               << std::endl;
+
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+  const bool useV2 = mode == ExportEngineMode::FastStreamingV2 &&
+                     ExportEngineV2::canHandle(parsedQuery, mediaType);
+  if (useV2 && sendMode == ExportSendMode::ScatterGather) {
+    using ad_utility::content_encoding::CompressionMethod;
+    const bool hasMiddleware =
+        plannedQuery.parsedQuery().responseMiddleware_.has_value();
+    const bool wantsCompression =
+        ad_utility::content_encoding::getCompressionMethodForRequest(request) !=
+        CompressionMethod::NONE;
+    if (hasMiddleware || wantsCompression) {
+      AD_LOG_INFO << "export-send=iovec requested; falling back to "
+                     "concatenated strings (compression or response middleware)"
+                  << std::endl;
+    } else {
+      AD_LOG_INFO << "Using ExportEngineV2 scatter-gather HTTP body for "
+                  << ad_utility::toString(mediaType) << " export" << std::endl;
+      http::response<ql::engine::export_v2::scatter_gather_body> sgResponse{
+          http::status::ok, request.version()};
+      sgResponse.set(http::field::content_type,
+                     ad_utility::toString(mediaType));
+      sgResponse.body() = ExportEngineV2::computeResultChunks(
+          parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+          cancellationHandle);
+      sgResponse.keep_alive(request.keep_alive());
+      sgResponse.prepare_payload();
+      try {
+        co_await send(std::move(sgResponse));
+      } catch (const boost::system::system_error& e) {
+        if (e.code().value() == EPIPE) {
+          co_return;
+        }
+        AD_LOG_ERROR << "Unexpected error while sending scatter-gather "
+                        "response: "
+                     << e.what() << std::endl;
+        metrics_->sparqlErrors_->Add(1, {SparqlErrorType::systemError});
+      }
+      co_return;
+    }
+  }
+#endif
 
   // Do not wrap these generators in an immediately-invoked coroutine lambda.
   // A `[&]() -> cppcoro::generator<std::string> { ... co_yield ... }()`
@@ -989,9 +1041,9 @@ CPP_template_def(typename RequestT, typename SendT)(
 #if defined(QLEVER_ENABLE_EXPORT_V2)
       (mode == ExportEngineMode::FastStreamingV2 &&
        ExportEngineV2::canHandle(parsedQuery, mediaType))
-          ? ExportEngineV2::computeResult(
-                parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-                cancellationHandle)
+          ? ExportEngineV2::computeResult(parsedQuery,
+                                          plannedQuery.queryExecutionTree(),
+                                          mediaType, cancellationHandle)
           : ExportQueryExecutionTrees::computeResult(
                 parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
                 requestTimer, std::move(cancellationHandle));
@@ -1008,6 +1060,7 @@ CPP_template_def(typename RequestT, typename SendT)(
   }
 #else
   (void)mode;
+  (void)sendMode;
 #endif
 
   auto response = ad_utility::httpUtils::createOkResponse(
