@@ -12,7 +12,7 @@
 QLever's standard query execution engine operates as a pull-based Volcano iterator producing intermediate `IdTable`s. While optimal for complex joins, aggregations, and subqueries, bulk data exports (`SELECT *`, `CONSTRUCT`, TSV, CSV, Turtle) suffer from:
 1. Materializing gigabytes of intermediate `IdTable`s in memory before streaming.
 2. Dynamic polymorphic per-cell type checks (`id.getDatatype()`) and branch mispredictions.
-3. Triple intermediate string copies per term between decompression, formatting, and HTTP framing.
+3. Up to three copies of each term may occur between vocabulary decompression, output formatting, and HTTP chunk assembly.
 4. Lockstep execution where CPU computation and TCP socket I/O block each other sequentially on a single thread.
 
 ---
