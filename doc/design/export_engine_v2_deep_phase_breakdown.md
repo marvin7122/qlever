@@ -220,7 +220,7 @@
      - Terms requiring escaping are formatted into a bounded temporary buffer owned by the current chunk, and the corresponding `struct iovec` points to that formatted storage.
   3. Static delimiters (`<`, `>`, `\t`, `\n`) remain direct pointers. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
   4. If the temporary buffer cannot fit the next escaped term, the serializer flushes the current chunk and retries in a fresh chunk. If a single term exceeds the configured scratch capacity, it uses the bounded buffered formatter fallback rather than emitting an invalid span.
-  5. The resulting chunk is transmitted via `::writev()` or `io_uring_prep_send_zc`; the zero-copy path therefore applies only to unescaped terms.
+  5. The resulting chunk is split into batches whose `iovec` count does not exceed the platform's `IOV_MAX`. Each batch is submitted via `::writev()` or `io_uring_prep_send_zc`; adjacent fragments may be coalesced when needed. Arena spans, delimiters, and per-chunk formatted storage remain alive until every batch completion has finished. The zero-copy path therefore applies only to unescaped terms.
 
 ### 3. Performance Rationale
 * **Conditional Copying:** Unescaped terms incur no term copy; escaped terms incur one copy into the per-chunk temporary formatted buffer.
