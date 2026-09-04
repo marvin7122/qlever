@@ -127,8 +127,7 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
   EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
 
-  // Consume all results
-  auto results = session.drainRemainingResults();
+    auto results = session.drainRemainingResults();
   EXPECT_EQ(results.size(), 6u);
   for (size_t i = 0; i < 6; ++i) {
     EXPECT_EQ(results[i], "dynamic_" + std::to_string(i));
