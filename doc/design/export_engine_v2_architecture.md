@@ -19,7 +19,7 @@ QLever's standard query execution engine operates as a pull-based Volcano iterat
 
 ## 2. Architecture Overview: Dual-Mode Execution
 
-To maintain strict backward compatibility with 100% of existing queries and tests, the engine introduces a **side-by-side dual-mode architecture**:
+The proposed design maintains backward compatibility through a **side-by-side dual-mode architecture**:
 
 ```
                               Request Ingress & Selection
