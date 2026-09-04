@@ -69,10 +69,11 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // below balances CPU consumption against wake-up latency for QLever's
   // bursty batch workload.
   //
-  // Do not set `IORING_SETUP_SINGLE_ISSUER` because QLever submits from a
-  // single thread. Pooled rings are reused across query threads. An
-  // `IoUringPolicy` must therefore not be submitted to from more than one
-  // thread over its lifetime.
+  // Do not set `IORING_SETUP_SINGLE_ISSUER`: pooled rings are reused across
+  // query threads, and that flag requires all submissions to come from a
+  // single thread for the ring's entire lifetime. The pool guarantees that
+  // only one thread uses a given ring at a time, but different threads may
+  // use it over its lifetime.
   //
   // liburing rounds the requested ring size up to a power of two, so
   // `ringSize_` is a conservative lower bound for the ring-full check below.
