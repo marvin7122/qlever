@@ -404,3 +404,77 @@ TEST(JitExpressionBytecodeVmTest, ProgramPredicates) {
   EXPECT_FALSE(JitExpressionBytecodeVm::hasExactIntegerSemantics(withIdOp));
 }
 
+TEST(JitExpressionBytecodeVmTest, ExecuteIntColumn) {
+  // Program: (?x * 2) + ?y, evaluated to a value column across morsels.
+  // UNDEF and non-integer inputs propagate UNDEF, like legacy evaluation.
+  auto I = ad_utility::testing::IntId;
+  constexpr size_t NUM_ROWS = 70;
+  VectorTable raw;
+  for (size_t i = 0; i < NUM_ROWS; ++i) {
+    raw.push_back({static_cast<int64_t>(i), static_cast<int64_t>(100 - i)});
+  }
+  IdTable inputTable = makeIdTableFromVector(raw, I);
+  inputTable(3, 0) = Id::makeUndefined();
+  inputTable(5, 1) = Id::makeFromVocabIndex(VocabIndex::make(7));
+
+  JitBytecodeProgram program;
+  program.addInstruction(OpCode::LOAD_COL_INT, 0);
+  program.addInstruction(OpCode::LOAD_CONST_INT, 2);
+  program.addInstruction(OpCode::MUL_INT);
+  program.addInstruction(OpCode::LOAD_COL_INT, 1);
+  program.addInstruction(OpCode::ADD_INT);
+  program.addInstruction(OpCode::RET);
+
+  IdTable outputTable = inputTable.clone();
+  outputTable.addEmptyColumn();
+  const ColumnIndex outCol = outputTable.numColumns() - 1;
+  JitExpressionBytecodeVm::executeIntColumn(program, inputTable, outputTable,
+                                            outCol, nullptr);
+  ASSERT_EQ(outputTable.size(), NUM_ROWS);
+  for (size_t i = 0; i < NUM_ROWS; ++i) {
+    if (i == 3 || i == 5) {
+      EXPECT_EQ(outputTable(i, outCol), Id::makeUndefined()) << "row " << i;
+    } else {
+      const int64_t expected =
+          static_cast<int64_t>(i) * 2 + (100 - static_cast<int64_t>(i));
+      EXPECT_EQ(outputTable(i, outCol), Id::makeFromInt(expected))
+          << "row " << i;
+    }
+  }
+}
+
+TEST(JitExpressionBytecodeVmTest, BindOperationIntegration) {
+  // `BIND((?x * 2) + 1 AS ?z)` evaluates through `executeIntColumn`, with
+  // UNDEF propagation for undefined inputs.
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  IdTable inputTable = makeIdTableFromVector({{1}, {2}, {3}, {4}, {5}, {6}}, I);
+  inputTable(5, 0) = Id::makeUndefined();
+  ValuesForTesting values{qec, std::move(inputTable), {Variable{"?x"}}, false,
+                          {},  LocalVocab{},          std::nullopt,     true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+
+  auto expr = makeAddExpression(
+      makeMultiplyExpression(
+          std::make_unique<VariableExpression>(Variable{"?x"}),
+          std::make_unique<IdExpression>(I(2))),
+      std::make_unique<IdExpression>(I(1)));
+  parsedQuery::Bind bind{{std::move(expr), "(?x * 2) + 1"}, Variable{"?z"}};
+  Bind bindOp{qec, std::make_shared<QueryExecutionTree>(std::move(subTree)),
+              std::move(bind)};
+
+  auto result = bindOp.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  ASSERT_EQ(result->idTableView().numColumns(), 2u);
+  const auto& table = result->idTableView();
+  ASSERT_EQ(table.size(), 6u);
+  for (size_t i = 0; i < 5; ++i) {
+    EXPECT_EQ(table(i, 1), I(static_cast<int64_t>(i + 1) * 2 + 1))
+        << "row " << i;
+  }
+  EXPECT_EQ(table(5, 1), Id::makeUndefined());
+}

@@ -932,4 +932,168 @@ class JitExpressionBytecodeVm {
                        });
   }
 
+  // Evaluate an integer-valued program (see `hasExactIntegerSemantics`) over
+  // all rows of `inputTable` and write the results as `Id`s into
+  // `outputColumn` of `outputTable` (`Int` where the row is valid, `UNDEF`
+  // otherwise, matching the legacy evaluation). `outputTable` may be the
+  // same table as `inputTable` as long as `outputColumn` holds no referenced
+  // input column.
+  template <typename Table>
+  static void executeIntColumn(
+      const JitBytecodeProgram& program, const Table& inputTable,
+      IdTable& outputTable, ColumnIndex outputColumn,
+      ad_utility::SharedCancellationHandle cancellationHandle = nullptr) {
+    size_t numRows = inputTable.size();
+    if (numRows == 0) {
+      return;
+    }
+
+    constexpr size_t MORSEL_SIZE = 64;
+    alignas(64) int64_t stack[16][MORSEL_SIZE];
+    alignas(64) uint64_t validity[16];
+
+    for (size_t rowOffset = 0; rowOffset < numRows; rowOffset += MORSEL_SIZE) {
+      if (cancellationHandle && (rowOffset % (MORSEL_SIZE * 1024) == 0)) {
+        cancellationHandle->throwIfCancelled();
+      }
+      size_t batchSize = std::min<size_t>(MORSEL_SIZE, numRows - rowOffset);
+      uint64_t batchMask =
+          batchSize == MORSEL_SIZE ? ~0ULL : ((1ULL << batchSize) - 1);
+      size_t sp = 0;
+
+      for (const auto& inst : program.instructions()) {
+        switch (inst.op) {
+          case OpCode::LOAD_COL_INT: {
+            auto colSpan = inputTable.getColumn(inst.arg);
+            const Id* colData = colSpan.data() + rowOffset;
+            uint64_t valid = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              if (colData[i].getDatatype() == Datatype::Int) {
+                stack[sp][i] = colData[i].getInt();
+                valid |= (1ULL << i);
+              } else if (colData[i].getDatatype() == Datatype::Bool) {
+                stack[sp][i] = colData[i].getBool() ? 1 : 0;
+                valid |= (1ULL << i);
+              } else {
+                stack[sp][i] = 0;
+              }
+            }
+            validity[sp] = valid & batchMask;
+            sp++;
+            break;
+          }
+          case OpCode::LOAD_CONST_INT:
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = inst.arg;
+            }
+            validity[sp] = batchMask;
+            sp++;
+            break;
+          case OpCode::ADD_INT: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = stack[aIdx][i] + stack[bIdx][i];
+            }
+            validity[sp] = validity[aIdx] & validity[bIdx];
+            sp++;
+            break;
+          }
+          case OpCode::SUB_INT: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = stack[aIdx][i] - stack[bIdx][i];
+            }
+            validity[sp] = validity[aIdx] & validity[bIdx];
+            sp++;
+            break;
+          }
+          case OpCode::MUL_INT: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = stack[aIdx][i] * stack[bIdx][i];
+            }
+            validity[sp] = validity[aIdx] & validity[bIdx];
+            sp++;
+            break;
+          }
+          case OpCode::DIV_INT: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+            uint64_t divMask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              int64_t b = stack[bIdx][i];
+              if (b != 0) {
+                stack[sp][i] = stack[aIdx][i] / b;
+                divMask |= (1ULL << i);
+              } else {
+                stack[sp][i] = 0;
+              }
+            }
+            validity[sp] = validity[aIdx] & validity[bIdx] & divMask;
+            sp++;
+            break;
+          }
+          case OpCode::MOD_INT: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+            uint64_t modMask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              int64_t b = stack[bIdx][i];
+              if (b != 0) {
+                stack[sp][i] = stack[aIdx][i] % b;
+                modMask |= (1ULL << i);
+              } else {
+                stack[sp][i] = 0;
+              }
+            }
+            validity[sp] = validity[aIdx] & validity[bIdx] & modMask;
+            sp++;
+            break;
+          }
+          case OpCode::RET:
+            break;
+          default:
+            // Unreachable for programs satisfying `hasExactIntegerSemantics`
+            // (see above): invalidate the slot.
+            validity[sp] = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = 0;
+            }
+            sp++;
+            break;
+        }
+      }
+
+      if (sp > 0) {
+        uint64_t valid = validity[sp - 1] & batchMask;
+#pragma GCC unroll 8
+        for (size_t i = 0; i < batchSize; ++i) {
+          outputTable(rowOffset + i, outputColumn) =
+              (valid & (1ULL << i)) ? Id::makeFromInt(stack[sp - 1][i])
+                                    : Id::makeUndefined();
+        }
+      }
+    }
+  }
 };
