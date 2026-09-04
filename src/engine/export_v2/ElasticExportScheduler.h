@@ -49,7 +49,7 @@ enum class MorselStatus {
   Cancelled   // Job or morsel was cancelled
 };
 
-// Convert enums to human-readable strings for logging and assertion
+// Convert the enums to human-readable strings for logging and assertion
 // diagnostics.
 inline std::string_view toString(SessionState state) noexcept {
   switch (state) {
