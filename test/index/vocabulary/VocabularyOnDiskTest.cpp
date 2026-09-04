@@ -16,7 +16,7 @@
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
-#include "../../util/RuntimeParametersTestHelpers.h"
+#include "util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
