@@ -1,6 +1,6 @@
 # QLever Fast-Path Streaming Export Engine (V2): Master Architectural Specification & Work Packages
 
-**Target Branch:** `feat/export-engine-v2-streaming`  
+  
 **Repository:** `marvin7122/qlever`  
 **Design Standard:** `~/ARCHITECTURE.md` (7 Universal Laws) & Single-Core/Elastic Multi-Core Discipline  
 
