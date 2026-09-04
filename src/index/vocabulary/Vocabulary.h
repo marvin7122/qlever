@@ -135,9 +135,9 @@ class Vocabulary {
   // Batch lookup: look up multiple indices at once and return their words.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
-  // Split-phase variant of `lookupBatch`. `beginLookup` submits the reads for
+    // Split-phase variant of `lookupBatch`. `beginLookup` submits the reads for
   // `indices` without blocking and returns a handle; `finishLookup` blocks
-  // until those reads have completed and returns the resolved words. This lets
+  // until those reads have completed and returns the resolved words. Let
   // callers overlap vocabulary I/O with their own CPU work.
   std::unique_ptr<VocabLookupHandleBase> beginLookup(
       ql::span<const size_t> indices) const;
