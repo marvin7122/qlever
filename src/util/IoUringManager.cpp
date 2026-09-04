@@ -111,9 +111,29 @@ IoUringPolicy::~IoUringPolicy() {
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
       break;
     }
+    const int res = cqe->res;
+    const uint64_t requestId = io_uring_cqe_get_data64(cqe);
     io_uring_cqe_seen(&ring_, cqe);
+
+    auto reqIt = inFlightReadsByRequestId_.find(requestId);
+    if (reqIt != inFlightReadsByRequestId_.end()) {
+      const InFlightRead inFlightRead = reqIt->second;
+      inFlightReadsByRequestId_.erase(reqIt);
+
+      auto batchIt = numInFlightReadRequestsPerBatch_.find(inFlightRead.batchHandle);
+      if (batchIt != numInFlightReadRequestsPerBatch_.end()) {
+        if (--batchIt->second == 0) {
+          numInFlightReadRequestsPerBatch_.erase(batchIt);
+        }
+      }
+
+      if (inFlightRead.poolBufferIndex != NO_POOL_BUFFER) {
+        freePoolBuffer(inFlightRead.poolBufferIndex);
+      }
+    }
+
     AD_CORRECTNESS_CHECK(numInFlightReadRequests_ > 0);
-  --numInFlightReadRequests_;
+    --numInFlightReadRequests_;
   }
   if (registeredBufferPool_ != nullptr) {
     io_uring_unregister_buffers(&ring_);
