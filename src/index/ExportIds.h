@@ -113,7 +113,7 @@ std::optional<std::pair<std::string, const char*>>
 idToStringAndTypeForEncodedValue(Id id);
 
 // Result of appending a serialized `Id`. `written` is false for Undefined
-// and for `returnOnlyLiterals` when the id is not a literal.
+// and for `returnOnlyLiterals` when the `id` is not a literal.
 struct AppendedId {
   bool written = false;
   const char* xsdType = nullptr;
