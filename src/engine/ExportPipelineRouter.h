@@ -295,8 +295,20 @@ class ExportPipelineRouter {
   [[nodiscard]] static bool graphPatternIsUnsupported(
       const parsedQuery::GraphPattern& pattern) noexcept {
     for (const auto& operation : pattern._graphPatterns) {
-      if (std::holds_alternative<parsedQuery::BasicGraphPattern>(operation) ||
-          std::holds_alternative<parsedQuery::Bind>(operation) ||
+      if (const auto* bgp =
+              std::get_if<parsedQuery::BasicGraphPattern>(&operation)) {
+        // A property path predicate (e.g. `?s <p>+ ?o`) plans to `TransPath`,
+        // not to a scan, so V2 cannot serve it. Plain IRIs and variable
+        // predicates stay eligible.
+        for (const auto& triple : bgp->_triples) {
+          if (std::holds_alternative<PropertyPath>(triple.p_) &&
+              !triple.getSimplePredicate().has_value()) {
+            return true;
+          }
+        }
+        continue;
+      }
+      if (std::holds_alternative<parsedQuery::Bind>(operation) ||
           std::holds_alternative<parsedQuery::Values>(operation)) {
         continue;
       }
