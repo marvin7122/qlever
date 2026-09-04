@@ -18,7 +18,14 @@
 #include <vector>
 
 #include "backports/algorithm.h"
+#include "engine/Bind.h"
+#include "engine/CartesianProductJoin.h"
 #include "engine/ExportQueryExecutionTrees.h"
+#include "engine/Filter.h"
+#include "engine/HasPredicateScan.h"
+#include "engine/IndexScan.h"
+#include "engine/Join.h"
+#include "engine/Values.h"
 #include "engine/export_v2/VectorStreamSource.h"
 #include "global/Id.h"
 #include "index/ExportIds.h"
@@ -205,6 +212,30 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
 
 }  // namespace
 
+// True when every operation in the tree rooted at `operation` is one the V2
+// serializer understands: triple scans, joins, filters, BIND, and inline
+// VALUES. A null or foreign child falls back to Legacy V1 (safe direction).
+bool operationTreeIsSupported(const Operation& operation) {
+  const bool supported =
+      dynamic_cast<const IndexScan*>(&operation) != nullptr ||
+      dynamic_cast<const HasPredicateScan*>(&operation) != nullptr ||
+      dynamic_cast<const Join*>(&operation) != nullptr ||
+      dynamic_cast<const CartesianProductJoin*>(&operation) != nullptr ||
+      dynamic_cast<const Filter*>(&operation) != nullptr ||
+      dynamic_cast<const Bind*>(&operation) != nullptr ||
+      dynamic_cast<const Values*>(&operation) != nullptr;
+  if (!supported) {
+    return false;
+  }
+  for (const auto* child : operation.getChildren()) {
+    if (child == nullptr ||
+        !operationTreeIsSupported(*child->getRootOperation())) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // _____________________________________________________________________________
 bool ExportEngineV2::canHandle(const ParsedQuery& parsedQuery,
                                ad_utility::MediaType mediaType) noexcept {
@@ -216,6 +247,14 @@ bool ExportEngineV2::canHandle(const ParsedQuery& parsedQuery,
     return false;
   }
   return true;
+}
+
+// _____________________________________________________________________________
+bool ExportEngineV2::canHandle(const ParsedQuery& parsedQuery,
+                               const QueryExecutionTree& qet,
+                               ad_utility::MediaType mediaType) noexcept {
+  return canHandle(parsedQuery, mediaType) &&
+         operationTreeIsSupported(*qet.getRootOperation());
 }
 
 // _____________________________________________________________________________
@@ -340,7 +379,7 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
   ad_utility::Timer timer{ad_utility::Timer::Started};
 
-  if (!canHandle(parsedQuery, mediaType)) {
+  if (!canHandle(parsedQuery, qet, mediaType)) {
     for (auto& chunk : ExportQueryExecutionTrees::computeResult(
              parsedQuery, qet, mediaType, timer,
              std::move(cancellationHandle))) {
@@ -362,7 +401,7 @@ cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
     ad_utility::MediaType mediaType,
     ad_utility::SharedCancellationHandle cancellationHandle,
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
-  AD_CONTRACT_CHECK(canHandle(parsedQuery, mediaType));
+  AD_CONTRACT_CHECK(canHandle(parsedQuery, qet, mediaType));
   // Serialize on the caller thread. Do not spawn a producer thread here:
   // GCC rewrites this function as a coroutine frame and rejected
   // `std::thread` + `AsyncChunkPipeline` locals (91a9a7845). Overlap with
