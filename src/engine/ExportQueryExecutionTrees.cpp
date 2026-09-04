@@ -73,7 +73,7 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
                           ad_utility::toString(mediaType)));
   }
 
-  // Compute the result of the ASK query.
+
   const bool result = getResultForAsk(qet.getResult(true));
 
   // Lambda that returns the result bool in XML format.
