@@ -213,9 +213,9 @@ struct HasBeginLookup<
     Vocab, std::void_t<decltype(std::declval<const Vocab&>().beginLookup(
                std::declval<ql::span<const size_t>>()))>> : std::true_type {};
 
-// Sequential fallback for `lookupBatch`: look up each index individually via
-// `vocab[idx]`, returning one `string_view` per index. Works for any vocabulary
-// whose `operator[]` yields something convertible to `std::string`.
+// Look up each index individually via `vocab[idx]`, returning one
+// `string_view` per index. Works for any vocabulary whose `operator[]` yields
+// something convertible to `std::string`.
 template <typename Vocab>
 VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
                                              ql::span<const size_t> indices) {
