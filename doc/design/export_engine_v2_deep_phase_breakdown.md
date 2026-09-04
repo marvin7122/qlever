@@ -165,7 +165,7 @@
      `MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>::serializeBatch(...)`
   3. Integers are converted using `formatIntBranchless` (0 division instructions).
   4. Literal strings are checked for quotes/newlines 32 bytes at a time via `SimdEscapeClassifier`.
-  5. Delimiters (tabs, quotes, angle brackets, newlines) are packed into 64-bit unsigned integers via `SwarDelimiterPacker` and written in single 64-bit store instructions.
+  5. Delimiters (tabs, quotes, angle brackets, newlines) are emitted using bounded writes that respect the destination buffer's alignment and remaining capacity.
 
 ### 3. Performance Rationale
 * **Branch Elimination:** Branch count drops from ~12 branches/row down to 0 branches/row on the fast path. Branch misprediction rate drops to <0.2%.
