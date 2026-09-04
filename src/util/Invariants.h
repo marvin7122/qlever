@@ -65,8 +65,8 @@ CPP_template(typename T)(
 };
 
 // _____________________________________________________________________________
-// Provide a parameterless `makeInvariantGuard()` member function and enforce
-// `InvariantStatefulClass` for the derived type.
+// Provide a parameterless `makeInvariantGuard()` member function and check
+// `InvariantStatefulClass` for the derived type when that function is used.
 template <typename Derived>
 class WithInvariants {
  public:
