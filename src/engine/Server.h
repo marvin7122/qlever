@@ -13,6 +13,7 @@
 #include <absl/functional/any_invocable.h>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -26,6 +27,7 @@
 #include "engine/QueryExecutionContext.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
+#include "engine/export_v2/ElasticExportScheduler.h"
 #include "index/IdTableUtils.h"
 #include "index/Index.h"
 #include "libqlever/Qlever.h"
@@ -98,6 +100,12 @@ class Server {
   unsigned short port_;
   std::string accessToken_;
   bool noAccessCheck_;
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+  // Declared before `queryRegistry_` so the registry (and its start/end
+  // callbacks) is destroyed first.
+  std::unique_ptr<ad_utility::export_v2::ElasticExportScheduler>
+      exportScheduler_;
+#endif
   ad_utility::websocket::QueryRegistry queryRegistry_{};
 
   /// Non-owning reference to the `QueryHub` instance living inside
