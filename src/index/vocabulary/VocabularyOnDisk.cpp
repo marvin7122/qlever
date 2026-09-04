@@ -298,11 +298,14 @@ void VocabularyOnDisk::open(const std::string& filename) {
   size_t ringSize =
       getRuntimeParameter<&RuntimeParameters::vocabBatchIoRingSize_>();
   // Ensure the pool has at least one manager to avoid blocking every `lookupBatch`.
-  // Reject values that do not fit into the `unsigned` ring size.
-  // do not fit into the `unsigned` range (instead of silently wrapping them).
-  AD_CONTRACT_CHECK(numManagers > 0);
-  AD_CONTRACT_CHECK(ringSize > 0 &&
-                    ringSize <= std::numeric_limits<unsigned>::max());
+  // Reject values that do not fit into the `unsigned` ring size
+  // (instead of silently wrapping them).
+  if (numManagers == 0) {
+    throw std::invalid_argument("vocabBatchIoNumManagers must be greater than 0");
+  }
+  if (ringSize == 0 || ringSize > std::numeric_limits<unsigned>::max()) {
+    throw std::invalid_argument("vocabBatchIoRingSize must be in range [1, UINT_MAX]");
+  }
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(numManagers);
   bool preferIoUring = true;
