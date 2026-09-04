@@ -134,7 +134,7 @@ TEST(MonomorphicSerializersTest, DoubleMatchesLegacyEncodedCsv) {
 
 TEST(MonomorphicSerializersTest, BooleanMatchesLegacyBoolLiteral) {
   using Serializer = MonomorphicRowSerializer<ColumnType::Boolean>;
-  for (const auto [id, legacy] :
+  for (const auto& [id, legacy] :
        {std::pair{Id::makeFromBool(false), "false\n"},
         std::pair{Id::makeFromBool(true), "true\n"},
         std::pair{Id::makeBoolFromZeroOrOne(false), "0\n"},
