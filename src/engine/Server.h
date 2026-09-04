@@ -185,7 +185,7 @@ class Server {
           -> CancellationHandleAndTimeoutTimerCancel<CancelTimeout>;
 #endif
 
-  // Initialize and register server metrics which are stored in `metrics_`.
+  // Initialize server metrics. // Register server metrics which are stored in `metrics_`.
   void initializeServerMetrics(
       std::optional<ad_utility::MemorySize> memoryLimit);
 
