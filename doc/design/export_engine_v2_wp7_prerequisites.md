@@ -85,7 +85,7 @@ This fallback is internal to `ExportWorkSession`. The caller never requeues a mo
 
 When runtime V2 support is enabled, `Server` registers callbacks through the existing `QueryRegistry` API.
 
-The start callback increments an atomic foreground count and demand epoch. It then wakes sleeping V2 helper workers.
+The start callback increments an atomic foreground count and increments the demand epoch when the new count exceeds the helper-admission threshold. It then wakes sleeping V2 helper workers.
 
 The end callback decrements the foreground count. It may make helper capacity available again.
 
