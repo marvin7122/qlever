@@ -79,7 +79,7 @@ IoUringPolicy::~IoUringPolicy() {
     AD_LOG_WARN << "IoUringPolicy destroyed with " << numInFlightReadRequests_
                 << " read request(s) still in flight; all batches should be "
                    "`wait()`ed before destroying the policy. Draining them now "
-                   "so the kernel stops writing into the target buffers.\n";
+                   "we deliberately do not call `drainOneCqe`.\n";
   }
   // Reap the outstanding completions before tearing down the ring, so the
   // kernel is no longer writing into any target buffer once we return. Do not
