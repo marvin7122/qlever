@@ -167,7 +167,7 @@ The first backend is a bounded mutex queue. Compare MPMC and Chase-Lev alternati
 | **Non-Temporal Streaming Stores** | ClickHouse / HPC | `_mm_stream_si128` streaming directly to DRAM, bypassing CPU cache hierarchy (14.71 GB/s). |
 | **SWAR Punctuation Packing** | High-Frequency Trading | Delimiter sequences (`"\t"`, `"< >"`, `"\r\n"`) packed into 64-bit unsigned integers. |
 | **Run-Length Prefix Folding** | DuckDB / ClickHouse | Formats repeated IRI subjects/predicates once and copies 128-bit words across sorted runs. |
-| **Scatter-Gather Zero-Copy** | Apache Arrow / Seastar | Assembles chunks via `struct iovec` arrays pointing to decompression arena pages (0 copies). |
+| **Scatter-Gather Zero-Copy** | Apache Arrow / Seastar | Assembles chunks via `struct iovec` arrays that reference decompression-arena pages, avoiding a user-space payload copy during chunk assembly; kernel and network copies are outside this claim. |
 | **Adaptive Initial Chunking** | DuckDB | Starts with 64KB buffer for <0.1ms TTFB, then exponentially ramps to 4MB for max throughput. |
 
 ---
