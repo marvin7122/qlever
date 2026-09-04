@@ -199,7 +199,7 @@ To enable independent implementation and clean reviewability, the V2 engine is d
   - Implement server configuration default (`--export-engine-default=legacy|v2`).
   - Implement plan capability analyzer: inspects `ParsedQuery` to verify fast-path eligibility.
   - Implement automatic transparent fallback to Legacy V1 on unsupported shapes.
-* **Definition of Done:** 100% unit test coverage in `ExportPipelineRouterTest.cpp` verifying mode selection and error-free fallback.
+* **Definition of Done:** 100% unit test coverage in `ExportPipelineRouterTest.cpp` verifying mode selection and error-free fallback, including malformed and conflicting request parameters, precedence between request parameters, headers, and configuration defaults, every rejected plan-capability shape, and preservation of the legacy fallback output.
 
 ---
 
