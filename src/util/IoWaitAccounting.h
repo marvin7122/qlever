@@ -27,7 +27,7 @@ namespace ad_utility::ioWait {
 
 // Wall-clock accounting for the calls on which a query thread blocks waiting
 // for storage: the positioned `pread` in `File::read` and the completion wait
-// in `IoUringPolicy::drainAtLeast`.
+// in `IoUringPolicy::drainOneCqe`.
 //
 // WHY THIS EXISTS. `cpu_s` (`utime + stime` from `/proc/<pid>/stat`) only
 // ticks while a thread is scheduled on a CPU. A cold `pread` puts the thread
