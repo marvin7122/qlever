@@ -168,7 +168,7 @@
   5. Delimiters (tabs, quotes, angle brackets, newlines) are packed into 64-bit unsigned integers via `SwarDelimiterPacker` and written in single 64-bit store instructions.
 
 ### 3. Performance Rationale
-* **Branch Elimination:** Branch count drops from ~12 branches/row down to 0 branches/row on the fast path. Branch misprediction rate drops to <0.2%.
+* **Branch Reduction:** The serializer aims to reduce data-dependent branches on the supported fast path. Measure retired branch instructions and branch mispredictions per row for the complete serialization loop.
 * **High IPC (Instructions Per Cycle):** Compiler unrolling achieves sustained **>2.85 IPC** on modern x86-64 microarchitectures.
 
 ### 4. Benchmarking & Verification Plan
