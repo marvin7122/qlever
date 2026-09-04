@@ -162,11 +162,9 @@ struct MixedVocabBatchLookupData {
   static VocabBatchLookupResult asResult(
       std::shared_ptr<MixedVocabBatchLookupData> self) {
     self->span_ = ql::span<std::string_view>{self->views_};
-    // Capture the span pointer before moving `self`, so the pointer is not
-    // derived from the moved-from (nulled) shared_ptr. The argument
-    // evaluation order of `std::shared_ptr(std::move(self), p)` is
-    // unspecified, so deriving the pointer in the argument list would be a
-    // use-after-move.
+        // Take the address of `self->span_` in a local so it can be passed to
+    // the aliasing shared_ptr constructor without re-deriving it from `self`
+    // in the (unspecified-order) argument list.
     auto* spanPtr = &self->span_;
     return std::shared_ptr<ql::span<std::string_view>>(std::move(self),
                                                        spanPtr);
