@@ -128,8 +128,8 @@ class AsyncChunkPipeline
     return PushResult::Accepted;
   }
 
-  // Returns no value after normal completion, cancellation, or when either
-  // kill switch disabled the pipeline. Producer failures are rethrown after
+  // Return no value after normal completion, cancellation, or when either
+  // kill switch disables the pipeline. Rethrow producer failures after
   // already queued chunks have been consumed.
   [[nodiscard]] std::optional<ChunkType> pop() {
     auto guard = this->makeInvariantGuard();
