@@ -48,6 +48,15 @@ class ConstructTripleGenerator {
 
  public:
   // the number of `IdTable` rows that one batch consists of.
+  // 8192 (2^13) is chosen as a power-of-two sweet spot:
+  // - Fits comfortably in L2 cache (typically 256KB–1MB per core) even with
+  //   multiple columns and cache structures.
+  // - Large enough to amortize per-batch overhead (cache initialization,
+  //   deduplication setup, virtual dispatch) over many rows.
+  // - Small enough to bound worst-case memory pressure when many generators
+  //   run concurrently (e.g., in parallel query execution).
+  // - Aligns with typical OS page multiples (8 KiB = 2 pages on 4 KiB systems),
+  //   reducing page-fault overhead for the IdTable backing store.
   static constexpr size_t BATCH_SIZE = 8192;
   // Cache BATCH_SIZE distinct IDs per template variable to minimize thrashing.
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = BATCH_SIZE;
