@@ -70,8 +70,7 @@ TEST(ElasticExportSchedulerTest, SingleCoreFallbackUnderHighForegroundLoad) {
   ElasticExportScheduler scheduler(2, 64);
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
-  // Simulate 2 active queries (e.g. export query + another concurrent query)
-  scheduler.onForegroundQueryStarted();
+    scheduler.onForegroundQueryStarted();
   scheduler.onForegroundQueryStarted();
   EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
 
