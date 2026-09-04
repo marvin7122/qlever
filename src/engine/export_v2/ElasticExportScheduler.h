@@ -327,7 +327,7 @@ class ExportJobState final
   }
 
   [[nodiscard]] SessionState state() const noexcept {
-      return state_.load(std::memory_order_acquire);
+    return state_.load(std::memory_order_acquire);
   }
 
   [[nodiscard]] size_t activeHelpers() const noexcept {
@@ -357,9 +357,9 @@ class ExportJobState final
         // Foreground load exceeded threshold; revoke helpers
         currentEpoch_.store(newEpoch, std::memory_order_release);
         if (activeHelpers_.load(std::memory_order_relaxed) > 0) {
-            state_.store(SessionState::Revoking, std::memory_order_release);
+          state_.store(SessionState::Revoking, std::memory_order_release);
         } else {
-            state_.store(SessionState::PrimaryOnly, std::memory_order_release);
+          state_.store(SessionState::PrimaryOnly, std::memory_order_release);
         }
       }
       cv_.notify_all();
@@ -391,12 +391,12 @@ class ExportJobState final
   }
 
   void executeHelperTask(size_t morselIndex, uint64_t leaseEpoch) override {
-      if (cancelled_.load(std::memory_order_relaxed) ||
-          currentEpoch_.load(std::memory_order_relaxed) != leaseEpoch ||
-          state_.load(std::memory_order_acquire) == SessionState::Revoking ||
-          state_.load(std::memory_order_acquire) == SessionState::Closed) {
-          return;
-      }
+    if (cancelled_.load(std::memory_order_relaxed) ||
+        currentEpoch_.load(std::memory_order_relaxed) != leaseEpoch ||
+        state_.load(std::memory_order_acquire) == SessionState::Revoking ||
+        state_.load(std::memory_order_acquire) == SessionState::Closed) {
+      return;
+    }
 
     absl::AnyInvocable<ResultType()> task;
     auto startWall = std::chrono::steady_clock::now();
