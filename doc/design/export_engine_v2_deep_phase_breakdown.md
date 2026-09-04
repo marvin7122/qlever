@@ -68,7 +68,7 @@
   1. Inspects query-time request metadata (`fast-export=1`, `export-engine=v2`, `X-QLever-Export-Engine: v2`).
   2. Evaluates the `ParsedQuery` execution plan: verifies whether the root operator is exportable (e.g. index scans, join trees, projections, filters) without blocking global operators (e.g. global top-N sort without index ordering).
   3. Returns `ExportEngineMode::FastStreamingV2` or `ExportEngineMode::LegacyV1`.
-  4. If an unexpected runtime condition arises during V2 setup, it triggers a clean, transparent fallback to Legacy V1 with zero HTTP error returned to the client.
+  4. If an unexpected runtime condition arises during V2 setup before any response bytes are sent, route the request to Legacy V1. Once V2 has started streaming the response, report the failure according to the server's existing streaming-error behavior.
 
 ### 3. Performance Rationale
 * **Zero Overhead on Normal Queries:** Evaluation is an $O(1)$ bitwise check during query plan translation (<200 nanoseconds).
