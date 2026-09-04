@@ -912,7 +912,7 @@ ExportQueryExecutionTrees::constructQueryResultParallel(
       qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE;
   const size_t window = 2 * numThreads;
   ad_utility::TaskQueue<false> queue{window, numThreads,
-                                     "ConstructExportParallel"};
+                                     ""};
 
   for (TableWithRange& block : rowIndices) {
     std::vector<TableWithRange> chunks =
