@@ -328,7 +328,7 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
   std::atomic<bool> stopQueryChanger{false};
-  // Background thread fluctuating foreground demand
+  // Start a background thread that fluctuates foreground demand.
   std::thread queryChanger([&]() {
     while (!stopQueryChanger.load()) {
       scheduler.onForegroundQueryStarted();
