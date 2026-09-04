@@ -200,7 +200,9 @@
                                  │ [2] Delim: "\t"         │
                                  │ [3] Span: Literal Text  │
                                  └────────────┬────────────┘
-                                              │ Single writev() / SEND_ZC
+                                              │ Resumable writev() / SEND_ZC
+                                              │ Advance iovec/byte cursors on partial writes or EAGAIN;
+                                              │ retain the slot until transport completion permits reuse.
                                               ▼
                                      Linux Kernel TCP Stack
 ```
