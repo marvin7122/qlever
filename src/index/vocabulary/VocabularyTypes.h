@@ -187,7 +187,7 @@ class VocabLookupHandleBase {
   [[nodiscard]] virtual VocabBatchLookupResult finish() = 0;
 };
 
-// A split-phase lookup handle for vocabularies whose lookups complete without
+// Provide a split-phase lookup handle for vocabularies whose lookups complete without
 // any I/O (e.g. fully in-memory vocabularies): `beginLookup` performs the full
 // lookup and `finish` just returns the stored result.
 struct EagerVocabLookupHandle : VocabLookupHandleBase {
