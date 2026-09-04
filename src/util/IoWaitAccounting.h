@@ -304,7 +304,7 @@ inline std::string report() {
   return out.str();
 }
 
-// Periodically samples the io_uring worker pool and rewrites the report to the
+// Periodically sample the io_uring worker pool and rewrite the report to the
 // file named by `QLEVER_IO_WAIT_REPORT`, plus stderr at process exit.
 //
 // WHY A FILE AND A POLLER, NOT AN EXIT HOOK. The server can stop with a
