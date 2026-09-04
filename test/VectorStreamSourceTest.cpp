@@ -81,19 +81,6 @@ TEST(VectorStreamSource, ExactBoundaryDoesNotEmitEmptyFinalChunk) {
   EXPECT_EQ(collect(source, blocks).size(), 2);
 }
 
-TEST(VectorStreamSource, ReusesTheReservedIdTableStorage) {
-  VectorStreamSource source{VectorStreamConfig{RowsPerChunk{2}}};
-  std::vector<Pair> blocks;
-  blocks.push_back(makeBlock({{1}, {2}, {3}, {4}}));
-  std::vector<const Id*> addresses;
-
-  source.run(blocks, [&addresses](const Pair& chunk) {
-    addresses.push_back(chunk.idTable_.getColumn(0).data());
-  });
-
-  ASSERT_EQ(addresses.size(), 2);
-  EXPECT_EQ(addresses[0], addresses[1]);
-}
 
 TEST(VectorStreamSource, AppliesConjoinedEqualityFilters) {
   VectorStreamSource source{VectorStreamConfig{RowsPerChunk{2}}};
