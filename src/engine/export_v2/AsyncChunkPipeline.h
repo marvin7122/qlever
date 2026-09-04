@@ -97,6 +97,11 @@ class AsyncChunkPipeline
     AD_CORRECTNESS_CHECK(stats_.chunksConsumed_ + stats_.chunksDiscarded_ <=
                          stats_.chunksProduced_);
     AD_CORRECTNESS_CHECK((state_ == State::Failed) == (exception_ != nullptr));
+    AD_CORRECTNESS_CHECK((state_ == State::Disabled ||
+                          state_ == State::Cancelled) &&
+                             chunks_.empty() ||
+                         state_ != State::Disabled &&
+                             state_ != State::Cancelled);
   }
 
   [[nodiscard]] bool isEnabled() const {
