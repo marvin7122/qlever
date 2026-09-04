@@ -269,18 +269,17 @@ class ScatterGatherChunkBuilder
 
   void appendCopy(std::string_view bytes) {
     auto guard = makeInvariantGuard();
-    if (bytes.empty()) {
-      return;
+    if (!bytes.empty()) {
+      if (!segments_.empty() && segments_.back().copied_) {
+        copiedBytes_.append(bytes);
+        segments_.back().size_ += bytes.size();
+      } else {
+        const size_t offset = copiedBytes_.size();
+        copiedBytes_.append(bytes);
+        segments_.push_back({nullptr, offset, bytes.size(), true});
+      }
+      totalBytes_ += bytes.size();
     }
-    if (!segments_.empty() && segments_.back().copied_) {
-      copiedBytes_.append(bytes);
-      segments_.back().size_ += bytes.size();
-    } else {
-      const size_t offset = copiedBytes_.size();
-      copiedBytes_.append(bytes);
-      segments_.push_back({nullptr, offset, bytes.size(), true});
-    }
-    totalBytes_ += bytes.size();
   }
 
   void appendOwned(OwnedByteSpan bytes) {
