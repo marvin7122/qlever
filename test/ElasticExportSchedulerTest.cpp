@@ -395,8 +395,7 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
       },
       std::runtime_error);
 
-  // Slot 2 should still return 100
-  EXPECT_EQ(session.consumeNextResult(), 100);
+    EXPECT_EQ(session.consumeNextResult(), 100);
 
   // Verify lease accounting did not leak
   EXPECT_EQ(scheduler.totalActiveHelpers(), 0u);
