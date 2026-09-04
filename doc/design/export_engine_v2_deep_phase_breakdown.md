@@ -215,9 +215,10 @@
   - `src/engine/export_v2/InPlaceHttpChunkFraming.h`
 * **Mechanics:**
   1. Decompressed vocabulary terms live in a page-aligned arena buffer (`CompactStringVector` / PMR Arena).
-  2. Instead of copying strings into a formatted buffer, the serializer creates an array of `struct iovec` descriptors containing:
+  2. Instead of copying strings into a formatted buffer, the serializer creates a bounded batch of `struct iovec` descriptors containing:
      - Direct pointers to static delimiters (`<`, `>`, `\t`, `\n`).
      - Direct pointers to the arena string spans.
+     The batch has an explicit maximum descriptor count and byte budget. When either limit is reached, the batch is submitted before more rows are serialized; if submission cannot make progress, serialization yields until completion or writability is reported, so in-flight descriptors and backing storage remain bounded.
   3. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
   4. The chunk is submitted using `::writev()` or `io_uring_prep_send_zc`; each outstanding iovec is paired with an immutable arena or per-slot backing allocation owned by the streaming abstraction. Partial writes retain the iovec and its backing allocation, and the allocation is released or reused only after the corresponding writev/io_uring completion, so decompression and arena recycling cannot invalidate in-flight spans.
 
