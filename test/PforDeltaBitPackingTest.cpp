@@ -19,7 +19,8 @@ TEST(PforDeltaBitPackingTest, CompressAndDecompressMonotonicIds) {
   std::vector<Id> inputIds;
   inputIds.reserve(64);
 
-  // Generate 64 sorted monotonic IDs starting at base 1,000,000 with small deltas
+  // Generate 64 sorted monotonic IDs starting at base 1,000,000 with small
+  // deltas
   for (uint64_t i = 0; i < 64; ++i) {
     inputIds.push_back(Id::fromBits(1'000'000 + i * 3));
   }

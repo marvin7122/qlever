@@ -48,7 +48,8 @@ class PforDeltaBitPacking {
       }
     }
 
-    block.bitWidth_ = (maxDelta == 0) ? 1 : static_cast<uint8_t>(std::bit_width(maxDelta));
+    block.bitWidth_ =
+        (maxDelta == 0) ? 1 : static_cast<uint8_t>(std::bit_width(maxDelta));
     if (block.bitWidth_ > 64) {
       block.bitWidth_ = 64;
     }
@@ -63,8 +64,10 @@ class PforDeltaBitPacking {
       size_t intraWordOffset = bitOffset % 64;
 
       block.packedWords_[wordIdx] |= (deltas[i] << intraWordOffset);
-      if (intraWordOffset + block.bitWidth_ > 64 && (wordIdx + 1) < block.packedWords_.size()) {
-        block.packedWords_[wordIdx + 1] |= (deltas[i] >> (64 - intraWordOffset));
+      if (intraWordOffset + block.bitWidth_ > 64 &&
+          (wordIdx + 1) < block.packedWords_.size()) {
+        block.packedWords_[wordIdx + 1] |=
+            (deltas[i] >> (64 - intraWordOffset));
       }
     }
 
@@ -72,11 +75,11 @@ class PforDeltaBitPacking {
   }
 
   // Decompress a block back into full 64-bit ValueId integers.
-  static void decompressBlock(
-      const CompressedBlock& block, size_t numRows,
-      ql::span<Id> outputIds) {
+  static void decompressBlock(const CompressedBlock& block, size_t numRows,
+                              ql::span<Id> outputIds) {
     AD_CORRECTNESS_CHECK(outputIds.size() >= numRows);
-    const uint64_t mask = (block.bitWidth_ == 64) ? ~0ULL : ((1ULL << block.bitWidth_) - 1);
+    const uint64_t mask =
+        (block.bitWidth_ == 64) ? ~0ULL : ((1ULL << block.bitWidth_) - 1);
 
     for (size_t i = 0; i < numRows; ++i) {
       size_t bitOffset = i * block.bitWidth_;
@@ -84,7 +87,8 @@ class PforDeltaBitPacking {
       size_t intraWordOffset = bitOffset % 64;
 
       uint64_t delta = (block.packedWords_[wordIdx] >> intraWordOffset);
-      if (intraWordOffset + block.bitWidth_ > 64 && (wordIdx + 1) < block.packedWords_.size()) {
+      if (intraWordOffset + block.bitWidth_ > 64 &&
+          (wordIdx + 1) < block.packedWords_.size()) {
         delta |= (block.packedWords_[wordIdx + 1] << (64 - intraWordOffset));
       }
       delta &= mask;

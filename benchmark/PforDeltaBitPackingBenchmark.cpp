@@ -19,10 +19,13 @@ int main() {
   constexpr size_t NUM_BLOCKS = 100'000;
   constexpr size_t TOTAL_IDS = NUM_BLOCKS * 64;  // 6.4 million IDs
 
-  std::cout << "=================================================================\n";
-  std::cout << "Comparative Benchmark: Uncompressed 64-bit Array vs PFOR-DELTA ("
-            << TOTAL_IDS << " monotonic IDs)\n";
-  std::cout << "=================================================================\n";
+  std::cout
+      << "=================================================================\n";
+  std::cout
+      << "Comparative Benchmark: Uncompressed 64-bit Array vs PFOR-DELTA ("
+      << TOTAL_IDS << " monotonic IDs)\n";
+  std::cout
+      << "=================================================================\n";
 
   std::vector<Id> input(TOTAL_IDS);
   for (size_t i = 0; i < TOTAL_IDS; ++i) {
@@ -48,7 +51,8 @@ int main() {
         ql::span<const Id>(&input[b * 64], 64)));
   }
   auto c1 = std::chrono::high_resolution_clock::now();
-  double compressMs = std::chrono::duration<double, std::milli>(c1 - c0).count();
+  double compressMs =
+      std::chrono::duration<double, std::milli>(c1 - c0).count();
 
   // Measure Decompression
   auto d0 = std::chrono::high_resolution_clock::now();
@@ -58,7 +62,8 @@ int main() {
         compressedBlocks[b], 64, ql::span<Id>(&decompressed[b * 64], 64));
   }
   auto d1 = std::chrono::high_resolution_clock::now();
-  double decompressMs = std::chrono::duration<double, std::milli>(d1 - d0).count();
+  double decompressMs =
+      std::chrono::duration<double, std::milli>(d1 - d0).count();
 
   size_t compressedBytes = 0;
   for (const auto& blk : compressedBlocks) {
@@ -66,15 +71,18 @@ int main() {
   }
 
   std::cout << "\n--- Memory Footprint ---\n";
-  std::cout << "Baseline 64-bit Memory: " << (baseBytes / (1024 * 1024)) << " MB\n";
-  std::cout << "PFOR-DELTA Memory:      " << (compressedBytes / (1024 * 1024)) << " MB\n";
+  std::cout << "Baseline 64-bit Memory: " << (baseBytes / (1024 * 1024))
+            << " MB\n";
+  std::cout << "PFOR-DELTA Memory:      " << (compressedBytes / (1024 * 1024))
+            << " MB\n";
   std::cout << ">>> Memory Compression Ratio: "
             << static_cast<double>(baseBytes) / compressedBytes << "x\n";
 
   std::cout << "\n--- Decompression Throughput ---\n";
   std::cout << "PFOR-DELTA Decompress:  " << decompressMs << " ms ("
             << (TOTAL_IDS / (decompressMs / 1000.0)) / 1e6 << " M IDs/sec)\n";
-  std::cout << "=================================================================\n";
+  std::cout
+      << "=================================================================\n";
 
   return 0;
 }
