@@ -68,7 +68,6 @@ class VectorStreamSource {
   void run(Range&& blocks, Sink&& sink,
            ql::span<const EqualityFilter> filters = {}) const {
     std::optional<Result::IdTableVocabPair> output;
-    bool currentVocabIsMerged = false;
 
     auto flush = [&]() {
       AD_CORRECTNESS_CHECK(output.has_value());
