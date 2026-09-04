@@ -19,6 +19,7 @@
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
 #include "util/CancellationHandle.h"
+#include "util/Exception.h"
 
 namespace sparqlExpression {
 class SparqlExpression;
@@ -63,6 +64,30 @@ struct Instruction {
   int64_t arg = 0;
 };
 
+// Exactness precondition for executing a program over table cells whose
+// datatypes are only known at runtime. The integer morsel kernels treat
+// every non-`Int` (non-`Bool`) cell as invalid (`UNDEF`), which matches the
+// legacy evaluation except in the following cases:
+// * `Double` cells: legacy arithmetic and comparisons compute doubles.
+// * `Bool` cells under bitwise `ID` equality: legacy `true == 1` holds.
+// * `Date` cells under `ADD`/`SUB`: legacy computes dates.
+// * Any non-`Int` cell under the native machine-code backend, which has no
+//   validity concept and reinterprets raw `ValueId` bits.
+enum class CellRule {
+  // Bitwise `ID` programs (string/IRI folds, prefix ranges): exact for
+  // every cell datatype.
+  BitwiseExact,
+  // Folded `?var = <int>`: legacy cross-type numeric equality (`5.0 == 5`,
+  // `true == 1`) requires the absence of `Double` and `Bool` cells.
+  FoldIntEquality,
+  // Integer arithmetic (`ADD`/`SUB`/`MUL`/`MOD`): requires the absence of
+  // `Double` and `Date` cells.
+  IntegerArithmetic,
+  // Programs with comparisons: only `Int`, `Bool` and `Undefined` cells
+  // are exact (legacy compares strings, dates and mixed numerics).
+  OrderedComparison,
+};
+
 class JitBytecodeProgram {
  private:
   std::vector<Instruction> code_;
@@ -71,8 +96,13 @@ class JitBytecodeProgram {
   // Bounds use unsigned bit order, matching
   // `valueIdComparators::compareByBits`.
   std::vector<std::pair<uint64_t, uint64_t>> idRanges_;
+  // Strictest rule by default, so a lowering site that forgets to set the
+  // rule over-falls-back (performance) instead of diverging (correctness).
+  CellRule cellRule_ = CellRule::OrderedComparison;
 
  public:
+  void setCellRule(CellRule rule) noexcept { cellRule_ = rule; }
+  [[nodiscard]] CellRule cellRule() const noexcept { return cellRule_; }
   void addInstruction(OpCode op, int64_t arg = 0) {
     code_.push_back({op, arg});
   }
@@ -930,6 +960,86 @@ class JitExpressionBytecodeVm {
                              return false;
                          }
                        });
+  }
+
+  // Datatype presence in a program's referenced columns over a row range.
+  // `Undefined` cells are always exact (both sides drop them) and are not
+  // tracked.
+  struct ColumnKinds {
+    bool hasDouble = false;
+    bool hasBool = false;
+    bool hasDate = false;
+    // Any cell that is not `Int`, `Bool`, `Undefined`, `Double` or `Date`
+    // (vocabulary indices, literals, geo points, blank nodes, ...).
+    bool hasOther = false;
+    bool allInt = true;
+  };
+
+  // Scan the program's referenced columns over `[begin, begin + numRows)`
+  // for the datatypes that constrain exact execution (see `CellRule`).
+  // Short-circuits once every kind is present.
+  template <typename Table>
+  static ColumnKinds scanColumnKinds(const JitBytecodeProgram& program,
+                                     const Table& inputTable, size_t begin,
+                                     size_t numRows,
+                                     const ad_utility::SharedCancellationHandle&
+                                         cancellationHandle = nullptr) {
+    ColumnKinds kinds;
+    size_t checked = 0;
+    for (ColumnIndex col : program.referencedColumns()) {
+      auto colSpan = inputTable.getColumn(col);
+      const Id* colData = colSpan.data() + begin;
+      for (size_t i = 0; i < numRows; ++i) {
+        if (cancellationHandle && (++checked % (64 * 1024) == 0)) {
+          cancellationHandle->throwIfCancelled();
+        }
+        switch (colData[i].getDatatype()) {
+          case Datatype::Int:
+            break;
+          case Datatype::Double:
+            kinds.hasDouble = true;
+            kinds.allInt = false;
+            break;
+          case Datatype::Bool:
+            kinds.hasBool = true;
+            kinds.allInt = false;
+            break;
+          case Datatype::Date:
+            kinds.hasDate = true;
+            kinds.allInt = false;
+            break;
+          case Datatype::Undefined:
+            kinds.allInt = false;
+            break;
+          default:
+            kinds.hasOther = true;
+            kinds.allInt = false;
+            break;
+        }
+        if (kinds.hasDouble && kinds.hasBool && kinds.hasDate &&
+            kinds.hasOther) {
+          return kinds;
+        }
+      }
+    }
+    return kinds;
+  }
+
+  // True if executing a program with the given `CellRule` over cells of the
+  // scanned kinds matches the legacy evaluation (see `CellRule`).
+  static bool satisfiesCellRule(CellRule rule, const ColumnKinds& kinds) {
+    switch (rule) {
+      case CellRule::BitwiseExact:
+        return true;
+      case CellRule::FoldIntEquality:
+        return !kinds.hasDouble && !kinds.hasBool;
+      case CellRule::IntegerArithmetic:
+        return !kinds.hasDouble && !kinds.hasDate;
+      case CellRule::OrderedComparison:
+        return !kinds.hasDouble && !kinds.hasBool && !kinds.hasDate &&
+               !kinds.hasOther;
+    }
+    AD_FAIL();
   }
 
   // Evaluate an integer-valued program (see `hasExactIntegerSemantics`) over

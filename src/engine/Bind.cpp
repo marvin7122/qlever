@@ -191,7 +191,12 @@ IdTable Bind::computeExpressionBind(
       *expression, _subtree->getVariableColumns());
   if (optProgram.has_value() &&
       ql::engine::jit::JitExpressionBytecodeVm::hasExactIntegerSemantics(
-          optProgram.value())) {
+          optProgram.value()) &&
+      ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
+          optProgram->cellRule(),
+          ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+              optProgram.value(), idTable, 0, idTable.size(),
+              cancellationHandle_))) {
     idTable.addEmptyColumn();
     const ColumnIndex outputColumn = idTable.numColumns() - 1;
     ql::engine::jit::JitExpressionBytecodeVm::executeIntColumn(

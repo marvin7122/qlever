@@ -1767,8 +1767,18 @@ tryEvaluateAggregateChildExpressionJit(
           program.value())) {
     return std::nullopt;
   }
+  // The integer kernels diverge from the legacy evaluation on `Double`
+  // (`Date`) cells, which compute doubles (dates) instead of `UNDEF`.
   const size_t begin = evaluationContext._beginIndex;
   const size_t end = evaluationContext._endIndex;
+  if (!ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
+          program->cellRule(),
+          ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+              program.value(), evaluationContext._inputTable, begin,
+              end > begin ? end - begin : 0,
+              evaluationContext.cancellationHandle_))) {
+    return std::nullopt;
+  }
   VectorWithMemoryLimit<Id> result(end > begin ? end - begin : 0,
                                    evaluationContext._allocator);
   if (!result.empty()) {

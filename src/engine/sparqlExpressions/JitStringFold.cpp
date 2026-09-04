@@ -68,6 +68,15 @@ std::optional<T> getLiteralValue(
   return literal->value();
 }
 
+// True if an ID resolved from a string/IRI constant is backed by the
+// vocabulary or inline-encoded (and therefore bitwise-comparable): plain
+// literals and IRIs resolve to `VocabIndex` or `EncodedVal`, never to a
+// numeric payload.
+bool isStringBackedId(Id id) {
+  const auto datatype = id.getDatatype();
+  return datatype == Datatype::VocabIndex || datatype == Datatype::EncodedVal;
+}
+
 // Try `?var = <constant>` (in either argument order). Only `EQ` is folded,
 // see the header for why `NE` is excluded.
 std::optional<JitBytecodeProgram> tryFoldEquality(
@@ -84,37 +93,51 @@ std::optional<JitBytecodeProgram> tryFoldEquality(
     }
     const ColumnIndex column = varColMap.at(variable.value()).columnIndex_;
     // IRI or string literal constant (String Optimization Cases A and B).
+    // Only vocabulary-backed or inline-encoded IDs fold: a bitwise
+    // comparison is exact for those (no legacy cross-type equality with
+    // strings exists), while e.g. boolean or decimal literals would compare
+    // numerically in the legacy evaluation.
     if (auto literal = getLiteralValue<TripleComponent::Literal>(*constChild)) {
       auto id = resolveConstantToId(TripleComponent{literal.value()}, index);
-      if (!id.has_value()) {
+      if (!id.has_value() || !isStringBackedId(id.value())) {
         return std::nullopt;
       }
       JitBytecodeProgram program;
       emitIdEquality(program, column, id.value().getBits());
       program.addInstruction(OpCode::RET);
+      program.setCellRule(CellRule::BitwiseExact);
       return program;
     }
     if (auto iri = getLiteralValue<TripleComponent::Iri>(*constChild)) {
       auto id = resolveConstantToId(TripleComponent{iri.value()}, index);
-      if (!id.has_value()) {
+      if (!id.has_value() || !isStringBackedId(id.value())) {
         return std::nullopt;
       }
       JitBytecodeProgram program;
       emitIdEquality(program, column, id.value().getBits());
       program.addInstruction(OpCode::RET);
+      program.setCellRule(CellRule::BitwiseExact);
       return program;
     }
     // Already-resolved `Id` constant. Floating-point payloads are excluded:
     // a bitwise comparison would consider two NaNs equal, while the legacy
-    // evaluation does not.
+    // evaluation does not. `Bool` and `Undefined` payloads are excluded
+    // because the legacy evaluation compares them numerically (`true == 1`)
+    // or drops them, unlike a bitwise comparison. `Int` payloads fold with
+    // a `FoldIntEquality` precondition (no `Double`/`Bool` cells); all
+    // vocabulary-backed payloads are bitwise-exact.
     if (auto id = getLiteralValue<ValueId>(*constChild)) {
       const auto datatype = id.value().getDatatype();
-      if (datatype == Datatype::Double || datatype == Datatype::GeoPoint) {
+      if (datatype == Datatype::Double || datatype == Datatype::GeoPoint ||
+          datatype == Datatype::Bool || datatype == Datatype::Undefined ||
+          datatype == Datatype::Date) {
         return std::nullopt;
       }
       JitBytecodeProgram program;
       emitIdEquality(program, column, id.value().getBits());
       program.addInstruction(OpCode::RET);
+      program.setCellRule(datatype == Datatype::Int ? CellRule::FoldIntEquality
+                                                    : CellRule::BitwiseExact);
       return program;
     }
     return std::nullopt;
@@ -174,6 +197,9 @@ std::optional<JitBytecodeProgram> tryFoldPrefixRegex(
     }
   }
   program.addInstruction(OpCode::RET);
+  // Same bitwise range test as the legacy `PrefixRegexExpression::evaluate`
+  // over the same vocabulary ranges: exact for every cell datatype.
+  program.setCellRule(CellRule::BitwiseExact);
   return program;
 }
 

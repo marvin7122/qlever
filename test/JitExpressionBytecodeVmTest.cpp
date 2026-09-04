@@ -380,6 +380,106 @@ TEST(JitExpressionBytecodeVmTest, DivisionFallsBackToLegacyEvaluation) {
             makeIdTableFromVector({{1, 2}, {2, 4}, {4, 2}, {1, 0}}, I));
 }
 
+TEST(JitExpressionBytecodeVmTest, FoldIntEqualityFallsBackOnDoubleAndBool) {
+  // Regression test: a folded `?x = <int>` compares raw `ValueId` bits,
+  // but the legacy evaluation compares numerically (`1.0 == 1`,
+  // `true == 1`). The fold must only run when no `Double`/`Bool` cells
+  // occur, otherwise the legacy evaluation takes over and keeps them.
+  using namespace sparqlExpression;
+  using namespace sparqlExpression::relational;
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  IdTable inputTable = makeIdTableFromVector({{I(1)},
+                                              {Id::makeFromDouble(1.0)},
+                                              {Id::makeFromBool(true)},
+                                              {I(2)},
+                                              {Id::makeUndefined()}});
+  ValuesForTesting values{qec, std::move(inputTable), {Variable{"?x"}}, false,
+                          {},  LocalVocab{},          std::nullopt,     true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+
+  auto expr = std::make_unique<EqualExpression>(
+      std::make_unique<VariableExpression>(Variable{"?x"}),
+      std::make_unique<IdExpression>(I(1)));
+  Filter filter{qec,
+                std::make_shared<QueryExecutionTree>(std::move(subTree)),
+                {std::move(expr), "?x = 1"}};
+
+  auto result = filter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  // `1`, `1.0` and `true` are all equal to `1` in the legacy evaluation.
+  EXPECT_EQ(result->idTableView(),
+            makeIdTableFromVector(
+                {{I(1)}, {Id::makeFromDouble(1.0)}, {Id::makeFromBool(true)}}));
+}
+
+TEST(JitExpressionBytecodeVmTest, ArithmeticFilterFallsBackOnDoubles) {
+  // Regression test: `FILTER(?x * 2 > 3)` with `Double` cells. The legacy
+  // evaluation computes doubles, while the integer kernels yield `UNDEF`
+  // for `Double` cells and would wrongly drop the `2.5` row.
+  using namespace sparqlExpression;
+  using namespace sparqlExpression::relational;
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  IdTable inputTable = makeIdTableFromVector(
+      {{I(2)}, {Id::makeFromDouble(1.5)}, {Id::makeFromDouble(2.5)}, {I(1)}});
+  ValuesForTesting values{qec, std::move(inputTable), {Variable{"?x"}}, false,
+                          {},  LocalVocab{},          std::nullopt,     true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+
+  auto expr = std::make_unique<GreaterThanExpression>(
+      makeMultiplyExpression(
+          std::make_unique<VariableExpression>(Variable{"?x"}),
+          std::make_unique<IdExpression>(I(2))),
+      std::make_unique<IdExpression>(I(3)));
+  Filter filter{qec,
+                std::make_shared<QueryExecutionTree>(std::move(subTree)),
+                {std::move(expr), "?x * 2 > 3"}};
+
+  auto result = filter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  EXPECT_EQ(result->idTableView(),
+            makeIdTableFromVector({{I(2)}, {Id::makeFromDouble(2.5)}}));
+}
+
+TEST(JitExpressionBytecodeVmTest, BindFallsBackOnDoubles) {
+  // Regression test: `BIND(?x * 2 AS ?z)` with a `Double` cell. The legacy
+  // evaluation materializes the double `3.0`, while the integer column
+  // execution yields `UNDEF` for `Double` cells.
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  IdTable inputTable =
+      makeIdTableFromVector({{Id::makeFromDouble(1.5)}, {I(3)}});
+  ValuesForTesting values{qec, std::move(inputTable), {Variable{"?x"}}, false,
+                          {},  LocalVocab{},          std::nullopt,     true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+
+  auto expr = makeMultiplyExpression(
+      std::make_unique<VariableExpression>(Variable{"?x"}),
+      std::make_unique<IdExpression>(I(2)));
+  parsedQuery::Bind bind{{std::move(expr), "?x * 2"}, Variable{"?z"}};
+  Bind bindOp{qec, std::make_shared<QueryExecutionTree>(std::move(subTree)),
+              std::move(bind)};
+
+  auto result = bindOp.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  const auto& table = result->idTableView();
+  ASSERT_EQ(table.size(), 2u);
+  ASSERT_EQ(table.numColumns(), 2u);
+  EXPECT_EQ(table(0, 1), Id::makeFromDouble(3.0));
+  EXPECT_EQ(table(1, 1), I(6));
+}
+
 TEST(JitExpressionBytecodeVmTest, ProgramPredicates) {
   // `containsDivision` and `hasExactIntegerSemantics` gate the JIT backends.
   JitBytecodeProgram arith;

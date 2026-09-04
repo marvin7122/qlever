@@ -1404,6 +1404,52 @@ TEST_F(GroupByOptimizations, sumOfComputedChildSortedPath) {
 }
 
 // _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumOfComputedChildWithDoublesFallsBack) {
+  // Regression test: `SUM(?b * 2)` with `Double` cells. The legacy
+  // evaluation computes doubles, while the integer child execution yields
+  // `UNDEF` for `Double` cells, so the JIT path must fall back. Both paths
+  // (hashmap on/off) must yield the legacy result.
+  using namespace sparqlExpression;
+  auto i = IntId;
+  for (bool hashMapEnabled : {true, false}) {
+    auto cleanup =
+        setRuntimeParameterForTest<&RuntimeParameters::groupByHashMapEnabled_>(
+            hashMapEnabled);
+    Variable varA = Variable{"?a"};
+    Variable varB = Variable{"?b"};
+    Variable varS = Variable{"?s"};
+
+    auto qec = ad_utility::testing::getQec();
+    IdTable testTable{qec->getAllocator()};
+    testTable.setNumColumns(2);
+    testTable.resize(2);
+    testTable(0, 0) = i(1);
+    testTable(1, 0) = i(1);
+    testTable(0, 1) = D(1.5);
+    testTable(1, 1) = D(2.5);
+    std::vector<std::optional<Variable>> variables = {varA, varB};
+    auto values = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, std::move(testTable), variables, false);
+
+    // `SUM(?b * 2)`: children `3.0` and `5.0` sum to `8.0`.
+    SparqlExpressionPimpl sumPimpl{
+        std::make_unique<SumExpression>(
+            false,
+            makeMultiplyExpression(std::make_unique<VariableExpression>(varB),
+                                   std::make_unique<IdExpression>(D(2.0)))),
+        "SUM(?b * 2)"};
+    std::vector<Alias> aliases;
+    aliases.push_back(Alias{std::move(sumPimpl), varS});
+    GroupBy groupBy{qec, {varA}, std::move(aliases), std::move(values)};
+    auto result = groupBy.getResult()->idTableView().clone();
+    // `cleanup` must outlive the evaluation.
+    (void)cleanup;
+    EXPECT_EQ(result, makeIdTableFromVector({{i(1), D(8.0)}}))
+        << "hashMapEnabled=" << hashMapEnabled;
+  }
+}
+
+// _____________________________________________________________________________
 TEST_F(GroupByOptimizations, hashMapOptimizationGroupConcatIndex) {
   auto cleanup =
       setRuntimeParameterForTest<&RuntimeParameters::groupByHashMapEnabled_>(

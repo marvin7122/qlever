@@ -143,11 +143,19 @@ CPP_template_def(int WIDTH,
 
   // Attempt index-folded string filters (`?var = <constant>` and
   // `REGEX(?var, "^prefix")` resolved against the vocabulary once, without
-  // per-row polymorphism or dictionary lookups).
+  // per-row polymorphism or dictionary lookups). The folded program runs
+  // only if its `CellRule` holds over the input cells (e.g. a folded
+  // `?var = <int>` diverges on `Double`/`Bool` cells, where the legacy
+  // evaluation compares numerically).
   auto optFolded = ql::engine::jit::tryFoldStringFilterToJit(
       *_expression.getPimpl(), _subtree->getVariableColumns(),
       getExecutionContext()->getIndex());
-  if (optFolded.has_value()) {
+  if (optFolded.has_value() &&
+      ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
+          optFolded->cellRule(),
+          ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+              optFolded.value(), inputTable, 0, inputTable.size(),
+              cancellationHandle_))) {
     ql::engine::jit::JitExpressionBytecodeVm::executeFilter<WIDTH>(
         optFolded.value(), inputTable, resultTable, cancellationHandle_);
     dynamicResultTable = std::move(resultTable).toDynamic();
@@ -159,15 +167,28 @@ CPP_template_def(int WIDTH,
   // `DIV_INT` are excluded: the backends implement truncating integer
   // division, while the legacy evaluation divides via doubles (see
   // `JitExpressionBytecodeVm::containsDivision`), so they can disagree.
+  // The native backend additionally requires all-`Int` cells (it has no
+  // validity concept and reinterprets raw `ValueId` bits); the bytecode
+  // backend requires the program's `CellRule` (see `CellRule`).
   auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
       *_expression.getPimpl(), _subtree->getVariableColumns());
-  const bool jitExact =
-      optProgram.has_value() &&
+  bool useNativeJit = false;
+  bool useBytecodeJit = false;
+  if (optProgram.has_value() &&
       !ql::engine::jit::JitExpressionBytecodeVm::containsDivision(
-          optProgram.value());
+          optProgram.value())) {
+    const auto kinds =
+        ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+            optProgram.value(), inputTable, 0, inputTable.size(),
+            cancellationHandle_);
+    useNativeJit = kinds.allInt;
+    useBytecodeJit =
+        ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
+            optProgram->cellRule(), kinds);
+  }
 
   // Attempt Native x86-64 JIT (AsmJit) compilation & execution
-  if (jitExact) {
+  if (useNativeJit) {
     auto optJitCompiled = ql::engine::jit::JitExpressionCompiler::compile(
         *_expression.getPimpl(), _subtree->getVariableColumns());
     if (optJitCompiled.has_value()) {
@@ -180,7 +201,7 @@ CPP_template_def(int WIDTH,
   }
 
   // Attempt JIT bytecode interpretation for simple expressions
-  if (jitExact) {
+  if (useBytecodeJit) {
     ql::engine::jit::JitExpressionBytecodeVm::executeFilter<WIDTH>(
         optProgram.value(), inputTable, resultTable, cancellationHandle_);
     dynamicResultTable = std::move(resultTable).toDynamic();
