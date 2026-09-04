@@ -858,7 +858,10 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
 
   ConstructStreamParams streamParams{qet.getVariableColumns(), constructTriples,
                                      limitAndOffset._offset, std::move(config)};
-  if (numThreads <= 1) {
+  // Architectural parameter: threshold for choosing serial vs parallel execution.
+  // Should be tuned based on performance measurements (DATA-ARCH-UNMEASURED).
+  constexpr size_t kParallelThreshold = 1;
+  if (numThreads <= kParallelThreshold) {
     STREAMABLE_YIELD_FROM(constructQueryResultSerial<format>(
         std::move(streamParams), std::move(rowIndices), streamableYielder));
     STREAMABLE_RETURN;
