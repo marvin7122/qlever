@@ -62,22 +62,22 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   static constexpr uint32_t kSqThreadIdleMs = 100;
   // Set up the submission and completion queues with kernel-side SQ polling.
   // `IORING_SETUP_SQPOLL` creates a dedicated kernel thread that continuously
-  // polls the submission queue.  The application calls `io_uring_submit` for
+  // polls the submission queue. The application calls `io_uring_submit` for
   // each batch; liburing wakes an idle SQPOLL kernel thread via
-  // `io_uring_enter` when needed.  The kernel thread sleeps after
-  // `sq_thread_idle` ms of inactivity (waking costs ~30 µs).  The value
+  // `io_uring_enter` when needed. The kernel thread sleeps after
+  // `sq_thread_idle` ms of inactivity (waking costs ~30 µs). The value
   // below balances CPU consumption against wake-up latency for QLever's
   // bursty batch workload.
   //
-  // `IORING_SETUP_SINGLE_ISSUER` tells the kernel that a single thread will
-  // submit all requests; it is Pooled rings are reused across query threads. Do not set IORING_SETUP_SINGLE_ISSUER because QLever submits from a single
-  // thread.  An `IoUringPolicy` must therefore not be submitted to from more
-  // than one thread over its lifetime.
+  // Do not set `IORING_SETUP_SINGLE_ISSUER` because QLever submits from a
+  // single thread. Pooled rings are reused across query threads. An
+  // `IoUringPolicy` must therefore not be submitted to from more than one
+  // thread over its lifetime.
   //
   // liburing rounds the requested ring size up to a power of two, so
   // `ringSize_` is a conservative lower bound for the ring-full check below.
   //
-  // `sq_thread_idle` is deliberately short: the poller thread burns a full
+  // Keep `sq_thread_idle` deliberately short: the poller thread burns a full
   // core while awake, and with one ring per batch manager a long idle period
   // means several kernel threads spinning against the query threads. QLever's
   // batch lookups arrive in bursts that are much shorter than the gaps
