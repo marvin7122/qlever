@@ -98,7 +98,7 @@
    ┌────────────────────────┐                ┌────────────────────────────────┐
    │ Dynamic Cell Resolver  │                │ Vectorized Filter / Projection │
    └───────────┬────────────┘                └───────────────┬────────────────┘
-               │ 3 String Copies                             │ Push directly
+               │ Copy/materialization cost (to measure)      │ Chunk handoff (to measure)
                ▼                                             ▼
    ┌────────────────────────┐                ┌────────────────────────────────┐
    │ Socket Send (Lockstep) │                │ Socket Buffer (Zero-Copy Send) │
