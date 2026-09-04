@@ -76,7 +76,7 @@ TEST(ElasticExportSchedulerTest, SingleCoreFallbackUnderHighForegroundLoad) {
   EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
 
   auto session = scheduler.createSession<int>();
-  // Because activeForegroundQueries > 1, state must be PrimaryOnly
+  // Verify that `activeForegroundQueries > 1` selects the `PrimaryOnly` state.
   EXPECT_EQ(session.state(), SessionState::PrimaryOnly);
 
   constexpr size_t numMorsels = 5;
