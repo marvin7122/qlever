@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <future>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -373,4 +374,41 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
 
   stopQueryChanger.store(true);
   queryChanger.join();
+}
+
+// -----------------------------------------------------------------------------
+// Test 10: Unordered Emission Consumes Every Morsel Exactly Once
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  session.setOrdered(false);
+
+  constexpr size_t numMorsels = 20;
+  for (size_t i = 0; i < numMorsels; ++i) {
+    session.submitMorsel([i]() {
+      // Later morsels finish first: invert completion order so slot order
+      // and completion order disagree.
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(2 * (numMorsels - i)));
+      return "result_" + std::to_string(i);
+    });
+  }
+
+  std::set<std::string> seen;
+  while (session.hasMoreResults()) {
+    seen.insert(session.consumeNextResult());
+  }
+  EXPECT_EQ(seen.size(), numMorsels);
+  for (size_t i = 0; i < numMorsels; ++i) {
+    EXPECT_TRUE(seen.contains("result_" + std::to_string(i)));
+  }
+  EXPECT_EQ(session.consumedSlots(), numMorsels);
+  EXPECT_FALSE(session.hasMoreResults());
+
+  scheduler.onForegroundQueryEnded();
 }
