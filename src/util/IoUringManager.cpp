@@ -156,6 +156,7 @@ size_t IoUringPolicy::allocatePoolBuffer() {
 }
 
 //______________________________________________________________________________
+// Return a buffer index to the free list after its completion has been processed.
 void IoUringPolicy::freePoolBuffer(size_t index) {
   AD_CORRECTNESS_CHECK(index < ringSize_);
   freeBufferIndices_.push_back(index);
