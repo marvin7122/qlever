@@ -206,6 +206,17 @@ class ScatterGatherChunk
     return result;
   }
 
+  // Call `visitor(std::string_view)` for each owned segment. Views are valid
+  // only while this chunk is alive; the HTTP writer stores the chunk as a
+  // member for that reason.
+  template <typename Visitor>
+  void visitSegments(Visitor&& visitor) const {
+    for (const auto& segment : segments_) {
+      visitor(std::string_view{segment.owner_->data() + segment.offset_,
+                               segment.size_});
+    }
+  }
+
   [[nodiscard]] ScatterGatherWriteResult writeToFd(
       int fd, const IsCancelled& isCancelled = [] { return false; }) const {
     AD_CONTRACT_CHECK(fd >= 0);
