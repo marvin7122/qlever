@@ -67,8 +67,8 @@ class VocabularyInternalExternal {
   // which is then completed with `finishLookup`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
-  // Split-phase variant: RAM-cached indices are resolved immediately; the
-  // rest are submitted to `externalVocab_.beginLookup` without blocking.
+    // Split-phase variant: Resolve RAM-cached indices immediately; submit the
+  // rest to `externalVocab_.beginLookup` without blocking.
   std::unique_ptr<VocabLookupHandleBase> beginLookup(
       ql::span<const size_t> indices) const;
 
