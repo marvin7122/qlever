@@ -220,6 +220,7 @@
      - Direct pointers to the arena string spans.
   3. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
   4. The complete chunk is transmitted via a single `::writev()` or `io_uring_prep_send_zc` call.
+  5. Lifetime contract: retain the arena and all storage referenced by the `struct iovec` entries until the kernel reports completion for the corresponding `writev`/`send_zc` operation. Do not reuse the slot or destroy the query context before that completion.
 
 ### 3. Performance Rationale
 * **Reduced Intermediate Copies:** Formatting avoids concatenating terms into an intermediate buffer; kernel-level payload-copy avoidance is available only when the supported zero-copy send path is used.
