@@ -239,7 +239,7 @@ struct RuntimeParameters {
   LogLevelParameter logLevel_{LogLevel{ad_utility::detail::defaultLogLevel},
                               "log-level"};
 
-  // Controls deduplication of triples in CONSTRUCT query results.
+    // Control deduplication of triples in CONSTRUCT query results.
   // "none" (default): no duplicate tracking; every valid instantiated result
   // triple is emitted.
   // "full": one shared set stores the full triple keys for the whole query;
