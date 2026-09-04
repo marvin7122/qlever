@@ -318,14 +318,14 @@
 * **Mechanics:**
   1. Spins up the full QLever server engine against realistic indexes (Wikidata SPO permutations and synthetic multi-column RDF datasets).
   2. Executes massive export queries (5,000,000+ triples) across all formats (TSV, CSV, Turtle).
-  3. Verifies bit-for-bit output equivalence: `diff <(export_v1) <(export_v2)` must return exit code 0.
+  3. Verifies format-specific equivalence: compares bytes for canonical serializations such as TSV, CSV, and N-Triples; validates Turtle with a parser/canonicalizer or RDF semantic comparison rather than requiring byte identity.
   4. Records hardware counters via Linux `perf_event` and generates interactive SVG FlameGraphs showing where CPU cycles are spent.
 
 ### 3. Verification & Acceptance Criteria (Definition of Done)
 
 | Metric / Dimension | Baseline Legacy V1 | Fast-Path Engine V2 | Acceptance Criterion |
 | :--- | :--- | :--- | :--- |
-| **Output Equivalence** | Canonical RDF text | Streamed RDF text | **100% Bit-Identical (`diff == 0`)** |
+| **Output Equivalence** | Canonical RDF text | Streamed RDF text | **Format-specific equivalence: byte-identical for canonical formats; parser/canonicalizer or RDF semantic equality for Turtle** |
 | **Time-To-First-Byte (TTFB)**| 850 ms – 2,400 ms | < 5 ms | **>100x Lower Initial Latency** |
 | **Sustained Throughput** | 1.2M – 2.5M triples/s | 8.0M – 15.0M triples/s | **4x – 8x Sustained Throughput** |
 | **Memory Consumption** | 450 MB – 1.8 GB | < 16 MB (Fixed Arena) | **>95% Memory Reduction** |
