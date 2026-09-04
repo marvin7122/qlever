@@ -42,7 +42,7 @@ using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
 using Literal = ad_utility::triple_component::Literal;
 
 // Interpret `0` for `construct-export-num-threads` as all logical cores.
-size_t resolveConstructExportNumThreads() {
+inline size_t resolveConstructExportNumThreads() {
   const size_t n =
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
   return n == 0 ? std::max(1u, std::thread::hardware_concurrency()) : n;
