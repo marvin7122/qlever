@@ -603,6 +603,6 @@ addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 
-# Header-only util under export_v2; do not pull testUtil/index (cluster GCC
-# range-v3 needs -fpermissive for those translation units).
+# Test the header-only utility under `export_v2`; do not pull in `testUtil/index`
+# because GCC with `range-v3` needs `-fpermissive` for those translation units.
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
