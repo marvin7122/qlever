@@ -266,7 +266,7 @@ class ExportQueryExecutionTrees {
     std::reference_wrapper<const Index> index_;
   };
 
-  // Format each SELECT result block on a `TaskQueue`. CSV and TSV only.
+  // Format each SELECT result row block on a `TaskQueue`. CSV and TSV only.
   // Join the current block before the generator advances. The header is
   // yielded by the caller before this function runs.
   template <ad_utility::MediaType format>
