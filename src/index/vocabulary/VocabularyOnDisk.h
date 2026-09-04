@@ -199,7 +199,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // `finish` completes the lookup and returns the manager to the pool.
   class LookupHandle : public VocabLookupHandleBase {
    public:
-    // Requires `vocab_`, `manager_`, `indices_`, `offsetBatch_` and
+    // Requires `vocab_`, `manager_`, `assign(...)`, `offsetBatch_` and
     // `offsetPairs_` to be set by `VocabularyOnDisk::beginLookup`.
     VocabBatchLookupResult finish() override;
 

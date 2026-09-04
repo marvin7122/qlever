@@ -242,7 +242,7 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
   // itself (and not `VocabularyOnDisk::finishLookup`) owns the return, because
   // wrapping vocabularies (e.g. `CompressedVocabulary`) complete the lookup
   // through the type-erased `VocabLookupHandleBase` interface, where the
-  // concrete `VocabularyOnDisk::finishLookup` cannot be called.
+  // concrete `VocabularyOnDisk::finishLookup` is bypassed.
   absl::Cleanup returnManager{[this]() {
     ad_utility::terminateIfThrows([this]() { returnManagerToPool(); },
                                   "returning the `IoManager` to the pool in "

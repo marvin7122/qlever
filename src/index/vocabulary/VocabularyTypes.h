@@ -53,7 +53,7 @@ using VocabLookupOutput =
 // that keeps this object (and thus the storage the views point into) alive for
 // as long as the `VocabBatchLookupResult` is used.
 //
-// NOTE: Use `finalize()` after filling `views` to set up the span, then use
+// NOTE: Use `asResult()` after filling `views` to set up the span, then use
 // `asResult()` to get a `VocabBatchLookupResult` via aliasing shared_ptr.
 template <typename BufferType>
 class VocabLookupDataCommonBase {
