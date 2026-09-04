@@ -215,10 +215,19 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
 
   constexpr uint64_t rowsPerMorsel = 8192;
   if (scheduler == nullptr) {
+    // No session exists here, so nothing can revoke: serialize each plan
+    // directly without checkpoints.
     for (auto&& plan : planExportMorsels(
              result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
       cancellationHandle->throwIfCancelled();
-      auto builder = serializePlan(plan);
+      ScatterGatherChunkBuilder builder;
+      for (const auto& segment : plan.segments_) {
+        ExportEngineV2::appendSerializedRows(
+            segment.block_->idTable_.asStaticView<0>(),
+            segment.block_->localVocab_, format, builder, index,
+            columns.indices_, segment.begin_, segment.end_,
+            columns.lattice_.columns_);
+      }
       if (!builder.empty()) {
         co_yield std::move(builder);
       }
