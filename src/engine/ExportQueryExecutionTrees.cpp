@@ -862,8 +862,8 @@ ExportQueryExecutionTrees::computeResult(
     ad_utility::MediaType mediaType, const ad_utility::Timer& requestTimer,
     CancellationHandle cancellationHandle,
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
-  // Arm the storage-wait accounting for this query and make sure the
-  // process-exit reporter is registered. Both are no-ops when the parameter is
+    // Arm the storage-wait accounting for this query and make sure the
+  // reporter is started. Both are no-ops when the parameter is
   // off, which is the default.
   ad_utility::ioWait::setEnabled(
       getRuntimeParameter<&RuntimeParameters::measureIoWait_>());
