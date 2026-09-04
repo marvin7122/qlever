@@ -148,8 +148,8 @@ inline uint64_t nowNanos() {
 }
 }  // namespace detail
 
-// Times the blocking call `callable` into `counters` when the instrumentation
-// is enabled, and calls it directly otherwise. Returns whatever `callable`
+// Time the blocking call `callable` into `counters` when the instrumentation
+// is enabled, and call it directly otherwise. Return whatever `callable`
 // returns.
 template <typename Selector, typename Callable>
 decltype(auto) timed(Selector selector, Callable&& callable) {
