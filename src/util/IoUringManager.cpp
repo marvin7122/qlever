@@ -165,7 +165,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
 void ad_utility::IoUringPolicy::drainOneCqe() {
   // Block until at least one completion queue entry (CQE) is available.
   io_uring_cqe* cqe = nullptr;
-  // Timed because this is where the thread blocks waiting for the device. A
+    // Time because this is where the thread blocks waiting for the device. A
   // no-op unless `measure-io-wait` is set.
   int ret = ad_utility::ioWait::timed(
       ad_utility::ioWait::ioUringWaitCounters,
