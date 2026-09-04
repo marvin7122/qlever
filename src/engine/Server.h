@@ -15,6 +15,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "backports/filesystem.h"
@@ -159,7 +160,10 @@ class Server {
   class MockSend {
    public:
     Awaitable<void> operator()(auto response) {
-      response_ = std::move(response);
+      using Sent = std::decay_t<decltype(response)>;
+      if constexpr (std::is_same_v<Sent, ResponseT>) {
+        response_ = std::move(response);
+      }
       co_return;
     }
 
