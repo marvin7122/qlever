@@ -244,7 +244,7 @@ struct RuntimeParameters {
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
   // Specify the size of the io_uring submission queue (ring size) per batch I/O manager.
-  // Powers of two are preferred; liburing rounds up.  Larger rings increase
+  // Prefer powers of two; liburing rounds up. Larger rings increase.
   // in-flight I/O concurrency at the cost of registered buffer memory.
   SizeT vocabBatchIoRingSize_{256, "vocab-batch-io-ring-size"};
 
