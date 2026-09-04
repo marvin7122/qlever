@@ -184,7 +184,7 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
     int r0 = session.consumeNextResult();
   EXPECT_EQ(r0, 100);
 
-  // Once helper 0 released lease, session transitions to PrimaryOnly
+  // After helper `0` releases its lease, expect the session to transition to `PrimaryOnly`.
   // Morsel 1 should be executed on coordinator thread
   int r1 = session.consumeNextResult();
   EXPECT_EQ(r1, 200);
