@@ -56,8 +56,8 @@ To maintain strict backward compatibility with 100% of existing queries and test
    - URL Query Parameter: `GET /sparql?query=...&fast-export=1` or `&export-engine=v2`
    - HTTP Header: `X-QLever-Export-Engine: v2`
 2. **Conflict Handling:**
-   - At most one engine selection may be supplied. If the query parameter and header select different engines, reject the request with a client error; do not let router ordering decide the result.
-   - `fast-export=1` is equivalent to an explicit `export-engine=v2` selection. Supplying both is allowed only when they select the same engine; otherwise reject the request.
+   - Multiple engine-selection inputs may be supplied only when they select the same engine. If the query parameter and header select different engines, reject the request with a client error; do not let router ordering decide the result.
+   - `fast-export=1` is equivalent to an explicit `export-engine=v2` selection. Supplying both is therefore allowed only when they select the same engine; otherwise reject the request.
 3. **Selection Precedence:**
    - A non-conflicting query-time selection overrides the server configuration default.
    - If no query-time selection is supplied, use `--export-engine-default [legacy | v2]` (Default: `legacy`).
