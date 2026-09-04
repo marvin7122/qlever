@@ -153,8 +153,8 @@ inline std::vector<std::string> tokenizeAndNormalizeText(
     std::string_view text, const LocaleManager& localeManager) {
   std::vector<std::string_view> split{
       absl::StrSplit(text, LiteralsTokenizationDelimiter{}, absl::SkipEmpty{})};
-  // Eager vector: `ql::views::transform` on a temporary vector fails to
-  // instantiate on the cluster range-v3 / GCC toolchains.
+    // Use an eager `std::vector` because transforming a temporary vector with
+  // `ql::views::transform` does not instantiate reliably.
   std::vector<std::string> result;
   result.reserve(split.size());
   for (const auto& str : split) {
