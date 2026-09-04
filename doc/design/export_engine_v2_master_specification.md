@@ -206,7 +206,7 @@ To enable independent implementation and clean reviewability, the V2 engine is d
 ### Work Package 2: Push-Based Vector Stream Source
 * **Artifact Target:** `src/engine/export_v2/VectorStreamSource.h` & `test/VectorStreamSourceTest.cpp`
 * **Task Description:**
-  - Create `VectorStreamSource` consuming index scan iterators in 64KB vector chunks (4,096–8,192 rows).
+    - Create `VectorStreamSource` consuming index scan iterators in chunks capped at 64 KiB of vector payload; the number of rows per chunk is variable and must be measured.
   - Implement in-place SIMD filtering using AVX2 equality bitmasks (`_mm256_cmpeq_epi64`).
   - Zero heap allocations during chunk streaming.
 * **Definition of Done:** `VectorScanBenchmark` achieves >120M rows/sec on a single CPU core with 0 intermediate `IdTable` materialization.
