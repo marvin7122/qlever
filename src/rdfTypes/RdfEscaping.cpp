@@ -326,7 +326,7 @@ std::string escapeForTsv(std::string input) {
 
 // __________________________________________________________________________
 std::string escapeForXml(std::string input) {
-  if (ad_utility::simd::containsAnyByte(detail::XmlSpecialChars{}, input))
+  
       [[unlikely]] {
     absl::StrReplaceAll({{"&", "&amp;"},
                          {"<", "&lt;"},
