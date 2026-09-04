@@ -1,4 +1,4 @@
-// Copyright 2023 - 2026, The QLever Authors, in particular:
+// Copyright 2023 - 2026, The QLever Authors, in particular.
 //
 // 2023 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2023 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
