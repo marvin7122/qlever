@@ -208,8 +208,8 @@ TEST(ElasticExportSchedulerTest, DeterministicSlotOrderingWithVaryingDelays) {
   constexpr size_t count = 20;
   for (size_t i = 0; i < count; ++i) {
     session.submitMorsel([i]() {
-      // Invert delays: slot 0 sleeps longest (20ms), slot 19 sleeps shortest
-      // (1ms)
+            // Invert delays: slot 0 sleeps longest (40ms), slot 19 sleeps shortest
+      // (2ms)
       auto delay = std::chrono::milliseconds((count - i) * 2);
       std::this_thread::sleep_for(delay);
       return i;
