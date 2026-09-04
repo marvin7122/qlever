@@ -222,7 +222,7 @@
   4. The complete chunk is transmitted via a single `::writev()` or `io_uring_prep_send_zc` call.
 
 ### 3. Performance Rationale
-* **Zero Intermediate Copies:** Memory copying drops from 3 intermediate copies per term to **0 copies**.
+* **No intermediate payload copy:** The serializer avoids copying term contents into an intermediate contiguous formatting buffer; copies or DMA performed by the kernel and network stack are implementation-dependent.
 * **Memory Bus Saturation Avoided:** Frees up CPU memory bus bandwidth for index decompression and cache prefetching.
 
 ### 4. Benchmarking & Verification Plan
