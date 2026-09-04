@@ -220,6 +220,8 @@ class EncodedIriManagerImpl {
     return result;
   }
 
+    // Append the IRI representation using the given prefix. The prefix must
+  // start with `<` (checked by AD_EXPENSIVE_CHECK).
   static void appendWithGivenPrefix(std::string& out, uint64_t digitEncoding,
                                     std::string_view prefix) {
     AD_EXPENSIVE_CHECK(ql::starts_with(prefix, '<'));
