@@ -31,6 +31,10 @@ enum class ExportEngineMode {
   FastStreamingV2 = 1  // Push-based zero-copy streaming engine
 };
 
+// How a V2 response is handed to Beast. ConcatenatedString is the curl-checked
+// default (`generator<std::string>`). ScatterGather is opt-in (`export-send`).
+enum class ExportSendMode { ConcatenatedString = 0, ScatterGather = 1 };
+
 // Return a human-readable representation of `ExportEngineMode`.
 [[nodiscard]] constexpr std::string_view toString(
     ExportEngineMode mode) noexcept {
@@ -39,6 +43,17 @@ enum class ExportEngineMode {
       return "LegacyV1";
     case ExportEngineMode::FastStreamingV2:
       return "FastStreamingV2";
+  }
+  return "Unknown";
+}
+
+[[nodiscard]] constexpr std::string_view toString(
+    ExportSendMode mode) noexcept {
+  switch (mode) {
+    case ExportSendMode::ConcatenatedString:
+      return "ConcatenatedString";
+    case ExportSendMode::ScatterGather:
+      return "ScatterGather";
   }
   return "Unknown";
 }
@@ -109,6 +124,28 @@ class ExportPipelineRouter {
     }
 
     return ExportEngineMode::LegacyV1;
+  }
+
+  // How V2 should hand bytes to HTTP. Default is concatenated strings.
+  // `export-send=iovec` (or header `X-QLever-Export-Send: iovec`) selects
+  // scatter-gather. Unknown values keep the default; this does not select V2.
+  [[nodiscard]] static ExportSendMode selectSendMode(
+      const ParamValueMap& parameters,
+      std::optional<std::string_view> exportSendHeader =
+          std::nullopt) noexcept {
+    if (const auto opt = getParameterValue(parameters, "export-send");
+        opt.has_value()) {
+      if (const auto parsed = parseSendMode(opt.value()); parsed.has_value()) {
+        return parsed.value();
+      }
+    }
+    if (exportSendHeader.has_value()) {
+      if (const auto parsed = parseSendMode(exportSendHeader.value());
+          parsed.has_value()) {
+        return parsed.value();
+      }
+    }
+    return ExportSendMode::ConcatenatedString;
   }
 
   // ___________________________________________________________________________
@@ -235,6 +272,19 @@ class ExportPipelineRouter {
   [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
     auto lower = ad_utility::getLowercase(std::string(val));
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
+  }
+
+  [[nodiscard]] static std::optional<ExportSendMode> parseSendMode(
+      std::string_view val) noexcept {
+    const auto lower = ad_utility::getLowercase(std::string(val));
+    if (lower == "string" || lower == "concat" || lower == "concatenated") {
+      return ExportSendMode::ConcatenatedString;
+    }
+    if (lower == "iovec" || lower == "sg" || lower == "scatter-gather" ||
+        lower == "writev") {
+      return ExportSendMode::ScatterGather;
+    }
+    return std::nullopt;
   }
 
   // Unsupported-construct detection is not implemented yet; all SELECT and
