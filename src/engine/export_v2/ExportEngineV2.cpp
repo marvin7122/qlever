@@ -129,13 +129,12 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   result->logResultSize();
 
   constexpr uint64_t morselRows = 8192;
-  auto serializeOnThisThread = [&](const IdTable& table,
+  auto serializeOnThisThread = [&](const IdTableView<0>& table,
                                    const LocalVocab& localVocab, uint64_t begin,
                                    uint64_t end) {
     ScatterGatherChunkBuilder builder;
-    ExportEngineV2::appendSerializedRows(table.asStaticView<0>(), localVocab,
-                                         format, builder, index, columns, begin,
-                                         end);
+    ExportEngineV2::appendSerializedRows(table, localVocab, format, builder,
+                                         index, columns, begin, end);
     return builder;
   };
 
