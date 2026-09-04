@@ -108,9 +108,9 @@ CPP_template(typename UnderlyingVocabulary,
         });
   }
 
-  // Batch-read the compressed words from the underlying vocabulary (which may
+    // Batch-read the compressed words from the underlying vocabulary (which may
   // itself be on-disk), then decompress each word with the decoder of its
-  // block. The result order matches `indices`.
+  // block. Match the result order to `indices`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     return finishLookup(beginLookup(indices));
   }
