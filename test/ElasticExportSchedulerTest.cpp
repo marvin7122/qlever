@@ -316,7 +316,7 @@ TEST(ElasticExportSchedulerTest, QueryRegistryLifecycleHookIntegration) {
       auto q2 = registry.uniqueId("SELECT ?y WHERE { ?y ?p ?o }");
       EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
     }
-    // q2 destroyed -> end callback fired
+    // Verify that destroying `q2` fires the end callback.
     EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
   }
   // q1 destroyed -> end callback fired
