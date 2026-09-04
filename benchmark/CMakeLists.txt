@@ -36,6 +36,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
-    addAndLinkBenchmark(JitExpressionBytecodeVmBenchmark global qlever_util)
+    addAndLinkBenchmark(JitExpressionBytecodeVmBenchmark global qlever_util asmjit::asmjit)
 
 endif()

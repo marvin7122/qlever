@@ -662,6 +662,18 @@ FetchContent_Declare(
         SYSTEM
 )
 
+set(ASMJIT_STATIC ON CACHE BOOL "" FORCE)
+set(ASMJIT_TEST OFF CACHE BOOL "" FORCE)
+set(ASMJIT_NO_CUSTOM_FLAGS ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        asmjit
+        GIT_REPOSITORY https://github.com/asmjit/asmjit.git
+        GIT_TAG b2d7c505372ae797ad8948174f8083818e381eb9 # master stable
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL
+        SYSTEM
+)
+
 ################################
 # Apply FetchContent
 ################################
@@ -678,7 +690,7 @@ if (EMSCRIPTEN)
     # and profiled with source information in the browser dev tools.
     add_link_options("$<$<CONFIG:Debug,RelWithDebInfo>:-g>")
 endif ()
-FetchContent_MakeAvailable(googletest ctre abseil fsst nlohmann-json antlr range-v3 spatialjoin uriparser opentelemetry-cpp s2 re2)
+FetchContent_MakeAvailable(googletest ctre abseil fsst nlohmann-json antlr range-v3 spatialjoin uriparser opentelemetry-cpp s2 re2 asmjit)
 
 # Depending on `BUILD_SHARED_LIBS`, the `antlr4` build creates either a shared or
 # a static library target. Define the alias `antlr4_umbrella` such that the rest

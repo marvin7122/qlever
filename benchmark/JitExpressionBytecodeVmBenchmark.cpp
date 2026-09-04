@@ -11,6 +11,8 @@
 #include <memory>
 #include <vector>
 
+#include <asmjit/x86.h>
+
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 
 using namespace ql::engine::jit;
@@ -113,8 +115,92 @@ int main() {
   std::cout << "Runtime: " << jitMs << " ms ("
             << (NUM_ROWS / (jitMs / 1000.0)) / 1e6 << " M rows/sec, matches: " << jitMatches << ")\n";
 
+  // 3. TIER 2: Native x86-64 Machine-Code JIT via AsmJit
+  // Generates native x86-64 loop: (col0 * 2) + col1 > 100
+  // Signature: size_t (*)(const int64_t* col0, const int64_t* col1, size_t count)
+  using NativeFilterFunc = size_t (*)(const int64_t*, const int64_t*, size_t);
+
+  asmjit::JitRuntime rt;
+  asmjit::CodeHolder code;
+  code.init(rt.environment());
+  asmjit::x86::Compiler cc(&code);
+
+  // Define function signature
+  asmjit::FuncNode* func = cc.addFunc(asmjit::FuncSignature::build<size_t, const int64_t*, const int64_t*, size_t>());
+
+  asmjit::x86::Gp ptr0 = cc.newUIntPtr("ptr0");
+  asmjit::x86::Gp ptr1 = cc.newUIntPtr("ptr1");
+  asmjit::x86::Gp count = cc.newUIntPtr("count");
+  asmjit::x86::Gp matches = cc.newUInt64("matches");
+  asmjit::x86::Gp idx = cc.newUIntPtr("idx");
+
+  func->setArg(0, ptr0);
+  func->setArg(1, ptr1);
+  func->setArg(2, count);
+
+  cc.xor_(matches, matches);
+  cc.xor_(idx, idx);
+
+  asmjit::Label loopStart = cc.newLabel();
+  asmjit::Label loopEnd = cc.newLabel();
+
+  cc.bind(loopStart);
+  cc.cmp(idx, count);
+  cc.jge(loopEnd);
+
+  // Load col0[idx] and col1[idx]
+  asmjit::x86::Gp v0 = cc.newInt64("v0");
+  asmjit::x86::Gp v1 = cc.newInt64("v1");
+  asmjit::x86::Gp sum = cc.newInt64("sum");
+
+  cc.mov(v0, asmjit::x86::qword_ptr(ptr0, idx, 3)); // scale 8 = 1 << 3
+  cc.mov(v1, asmjit::x86::qword_ptr(ptr1, idx, 3));
+
+  // Compute: (v0 * 2) + v1
+  cc.lea(sum, asmjit::x86::qword_ptr(v1, v0, 1)); // sum = v1 + v0 * 2
+
+  // Compare > 100
+  cc.cmp(sum, 100);
+  asmjit::x86::Gp matchBit = cc.newUInt64("matchBit");
+  cc.setg(matchBit.r8());
+  cc.movzx(matchBit, matchBit.r8());
+  cc.add(matches, matchBit);
+
+  cc.inc(idx);
+  cc.jmp(loopStart);
+
+  cc.bind(loopEnd);
+  cc.ret(matches);
+  cc.endFunc();
+
+  cc.finalize();
+
+  auto c0 = std::chrono::high_resolution_clock::now();
+  NativeFilterFunc nativeFn = nullptr;
+  asmjit::Error err = rt.add(&nativeFn, &code);
+  auto c1 = std::chrono::high_resolution_clock::now();
+  double compileUs = std::chrono::duration<double, std::micro>(c1 - c0).count();
+
+  if (err || !nativeFn) {
+    std::cerr << "AsmJit compilation failed: " << err << "\n";
+    return 1;
+  }
+
+  // Benchmark Native JIT execution
+  auto n0 = std::chrono::high_resolution_clock::now();
+  size_t asmjitMatches = nativeFn(col0.data(), col1.data(), NUM_ROWS);
+  auto n1 = std::chrono::high_resolution_clock::now();
+  double asmMs = std::chrono::duration<double, std::milli>(n1 - n0).count();
+
+  std::cout << "\n--- Tier 2: Native x86-64 Machine-Code JIT (AsmJit) ---\n";
+  std::cout << "Compile Time: " << compileUs << " us\n";
+  std::cout << "Runtime:      " << asmMs << " ms ("
+            << (NUM_ROWS / (asmMs / 1000.0)) / 1e6 << " M rows/sec, matches: " << asmjitMatches << ")\n";
+
   std::cout << "\n=================================================================\n";
-  std::cout << ">>> JIT Expression Speedup: " << (astMs / jitMs) << "x faster\n";
+  std::cout << ">>> Bytecode VM vs Virtual AST: " << (astMs / jitMs) << "x\n";
+  std::cout << ">>> Native AsmJit vs Virtual AST: " << (astMs / asmMs) << "x faster!\n";
+  std::cout << ">>> Native AsmJit vs Bytecode VM:  " << (jitMs / asmMs) << "x faster!\n";
   std::cout << "=================================================================\n";
 
   return 0;

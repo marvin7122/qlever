@@ -26,7 +26,7 @@ add_library(sparqlExpressions
         GroupConcatExpression.cpp
         JitExpressionBytecodeVm.cpp)
 
-qlever_target_link_libraries(sparqlExpressions qlever_util index sortPerformanceEstimator)
+qlever_target_link_libraries(sparqlExpressions qlever_util index sortPerformanceEstimator asmjit::asmjit)
 if (NOT REDUCED_FEATURE_SET_FOR_CPP17)
     target_link_libraries(sparqlExpressions PUBLIC Boost::url)
 endif()
