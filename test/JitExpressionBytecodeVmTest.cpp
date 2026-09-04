@@ -271,8 +271,8 @@ TEST(JitExpressionBytecodeVmTest, NativeAsmJitFilterCompilationAndExecution) {
       qec, std::make_shared<ValuesForTesting>(std::move(values))};
 
   // Filter: (?a * 2) == ?b  (All 100 rows should match)
-  auto expr = std::make_unique<EqualExpression>(
-      std::array<SparqlExpression::Ptr, 2>{
+  auto expr =
+      std::make_unique<EqualExpression>(std::array<SparqlExpression::Ptr, 2>{
           makeMultiplyExpression(
               std::make_unique<VariableExpression>(Variable{"?a"}),
               std::make_unique<IdExpression>(I(2))),
@@ -287,3 +287,46 @@ TEST(JitExpressionBytecodeVmTest, NativeAsmJitFilterCompilationAndExecution) {
   EXPECT_EQ(result->idTableView().size(), 100u);
 }
 
+TEST(JitExpressionBytecodeVmTest, IdEqualityAndRangeOpcodes) {
+  const uint64_t vocabBase =
+      Id::makeFromVocabIndex(VocabIndex::make(100)).getBits();
+  const uint64_t lo = vocabBase;
+  const uint64_t hi = Id::makeFromVocabIndex(VocabIndex::make(200)).getBits();
+
+  // col == const via raw ID bits.
+  {
+    JitBytecodeProgram program;
+    program.addInstruction(OpCode::LOAD_COL_ID, 0);
+    program.addInstruction(OpCode::LOAD_CONST_INT,
+                           static_cast<int64_t>(vocabBase + 7));
+    program.addInstruction(OpCode::CMP_EQ_ID);
+    program.addInstruction(OpCode::RET);
+    EXPECT_EQ(program.execute(
+                  std::vector<int64_t>{static_cast<int64_t>(vocabBase + 7)}),
+              1);
+    EXPECT_EQ(program.execute(
+                  std::vector<int64_t>{static_cast<int64_t>(vocabBase + 8)}),
+              0);
+    // Undefined (all-zero bits) never matches a defined constant.
+    EXPECT_EQ(program.execute(std::vector<int64_t>{0}), 0);
+  }
+
+  // Half-open unsigned range check, combined with OR_BOOL.
+  {
+    JitBytecodeProgram program;
+    const size_t range = program.addIdRange(lo, hi);
+    program.addInstruction(OpCode::LOAD_COL_ID, 0);
+    program.addInstruction(OpCode::IN_ID_RANGE, static_cast<int64_t>(range));
+    program.addInstruction(OpCode::LOAD_COL_ID, 0);
+    program.addInstruction(OpCode::IN_ID_RANGE, static_cast<int64_t>(range));
+    program.addInstruction(OpCode::OR_BOOL);
+    program.addInstruction(OpCode::RET);
+    EXPECT_EQ(program.execute(std::vector<int64_t>{static_cast<int64_t>(lo)}),
+              1);
+    EXPECT_EQ(
+        program.execute(std::vector<int64_t>{static_cast<int64_t>(hi - 1)}), 1);
+    EXPECT_EQ(program.execute(std::vector<int64_t>{static_cast<int64_t>(hi)}),
+              0);
+    EXPECT_EQ(program.execute(std::vector<int64_t>{0}), 0);
+  }
+}
