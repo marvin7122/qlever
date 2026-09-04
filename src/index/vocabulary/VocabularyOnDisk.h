@@ -102,7 +102,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
-  // Split-phase variant of `lookupBatch`: `beginLookup` submits the offset
+  // Submit the offset reads for the given indices and return a handle immediately without blocking. The caller must call `finishLookup` with the returned handle to complete the lookup and obtain the resolved strings. This allows overlapping the I/O of one batch with the CPU work of another (see the depth-2 pipeline in the CONSTRUCT export path).
   // reads and returns a handle immediately (without blocking), `finishLookup`
   // blocks until the lookup is complete and returns the resolved strings. This
   // lets a caller overlap the I/O of one batch with the CPU work of another
