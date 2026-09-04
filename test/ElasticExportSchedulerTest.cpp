@@ -259,8 +259,7 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
     session.cancel();
   EXPECT_EQ(session.state(), SessionState::Closed);
 
-  // Unblock helper morsel
-  unblockPromise.set_value();
+    unblockPromise.set_value();
 
   // Attempting to consume from cancelled session should throw
   EXPECT_THROW(session.consumeNextResult(), ad_utility::Exception);
