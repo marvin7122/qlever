@@ -184,8 +184,7 @@ class IoUringPolicy {
  private:
   io_uring ring_{};
   unsigned ringSize_;
-  // Size in bytes of each individual buffer in the registered buffer pool.
-  size_t registeredBufferSize_;
+    size_t registeredBufferSize_;
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
