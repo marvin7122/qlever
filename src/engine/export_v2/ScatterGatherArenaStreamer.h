@@ -295,6 +295,18 @@ class ScatterGatherChunkBuilder
         {std::move(bytes.owner_), bytes.offset_, bytes.size_, false});
   }
 
+  // Take ownership of `bytes` without copying the payload into copiedBytes_.
+  void appendOwned(std::string bytes) {
+    auto guard = makeInvariantGuard();
+    if (bytes.empty()) {
+      return;
+    }
+    const size_t size = bytes.size();
+    auto owner = std::make_shared<const std::string>(std::move(bytes));
+    segments_.push_back({std::move(owner), 0, size, false});
+    totalBytes_ += size;
+  }
+
   [[nodiscard]] ScatterGatherChunk finalize() && {
     auto guard = makeInvariantGuard();
     auto copiedOwner =

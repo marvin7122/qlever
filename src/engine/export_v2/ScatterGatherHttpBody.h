@@ -36,7 +36,9 @@ class scatter_gather_body::writer {
   value_type& generator_;
   value_type::iterator iterator_;
   Chunk chunk_;
-  std::vector<boost::asio::const_buffer> buffers_;
+  std::vector<boost::asio::const_buffer> chunkBuffers_;
+  std::vector<boost::asio::const_buffer> writeBuffers_;
+  size_t chunkOffset_ = 0;
   bool first_ = true;
 
   bool loadNextChunk(boost::system::error_code& ec) {
@@ -49,12 +51,13 @@ class scatter_gather_body::writer {
       }
       while (iterator_ != generator_.end()) {
         chunk_ = std::move(*iterator_);
-        buffers_.clear();
-        buffers_.reserve(chunk_.numSegments());
+        chunkBuffers_.clear();
+        chunkBuffers_.reserve(chunk_.numSegments());
         chunk_.visitSegments([this](std::string_view bytes) {
-          buffers_.emplace_back(bytes.data(), bytes.size());
+          chunkBuffers_.emplace_back(bytes.data(), bytes.size());
         });
-        if (!buffers_.empty()) {
+        chunkOffset_ = 0;
+        if (!chunkBuffers_.empty()) {
           return true;
         }
         ++iterator_;
@@ -81,10 +84,19 @@ class scatter_gather_body::writer {
   boost::optional<std::pair<const_buffers_type, bool>> get(
       boost::system::error_code& ec) {
     ec = {};
-    if (!loadNextChunk(ec)) {
-      return boost::none;
+    if (chunkOffset_ >= chunkBuffers_.size()) {
+      if (!loadNextChunk(ec)) {
+        return boost::none;
+      }
     }
-    return {{buffers_, true}};
+    const size_t remaining = chunkBuffers_.size() - chunkOffset_;
+    const size_t n = remaining < static_cast<size_t>(UIO_MAXIOV)
+                         ? remaining
+                         : static_cast<size_t>(UIO_MAXIOV);
+    writeBuffers_.assign(chunkBuffers_.begin() + chunkOffset_,
+                         chunkBuffers_.begin() + chunkOffset_ + n);
+    chunkOffset_ += n;
+    return {{writeBuffers_, true}};
   }
 };
 
