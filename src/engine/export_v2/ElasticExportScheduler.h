@@ -544,7 +544,7 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Running) {
-        // Wait for running helper worker to finish CPU morsel
+        // Wait for the helper worker to finish the CPU morsel.
         cv_.wait(lock, [&] {
           return slots_[index].status_ == MorselStatus::Completed ||
                  cancelled_.load(std::memory_order_relaxed);
