@@ -39,10 +39,11 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
   asmjit::x86::Compiler cc(&code);
 
   // Signature:
-  // size_t func(const uint64_t* const* colPtrs, size_t count, uint64_t* outMask)
-  asmjit::FuncNode* func = cc.add_func(
-      asmjit::FuncSignature::build<size_t, const uint64_t* const*, size_t,
-                                   uint64_t*>());
+  // size_t func(const uint64_t* const* colPtrs, size_t count, uint64_t*
+  // outMask)
+  asmjit::FuncNode* func =
+      cc.add_func(asmjit::FuncSignature::build<size_t, const uint64_t* const*,
+                                               size_t, uint64_t*>());
 
   asmjit::x86::Gp colPtrsReg = cc.new_gp_ptr("colPtrs");
   asmjit::x86::Gp countReg = cc.new_gp_ptr("count");
@@ -257,6 +258,70 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         cc.setne(cond.r8());
         cc.movzx(cond, cond.r8());
         regStack.push_back(cond);
+        break;
+      }
+      case OpCode::LOAD_COL_ID: {
+        // Like `LOAD_COL_INT`, but push the raw 64-bit `ValueId` bits
+        // without integer unpacking.
+        size_t colIdx = 0;
+        for (size_t i = 0; i < referencedCols.size(); ++i) {
+          if (referencedCols[i] == static_cast<ColumnIndex>(inst.arg)) {
+            colIdx = i;
+            break;
+          }
+        }
+        asmjit::x86::Gp rawVal = cc.new_gp64("rawId");
+        cc.mov(rawVal, asmjit::x86::qword_ptr(colBaseRegs[colIdx], idx, 3));
+        regStack.push_back(rawVal);
+        break;
+      }
+      case OpCode::CMP_EQ_ID: {
+        if (regStack.size() < 2) return std::nullopt;
+        asmjit::x86::Gp b = regStack.back();
+        regStack.pop_back();
+        asmjit::x86::Gp a = regStack.back();
+        regStack.pop_back();
+        asmjit::x86::Gp cond = cc.new_gp64("eqIdCond");
+        cc.cmp(a, b);
+        cc.sete(cond.r8());
+        cc.movzx(cond, cond.r8());
+        regStack.push_back(cond);
+        break;
+      }
+      case OpCode::IN_ID_RANGE: {
+        if (regStack.empty()) return std::nullopt;
+        if (static_cast<size_t>(inst.arg) >= program.idRanges().size()) {
+          return std::nullopt;
+        }
+        const auto& [lo, hi] =
+            program.idRanges().at(static_cast<size_t>(inst.arg));
+        asmjit::x86::Gp a = regStack.back();
+        regStack.pop_back();
+        asmjit::x86::Gp loReg = cc.new_gp64("rangeLo");
+        asmjit::x86::Gp hiReg = cc.new_gp64("rangeHi");
+        asmjit::x86::Gp cond = cc.new_gp64("rangeCond");
+        cc.mov(loReg, static_cast<uint64_t>(lo));
+        cc.mov(hiReg, static_cast<uint64_t>(hi));
+        // Unsigned comparison: `lo <= a < hi` in `ValueId` bit order.
+        asmjit::Label rangeFail = cc.new_label();
+        cc.xor_(cond, cond);
+        cc.cmp(a, loReg);
+        cc.jb(rangeFail);
+        cc.cmp(a, hiReg);
+        cc.jae(rangeFail);
+        cc.mov(cond, 1);
+        cc.bind(rangeFail);
+        regStack.push_back(cond);
+        break;
+      }
+      case OpCode::OR_BOOL: {
+        if (regStack.size() < 2) return std::nullopt;
+        asmjit::x86::Gp b = regStack.back();
+        regStack.pop_back();
+        asmjit::x86::Gp a = regStack.back();
+        regStack.pop_back();
+        cc.or_(a, b);
+        regStack.push_back(a);
         break;
       }
       case OpCode::RET:

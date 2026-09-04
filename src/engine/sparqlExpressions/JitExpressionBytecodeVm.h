@@ -44,6 +44,16 @@ enum class OpCode : uint8_t {
   CMP_LE_INT,
   CMP_EQ_INT,
   CMP_NE_INT,
+  // Raw `ValueId` bit operations for index-folded string filters (see
+  // `tryFoldStringFilterToJit`). `LOAD_COL_ID` pushes the uninterpreted
+  // 64-bit ID of a column, `CMP_EQ_ID` compares raw ID bits for equality,
+  // and `IN_ID_RANGE` checks `lo <= id < hi` in unsigned `ValueId` bit
+  // order, where `arg` indexes the program's ID range table. `OR_BOOL`
+  // pops two boolean values and pushes their disjunction.
+  LOAD_COL_ID,
+  CMP_EQ_ID,
+  IN_ID_RANGE,
+  OR_BOOL,
   RET
 };
 
@@ -56,6 +66,10 @@ class JitBytecodeProgram {
  private:
   std::vector<Instruction> code_;
   std::vector<ColumnIndex> referencedColumns_;
+  // Half-open `[lo, hi)` ranges of raw `ValueId` bits for `IN_ID_RANGE`.
+  // Bounds use unsigned bit order, matching
+  // `valueIdComparators::compareByBits`.
+  std::vector<std::pair<uint64_t, uint64_t>> idRanges_;
 
  public:
   void addInstruction(OpCode op, int64_t arg = 0) {
@@ -66,6 +80,12 @@ class JitBytecodeProgram {
     referencedColumns_.push_back(col);
   }
 
+  // Store an ID range and return its index for `IN_ID_RANGE`.
+  size_t addIdRange(uint64_t loBits, uint64_t hiBits) {
+    idRanges_.emplace_back(loBits, hiBits);
+    return idRanges_.size() - 1;
+  }
+
   [[nodiscard]] const std::vector<Instruction>& instructions() const noexcept {
     return code_;
   }
@@ -73,6 +93,11 @@ class JitBytecodeProgram {
   [[nodiscard]] const std::vector<ColumnIndex>& referencedColumns()
       const noexcept {
     return referencedColumns_;
+  }
+
+  [[nodiscard]] const std::vector<std::pair<uint64_t, uint64_t>>& idRanges()
+      const noexcept {
+    return idRanges_;
   }
 
   // Execute bytecode program over a single row's column inputs
@@ -153,6 +178,27 @@ class JitBytecodeProgram {
           int64_t b = stack[--sp];
           int64_t a = stack[--sp];
           stack[sp++] = (a != b) ? 1 : 0;
+          break;
+        }
+        case OpCode::LOAD_COL_ID:
+          stack[sp++] = rowColumns[inst.arg];
+          break;
+        case OpCode::CMP_EQ_ID: {
+          int64_t b = stack[--sp];
+          int64_t a = stack[--sp];
+          stack[sp++] = (a == b) ? 1 : 0;
+          break;
+        }
+        case OpCode::IN_ID_RANGE: {
+          uint64_t a = static_cast<uint64_t>(stack[--sp]);
+          const auto& [lo, hi] = idRanges_.at(static_cast<size_t>(inst.arg));
+          stack[sp++] = (lo <= a && a < hi) ? 1 : 0;
+          break;
+        }
+        case OpCode::OR_BOOL: {
+          int64_t b = stack[--sp];
+          int64_t a = stack[--sp];
+          stack[sp++] = (a || b) ? 1 : 0;
           break;
         }
         case OpCode::RET:
@@ -396,6 +442,77 @@ class JitExpressionBytecodeVm {
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
               if (stack[aIdx][i] != stack[bIdx][i]) {
+                mask |= (1ULL << i);
+              }
+            }
+            validity[sp] = mask & validity[aIdx] & validity[bIdx] & batchMask;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = (mask >> i) & 1;
+            }
+            sp++;
+            break;
+          }
+          case OpCode::LOAD_COL_ID: {
+            const int64_t* colData = inputColumns[inst.arg] + rowOffset;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = colData[i];
+            }
+            validity[sp] = batchMask;
+            sp++;
+            break;
+          }
+          case OpCode::CMP_EQ_ID: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+            uint64_t mask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              if (stack[aIdx][i] == stack[bIdx][i]) {
+                mask |= (1ULL << i);
+              }
+            }
+            validity[sp] = mask & validity[aIdx] & validity[bIdx] & batchMask;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = (mask >> i) & 1;
+            }
+            sp++;
+            break;
+          }
+          case OpCode::IN_ID_RANGE: {
+            sp--;
+            size_t aIdx = sp;
+            const auto& [lo, hi] =
+                program.idRanges().at(static_cast<size_t>(inst.arg));
+            uint64_t mask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              auto bits = static_cast<uint64_t>(stack[aIdx][i]);
+              if (lo <= bits && bits < hi) {
+                mask |= (1ULL << i);
+              }
+            }
+            validity[sp] = mask & validity[aIdx] & batchMask;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = (mask >> i) & 1;
+            }
+            sp++;
+            break;
+          }
+          case OpCode::OR_BOOL: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+            uint64_t mask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              if (stack[aIdx][i] || stack[bIdx][i]) {
                 mask |= (1ULL << i);
               }
             }
@@ -671,6 +788,78 @@ class JitExpressionBytecodeVm {
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
               if (stack[aIdx][i] != stack[bIdx][i]) {
+                mask |= (1ULL << i);
+              }
+            }
+            validity[sp] = mask & validity[aIdx] & validity[bIdx] & batchMask;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = (mask >> i) & 1;
+            }
+            sp++;
+            break;
+          }
+          case OpCode::LOAD_COL_ID: {
+            auto colSpan = inputTable.getColumn(inst.arg);
+            const Id* colData = colSpan.data() + rowOffset;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = static_cast<int64_t>(colData[i].getBits());
+            }
+            validity[sp] = batchMask;
+            sp++;
+            break;
+          }
+          case OpCode::CMP_EQ_ID: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+            uint64_t mask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              if (stack[aIdx][i] == stack[bIdx][i]) {
+                mask |= (1ULL << i);
+              }
+            }
+            validity[sp] = mask & validity[aIdx] & validity[bIdx] & batchMask;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = (mask >> i) & 1;
+            }
+            sp++;
+            break;
+          }
+          case OpCode::IN_ID_RANGE: {
+            sp--;
+            size_t aIdx = sp;
+            const auto& [lo, hi] =
+                program.idRanges().at(static_cast<size_t>(inst.arg));
+            uint64_t mask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              auto bits = static_cast<uint64_t>(stack[aIdx][i]);
+              if (lo <= bits && bits < hi) {
+                mask |= (1ULL << i);
+              }
+            }
+            validity[sp] = mask & validity[aIdx] & batchMask;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = (mask >> i) & 1;
+            }
+            sp++;
+            break;
+          }
+          case OpCode::OR_BOOL: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+            uint64_t mask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              if (stack[aIdx][i] || stack[bIdx][i]) {
                 mask |= (1ULL << i);
               }
             }
