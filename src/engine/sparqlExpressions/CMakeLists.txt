@@ -25,7 +25,8 @@ add_library(sparqlExpressions
         BlankNodeExpression.cpp
         GroupConcatExpression.cpp
         JitExpressionBytecodeVm.cpp
-        JitExpressionCompiler.cpp)
+        JitExpressionCompiler.cpp
+        JitStringFold.cpp)
 
 qlever_target_link_libraries(sparqlExpressions qlever_util index sortPerformanceEstimator asmjit::asmjit)
 if (NOT REDUCED_FEATURE_SET_FOR_CPP17)

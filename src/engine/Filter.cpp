@@ -14,6 +14,7 @@
 #include "engine/QueryExecutionTree.h"
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/JitExpressionCompiler.h"
+#include "engine/sparqlExpressions/JitStringFold.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
 #include "engine/sparqlExpressions/SparqlExpressionValueGetters.h"
@@ -139,6 +140,20 @@ CPP_template_def(int WIDTH,
   AD_CONTRACT_CHECK(inputTable.numColumns() == WIDTH || WIDTH == 0);
   IdTableStatic<WIDTH> resultTable =
       std::move(dynamicResultTable).toStatic<static_cast<size_t>(WIDTH)>();
+
+  // Attempt index-folded string filters (`?var = <constant>` and
+  // `REGEX(?var, "^prefix")` resolved against the vocabulary once, without
+  // per-row polymorphism or dictionary lookups).
+  auto optFolded = ql::engine::jit::tryFoldStringFilterToJit(
+      *_expression.getPimpl(), _subtree->getVariableColumns(),
+      getExecutionContext()->getIndex());
+  if (optFolded.has_value()) {
+    ql::engine::jit::JitExpressionBytecodeVm::executeFilter<WIDTH>(
+        optFolded.value(), inputTable, resultTable, cancellationHandle_);
+    dynamicResultTable = std::move(resultTable).toDynamic();
+    checkCancellation();
+    return;
+  }
 
   // Attempt Native x86-64 JIT (AsmJit) compilation & execution
   auto optJitCompiled = ql::engine::jit::JitExpressionCompiler::compile(
