@@ -12,6 +12,7 @@
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -107,10 +108,13 @@ std::vector<std::optional<ColumnIndex>> selectedColumnIndices(
 }
 
 // One builder per header / 8192-row morsel. Callers choose finalizeToString
-// (default HTTP) or finalize (scatter-gather HTTP).
+// (default HTTP) or finalize (scatter-gather HTTP). When `scheduler` is set
+// (live V2 default), CPU serialize runs on the isolated helper pool with
+// ordered consume on this thread; helpers never write the socket.
 cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
-    RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle) {
+    RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
   const auto& selectClause = parsedQuery.selectClause();
   const auto columns = selectedColumnIndices(qet, selectClause);
   const Index& index = qet.getQec()->getIndex();
@@ -125,6 +129,56 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   result->logResultSize();
 
   constexpr uint64_t morselRows = 8192;
+  auto serializeOnThisThread = [&](const IdTable& table,
+                                   const LocalVocab& localVocab, uint64_t begin,
+                                   uint64_t end) {
+    ScatterGatherChunkBuilder builder;
+    ExportEngineV2::appendSerializedRows(table.asStaticView<0>(), localVocab,
+                                         format, builder, index, columns, begin,
+                                         end);
+    return builder;
+  };
+
+  if (scheduler == nullptr) {
+    uint64_t resultSize = 0;
+    for (const auto& tableWithRange : ExportQueryExecutionTrees::getRowIndices(
+             parsedQuery._limitOffset, *result, resultSize)) {
+      cancellationHandle->throwIfCancelled();
+      if (tableWithRange.view_.empty()) {
+        continue;
+      }
+      const auto& table = tableWithRange.tableWithVocab_.idTable();
+      const auto& localVocab = tableWithRange.tableWithVocab_.localVocab();
+      const uint64_t rowBegin = tableWithRange.view_.front();
+      const uint64_t rowEnd = rowBegin + tableWithRange.view_.size();
+      for (uint64_t begin = rowBegin; begin < rowEnd; begin += morselRows) {
+        cancellationHandle->throwIfCancelled();
+        const uint64_t end = std::min(rowEnd, begin + morselRows);
+        auto builder = serializeOnThisThread(table, localVocab, begin, end);
+        if (!builder.empty()) {
+          co_yield std::move(builder);
+        }
+      }
+    }
+    co_return;
+  }
+
+  AD_LOG_INFO << "ExportEngineV2 using ElasticExportScheduler ("
+              << scheduler->workerThreadCount() << " helper threads)"
+              << std::endl;
+  auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
+  auto columnsPtr =
+      std::make_shared<std::vector<std::optional<ColumnIndex>>>(columns);
+  const Index* indexPtr = &index;
+  constexpr size_t kSubmitWindow = 8;
+  size_t inflight = 0;
+
+  auto consumeOne = [&]() {
+    auto builder = session.consumeNextResult();
+    --inflight;
+    return builder;
+  };
+
   uint64_t resultSize = 0;
   for (const auto& tableWithRange : ExportQueryExecutionTrees::getRowIndices(
            parsedQuery._limitOffset, *result, resultSize)) {
@@ -132,20 +186,54 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     if (tableWithRange.view_.empty()) {
       continue;
     }
-    const auto& table = tableWithRange.tableWithVocab_.idTable();
-    const auto& localVocab = tableWithRange.tableWithVocab_.localVocab();
     const uint64_t rowBegin = tableWithRange.view_.front();
     const uint64_t rowEnd = rowBegin + tableWithRange.view_.size();
+    std::shared_ptr<const IdTable> tablePtr;
+    std::shared_ptr<const LocalVocab> vocabPtr;
+    const bool shareMaterialized = result->isFullyMaterialized();
+    if (!shareMaterialized) {
+      tablePtr = std::make_shared<IdTable>(
+          tableWithRange.tableWithVocab_.idTable().clone());
+      vocabPtr = std::make_shared<LocalVocab>(
+          tableWithRange.tableWithVocab_.localVocab().clone());
+    }
     for (uint64_t begin = rowBegin; begin < rowEnd; begin += morselRows) {
       cancellationHandle->throwIfCancelled();
       const uint64_t end = std::min(rowEnd, begin + morselRows);
-      ScatterGatherChunkBuilder builder;
-      ExportEngineV2::appendSerializedRows(table.asStaticView<0>(), localVocab,
-                                           format, builder, index, columns,
-                                           begin, end);
-      if (!builder.empty()) {
-        co_yield std::move(builder);
+      if (shareMaterialized) {
+        session.submitMorsel([result, columnsPtr, indexPtr, format, begin, end,
+                              cancellationHandle]() {
+          cancellationHandle->throwIfCancelled();
+          ScatterGatherChunkBuilder builder;
+          ExportEngineV2::appendSerializedRows(
+              result->idTableView(), result->localVocab(), format, builder,
+              *indexPtr, *columnsPtr, begin, end);
+          return builder;
+        });
+      } else {
+        session.submitMorsel([tablePtr, vocabPtr, columnsPtr, indexPtr, format,
+                              begin, end, cancellationHandle]() {
+          cancellationHandle->throwIfCancelled();
+          ScatterGatherChunkBuilder builder;
+          ExportEngineV2::appendSerializedRows(
+              tablePtr->asStaticView<0>(), *vocabPtr, format, builder,
+              *indexPtr, *columnsPtr, begin, end);
+          return builder;
+        });
       }
+      ++inflight;
+      if (inflight >= kSubmitWindow) {
+        auto builder = consumeOne();
+        if (!builder.empty()) {
+          co_yield std::move(builder);
+        }
+      }
+    }
+  }
+  while (session.hasMoreResults()) {
+    auto builder = consumeOne();
+    if (!builder.empty()) {
+      co_yield std::move(builder);
     }
   }
 }
@@ -275,9 +363,8 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
   }
 
   const auto format = rowFormatFor(mediaType).value();
-  (void)scheduler;
-  for (auto builder :
-       buildSerializedMorsels(parsedQuery, qet, format, cancellationHandle)) {
+  for (auto builder : buildSerializedMorsels(parsedQuery, qet, format,
+                                             cancellationHandle, scheduler)) {
     co_yield std::move(builder).finalizeToString();
   }
 }
@@ -294,9 +381,9 @@ cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
   // `std::thread` + `AsyncChunkPipeline` locals (91a9a7845). Overlap with
   // HTTP send is `runStreamAsync` in `Server::sendStreamableResponse`.
   const auto format = rowFormatFor(mediaType).value();
-  (void)scheduler;
-  for (auto builder : buildSerializedMorsels(parsedQuery, qet, format,
-                                             std::move(cancellationHandle))) {
+  for (auto builder :
+       buildSerializedMorsels(parsedQuery, qet, format,
+                              std::move(cancellationHandle), scheduler)) {
     auto chunk = std::move(builder).finalize();
     if (!chunk.empty()) {
       co_yield std::move(chunk);
