@@ -160,7 +160,10 @@ inline std::string_view stripQuotesOrAngleBrackets(std::string_view word) {
   return word;
 }
 
-// Append a vocabulary / local-vocab word that is already in emit form.
+// Append a vocabulary / local-vocab word in its stored serialized form:
+// IRIs are wrapped in `<...>`, literals in `"..."` with optional
+// language tag or datatype suffix. The function handles blank-node IRIs
+// and optionally strips the surrounding delimiters.
 template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
           typename AppendEscape>
 AppendedId appendSerializedRdfWord(std::string& out, std::string_view word,
