@@ -19,7 +19,7 @@
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Phase 4: Zero-Copy Memory Arena Scatter-Gather Streaming (`struct iovec` / `writev`)        │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Phase 5: Asynchronous Double-Buffered Backpressure Ring (Compute/Network Decoupling)       │
+│ Phase 5: Double-Buffered Backpressure Ring (Cooperative I/O Buffering)       │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Phase 6: End-to-End Server Pipeline Integration, Bit-Equivalence & Differential Profiling   │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -254,7 +254,7 @@
                     │                                             │
                     ▼ Slot 1                                      ▼ Slot 2
         ┌──────────────────────────────┐              ┌──────────────────────────────┐
-        │ Active Network Transmission  │              │ Simultaneous Chunk Generation│
+        │ Pending Network Transmission│              │ Next Chunk Generation       │
         ├──────────────────────────────┤              ├──────────────────────────────┤
         │ • NIC transmitting via DMA   │              │ • CPU unrolling rows         │
         │ • Zero CPU intervention      │              │ • SIMD radix & escape scan   │
@@ -274,14 +274,14 @@
 * **Component:** `src/engine/export_v2/AsyncChunkPipeline.h`
 * **Mechanics:**
   1. Maintains two page-aligned 4MB buffer slots (`Slot A` and `Slot B`).
-    2. While transmission of `Slot A` is pending in the kernel or NIC, the worker generates `Slot B`; if the socket is not writable or a completion is pending, the worker yields cooperatively rather than blocking.
+    2. The worker fills one slot, submits it for transmission, and then yields cooperatively while waiting for socket writability or transmission completion before proceeding with the next slot; it does not perform formatting and transmission concurrently on the single query worker thread.
   3. When `Slot B` is full, the pipeline waits for `Slot A`'s transmission completion (which typically finished long before), then seamlessly flips the active slots.
   4. **Strict Single-Core Concurrency:** All operations execute on the single query worker thread using cooperative asynchronous suspension, honoring single-core supervisor constraints.
   5. **Backpressure Safety:** If the network socket is choked by a slow client, chunk generation suspends until the socket drains, preventing unbounded memory growth.
 
 ### 3. Performance Rationale
-* **100% Hardware Concurrency on 1 Core:** When the client can consume data fast enough and chunks are available, double buffering overlaps formatting with transmission and reduces CPU stalls on socket progress. A slow client can still suspend chunk generation, and the NIC can be idle when formatting or input production cannot keep it supplied.
-* **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
+* **Bounded Cooperative Buffering:** When the client is ready, the worker alternates between filling a slot and yielding for socket progress or transmission completion. A slow client suspends chunk generation, and the two slots bound in-flight data without requiring concurrent formatting and transmission on the query worker.
+* **I/O Scheduling:** Cooperative suspension prevents the worker from blocking while waiting for socket progress; network latency remains part of the sequential pipeline rather than being hidden by claimed single-threaded overlap.
 
 ### 4. Benchmarking & Verification Plan
 * **Dedicated unit-test target:** `test/AsyncChunkPipelineTest.cpp`.
