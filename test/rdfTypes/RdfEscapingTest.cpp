@@ -281,7 +281,7 @@ std::vector<std::string> trickyInputs() {
   result.emplace_back("h\u00e9llo w\u00f6rld \U0001F600");
   result.emplace_back("\x01\x02\x1f\x7f");
   result.emplace_back("\"\\\n\r\t,&<>'\"");
-  result.push_back(std::string("\0\0\0", 3));  // embedded NULs
+  result.emplace_back(3, '\0');  // embedded NULs
   return result;
 }
 }  // namespace
