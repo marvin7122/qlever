@@ -107,6 +107,34 @@ TEST(MonomorphicSerializersTest, HandlesEmptyAndBoundaryValues) {
   EXPECT_EQ(writer.output(), "T\t-9223372036854775808\tfalse\t\n");
 }
 
+// Correctness vs Legacy CSV (`idToStringAndType` / ExportIds.cpp). These
+// checks exist so we do not swap the live SELECT path onto CellWriter until
+// the bytes match. RecordingWriter::writeDouble uses std::to_chars, which is
+// what MonomorphicRowSerializer asks of a Writer.
+TEST(MonomorphicSerializersTest, DoubleOneDoesNotMatchLegacyEncodedCsv) {
+  using Serializer = MonomorphicRowSerializer<ColumnType::Double>;
+  RecordingWriter writer;
+  Serializer::serializeRow<RowFormat::Csv>(writer, 1.0);
+  EXPECT_EQ(writer.output(), "1\n");
+  EXPECT_NE(writer.output(), "1.0\n");
+}
+
+TEST(MonomorphicSerializersTest, BooleanDoesNotUseEncodedZeroOneForms) {
+  using Serializer = MonomorphicRowSerializer<ColumnType::Boolean>;
+  RecordingWriter writer;
+  Serializer::serializeRow<RowFormat::Csv>(writer, false);
+  EXPECT_EQ(writer.output(), "false\n");
+  EXPECT_NE(writer.output(), "0\n");
+}
+
+TEST(MonomorphicSerializersTest, CsvIriKeepsBracketsUnlikeLegacySelectCsv) {
+  using Serializer = MonomorphicRowSerializer<ColumnType::Iri>;
+  RecordingWriter writer;
+  Serializer::serializeRow<RowFormat::Csv>(writer, "<https://example.org/x>");
+  EXPECT_EQ(writer.output(), "C<https://example.org/x>\n");
+  EXPECT_NE(writer.output(), "https://example.org/x\n");
+}
+
 TEST(MonomorphicSerializersTest, ExposesTheStaticSchema) {
   using Serializer =
       MonomorphicRowSerializer<ColumnType::BlankNode, ColumnType::Boolean>;
