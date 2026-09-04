@@ -33,8 +33,8 @@ namespace ad_utility::export_v2 {
 
 /// State machine states for an export session.
 enum class SessionState {
-  PrimaryOnly,  // Only primary coordinator executes morsels (helpers disabled
-                // or foreground queries > 1)
+  PrimaryOnly,  // Only the primary coordinator executes morsels (helpers disabled
+                // or active foreground queries exceed the admission threshold)
   HelpersEligible,  // Helpers may be leased to execute morsels in parallel
   Revoking,  // Foreground load arrived while helpers were active; waiting for
              // active leases to drain
