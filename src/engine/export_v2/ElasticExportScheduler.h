@@ -45,7 +45,7 @@ enum class SessionState {
 enum class MorselStatus {
   Pending,    // Work submitted, awaiting execution
   Running,    // Actively executing on helper thread or primary thread
-  Completed,  // Execution completed successfully; result is stored in slot
+  Completed,  // Execution finished; a result or exception is stored in the slot
   Cancelled   // Job or morsel was cancelled
 };
 
