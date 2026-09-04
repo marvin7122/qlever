@@ -317,6 +317,8 @@ addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions ind
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
 
+addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
 addLinkAndDiscoverTestNoLibs(StringBatcherTest)
