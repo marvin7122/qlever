@@ -21,7 +21,7 @@
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Phase 5: Double-Buffered Backpressure Ring (Cooperative I/O Buffering)       │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Phase 6: End-to-End Server Pipeline Integration, Bit-Equivalence & Differential Profiling   │
+│ Phase 6: End-to-End Server Pipeline Integration, Output Equivalence & Differential Profiling │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -331,14 +331,14 @@
 * **Mechanics:**
   1. Spins up the full QLever server engine against realistic indexes (Wikidata SPO permutations and synthetic multi-column RDF datasets).
   2. Executes massive export queries (5,000,000+ triples) across all formats (TSV, CSV, Turtle).
-  3. Verifies bit-for-bit output equivalence: `diff <(export_v1) <(export_v2)` must return exit code 0.
+  3. Compares semantic or canonicalized output per format; require byte-for-byte equivalence only where ordering and serialization are explicitly guaranteed to remain identical.
   4. Records hardware counters via Linux `perf_event` and generates interactive SVG FlameGraphs showing where CPU cycles are spent.
 
 ### 3. Verification & Acceptance Criteria (Definition of Done)
 
 | Metric / Dimension | Baseline Legacy V1 | Fast-Path Engine V2 | Acceptance Criterion |
 | :--- | :--- | :--- | :--- |
-| **Output Equivalence** | Canonical RDF text | Streamed RDF text | **100% Bit-Identical (`diff == 0`)** |
+| **Output Equivalence** | Canonical RDF text | Streamed RDF text | **Semantic or canonicalized equivalence per format; byte-identical only where ordering and serialization are explicitly guaranteed** |
 | **Time-To-First-Byte (TTFB)** | To be measured | Target: < 5 ms | Benchmark on representative queries |
 | **Sustained Throughput** | To be measured | Target: 8.0M–15.0M triples/s | Benchmark on representative queries |
 | **Memory Consumption** | To be measured | Target: < 16 MB fixed arena | Measure peak resident memory |
