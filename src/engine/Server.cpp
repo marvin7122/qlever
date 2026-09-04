@@ -980,28 +980,35 @@ CPP_template_def(typename RequestT, typename SendT)(
                     ExportEngineMode::LegacyV1)
               << std::endl;
 
-  auto responseGenerator = [&]() -> cppcoro::generator<std::string> {
+  // Do not wrap these generators in an immediately-invoked coroutine lambda.
+  // A `[&]() -> cppcoro::generator<std::string> { ... co_yield ... }()`
+  // destroys the lambda (and its captures) when the IIFE returns, while the
+  // generator still holds the coroutine frame — that segfaults on first
+  // resume (observed on SELECT CSV even for the LegacyV1 branch).
+  cppcoro::generator<std::string> responseGenerator =
 #if defined(QLEVER_ENABLE_EXPORT_V2)
-    if (mode == ExportEngineMode::FastStreamingV2 &&
-        ExportEngineV2::canHandle(parsedQuery, mediaType)) {
-      AD_LOG_INFO << "Using ExportEngineV2 for "
-                  << ad_utility::toString(mediaType) << " export" << std::endl;
-      for (auto& chunk : ExportEngineV2::computeResult(
-               parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-               cancellationHandle)) {
-        co_yield std::move(chunk);
-      }
-      co_return;
-    }
+      (mode == ExportEngineMode::FastStreamingV2 &&
+       ExportEngineV2::canHandle(parsedQuery, mediaType))
+          ? ExportEngineV2::computeResult(
+                parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+                cancellationHandle)
+          : ExportQueryExecutionTrees::computeResult(
+                parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+                requestTimer, std::move(cancellationHandle));
 #else
-    (void)mode;
+      ExportQueryExecutionTrees::computeResult(
+          parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+          requestTimer, std::move(cancellationHandle));
 #endif
-    for (auto& chunk : ExportQueryExecutionTrees::computeResult(
-             parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-             requestTimer, std::move(cancellationHandle))) {
-      co_yield std::move(chunk);
-    }
-  }();
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+  if (mode == ExportEngineMode::FastStreamingV2 &&
+      ExportEngineV2::canHandle(parsedQuery, mediaType)) {
+    AD_LOG_INFO << "Using ExportEngineV2 for "
+                << ad_utility::toString(mediaType) << " export" << std::endl;
+  }
+#else
+  (void)mode;
+#endif
 
   auto response = ad_utility::httpUtils::createOkResponse(
       std::move(responseGenerator), request, mediaType);
