@@ -54,7 +54,7 @@ struct RuntimeParameters {
                                          "sort-estimate-cancellation-factor"};
   SizeT cacheMaxNumEntries_{1000, "cache-max-num-entries"};
 
-  // Threads used to format CONSTRUCT triples in parallel. 0 means all
+    // Use threads to format CONSTRUCT triples in parallel. 0 means all
   // logical cores, matching `computeInParallelChunks`. The default of 1
   // keeps the serial generator (one formatted triple per yield).
   SizeT constructExportNumThreads_{1, "construct-export-num-threads"};
