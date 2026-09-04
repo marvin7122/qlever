@@ -128,7 +128,7 @@ The detailed prerequisite design is in `export_engine_v2_wp7_prerequisites.md`. 
 **1. Isolation from V1 and non-V2 queries**
 
 - `ElasticExportScheduler` exists only on the V2 code path. V1 queries never submit work to it or consume its helper pool.
-- Runtime-enabled V2 observes existing query registration through `QueryRegistry` callbacks. Runtime-disabled V2 registers no callbacks and constructs no scheduler.
+- Runtime-enabled V2 subscribes to `QueryRegistry` query-registration and query-deregistration callbacks. The scheduler counts the current V2 export request and admits helpers only while that active-query count is exactly one. Runtime-disabled V2 registers no callbacks and constructs no scheduler.
 - `QLEVER_ENABLE_EXPORT_V2=OFF` excludes the scheduler and every V2 production source.
 - A startup flag disables V2 routing in binaries that include it.
 - The isolation test compares output, request latency, and retired instructions across excluded and runtime-disabled builds.
