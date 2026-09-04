@@ -219,7 +219,7 @@
      - Direct pointers to static delimiters (`<`, `>`, `\t`, `\n`).
      - Direct pointers to the arena string spans.
   3. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
-  4. The chunk is submitted using `::writev()` or `io_uring_prep_send_zc`; the implementation handles partial writes and retains all referenced buffers until the kernel reports completion.
+  4. The chunk is submitted using `::writev()` or `io_uring_prep_send_zc`; each outstanding iovec is paired with an immutable arena or per-slot backing allocation owned by the streaming abstraction. Partial writes retain the iovec and its backing allocation, and the allocation is released or reused only after the corresponding writev/io_uring completion, so decompression and arena recycling cannot invalidate in-flight spans.
 
 ### 3. Performance Rationale
 * **Zero Intermediate Copies:** For terms that can be emitted without escaping, the serializer avoids its intermediate concatenation copies by referencing arena spans directly. Escaping, framing, kernel buffering, and other transport-layer copies may still occur.
