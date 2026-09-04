@@ -76,8 +76,9 @@
 
 ### 4. Benchmarking & Verification Plan
 * **Test Target:** `test/ExportPipelineRouterTest.cpp`
-* **Coverage:** Matrix of query strings (supported vs unsupported operators), HTTP headers, and URL parameter permutations.
-* **Assertion:** Correct mode selected for 100% of cases; error-free fallback on malformed inputs.
+* **Coverage:** Matrix of supported and unsupported query shapes, including supported operators and fallback-triggering operators; test HTTP headers and URL parameters for precedence, conflicts, missing values, and malformed inputs, and verify fallback behavior.
+* **Component Tests:** Add focused tests for each new serializer, framing, pipeline, and differential-output component before treating its phase as verified.
+* **Assertion:** Correct mode selected for every routing case; malformed inputs produce the defined error-free fallback; component tests verify serialization, framing, pipeline, and differential-output behavior.
 
 ### 5. Compatibility Matrix
 * **Supported in V2:** `SELECT`, `CONSTRUCT`, SPARQL graph pattern scans (SPO, POS, PSO, etc.), join operations, value filters, and all export MIME types (`text/tab-separated-values`, `text/csv`, `text/turtle`, `application/n-triples`).
