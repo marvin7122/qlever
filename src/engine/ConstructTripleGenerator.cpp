@@ -101,7 +101,7 @@ CPP_template(typename ChunkView)(requires ranges::range<ChunkView>)
 auto processTableBatches(const TableWithRange& table, BatchEvalContext context,
                          size_t tableRowOffset) {
   // Copy the cheap pieces out first so neither `chunk` nor the transform
-  // lambda retain a reference into the by-value `table` parameter.
+  // lambda retain a reference into the by-reference `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
   return ranges::views::chunk(rowView, ConstructTripleGenerator::BATCH_SIZE) |
