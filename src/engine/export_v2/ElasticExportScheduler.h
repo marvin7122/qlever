@@ -248,9 +248,7 @@ class ElasticExportScheduler {
     return nextJobId_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  /// Create a typed ExportWorkSession.
-  template <typename ResultType = std::string>
-  ExportWorkSession<ResultType> createSession();
+  
 
  private:
   void workerLoop();
