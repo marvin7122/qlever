@@ -34,7 +34,7 @@ This master specification deepens the design of the **Fast-Path Streaming Export
 │    • Compile-time unrolled serialization + Lemire SIMD Radix + AVX2 Literal Escaping        │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 6. Zero-Copy Arena Scatter-Gather (`src/engine/export_v2/ScatterGatherArenaStreamer.h`)    │
-│    • Direct iovec / SEND_ZC pointer arrays referencing page-pinned decompression arenas     │
+│    • Direct iovec / SEND_ZC pointer arrays referencing decompression-arena spans whose addresses remain valid until the send operation completes     │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 7. Asynchronous Double-Buffered Ring (`src/engine/export_v2/AsyncChunkPipeline.h`)         │
 │    • 2-slot 4MB ring interleaving CPU formatting with network transmission                  │
