@@ -260,7 +260,7 @@ class ExportQueryExecutionTrees {
       size_t numThreads, CancellationHandle cancellationHandle,
       STREAMABLE_YIELDER_ARG_DECL);
 
-  // Inputs the SELECT CSV/TSV parallel coroutine owns in its frame.
+    // Parameters for the parallel SELECT CSV/TSV generator.
   struct SelectCsvTsvStreamParams {
     QueryExecutionTree::ColumnIndicesAndTypes columns_;
     std::reference_wrapper<const Index> index_;
