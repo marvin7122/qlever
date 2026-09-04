@@ -223,7 +223,7 @@
 
 ### 3. Performance Rationale
 * **Reduced Intermediate Copies:** The serializer avoids copying vocabulary spans into a temporary per-term formatting buffer; the remaining framing, kernel, and buffer-lifetime costs depend on the selected transport.
-* **Memory Bus Saturation Avoided:** Frees up CPU memory bus bandwidth for index decompression and cache prefetching.
+
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmarks:** `ScatterGatherBenchmark`, `HttpFramingBenchmark`.
