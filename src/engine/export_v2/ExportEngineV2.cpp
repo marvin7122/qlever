@@ -26,7 +26,8 @@
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
 #include "engine/Values.h"
-#include "engine/export_v2/VectorStreamSource.h"
+#include "engine/export_v2/ColumnLattice.h"
+#include "engine/export_v2/ExportMorselPlanner.h"
 #include "global/Id.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
@@ -100,32 +101,46 @@ std::string makeHeaderLine(const parsedQuery::SelectClause& selectClause,
                       "\n");
 }
 
-std::vector<std::optional<ColumnIndex>> selectedColumnIndices(
-    const QueryExecutionTree& qet,
-    const parsedQuery::SelectClause& selectClause) {
+// The selected output columns with their plan-time datatype lattice (WP-A).
+// `indices` parallels the SELECT list (`std::nullopt` = unbound column);
+// `lattice` proves per-column types so the serializer can skip its per-chunk
+// uniformity scan for proven-trivial columns (WP-C).
+struct SelectedColumns {
+  std::vector<std::optional<ColumnIndex>> indices_;
+  ColumnLatticeResult lattice_;
+};
+
+SelectedColumns selectedColumns(const ParsedQuery& parsedQuery,
+                                const QueryExecutionTree& qet,
+                                const parsedQuery::SelectClause& selectClause) {
   auto selected = qet.selectedVariablesToColumnIndices(selectClause, true);
-  std::vector<std::optional<ColumnIndex>> columns;
-  columns.reserve(selected.size());
+  SelectedColumns columns;
+  columns.indices_.reserve(selected.size());
   for (const auto& entry : selected) {
     if (entry.has_value()) {
-      columns.emplace_back(entry.value().columnIndex_);
+      columns.indices_.emplace_back(entry.value().columnIndex_);
     } else {
-      columns.emplace_back(std::nullopt);
+      columns.indices_.emplace_back(std::nullopt);
     }
   }
+  columns.lattice_ = compileColumnLattice(parsedQuery, selected);
   return columns;
 }
 
 // One builder per header / 8192-row morsel. Callers choose finalizeToString
 // (default HTTP) or finalize (scatter-gather HTTP). When `scheduler` is set
-// (live V2 default), CPU serialize runs on the isolated helper pool with
-// ordered consume on this thread; helpers never write the socket.
+// (live V2 default), CPU serialize runs on `queryThreadPool_` with ordered
+// consume on this thread; helpers never write the socket.
+//
+// The morsel plans stream straight from the lazy result blocks: every segment
+// serializes from its block in place, so there is no `sliced` copy and no
+// second copy through a rechunker.
 cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
     RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle,
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
   const auto& selectClause = parsedQuery.selectClause();
-  const auto columns = selectedColumnIndices(qet, selectClause);
+  const auto columns = selectedColumns(parsedQuery, qet, selectClause);
   const Index& index = qet.getQec()->getIndex();
 
   {
@@ -137,71 +152,59 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
-  std::vector<Result::IdTableVocabPair> streamBlocks;
-  uint64_t resultSize = 0;
-  for (const auto& tableWithRange : ExportQueryExecutionTrees::getRowIndices(
-           parsedQuery._limitOffset, *result, resultSize)) {
-    cancellationHandle->throwIfCancelled();
-    if (tableWithRange.view_.empty()) {
-      continue;
-    }
-    const auto& table = tableWithRange.tableWithVocab_.idTable();
-    const auto& localVocab = tableWithRange.tableWithVocab_.localVocab();
-    const uint64_t rowBegin = tableWithRange.view_.front();
-    const uint64_t n = tableWithRange.view_.size();
-    IdTable sliced{table.numColumns(), table.getAllocator()};
-    sliced.reserve(n);
-    for (uint64_t i = 0; i < n; ++i) {
-      sliced.push_back(table[rowBegin + i]);
-    }
-    streamBlocks.emplace_back(std::move(sliced), localVocab.clone());
-  }
-
-  VectorStreamSource source{VectorStreamConfig{RowsPerChunk{8192}}};
-  auto serializeChunk = [&](const Result::IdTableVocabPair& chunk) {
+  // Serialize one morsel plan: every segment straight from its lazy block.
+  auto serializePlan = [&](const ExportMorsel& plan) {
     ScatterGatherChunkBuilder builder;
-    ExportEngineV2::appendSerializedRows(
-        chunk.idTable_.asStaticView<0>(), chunk.localVocab_, format, builder,
-        index, columns, 0, chunk.idTable_.numRows());
+    for (const auto& segment : plan.segments_) {
+      ExportEngineV2::appendSerializedRows(
+          segment.block_->idTable_.asStaticView<0>(),
+          segment.block_->localVocab_, format, builder, index, columns.indices_,
+          segment.begin_, segment.end_, columns.lattice_.columns_);
+    }
     return builder;
   };
 
+  constexpr uint64_t rowsPerMorsel = 8192;
   if (scheduler == nullptr) {
-    std::vector<ScatterGatherChunkBuilder> sequential;
-    source.run(streamBlocks, [&](const Result::IdTableVocabPair& chunk) {
-      auto builder = serializeChunk(chunk);
+    for (auto&& plan : planExportMorsels(
+             result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
+      cancellationHandle->throwIfCancelled();
+      auto builder = serializePlan(plan);
       if (!builder.empty()) {
-        sequential.push_back(std::move(builder));
+        co_yield std::move(builder);
       }
-    });
-    for (auto& builder : sequential) {
-      co_yield std::move(builder);
     }
     co_return;
   }
 
-  AD_LOG_INFO << "ExportEngineV2 using ElasticExportScheduler on "
+  AD_LOG_INFO << "ExportEngineV2 streaming lazy result blocks to morsels on "
                  "queryThreadPool_ (no extra V2 threads)"
               << std::endl;
   auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
-  auto columnsPtr =
-      std::make_shared<std::vector<std::optional<ColumnIndex>>>(columns);
+  auto columnsPtr = std::make_shared<std::vector<std::optional<ColumnIndex>>>(
+      columns.indices_);
+  auto latticePtr =
+      std::make_shared<std::vector<ColumnLattice>>(columns.lattice_.columns_);
   const Index* indexPtr = &index;
 
-  source.run(streamBlocks, [&](const Result::IdTableVocabPair& chunk) {
+  for (auto&& plan : planExportMorsels(
+           result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
-    auto tablePtr = std::make_shared<IdTable>(chunk.idTable_.clone());
-    auto vocabPtr = std::make_shared<LocalVocab>(chunk.localVocab_.clone());
-    session.submitMorsel([tablePtr, vocabPtr, columnsPtr, indexPtr, format,
-                          cancellationHandle]() {
+    // The plan owns its blocks, so the worker can serialize after the driver
+    // moved on. No table or vocabulary clone: one shared owner per block.
+    session.submitMorsel([morsel = std::move(plan), columnsPtr, latticePtr,
+                          indexPtr, format, cancellationHandle]() {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
-      ExportEngineV2::appendSerializedRows(
-          tablePtr->asStaticView<0>(), *vocabPtr, format, builder, *indexPtr,
-          *columnsPtr, 0, tablePtr->numRows());
+      for (const auto& segment : morsel.segments_) {
+        ExportEngineV2::appendSerializedRows(
+            segment.block_->idTable_.asStaticView<0>(),
+            segment.block_->localVocab_, format, builder, *indexPtr,
+            *columnsPtr, segment.begin_, segment.end_, *latticePtr);
+      }
       return builder;
     });
-  });
+  }
   while (session.hasMoreResults()) {
     auto builder = session.consumeNextResult();
     if (!builder.empty()) {
@@ -215,15 +218,15 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
 // True when every operation in the tree rooted at `operation` is one the V2
 // serializer understands: triple scans, joins, filters, BIND, and inline
 // VALUES. A null or foreign child falls back to Legacy V1 (safe direction).
-bool operationTreeIsSupported(const Operation& operation) {
+static bool operationTreeIsSupported(const ::Operation& operation) {
   const bool supported =
-      dynamic_cast<const IndexScan*>(&operation) != nullptr ||
-      dynamic_cast<const HasPredicateScan*>(&operation) != nullptr ||
-      dynamic_cast<const Join*>(&operation) != nullptr ||
-      dynamic_cast<const CartesianProductJoin*>(&operation) != nullptr ||
-      dynamic_cast<const Filter*>(&operation) != nullptr ||
-      dynamic_cast<const Bind*>(&operation) != nullptr ||
-      dynamic_cast<const Values*>(&operation) != nullptr;
+      dynamic_cast<const ::IndexScan*>(&operation) != nullptr ||
+      dynamic_cast<const ::HasPredicateScan*>(&operation) != nullptr ||
+      dynamic_cast<const ::Join*>(&operation) != nullptr ||
+      dynamic_cast<const ::CartesianProductJoin*>(&operation) != nullptr ||
+      dynamic_cast<const ::Filter*>(&operation) != nullptr ||
+      dynamic_cast<const ::Bind*>(&operation) != nullptr ||
+      dynamic_cast<const ::Values*>(&operation) != nullptr;
   if (!supported) {
     return false;
   }
@@ -275,7 +278,7 @@ void ExportEngineV2::appendSerializedRows(
     const IdTableView<0>& idTable, const LocalVocab& localVocab,
     RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
     ql::span<const std::optional<ColumnIndex>> selectedColumns,
-    uint64_t rowBegin, uint64_t rowEnd) {
+    uint64_t rowBegin, uint64_t rowEnd, ql::span<const ColumnLattice> lattice) {
   const uint64_t numRows = idTable.numRows();
   rowEnd = std::min(rowEnd, numRows);
   if (rowBegin >= rowEnd) {
@@ -309,9 +312,27 @@ void ExportEngineV2::appendSerializedRows(
     if (!col.has_value()) {
       continue;
     }
+    // A proven-trivial plan-time lattice (WP-A `BIND` constants) already
+    // settles the column: every row holds this datatype, so the per-chunk
+    // uniformity scan below is redundant. All other lattices (`Union`,
+    // `Vocab`, `Encoded`, short spans) keep the runtime check, which is the
+    // only path that may select the vocab resolvers.
+    // The lattice parallels the SELECT list, so it only applies when the
+    // caller selected explicit columns. With an empty `selectedColumns` the
+    // output follows table order and the lattice would misalign.
+    const ColumnLattice colLattice =
+        !selectedColumns.empty() && outCol < lattice.size()
+            ? lattice[outCol]
+            : ColumnLattice::Union;
+    const bool latticeTrivial = colLattice == ColumnLattice::Int ||
+                                colLattice == ColumnLattice::Double ||
+                                colLattice == ColumnLattice::Bool ||
+                                colLattice == ColumnLattice::Date ||
+                                colLattice == ColumnLattice::GeoPoint;
     const auto ids = idTable.getColumn(col.value()).subspan(rowBegin, n);
-    bool uniformEncoded = !ids.empty() && !isVocabLike(ids[0].getDatatype());
-    if (uniformEncoded) {
+    bool uniformEncoded =
+        latticeTrivial || (!ids.empty() && !isVocabLike(ids[0].getDatatype()));
+    if (uniformEncoded && !latticeTrivial) {
       const Datatype dt = ids[0].getDatatype();
       for (Id id : ids) {
         if (id.getDatatype() != dt) {

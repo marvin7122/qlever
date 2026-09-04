@@ -16,6 +16,7 @@
 #include "engine/ExportPipelineRouter.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/export_v2/AsyncChunkPipeline.h"
+#include "engine/export_v2/ColumnLattice.h"
 #include "engine/export_v2/ElasticExportScheduler.h"
 #include "engine/export_v2/ExportEngineV2Serialize.h"
 #include "engine/export_v2/VectorStreamSource.h"
@@ -64,12 +65,15 @@ class ExportEngineV2 {
   // Live-path serialize with vocabulary resolution and selected columns.
   // `selectedColumns` empty means all IdTable columns; nullopt entry = unbound.
   // `[rowBegin, rowEnd)` selects a half-open row range (default: all rows).
+  // `lattice` parallels the SELECT list (see `ColumnLattice`); an empty span
+  // means plan-time types are unknown and every column is checked at runtime.
   static void appendSerializedRows(
       const IdTableView<0>& idTable, const LocalVocab& localVocab,
       RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
       ql::span<const std::optional<ColumnIndex>> selectedColumns,
       uint64_t rowBegin = 0,
-      uint64_t rowEnd = std::numeric_limits<uint64_t>::max());
+      uint64_t rowEnd = std::numeric_limits<uint64_t>::max(),
+      ql::span<const ColumnLattice> lattice = {});
 
   static ScatterGatherChunk serializeTableChunk(
       const IdTableView<0>& idTable, const LocalVocab& localVocab,
