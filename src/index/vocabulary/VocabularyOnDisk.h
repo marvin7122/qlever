@@ -209,8 +209,8 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
     const VocabularyOnDisk* vocab_ = nullptr;
     std::unique_ptr<ad_utility::BatchManagerBase> manager_;
-    // The requested indices, owned so the offset reads can be completed after
-    // the caller's span has gone out of scope.
+        // The requested indices, kept as an owned copy (the in-flight io_uring
+    // reads target `offsetPairs_` and do not depend on `indices_`).
     std::vector<size_t> indices_;
     // The batched offset read submitted by `beginLookup`.
     ad_utility::BatchManagerBase::BatchHandle offsetBatch_ = 0;
