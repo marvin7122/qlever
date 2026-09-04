@@ -37,7 +37,7 @@ namespace qlever::export_v2 {
 class OwnedByteSpan;
 
 // Immutable shared storage for bytes referenced by scatter-gather chunks. The
-// factory consumes its input, so no mutable alias to the stored string exists.
+// constructor consumes its input, so no mutable alias to the stored string exists.
 class ImmutableByteBuffer {
  private:
   std::shared_ptr<const std::string> bytes_;
