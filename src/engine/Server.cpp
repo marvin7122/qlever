@@ -13,6 +13,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <algorithm>
 #include <array>
 #include <string>
 #include <string_view>
@@ -74,6 +75,16 @@ Server::Server(
       keepPreviousIndexDirs_(config.keepPreviousIndexDirs_),
       metricsReader_(std::move(metricsReader)) {
   AD_LOG_INFO << "Initializing server ..." << std::endl;
+
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+  const size_t helperThreads = std::max<size_t>(1, numThreads_ / 2);
+  exportScheduler_ =
+      std::make_unique<ad_utility::export_v2::ElasticExportScheduler>(
+          helperThreads);
+  exportScheduler_->attachToQueryRegistry(queryRegistry_);
+  AD_LOG_INFO << "ExportEngineV2 helper pool: " << helperThreads
+              << " threads (default on for V2 exports)" << std::endl;
+#endif
 
   initializeServerMetrics(config.memoryLimit_);
 
@@ -1033,7 +1044,7 @@ CPP_template_def(typename RequestT, typename SendT)(
           asScatterGatherBody(ad_utility::streams::runStreamAsync(
               ExportEngineV2::computeResultChunks(
                   parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-                  cancellationHandle),
+                  cancellationHandle, exportScheduler_.get()),
               kIovecPrefetchDepth));
       sgResponse.keep_alive(request.keep_alive());
       sgResponse.prepare_payload();
@@ -1062,9 +1073,9 @@ CPP_template_def(typename RequestT, typename SendT)(
 #if defined(QLEVER_ENABLE_EXPORT_V2)
       (mode == ExportEngineMode::FastStreamingV2 &&
        ExportEngineV2::canHandle(parsedQuery, mediaType))
-          ? ExportEngineV2::computeResult(parsedQuery,
-                                          plannedQuery.queryExecutionTree(),
-                                          mediaType, cancellationHandle)
+          ? ExportEngineV2::computeResult(
+                parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+                cancellationHandle, exportScheduler_.get())
           : ExportQueryExecutionTrees::computeResult(
                 parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
                 requestTimer, std::move(cancellationHandle));
