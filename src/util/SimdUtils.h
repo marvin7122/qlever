@@ -103,13 +103,7 @@ __attribute__((target("avx2"))) bool avx2ChunkContainsSpecial(const char* p) {
 
 template <char... SpecialChars>
 __attribute__((target("avx2"))) bool containsAnyByteAVX2(const char* data,
-                                                         size_t size) {
-  constexpr size_t chunkSize = 32;
-  if (size < chunkSize) {
-    return containsAnyByteSSE2<SpecialChars...>(data, size);
-  }
-  for (size_t i = 0; i + chunkSize <= size; i += chunkSize) {
-    if (avx2ChunkContainsSpecial<SpecialChars...>(data + i)) {
+                                                         
       return true;
     }
   }
