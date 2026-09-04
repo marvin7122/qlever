@@ -28,6 +28,7 @@
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
 #include "util/TransparentFunctors.h"
+#include <string_view>
 
 namespace detail {
 
