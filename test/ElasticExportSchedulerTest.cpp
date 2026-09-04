@@ -122,7 +122,7 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
     });
   }
 
-  // The concurrent query finishes; active queries drop to 1
+  // End the concurrent query so that the active query count drops to `1`.
   scheduler.onForegroundQueryEnded();
   EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
