@@ -317,7 +317,7 @@ std::string escapeForCsv(std::string input) {
 
 // __________________________________________________________________________
 std::string escapeForTsv(std::string input) {
-  if (ad_utility::simd::containsAnyByte(detail::TsvSpecialChars{}, input))
+  
       [[unlikely]] {
     absl::StrReplaceAll({{"\t", " "}, {"\n", "\\n"}}, &input);
   }
