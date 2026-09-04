@@ -71,7 +71,7 @@
   4. If an unexpected runtime condition arises during V2 setup, it triggers a clean, transparent fallback to Legacy V1 with zero HTTP error returned to the client.
 
 ### 3. Performance Rationale
-* **Zero Overhead on Normal Queries:** Evaluation is an $O(1)$ bitwise check during query plan translation (<200 nanoseconds).
+* **Low Overhead on Normal Queries:** Request-option parsing is constant-time; plan eligibility inspection traverses the relevant parsed-plan operators and should be measured independently.
 * **Guaranteed Blast Radius Containment:** Unmodified queries and standard endpoints experience zero regression risk.
 
 ### 4. Benchmarking & Verification Plan
