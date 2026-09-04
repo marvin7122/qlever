@@ -258,8 +258,7 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
 
     unblockPromise.set_value();
 
-  // Attempting to consume from cancelled session should throw
-  EXPECT_THROW(session.consumeNextResult(), ad_utility::Exception);
+    EXPECT_THROW(session.consumeNextResult(), ad_utility::Exception);
 
   scheduler.onForegroundQueryEnded();
 }
