@@ -281,9 +281,7 @@ void resolveVocabIndexIds(
     return;
   }
 
-  AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t i) {
-    return ids[i].getDatatype() == Datatype::VocabIndex;
-  }));
+
 
   finishResolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
       index, positions, beginResolveVocabIndexIds(index, ids, positions),
