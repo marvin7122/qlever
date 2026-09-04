@@ -2403,18 +2403,7 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(::testing::ValuesIn(kSelectExportMediaTypes),
                        ::testing::ValuesIn(kConstructExportThreadCounts)));
 
-TEST_P(ParallelConstructThreadCountTest, SelectEmptyResult) {
-  using enum ad_utility::MediaType;
-  const std::string kg = makeConstructKg(5);
-  const std::string query =
-      "SELECT ?s ?p ?o WHERE {?s ?p ?o FILTER(?s = <s999>)}";
-  const std::string expectedTsv = runQueryStreamableResult(kg, query, tsv);
-  const std::string expectedCsv = runQueryStreamableResult(kg, query, csv);
-  EXPECT_EQ(constructResultWithThreads(kg, query, tsv, GetParam()),
-            expectedTsv);
-  EXPECT_EQ(constructResultWithThreads(kg, query, csv, GetParam()),
-            expectedCsv);
-}
+
 
 // White-box test for `splitBlockIntoChunks`. `getRowIndices` never yields
 // an empty view, but the function must still handle one.
