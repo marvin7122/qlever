@@ -21,7 +21,8 @@ using namespace ql::engine::export_v2;
 
 namespace {
 
-// Create synthetic blocks of IdTables simulating upstream operator output.
+// Create deterministic three-column IdTable blocks with repeated vocabulary indices
+// for the chunking and filtering benchmarks.
 std::vector<Result::IdTableVocabPair> createSyntheticBlocks(
     size_t numBlocks, size_t rowsPerBlock, size_t numCols) {
   ad_utility::AllocatorWithLimit<Id> allocator{
