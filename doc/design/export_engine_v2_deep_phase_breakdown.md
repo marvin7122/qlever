@@ -271,7 +271,7 @@
 
 ### 3. Performance Rationale
 * **Latency Hiding on 1 Core:** While one chunk is being transmitted, the worker can prepare the next chunk; backpressure may still suspend generation until the socket drains.
-* **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
+* **Latency Hiding:** While one chunk is in flight, the worker can generate the next chunk; measure the resulting overlap as reduced compute stalls under the benchmark's defined network-delay conditions.
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmark:** `ChunkStreamingBenchmark`
