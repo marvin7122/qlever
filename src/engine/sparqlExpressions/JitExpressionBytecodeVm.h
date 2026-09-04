@@ -1097,3 +1097,5 @@ class JitExpressionBytecodeVm {
     }
   }
 };
+
+}  // namespace ql::engine::jit
