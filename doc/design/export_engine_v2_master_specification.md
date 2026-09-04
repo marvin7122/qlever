@@ -259,7 +259,7 @@ To enable independent implementation and clean reviewability, the V2 engine is d
   - Observe foreground demand through runtime-enabled `QueryRegistry` callbacks. QLever has no `Server::handleRequest` function.
   - Enforce single-core execution when concurrent queries exist.
   - Implement dynamic work-stealing morsel leasing when server is completely idle, using cooperative-only revocation and refcounted keep-alive state per the Amendment's lease-safety requirements.
-  - Implement immediate preemption and worker thread surrender on new query arrival.
+  - Revoke outstanding helper leases immediately when a new query arrives; workers currently executing a morsel finish that morsel and then surrender without starting another one.
 * **Definition of Done:** See the amendment and prerequisite design. Required evidence includes isolation tests, TSAN results, and measured p99.9 preemption and first-byte latency.
 
 ---
