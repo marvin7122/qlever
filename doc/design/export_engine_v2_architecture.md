@@ -55,10 +55,16 @@ To maintain strict backward compatibility with 100% of existing queries and test
 1. **Query-Time Ingress (Primary):**
    - URL Query Parameter: `GET /sparql?query=...&fast-export=1` or `&export-engine=v2`
    - HTTP Header: `X-QLever-Export-Engine: v2`
-2. **Server Configuration Default:**
-   - `--export-engine-default [legacy | v2]` (Default: `legacy`)
-3. **Automatic Safe Fallback:**
-   - If an export query contains unsupported complex operators (e.g. distributed aggregation), the router automatically delegates to Legacy V1 with zero failure.
+2. **Conflict Handling:**
+   - At most one engine selection may be supplied. If the query parameter and header select different engines, reject the request with a client error; do not let router ordering decide the result.
+   - `fast-export=1` is equivalent to an explicit `export-engine=v2` selection. Supplying both is allowed only when they select the same engine; otherwise reject the request.
+3. **Selection Precedence:**
+   - A non-conflicting query-time selection overrides the server configuration default.
+   - If no query-time selection is supplied, use `--export-engine-default [legacy | v2]` (Default: `legacy`).
+4. **Eligibility and Unsupported Queries:**
+   - Engine selection and query eligibility are separate decisions. After selecting an engine, the router checks whether the query is supported by V2.
+   - An explicit `v2` selection for an unsupported query is rejected with a client error; it is never silently downgraded.
+   - An automatic or default `v2` selection for an unsupported query falls back to Legacy V1 at planning time.
 
 ---
 
