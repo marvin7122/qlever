@@ -384,8 +384,7 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
 
     EXPECT_EQ(session.consumeNextResult(), 42);
 
-  // Slot 1 should throw std::runtime_error
-  EXPECT_THROW(
+    EXPECT_THROW(
       {
         try {
           [[maybe_unused]] int r = session.consumeNextResult();
