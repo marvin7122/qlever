@@ -112,7 +112,8 @@ IoUringPolicy::~IoUringPolicy() {
       break;
     }
     io_uring_cqe_seen(&ring_, cqe);
-    --numInFlightReadRequests_;
+    AD_CORRECTNESS_CHECK(numInFlightReadRequests_ > 0);
+  --numInFlightReadRequests_;
   }
   if (registeredBufferPool_ != nullptr) {
     io_uring_unregister_buffers(&ring_);
