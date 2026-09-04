@@ -42,6 +42,7 @@ using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
 using Literal = ad_utility::triple_component::Literal;
 
 // Interpret `0` for `construct-export-num-threads` as all logical cores.
+// If hardware_concurrency() returns 0, fall back to 1 thread.
 inline size_t resolveConstructExportNumThreads() {
   const size_t n =
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
