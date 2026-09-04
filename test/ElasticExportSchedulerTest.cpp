@@ -103,7 +103,7 @@ TEST(ElasticExportSchedulerTest, SingleCoreFallbackUnderHighForegroundLoad) {
 // Test 3: Dynamic Scale-Out When Foreground Query Completes
 // -----------------------------------------------------------------------------
 
-TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
+TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenForegroundLoadDecreases) {
   ElasticExportScheduler scheduler(4, 64);
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
