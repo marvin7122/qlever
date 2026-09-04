@@ -219,7 +219,7 @@ class ScatterGatherChunk
   }
 };
 
-// Consuming builder that pairs each referenced byte range with its owner.
+// Build a chunk while retaining ownership of each referenced byte range.
 class ScatterGatherChunkBuilder
     : public ad_utility::WithInvariants<ScatterGatherChunkBuilder> {
  private:
