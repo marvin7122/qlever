@@ -27,7 +27,9 @@
 
 ---
 
-# Phase 1: Ingress Routing, Feature Gating & Automatic Fallback
+# Phase 1: Ingress Routing, Feature Gating & Pre-Response Fallback
+
+**Fallback invariant:** Engine selection and all V2 setup checks must complete before emitting HTTP headers or response bytes. Once V2 streaming begins, no engine switch is permitted. Any subsequent runtime failure terminates the V2 response and reports an error through the active response mechanism.
 
 ```
                              Request Ingress & Route Decision Tree
