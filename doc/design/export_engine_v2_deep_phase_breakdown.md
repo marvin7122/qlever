@@ -326,8 +326,8 @@
 | Metric / Dimension | Baseline Legacy V1 | Fast-Path Engine V2 | Acceptance Criterion |
 | :--- | :--- | :--- | :--- |
 | **Output Equivalence** | Canonical RDF text | Streamed RDF text | **100% Bit-Identical (`diff == 0`)** |
-| **Time-To-First-Byte (TTFB)**| 850 ms – 2,400 ms | < 5 ms | **>100x Lower Initial Latency** |
-| **Sustained Throughput** | 1.2M – 2.5M triples/s | 8.0M – 15.0M triples/s | **4x – 8x Sustained Throughput** |
-| **Memory Consumption** | 450 MB – 1.8 GB | < 16 MB (Fixed Arena) | **>95% Memory Reduction** |
-| **Branch Mispredictions** | 4.2% – 8.5% | < 0.3% | **Zero Hot-Loop Mispredicts** |
-| **Instructions per Cycle (IPC)**| 0.85 – 1.20 | > 2.70 | **Hardware CPU Saturation** |
+| **Time-To-First-Byte (TTFB)** | To be measured | Target: < 5 ms | Benchmark on representative queries |
+| **Sustained Throughput** | To be measured | Target: 8.0M–15.0M triples/s | Benchmark on representative queries |
+| **Memory Consumption** | To be measured | Target: < 16 MB fixed arena | Measure peak resident memory |
+| **Branch Mispredictions** | To be measured | Target: < 0.3% | Measure with hardware counters |
+| **Instructions per Cycle (IPC)** | To be measured | Target: > 2.70 | Measure with hardware counters |
