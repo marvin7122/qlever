@@ -173,10 +173,10 @@
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmarks:**
-  - `FastNumberFormatterBenchmark` (Validated: >180M nums/sec)
-  - `SimdEscapeBenchmark` (Validated: 13.94 GB/s AVX2)
-  - `BranchlessDispatcherBenchmark` (Validated: 42.4M terms/sec)
-  - `MonomorphicSerializerBenchmark` (Validated: 2.90 IPC)
+    - `FastNumberFormatterBenchmark` (target: >180M nums/sec)
+  - `SimdEscapeBenchmark` (target: 13.94 GB/s AVX2)
+  - `BranchlessDispatcherBenchmark` (target: 42.4M terms/sec)
+  - `MonomorphicSerializerBenchmark` (target: 2.90 IPC)
 * **Metrics:** Branch misprediction rate, CPU cycles per row, formatted throughput (MB/s).
 
 ---
