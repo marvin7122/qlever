@@ -431,3 +431,43 @@ TEST(ElasticExportSchedulerTest, TrySubmitMorselReportsInsteadOfFiring) {
 
   scheduler.onForegroundQueryEnded();
 }
+
+// -----------------------------------------------------------------------------
+// Test 12: Abandoned Remainder Runs Exactly Once
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, AbandonedRemainderRunsExactlyOnce) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  session.setOrdered(false);
+  auto state = session.sharedState();
+
+  // Self-abandoning morsel: returns a partial result and resubmits its
+  // tail via trySubmitMorsel, mirroring CheckpointMorselRunner on an
+  // epoch change. May run on a helper or the coordinator thread.
+  session.submitMorsel([state]() {
+    EXPECT_TRUE(state->trySubmitMorsel([]() { return std::string{"tail"}; }));
+    return std::string{"partial"};
+  });
+  session.submitMorsel([]() { return std::string{"other"}; });
+
+  // A new foreground query revokes helper eligibility mid-flight.
+  scheduler.onForegroundQueryStarted();
+
+  std::set<std::string> seen;
+  while (session.hasMoreResults()) {
+    seen.insert(session.consumeNextResult());
+  }
+  EXPECT_EQ(seen.size(), 3u);
+  EXPECT_TRUE(seen.contains("partial"));
+  EXPECT_TRUE(seen.contains("tail"));
+  EXPECT_TRUE(seen.contains("other"));
+  EXPECT_EQ(session.consumedSlots(), 3u);
+  EXPECT_FALSE(session.hasMoreResults());
+
+  scheduler.onForegroundQueryEnded();
+  scheduler.onForegroundQueryEnded();
+}
