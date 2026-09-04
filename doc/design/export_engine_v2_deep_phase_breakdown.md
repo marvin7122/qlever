@@ -270,8 +270,8 @@
   5. **Backpressure Safety:** If the network socket is choked by a slow client, chunk generation suspends until the socket drains, preventing unbounded memory growth.
 
 ### 3. Performance Rationale
-* **100% Hardware Concurrency on 1 Core:** The CPU core never sits idle waiting for network socket acknowledgments, and the network NIC never sits idle waiting for chunk formatting.
-* **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
+* **Compute/I/O Overlap:** While a submitted chunk is pending, the event loop can generate another chunk when a free slot is available. The achievable overlap depends on CPU formatting cost, socket readiness, and client bandwidth.
+* **Latency Hiding:** The pipeline may reduce stalls caused by network backpressure; the amount of latency hidden must be measured under the stated network conditions.
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmark:** `ChunkStreamingBenchmark`
