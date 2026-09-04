@@ -47,10 +47,9 @@ struct AsyncChunkPipelineStats {
   size_t consumerWaits_ = 0;
 };
 
-// A bounded handoff queue adapted from PR #82. It retains that implementation's
-// backpressure and exception propagation, but does not create worker threads.
-// The future HTTP integration can drive it from the query executor and socket
-// completion handlers without violating the single-core scheduling contract.
+// A bounded handoff queue: push waits while the queue is full, and a producer
+// exception is stored and rethrown by pop after all already queued chunks have
+// been consumed. This class does not create worker threads.
 template <typename ChunkType = std::string>
 class AsyncChunkPipeline
     : public ad_utility::WithInvariants<AsyncChunkPipeline<ChunkType>> {
