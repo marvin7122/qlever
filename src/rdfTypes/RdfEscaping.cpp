@@ -308,7 +308,7 @@ std::string unescapePrefixedIri(std::string_view literal) {
 
 // __________________________________________________________________________
 std::string escapeForCsv(std::string input) {
-  if (!ad_utility::simd::containsAnyByte(detail::CsvSpecialChars{}, input))
+  
       [[likely]] {
     return input;
   }
