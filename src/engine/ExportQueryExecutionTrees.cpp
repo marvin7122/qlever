@@ -774,7 +774,9 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
       "a little patience");
 }
 
-
+// _____________________________________________________________________________
+std::vector<TableWithRange> ExportQueryExecutionTrees::splitBlockIntoChunks(
+    const TableWithRange& block, size_t rowsPerChunk) {
   AD_CONTRACT_CHECK(rowsPerChunk > 0);
   std::vector<TableWithRange> chunks;
   if (ql::ranges::empty(block.view_)) {
