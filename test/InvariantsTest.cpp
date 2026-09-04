@@ -27,7 +27,7 @@ class MockInvariantClass
  public:
     // Count invariant-check invocations; mutable for use in `checkInvariants() const`.
   mutable size_t checkCount_{0};
-  // Test control state used to simulate violated entry or exit invariants.
+    // Use this test control state to simulate violated entry or exit invariants.
   bool failInvariants_{false};
 
   void checkInvariants() const {
