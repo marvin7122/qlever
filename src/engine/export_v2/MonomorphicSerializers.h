@@ -10,7 +10,6 @@
 #define QLEVER_SRC_ENGINE_EXPORT_V2_MONOMORPHICSERIALIZERS_H
 
 #include <array>
-#include <concepts>
 #include <cstddef>
 #include <string_view>
 #include <tuple>
