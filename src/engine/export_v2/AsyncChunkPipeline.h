@@ -30,9 +30,38 @@ inline constexpr bool kExportV2CompiledIn = true;
 inline constexpr bool kExportV2CompiledIn = false;
 #endif
 
-struct AsyncChunkPipelineConfig {
+class AsyncChunkPipelineConfig {
+ public:
+  class Builder {
+   private:
+    size_t capacity_ = 2;
+    bool runtimeEnabled_ = false;
+
+   public:
+    Builder& capacity(size_t capacity) {
+      AD_CONTRACT_CHECK(capacity > 0);
+      capacity_ = capacity;
+      return *this;
+    }
+
+    Builder& runtimeEnabled(bool enabled) {
+      runtimeEnabled_ = enabled;
+      return *this;
+    }
+
+    [[nodiscard]] AsyncChunkPipelineConfig build() const {
+      return AsyncChunkPipelineConfig{capacity_, runtimeEnabled_};
+    }
+  };
+
+  [[nodiscard]] static Builder builder() { return {}; }
+
   size_t capacity_ = 2;
   bool runtimeEnabled_ = false;
+
+ private:
+  AsyncChunkPipelineConfig(size_t capacity, bool runtimeEnabled)
+      : capacity_{capacity}, runtimeEnabled_{runtimeEnabled} {}
 };
 
 enum class PushResult { Accepted, Closed };
