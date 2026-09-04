@@ -78,8 +78,8 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   //
   // Keep `sq_thread_idle` deliberately short: the poller thread burns a full
   // core while awake, and with one ring per batch manager a long idle period
-  // means several kernel threads spinning against the query threads. QLever's
-  // batch lookups arrive in bursts that are much shorter than the gaps
+  // means several kernel threads spinning against the query threads.
+  // Batch lookups arrive in bursts that are much shorter than the gaps
   // between them, so a short idle window costs one ~30 µs wake-up per burst
   // and saves the rest.
   struct io_uring_params params {};
