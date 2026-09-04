@@ -202,7 +202,7 @@
                                  └────────────┬────────────┘
                                               │ Single writev() / SEND_ZC
                                               ▼
-                                     Linux Kernel TCP Stack
+                                     Kernel TCP Stack
 ```
 
 ### 1. Inspiration & Prior Art Review
