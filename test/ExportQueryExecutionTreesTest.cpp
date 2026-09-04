@@ -2278,8 +2278,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 // ____________________________________________________________________________
 // Parallel CONSTRUCT export. `numThreads` is the `TaskQueue` worker count
-// (software threads). 0 means `hardware_concurrency()`. These sizes do not
-// require that many hardware cores.
+// (software threads). 0 means `hardware_concurrency()`.
 
 namespace {
 std::string makeConstructKg(size_t numTriples) {
