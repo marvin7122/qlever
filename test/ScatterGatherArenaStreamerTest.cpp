@@ -146,6 +146,29 @@ TEST(ScatterGatherArenaStreamerTest, RejectsWriterWithoutProgress) {
       ::testing::HasSubstr("attempt.bytesWritten_ > 0"));
 }
 
+TEST(ScatterGatherArenaStreamerTest, FinalizeToStringMovesCopyOnlyPayload) {
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy("ab");
+  builder.appendCopy("cd");
+  EXPECT_EQ(builder.size(), 4);
+  EXPECT_EQ(std::move(builder).finalizeToString(), "abcd");
+}
+
+TEST(ScatterGatherArenaStreamerTest, FinalizeToStringConcatenatesBorrowed) {
+  ImmutableByteBuffer arena{"XYZ"};
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy("<");
+  builder.appendOwned(arena.slice(0, 3));
+  builder.appendCopy(">");
+  EXPECT_EQ(std::move(builder).finalizeToString(), "<XYZ>");
+}
+
+TEST(ScatterGatherArenaStreamerTest, FinalizeToStringEmpty) {
+  ScatterGatherChunkBuilder builder;
+  EXPECT_TRUE(builder.empty());
+  EXPECT_EQ(std::move(builder).finalizeToString(), "");
+}
+
 TEST(ScatterGatherArenaStreamerTest, LimitsEachWritevBatch) {
   ScatterGatherChunkBuilder builder;
   std::vector<ImmutableByteBuffer> buffers;
