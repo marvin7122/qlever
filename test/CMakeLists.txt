@@ -619,6 +619,8 @@ addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
 
 addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
 
+addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+
 # Header-only util under export_v2; do not pull testUtil/index (cluster GCC
 # range-v3 needs -fpermissive for those translation units).
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
