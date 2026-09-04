@@ -159,7 +159,6 @@ bool termIsLiteral(const EvaluatedTerm& term, bool includeDataType) {
          ql::starts_with(term->rdfTermString_, '"');
 }
 
-) and wrap it as `rdfTermString_`) and
 // wrap it as `"escaped"^^<datatype>`.
 void appendTypedLiteral(std::string& out, const EvaluatedTermData& term) {
   out.push_back('"');

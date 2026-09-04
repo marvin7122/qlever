@@ -86,7 +86,10 @@ ConstructTemplatePreprocessor::preprocessVariable(const Variable& variable) {
 // _____________________________________________________________________________
 std::optional<PreprocessedTerm>
 ConstructTemplatePreprocessor::preprocessBlankNode(const BlankNode& blankNode) {
-  
+  return PrecomputedBlankNode{.prefix_ = std::make_shared<const std::string>(
+                                  blankNode.isGenerated() ? "_:g" : "_:u"),
+                              .suffix_ = std::make_shared<const std::string>(
+                                  absl::StrCat("_", blankNode.label()))};
 }
 
 // _____________________________________________________________________________
