@@ -327,7 +327,7 @@ class ExportJobState final
         // Foreground load is low; helpers are eligible.
         currentEpoch_.store(newEpoch, std::memory_order_relaxed);
         state_.store(SessionState::HelpersEligible, std::memory_order_relaxed);
-        // Collect pending slots to submit to helper pool
+        // Collect pending slots to submit to the helper pool.
         for (size_t i = nextSlotToConsume_; i < slots_.size(); ++i) {
           if (slots_[i].status_ == MorselStatus::Pending) {
             pendingIndicesToEnqueue.push_back(i);
