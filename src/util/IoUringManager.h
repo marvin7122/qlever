@@ -195,9 +195,14 @@ class IoUringPolicy {
   // in-flight (prepared, submitted, or waiting for a CQE). Erased when 0.
   ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
 
-    // Per-read metadata needed when a completion is reaped: which batch the read
-  // belongs to, how many bytes it was supposed to read (to detect short reads),
-  // and whether it used a registered pool buffer (with target buffer for copy-back).
+    // Per-read metadata needed when a completion is reaped:
+  // - batchHandle: which batch the read belongs to
+  // - expectedNumBytes: how many bytes the read was supposed to read (to detect
+  //   short reads)
+  // - poolBufferIndex: index into the registered buffer pool, or NO_POOL_BUFFER
+  //   if the read bypassed the pool (too large, pool unavailable, or exhausted)
+  // - targetBuffer: pointer to the caller's buffer; for pooled reads this is
+  //   where the data is copied after the kernel fills the pool buffer
   struct InFlightRead {
     BatchHandle batchHandle;
     size_t expectedNumBytes;
