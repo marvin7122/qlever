@@ -85,7 +85,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // between them, so a short idle window costs one ~30 µs wake-up per burst
   // and saves the rest.
   struct io_uring_params params {};
-  // Pooled rings are reused across query threads. Do not set
+    // Note that pooled rings are reused across query threads. Do not set
   // `IORING_SETUP_SINGLE_ISSUER`.
   params.flags = IORING_SETUP_SQPOLL;
   params.sq_thread_idle = kSqThreadIdleMs;  // ms before the SQ poller sleeps
