@@ -1365,15 +1365,19 @@ IdTable runSumOfComputedChild(bool hashMapEnabled) {
       qec, std::move(testTable), variables, false);
 
   using namespace sparqlExpression;
-  auto sumExpr = std::make_unique<SumExpression>(
-      false, makeMultiplyExpression(makeVariableExpression(varB),
-                                    std::make_unique<IdExpression>(toId(2))));
-  auto alias =
-      Alias{SparqlExpressionPimpl{std::move(sumExpr), "SUM(?b * 2)"}, varS};
+  // Mirror the fixture's `makeSumPimpl` factory (out of scope for this free
+  // function): build SUM(?b * 2) from prvalues so the `unique_ptr` converts
+  // to the `shared_ptr` that `SparqlExpressionPimpl` takes.
+  SparqlExpressionPimpl sumPimpl{
+      std::make_unique<SumExpression>(
+          false,
+          makeMultiplyExpression(std::make_unique<VariableExpression>(varB),
+                                 std::make_unique<IdExpression>(toId(2)))),
+      "SUM(?b * 2)"};
   // NOTE: `Alias` is move-only (like the existing tests, move a named
   // vector, since a braced list requires copyable elements).
   std::vector<Alias> aliases;
-  aliases.push_back(std::move(alias));
+  aliases.push_back(Alias{std::move(sumPimpl), varS});
   GroupBy groupBy{qec, {varA}, std::move(aliases), std::move(values)};
   auto result = groupBy.getResult();
   // `cleanup` must outlive the evaluation.
