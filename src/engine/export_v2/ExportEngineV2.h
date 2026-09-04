@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -35,7 +36,8 @@ using qlever::export_v2::AsyncChunkPipeline;
 class ExportEngineV2 {
  public:
   // True when this engine can serve `mediaType` for `parsedQuery` without
-  // falling back to Legacy V1. Currently: unconstrained SELECT + CSV/TSV.
+  // falling back to Legacy V1. Currently: SELECT + CSV/TSV (LIMIT/OFFSET
+  // included). CONSTRUCT and other media types still use Legacy.
   [[nodiscard]] static bool canHandle(
       const ParsedQuery& parsedQuery, ad_utility::MediaType mediaType) noexcept;
 
@@ -53,10 +55,20 @@ class ExportEngineV2 {
 
   // Live-path serialize with vocabulary resolution and selected columns.
   // `selectedColumns` empty means all IdTable columns; nullopt entry = unbound.
+  // `[rowBegin, rowEnd)` selects a half-open row range (default: all rows).
+  static ScatterGatherChunk serializeTableChunk(
+      const IdTableView<0>& idTable, const LocalVocab& localVocab,
+      RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
+      ql::span<const std::optional<ColumnIndex>> selectedColumns,
+      uint64_t rowBegin = 0,
+      uint64_t rowEnd = std::numeric_limits<uint64_t>::max());
+
   static ScatterGatherChunk serializeTableChunk(
       const IdTable& idTable, const LocalVocab& localVocab, RowFormat format,
       ScatterGatherChunkBuilder& builder, const Index& index,
-      ql::span<const std::optional<ColumnIndex>> selectedColumns);
+      ql::span<const std::optional<ColumnIndex>> selectedColumns,
+      uint64_t rowBegin = 0,
+      uint64_t rowEnd = std::numeric_limits<uint64_t>::max());
 
   // Compute streamed query export results using the push-driven V2 pipeline
   // for eligible SELECT CSV/TSV requests; otherwise delegates to Legacy V1.
