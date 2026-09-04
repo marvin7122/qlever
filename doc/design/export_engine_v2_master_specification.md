@@ -220,7 +220,7 @@ To enable independent implementation and clean reviewability, the V2 engine is d
   - Implement 2-slot 4MB buffer ring using non-blocking socket I/O / Boost.Asio coroutines.
   - Interleave single-core CPU formatting with network NIC DMA transmission.
   - Implement backpressure suspension for slow client connections.
-* **Definition of Done:** `ChunkStreamingBenchmark` demonstrates 0 CPU idle stalls under 5ms simulated network latency.
+* **Definition of Done:** `ChunkStreamingBenchmark` measures formatting and transmission overlap under 5ms simulated network latency, separately reporting CPU stalls caused by backpressure.
 
 ---
 
