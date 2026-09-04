@@ -352,7 +352,8 @@ TEST(VocabularyOnDisk, BatchIoRuntimeParametersAreValidated) {
     AD_EXPECT_THROW_WITH_MESSAGE(createExampleVocabulary(), expectedMessage);
   };
   // A pool of zero managers must be rejected.
-  testInvalid([] {
+  testInvalid([](ad_utility::source_location loc = AD_CURRENT_SOURCE_LOC()) {
+    auto trace = generateLocationTrace(loc);
     return setRuntimeParameterForTest<
         &RuntimeParameters::vocabBatchIoNumManagers_>(size_t{0});
   }, "vocabBatchIoNumManagers must be greater than 0");
