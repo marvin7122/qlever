@@ -10,6 +10,7 @@
 
 #include <vector>
 
+#include "./util/RuntimeParametersTestHelpers.h"
 #include "engine/Bind.h"
 #include "engine/Filter.h"
 #include "engine/ValuesForTesting.h"
@@ -343,6 +344,12 @@ TEST(JitExpressionBytecodeVmTest, DivisionFallsBackToLegacyEvaluation) {
   auto I = ad_utility::testing::IntId;
   QueryExecutionContext* qec = ad_utility::testing::getQec();
   qec->getQueryTreeCache().clearAll();
+  // Pin division-by-zero to NaN/inf (rather than UNDEF): only then does the
+  // legacy evaluation keep the `(1, 0)` row via +inf, so the test genuinely
+  // verifies that the JIT falls back instead of truncating.
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::divisionByZeroIsUndef_>(
+          false);
 
   IdTable inputTable =
       makeIdTableFromVector({{1, 2}, {2, 4}, {4, 2}, {1, 0}, {0, 5}}, I);
@@ -365,6 +372,8 @@ TEST(JitExpressionBytecodeVmTest, DivisionFallsBackToLegacyEvaluation) {
                 {std::move(expr), "?x / ?y"}};
 
   auto result = filter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  // `cleanup` must outlive the evaluation.
+  (void)cleanup;
   ASSERT_TRUE(result->isFullyMaterialized());
   // All rows except (0, 5) have a nonzero (possibly infinite) quotient.
   EXPECT_EQ(result->idTableView(),
