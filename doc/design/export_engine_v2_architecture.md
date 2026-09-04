@@ -58,7 +58,7 @@ To maintain strict backward compatibility with 100% of existing queries and test
 2. **Server Configuration Default:**
    - `--export-engine-default [legacy | v2]` (Default: `legacy`)
 3. **Automatic Safe Fallback:**
-   - If an export query contains unsupported complex operators (e.g. distributed aggregation), the router automatically delegates to Legacy V1 with zero failure.
+      - If an export query contains unsupported complex operators (e.g. distributed aggregation), the router executes it with Legacy V1 so that the query completes with the same results and error behavior as before.
 
 ---
 
