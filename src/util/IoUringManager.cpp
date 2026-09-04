@@ -70,10 +70,9 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // bursty batch workload.
   //
   // Do not set `IORING_SETUP_SINGLE_ISSUER`: pooled rings are reused across
-  // query threads, and that flag requires all submissions to come from a
-  // single thread for the ring's entire lifetime. The pool guarantees that
-  // only one thread uses a given ring at a time, but different threads may
-  // use it over its lifetime.
+  // query threads, and that flag requires all submissions to originate from a
+  // single thread for the ring's entire lifetime (requires Linux 6.0+). The
+  // pool makes no such guarantee, so the flag cannot be set.
   //
   // liburing rounds the requested ring size up to a power of two, so
   // `ringSize_` is a conservative lower bound for the ring-full check below.
