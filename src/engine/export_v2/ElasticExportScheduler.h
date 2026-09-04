@@ -386,8 +386,8 @@ class ExportJobState final
     auto startWall = std::chrono::steady_clock::now();
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (morselIndex >= slots_.size() ||
-        slots_[morselIndex].status_ != MorselStatus::Pending) {
+            if (morselIndex >= slots_.size() ||
+          slots_[morselIndex].status_ != MorselStatus::Pending) {
         return;
       }
       if (cancelled_ ||
