@@ -59,6 +59,17 @@ void measureFormat(std::string_view name, char escape) {
     for (size_t index = 0; index < inputs.size(); index += 12) {
       inputs[index][length / 2] = escape;
     }
+    for (const std::string& input : inputs) {
+      const auto scalarResult =
+          SimdEscapeClassifier::findFirstEscapeScalar<Format>(input);
+      const auto simdResult =
+          SimdEscapeClassifier::findFirstEscapeSimd<Format>(input);
+      if (scalarResult != simdResult) {
+        std::cerr << "Scalar and SIMD results differ for format " << name
+                  << " and input length " << length << '\\n';
+        std::abort();
+      }
+    }
     const double scalar = measure<Format, false>(inputs, length);
     const double simd = measure<Format, true>(inputs, length);
     std::cout << name << ',' << length << ',' << std::fixed
