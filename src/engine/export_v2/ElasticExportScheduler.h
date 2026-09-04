@@ -437,8 +437,9 @@ class ExportJobState final
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
     AD_CONTRACT_CHECK(task != nullptr, "Cannot submit null morsel task");
     size_t index = 0;
-    AD_CONTRACT_CHECK(appendMorsel(std::move(task), &index),
-                      "Cannot submit morsel to closed or cancelled session");
+    AD_CONTRACT_CHECK(
+        appendAndEnqueue(std::move(task), &index),
+        "Cannot submit morsel to closed or cancelled session");
     return index;
   }
 
@@ -451,24 +452,7 @@ class ExportJobState final
       return false;
     }
     size_t index = 0;
-    if (!appendMorsel(std::move(task), &index)) {
-      return false;
-    }
-    bool shouldEnqueue = false;
-    uint64_t epochToSubmit = 0;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      epochToSubmit = currentEpoch_.load(std::memory_order_relaxed);
-      if (state_.load(std::memory_order_relaxed) ==
-          SessionState::HelpersEligible) {
-        shouldEnqueue = true;
-      }
-    }
-    if (shouldEnqueue) {
-      scheduler_->enqueueMorsel(
-          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index));
-    }
-    return true;
+    return appendAndEnqueue(std::move(task), &index);
   }
 
   // Submission epoch for a task created now. Morsel tasks compare it against
@@ -645,20 +629,35 @@ class ExportJobState final
   }
 
  private:
-  // Append a Pending slot; false when closed or cancelled. Shared core of
-  // `submitMorsel` (which fires) and `trySubmitMorsel` (which reports).
-  bool appendMorsel(absl::AnyInvocable<ResultType()> task, size_t* index) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (closed_ || cancelled_) {
-      return false;
+  // Append a Pending slot and offer it to helpers when eligible; false when
+  // closed or cancelled. Shared core of `submitMorsel` (which fires) and
+  // `trySubmitMorsel` (which reports).
+  bool appendAndEnqueue(absl::AnyInvocable<ResultType()> task,
+                        size_t* index) {
+    bool shouldEnqueue = false;
+    uint64_t epochToSubmit = 0;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (closed_ || cancelled_) {
+        return false;
+      }
+      *index = slots_.size();
+      Slot slot;
+      slot.status_ = MorselStatus::Pending;
+      slot.task_ = std::move(task);
+      slot.profile_.morselIndex_ = *index;
+      slot.profile_.submittedAt_ = std::chrono::steady_clock::now();
+      slots_.push_back(std::move(slot));
+      epochToSubmit = currentEpoch_.load(std::memory_order_relaxed);
+      if (state_.load(std::memory_order_relaxed) ==
+          SessionState::HelpersEligible) {
+        shouldEnqueue = true;
+      }
     }
-    *index = slots_.size();
-    Slot slot;
-    slot.status_ = MorselStatus::Pending;
-    slot.task_ = std::move(task);
-    slot.profile_.morselIndex_ = *index;
-    slot.profile_.submittedAt_ = std::chrono::steady_clock::now();
-    slots_.push_back(std::move(slot));
+    if (shouldEnqueue) {
+      scheduler_->enqueueMorsel(OwnedMorsel(this->shared_from_this(), jobId_,
+                                            epochToSubmit, *index));
+    }
     return true;
   }
 
