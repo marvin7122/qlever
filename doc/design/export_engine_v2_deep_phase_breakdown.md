@@ -197,7 +197,7 @@
                                  ├─────────────────────────┤
                                  │ [0] Header "\r\n1000\r\n│
                                  │ [1] Span: Q42 IRI       │
-                                 │ [2] Delim: "\t"         │
+                                 │ [2] Static buffer: "\t"  │
                                  │ [3] Span: Literal Text  │
                                  └────────────┬────────────┘
                                               │ Single writev() / SEND_ZC
