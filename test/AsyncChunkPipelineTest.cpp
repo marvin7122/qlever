@@ -48,14 +48,14 @@ TEST(AsyncChunkPipelineTest, RuntimeKillSwitchLeavesPipelineClosed) {
       {.capacity_ = 2, .runtimeEnabled_ = false}};
   EXPECT_FALSE(pipeline.isEnabled());
   EXPECT_EQ(pipeline.push("ignored"), PushResult::Closed);
-  EXPECT_FALSE(pipeline.pop().has_value());
+  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
 }
 
 TEST(AsyncChunkPipelineTest, EmptyCompletedPipelineReturnsNoChunk) {
   AsyncChunkPipeline<std::string> pipeline{
       {.capacity_ = 2, .runtimeEnabled_ = true}};
   pipeline.finish();
-  EXPECT_FALSE(pipeline.pop().has_value());
+  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
 }
 
 TEST(AsyncChunkPipelineTest, MovesChunksWithoutCopyingTheirBuffer) {
@@ -79,9 +79,9 @@ TEST(AsyncChunkPipelineTest, CompletionDrainsQueuedChunksInOrder) {
   ASSERT_EQ(pipeline.push("second"), PushResult::Accepted);
   pipeline.finish();
 
-  EXPECT_EQ(pipeline.pop(), "first");
-  EXPECT_EQ(pipeline.pop(), "second");
-  EXPECT_FALSE(pipeline.pop().has_value());
+  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"first"})));
+  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"second"})));
+  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
 }
 
@@ -96,7 +96,7 @@ TEST(AsyncChunkPipelineTest, CancellationUnblocksProducer) {
   pipeline.cancel();
 
   EXPECT_EQ(blockedPush.get(), PushResult::Closed);
-  EXPECT_FALSE(pipeline.pop().has_value());
+  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
   EXPECT_EQ(pipeline.stats().chunksDiscarded_, 1);
 }
 
@@ -118,8 +118,8 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
   ASSERT_EQ(pipeline.push("before-error"), PushResult::Accepted);
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"producer failed"}));
 
-  EXPECT_EQ(pipeline.pop(), "before-error");
-  EXPECT_THROW(pipeline.pop(), std::runtime_error);
+  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"before-error"})));
+  EXPECT_THROW(static_cast<void>(pipeline.pop()), std::runtime_error);
 }
 
 TEST(AsyncChunkPipelineTest, BackpressureReusesFreedSlot) {
@@ -130,9 +130,9 @@ TEST(AsyncChunkPipelineTest, BackpressureReusesFreedSlot) {
       std::async(std::launch::async, [&] { return pipeline.push("second"); });
 
   waitUntilProducerBlocks(pipeline);
-  EXPECT_EQ(pipeline.pop(), "first");
+  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"first"})));
   EXPECT_EQ(blockedPush.get(), PushResult::Accepted);
-  EXPECT_EQ(pipeline.pop(), "second");
+  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"second"})));
   EXPECT_EQ(pipeline.stats().producerWaits_, 1);
 }
 
