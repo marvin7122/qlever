@@ -181,8 +181,7 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   // Allow morsel 0 to complete cooperatively
   unblockMorsel0Promise.set_value();
 
-  // Consume morsel 0 (was executed by helper)
-  int r0 = session.consumeNextResult();
+    int r0 = session.consumeNextResult();
   EXPECT_EQ(r0, 100);
 
   // Once helper 0 released lease, session transitions to PrimaryOnly
