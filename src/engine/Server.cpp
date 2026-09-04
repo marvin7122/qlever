@@ -77,13 +77,19 @@ Server::Server(
   AD_LOG_INFO << "Initializing server ..." << std::endl;
 
 #if defined(QLEVER_ENABLE_EXPORT_V2)
-  const size_t helperThreads = std::max<size_t>(1, numThreads_ / 2);
   exportScheduler_ =
       std::make_unique<ad_utility::export_v2::ElasticExportScheduler>(
-          helperThreads);
+          [this](absl::AnyInvocable<void()> work) {
+            auto held =
+                std::make_shared<absl::AnyInvocable<void()>>(std::move(work));
+            boost::asio::post(queryThreadPool_, [held]() { (*held)(); });
+          });
   exportScheduler_->attachToQueryRegistry(queryRegistry_);
-  AD_LOG_INFO << "ExportEngineV2 helper pool: " << helperThreads
-              << " threads (default on for V2 exports)" << std::endl;
+  AD_LOG_INFO << "ExportEngineV2 serialize posts onto queryThreadPool_ ("
+              << numThreads_
+              << " threads); no extra V2 pool. Helpers stop admitting when "
+                 "another query is registered."
+              << std::endl;
 #endif
 
   initializeServerMetrics(config.memoryLimit_);

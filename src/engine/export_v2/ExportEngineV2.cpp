@@ -19,6 +19,8 @@
 
 #include "backports/algorithm.h"
 #include "engine/ExportQueryExecutionTrees.h"
+#include "engine/export_v2/VectorStreamSource.h"
+#include "global/Id.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
@@ -128,56 +130,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
-  constexpr uint64_t morselRows = 8192;
-  auto serializeOnThisThread = [&](const IdTableView<0>& table,
-                                   const LocalVocab& localVocab, uint64_t begin,
-                                   uint64_t end) {
-    ScatterGatherChunkBuilder builder;
-    ExportEngineV2::appendSerializedRows(table, localVocab, format, builder,
-                                         index, columns, begin, end);
-    return builder;
-  };
-
-  if (scheduler == nullptr) {
-    uint64_t resultSize = 0;
-    for (const auto& tableWithRange : ExportQueryExecutionTrees::getRowIndices(
-             parsedQuery._limitOffset, *result, resultSize)) {
-      cancellationHandle->throwIfCancelled();
-      if (tableWithRange.view_.empty()) {
-        continue;
-      }
-      const auto& table = tableWithRange.tableWithVocab_.idTable();
-      const auto& localVocab = tableWithRange.tableWithVocab_.localVocab();
-      const uint64_t rowBegin = tableWithRange.view_.front();
-      const uint64_t rowEnd = rowBegin + tableWithRange.view_.size();
-      for (uint64_t begin = rowBegin; begin < rowEnd; begin += morselRows) {
-        cancellationHandle->throwIfCancelled();
-        const uint64_t end = std::min(rowEnd, begin + morselRows);
-        auto builder = serializeOnThisThread(table, localVocab, begin, end);
-        if (!builder.empty()) {
-          co_yield std::move(builder);
-        }
-      }
-    }
-    co_return;
-  }
-
-  AD_LOG_INFO << "ExportEngineV2 using ElasticExportScheduler ("
-              << scheduler->workerThreadCount() << " helper threads)"
-              << std::endl;
-  auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
-  auto columnsPtr =
-      std::make_shared<std::vector<std::optional<ColumnIndex>>>(columns);
-  const Index* indexPtr = &index;
-  constexpr size_t kSubmitWindow = 8;
-  size_t inflight = 0;
-
-  auto consumeOne = [&]() {
-    auto builder = session.consumeNextResult();
-    --inflight;
-    return builder;
-  };
-
+  std::vector<Result::IdTableVocabPair> streamBlocks;
   uint64_t resultSize = 0;
   for (const auto& tableWithRange : ExportQueryExecutionTrees::getRowIndices(
            parsedQuery._limitOffset, *result, resultSize)) {
@@ -185,52 +138,65 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     if (tableWithRange.view_.empty()) {
       continue;
     }
+    const auto& table = tableWithRange.tableWithVocab_.idTable();
+    const auto& localVocab = tableWithRange.tableWithVocab_.localVocab();
     const uint64_t rowBegin = tableWithRange.view_.front();
-    const uint64_t rowEnd = rowBegin + tableWithRange.view_.size();
-    std::shared_ptr<const IdTable> tablePtr;
-    std::shared_ptr<const LocalVocab> vocabPtr;
-    const bool shareMaterialized = result->isFullyMaterialized();
-    if (!shareMaterialized) {
-      tablePtr = std::make_shared<IdTable>(
-          tableWithRange.tableWithVocab_.idTable().clone());
-      vocabPtr = std::make_shared<LocalVocab>(
-          tableWithRange.tableWithVocab_.localVocab().clone());
+    const uint64_t n = tableWithRange.view_.size();
+    IdTable sliced{table.numColumns(), table.getAllocator()};
+    sliced.reserve(n);
+    for (uint64_t i = 0; i < n; ++i) {
+      sliced.push_back(table[rowBegin + i]);
     }
-    for (uint64_t begin = rowBegin; begin < rowEnd; begin += morselRows) {
-      cancellationHandle->throwIfCancelled();
-      const uint64_t end = std::min(rowEnd, begin + morselRows);
-      if (shareMaterialized) {
-        session.submitMorsel([result, columnsPtr, indexPtr, format, begin, end,
-                              cancellationHandle]() {
-          cancellationHandle->throwIfCancelled();
-          ScatterGatherChunkBuilder builder;
-          ExportEngineV2::appendSerializedRows(
-              result->idTableView(), result->localVocab(), format, builder,
-              *indexPtr, *columnsPtr, begin, end);
-          return builder;
-        });
-      } else {
-        session.submitMorsel([tablePtr, vocabPtr, columnsPtr, indexPtr, format,
-                              begin, end, cancellationHandle]() {
-          cancellationHandle->throwIfCancelled();
-          ScatterGatherChunkBuilder builder;
-          ExportEngineV2::appendSerializedRows(
-              tablePtr->asStaticView<0>(), *vocabPtr, format, builder,
-              *indexPtr, *columnsPtr, begin, end);
-          return builder;
-        });
-      }
-      ++inflight;
-      if (inflight >= kSubmitWindow) {
-        auto builder = consumeOne();
-        if (!builder.empty()) {
-          co_yield std::move(builder);
-        }
-      }
-    }
+    streamBlocks.emplace_back(std::move(sliced), localVocab.clone());
   }
+
+  VectorStreamSource source{VectorStreamConfig{RowsPerChunk{8192}}};
+  auto serializeChunk = [&](const Result::IdTableVocabPair& chunk) {
+    ScatterGatherChunkBuilder builder;
+    ExportEngineV2::appendSerializedRows(
+        chunk.idTable_.asStaticView<0>(), chunk.localVocab_, format, builder,
+        index, columns, 0, chunk.idTable_.numRows());
+    return builder;
+  };
+
+  if (scheduler == nullptr) {
+    std::vector<ScatterGatherChunkBuilder> sequential;
+    source.run(streamBlocks, [&](const Result::IdTableVocabPair& chunk) {
+      auto builder = serializeChunk(chunk);
+      if (!builder.empty()) {
+        sequential.push_back(std::move(builder));
+      }
+    });
+    for (auto& builder : sequential) {
+      co_yield std::move(builder);
+    }
+    co_return;
+  }
+
+  AD_LOG_INFO << "ExportEngineV2 using ElasticExportScheduler on "
+                 "queryThreadPool_ (no extra V2 threads)"
+              << std::endl;
+  auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
+  auto columnsPtr =
+      std::make_shared<std::vector<std::optional<ColumnIndex>>>(columns);
+  const Index* indexPtr = &index;
+
+  source.run(streamBlocks, [&](const Result::IdTableVocabPair& chunk) {
+    cancellationHandle->throwIfCancelled();
+    auto tablePtr = std::make_shared<IdTable>(chunk.idTable_.clone());
+    auto vocabPtr = std::make_shared<LocalVocab>(chunk.localVocab_.clone());
+    session.submitMorsel([tablePtr, vocabPtr, columnsPtr, indexPtr, format,
+                          cancellationHandle]() {
+      cancellationHandle->throwIfCancelled();
+      ScatterGatherChunkBuilder builder;
+      ExportEngineV2::appendSerializedRows(
+          tablePtr->asStaticView<0>(), *vocabPtr, format, builder, *indexPtr,
+          *columnsPtr, 0, tablePtr->numRows());
+      return builder;
+    });
+  });
   while (session.hasMoreResults()) {
-    auto builder = consumeOne();
+    auto builder = session.consumeNextResult();
     if (!builder.empty()) {
       co_yield std::move(builder);
     }
@@ -286,12 +252,18 @@ void ExportEngineV2::appendSerializedRows(
     return selectedColumns[outCol];
   };
 
-  // Batch-resolve each bound column with the same idToStringAndType contract
-  // as Legacy (CSV quoting, vocab strings). MonomorphicRowSerializer is not
-  // a drop-in: it needs a compile-time column schema, does not resolve Ids,
-  // formats doubles with to_chars ("1" vs Legacy "1.0"), and keeps IRI
-  // brackets that SELECT CSV strips. See MonomorphicSerializersTest.
+  // Uniform encoded columns (Int/Double/Bool/Date/...) use the same
+  // idToStringAndTypeForEncodedValue bytes as Legacy. Mixed or vocab columns
+  // still go through idsToStringAndType / lookupBatch. Compile-time
+  // MonomorphicRowSerializer stays off: its to_chars doubles and IRI brackets
+  // do not match SELECT CSV (MonomorphicSerializersTest).
   const size_t n = static_cast<size_t>(rowEnd - rowBegin);
+  auto isVocabLike = [](Datatype d) {
+    using enum Datatype;
+    return d == VocabIndex || d == LocalVocabIndex ||
+           d == SecondaryVocabIndex || d == WordVocabIndex ||
+           d == TextRecordIndex || d == EncodedVal;
+  };
   std::vector<std::vector<ResolvedCell>> resolved(numOutputCols);
   for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
     const auto col = columnAt(outCol);
@@ -299,7 +271,23 @@ void ExportEngineV2::appendSerializedRows(
       continue;
     }
     const auto ids = idTable.getColumn(col.value()).subspan(rowBegin, n);
-    if (format == RowFormat::Csv) {
+    bool uniformEncoded = !ids.empty() && !isVocabLike(ids[0].getDatatype());
+    if (uniformEncoded) {
+      const Datatype dt = ids[0].getDatatype();
+      for (Id id : ids) {
+        if (id.getDatatype() != dt) {
+          uniformEncoded = false;
+          break;
+        }
+      }
+    }
+    if (uniformEncoded) {
+      resolved[outCol].resize(n);
+      for (size_t i = 0; i < n; ++i) {
+        resolved[outCol][i] =
+            ql::exportIds::idToStringAndTypeForEncodedValue(ids[i]);
+      }
+    } else if (format == RowFormat::Csv) {
       resolved[outCol] = resolveColumn<RowFormat::Csv>(index, ids, localVocab);
     } else {
       resolved[outCol] = resolveColumn<RowFormat::Tsv>(index, ids, localVocab);
