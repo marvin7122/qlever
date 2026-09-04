@@ -182,7 +182,7 @@ int main() {
   double compileUs = std::chrono::duration<double, std::micro>(c1 - c0).count();
 
   if (err || !nativeFn) {
-    std::cerr << "AsmJit compilation failed: " << err << "\n";
+    std::cerr << "AsmJit compilation failed: code=" << static_cast<unsigned int>(err) << "\n";
     return 1;
   }
 
