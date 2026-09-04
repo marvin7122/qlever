@@ -118,7 +118,7 @@
 
 ### 3. Performance Rationale
 * **DRAM Traffic Elimination:** In Legacy V1, a 10,000,000-row export writes and reads 240 MB of `IdTable` buffers to/from main DRAM. In V2, chunk vectors stay in L1/L2 CPU caches (0 DRAM roundtrips).
-* **Memory Footprint Reduction:** Memory consumption drops from $O(N)$ (proportional to total query result size) to $O(1)$ (fixed 64 KB scratch vector).
+* **Memory Footprint Reduction:** Result-processing scratch space is bounded by the configured chunk and buffer sizes instead of being proportional to the total query result size; the vocabulary arena and persistent network buffers remain additional allocations.
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmark:** `benchmark/export_v2/VectorScanBenchmark.cpp`
