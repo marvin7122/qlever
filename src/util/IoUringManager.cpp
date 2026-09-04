@@ -14,8 +14,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <vector>
+
 
 #include "util/Exception.h"
 #include "util/Log.h"
