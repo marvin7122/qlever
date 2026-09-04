@@ -150,7 +150,14 @@ class ScatterGatherChunk
                               std::strerror(attempt.errorNumber_)));
       }
       AD_CONTRACT_CHECK(attempt.errorNumber_ == 0);
-      AD_CONTRACT_CHECK(attempt.bytesWritten_ > 0);
+      if (attempt.bytesWritten_ == 0) {
+        // A non-progressing write can be transient. Retry unless cancellation
+        // was requested, avoiding an invariant assertion on caller behavior.
+        if (isCancelled()) {
+          return {totalWritten, true};
+        }
+        continue;
+      }
 
       size_t remaining = static_cast<size_t>(attempt.bytesWritten_);
       size_t offered = 0;
