@@ -1,6 +1,6 @@
 # Export Engine V2 WP7 Prerequisite Design
 
-**Status:** Design prerequisite. No production scheduler code is authorized by this document.
+**Status:** Design prerequisite. Production scheduler integration is not authorized by this document.
 
 **Source baseline:** `marvin7122/qlever` `origin/master` at `379568d8d`, inspected on 2026-09-03.
 
