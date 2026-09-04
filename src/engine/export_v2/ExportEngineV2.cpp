@@ -11,6 +11,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -101,10 +102,7 @@ bool ExportEngineV2::canHandle(const ParsedQuery& parsedQuery,
   if (mediaType != csv && mediaType != tsv) {
     return false;
   }
-  // LIMIT/OFFSET / export-limit handling is still on the Legacy path.
-  // TODO(export-v2): wire getRowIndices-equivalent limiting into V2.
-  return parsedQuery._limitOffset.isUnconstrained() &&
-         !parsedQuery._limitOffset.exportLimit_.has_value();
+  return true;
 }
 
 // _____________________________________________________________________________
@@ -122,10 +120,15 @@ std::optional<RowFormat> ExportEngineV2::rowFormatFor(
 
 // _____________________________________________________________________________
 ScatterGatherChunk ExportEngineV2::serializeTableChunk(
-    const IdTable& idTable, const LocalVocab& localVocab, RowFormat format,
-    ScatterGatherChunkBuilder& builder, const Index& index,
-    ql::span<const std::optional<ColumnIndex>> selectedColumns) {
-  const size_t numRows = idTable.numRows();
+    const IdTableView<0>& idTable, const LocalVocab& localVocab,
+    RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
+    ql::span<const std::optional<ColumnIndex>> selectedColumns,
+    uint64_t rowBegin, uint64_t rowEnd) {
+  const uint64_t numRows = idTable.numRows();
+  rowEnd = std::min(rowEnd, numRows);
+  if (rowBegin >= rowEnd) {
+    return std::move(builder).finalize();
+  }
   const size_t numOutputCols =
       selectedColumns.empty() ? idTable.numColumns() : selectedColumns.size();
 
@@ -136,7 +139,7 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
     return selectedColumns[outCol];
   };
 
-  for (size_t row = 0; row < numRows; ++row) {
+  for (uint64_t row = rowBegin; row < rowEnd; ++row) {
     for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
       if (outCol > 0) {
         builder.appendCopy(format == RowFormat::Csv ? "," : "\t");
@@ -156,6 +159,16 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
   }
 
   return std::move(builder).finalize();
+}
+
+ScatterGatherChunk ExportEngineV2::serializeTableChunk(
+    const IdTable& idTable, const LocalVocab& localVocab, RowFormat format,
+    ScatterGatherChunkBuilder& builder, const Index& index,
+    ql::span<const std::optional<ColumnIndex>> selectedColumns,
+    uint64_t rowBegin, uint64_t rowEnd) {
+  return serializeTableChunk(idTable.asStaticView<0>(), localVocab, format,
+                             builder, index, selectedColumns, rowBegin,
+                             rowEnd);
 }
 
 // _____________________________________________________________________________
@@ -185,41 +198,29 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
-  // Synchronous vertical slice: VectorStreamSource → escape → ScatterGather →
-  // co_yield. A producer-thread + AsyncChunkPipeline nested in this coroutine
-  // fails to compile under GCC (coroutine frame rewrite); async ring is a
-  // follow-up seam. `co_yield` cannot appear inside the forEach/run lambdas, so
-  // we buffer one Result block's serialized chunks then yield them here.
+  // Same LIMIT/OFFSET / export-limit slicing as Legacy V1 (`getRowIndices`).
+  // VectorStream rechunk is applied per exported block (8192-row morsels).
   (void)scheduler;
-  VectorStreamSource source{VectorStreamConfig{RowsPerChunk{8192}}};
-  std::vector<Result::IdTableVocabPair> pendingBlocks;
-  std::vector<std::string> pendingChunks;
-
-  auto serializeBlock = [&](Result::IdTableVocabPair block) {
+  constexpr uint64_t morselRows = 8192;
+  uint64_t resultSize = 0;
+  for (const auto& tableWithRange : ExportQueryExecutionTrees::getRowIndices(
+           parsedQuery._limitOffset, *result, resultSize)) {
     cancellationHandle->throwIfCancelled();
-    pendingBlocks.clear();
-    pendingBlocks.push_back(std::move(block));
-    pendingChunks.clear();
-    source.run(pendingBlocks, [&](const Result::IdTableVocabPair& chunk) {
-      cancellationHandle->throwIfCancelled();
-      ScatterGatherChunkBuilder builder;
-      auto sgChunk = serializeTableChunk(chunk.idTable_, chunk.localVocab_,
-                                         format, builder, index, columns);
-      pendingChunks.push_back(sgChunk.toString());
-    });
-  };
-
-  if (result->isFullyMaterialized()) {
-    serializeBlock(Result::IdTableVocabPair{result->cloneIdTable(),
-                                            result->localVocab().clone()});
-    for (auto& serialized : pendingChunks) {
-      co_yield std::move(serialized);
+    if (tableWithRange.view_.empty()) {
+      continue;
     }
-  } else {
-    for (auto& pair : result->idTables()) {
-      serializeBlock(std::move(pair));
-      for (auto& serialized : pendingChunks) {
-        co_yield std::move(serialized);
+    const auto& table = tableWithRange.tableWithVocab_.idTable();
+    const auto& localVocab = tableWithRange.tableWithVocab_.localVocab();
+    const uint64_t rowBegin = tableWithRange.view_.front();
+    const uint64_t rowEnd = rowBegin + tableWithRange.view_.size();
+    for (uint64_t begin = rowBegin; begin < rowEnd; begin += morselRows) {
+      cancellationHandle->throwIfCancelled();
+      const uint64_t end = std::min(rowEnd, begin + morselRows);
+      ScatterGatherChunkBuilder builder;
+      auto sgChunk = serializeTableChunk(table, localVocab, format, builder,
+                                         index, columns, begin, end);
+      if (!sgChunk.empty()) {
+        co_yield sgChunk.toString();
       }
     }
   }
