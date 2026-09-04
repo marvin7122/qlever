@@ -402,9 +402,9 @@ TEST(JitExpressionBytecodeVmTest, FoldIntEqualityFallsBackOnDoubleAndBool) {
   QueryExecutionTree subTree{
       qec, std::make_shared<ValuesForTesting>(std::move(values))};
 
-  auto expr = std::make_unique<EqualExpression>(
+  auto expr = std::make_unique<EqualExpression>(EqualExpression::Children{
       std::make_unique<VariableExpression>(Variable{"?x"}),
-      std::make_unique<IdExpression>(I(1)));
+      std::make_unique<IdExpression>(I(1))});
   Filter filter{qec,
                 std::make_shared<QueryExecutionTree>(std::move(subTree)),
                 {std::move(expr), "?x = 1"}};
@@ -434,11 +434,12 @@ TEST(JitExpressionBytecodeVmTest, ArithmeticFilterFallsBackOnDoubles) {
   QueryExecutionTree subTree{
       qec, std::make_shared<ValuesForTesting>(std::move(values))};
 
-  auto expr = std::make_unique<GreaterThanExpression>(
-      makeMultiplyExpression(
-          std::make_unique<VariableExpression>(Variable{"?x"}),
-          std::make_unique<IdExpression>(I(2))),
-      std::make_unique<IdExpression>(I(3)));
+  auto expr =
+      std::make_unique<GreaterThanExpression>(GreaterThanExpression::Children{
+          makeMultiplyExpression(
+              std::make_unique<VariableExpression>(Variable{"?x"}),
+              std::make_unique<IdExpression>(I(2))),
+          std::make_unique<IdExpression>(I(3))});
   Filter filter{qec,
                 std::make_shared<QueryExecutionTree>(std::move(subTree)),
                 {std::move(expr), "?x * 2 > 3"}};
@@ -572,7 +573,6 @@ TEST(JitExpressionBytecodeVmTest, ScanColumnKindsAndCellRules) {
   EXPECT_TRUE(emptyKinds.allInt);
   EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
       CellRule::OrderedComparison, emptyKinds));
-}
 }
 
 TEST(JitExpressionBytecodeVmTest, ExecuteIntColumn) {
