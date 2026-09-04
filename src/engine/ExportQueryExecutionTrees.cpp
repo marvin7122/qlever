@@ -769,7 +769,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
     [[maybe_unused]] CancellationHandle cancellationHandle,
     [[maybe_unused]] const ad_utility::Timer& requestTimer,
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
-  throw std::runtime_error(
+  AD_THROW(
       "The binary export of QLever results is not yet implemented, please have "
       "a little patience");
 }
