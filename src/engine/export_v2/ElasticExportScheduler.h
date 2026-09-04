@@ -6,6 +6,7 @@
 
 #include <absl/functional/any_invocable.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -298,6 +299,10 @@ class ExportJobState final
  public:
   struct Slot {
     MorselStatus status_{MorselStatus::Pending};
+    // Set once the coordinator hands the result out. Unordered sessions emit
+    // whichever morsel completes first, so consumption is tracked per slot
+    // rather than by position.
+    bool consumed_{false};
     absl::AnyInvocable<ResultType()> task_;
     std::optional<ResultType> result_;
     MorselProfile profile_;
@@ -463,9 +468,22 @@ class ExportJobState final
     return index;
   }
 
+  // Row order is significant only when the query bounds the result
+  // (LIMIT/OFFSET/export limit select a deterministic prefix). Unordered
+  // sessions emit whichever morsel completes first, which removes
+  // head-of-line blocking behind a slow morsel. Must be fixed before the
+  // first consume.
+  void setOrdered(bool ordered) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    AD_CONTRACT_CHECK(nextSlotToConsume_ == 0,
+                      "Emission order must be fixed before consuming");
+    ordered_ = ordered;
+  }
+
   [[nodiscard]] bool hasMoreResults() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return nextSlotToConsume_ < slots_.size();
+    return std::any_of(slots_.begin(), slots_.end(),
+                       [](const Slot& slot) { return !slot.consumed_; });
   }
 
   [[nodiscard]] size_t totalSlots() const {
@@ -475,7 +493,8 @@ class ExportJobState final
 
   [[nodiscard]] size_t consumedSlots() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return nextSlotToConsume_;
+    return std::count_if(slots_.begin(), slots_.end(),
+                         [](const Slot& slot) { return slot.consumed_; });
   }
 
   ResultType consumeNextResult() {
@@ -483,9 +502,44 @@ class ExportJobState final
     absl::AnyInvocable<ResultType()> primaryTask;
 
     std::unique_lock<std::mutex> lock(mutex_);
-    AD_CONTRACT_CHECK(nextSlotToConsume_ < slots_.size(),
-                      "No more submitted morsels to consume");
-    index = nextSlotToConsume_++;
+    if (ordered_) {
+      AD_CONTRACT_CHECK(nextSlotToConsume_ < slots_.size(),
+                        "No more submitted morsels to consume");
+      index = nextSlotToConsume_++;
+    } else {
+      // Completion order: a finished morsel first, else a pending one for
+      // inline execution, else a running one to wait on in the shared
+      // machine below. Anything else means nothing is consumable.
+      size_t completed = slots_.size();
+      size_t pending = slots_.size();
+      size_t running = slots_.size();
+      for (size_t i = 0; i < slots_.size(); ++i) {
+        if (slots_[i].consumed_) {
+          continue;
+        }
+        if (slots_[i].status_ == MorselStatus::Completed) {
+          completed = i;
+          break;
+        }
+        if (slots_[i].status_ == MorselStatus::Pending &&
+            pending == slots_.size()) {
+          pending = i;
+        }
+        if (slots_[i].status_ == MorselStatus::Running &&
+            running == slots_.size()) {
+          running = i;
+        }
+      }
+      if (completed != slots_.size()) {
+        index = completed;
+      } else if (pending != slots_.size()) {
+        index = pending;
+      } else if (running != slots_.size()) {
+        index = running;
+      }
+      AD_CONTRACT_CHECK(index < slots_.size() && !slots_[index].consumed_,
+                        "No more submitted morsels to consume");
+    }
 
     while (true) {
       if (cancelled_) {
@@ -495,6 +549,7 @@ class ExportJobState final
 
       if (slots_[index].status_ == MorselStatus::Completed) {
         AD_CORRECTNESS_CHECK(slots_[index].result_.has_value());
+        slots_[index].consumed_ = true;
         return std::move(*slots_[index].result_);
       }
 
@@ -521,6 +576,7 @@ class ExportJobState final
         slots_[index].profile_.wallDuration_ = endWall - startWall;
         slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
         slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
+        slots_[index].consumed_ = true;
         cv_.notify_all();
         return std::move(*slots_[index].result_);
       }
@@ -603,6 +659,9 @@ class ExportJobState final
   std::condition_variable cv_;
   std::vector<Slot> slots_;
   size_t nextSlotToConsume_{0};
+  // False when row order is semantically irrelevant (no LIMIT/OFFSET/export
+  // limit): morsels emit in completion order instead of slot order.
+  bool ordered_{true};
 };
 
 // -----------------------------------------------------------------------------
@@ -646,6 +705,11 @@ class ExportWorkSession {
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
     AD_CONTRACT_CHECK(state_ != nullptr);
     return state_->submitMorsel(std::move(task));
+  }
+
+  void setOrdered(bool ordered) {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    state_->setOrdered(ordered);
   }
 
   [[nodiscard]] bool hasMoreResults() const {
