@@ -219,10 +219,10 @@
      - Direct pointers to static delimiters (`<`, `>`, `\t`, `\n`).
      - Direct pointers to the arena string spans.
   3. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
-  4. The complete chunk is transmitted via a single `::writev()` or `io_uring_prep_send_zc` call.
+    4. The chunk is transmitted using scatter-gather I/O. Plain `::writev()` may copy data into kernel buffers; `io_uring_prep_send_zc` can avoid that copy when its completion and buffer-lifetime requirements are satisfied.
 
 ### 3. Performance Rationale
-* **Zero Intermediate Copies:** Memory copying drops from 3 intermediate copies per term to **0 copies**.
+* **Reduced Intermediate Copies:** Formatting avoids intermediate string concatenation; the actual copy count depends on whether plain `::writev()` or zero-copy send is used.
 * **Memory Bus Saturation Avoided:** Frees up CPU memory bus bandwidth for index decompression and cache prefetching.
 
 ### 4. Benchmarking & Verification Plan
