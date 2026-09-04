@@ -283,7 +283,7 @@ inline void sampleWorkers() {
 }
 }  // namespace detail
 
-// Formats the current totals as one line.
+// Format the current totals as one line.
 inline std::string report() {
   const ThreadCounters counters = total();
   const WorkerSample& sample = detail::workerSample();
