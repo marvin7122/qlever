@@ -175,8 +175,7 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   // Verify that the session transitions to `Revoking` while helper `0` is actively leased.
   EXPECT_EQ(session.state(), SessionState::Revoking);
 
-  // Allow morsel 0 to complete cooperatively
-  unblockMorsel0Promise.set_value();
+    unblockMorsel0Promise.set_value();
 
   // Consume morsel 0 (was executed by helper)
   int r0 = session.consumeNextResult();
