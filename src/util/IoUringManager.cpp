@@ -70,7 +70,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // bursty batch workload.
   //
   // `IORING_SETUP_SINGLE_ISSUER` tells the kernel that a single thread will
-  // submit all requests; it is safe here because QLever submits from a single
+  // submit all requests; it is Pooled rings are reused across query threads. Do not set IORING_SETUP_SINGLE_ISSUER because QLever submits from a single
   // thread.  An `IoUringPolicy` must therefore not be submitted to from more
   // than one thread over its lifetime.
   //
@@ -92,7 +92,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // SQPOLL requires Linux 5.13+ for unprivileged use (before that,
   // `CAP_SYS_ADMIN`), and `IORING_SETUP_SINGLE_ISSUER` requires 6.0. On any
   // kernel that rejects the combination, fall back to a plain ring instead of
-  // failing to open the vocabulary: SQPOLL is an optimization, not a
+  // failing to initialize the io_uring instance: SQPOLL is an optimization, not a
   // requirement.
   int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
   if (ret == -EINVAL || ret == -EPERM) {
