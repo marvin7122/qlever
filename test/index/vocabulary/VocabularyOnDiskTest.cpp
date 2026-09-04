@@ -340,7 +340,7 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
   });
 }
 
-// The new runtime parameters `vocabBatchIoNumManagers_` and
+// Specify the new runtime parameters `vocabBatchIoNumManagers_` and
 // `vocabBatchIoRingSize_` control the pool of persistent `BatchIoManager`s
 // created by `open`. They must be validated: a pool without managers would
 // make every batch lookup block forever, and the ring size is narrowed to an
