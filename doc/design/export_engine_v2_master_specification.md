@@ -1,4 +1,4 @@
-# QLever Fast-Path Streaming Export Engine (V2): Master Architectural Specification & Work Packages
+# QLever Fast-Path Streaming Export Engine (V2): Master Architectural Specification
 
 **Target Branch:** `feat/export-engine-v2-streaming`  
 **Repository:** `marvin7122/qlever`  
