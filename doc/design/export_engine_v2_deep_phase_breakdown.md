@@ -233,6 +233,7 @@ Each PR must remain independently reviewable and testable. Later PRs may depend 
      - Direct pointers to the arena string spans.
   3. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
   4. The complete chunk is transmitted via a single `::writev()` or `io_uring_prep_send_zc` call.
+  5. The vocabulary arena, static delimiter storage, and every span referenced by the `struct iovec` entries must remain alive and unchanged until the asynchronous transmission's completion event. None of these buffers may be reused, reset, or overwritten before that completion.
 
 ### 3. Performance Rationale
 * **Zero Intermediate Copies:** Memory copying drops from 3 intermediate copies per term to **0 copies**.
