@@ -143,7 +143,12 @@ std::optional<JitBytecodeProgram> tryFoldPrefixRegex(
   };
   std::vector<Range> ranges;
   for (const auto& prefix : prefixes) {
-    for (const auto& [begin, end] : index.prefixRanges(prefix).ranges()) {
+    // NOTE: bind the returned `PrefixRanges` to a local: iterating
+    // `index.prefixRanges(prefix).ranges()` directly would read through a
+    // reference into a temporary that is destroyed after the range
+    // initializer (undefined behavior).
+    const auto prefixRange = index.prefixRanges(prefix);
+    for (const auto& [begin, end] : prefixRange.ranges()) {
       const uint64_t lo = Id::makeFromVocabIndex(begin).getBits();
       const uint64_t hi = Id::makeFromVocabIndex(end).getBits();
       if (lo != hi) {
