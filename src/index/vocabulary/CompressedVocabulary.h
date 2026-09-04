@@ -111,7 +111,7 @@ CPP_template(typename UnderlyingVocabulary,
   // decompress each word with the decoder of its block. The result order
   // matches `indices`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    AD_CONTRACT_CHECK(!indices.empty());
+
     auto compressed = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressed->size() == indices.size());
 
