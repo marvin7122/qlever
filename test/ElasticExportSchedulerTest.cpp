@@ -122,7 +122,7 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
     });
   }
 
-  // The concurrent query finishes; active queries drop to 1
+  // Verify that the concurrent query finishes, reducing `activeForegroundQueries` to `1` and changing the state to `HelpersEligible`.
   scheduler.onForegroundQueryEnded();
   EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
