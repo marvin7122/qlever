@@ -87,7 +87,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
     // Pooled rings are reused across query threads. Do not set
   // `IORING_SETUP_SINGLE_ISSUER`.
   params.flags = IORING_SETUP_SQPOLL;
-  params.sq_thread_idle = kSqThreadIdleMs;  // ms before the SQ poller sleeps
+  params.sq_thread_idle = 50;  // Reduce idle time to 50 ms for better CPU efficiency
 
   // SQPOLL requires Linux 5.13+ for unprivileged use (before that,
   // `CAP_SYS_ADMIN`), and `IORING_SETUP_SINGLE_ISSUER` requires 6.0. On any
