@@ -81,11 +81,11 @@ IoUringPolicy::~IoUringPolicy() {
                    "`wait()`ed before destroying the policy. Draining them now "
                    "we deliberately do not call `drainOneCqe`.\n";
   }
-  // Reap the outstanding completions before tearing down the ring, so the
-  // kernel is no longer writing into any target buffer once we return. Do not
-  // call `drainAtLeast` here: it throws on I/O errors, and a destructor must
-  // not throw. Stop if `io_uring_wait_cqe` fails, to avoid spinning forever
-  // (it would not decrement the in-flight count).
+  // Wait for outstanding completions before tearing down the ring, so the
+  // kernel is no longer writing into any target buffer once we return. We do
+  // not fully reap (process) them here: drainAtLeast throws on I/O errors,
+  // and a destructor must not throw. Stop if `io_uring_wait_cqe` fails, to
+  // avoid spinning forever (it would not decrement the in-flight count).
   while (numInFlightReadRequests_ > 0) {
     io_uring_cqe* cqe = nullptr;
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
