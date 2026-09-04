@@ -35,8 +35,8 @@ CPP_concept InvariantStatefulClass =
 CPP_template(typename T)(
     requires InvariantStatefulClass<T>) class InvariantGuard {
  private:
-  // Non-owning pointer to the guarded object; the guard must not outlive this
-  // object.
+    // Store a non-owning pointer to the guarded object; ensure that the guard
+  // does not outlive the object.
   const T* self_;
   // Exception count at construction distinguishes normal scope exit from
   // stack unwinding, allowing the exit invariant check to be skipped when
