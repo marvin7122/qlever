@@ -215,7 +215,8 @@ NormalizedRDFString normalizeRDFLiteral(const std::string_view origLiteral) {
 namespace {
 // Append `input`, replacing each listed source character with `repl` in one
 // pass over the original bytes. Same semantics as a simultaneous
-// `absl::StrReplaceAll` on those pairs.
+// `absl::StrReplaceAll` for the non-overlapping single-character replacements
+// used in this file.
 void appendWithCharReplacements(
     std::string& out, std::string_view input,
     ql::span<const std::pair<char, std::string_view>> replacements) {
