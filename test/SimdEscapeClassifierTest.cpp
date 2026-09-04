@@ -82,7 +82,7 @@ TEST(SimdEscapeClassifierTest, CopiesAndEscapesAcrossChunkBoundaries) {
   turtle[32] = '\n';
   turtle[64] = '\r';
   std::string expected =
-      "\\\"" + std::string(30, 'a') + "\\\\\\n" + std::string(31, 'a') + "\\r";
+      "\\\"" + std::string(30, 'a') + R"(\\\n)" + std::string(31, 'a') + "\\r";
   EXPECT_EQ(escaped<EscapeFormat::Turtle>(turtle), expected);
 
   EXPECT_EQ(escaped<EscapeFormat::Csv>("a,\"b\n"), "a,\"\"b\n");
