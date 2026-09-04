@@ -74,21 +74,6 @@ std::vector<ResolvedCell> resolveColumn(const Index& index,
                                                          escapeCell<Format>);
 }
 
-const qlever::export_v2::ImmutableByteBuffer& csvComma() {
-  static const qlever::export_v2::ImmutableByteBuffer buf{std::string(",")};
-  return buf;
-}
-
-const qlever::export_v2::ImmutableByteBuffer& tsvTab() {
-  static const qlever::export_v2::ImmutableByteBuffer buf{std::string("\t")};
-  return buf;
-}
-
-const qlever::export_v2::ImmutableByteBuffer& newline() {
-  static const qlever::export_v2::ImmutableByteBuffer buf{std::string("\n")};
-  return buf;
-}
-
 std::string makeHeaderLine(const parsedQuery::SelectClause& selectClause,
                            RowFormat format) {
   std::vector<std::string> variables =
@@ -361,22 +346,29 @@ void ExportEngineV2::appendSerializedRows(
     AD_CORRECTNESS_CHECK(resolved[outCol].size() == n);
   }
 
-  const auto& separator = format == RowFormat::Csv ? csvComma() : tsvTab();
+  // Assemble the whole window into one string with a single coalesced append.
+  // Per-cell appends would create one builder segment per cell, and the
+  // builder's invariant guard scans every segment on each append: quadratic
+  // in the window size (~600 s for 1M H-size rows, measured). One append per
+  // window keeps segments per morsel in the single digits.
+  const char separator = format == RowFormat::Csv ? ',' : '\t';
+  std::string out;
   for (size_t i = 0; i < n; ++i) {
     for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
       if (outCol > 0) {
-        builder.appendOwned(separator.slice(0, separator.size()));
+        out.push_back(separator);
       }
       if (resolved[outCol].empty()) {
         continue;
       }
       auto& cell = resolved[outCol][i];
       if (cell.has_value()) {
-        builder.appendOwned(std::move(cell.value().first));
+        out.append(std::move(cell.value().first));
       }
     }
-    builder.appendOwned(newline().slice(0, newline().size()));
+    out.push_back('\n');
   }
+  builder.appendCopy(out);
 }
 
 ScatterGatherChunk ExportEngineV2::serializeTableChunk(
