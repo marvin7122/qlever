@@ -117,7 +117,7 @@
   3. Evaluates scan filters in-place using AVX2 SIMD equality comparisons (`_mm256_cmpeq_epi64`), directly producing active bitmasks without copying rows.
 
 ### 3. Performance Rationale
-* **DRAM Traffic Elimination:** In Legacy V1, a 10,000,000-row export writes and reads 240 MB of `IdTable` buffers to/from main DRAM. In V2, chunk vectors stay in L1/L2 CPU caches (0 DRAM roundtrips).
+* **Intermediate Materialization Avoidance:** Legacy V1 materializes the complete result in `IdTable` buffers. V2 processes fixed-size chunks and avoids that full-result write/read cycle; the chunks may still incur DRAM traffic when loaded, decompressed, or evicted.
 * **Memory Footprint Reduction:** Memory consumption drops from $O(N)$ (proportional to total query result size) to $O(1)$ (fixed 64 KB scratch vector).
 
 ### 4. Benchmarking & Verification Plan
