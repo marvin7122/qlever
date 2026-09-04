@@ -19,7 +19,6 @@
 #include "util/HashSet.h"
 #include "util/Log.h"
 #include "util/SimdUtils.h"
-#include "util/StringUtils.h"
 
 namespace RdfEscaping {
 using namespace std::string_literals;
