@@ -38,7 +38,10 @@ import sys
 from typing import List, Optional, Sequence, Tuple
 
 _BNODE_LABEL = re.compile(r"^_:[A-Za-z0-9_\-]+$")
+# Namespace for encoding variable names as predicate URIs when converting
+# SELECT solution mappings to RDF graphs for isomorphism comparison.
 _VAR_NS = "urn:qlever:var:"
+
 
 
 def _is_bnode(term: str) -> bool:
