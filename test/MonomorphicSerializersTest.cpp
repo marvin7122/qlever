@@ -13,6 +13,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #include "engine/export_v2/MonomorphicSerializers.h"
 
