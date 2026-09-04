@@ -412,3 +412,22 @@ TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
 
   scheduler.onForegroundQueryEnded();
 }
+
+// -----------------------------------------------------------------------------
+// Test 11: TrySubmitMorsel Reports Instead Of Firing
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, TrySubmitMorselReportsInsteadOfFiring) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  EXPECT_TRUE(session.trySubmitMorsel([]() { return std::string{"a"}; }));
+  EXPECT_EQ(session.totalSlots(), 1u);
+
+  session.sharedState()->cancel();
+  EXPECT_FALSE(session.trySubmitMorsel([]() { return std::string{"b"}; }));
+  EXPECT_EQ(session.totalSlots(), 1u);
+
+  scheduler.onForegroundQueryEnded();
+}

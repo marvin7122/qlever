@@ -437,35 +437,44 @@ class ExportJobState final
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
     AD_CONTRACT_CHECK(task != nullptr, "Cannot submit null morsel task");
     size_t index = 0;
+    AD_CONTRACT_CHECK(appendMorsel(std::move(task), &index),
+                      "Cannot submit morsel to closed or cancelled session");
+    return index;
+  }
+
+  // Soft version of `submitMorsel` for tasks that resubmit themselves (e.g.
+  // an abandoned remainder after revocation): reports `false` instead of
+  // firing when the session is closed or cancelled. The caller must drop the
+  // remainder on `false`; on cancellation the whole job is torn down anyway.
+  bool trySubmitMorsel(absl::AnyInvocable<ResultType()> task) {
+    if (task == nullptr) {
+      return false;
+    }
+    size_t index = 0;
+    if (!appendMorsel(std::move(task), &index)) {
+      return false;
+    }
     bool shouldEnqueue = false;
     uint64_t epochToSubmit = 0;
-
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      AD_CONTRACT_CHECK(!closed_, "Cannot submit morsel to closed session");
-      AD_CONTRACT_CHECK(!cancelled_,
-                        "Cannot submit morsel to cancelled session");
-
-      index = slots_.size();
-      Slot slot;
-      slot.status_ = MorselStatus::Pending;
-      slot.task_ = std::move(task);
-      slot.profile_.morselIndex_ = index;
-      slot.profile_.submittedAt_ = std::chrono::steady_clock::now();
-      slots_.push_back(std::move(slot));
-
       epochToSubmit = currentEpoch_.load(std::memory_order_relaxed);
       if (state_.load(std::memory_order_relaxed) ==
           SessionState::HelpersEligible) {
         shouldEnqueue = true;
       }
     }
-
     if (shouldEnqueue) {
       scheduler_->enqueueMorsel(
           OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index));
     }
-    return index;
+    return true;
+  }
+
+  // Submission epoch for a task created now. Morsel tasks compare it against
+  // the live epoch at checkpoints to notice revocation without locking.
+  [[nodiscard]] uint64_t currentEpoch() const {
+    return currentEpoch_.load(std::memory_order_relaxed);
   }
 
   // Row order is significant only when the query bounds the result
@@ -636,6 +645,23 @@ class ExportJobState final
   }
 
  private:
+  // Append a Pending slot; false when closed or cancelled. Shared core of
+  // `submitMorsel` (which fires) and `trySubmitMorsel` (which reports).
+  bool appendMorsel(absl::AnyInvocable<ResultType()> task, size_t* index) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_ || cancelled_) {
+      return false;
+    }
+    *index = slots_.size();
+    Slot slot;
+    slot.status_ = MorselStatus::Pending;
+    slot.task_ = std::move(task);
+    slot.profile_.morselIndex_ = *index;
+    slot.profile_.submittedAt_ = std::chrono::steady_clock::now();
+    slots_.push_back(std::move(slot));
+    return true;
+  }
+
   static std::chrono::nanoseconds getCpuDuration() noexcept {
 #if defined(__linux__)
     struct timespec ts;
@@ -692,6 +718,13 @@ class ExportWorkSession {
     return state_->jobId();
   }
 
+  // Shared ownership for morsel tasks that resubmit themselves (abandoned
+  // remainders). Keeps the state alive while any task can still observe it.
+  [[nodiscard]] std::shared_ptr<ExportJobState<ResultType>> sharedState()
+      const noexcept {
+    return state_;
+  }
+
   [[nodiscard]] SessionState state() const noexcept {
     AD_CONTRACT_CHECK(state_ != nullptr);
     return state_->state();
@@ -710,6 +743,16 @@ class ExportWorkSession {
   void setOrdered(bool ordered) {
     AD_CONTRACT_CHECK(state_ != nullptr);
     state_->setOrdered(ordered);
+  }
+
+  bool trySubmitMorsel(absl::AnyInvocable<ResultType()> task) {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    return state_->trySubmitMorsel(std::move(task));
+  }
+
+  [[nodiscard]] uint64_t currentEpoch() const {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    return state_->currentEpoch();
   }
 
   [[nodiscard]] bool hasMoreResults() const {
