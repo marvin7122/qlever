@@ -349,7 +349,7 @@ class ExportJobState final
       cv_.notify_all();
     }
 
-    // Enqueue pending morsels outside the lock
+    // Enqueue pending morsels outside the lock.
     if (!pendingIndicesToEnqueue.empty()) {
       auto self = this->shared_from_this();
       for (size_t index : pendingIndicesToEnqueue) {
