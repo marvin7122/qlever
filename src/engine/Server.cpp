@@ -38,6 +38,7 @@
 #include "parser/ParsedQuery.h"
 #include "parser/SparqlParser.h"
 #include "util/AsioHelpers.h"
+#include "util/AsyncStream.h"
 #include "util/Exception.h"
 #include "util/MemorySize/MemorySize.h"
 #include "util/ParseableDuration.h"
@@ -955,6 +956,19 @@ CPP_template_def(typename RequestT)(
   return std::move(queryId.value());
 }
 
+namespace {
+// Own `range` in the coroutine frame (parameter, not a `[&]` capture). Used to
+// attach `runStreamAsync` *outside* `ExportEngineV2::computeResultChunks`: a
+// producer thread nested in that coroutine failed to compile (91a9a7845).
+template <typename Range>
+cppcoro::generator<qlever::export_v2::ScatterGatherChunk> asScatterGatherBody(
+    Range range) {
+  for (auto& chunk : range) {
+    co_yield std::move(chunk);
+  }
+}
+}  // namespace
+
 // _____________________________________________________________________________
 CPP_template_def(typename RequestT, typename SendT)(
     requires ad_utility::httpUtils::HttpRequest<RequestT>)
@@ -1005,15 +1019,22 @@ CPP_template_def(typename RequestT, typename SendT)(
                      "concatenated strings (compression or response middleware)"
                   << std::endl;
     } else {
-      AD_LOG_INFO << "Using ExportEngineV2 scatter-gather HTTP body for "
+      AD_LOG_INFO << "Using ExportEngineV2 scatter-gather HTTP body "
+                     "(async prefetch) for "
                   << ad_utility::toString(mediaType) << " export" << std::endl;
       http::response<ql::engine::export_v2::scatter_gather_body> sgResponse{
           http::status::ok, request.version()};
       sgResponse.set(http::field::content_type,
                      ad_utility::toString(mediaType));
-      sgResponse.body() = ExportEngineV2::computeResultChunks(
-          parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-          cancellationHandle);
+      // Prefetch the next morsel on a producer thread owned by
+      // `runStreamAsync`, not by `computeResultChunks` (GCC coroutine frame).
+      constexpr size_t kIovecPrefetchDepth = 2;
+      sgResponse.body() =
+          asScatterGatherBody(ad_utility::streams::runStreamAsync(
+              ExportEngineV2::computeResultChunks(
+                  parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+                  cancellationHandle),
+              kIovecPrefetchDepth));
       sgResponse.keep_alive(request.keep_alive());
       sgResponse.prepare_payload();
       try {

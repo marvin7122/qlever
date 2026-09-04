@@ -272,6 +272,10 @@ cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
     ad_utility::SharedCancellationHandle cancellationHandle,
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
   AD_CONTRACT_CHECK(canHandle(parsedQuery, mediaType));
+  // Serialize on the caller thread. Do not spawn a producer thread here:
+  // GCC rewrites this function as a coroutine frame and rejected
+  // `std::thread` + `AsyncChunkPipeline` locals (91a9a7845). Overlap with
+  // HTTP send is `runStreamAsync` in `Server::sendStreamableResponse`.
   const auto format = rowFormatFor(mediaType).value();
   (void)scheduler;
   for (auto builder : buildSerializedMorsels(parsedQuery, qet, format,
