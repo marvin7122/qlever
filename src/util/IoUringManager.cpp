@@ -69,7 +69,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // below balances CPU consumption against wake-up latency for QLever's
   // bursty batch workload.
   //
-  // Do not set `IORING_SETUP_SINGLE_ISSUER`: pooled rings are reused across
+  // Idle time optimized for expected latency and burst frequency; Do not set `IORING_SETUP_SINGLE_ISSUER`: pooled rings are reused across
   // query threads, and that flag requires all submissions to originate from a
   // single thread for the ring's entire lifetime (requires Linux 6.0+). The
   // pool makes no such guarantee, so the flag cannot be set.
