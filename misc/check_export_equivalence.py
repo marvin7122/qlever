@@ -88,7 +88,12 @@ def _cell_to_term(cell: str):
 
 def _solutions_to_graph(header: Sequence[str],
                         rows: Sequence[Sequence[str]]):
+    """Encode SELECT solution mappings as an RDF graph for isomorphism
+    comparison. Each row becomes a distinct blank node; variable names are
+    used as predicate URIs so that blank-node correspondences across rows
+    are detected by rdflib.compare.isomorphic."""
     from rdflib import BNode, Graph, URIRef
+
 
     graph = Graph()
     variables = [_normalize_var(name) for name in header]
