@@ -42,6 +42,7 @@ using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
 using Literal = ad_utility::triple_component::Literal;
 
 // `0` for `construct-export-num-threads` (also used for SELECT export) means all logical cores.
+// The same parameter controls thread count for both CONSTRUCT and SELECT export.
 size_t resolveExportNumThreads() {
   const size_t n =
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
