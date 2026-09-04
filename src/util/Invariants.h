@@ -70,8 +70,8 @@ template <typename Derived>
 class WithInvariants {
  public:
   // ___________________________________________________________________________
-  // Lvalue-qualified so the guard can never be created for a temporary:
-  // it stores a raw pointer to `this`, which must outlive the guard's scope.
+    // Qualify this function for lvalues so the guard cannot be created for a
+  // temporary; it stores a raw pointer to `this`, which must outlive its scope.
   [[nodiscard]] auto makeInvariantGuard() const& {
     static_assert(
         InvariantStatefulClass<Derived>,
