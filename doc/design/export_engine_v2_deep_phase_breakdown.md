@@ -25,6 +25,19 @@
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## Required PR Merge Order
+
+Implement and merge the feature as phase-specific pull requests in this order:
+
+1. **PR 1 — Routing, feature gating, and automatic fallback:** Define the ingress route decision, supported-plan checks, and the Legacy V1 fallback path.
+2. **PR 2 — Push-based vectorized execution:** Add chunk production and execution without introducing serialization or I/O changes.
+3. **PR 3 — Serialization and SIMD kernels:** Add schema-specialized serializers and formatting kernels on top of the execution stream.
+4. **PR 4 — Scatter-gather and zero-copy I/O:** Add arena-backed views, HTTP chunk framing, and `writev`/`io_uring` integration.
+5. **PR 5 — Asynchronous buffering and backpressure:** Add the double-buffered transmission pipeline and bounded backpressure behavior.
+6. **PR 6 — Server integration and end-to-end verification:** Integrate the complete pipeline into the server and validate bit-equivalence and performance against V1.
+
+Each PR must remain independently reviewable and testable. Later PRs may depend on earlier merged PRs, but routing and fallback must land before execution, serialization, I/O, or server integration.
+
 ---
 
 # Phase 1: Ingress Routing, Feature Gating & Automatic Fallback
