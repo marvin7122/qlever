@@ -78,4 +78,4 @@ To maintain strict backward compatibility with 100% of existing queries and test
 1. **Information Hiding:** Internal SIMD registers, chunk rings, and `iovec` arrays are completely encapsulated within `ExportExecutionEngineV2`.
 2. **Zero Accounting Leakage:** Ring slot indices, partial buffer pointers, and backpressure state never leak outside the streamer.
 3. **Defining Errors Out of Existence:** Unsupported query shapes route cleanly to V1 at planning time.
-4. **Single-Core Discipline:** Interleaved compute and I/O runs asynchronously on the single query worker thread using non-blocking I/O.
+4. **Single-Core Discipline:** The query worker alternates between vector computation and readiness-based non-blocking socket operations; it does not wait synchronously for socket writes.
