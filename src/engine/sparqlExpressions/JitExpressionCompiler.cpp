@@ -149,16 +149,17 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         asmjit::x86::Gp a = regStack.back();
         regStack.pop_back();
         // Safe division: handled in registers with fallback if b == 0
-        asmjit::x86::Gp res = cc.new_gp64("divRes");
-        cc.xor_(res, res);
+        asmjit::x86::Gp quot = cc.new_gp64("quot");
+        asmjit::x86::Gp rem = cc.new_gp64("rem");
+        cc.xor_(quot, quot);
         asmjit::Label skipDiv = cc.new_label();
         cc.test(b, b);
         cc.jz(skipDiv);
-        cc.mov(res, a);
-        cc.cqo();
-        cc.idiv(b);
+        cc.mov(quot, a);
+        cc.xor_(rem, rem);
+        cc.idiv(rem, quot, b);
         cc.bind(skipDiv);
-        regStack.push_back(res);
+        regStack.push_back(quot);
         break;
       }
       case OpCode::MOD_INT: {
@@ -167,17 +168,17 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         regStack.pop_back();
         asmjit::x86::Gp a = regStack.back();
         regStack.pop_back();
-        asmjit::x86::Gp res = cc.new_gp64("modRes");
-        cc.xor_(res, res);
+        asmjit::x86::Gp quot = cc.new_gp64("quot");
+        asmjit::x86::Gp rem = cc.new_gp64("rem");
+        cc.xor_(rem, rem);
         asmjit::Label skipMod = cc.new_label();
         cc.test(b, b);
         cc.jz(skipMod);
-        cc.mov(res, a);
-        cc.cqo();
-        cc.idiv(b);
-        // idiv places remainder in rdx
+        cc.mov(quot, a);
+        cc.xor_(rem, rem);
+        cc.idiv(rem, quot, b);
         cc.bind(skipMod);
-        regStack.push_back(res);
+        regStack.push_back(rem);
         break;
       }
       case OpCode::CMP_GT_INT: {
