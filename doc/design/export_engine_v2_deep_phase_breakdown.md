@@ -164,7 +164,7 @@
   2. Dispatches to the monomorphic template:
      `MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>::serializeBatch(...)`
   3. Integers are converted using `formatIntBranchless` (0 division instructions).
-  4. Literal strings are checked for quotes/newlines 32 bytes at a time via `SimdEscapeClassifier`.
+  4. The serializer classifies each term before emission. Terms that require no escaping remain zero-copy spans. Terms containing format-sensitive characters are copied into a bounded per-chunk temporary formatted buffer, where the required escaping is applied before emission.
   5. Delimiters (tabs, quotes, angle brackets, newlines) are packed into 64-bit unsigned integers via `SwarDelimiterPacker` and written in single 64-bit store instructions.
 
 ### 3. Performance Rationale
@@ -215,15 +215,18 @@
   - `src/engine/export_v2/InPlaceHttpChunkFraming.h`
 * **Mechanics:**
   1. Decompressed vocabulary terms live in a page-aligned arena buffer (`CompactStringVector` / PMR Arena).
-  2. Instead of copying strings into a formatted buffer, the serializer creates an array of `struct iovec` descriptors containing:
-     - Direct pointers to static delimiters (`<`, `>`, `\t`, `\n`).
-     - Direct pointers to the arena string spans.
-  3. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
-  4. The complete chunk is transmitted via a single `::writev()` or `io_uring_prep_send_zc` call.
+  2. The serializer classifies every term before constructing the scatter-gather list:
+     - Terms that are already valid for the selected output format are represented by direct pointers to arena string spans.
+     - Terms requiring escaping are formatted into a bounded temporary buffer owned by the current chunk, and the corresponding `struct iovec` points to that formatted storage.
+  3. Static delimiters (`<`, `>`, `\t`, `\n`) remain direct pointers. `InPlaceHttpChunkFraming` pre-reserves 16 bytes at the buffer head and writes the HTTP hex chunk length (e.g. `1a4f0\r\n`) in-place.
+  4. If the temporary buffer cannot fit the next escaped term, the serializer flushes the current chunk and retries in a fresh chunk. If a single term exceeds the configured scratch capacity, it uses the bounded buffered formatter fallback rather than emitting an invalid span.
+  5. The resulting chunk is transmitted via `::writev()` or `io_uring_prep_send_zc`; the zero-copy path therefore applies only to unescaped terms.
 
 ### 3. Performance Rationale
-* **Zero Intermediate Copies:** Memory copying drops from 3 intermediate copies per term to **0 copies**.
-* **Memory Bus Saturation Avoided:** Frees up CPU memory bus bandwidth for index decompression and cache prefetching.
+* **Conditional Copying:** Unescaped terms incur no term copy; escaped terms incur one copy into the per-chunk temporary formatted buffer.
+* **Bounded Memory:** Arena storage, iovec descriptors, and escaping scratch space are bounded per in-flight chunk. Scratch capacity and the large-term fallback must be included in memory budgets.
+* **Throughput Scope:** Zero-copy throughput measurements apply to the unescaped fast path. Escaped-term and large-term fallback throughput must be reported separately, including scratch-buffer work.
+* **Memory Bus Trade-off:** The fast path avoids term copies, while the fallback deliberately spends bounded memory bandwidth to preserve correct output formatting.
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmarks:** `ScatterGatherBenchmark`, `HttpFramingBenchmark`.
@@ -327,7 +330,7 @@
 | :--- | :--- | :--- | :--- |
 | **Output Equivalence** | Canonical RDF text | Streamed RDF text | **100% Bit-Identical (`diff == 0`)** |
 | **Time-To-First-Byte (TTFB)**| 850 ms – 2,400 ms | < 5 ms | **>100x Lower Initial Latency** |
-| **Sustained Throughput** | 1.2M – 2.5M triples/s | 8.0M – 15.0M triples/s | **4x – 8x Sustained Throughput** |
-| **Memory Consumption** | 450 MB – 1.8 GB | < 16 MB (Fixed Arena) | **>95% Memory Reduction** |
+| **Sustained Throughput** | 1.2M – 2.5M triples/s | 8.0M – 15.0M triples/s on unescaped fast-path data; escaped and oversized-term fallback measured separately | **4x – 8x on the unescaped fast path; report fallback throughput separately** |
+| **Memory Consumption** | 450 MB – 1.8 GB | < 16 MB for arena, descriptors, and bounded escaping scratch | **>95% reduction for configured bounded chunks; include scratch and fallback buffers in the measurement** |
 | **Branch Mispredictions** | 4.2% – 8.5% | < 0.3% | **Zero Hot-Loop Mispredicts** |
 | **Instructions per Cycle (IPC)**| 0.85 – 1.20 | > 2.70 | **Hardware CPU Saturation** |
