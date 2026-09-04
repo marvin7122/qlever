@@ -9,12 +9,14 @@
 #include <gtest/gtest.h>
 
 #include <charconv>
+#include <cmath>
 #include <iterator>
 #include <limits>
 #include <string>
 #include <string_view>
 
 #include "engine/export_v2/MonomorphicSerializers.h"
+#include "global/ValueId.h"
 
 namespace {
 
@@ -49,11 +51,6 @@ class RecordingWriter {
 
   template <std::integral Value>
   void writeInteger(Value value) {
-    appendNumber(value);
-  }
-
-  template <std::floating_point Value>
-  void writeDouble(Value value) {
     appendNumber(value);
   }
 
@@ -100,39 +97,54 @@ TEST(MonomorphicSerializersTest, HandlesEmptyAndBoundaryValues) {
                                ColumnType::Boolean, ColumnType::Undefined>;
   RecordingWriter writer;
 
-  Serializer::serializeRow<RowFormat::Tsv>(writer, std::string_view{},
-                                           std::numeric_limits<int64_t>::min(),
-                                           false, 0);
+  Serializer::serializeRow<RowFormat::Tsv>(
+      writer, std::string_view{}, std::numeric_limits<int64_t>::min(),
+      Id::makeFromBool(false), 0);
 
   EXPECT_EQ(writer.output(), "T\t-9223372036854775808\tfalse\t\n");
 }
 
-// Correctness vs Legacy CSV (`idToStringAndType` / ExportIds.cpp). These
-// checks exist so we do not swap the live SELECT path onto CellWriter until
-// the bytes match. RecordingWriter::writeDouble uses std::to_chars, which is
-// what MonomorphicRowSerializer asks of a Writer.
-TEST(MonomorphicSerializersTest, DoubleOneDoesNotMatchLegacyEncodedCsv) {
+// Correctness vs Legacy CSV (`idToStringAndTypeForEncodedValue` in
+// `src/index/ExportIds.cpp`). These checks gate swapping the live SELECT path
+// onto CellWriter: every byte must match first.
+TEST(MonomorphicSerializersTest, DoubleMatchesLegacyEncodedCsv) {
   using Serializer = MonomorphicRowSerializer<ColumnType::Double>;
-  RecordingWriter writer;
-  Serializer::serializeRow<RowFormat::Csv>(writer, 1.0);
-  EXPECT_EQ(writer.output(), "1\n");
-  EXPECT_NE(writer.output(), "1.0\n");
+  for (const auto [value, legacy] :
+       {std::pair{1.0, "1.0\n"},
+        std::pair{-0.0, "-0.0\n"},
+        std::pair{0.5, "0.5\n"},
+        std::pair{153.07, "153.07\n"},
+        std::pair{1e300, "1e+300\n"},
+        std::pair{std::numeric_limits<double>::quiet_NaN(), "NaN\n"},
+        std::pair{std::numeric_limits<double>::infinity(), "INF\n"},
+        std::pair{-std::numeric_limits<double>::infinity(), "-INF\n"}}) {
+    RecordingWriter writer;
+    Serializer::serializeRow<RowFormat::Csv>(writer, value);
+    EXPECT_EQ(writer.output(), legacy);
+  }
 }
 
-TEST(MonomorphicSerializersTest, BooleanDoesNotUseEncodedZeroOneForms) {
+TEST(MonomorphicSerializersTest, BooleanMatchesLegacyBoolLiteral) {
   using Serializer = MonomorphicRowSerializer<ColumnType::Boolean>;
-  RecordingWriter writer;
-  Serializer::serializeRow<RowFormat::Csv>(writer, false);
-  EXPECT_EQ(writer.output(), "false\n");
-  EXPECT_NE(writer.output(), "0\n");
+  for (const auto [id, legacy] : {std::pair{Id::makeFromBool(false), "false\n"},
+                                  std::pair{Id::makeFromBool(true), "true\n"},
+                                  std::pair{Id::makeBoolFromZeroOrOne(false),
+                                            "0\n"},
+                                  std::pair{Id::makeBoolFromZeroOrOne(true),
+                                            "1\n"}}) {
+    RecordingWriter writer;
+    Serializer::serializeRow<RowFormat::Csv>(writer, id);
+    EXPECT_EQ(writer.output(), legacy);
+  }
 }
 
-TEST(MonomorphicSerializersTest, CsvIriKeepsBracketsUnlikeLegacySelectCsv) {
+TEST(MonomorphicSerializersTest, CsvIriWritesBareContentLikeLegacySelectCsv) {
+  // The vocabulary path hands the writer bare content (Legacy strips `<>`
+  // via `removeQuotesAndAngleBrackets`), so the CSV writer only escapes.
   using Serializer = MonomorphicRowSerializer<ColumnType::Iri>;
   RecordingWriter writer;
-  Serializer::serializeRow<RowFormat::Csv>(writer, "<https://example.org/x>");
-  EXPECT_EQ(writer.output(), "C<https://example.org/x>\n");
-  EXPECT_NE(writer.output(), "https://example.org/x\n");
+  Serializer::serializeRow<RowFormat::Csv>(writer, "https://example.org/x");
+  EXPECT_EQ(writer.output(), "Chttps://example.org/x\n");
 }
 
 TEST(MonomorphicSerializersTest, ExposesTheStaticSchema) {
