@@ -9,6 +9,8 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_MONOMORPHICSERIALIZERS_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_MONOMORPHICSERIALIZERS_H
 
+#include <absl/strings/str_format.h>
+
 #include <array>
 #include <cmath>
 #include <concepts>
@@ -58,13 +60,12 @@ concept StringLike = requires(const Value& value) { std::string_view{value}; };
     return value > 0 ? "INF" : "-INF";
   }
   double intPart = 0.0;
-  char buffer[64];
   if (std::modf(value, &intPart) == 0.0) {
-    const int length = std::snprintf(buffer, sizeof(buffer), "%.1f", value);
-    return std::string{buffer, static_cast<size_t>(length)};
+    // Integral doubles grow beyond any fixed buffer (`%.1f` of `1e300` is 301
+    // digits), so format dynamically, exactly like Legacy.
+    return absl::StrFormat("%.1f", value);
   }
-  const int length = std::snprintf(buffer, sizeof(buffer), "%.13g", value);
-  std::string out{buffer, static_cast<size_t>(length)};
+  std::string out = absl::StrFormat("%.13g", value);
   if (out.find_last_of(".e") == std::string::npos) {
     out += ".0";
   }
