@@ -115,8 +115,11 @@ SelectedColumns selectedColumns(const ParsedQuery& parsedQuery,
 
 // One builder per header / 8192-row morsel. Callers choose finalizeToString
 // (default HTTP) or finalize (scatter-gather HTTP). When `scheduler` is set
-// (live V2 default), CPU serialize runs on `queryThreadPool_` with ordered
-// consume on this thread; helpers never write the socket.
+// (live V2 default), CPU serialize runs on `queryThreadPool_` and the
+// coordinator consumes here; helpers never write the socket. Without
+// LIMIT/OFFSET/export limits the row order is semantically irrelevant, so
+// morsels emit in completion order; bounded queries keep deterministic slot
+// order.
 //
 // The morsel plans stream straight from the lazy result blocks: every segment
 // serializes from its block in place, so there is no `sliced` copy and no
@@ -167,6 +170,10 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
                  "queryThreadPool_ (no extra V2 threads)"
               << std::endl;
   auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
+  const auto& limitOffset = parsedQuery._limitOffset;
+  session.setOrdered(limitOffset._limit.has_value() || limitOffset._offset != 0 ||
+                     limitOffset.textLimit_.has_value() ||
+                     limitOffset.exportLimit_.has_value());
   auto columnsPtr = std::make_shared<std::vector<std::optional<ColumnIndex>>>(
       columns.indices_);
   auto latticePtr =
