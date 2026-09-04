@@ -227,7 +227,7 @@
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmarks:** `ScatterGatherBenchmark`, `HttpFramingBenchmark`.
-* **Validation:** Verified across 128B to 4096B literal sizes on Ural (`exit=0`).
+* **Validation plan:** Verify behavior across 128B to 4096B literal sizes and require a successful test exit status.
 * **Metrics:** Memory copy bandwidth savings (GB/s) and single-core CPU utilization percentage.
 
 ---
