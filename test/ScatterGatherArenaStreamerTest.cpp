@@ -169,6 +169,24 @@ TEST(ScatterGatherArenaStreamerTest, FinalizeToStringEmpty) {
   EXPECT_EQ(std::move(builder).finalizeToString(), "");
 }
 
+TEST(ScatterGatherArenaStreamerTest, VisitSegmentsMatchesToString) {
+  ImmutableByteBuffer arena{"XYZ"};
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy("<");
+  builder.appendOwned(arena.slice(0, 3));
+  builder.appendCopy(">");
+  auto chunk = std::move(builder).finalize();
+  std::string joined;
+  std::vector<size_t> sizes;
+  chunk.visitSegments([&](std::string_view bytes) {
+    joined.append(bytes);
+    sizes.push_back(bytes.size());
+  });
+  EXPECT_EQ(joined, chunk.toString());
+  EXPECT_EQ(joined, "<XYZ>");
+  EXPECT_EQ(sizes.size(), 3u);
+}
+
 TEST(ScatterGatherArenaStreamerTest, LimitsEachWritevBatch) {
   ScatterGatherChunkBuilder builder;
   std::vector<ImmutableByteBuffer> buffers;

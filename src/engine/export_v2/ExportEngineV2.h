@@ -79,7 +79,17 @@ class ExportEngineV2 {
 
   // Compute streamed query export results using the push-driven V2 pipeline
   // for eligible SELECT CSV/TSV requests; otherwise delegates to Legacy V1.
+  // Default HTTP path: one `std::string` per morsel (`export-send=string`).
   static cppcoro::generator<std::string> computeResult(
+      const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+      ad_utility::MediaType mediaType,
+      ad_utility::SharedCancellationHandle cancellationHandle,
+      ad_utility::export_v2::ElasticExportScheduler* scheduler = nullptr);
+
+  // Same serialize as `computeResult`, but each morsel is a ScatterGatherChunk
+  // for `export-send=iovec`. Requires `canHandle`; does not fall back to
+  // Legacy.
+  static cppcoro::generator<ScatterGatherChunk> computeResultChunks(
       const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
       ad_utility::MediaType mediaType,
       ad_utility::SharedCancellationHandle cancellationHandle,
