@@ -411,7 +411,7 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   EXPECT_EQ(session.consumeNextResult(), 100);
 
   // Verify lease accounting did not leak
-  EXPECT_EQ(scheduler.totalActiveHelpers(), 0u);
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
 }
 
 // -----------------------------------------------------------------------------
@@ -435,5 +435,5 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
   // Shutdown scheduler while queue may contain pending items under high load
   // Must return promptly without deadlock or infinite spin loop
   scheduler.shutdown();
-  EXPECT_EQ(scheduler.totalActiveHelpers(), 0u);
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
 }
