@@ -42,12 +42,8 @@ struct EvaluationConfig {
   ad_utility::DeduplicationMode mode_ = ad_utility::DeduplicationMode::none();
 
   // Deduplicator shared by all chunks of a parallel CONSTRUCT export.
-  // Uses `std::shared_ptr` because the deduplicator uses shared ownership
-  // across parallel chunks; a value or `std::optional` member would copy
-  // or move with each chunk rather than sharing one instance, so we use
-  // `std::shared_ptr` for shared ownership. Null means the caller did not
-  // share one; `evaluateTables` then creates a private instance when `mode_`
-  // is not `None`.
+  // Null means the caller did not share one; `evaluateTables` creates a
+  // private instance when `mode_` is not `None`.
   std::shared_ptr<ConstructDeduplicator> sharedDeduplicator_ = nullptr;
 };
 
