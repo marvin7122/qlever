@@ -51,7 +51,7 @@ class MockInvariantClass
 // Define a class that lacks `checkInvariants() const` to verify concept failure.
 struct ClassWithoutInvariants {};
 
-// Check the invariant-stateful-class concept for supported and unsupported types.
+// Check the `InvariantStatefulClass` concept for supported and unsupported types.
 static_assert(ad_utility::InvariantStatefulClass<MockInvariantClass>);
 static_assert(!ad_utility::InvariantStatefulClass<ClassWithoutInvariants>);
 
