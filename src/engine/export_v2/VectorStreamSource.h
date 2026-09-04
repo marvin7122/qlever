@@ -46,7 +46,7 @@ struct EqualityFilter {
   Id value;
 };
 
-// Rechunk lazy QLever result blocks and push them into a synchronous sink.
+// Rechunk QLever result blocks and push them into a synchronous sink.
 // The source is stateless, so concurrent and nested calls are independent.
 //
 // Each sink argument owns the local vocabulary entries referenced by its IDs.
