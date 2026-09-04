@@ -305,6 +305,47 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
 }
 
 // _____________________________________________________________________________
+// Focused tests for idsToStringAndTypeDepth2 pipeline behavior
+TEST(ExportIds, idsToStringAndTypeDepth2PipelineTests) {
+  // Test single element
+  {
+    auto qec = ad_utility::testing::getQec(" <p> <o> .");
+    const Index& index = qec->getIndex();
+    LocalVocab localVocab{};
+    auto getId = ad_utility::testing::makeGetId(index);
+    Id singleId = getId("\"hello\"");
+    auto result = ql::exportIds::idsToStringAndTypeDepth2(
+        index, ql::span<const Id>{singleId}, localVocab);
+    ASSERT_EQ(result.size(), 1u);
+    EXPECT_EQ(result[0], ql::exportIds::idToStringAndType(index, singleId, localVocab));
+  }
+
+  // Test duplicate indices
+  {
+    auto qec = ad_utility::testing::getQec(" <p> <o> .  <p> <o> ");
+    const Index& index = qec->getIndex();
+    LocalVocab localVocab{};
+    auto getId = ad_utility::testing::makeGetId(index);
+    std::vector<Id> dupIds = {getId("<p>"), getId("<p>")};
+    auto result = ql::exportIds::idsToStringAndTypeDepth2(
+        index, ql::span<const Id>{dupIds}, localVocab);
+    EXPECT_EQ(result.size(), 2u);
+  }
+
+  // Test exception propagation from underlying vocabulary
+  {
+    auto qec = ad_utility::testing::getQec(" <p> <o> .");
+    const Index& index = qec->getIndex();
+    LocalVocab localVocab{};
+    auto getId = ad_utility::testing::makeGetId(index);
+    Id undefId = ad_utility::testing::UndefId();
+    auto result = ql::exportIds::idsToStringAndTypeDepth2(
+        index, ql::span<const Id>{undefId}, localVocab);
+    EXPECT_EQ(result, std::nullopt);
+  }
+}
+
+// _____________________________________________________________________________
 // Empty span returns an empty vector.
 TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");
