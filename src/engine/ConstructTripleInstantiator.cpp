@@ -99,8 +99,8 @@ std::vector<EvaluatedTriple> instantiateBatch(
 }
 
 namespace {
-// Returns true iff `formatTerm` (and `appendFormattedTerm`) emit `term` in the
-// fully qualified form `"value"^^<datatype>` as opposed to the short form
+// Return true if `formatTerm` (and `appendFormattedTerm`) emit `term` in the
+// fully qualified form `"value"^^<datatype>` instead of the short form
 // without quotation marks.
 bool needsDatatypeWrapper(const EvaluatedTermData& term, bool includeDataType) {
   if (term.rdfTermDataType_ == nullptr) {
