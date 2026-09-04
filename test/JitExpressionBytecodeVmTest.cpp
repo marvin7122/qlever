@@ -247,12 +247,13 @@ TEST(JitExpressionBytecodeVmTest, FilterOperationIntegration) {
 }
 
 TEST(JitExpressionBytecodeVmTest, NativeAsmJitFilterCompilationAndExecution) {
+  using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;
   QueryExecutionContext* qec = ad_utility::testing::getQec();
   qec->getQueryTreeCache().clearAll();
 
   // Test with a larger table (100 rows) to test morsel processing
-  std::vector<std::vector<int64_t>> data;
+  VectorTable data;
   for (int64_t i = 0; i < 100; ++i) {
     data.push_back({i, i * 2});
   }
@@ -285,3 +286,4 @@ TEST(JitExpressionBytecodeVmTest, NativeAsmJitFilterCompilationAndExecution) {
   ASSERT_TRUE(result->isFullyMaterialized());
   EXPECT_EQ(result->idTableView().size(), 100u);
 }
+
