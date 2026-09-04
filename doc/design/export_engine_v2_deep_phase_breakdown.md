@@ -222,7 +222,7 @@
   4. The complete chunk is transmitted via a single `::writev()` or `io_uring_prep_send_zc` call.
 
 ### 3. Performance Rationale
-* **Zero Intermediate Copies:** Memory copying drops from 3 intermediate copies per term to **0 copies**.
+* **Reduced Intermediate Copies:** The serializer avoids copying vocabulary spans into a temporary per-term formatting buffer; the remaining framing, kernel, and buffer-lifetime costs depend on the selected transport.
 * **Memory Bus Saturation Avoided:** Frees up CPU memory bus bandwidth for index decompression and cache prefetching.
 
 ### 4. Benchmarking & Verification Plan
