@@ -47,9 +47,7 @@ struct RuntimeParameters {
   // between otherwise equal queries.
   Bool stripColumns_{false, "strip-columns"};
 
-  // If the time estimate for a sort operation is larger by more than this
-  // factor than the remaining time, then the sort is canceled with a
-  // timeout exception.
+  // Cancel a sort operation if its time estimate exceeds the remaining time by more than this factor.
   Double sortEstimateCancellationFactor_{3.0,
                                          "sort-estimate-cancellation-factor"};
   SizeT cacheMaxNumEntries_{1000, "cache-max-num-entries"};
