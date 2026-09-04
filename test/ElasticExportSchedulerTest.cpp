@@ -253,8 +253,7 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
 
   startedFuture.wait();
 
-  // Cancel session
-  session.cancel();
+    session.cancel();
   EXPECT_EQ(session.state(), SessionState::Closed);
 
   // Unblock helper morsel
