@@ -11,12 +11,15 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "engine/QueryExecutionTree.h"
 #include "engine/sparqlExpressions/LiteralExpression.h"
 #include "global/ValueId.h"
 #include "parser/Alias.h"
+#include "parser/GraphPattern.h"
+#include "parser/GraphPatternOperation.h"
 #include "parser/ParsedQuery.h"
 #include "rdfTypes/Variable.h"
 
@@ -120,10 +123,61 @@ struct ColumnLatticeResult {
   return ColumnLattice::Union;
 }
 
+// Lattice for one `BIND` target in the graph pattern: `BIND(1 AS ?x)` is
+// `Int`, a non-constant `BIND` is `Union`. `std::nullopt` means no `BIND`
+// for the variable here. Recurses into plain `{ }` groups only: a `BIND`
+// inside `GRAPH` binds a subset of rows and proves nothing about the whole
+// column. Disagreeing `BIND`s (possible across `UNION` branches) combine to
+// `Union`.
+[[nodiscard]] inline std::optional<ColumnLattice> latticeForBindTarget(
+    const parsedQuery::GraphPattern& pattern, const Variable& variable) {
+  std::optional<ColumnLattice> found;
+  const auto combine = [&found](ColumnLattice lattice) {
+    if (!found.has_value()) {
+      found = lattice;
+    } else if (found.value() != lattice) {
+      found = ColumnLattice::Union;
+    }
+  };
+  for (const auto& operation : pattern._graphPatterns) {
+    // `Union` is absorbing under `combine`, so stop at the first proof.
+    if (found == ColumnLattice::Union) {
+      return found;
+    }
+    if (const auto* bind = std::get_if<parsedQuery::Bind>(&operation)) {
+      if (bind->_target == variable) {
+        const auto* idExpression =
+            dynamic_cast<const sparqlExpression::IdExpression*>(
+                bind->_expression.getPimpl());
+        combine(idExpression == nullptr
+                    ? ColumnLattice::Union
+                    : latticeForDatatype(idExpression->value().getDatatype()));
+      }
+      continue;
+    }
+    if (const auto* group =
+            std::get_if<parsedQuery::GroupGraphPattern>(&operation)) {
+      if (std::holds_alternative<std::monostate>(group->graphSpec_)) {
+        if (auto inner = latticeForBindTarget(group->_child, variable);
+            inner.has_value()) {
+          combine(inner.value());
+        }
+      }
+    }
+  }
+  return found;
+}
+
 // Lattice for one variable from the query plan: a `BIND` constant yields its
 // datatype (e.g. `BIND(1 AS ?x)` is `Int`); anything else is `Union`.
+// `BIND` lives in the graph pattern, `SELECT (expr AS ?v)` aliases are the
+// fallback.
 [[nodiscard]] inline ColumnLattice latticeForVariable(
     const ParsedQuery& query, const Variable& variable) {
+  if (auto bind = latticeForBindTarget(query._rootGraphPattern, variable);
+      bind.has_value()) {
+    return bind.value();
+  }
   for (const auto& alias : query.getAliases()) {
     if (alias._target == variable) {
       const auto* idExpression =
