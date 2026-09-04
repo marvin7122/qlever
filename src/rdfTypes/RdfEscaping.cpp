@@ -220,7 +220,8 @@ NormalizedRDFString normalizeRDFLiteral(const std::string_view origLiteral) {
 
 // __________________________________________________________________________
 std::string validRDFLiteralFromNormalized(std::string_view normLiteral) {
-  AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'));
+  AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'),
+                    "Normalized RDF literal must start with a double quote");
   // The contract that there is a closing quote (a quote at a position > 0)
   // is checked here; it is equivalent to the old
   // `AD_CONTRACT_CHECK(find('"', 1) != npos)`.
