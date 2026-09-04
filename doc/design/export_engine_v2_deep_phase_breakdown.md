@@ -246,9 +246,9 @@
         ┌──────────────────────────────┐              ┌──────────────────────────────┐
         │ Active Network Transmission  │              │ Simultaneous Chunk Generation│
         ├──────────────────────────────┤              ├──────────────────────────────┤
-        │ • NIC transmitting via DMA   │              │ • CPU unrolling rows         │
-        │ • Zero CPU intervention      │              │ • SIMD radix & escape scan   │
-        │ • Socket draining            │              │ • Assembling next chunk      │
+                │ • NIC transmitting via DMA   │              │ • CPU unrolling rows         │
+        │ • No CPU payload copying     │              │ • SIMD radix & escape scan   │
+        │ • Completion/backpressure handled │          │ • Assembling next chunk      │
         └──────────────┬───────────────┘              └──────────────┬───────────────┘
                        │                                             │
                        └──────────────────────┬──────────────────────┘
