@@ -169,8 +169,7 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
 
     morsel0Started.wait();
 
-  // A new foreground query starts! (count = 2)
-  scheduler.onForegroundQueryStarted();
+    scheduler.onForegroundQueryStarted();
   EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
 
   // Verify that the session transitions to `Revoking` while helper `0` is actively leased.
