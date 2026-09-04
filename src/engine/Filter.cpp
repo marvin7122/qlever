@@ -155,21 +155,32 @@ CPP_template_def(int WIDTH,
     return;
   }
 
-  // Attempt Native x86-64 JIT (AsmJit) compilation & execution
-  auto optJitCompiled = ql::engine::jit::JitExpressionCompiler::compile(
+  // Probe-compile once for the JIT backends below. Programs containing
+  // `DIV_INT` are excluded: the backends implement truncating integer
+  // division, while the legacy evaluation divides via doubles (see
+  // `JitExpressionBytecodeVm::containsDivision`), so they can disagree.
+  auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
       *_expression.getPimpl(), _subtree->getVariableColumns());
-  if (optJitCompiled.has_value()) {
-    optJitCompiled.value().executeFilter<WIDTH>(inputTable, resultTable,
-                                                cancellationHandle_);
-    dynamicResultTable = std::move(resultTable).toDynamic();
-    checkCancellation();
-    return;
+  const bool jitExact =
+      optProgram.has_value() &&
+      !ql::engine::jit::JitExpressionBytecodeVm::containsDivision(
+          optProgram.value());
+
+  // Attempt Native x86-64 JIT (AsmJit) compilation & execution
+  if (jitExact) {
+    auto optJitCompiled = ql::engine::jit::JitExpressionCompiler::compile(
+        *_expression.getPimpl(), _subtree->getVariableColumns());
+    if (optJitCompiled.has_value()) {
+      optJitCompiled.value().executeFilter<WIDTH>(inputTable, resultTable,
+                                                  cancellationHandle_);
+      dynamicResultTable = std::move(resultTable).toDynamic();
+      checkCancellation();
+      return;
+    }
   }
 
   // Attempt JIT bytecode interpretation for simple expressions
-  auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
-      *_expression.getPimpl(), _subtree->getVariableColumns());
-  if (optProgram.has_value()) {
+  if (jitExact) {
     ql::engine::jit::JitExpressionBytecodeVm::executeFilter<WIDTH>(
         optProgram.value(), inputTable, resultTable, cancellationHandle_);
     dynamicResultTable = std::move(resultTable).toDynamic();

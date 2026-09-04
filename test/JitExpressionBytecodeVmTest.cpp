@@ -10,6 +10,7 @@
 
 #include <vector>
 
+#include "engine/Bind.h"
 #include "engine/Filter.h"
 #include "engine/ValuesForTesting.h"
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
@@ -17,6 +18,7 @@
 #include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/sparqlExpressions/RelationalExpressions.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
+#include "parser/GraphPatternOperation.h"
 #include "util/IdTableHelpers.h"
 #include "util/IndexTestHelpers.h"
 
@@ -330,3 +332,75 @@ TEST(JitExpressionBytecodeVmTest, IdEqualityAndRangeOpcodes) {
     EXPECT_EQ(program.execute(std::vector<int64_t>{0}), 0);
   }
 }
+
+TEST(JitExpressionBytecodeVmTest, DivisionFallsBackToLegacyEvaluation) {
+  // Regression test: the JIT backends implement truncating integer division,
+  // but the legacy evaluation divides via doubles (see `DivideImpl`), so
+  // programs containing `DIV_INT` must fall back. Rows where the true
+  // quotient is nonzero but truncates to zero (1/2, 2/4) or infinite (1/0)
+  // are kept by the legacy evaluation and must also be kept here.
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  IdTable inputTable =
+      makeIdTableFromVector({{1, 2}, {2, 4}, {4, 2}, {1, 0}, {0, 5}}, I);
+  ValuesForTesting values{qec,
+                          std::move(inputTable),
+                          {Variable{"?x"}, Variable{"?y"}},
+                          false,
+                          {},
+                          LocalVocab{},
+                          std::nullopt,
+                          true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+
+  auto expr = makeDivideExpression(
+      std::make_unique<VariableExpression>(Variable{"?x"}),
+      std::make_unique<VariableExpression>(Variable{"?y"}));
+  Filter filter{qec,
+                std::make_shared<QueryExecutionTree>(std::move(subTree)),
+                {std::move(expr), "?x / ?y"}};
+
+  auto result = filter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  // All rows except (0, 5) have a nonzero (possibly infinite) quotient.
+  EXPECT_EQ(result->idTableView(),
+            makeIdTableFromVector({{1, 2}, {2, 4}, {4, 2}, {1, 0}}, I));
+}
+
+TEST(JitExpressionBytecodeVmTest, ProgramPredicates) {
+  // `containsDivision` and `hasExactIntegerSemantics` gate the JIT backends.
+  JitBytecodeProgram arith;
+  arith.addInstruction(OpCode::LOAD_COL_INT, 0);
+  arith.addInstruction(OpCode::LOAD_CONST_INT, 2);
+  arith.addInstruction(OpCode::MUL_INT);
+  arith.addInstruction(OpCode::RET);
+  EXPECT_FALSE(JitExpressionBytecodeVm::containsDivision(arith));
+  EXPECT_TRUE(JitExpressionBytecodeVm::hasExactIntegerSemantics(arith));
+
+  JitBytecodeProgram withDiv;
+  withDiv.addInstruction(OpCode::LOAD_COL_INT, 0);
+  withDiv.addInstruction(OpCode::LOAD_CONST_INT, 2);
+  withDiv.addInstruction(OpCode::DIV_INT);
+  withDiv.addInstruction(OpCode::RET);
+  EXPECT_TRUE(JitExpressionBytecodeVm::containsDivision(withDiv));
+  EXPECT_FALSE(JitExpressionBytecodeVm::hasExactIntegerSemantics(withDiv));
+
+  JitBytecodeProgram withCmp;
+  withCmp.addInstruction(OpCode::LOAD_COL_INT, 0);
+  withCmp.addInstruction(OpCode::LOAD_CONST_INT, 2);
+  withCmp.addInstruction(OpCode::CMP_GT_INT);
+  withCmp.addInstruction(OpCode::RET);
+  EXPECT_FALSE(JitExpressionBytecodeVm::containsDivision(withCmp));
+  // Comparisons yield booleans, not integers, in legacy evaluation.
+  EXPECT_FALSE(JitExpressionBytecodeVm::hasExactIntegerSemantics(withCmp));
+
+  JitBytecodeProgram withIdOp;
+  withIdOp.addInstruction(OpCode::LOAD_COL_ID, 0);
+  withIdOp.addInstruction(OpCode::RET);
+  EXPECT_FALSE(JitExpressionBytecodeVm::hasExactIntegerSemantics(withIdOp));
+}
+

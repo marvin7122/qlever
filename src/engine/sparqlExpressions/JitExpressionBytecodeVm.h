@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <optional>
@@ -894,6 +895,41 @@ class JitExpressionBytecodeVm {
       }
     }
   }
-};
 
-}  // namespace ql::engine::jit
+  // True if the program contains a `DIV_INT` instruction. The JIT backends
+  // implement truncating integer division, while the legacy evaluation
+  // divides via doubles (see `DivideImpl` in `NumericBinaryExpressions.cpp`):
+  // `FILTER(?x / ?y)` keeps rows where the true quotient is nonzero but
+  // truncates to zero (e.g. `1 / 2`), and keeps rows with infinite quotient
+  // (e.g. `1 / 0`), so such programs must fall back to legacy evaluation.
+  static bool containsDivision(const JitBytecodeProgram& program) {
+    return std::any_of(
+        program.instructions().begin(), program.instructions().end(),
+        [](const Instruction& inst) { return inst.op == OpCode::DIV_INT; });
+  }
+
+  // True if the program evaluates to plain integers with legacy-identical
+  // semantics: integer arithmetic over integer inputs only. Excluded are
+  // `DIV_INT` (see `containsDivision`) as well as all comparison and ID
+  // opcodes, which produce boolean (not integer) results in the legacy
+  // evaluation and therefore must not be materialized as value columns.
+  static bool hasExactIntegerSemantics(const JitBytecodeProgram& program) {
+    return std::all_of(program.instructions().begin(),
+                       program.instructions().end(),
+                       [](const Instruction& inst) {
+                         switch (inst.op) {
+                           case OpCode::LOAD_COL_INT:
+                           case OpCode::LOAD_CONST_INT:
+                           case OpCode::ADD_INT:
+                           case OpCode::SUB_INT:
+                           case OpCode::MUL_INT:
+                           case OpCode::MOD_INT:
+                           case OpCode::RET:
+                             return true;
+                           default:
+                             return false;
+                         }
+                       });
+  }
+
+};
