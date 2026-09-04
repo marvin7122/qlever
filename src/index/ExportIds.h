@@ -239,6 +239,9 @@ void resolveNonVocabIndexIds(
   });
 }
 
+// NOTE: The batch is deliberately not sorted by vocabulary position: the
+// io_uring backend reorders the reads anyway, and only the synchronous
+// fallback could profit from sequential file access.
 inline std::unique_ptr<VocabLookupHandleBase> beginResolveVocabIndexIds(
     const Index& index, ql::span<const Id> ids,
     ql::span<const size_t> positions) {
