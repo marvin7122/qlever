@@ -195,8 +195,7 @@ class SplitVocabulary {
     return scanAllImpl(std::make_index_sequence<numberOfVocabs>{});
   }
 
-  // Partition `indices` by marker and forward each group to the matching
-  // underlying `lookupBatch`. Return results in the order of `indices`,
+  // Partition `indices` by marker and forward each group to the matching underlying `lookupBatch`. Return results in the order of `indices`,
   // including duplicates and mixed markers. Ensure that
   // `OnDiskCompressedGeoSplit` uses the on-disk batch path instead of walking
   // `operator[]`.
