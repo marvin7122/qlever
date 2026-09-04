@@ -1,6 +1,4 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+
 
 #ifndef QLEVER_SRC_UTIL_SIMDUTILS_H
 #define QLEVER_SRC_UTIL_SIMDUTILS_H
