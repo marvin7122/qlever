@@ -385,7 +385,7 @@ class ExportJobState final
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (morselIndex >= slots_.size() ||
-        slots_[morselIndex].status_ != MorselStatus::Pending) {
+          slots_[morselIndex].status_ != MorselStatus::Pending) {
         return;
       }
       if (cancelled_ ||

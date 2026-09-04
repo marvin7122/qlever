@@ -437,4 +437,3 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
   scheduler.shutdown();
   EXPECT_EQ(scheduler.totalActiveHelpers(), 0u);
 }
-
