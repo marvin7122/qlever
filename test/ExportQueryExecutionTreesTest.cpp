@@ -2413,6 +2413,14 @@ TEST(ExportQueryExecutionTrees, SplitBlockIntoChunks) {
                             std::pair<uint64_t, uint64_t>{9, 10}));
   }
   {
+    // Exact multiple: rows divide evenly, no remainder chunk.
+    auto chunks =
+        ExportQueryExecutionTrees::splitBlockIntoChunks(makeBlock(0, 6), 3);
+    EXPECT_THAT(rangesOf(chunks),
+                ElementsAre(std::pair<uint64_t, uint64_t>{0, 3},
+                            std::pair<uint64_t, uint64_t>{3, 6}));
+  }
+  {
     auto chunks = ExportQueryExecutionTrees::splitBlockIntoChunks(
         makeBlock(100, 105), 10);
     EXPECT_THAT(rangesOf(chunks),
