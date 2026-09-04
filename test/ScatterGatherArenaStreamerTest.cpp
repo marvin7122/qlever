@@ -42,9 +42,9 @@ static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunkBuilder>);
 TEST(ScatterGatherArenaStreamerTest, RejectsSlicesOutsideOwner) {
   ImmutableByteBuffer arena{"abc"};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      arena.slice(4, 0), ::testing::HasSubstr("offset_ <= owner_->size()"));
+      static_cast<void>(arena.slice(4, 0)), ::testing::HasSubstr("offset_ <= owner_->size()"));
   AD_EXPECT_THROW_WITH_MESSAGE(
-      arena.slice(2, 2),
+      static_cast<void>(arena.slice(2, 2)),
       ::testing::HasSubstr("size_ <= owner_->size() - offset_"));
 }
 
