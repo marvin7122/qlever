@@ -173,7 +173,14 @@ class ExportWorkSession;
 
 class ElasticExportScheduler {
  public:
+  // Dedicated std::thread workers (unit tests).
   explicit ElasticExportScheduler(size_t numThreads = 0,
+                                  size_t queueCapacity = 1024);
+  // Live V2: post CPU morsels onto Server::queryThreadPool_ so we do not
+  // create a second pool. When another query is registered, admission
+  // stops and in-flight tasks no-op; the coordinator serializes itself.
+  using WorkPoster = absl::AnyInvocable<void(absl::AnyInvocable<void()>)>;
+  explicit ElasticExportScheduler(WorkPoster poster,
                                   size_t queueCapacity = 1024);
   ~ElasticExportScheduler();
 
@@ -206,9 +213,13 @@ class ElasticExportScheduler {
     return totalActiveHelpers_.load(std::memory_order_relaxed);
   }
 
-  /// Total number of dedicated helper worker threads in this pool.
+  /// Dedicated std::thread workers. Zero when posting onto queryThreadPool_.
   [[nodiscard]] size_t workerThreadCount() const noexcept {
     return workers_.size();
+  }
+
+  [[nodiscard]] bool postsToQueryThreadPool() const noexcept {
+    return static_cast<bool>(poster_);
   }
 
   /// Bounded capacity of the helper work queue.
@@ -252,8 +263,10 @@ class ElasticExportScheduler {
 
  private:
   void workerLoop();
+  void runPostedMorsel(OwnedMorsel morsel);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
 
+  WorkPoster poster_;
   const size_t maxQueueCapacity_;
   std::atomic<size_t> maxForegroundQueriesForHelperAdmission_{1};
   std::atomic<uint64_t> demandEpoch_{1};
