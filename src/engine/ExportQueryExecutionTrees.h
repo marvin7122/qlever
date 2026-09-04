@@ -216,8 +216,8 @@ class ExportQueryExecutionTrees {
   FRIEND_TEST(ExportQueryExecutionTrees, SerializeConstructGroup);
   FRIEND_TEST(ExportQueryExecutionTrees, compensateForLimitOffsetClause);
 
-  // The per-format serialization body of the CONSTRUCT export: instantiates
-  // `templateTriples` for every row in `rowRange` and serializes each resulting
+    // Serialize the per-format CONSTRUCT export: instantiate
+  // `templateTriples` for every row in `rowRange` and serialize each resulting
   // triple according to `format`, concatenated into a single output string.
   template <ad_utility::MediaType format>
   static std::string serializeConstructGroup(
