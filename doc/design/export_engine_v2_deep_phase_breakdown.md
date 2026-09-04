@@ -2,7 +2,7 @@
 
 **Status:** Approved Master Architecture RFC  
 **Target Repository:** `marvin7122/qlever` (`feat/export-engine-v2-streaming`)  
-**Design Standard:** Grounded in `~/ARCHITECTURE.md` (7 Universal Laws) & Single-Core CPU Discipline  
+**Design Standard:** This RFC prioritizes explicit ownership, bounded buffering, backpressure safety, and single-core execution discipline.
 
 ---
 
