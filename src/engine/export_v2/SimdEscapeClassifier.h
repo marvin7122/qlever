@@ -9,7 +9,6 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_SIMDESCAPECLASSIFIER_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_SIMDESCAPECLASSIFIER_H
 
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
