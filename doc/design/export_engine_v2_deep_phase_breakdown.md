@@ -271,7 +271,7 @@
 
 ### 3. Performance Rationale
 * **Single-Core I/O Overlap:** When the client can consume data fast enough and chunks are available, cooperative asynchronous I/O lets the worker interleave formatting with socket progress. A slow client can still suspend chunk generation, and the NIC can be idle when formatting or input production cannot keep it supplied.
-* **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
+* **Latency Hiding:** When output buffering is sufficient, asynchronous socket progress can overlap with chunk generation; quantify the resulting reduction in worker idle time under the stated network-latency test conditions.
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmark:** `ChunkStreamingBenchmark`
