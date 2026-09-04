@@ -1370,7 +1370,11 @@ IdTable runSumOfComputedChild(bool hashMapEnabled) {
                                     std::make_unique<IdExpression>(toId(2))));
   auto alias =
       Alias{SparqlExpressionPimpl{std::move(sumExpr), "SUM(?b * 2)"}, varS};
-  GroupBy groupBy{qec, {varA}, {std::move(alias)}, std::move(values)};
+  // NOTE: `Alias` is move-only (like the existing tests, move a named
+  // vector, since a braced list requires copyable elements).
+  std::vector<Alias> aliases;
+  aliases.push_back(std::move(alias));
+  GroupBy groupBy{qec, {varA}, std::move(aliases), std::move(values)};
   auto result = groupBy.getResult();
   // `cleanup` must outlive the evaluation.
   (void)cleanup;
