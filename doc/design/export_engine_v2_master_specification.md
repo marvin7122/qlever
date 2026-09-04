@@ -219,7 +219,7 @@ To enable independent implementation and clean reviewability, the V2 engine is d
   - Create compile-time unrolled serializers for fixed tuple schemas (`MonomorphicRowSerializer<ColumnTypes...>`).
   - Integrate `FastIntToString.h` (Lemire branchless integer formatting).
   - Integrate `SwarDelimiterPacker.h` for single-store punctuation writes.
-* **Definition of Done:** `MonomorphicSerializerBenchmark` confirms >2.75 IPC and <0.25% branch misprediction rate.
+* **Definition of Done:** `MonomorphicSerializerBenchmark` confirms >2.75 IPC and <0.25% branch misprediction rate. Focused unit tests in `test/MonomorphicSerializersTest.cpp` verify representative fixed tuple schemas, supported column types, escaping and delimiter handling, empty and boundary inputs, and byte-for-byte output correctness independently of the throughput benchmark.
 
 ---
 
