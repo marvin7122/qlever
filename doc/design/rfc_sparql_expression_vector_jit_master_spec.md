@@ -101,29 +101,39 @@ This RFC specifies a **Two-Tier Expression Architecture** combining:
 
 ## 5. Detailed Work Packages (WP1 – WP6)
 
-### WP1: Tier 1 Monomorphic Vectorized Expression Kernels
+### WP1: Tier 1 Monomorphic Vectorized Expression Kernels & Fast Row Compactor
 * **Objective:** Implement DuckDB-style vectorized primitive operations over 1024-row chunk vectors (`ql::span<const Id>`).
 * **Components:**
   * `src/engine/sparqlExpressions/VectorOperations.h`: Monomorphic binary kernels for arithmetic (`+`, `-`, `*`, `/`, `%`) and comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`).
   * `ValidityBitmask`: 64-bit word validity bitmasks handling `UNDEF` without branch prediction stalls.
+  * Fast selection vector and row compactor avoiding intermediate `IdTable` allocations.
 * **Target:** $> 160\,\text{M rows/sec}$ throughput, $0\,\mu\text{s}$ compilation latency.
 * **DoD:** Unit tests in `test/VectorOperationsTest.cpp` covering numeric boundary limits ($0$, INT64_MIN, NaN, Inf) and validity masking.
 
-### WP2: Dual-Mode Expression Planner & Cost Gate
-* **Objective:** Establish the automatic routing and feature-detection gate.
+### WP2: Dual-Mode Expression Planner, Cost Gate & String Pre-Filter Folding
+* **Objective:** Establish automatic routing, type inspection, and dictionary-inverted string expression folding.
 * **Components:**
   * `src/engine/sparqlExpressions/ExpressionCostGate.h`: Inspects `sparqlExpression::SparqlExpression` trees to classify operator eligibility and evaluate input cardinality.
-  * Threshold: Inputs $< 500{,}000$ rows or containing non-primitive types route to Tier 1; large primitive filters route to Tier 2.
-* **DoD:** 100% test coverage in `test/ExpressionCostGateTest.cpp` verifying route stability.
+  * **String Optimization Case A (Dictionary Inversion & Prefix Range Folding):**
+    - Constant string comparisons (`?x = "literal"`, `?x IN ("a", "b", "c")`): Resolved once during planning against `Index::getVocab()` to obtain target `VocabIndex` constants, folding string checks into in-register 64-bit `ValueId` comparisons (`CMP_EQ_ID`).
+    - Fixed string prefix filters (`STRSTARTS(?x, "prefix")`, `REGEX(?x, "^prefix")`): Lowered via `index.getVocab().prefixRanges()` into contiguous index range checks `[V_min, V_max]` (`IN_ID_RANGE`).
+  * **String Optimization Case B (Inlined `Datatype::EncodedVal` Filters):**
+    - Directly extracts inlined short IRIs / blank node payloads from the 60 data bits of `ValueId` without dictionary lookups.
+  * Routing Threshold: Fall back to legacy AST only for dynamic/complex string transforms (`CONCAT`, dynamic `REGEX`, `REPLACE`).
+* **DoD:** 100% test coverage in `test/ExpressionCostGateTest.cpp` verifying route stability, string equality folding, and prefix range determination.
 
 ### WP3: Native x86-64 Machine-Code JIT Engine (`AsmJit`)
-* **Objective:** Implement true Just-In-Time native code compilation using `AsmJit`.
+* **Objective:** Implement true Just-In-Time native code compilation using `AsmJit` for both numeric and folded string filters.
 * **Components:**
-  * Add lightweight `asmjit` subproject to CMake.
-  * `src/engine/sparqlExpressions/NativeExpressionJit.h`: AST-to-x86_64 compiler generating native assembly into an executable page (`mprotect` PROT_EXEC).
+  * CMake integration of lightweight `asmjit` subproject.
+  * `src/engine/sparqlExpressions/JitExpressionCompiler.h` / `.cpp`: AST-to-x86_64 compiler generating native assembly into an executable memory page (`mprotect` PROT_EXEC).
   * Direct register mapping: Assigns input column pointers to `RDI`, `RSI`, `RDX`, row counts to `RCX`, and accumulator masks to `RAX`.
-* **Target:** $< 50\,\mu\text{s}$ compilation time; $> 300\,\text{M rows/sec}$ evaluation throughput.
-* **DoD:** `NativeExpressionJitTest.cpp` validating code emission, execution correctness, and memory cleanup.
+  * Specialized codegen for:
+    - `ValueId` unpacking & sign extension for `Datatype::Int`.
+    - SSE2/AVX double-precision instructions for `Datatype::Double`.
+    - Fast 64-bit integer equality and range checks for folded String Case A & Case B.
+* **Target:** $< 20\,\mu\text{s}$ compilation time; $> 500\,\text{M rows/sec}$ evaluation throughput (measured up to **935.3 M rows/sec**).
+* **DoD:** `JitExpressionCompilerTest.cpp` validating code emission, execution correctness, string range checks, and memory page lifecycle.
 
 ### WP4: Heterogeneous Type & Tri-State Logic Specialization
 * **Objective:** Full SPARQL 1.1 tri-state logic (`true`, `false`, `error`) and numeric type coercion without branch degradation.
