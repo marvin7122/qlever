@@ -173,7 +173,7 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   scheduler.onForegroundQueryStarted();
   EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
 
-  // Session must transition to Revoking because helper 0 is actively leased
+  // Verify that the session transitions to `Revoking` while helper `0` is actively leased.
   EXPECT_EQ(session.state(), SessionState::Revoking);
 
   // Allow morsel 0 to complete cooperatively
