@@ -12,7 +12,7 @@
 
 #include <unistd.h>
 
-#include <cerrno>
+
 #include <stdexcept>
 
 #include "util/Exception.h"
