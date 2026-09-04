@@ -91,6 +91,7 @@ bool ConstructDeduplicator::isNew(size_t templateTripleIdx,
   std::lock_guard lock{mutex_};
   // Reset only at a triple boundary, never mid-key (would dangle the key).
   resetIfVocabTooLarge();
+  AD_CONTRACT_CHECK(!isLru() || dedupVocabBytes_ <= maxDedupVocabBytes_);
   return filter_.insert(makeFullTripleKey(
       tmpl.preprocessedTriples_[templateTripleIdx], rowIdxInIdTable, ctx));
 }
