@@ -172,12 +172,17 @@
 * **High IPC (Instructions Per Cycle):** Compiler unrolling achieves sustained **>2.85 IPC** on modern x86-64 microarchitectures.
 
 ### 4. Benchmarking & Verification Plan
+* **Dedicated unit-test targets:**
+  - `test/MonomorphicSerializersTest.cpp`: verify each supported schema specialization, empty batches, mixed term types, multi-row batches, and exact byte output against scalar reference serialization.
+  - `test/SimdEscapeClassifierTest.cpp`: verify no-match input, matches at the first and last byte, matches across 32-byte SIMD boundaries, consecutive escapable characters, empty input, and inputs shorter than one SIMD block.
+  - `test/SwarDelimiterPackerTest.cpp`: verify every supported delimiter combination, empty and one-byte fields, maximum packed width, and output at packing-width boundaries.
 * **Microbenchmarks:**
   - `FastNumberFormatterBenchmark` (Validated: >180M nums/sec)
   - `SimdEscapeBenchmark` (Validated: 13.94 GB/s AVX2)
   - `BranchlessDispatcherBenchmark` (Validated: 42.4M terms/sec)
   - `MonomorphicSerializerBenchmark` (Validated: 2.90 IPC)
 * **Metrics:** Branch misprediction rate, CPU cycles per row, formatted throughput (MB/s).
+* **Complementary validation:** Retain the microbenchmarks and the Phase 6 end-to-end bit-equivalence test; neither replaces the dedicated unit tests above.
 
 ---
 
@@ -227,9 +232,13 @@
 * **Memory Bus Saturation Avoided:** Frees up CPU memory bus bandwidth for index decompression and cache prefetching.
 
 ### 4. Benchmarking & Verification Plan
+* **Dedicated unit-test targets:**
+  - `test/ScatterGatherArenaStreamerTest.cpp`: verify descriptor and byte-budget limits, descriptor submission at both limits, empty batches, arena-span construction, partial writes that advance base pointers and lengths, completion before slot reuse, and backing-storage lifetime through the final write completion.
+  - `test/InPlaceHttpChunkFramingTest.cpp`: verify zero-length chunks, exact hexadecimal lengths, lengths at every header-width boundary, the reserved 16-byte headroom, CRLF placement, and rejection or handling of lengths that exceed the supported framing width.
 * **Microbenchmarks:** `ScatterGatherBenchmark`, `HttpFramingBenchmark`.
-* **Validation:** Verify behavior across 128B to 4096B literal sizes after implementation.
+* **Validation:** Verify behavior across 128B to 4096B literal sizes after implementation, including partial writes and completion-driven buffer recycling.
 * **Metrics:** Memory copy bandwidth savings (GB/s) and single-core CPU utilization percentage.
+* **Complementary validation:** Retain these benchmarks and the Phase 6 end-to-end bit-equivalence test; neither replaces the dedicated unit tests above.
 
 ---
 
@@ -275,9 +284,12 @@
 * **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
 
 ### 4. Benchmarking & Verification Plan
+* **Dedicated unit-test target:** `test/AsyncChunkPipelineTest.cpp`.
+* **Unit-test coverage:** Verify slot transitions and reuse only after completion, generation suspension when the socket is not writable, resumption after writability or completion, slow-client backpressure without unbounded slot growth, empty and exactly-full chunks, partial writes, completion and error paths, and propagation of transport or generation failures.
 * **Microbenchmark:** `ChunkStreamingBenchmark`
 * **Test Conditions:** Evaluated with simulated socket latencies (0ms local, 5ms LAN, 20ms WAN) and variable chunk sizes (64KB, 256KB, 1MB, 4MB).
 * **Target:** Sustained single-core throughput saturating 10 Gbps network connections.
+* **Complementary validation:** Retain the microbenchmark and the Phase 6 end-to-end bit-equivalence test; neither replaces the dedicated pipeline unit tests.
 
 ---
 
