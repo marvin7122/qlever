@@ -138,7 +138,7 @@ The supervisor's constraint is critical: **a heavy multi-threaded query must nev
 | **Non-Temporal Streaming Stores** | ClickHouse / HPC | `_mm_stream_si128` streaming directly to DRAM, bypassing CPU cache hierarchy (14.71 GB/s). |
 | **SWAR Punctuation Packing** | High-Frequency Trading | Delimiter sequences (`"\t"`, `"< >"`, `"\r\n"`) packed into 64-bit unsigned integers. |
 | **Run-Length Prefix Folding** | DuckDB / ClickHouse | Formats repeated IRI subjects/predicates once and copies 128-bit words across sorted runs. |
-| **Scatter-Gather Zero-Copy** | Apache Arrow / Seastar | Assembles chunks via `struct iovec` arrays pointing to decompression arena pages (0 copies). |
+| **Scatter-Gather Streaming** | Apache Arrow / Seastar | Assembles chunks via `struct iovec` arrays, retaining owned spans and optional copied segments. |
 | **Adaptive Initial Chunking** | DuckDB | Starts with 64KB buffer for <0.1ms TTFB, then exponentially ramps to 4MB for max throughput. |
 
 ---
