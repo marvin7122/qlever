@@ -115,14 +115,14 @@ CPP_template(typename UnderlyingVocabulary,
     return finishLookup(beginLookup(indices));
   }
 
-  std::unique_ptr<VocabLookupHandleBase> beginLookup(
+    std::unique_ptr<VocabLookupHandleBase> beginLookup(
       ql::span<const size_t> indices) const {
     auto handle = std::make_unique<CompressedLookupHandle>();
     handle->vocab_ = this;
     handle->indices_.assign(indices.begin(), indices.end());
     // Compile-time check: if the underlying vocabulary supports the
-    // split-phase interface itself, delegate the reads to it; otherwise fall
-    // back to an eager in-memory lookup.
+    // split-phase interface itself, delegate the reads to it (non-blocking);
+    // otherwise fall back to an eager in-memory lookup (blocking).
     if constexpr (ad_utility::vocabulary::HasBeginLookup<
                       UnderlyingVocabulary>::value) {
       handle->underlyingHandle_ = underlyingVocabulary_.beginLookup(indices);
