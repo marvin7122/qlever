@@ -182,6 +182,13 @@ class IoUringPolicy {
   static constexpr size_t DEFAULT_REGISTERED_BUFFER_SIZE = 64 * 1024;
 
  private:
+  // Architecture sentinel invariants for io_uring ring state:
+  // - `numInFlightReadRequests_` counts reads occupying a ring slot (prepared,
+  //   submitted, or waiting for a CQE) and must never exceed `ringSize_`. This
+  //   is guaranteed by the submission loop in `addBatch`: it reaps CQEs before
+  //   submitting more SQEs whenever `numInFlightReadRequests_ == ringSize_`.
+  // - `freeBufferIndices_` and `registeredIovecs_` are always the same size
+  //   (`ringSize_`); indices in `freeBufferIndices_` are always valid pool slots.
   io_uring ring_{};
   unsigned ringSize_;
     size_t registeredBufferSize_;
