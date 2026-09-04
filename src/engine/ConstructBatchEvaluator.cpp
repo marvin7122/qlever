@@ -97,7 +97,11 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   // making a later hash-colliding lookup compare against freed memory
   // (heap-use-after-free in `LocalVocabEntry::compareThreeWay`). Resolving
   // them per block is fine performance-wise: `LocalVocabEntry`s live in RAM,
-  // so there is no disk I/O to amortize across batches.
+  // so resolving them per block does not forgo any disk-I/O amortization that
+  // batching would otherwise provide. (The depth-2 pipeline may trigger async
+  // disk I/O for `VocabIndex` IDs in the same batch, but those are cached in
+  // `idCache` and are unrelated to the per-block handling of
+  // `LocalVocabIndex` IDs.)
   auto missResolved =
       ql::exportIds::idsToStringAndTypeDepth2(index, missIds, localVocab);
   for (auto&& [id, resolved, rows] :
