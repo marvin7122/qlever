@@ -9,7 +9,7 @@
 namespace ad_utility::export_v2 {
 
 // -----------------------------------------------------------------------------
-// ExportWorkLease Implementation
+// Implement `ExportWorkLease`.
 // -----------------------------------------------------------------------------
 
 ExportWorkLease::ExportWorkLease(ElasticExportScheduler* scheduler,
