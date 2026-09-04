@@ -8,7 +8,7 @@
 
 ## 1. Executive Summary & New Architectural Dimensions
 
-This master specification deepens the design of the **Fast-Path Streaming Export Engine (V2)** across three major innovations:
+This master specification deepens the design of the **Fast-Path Streaming Export Engine (V2)** across four major innovations:
 1. **Hybrid Columnar vs. Row-Major Dynamic Layout Selection** (Optimal memory layouts chosen at plan time).
 2. **Elastic Traffic-Aware Concurrency Controller** (Single-core default preventing head-of-line blocking, with dynamic work-stealing scale-out when the server is idle).
 3. **State-of-the-Art Techniques from Modern Data Engines** (DuckDB, ClickHouse, Umbra, Arrow, ScyllaDB).
