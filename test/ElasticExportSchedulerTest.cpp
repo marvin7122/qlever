@@ -386,8 +386,7 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   });
     session.submitMorsel([]() -> int { return 100; });
 
-  // Slot 0 should return 42
-  EXPECT_EQ(session.consumeNextResult(), 42);
+    EXPECT_EQ(session.consumeNextResult(), 42);
 
   // Slot 1 should throw std::runtime_error
   EXPECT_THROW(
