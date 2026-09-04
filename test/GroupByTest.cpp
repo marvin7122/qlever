@@ -1336,6 +1336,65 @@ TEST_F(GroupByOptimizations, hashMapOptimizationMinMaxSumIntegers) {
   EXPECT_EQ(table, expected);
 }
 
+namespace {
+// SELECT (SUM(?b * 2) AS ?s) WHERE { VALUES (?a ?b) {...} } GROUP BY ?a.
+// The aggregate child is an integer expression: the hashmap path evaluates
+// it via the JIT integer column execution, all other paths via the legacy
+// evaluation. Both must yield identical results.
+IdTable runSumOfComputedChild(bool hashMapEnabled) {
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::groupByHashMapEnabled_>(
+          hashMapEnabled);
+  Variable varA = Variable{"?a"};
+  Variable varB = Variable{"?b"};
+  Variable varS = Variable{"?s"};
+
+  auto qec = ad_utility::testing::getQec();
+  IdTable testTable{qec->getAllocator()};
+  testTable.setNumColumns(2);
+  testTable.resize(4);
+  auto toId = [](uint64_t value) {
+    return ValueId::makeFromInt(static_cast<int64_t>(value));
+  };
+  ql::ranges::transform(std::vector<uint64_t>{1, 1, 3, 3},
+                        testTable.getColumn(0).begin(), toId);
+  ql::ranges::transform(std::vector<uint64_t>{10, 20, 30, 40},
+                        testTable.getColumn(1).begin(), toId);
+  std::vector<std::optional<Variable>> variables = {varA, varB};
+  auto values = ad_utility::makeExecutionTree<ValuesForTesting>(
+      qec, std::move(testTable), variables, false);
+
+  using namespace sparqlExpression;
+  auto sumExpr = std::make_unique<SumExpression>(
+      false, makeMultiplyExpression(makeVariableExpression(varB),
+                                    std::make_unique<IdExpression>(toId(2))));
+  auto alias =
+      Alias{SparqlExpressionPimpl{std::move(sumExpr), "SUM(?b * 2)"}, varS};
+  GroupBy groupBy{qec, {varA}, {std::move(alias)}, std::move(values)};
+  auto result = groupBy.getResult();
+  // `cleanup` must outlive the evaluation.
+  (void)cleanup;
+  return result->idTableView().clone();
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumOfComputedChildHashMapPath) {
+  // Group 1 (?a = 1): SUM(20, 40) = 60; group 2 (?a = 3): SUM(60, 80) = 140.
+  auto i = IntId;
+  EXPECT_EQ(runSumOfComputedChild(true),
+            makeIdTableFromVector({{i(1), i(60)}, {i(3), i(140)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumOfComputedChildSortedPath) {
+  // Same query without the hashmap optimization (legacy child evaluation):
+  // results must agree with the JIT path above.
+  auto i = IntId;
+  EXPECT_EQ(runSumOfComputedChild(false),
+            makeIdTableFromVector({{i(1), i(60)}, {i(3), i(140)}}));
+}
+
 // _____________________________________________________________________________
 TEST_F(GroupByOptimizations, hashMapOptimizationGroupConcatIndex) {
   auto cleanup =

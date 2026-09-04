@@ -933,17 +933,14 @@ class JitExpressionBytecodeVm {
   }
 
   // Evaluate an integer-valued program (see `hasExactIntegerSemantics`) over
-  // all rows of `inputTable` and write the results as `Id`s into
-  // `outputColumn` of `outputTable` (`Int` where the row is valid, `UNDEF`
-  // otherwise, matching the legacy evaluation). `outputTable` may be the
-  // same table as `inputTable` as long as `outputColumn` holds no referenced
-  // input column.
+  // `numRows` rows of `inputTable` starting at `inputBegin` and write the
+  // results as `Id`s into `output` (`Int` where the row is valid, `UNDEF`
+  // otherwise, matching the legacy evaluation).
   template <typename Table>
-  static void executeIntColumn(
+  static void executeIntColumnInto(
       const JitBytecodeProgram& program, const Table& inputTable,
-      IdTable& outputTable, ColumnIndex outputColumn,
+      size_t inputBegin, size_t numRows, Id* output,
       ad_utility::SharedCancellationHandle cancellationHandle = nullptr) {
-    size_t numRows = inputTable.size();
     if (numRows == 0) {
       return;
     }
@@ -965,7 +962,7 @@ class JitExpressionBytecodeVm {
         switch (inst.op) {
           case OpCode::LOAD_COL_INT: {
             auto colSpan = inputTable.getColumn(inst.arg);
-            const Id* colData = colSpan.data() + rowOffset;
+            const Id* colData = colSpan.data() + inputBegin + rowOffset;
             uint64_t valid = 0;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
@@ -1089,12 +1086,28 @@ class JitExpressionBytecodeVm {
         uint64_t valid = validity[sp - 1] & batchMask;
 #pragma GCC unroll 8
         for (size_t i = 0; i < batchSize; ++i) {
-          outputTable(rowOffset + i, outputColumn) =
-              (valid & (1ULL << i)) ? Id::makeFromInt(stack[sp - 1][i])
-                                    : Id::makeUndefined();
+          output[rowOffset + i] = (valid & (1ULL << i))
+                                      ? Id::makeFromInt(stack[sp - 1][i])
+                                      : Id::makeUndefined();
         }
       }
     }
+  }
+
+  // Evaluate over all rows of `inputTable` and write the results into
+  // `outputColumn` of `outputTable` (see `executeIntColumnInto`).
+  // `outputTable` may be the same table as `inputTable` as long as
+  // `outputColumn` holds no referenced input column.
+  template <typename Table>
+  static void executeIntColumn(
+      const JitBytecodeProgram& program, const Table& inputTable,
+      IdTable& outputTable, ColumnIndex outputColumn,
+      ad_utility::SharedCancellationHandle cancellationHandle = nullptr) {
+    if (inputTable.size() == 0) {
+      return;
+    }
+    executeIntColumnInto(program, inputTable, 0, inputTable.size(),
+                         &outputTable(0, outputColumn), cancellationHandle);
   }
 };
 
