@@ -297,7 +297,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
       getRuntimeParameter<&RuntimeParameters::vocabBatchIoNumManagers_>();
   size_t ringSize =
       getRuntimeParameter<&RuntimeParameters::vocabBatchIoRingSize_>();
-  // A pool without managers would make every `lookupBatch` block forever, and
+  // Ensure the pool has at least one manager to avoid blocking every `lookupBatch`.
   // the batch manager API takes an `unsigned` ring size, so reject values that
   // do not fit into the `unsigned` range (instead of silently wrapping them).
   AD_CONTRACT_CHECK(numManagers > 0);
