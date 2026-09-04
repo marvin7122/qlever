@@ -933,7 +933,6 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::constructQueryResultSerial(
   for (const std::string& triple : triples) {
     STREAMABLE_YIELD(triple);
   }
-  STREAMABLE_RETURN;
 }
 
 // _____________________________________________________________________________
