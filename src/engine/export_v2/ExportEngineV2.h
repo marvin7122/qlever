@@ -38,8 +38,8 @@ class ExportEngineV2 {
   // True when this engine can serve `mediaType` for `parsedQuery` without
   // falling back to Legacy V1. Currently: SELECT + CSV/TSV (LIMIT/OFFSET
   // included). CONSTRUCT and other media types still use Legacy.
-  [[nodiscard]] static bool canHandle(
-      const ParsedQuery& parsedQuery, ad_utility::MediaType mediaType) noexcept;
+  [[nodiscard]] static bool canHandle(const ParsedQuery& parsedQuery,
+                                      ad_utility::MediaType mediaType) noexcept;
 
   // Map CSV/TSV media types onto the V2 row format. Returns nullopt otherwise.
   [[nodiscard]] static std::optional<RowFormat> rowFormatFor(
@@ -56,6 +56,13 @@ class ExportEngineV2 {
   // Live-path serialize with vocabulary resolution and selected columns.
   // `selectedColumns` empty means all IdTable columns; nullopt entry = unbound.
   // `[rowBegin, rowEnd)` selects a half-open row range (default: all rows).
+  static void appendSerializedRows(
+      const IdTableView<0>& idTable, const LocalVocab& localVocab,
+      RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
+      ql::span<const std::optional<ColumnIndex>> selectedColumns,
+      uint64_t rowBegin = 0,
+      uint64_t rowEnd = std::numeric_limits<uint64_t>::max());
+
   static ScatterGatherChunk serializeTableChunk(
       const IdTableView<0>& idTable, const LocalVocab& localVocab,
       RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,

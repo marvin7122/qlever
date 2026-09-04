@@ -28,7 +28,8 @@ namespace ql::engine::export_v2 {
 namespace {
 
 // Escape `input` for CSV/TSV. Uses SimdEscapeClassifier as a fast reject filter
-// before falling back to the legacy RdfEscaping path (required for CSV quoting).
+// before falling back to the legacy RdfEscaping path (required for CSV
+// quoting).
 template <RowFormat Format>
 std::string escapeCell(std::string input) {
   if (input.empty()) {
@@ -70,8 +71,8 @@ std::string makeHeaderLine(const parsedQuery::SelectClause& selectClause,
                          [](std::string& var) { var = var.substr(1); });
   }
   const char separator = format == RowFormat::Csv ? ',' : '\t';
-  return absl::StrCat(
-      absl::StrJoin(variables, std::string_view{&separator, 1}), "\n");
+  return absl::StrCat(absl::StrJoin(variables, std::string_view{&separator, 1}),
+                      "\n");
 }
 
 std::vector<std::optional<ColumnIndex>> selectedColumnIndices(
@@ -119,7 +120,7 @@ std::optional<RowFormat> ExportEngineV2::rowFormatFor(
 }
 
 // _____________________________________________________________________________
-ScatterGatherChunk ExportEngineV2::serializeTableChunk(
+void ExportEngineV2::appendSerializedRows(
     const IdTableView<0>& idTable, const LocalVocab& localVocab,
     RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
     ql::span<const std::optional<ColumnIndex>> selectedColumns,
@@ -127,7 +128,7 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
   const uint64_t numRows = idTable.numRows();
   rowEnd = std::min(rowEnd, numRows);
   if (rowBegin >= rowEnd) {
-    return std::move(builder).finalize();
+    return;
   }
   const size_t numOutputCols =
       selectedColumns.empty() ? idTable.numColumns() : selectedColumns.size();
@@ -157,7 +158,15 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
     }
     builder.appendCopy("\n");
   }
+}
 
+ScatterGatherChunk ExportEngineV2::serializeTableChunk(
+    const IdTableView<0>& idTable, const LocalVocab& localVocab,
+    RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
+    ql::span<const std::optional<ColumnIndex>> selectedColumns,
+    uint64_t rowBegin, uint64_t rowEnd) {
+  appendSerializedRows(idTable, localVocab, format, builder, index,
+                       selectedColumns, rowBegin, rowEnd);
   return std::move(builder).finalize();
 }
 
@@ -167,8 +176,7 @@ ScatterGatherChunk ExportEngineV2::serializeTableChunk(
     ql::span<const std::optional<ColumnIndex>> selectedColumns,
     uint64_t rowBegin, uint64_t rowEnd) {
   return serializeTableChunk(idTable.asStaticView<0>(), localVocab, format,
-                             builder, index, selectedColumns, rowBegin,
-                             rowEnd);
+                             builder, index, selectedColumns, rowBegin, rowEnd);
 }
 
 // _____________________________________________________________________________
@@ -217,10 +225,10 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
       cancellationHandle->throwIfCancelled();
       const uint64_t end = std::min(rowEnd, begin + morselRows);
       ScatterGatherChunkBuilder builder;
-      auto sgChunk = serializeTableChunk(table, localVocab, format, builder,
-                                         index, columns, begin, end);
-      if (!sgChunk.empty()) {
-        co_yield sgChunk.toString();
+      appendSerializedRows(table.asStaticView<0>(), localVocab, format, builder,
+                           index, columns, begin, end);
+      if (!builder.empty()) {
+        co_yield std::move(builder).finalizeToString();
       }
     }
   }

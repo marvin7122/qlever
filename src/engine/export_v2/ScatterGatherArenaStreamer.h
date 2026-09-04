@@ -255,6 +255,9 @@ class ScatterGatherChunkBuilder
     AD_CORRECTNESS_CHECK(total == totalBytes_);
   }
 
+  [[nodiscard]] size_t size() const noexcept { return totalBytes_; }
+  [[nodiscard]] bool empty() const noexcept { return totalBytes_ == 0; }
+
   void appendCopy(std::string_view bytes) {
     auto guard = makeInvariantGuard();
     if (bytes.empty()) {
@@ -296,6 +299,21 @@ class ScatterGatherChunkBuilder
     segments_.clear();
     totalBytes_ = 0;
     return ScatterGatherChunk{std::move(result), totalBytes};
+  }
+
+  // Consumes the builder. Copy-only payloads (the live SELECT CSV/TSV path)
+  // move `copiedBytes_` out; mixed borrowed segments fall back to concat.
+  [[nodiscard]] std::string finalizeToString() && {
+    auto guard = makeInvariantGuard();
+    const bool hasBorrowed = std::any_of(
+        segments_.begin(), segments_.end(),
+        [](const PendingSegment& segment) { return !segment.copied_; });
+    if (!hasBorrowed) {
+      segments_.clear();
+      totalBytes_ = 0;
+      return std::move(copiedBytes_);
+    }
+    return std::move(*this).finalize().toString();
   }
 };
 
