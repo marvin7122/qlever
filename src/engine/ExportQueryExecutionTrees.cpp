@@ -969,7 +969,7 @@ ExportQueryExecutionTrees::constructQueryResultParallel(
     while (nextGet < chunks.size()) {
       while (nextSubmit < chunks.size() && nextSubmit - nextGet < window) {
         futures[nextSubmit] = queue.submit(
-            [&params, chunk = std::move(chunks[nextSubmit])]() mutable {
+            [params, chunk = std::move(chunks[nextSubmit])]() mutable {
               std::vector<TableWithRange> one{std::move(chunk)};
               return serializeConstructGroup<format>(
                   params.constructTriples_, params.variableColumns_,
