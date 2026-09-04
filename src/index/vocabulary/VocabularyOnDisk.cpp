@@ -308,9 +308,6 @@ void VocabularyOnDisk::open(const std::string& filename) {
   bool preferIoUring = true;
   for (size_t i = 0; i < numManagers; ++i) {
     // The runtime parameter is a `size_t`; the batch manager API takes an
-    // `unsigned` ring size. Values above `UINT_MAX` were rejected above, so
-    // the cast is safe.
-    ioManagers_->push(ad_utility::makeBatchManager(
-        preferIoUring, static_cast<unsigned>(ringSize)));
+    
   }
 }
