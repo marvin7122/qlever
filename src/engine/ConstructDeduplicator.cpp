@@ -88,9 +88,30 @@ bool ConstructDeduplicator::isNew(size_t templateTripleIdx,
       tmpl.tripleContainsBlankNode_[templateTripleIdx]) {
     return true;
   }
+
+  // Check if reset might be needed (racy read is benign: false negative just
+  // delays reset by one call; false positive does cheap extra allocation).
+  const bool maybeNeedsReset = isLru() && dedupVocabBytes_ >= maxDedupVocabBytes_;
+
+  // Prepare replacement objects outside the lock to avoid contention.
+  std::optional<TripleDeduplicator> newFilter;
+  std::optional<LocalVocab> newVocab;
+  if (maybeNeedsReset) {
+    newFilter.emplace(mode_, queryExecutionContext_);
+    newVocab.emplace();
+  }
+
   std::lock_guard lock{mutex_};
-  // Reset only at a triple boundary, never mid-key (would dangle the key).
-  resetIfVocabTooLarge();
+
+  if (maybeNeedsReset) {
+    // Double-check under lock.
+    if (isLru() && dedupVocabBytes_ >= maxDedupVocabBytes_) {
+      filter_ = std::move(*newFilter);
+      dedupVocab_ = std::move(*newVocab);
+      dedupVocabBytes_ = 0;
+    }
+  }
+
   AD_CONTRACT_CHECK(!isLru() || dedupVocabBytes_ <= maxDedupVocabBytes_);
   return filter_.insert(makeFullTripleKey(
       tmpl.preprocessedTriples_[templateTripleIdx], rowIdxInIdTable, ctx));
