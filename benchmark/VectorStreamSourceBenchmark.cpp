@@ -23,14 +23,14 @@ namespace {
 
 // s that simulate upstream operator output.IdTables simulating upstream operator output.
 std::vector<Result::IdTableVocabPair> createSyntheticBlocks(
-    size_t numBlocks, size_t rowsPerBlock, size_t numCols) {
+    size_t numBlocks, size_t rowsPerBlock) {
   ad_utility::AllocatorWithLimit<Id> allocator{
       ad_utility::makeAllocationMemoryLimitForTesting()};
   std::vector<Result::IdTableVocabPair> blocks;
   blocks.reserve(numBlocks);
 
   for (size_t b = 0; b < numBlocks; ++b) {
-    IdTable table{numCols, allocator};
+    IdTable table{3, allocator};
     table.reserve(rowsPerBlock);
     for (size_t r = 0; r < rowsPerBlock; ++r) {
       table.push_back({Id::makeFromVocabIndex(VocabIndex::make(r % 1000)),
@@ -57,7 +57,7 @@ void benchmarkChunkSizeSweep() {
   const size_t rowsPerBlock = totalRows / numBlocks;
   const size_t numCols = 3;
 
-  auto blocks = createSyntheticBlocks(numBlocks, rowsPerBlock, numCols);
+  auto blocks = createSyntheticBlocks(numBlocks, rowsPerBlock);
 
   for (size_t chunkSize : {64, 256, 1024, 4096, 8192, 16384, 65536}) {
     VectorStreamConfig config;
@@ -100,7 +100,7 @@ void benchmarkFilterSelectivity() {
   const size_t rowsPerBlock = totalRows / numBlocks;
   const size_t numCols = 3;
 
-  auto blocks = createSyntheticBlocks(numBlocks, rowsPerBlock, numCols);
+  auto blocks = createSyntheticBlocks(numBlocks, rowsPerBlock);
 
   VectorStreamConfig config;
   config.rowsPerChunk = RowsPerChunk{8192};
