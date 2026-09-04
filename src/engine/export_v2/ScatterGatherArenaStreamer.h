@@ -81,6 +81,7 @@ inline OwnedByteSpan ImmutableByteBuffer::slice(size_t offset,
 struct ScatterGatherWriteResult {
   size_t bytesWritten_ = 0;
   bool cancelled_ = false;
+  bool wouldBlock_ = false;
 };
 
 struct ScatterGatherWriteAttempt {
@@ -145,6 +146,10 @@ class ScatterGatherChunk
       if (attempt.bytesWritten_ < 0) {
         if (attempt.errorNumber_ == EINTR) {
           continue;
+        }
+        if (attempt.errorNumber_ == EAGAIN ||
+            attempt.errorNumber_ == EWOULDBLOCK) {
+          return {totalWritten, false, true};
         }
         AD_THROW(absl::StrCat("scatter-gather write failed: ",
                               std::strerror(attempt.errorNumber_)));
