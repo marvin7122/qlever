@@ -240,8 +240,6 @@ void appendValidRDFLiteral(std::string& out, std::string_view normLiteral) {
   size_t posSecondQuote = normLiteral.find('"', 1);
   AD_CONTRACT_CHECK(posSecondQuote != std::string::npos);
   size_t posLastQuote = normLiteral.rfind('"');
-  // If there are only two quotes (the first and the last, which every
-  // normalized literal has), there is nothing to do.
   if (posSecondQuote == posLastQuote &&
       normLiteral.find_first_of("\\\n\r") == std::string::npos) {
     out.append(normLiteral);
