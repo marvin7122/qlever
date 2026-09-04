@@ -96,7 +96,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // failing to initialize the io_uring instance: SQPOLL is an optimization, not a
   // requirement.
   int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
-  if (ret == -EINVAL || ret == -EPERM) {
+    if (ret == -EINVAL || ret == -EPERM) {
     AD_LOG_INFO << "io_uring: the kernel refused IORING_SETUP_SQPOLL "
                    "(unprivileged SQPOLL requires Linux 5.13+, "
                    "IORING_SETUP_SINGLE_ISSUER requires 6.0), falling back to "
