@@ -88,9 +88,9 @@ struct ScatterGatherWriteAttempt {
   int errorNumber_ = 0;
 };
 
-// An immutable chunk whose segments retain all referenced allocations. Raw
-// iovec pointers exist only during a writer callback and cannot escape through
-// this class's interface.
+// An immutable chunk whose segments retain all referenced allocations. The
+// temporary iovec array is valid only while the writer callback is executing;
+// the callback must not retain the array or its iovec entries.
 class ScatterGatherChunk
     : public ad_utility::WithInvariants<ScatterGatherChunk> {
   friend class ScatterGatherChunkBuilder;
