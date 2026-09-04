@@ -144,6 +144,7 @@ IoUringPolicy::~IoUringPolicy() {
 }
 
 //______________________________________________________________________________
+// Claim a free buffer index from the registered pool. Precondition: pool not empty.
 size_t IoUringPolicy::allocatePoolBuffer() {
   AD_CORRECTNESS_CHECK(!freeBufferIndices_.empty());
   const size_t index = freeBufferIndices_.back();
