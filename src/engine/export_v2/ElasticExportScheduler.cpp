@@ -63,7 +63,7 @@ void ExportWorkLease::release() noexcept {
 }
 
 // -----------------------------------------------------------------------------
-// ElasticExportScheduler Implementation
+// Implement `ElasticExportScheduler`.
 // -----------------------------------------------------------------------------
 
 ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
