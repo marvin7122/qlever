@@ -300,8 +300,10 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         asmjit::x86::Gp loReg = cc.new_gp64("rangeLo");
         asmjit::x86::Gp hiReg = cc.new_gp64("rangeHi");
         asmjit::x86::Gp cond = cc.new_gp64("rangeCond");
-        cc.mov(loReg, static_cast<uint64_t>(lo));
-        cc.mov(hiReg, static_cast<uint64_t>(hi));
+        // The bounds are `VocabIndex` IDs, so the sign bit is never set and
+        // the bit patterns survive the cast unchanged.
+        cc.mov(loReg, static_cast<int64_t>(lo));
+        cc.mov(hiReg, static_cast<int64_t>(hi));
         // Unsigned comparison: `lo <= a < hi` in `ValueId` bit order.
         asmjit::Label rangeFail = cc.new_label();
         cc.xor_(cond, cond);
