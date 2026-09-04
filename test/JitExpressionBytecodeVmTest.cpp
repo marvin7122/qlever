@@ -245,3 +245,43 @@ TEST(JitExpressionBytecodeVmTest, FilterOperationIntegration) {
   EXPECT_EQ(result->idTableView(),
             makeIdTableFromVector({{10, 5}, {20, 15}, {30, 25}, {15, 8}}, I));
 }
+
+TEST(JitExpressionBytecodeVmTest, NativeAsmJitFilterCompilationAndExecution) {
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  // Test with a larger table (100 rows) to test morsel processing
+  std::vector<std::vector<int64_t>> data;
+  for (int64_t i = 0; i < 100; ++i) {
+    data.push_back({i, i * 2});
+  }
+  IdTable inputTable = makeIdTableFromVector(data, I);
+
+  ValuesForTesting values{qec,
+                          std::move(inputTable),
+                          {Variable{"?a"}, Variable{"?b"}},
+                          false,
+                          {},
+                          LocalVocab{},
+                          std::nullopt,
+                          true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+
+  // Filter: (?a * 2) == ?b  (All 100 rows should match)
+  auto expr = std::make_unique<EqualExpression>(
+      std::array<SparqlExpression::Ptr, 2>{
+          makeMultiplyExpression(
+              std::make_unique<VariableExpression>(Variable{"?a"}),
+              std::make_unique<IdExpression>(I(2))),
+          std::make_unique<VariableExpression>(Variable{"?b"})});
+
+  Filter filter{qec,
+                std::make_shared<QueryExecutionTree>(std::move(subTree)),
+                {std::move(expr), "(?a * 2) == ?b"}};
+
+  auto result = filter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  EXPECT_EQ(result->idTableView().size(), 100u);
+}

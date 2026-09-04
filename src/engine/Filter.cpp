@@ -13,6 +13,7 @@
 #include "engine/ExistsJoin.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
+#include "engine/sparqlExpressions/JitExpressionCompiler.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
 #include "engine/sparqlExpressions/SparqlExpressionValueGetters.h"
@@ -139,8 +140,18 @@ CPP_template_def(int WIDTH,
   IdTableStatic<WIDTH> resultTable =
       std::move(dynamicResultTable).toStatic<static_cast<size_t>(WIDTH)>();
 
-  // Attempt JIT bytecode compilation & execution for simple
-  // arithmetic/comparison expressions
+  // Attempt Native x86-64 JIT (AsmJit) compilation & execution
+  auto optJitCompiled = ql::engine::jit::JitExpressionCompiler::compile(
+      *_expression.getPimpl(), _subtree->getVariableColumns());
+  if (optJitCompiled.has_value()) {
+    optJitCompiled.value().executeFilter<WIDTH>(inputTable, resultTable,
+                                                cancellationHandle_);
+    dynamicResultTable = std::move(resultTable).toDynamic();
+    checkCancellation();
+    return;
+  }
+
+  // Attempt JIT bytecode interpretation for simple expressions
   auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
       *_expression.getPimpl(), _subtree->getVariableColumns());
   if (optProgram.has_value()) {
