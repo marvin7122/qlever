@@ -271,7 +271,7 @@
 
 ### 3. Performance Rationale
 * **Potential Overlap:** When formatting and transmission proceed at comparable rates, double buffering can overlap CPU work with network transmission. Backpressure or a CPU- or network-bound workload can still leave one side waiting.
-* **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
+* **Latency Hiding:** Overlapping chunk generation with asynchronous transmission can reduce the portion of end-to-end latency attributable to waiting for socket progress; the reduction depends on network and formatting throughput and must be measured.
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmark:** `ChunkStreamingBenchmark`
