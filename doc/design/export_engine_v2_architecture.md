@@ -83,7 +83,7 @@ To maintain strict backward compatibility with 100% of existing queries and test
 
 ---
 
-## 5. Architectural Invariants (Universal Laws from ~/ARCHITECTURE.md)
+## 5. Architectural Invariants
 
 1. **Information Hiding:** Internal SIMD registers, chunk rings, and `iovec` arrays are completely encapsulated within `ExportExecutionEngineV2`.
 2. **Zero Accounting Leakage:** Ring slot indices, partial buffer pointers, and backpressure state never leak outside the streamer.
