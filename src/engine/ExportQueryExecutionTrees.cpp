@@ -846,7 +846,7 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   // range yields.  When triple deduplication is active, the chunks share a
   // single deduplicator whose ID-space filter and `dedupVocab_` re-anchoring
   // are guarded by a mutex (see `ConstructDeduplicator::isNew`); the string
-  // formatting happens outside the lock.
+  
   bool dedupActive =
       !std::holds_alternative<ad_utility::DeduplicationMode::None>(
           getRuntimeParameter<&RuntimeParameters::constructDeduplication_>()
