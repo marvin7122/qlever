@@ -437,9 +437,8 @@ class ExportJobState final
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
     AD_CONTRACT_CHECK(task != nullptr, "Cannot submit null morsel task");
     size_t index = 0;
-    AD_CONTRACT_CHECK(
-        appendAndEnqueue(std::move(task), &index),
-        "Cannot submit morsel to closed or cancelled session");
+    AD_CONTRACT_CHECK(appendAndEnqueue(std::move(task), &index),
+                      "Cannot submit morsel to closed or cancelled session");
     return index;
   }
 
@@ -632,8 +631,7 @@ class ExportJobState final
   // Append a Pending slot and offer it to helpers when eligible; false when
   // closed or cancelled. Shared core of `submitMorsel` (which fires) and
   // `trySubmitMorsel` (which reports).
-  bool appendAndEnqueue(absl::AnyInvocable<ResultType()> task,
-                        size_t* index) {
+  bool appendAndEnqueue(absl::AnyInvocable<ResultType()> task, size_t* index) {
     bool shouldEnqueue = false;
     uint64_t epochToSubmit = 0;
     {
@@ -655,8 +653,8 @@ class ExportJobState final
       }
     }
     if (shouldEnqueue) {
-      scheduler_->enqueueMorsel(OwnedMorsel(this->shared_from_this(), jobId_,
-                                            epochToSubmit, *index));
+      scheduler_->enqueueMorsel(
+          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, *index));
     }
     return true;
   }

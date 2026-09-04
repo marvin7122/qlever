@@ -46,8 +46,9 @@ template <typename Value>
 concept StringLike = requires(const Value& value) { std::string_view{value}; };
 
 // Render a double exactly like Legacy CSV
-// (`ql::exportIds::idToStringAndTypeForEncodedValue` in `src/index/ExportIds.cpp`):
-// integral values get one decimal place (`1.0`, never `1`), other values use
+// (`ql::exportIds::idToStringAndTypeForEncodedValue` in
+// `src/index/ExportIds.cpp`): integral values get one decimal place (`1.0`,
+// never `1`), other values use
 // `%.13g` with a `.0` suffix when rounding removed the separator, and
 // non-finite values use the RDF spellings `NaN`/`INF`/`-INF`. `std::to_chars`
 // matches none of this, so the cell formats here instead of delegating to

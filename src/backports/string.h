@@ -10,28 +10,28 @@
 #ifndef QLEVER_SRC_BACKPORTS_STRING_H
 #define QLEVER_SRC_BACKPORTS_STRING_H
 
+#include <cstddef>
 #include <string>
 #include <utility>
 
 #include "backports/concepts.h"
-#include <cstddef>
-
 #include "util/Exception.h"
 
 namespace ql {
 
-// Provide a C++17-compatible backport of C++23's `std::basic_string::resize_and_overwrite` as a free
-// function that takes the string as the first parameter.
+// Provide a C++17-compatible backport of C++23's
+// `std::basic_string::resize_and_overwrite` as a free function that takes the
+// string as the first parameter.
 CPP_template(typename CharT, typename Traits, typename Allocator,
              typename Operation)(
-    requires ql::concepts::invocable<
-        Operation, CharT*, size_t> &&
-    ql::concepts::convertible_to<
-        decltype(std::declval<Operation>()(std::declval<CharT*>(),
-                                           std::declval<size_t>())),
-        size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
-                                                             Allocator>& str,
-                                           size_t count, Operation&& op) {
+    requires ql::concepts::invocable<Operation, CharT*, size_t>&&
+        ql::concepts::convertible_to<
+            decltype(std::declval<Operation>()(std::declval<CharT*>(),
+                                               std::declval<size_t>())),
+            size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
+                                                                 Allocator>&
+                                                   str,
+                                               size_t count, Operation&& op) {
 #if defined(__cpp_lib_string_resize_and_overwrite) && \
     __cpp_lib_string_resize_and_overwrite >= 202110L
   str.resize_and_overwrite(count, std::forward<Operation>(op));

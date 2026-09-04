@@ -124,8 +124,8 @@ TEST(ScatterGatherHttpBody, ThrowBeforeFirstChunkMapsToEpipe) {
   boost::system::error_code errorCode;
 
   auto result = writer.get(errorCode);
-  ASSERT_EQ(errorCode,
-            boost::system::error_code(EPIPE, boost::system::generic_category()));
+  ASSERT_EQ(errorCode, boost::system::error_code(
+                           EPIPE, boost::system::generic_category()));
   ASSERT_FALSE(result.has_value());
 }
 
@@ -147,6 +147,6 @@ TEST(ScatterGatherHttpBody, ThrowAfterFirstChunkMapsToEpipe) {
 
   auto failed = writer.get(errorCode);
   ASSERT_EQ(failed.has_value(), false);
-  ASSERT_EQ(errorCode,
-            boost::system::error_code(EPIPE, boost::system::generic_category()));
+  ASSERT_EQ(errorCode, boost::system::error_code(
+                           EPIPE, boost::system::generic_category()));
 }

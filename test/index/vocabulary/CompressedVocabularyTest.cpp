@@ -8,13 +8,12 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <array>
-
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
-#include "util/GTestHelpers.h"
+#include <array>
+
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -24,6 +23,7 @@
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/Exception.h"
+#include "util/GTestHelpers.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 
 namespace {
@@ -31,10 +31,10 @@ namespace {
 using namespace vocabulary_test;
 using namespace ad_utility::vocabulary;
 
-// A stateless test "compressor" that applies a trivial transformation to a string.
-// Satisfies the in-place decompression interface: `maxDecompressedSize` provides
-// the output bound, while `decompressInto` writes into caller-provided storage
-// and returns the number of bytes written.
+// A stateless test "compressor" that applies a trivial transformation to a
+// string. Satisfies the in-place decompression interface: `maxDecompressedSize`
+// provides the output bound, while `decompressInto` writes into caller-provided
+// storage and returns the number of bytes written.
 struct DummyDecoder {
   static size_t maxDecompressedSize(std::string_view compressed) {
     return compressed.size();
@@ -685,8 +685,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
                                        "epsi",  "zeta",  "eta",   "theta",
                                        "iota",  "kappa", "",      "lambda"};
 
-  const std::string filename =
-      std::string{gtestCurrentTestName()} + "-blocks";
+  const std::string filename = std::string{gtestCurrentTestName()} + "-blocks";
   ad_utility::deleteFile(filename, false);
   CompressedVocabulary<VocabularyInMemory, TypeParam, 2> vocab;
   {
