@@ -177,7 +177,7 @@ class IoUringPolicy {
   // few hundred bytes, but a vocabulary word has no fixed upper bound (long
   // abstracts and WKT geometries run into the tens of kilobytes), so this is
   // sized generously. Reads that still do not fit take the unregistered
-  // fallback path in `addBatch`, so this value is a performance knob and never
+  // fallback path in `addBatch`, so this value is a performance knob and is never a correctness limit
   // a correctness limit.
   static constexpr size_t DEFAULT_REGISTERED_BUFFER_SIZE = 64 * 1024;
 
