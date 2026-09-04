@@ -25,9 +25,9 @@ namespace detail {
 // Scalar fallback: return true iff `data[0 .. size)` contains any byte from
 // the compile-time set `SpecialChars`. This is the reference implementation
 // that all SIMD variants must agree with. It delegates to `find_first_of`,
-// which the standard libraries implement with a 256-bit lookup bitmap plus a
-// vectorized scan, and is therefore much faster than a naive nested loop for
-// the short inputs that dominate the non-SIMD paths.
+// which typical standard library implementations optimize with a 256-bit
+// lookup bitmap plus a vectorized scan, and is therefore much faster than a
+// naive nested loop for the short inputs that dominate the non-SIMD paths.
 template <char... SpecialChars>
 bool containsAnyByteScalar(std::string_view data) {
   static constexpr char specialChars[] = {SpecialChars...};
