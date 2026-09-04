@@ -2333,6 +2333,7 @@ TEST_P(ParallelConstructThreadCountTest, BlankNodesNoOffset) {
       qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE + 100);
   const std::string query =
       "CONSTRUCT {?s ?p _:b} WHERE {?s ?p ?o} ORDER BY ?s";
+  auto cleanupThreads = setRuntimeParameterForTest<&RuntimeParameters::constructExportNumThreads_>(0);
   const std::string expected = runQueryStreamableResult(kg, query, turtle);
   std::string parallel =
       constructResultWithThreads(kg, query, turtle, GetParam());
