@@ -14,7 +14,11 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
+#include <vector>
 
+#include "parser/GraphPattern.h"
+#include "parser/GraphPatternOperation.h"
 #include "parser/ParsedQuery.h"
 #include "util/Exception.h"
 #include "util/StringUtils.h"
@@ -281,11 +285,57 @@ class ExportPipelineRouter {
     return std::nullopt;
   }
 
-  // Unsupported-construct detection is not implemented yet; all SELECT and
-  // CONSTRUCT queries are currently treated as eligible for the fast path.
-  [[nodiscard]] static bool hasUnsupportedConstructs(
-      const ParsedQuery&) noexcept {
+  // A graph pattern is unsupported when it plans to anything but a triple
+  // scan, join, filter, BIND, or inline VALUES. Every other operation
+  // (UNION, OPTIONAL, MINUS, SERVICE, subqueries, property paths, text and
+  // spatial search, DESCRIBE, LOAD, cached results) needs Legacy V1.
+  // `FILTER` needs no case: filters live in `GraphPattern::_filters` and plan
+  // to the eligible `Filter` operation. `GRAPH { }` groups still plan to
+  // scans and joins, so they recurse like plain groups.
+  [[nodiscard]] static bool graphPatternIsUnsupported(
+      const parsedQuery::GraphPattern& pattern) noexcept {
+    for (const auto& operation : pattern._graphPatterns) {
+      if (std::holds_alternative<parsedQuery::BasicGraphPattern>(operation) ||
+          std::holds_alternative<parsedQuery::Bind>(operation) ||
+          std::holds_alternative<parsedQuery::Values>(operation)) {
+        continue;
+      }
+      if (const auto* group =
+              std::get_if<parsedQuery::GroupGraphPattern>(&operation)) {
+        if (graphPatternIsUnsupported(group->_child)) {
+          return true;
+        }
+        continue;
+      }
+      return true;
+    }
     return false;
+  }
+
+  // V2 serves Scan/Join/Filter SELECT CSV/TSV with LIMIT/OFFSET only. Anything
+  // else (GROUP BY and other aggregation, HAVING, ORDER BY, DISTINCT/REDUCED,
+  // or an unsupported graph pattern, see above) transparently falls back to
+  // Legacy V1. CONSTRUCT stays eligible here so the router keeps selecting
+  // the fast path; `ExportEngineV2::canHandle` still serves CONSTRUCT from
+  // Legacy until SELECT CSV/TSV V2 works (Decision 4).
+  [[nodiscard]] static bool hasUnsupportedConstructs(
+      const ParsedQuery& query) noexcept {
+    if (query.isAggregatingQuery()) {
+      return true;
+    }
+    if (!query._havingClauses.empty()) {
+      return true;
+    }
+    if (!query._orderBy.empty()) {
+      return true;
+    }
+    if (query.hasSelectClause()) {
+      const auto& selectClause = query.selectClause();
+      if (selectClause.distinct_ || selectClause.reduced_) {
+        return true;
+      }
+    }
+    return graphPatternIsUnsupported(query._rootGraphPattern);
   }
 };
 
