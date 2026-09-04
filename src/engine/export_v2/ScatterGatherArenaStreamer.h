@@ -50,7 +50,7 @@ class ImmutableByteBuffer {
   [[nodiscard]] OwnedByteSpan slice(size_t offset, size_t size) const;
 };
 
-// A byte range that carries the immutable allocation owning its data.
+// Represent a byte range together with the immutable allocation that owns it.
 class OwnedByteSpan {
   friend class ImmutableByteBuffer;
   friend class ScatterGatherChunkBuilder;
