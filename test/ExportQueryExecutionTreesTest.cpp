@@ -2382,7 +2382,7 @@ INSTANTIATE_TEST_SUITE_P(ConstructExportThreadCounts,
                          ::testing::ValuesIn(kConstructExportThreadCounts));
 
 // White-box test for `splitBlockIntoChunks`. `getRowIndices` never yields
-// an empty view, but the function must still handle one.
+// an empty view, but the function must still handle an empty view.
 TEST(ExportQueryExecutionTrees, SplitBlockIntoChunks) {
   std::vector<IdTable> tables;
   std::vector<LocalVocab> vocabs;
