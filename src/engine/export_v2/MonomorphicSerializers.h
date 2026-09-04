@@ -136,9 +136,9 @@ void writeCell(Writer& writer, const Value& value) {
 
 }  // namespace detail
 
-// Serialize typed tuple values for one compile-time schema. This class does
-// not perform runtime schema dispatch. Callers only use it when the planner can
-// select a concrete instantiation before entering the row loop.
+// Serialize one parameter pack of values according to a compile-time schema.
+// The class does not perform runtime schema dispatch; callers select a concrete
+// instantiation before entering the row loop.
 template <ColumnType... ColumnTypes>
 class MonomorphicRowSerializer {
  public:
