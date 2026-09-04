@@ -50,15 +50,17 @@ To maintain strict backward compatibility with 100% of existing queries and test
 
 ---
 
-## 3. Activation & Routing Hierarchy
+## 3. Activation & Routing Precedence
 
-1. **Query-Time Ingress (Primary):**
-   - URL Query Parameter: `GET /sparql?query=...&fast-export=1` or `&export-engine=v2`
-   - HTTP Header: `X-QLever-Export-Engine: v2`
-2. **Server Configuration Default:**
-   - `--export-engine-default [legacy | v2]` (Default: `legacy`)
-3. **Automatic Safe Fallback:**
-      - If an export query contains unsupported operators (e.g. distributed aggregation), the router delegates to Legacy V1 before execution; failures during V2 initialization must be handled separately.
+The router resolves controls in this deterministic order:
+
+1. **Query-time controls:** URL query parameters take precedence over the server default. `fast-export=1` requests V2, while `export-engine=v2` or `export-engine=legacy` selects the named engine.
+2. **HTTP header:** `X-QLever-Export-Engine: v2` or `legacy` is used when no URL query parameter selects an engine.
+3. **Server configuration default:** `--export-engine-default [legacy | v2]` (Default: `legacy`) is used when neither request-level control is present.
+
+Conflicting request-level controls are rejected before execution. In particular, `fast-export=1` must not be combined with `export-engine=legacy`, and a URL selection must not disagree with `X-QLever-Export-Engine`. The router reports the conflict rather than silently choosing one control.
+
+After the engine is selected, unsupported query shapes (e.g. distributed aggregation) use the automatic safe fallback to Legacy V1 at planning time. Failures during V2 initialization are handled separately and do not alter request-control resolution.
 
 ---
 
