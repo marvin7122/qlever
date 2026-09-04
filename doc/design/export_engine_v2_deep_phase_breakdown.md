@@ -264,7 +264,7 @@
 * **Component:** `src/engine/export_v2/AsyncChunkPipeline.h`
 * **Mechanics:**
   1. Maintains two page-aligned 4MB buffer slots (`Slot A` and `Slot B`).
-  2. While `Slot A` is being transmitted to the client socket asynchronously (via non-blocking socket I/O, Boost.Asio coroutine, or `io_uring`), the CPU immediately begins decompressing, resolving, and formatting `Slot B`.
+    2. While transmission of `Slot A` is pending in the kernel or NIC, the worker generates `Slot B`; if the socket is not writable or a completion is pending, the worker yields cooperatively rather than blocking.
   3. When `Slot B` is full, the pipeline waits for `Slot A`'s transmission completion (which typically finished long before), then seamlessly flips the active slots.
   4. **Strict Single-Core Concurrency:** All operations execute on the single query worker thread using cooperative asynchronous suspension, honoring single-core supervisor constraints.
   5. **Backpressure Safety:** If the network socket is choked by a slow client, chunk generation suspends until the socket drains, preventing unbounded memory growth.
