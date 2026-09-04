@@ -175,7 +175,7 @@ void IoUringPolicy::addBatch(int fd,
   }
   numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
 
-  auto prepareOne = [&](size_t i) {
+  
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     AD_CORRECTNESS_CHECK(sqe != nullptr);
 
