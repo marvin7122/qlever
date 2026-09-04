@@ -249,10 +249,11 @@ struct RuntimeParameters {
   SizeT vocabBatchIoRingSize_{256, "vocab-batch-io-ring-size"};
 
   // Number of persistent BatchIoManager instances in the pool.  Each manager
-  // holds its own io_uring ring, so this bounds the number of concurrent
-  // batch vocabulary lookups.  More managers = more parallelism for
-  // multi-query workloads, at the cost of memory for rings + registered
-  // buffers.  The default value is the constant `NUM_VOCAB_BATCH_IO_MANAGERS`
+  // holds its own io_uring ring (size set by `vocab-batch-io-ring-size`), so
+  // this bounds the number of concurrent batch vocabulary lookups.  More
+  // managers = more parallelism for multi-query workloads, at the cost of
+  // memory for the rings themselves (scales with ring size, not manager count).
+  // The default value is the constant `NUM_VOCAB_BATCH_IO_MANAGERS`
   // (Constants.h), the single source of truth for this value.
   SizeT vocabBatchIoNumManagers_{NUM_VOCAB_BATCH_IO_MANAGERS,
                                  "vocab-batch-io-num-managers"};
