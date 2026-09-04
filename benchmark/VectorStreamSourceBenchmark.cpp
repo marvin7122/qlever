@@ -21,7 +21,7 @@ using namespace ql::engine::export_v2;
 
 namespace {
 
-// Create synthetic blocks of IdTables simulating upstream operator output.
+// s that simulate upstream operator output.IdTables simulating upstream operator output.
 std::vector<Result::IdTableVocabPair> createSyntheticBlocks(
     size_t numBlocks, size_t rowsPerBlock, size_t numCols) {
   ad_utility::AllocatorWithLimit<Id> allocator{
