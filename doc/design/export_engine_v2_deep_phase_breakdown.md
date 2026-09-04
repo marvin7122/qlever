@@ -267,13 +267,13 @@
 * **Component:** `src/engine/export_v2/AsyncChunkPipeline.h`
 * **Mechanics:**
   1. Maintains two page-aligned 4MB buffer slots (`Slot A` and `Slot B`).
-  2. While `Slot A` is being transmitted to the client socket asynchronously (via non-blocking socket I/O, Boost.Asio coroutine, or `io_uring`), the CPU immediately begins decompressing, resolving, and formatting `Slot B`.
-  3. When `Slot B` is full, the pipeline waits for `Slot A`'s transmission completion (which typically finished long before), then seamlessly flips the active slots.
-  4. **Strict Single-Core Concurrency:** All operations execute on the single query worker thread using cooperative asynchronous suspension, honoring single-core supervisor constraints.
+  2. While `Slot A` has been submitted for asynchronous transmission to the client socket (via non-blocking socket I/O, a Boost.Asio coroutine, or `io_uring`), the event loop may suspend on that I/O and resume to decompress, resolve, and format `Slot B` while the kernel and NIC make progress on `Slot A`.
+  3. When `Slot B` is full, the event loop waits for `Slot A`'s transmission completion before reusing it, then flips the active slots.
+  4. **Strict Single-Core Execution:** CPU work and user-space I/O handling are interleaved on the single query worker thread using cooperative asynchronous suspension; they do not execute concurrently on that thread.
   5. **Backpressure Safety:** If the network socket is choked by a slow client, chunk generation suspends until the socket drains, preventing unbounded memory growth.
 
 ### 3. Performance Rationale
-* **Overlap on 1 Core:** While a chunk is queued for asynchronous transmission, the worker can format the next chunk instead of waiting synchronously for socket progress. Under backpressure or when formatting is faster than transmission, the worker waits for the socket; when formatting is slower, the NIC waits for the next chunk.
+* **Event-Loop Interleaving:** A pending asynchronous transmission can allow kernel and NIC progress while the worker performs formatting after an event-loop resumption. The worker still performs only one CPU task at a time: when formatting is faster than transmission, it waits for the socket; when formatting is slower, the NIC waits for the next chunk.
 * **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
 
 ### 4. Benchmarking & Verification Plan
