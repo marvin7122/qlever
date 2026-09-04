@@ -123,7 +123,7 @@ void benchmarkFilterSelectivity() {
 
     double elapsedMs =
         std::chrono::duration<double, std::milli>(end - start).count();
-    double mRowsPerSec = (totalRows / 1'000'000.0) / (elapsedMs / 1000.0);
+    double mRowsPerSec = (totalReceived / 1'000'000.0) / (elapsedMs / 1000.0);
 
     std::cout << std::setw(15) << label << " | "
               << std::setw(15) << totalReceived << " | "
