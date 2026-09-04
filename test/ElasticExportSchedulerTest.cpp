@@ -376,8 +376,7 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   ElasticExportScheduler scheduler(2, 64);
   auto session = scheduler.createSession<int>();
 
-  // Slot 0 succeeds
-  session.submitMorsel([]() -> int { return 42; });
+    session.submitMorsel([]() -> int { return 42; });
   // Slot 1 throws an exception
   session.submitMorsel([]() -> int {
     throw std::runtime_error("Simulated morsel processing failure");
