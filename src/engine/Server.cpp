@@ -1022,8 +1022,10 @@ CPP_template_def(typename RequestT, typename SendT)(
               << std::endl;
 
 #if defined(QLEVER_ENABLE_EXPORT_V2)
-  const bool useV2 = mode == ExportEngineMode::FastStreamingV2 &&
-                     ExportEngineV2::canHandle(parsedQuery, mediaType);
+  const bool useV2 =
+      mode == ExportEngineMode::FastStreamingV2 &&
+      ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
+                                mediaType);
   if (useV2 && sendMode == ExportSendMode::ScatterGather) {
     using ad_utility::content_encoding::CompressionMethod;
     const bool hasMiddleware =
@@ -1078,7 +1080,8 @@ CPP_template_def(typename RequestT, typename SendT)(
   cppcoro::generator<std::string> responseGenerator =
 #if defined(QLEVER_ENABLE_EXPORT_V2)
       (mode == ExportEngineMode::FastStreamingV2 &&
-       ExportEngineV2::canHandle(parsedQuery, mediaType))
+       ExportEngineV2::canHandle(parsedQuery,
+                                 plannedQuery.queryExecutionTree(), mediaType))
           ? ExportEngineV2::computeResult(
                 parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
                 cancellationHandle, exportScheduler_.get())
@@ -1092,7 +1095,8 @@ CPP_template_def(typename RequestT, typename SendT)(
 #endif
 #if defined(QLEVER_ENABLE_EXPORT_V2)
   if (mode == ExportEngineMode::FastStreamingV2 &&
-      ExportEngineV2::canHandle(parsedQuery, mediaType)) {
+      ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
+                                mediaType)) {
     AD_LOG_INFO << "Using ExportEngineV2 for "
                 << ad_utility::toString(mediaType) << " export" << std::endl;
   }
