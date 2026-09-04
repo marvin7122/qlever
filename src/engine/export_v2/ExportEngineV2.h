@@ -41,6 +41,14 @@ class ExportEngineV2 {
   [[nodiscard]] static bool canHandle(const ParsedQuery& parsedQuery,
                                       ad_utility::MediaType mediaType) noexcept;
 
+  // Same as above, but additionally requires the planned operation tree to
+  // contain only scans, joins, filters, BIND, and inline VALUES (the serving
+  // path, where the query execution tree is available). Anything else falls
+  // back to Legacy V1, including FILTER EXISTS (which plans an `ExistsJoin`).
+  [[nodiscard]] static bool canHandle(const ParsedQuery& parsedQuery,
+                                      const QueryExecutionTree& qet,
+                                      ad_utility::MediaType mediaType) noexcept;
+
   // Map CSV/TSV media types onto the V2 row format. Returns nullopt otherwise.
   [[nodiscard]] static std::optional<RowFormat> rowFormatFor(
       ad_utility::MediaType mediaType) noexcept;
