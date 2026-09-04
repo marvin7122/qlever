@@ -250,7 +250,7 @@ class ExportQueryExecutionTrees {
       ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
       STREAMABLE_YIELDER_ARG_DECL);
 
-  // Format each live WHERE block on a `TaskQueue` of `numThreads` workers.
+  // Format chunks of each live WHERE block on a `TaskQueue` of `numThreads` workers.
   // Join the current block before the generator advances.
   template <ad_utility::MediaType format>
   static STREAMABLE_GENERATOR_TYPE constructQueryResultParallel(

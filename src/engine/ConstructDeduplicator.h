@@ -123,7 +123,7 @@ class ConstructDeduplicator {
   // The deduplicator that decides whether a triple was already emitted.
   TripleDeduplicator filter_;
 
-  // Guards the shared deduplication state (`filter_` and `dedupVocab_`) against
+  // Guard the shared deduplication state (`filter_` and `dedupVocab_`) against
   // concurrent access from the parallel CONSTRUCT export path.
   mutable std::mutex mutex_;
 
