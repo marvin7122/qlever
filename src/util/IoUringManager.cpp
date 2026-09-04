@@ -93,7 +93,11 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // failing to initialize the io_uring instance: SQPOLL is an optimization, not a
   // requirement.
   int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
-  if (ret == -EINVAL || ret == -EPERM) {
+  if (ret < 0) {
+    // SQPOLL may be rejected for several reasons (unprivileged SQPOLL needs
+    // Linux 5.13+, IORING_SETUP_SINGLE_ISSUER needs 6.0+, or the kernel may
+    // reject the specific params combination). Fall back to a plain ring for
+    // any initialization failure rather than only EINVAL/EPERM.
     AD_LOG_INFO << "io_uring: the kernel refused IORING_SETUP_SQPOLL "
                    "(unprivileged SQPOLL requires Linux 5.13+, "
                    "IORING_SETUP_SINGLE_ISSUER requires 6.0), falling back to "
@@ -103,9 +107,6 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
       AD_THROW("io_uring_queue_init failed in IoUringManager: " +
                std::to_string(ret));
     }
-  } else if (ret < 0) {
-    AD_THROW("io_uring_queue_init_params failed in IoUringManager: " +
-             std::to_string(ret));
   }
 }
 
