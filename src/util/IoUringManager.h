@@ -26,6 +26,7 @@
 #endif
 
 #include "backports/span.h"
+#include <limits>
 
 namespace ad_utility {
 
@@ -234,10 +235,10 @@ class IoUringPolicy {
   void drainAllReadyCqes();
 
   // Apply one completion to the in-flight bookkeeping. Always updates the
-  // counts. Stores the first I/O error message in `pendingErrorMessage_`.
+  // counts. Stores the first error message in `pendingErrorMessage_`.
   void processCqe(int numBytesRead, uint64_t requestId);
 
-  // First I/O error seen while reaping a wave. Thrown after the wave is
+  // First error seen while reaping a wave. Thrown after the wave is
   // advanced so no CQE is processed twice.
   const char* pendingErrorMessage_ = nullptr;
 

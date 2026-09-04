@@ -19,6 +19,7 @@
 
 #include "util/Exception.h"
 #include "util/Log.h"
+#include <cstdlib>
 
 namespace ad_utility {
 
