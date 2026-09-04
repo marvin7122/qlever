@@ -167,8 +167,7 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   // Submit morsel 1
   session.submitMorsel([]() { return 200; });
 
-  // Wait until morsel 0 is running on a helper
-  morsel0Started.wait();
+    morsel0Started.wait();
 
   // A new foreground query starts! (count = 2)
   scheduler.onForegroundQueryStarted();
