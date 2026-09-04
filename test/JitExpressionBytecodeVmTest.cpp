@@ -19,6 +19,7 @@
 #include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/sparqlExpressions/RelationalExpressions.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
+#include "index/LocalVocabEntry.h"
 #include "parser/GraphPatternOperation.h"
 #include "util/IdTableHelpers.h"
 #include "util/IndexTestHelpers.h"
@@ -511,6 +512,67 @@ TEST(JitExpressionBytecodeVmTest, ProgramPredicates) {
   withIdOp.addInstruction(OpCode::LOAD_COL_ID, 0);
   withIdOp.addInstruction(OpCode::RET);
   EXPECT_FALSE(JitExpressionBytecodeVm::hasExactIntegerSemantics(withIdOp));
+}
+
+TEST(JitExpressionBytecodeVmTest, ScanColumnKindsAndCellRules) {
+  // Unit test for the runtime exactness guard (see `CellRule`): datatype
+  // presence detection over referenced columns and the per-rule predicates.
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  LocalVocabEntry local =
+      LocalVocabEntry::literalWithoutQuotes("xyz", qec->getLocalVocabContext());
+
+  JitBytecodeProgram program;
+  program.addInstruction(OpCode::LOAD_COL_ID, 0);
+  program.addReferencedColumn(0);
+
+  // Mixed column: every constrained kind is present.
+  IdTable mixed =
+      makeIdTableFromVector({{I(1)},
+                             {Id::makeFromDouble(1.5)},
+                             {Id::makeFromBool(true)},
+                             {Id::makeFromLocalVocabIndex(&local)},
+                             {Id::makeFromVocabIndex(VocabIndex::make(3))},
+                             {Id::makeUndefined()}});
+  auto kinds =
+      JitExpressionBytecodeVm::scanColumnKinds(program, mixed, 0, mixed.size());
+  EXPECT_TRUE(kinds.hasDouble);
+  EXPECT_TRUE(kinds.hasBool);
+  EXPECT_TRUE(kinds.hasLocalVocab);
+  EXPECT_TRUE(kinds.hasOther);
+  EXPECT_FALSE(kinds.allInt);
+  EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::BitwiseExact, kinds));
+  EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::FoldIntEquality, kinds));
+  EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::IntegerArithmetic, kinds));
+  EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::OrderedComparison, kinds));
+
+  // Pure integers satisfy every rule (the native backend additionally
+  // requires `allInt`, which holds here).
+  IdTable ints = makeIdTableFromVector({{I(1)}, {I(2)}});
+  auto intKinds =
+      JitExpressionBytecodeVm::scanColumnKinds(program, ints, 0, ints.size());
+  EXPECT_TRUE(intKinds.allInt);
+  EXPECT_FALSE(intKinds.hasDouble);
+  EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(CellRule::BitwiseExact,
+                                                         intKinds));
+  EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::FoldIntEquality, intKinds));
+  EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::IntegerArithmetic, intKinds));
+  EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::OrderedComparison, intKinds));
+
+  // An empty range scans nothing and satisfies every rule.
+  auto emptyKinds =
+      JitExpressionBytecodeVm::scanColumnKinds(program, mixed, 0, 0);
+  EXPECT_TRUE(emptyKinds.allInt);
+  EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::OrderedComparison, emptyKinds));
+}
 }
 
 TEST(JitExpressionBytecodeVmTest, ExecuteIntColumn) {

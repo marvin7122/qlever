@@ -75,7 +75,8 @@ struct Instruction {
 //   validity concept and reinterprets raw `ValueId` bits.
 enum class CellRule {
   // Bitwise `ID` programs (string/IRI folds, prefix ranges): exact for
-  // every cell datatype.
+  // every cell datatype except `LocalVocabIndex`, for which the legacy
+  // evaluation compares string-aware while the kernels compare raw bits.
   BitwiseExact,
   // Folded `?var = <int>`: legacy cross-type numeric equality (`5.0 == 5`,
   // `true == 1`) requires the absence of `Double` and `Bool` cells.
@@ -969,8 +970,11 @@ class JitExpressionBytecodeVm {
     bool hasDouble = false;
     bool hasBool = false;
     bool hasDate = false;
-    // Any cell that is not `Int`, `Bool`, `Undefined`, `Double` or `Date`
-    // (vocabulary indices, literals, geo points, blank nodes, ...).
+    // `LocalVocabIndex` cells compare string-aware in the legacy evaluation
+    // (against vocabulary-backed bounds), but bitwise in the kernels.
+    bool hasLocalVocab = false;
+    // Any cell that is not `Int`, `Bool`, `Undefined`, `Double`, `Date` or
+    // `LocalVocabIndex` (vocabulary indices, literals, geo points, ...).
     bool hasOther = false;
     bool allInt = true;
   };
@@ -1008,6 +1012,11 @@ class JitExpressionBytecodeVm {
             kinds.hasDate = true;
             kinds.allInt = false;
             break;
+          case Datatype::LocalVocabIndex:
+            kinds.hasLocalVocab = true;
+            kinds.hasOther = true;
+            kinds.allInt = false;
+            break;
           case Datatype::Undefined:
             kinds.allInt = false;
             break;
@@ -1030,7 +1039,7 @@ class JitExpressionBytecodeVm {
   static bool satisfiesCellRule(CellRule rule, const ColumnKinds& kinds) {
     switch (rule) {
       case CellRule::BitwiseExact:
-        return true;
+        return !kinds.hasLocalVocab;
       case CellRule::FoldIntEquality:
         return !kinds.hasDouble && !kinds.hasBool;
       case CellRule::IntegerArithmetic:
