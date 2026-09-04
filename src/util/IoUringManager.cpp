@@ -166,7 +166,7 @@ void IoUringPolicy::addBatch(int fd,
           sqe, fd, registeredBufferPool_ + poolIdx * registeredBufferSize_,
           static_cast<unsigned>(numBytes),
           static_cast<__u64>(fileOffsetPerRequest[i]),
-          static_cast<int>(poolIdx));
+          poolIdx);
     } else {
       io_uring_prep_read(sqe, fd, targetBufferPerRequest[i],
                          static_cast<unsigned>(numBytes),
