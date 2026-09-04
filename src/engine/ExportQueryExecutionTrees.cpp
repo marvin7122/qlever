@@ -838,14 +838,15 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   auto rowIndices = getRowIndices(limitAndOffset, *result, resultSize,
                                   constructTriples.size());
 
-  // The number of threads for the parallel serialization of the CONSTRUCT
+    // The number of threads for the parallel serialization of the CONSTRUCT
   // triples.  0 means: use all logical cores.  The parallel path walks lazy
   // WHERE blocks, cuts each block into contiguous row chunks, and serializes
-  // those chunks on a worker pool. Outputs are yielded in row order.  When
-  // triple deduplication is active, the chunks share a single deduplicator
-  // whose ID-space filter and `dedupVocab_` re-anchoring are guarded by a
-  // mutex (see `ConstructDeduplicator::isNew`); the string formatting happens
-  // outside the lock.
+  // those chunks on a worker pool. Within each block the chunks are yielded
+  // in row order; the order across blocks is whatever the underlying lazy
+  // range yields.  When triple deduplication is active, the chunks share a
+  // single deduplicator whose ID-space filter and `dedupVocab_` re-anchoring
+  // are guarded by a mutex (see `ConstructDeduplicator::isNew`); the string
+  // formatting happens outside the lock.
   bool dedupActive =
       !std::holds_alternative<ad_utility::DeduplicationMode::None>(
           getRuntimeParameter<&RuntimeParameters::constructDeduplication_>()
