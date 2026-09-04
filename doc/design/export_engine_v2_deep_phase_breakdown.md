@@ -65,7 +65,7 @@
 ### 2. What is it & How does it work?
 * **Component:** `src/engine/ExportPipelineRouter.h`
 * **Mechanics:**
-  1. Inspects query-time request metadata (`fast-export=1`, `export-engine=v2`, `X-QLever-Export-Engine: v2`).
+  1. Centralizes mode selection in one precedence-ordered decision function: first the explicit request parameter (`fast-export=1` or `export-engine=v2`), then the HTTP header (`X-QLever-Export-Engine: v2`), and finally the server default.
   2. Evaluates the `ParsedQuery` execution plan: verifies whether the root operator is exportable (e.g. index scans, join trees, projections, filters) without blocking global operators (e.g. global top-N sort without index ordering).
   3. Returns `ExportEngineMode::FastStreamingV2` or `ExportEngineMode::LegacyV1`.
   4. If an unexpected runtime condition arises during V2 planning or setup, before any output bytes are committed, it triggers a clean fallback to Legacy V1. Once the first byte is committed, fallback is unavailable; any subsequent V2 failure is reported as an explicit stream failure rather than switching to Legacy V1.
