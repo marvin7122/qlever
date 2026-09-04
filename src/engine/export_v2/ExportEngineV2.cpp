@@ -128,8 +128,8 @@ constexpr uint64_t kRevocationCheckRows = 1024;
 // job. Partial builders are just smaller builders: unordered emission
 // accepts them, ordered sessions never produce them.
 struct CheckpointMorselRunner {
-  std::shared_ptr<ad_utility::export_v2::ExportJobState<
-      ScatterGatherChunkBuilder>>
+  std::shared_ptr<
+      ad_utility::export_v2::ExportJobState<ScatterGatherChunkBuilder>>
       state_;
   std::shared_ptr<std::vector<std::optional<ColumnIndex>>> columnsPtr_;
   std::shared_ptr<std::vector<ColumnLattice>> latticePtr_;
@@ -171,8 +171,8 @@ struct CheckpointMorselRunner {
               remainder.numRows_ += seg.end_ - pos;
             }
             for (size_t r = s + 1; r < numSegments; ++r) {
-              remainder.numRows_ += plan.segments_[r].end_ -
-                                    plan.segments_[r].begin_;
+              remainder.numRows_ +=
+                  plan.segments_[r].end_ - plan.segments_[r].begin_;
               remainder.segments_.push_back(std::move(plan.segments_[r]));
             }
             state_->trySubmitMorsel(makeTask(std::move(remainder)));
@@ -256,7 +256,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   // tasks run each morsel to completion.
   const CheckpointMorselRunner runner{
       session.sharedState(), columnsPtr, latticePtr, indexPtr, format,
-      cancellationHandle, !ordered};
+      cancellationHandle,    !ordered};
   for (auto&& plan : planExportMorsels(
            result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();

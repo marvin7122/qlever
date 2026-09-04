@@ -10,11 +10,10 @@
 
 #include "index/vocabulary/VocabularyInternalExternal.h"
 
+#include <range/v3/view/enumerate.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
-
-#include <range/v3/view/enumerate.hpp>
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {

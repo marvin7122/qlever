@@ -97,9 +97,9 @@ TEST(MonomorphicSerializersTest, HandlesEmptyAndBoundaryValues) {
                                ColumnType::Boolean, ColumnType::Undefined>;
   RecordingWriter writer;
 
-  Serializer::serializeRow<RowFormat::Tsv>(
-      writer, std::string_view{}, std::numeric_limits<int64_t>::min(),
-      Id::makeFromBool(false), 0);
+  Serializer::serializeRow<RowFormat::Tsv>(writer, std::string_view{},
+                                           std::numeric_limits<int64_t>::min(),
+                                           Id::makeFromBool(false), 0);
 
   EXPECT_EQ(writer.output(), "T\t-9223372036854775808\tfalse\t\n");
 }
@@ -110,10 +110,8 @@ TEST(MonomorphicSerializersTest, HandlesEmptyAndBoundaryValues) {
 TEST(MonomorphicSerializersTest, DoubleMatchesLegacyEncodedCsv) {
   using Serializer = MonomorphicRowSerializer<ColumnType::Double>;
   for (const auto [value, legacy] :
-       {std::pair{1.0, "1.0\n"},
-        std::pair{-0.0, "-0.0\n"},
-        std::pair{0.5, "0.5\n"},
-        std::pair{153.07, "153.07\n"},
+       {std::pair{1.0, "1.0\n"}, std::pair{-0.0, "-0.0\n"},
+        std::pair{0.5, "0.5\n"}, std::pair{153.07, "153.07\n"},
         std::pair{std::numeric_limits<double>::quiet_NaN(), "NaN\n"},
         std::pair{std::numeric_limits<double>::infinity(), "INF\n"},
         std::pair{-std::numeric_limits<double>::infinity(), "-INF\n"}}) {
@@ -136,12 +134,11 @@ TEST(MonomorphicSerializersTest, DoubleMatchesLegacyEncodedCsv) {
 
 TEST(MonomorphicSerializersTest, BooleanMatchesLegacyBoolLiteral) {
   using Serializer = MonomorphicRowSerializer<ColumnType::Boolean>;
-  for (const auto [id, legacy] : {std::pair{Id::makeFromBool(false), "false\n"},
-                                  std::pair{Id::makeFromBool(true), "true\n"},
-                                  std::pair{Id::makeBoolFromZeroOrOne(false),
-                                            "0\n"},
-                                  std::pair{Id::makeBoolFromZeroOrOne(true),
-                                            "1\n"}}) {
+  for (const auto [id, legacy] :
+       {std::pair{Id::makeFromBool(false), "false\n"},
+        std::pair{Id::makeFromBool(true), "true\n"},
+        std::pair{Id::makeBoolFromZeroOrOne(false), "0\n"},
+        std::pair{Id::makeBoolFromZeroOrOne(true), "1\n"}}) {
     RecordingWriter writer;
     Serializer::serializeRow<RowFormat::Csv>(writer, id);
     EXPECT_EQ(writer.output(), legacy);

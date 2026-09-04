@@ -1080,8 +1080,8 @@ CPP_template_def(typename RequestT, typename SendT)(
   cppcoro::generator<std::string> responseGenerator =
 #if defined(QLEVER_ENABLE_EXPORT_V2)
       (mode == ExportEngineMode::FastStreamingV2 &&
-       ExportEngineV2::canHandle(parsedQuery,
-                                 plannedQuery.queryExecutionTree(), mediaType))
+       ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
+                                 mediaType))
           ? ExportEngineV2::computeResult(
                 parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
                 cancellationHandle, exportScheduler_.get())
