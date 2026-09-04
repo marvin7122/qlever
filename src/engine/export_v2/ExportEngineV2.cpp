@@ -51,15 +51,15 @@ std::string escapeCell(std::string input) {
   }
 }
 
+using ResolvedCell = std::optional<std::pair<std::string, const char*>>;
+
 template <RowFormat Format>
-void appendResolvedId(ScatterGatherChunkBuilder& builder, const Index& index,
-                      Id id, const LocalVocab& localVocab) {
+std::vector<ResolvedCell> resolveColumn(const Index& index,
+                                        ql::span<const Id> ids,
+                                        const LocalVocab& localVocab) {
   constexpr bool removeQuotes = Format == RowFormat::Csv;
-  auto optionalStringAndType = ql::exportIds::idToStringAndType<removeQuotes>(
-      index, id, localVocab, escapeCell<Format>);
-  if (optionalStringAndType.has_value()) {
-    builder.appendCopy(optionalStringAndType.value().first);
-  }
+  return ql::exportIds::idsToStringAndType<removeQuotes>(index, ids, localVocab,
+                                                         escapeCell<Format>);
 }
 
 std::string makeHeaderLine(const parsedQuery::SelectClause& selectClause,
@@ -140,20 +140,37 @@ void ExportEngineV2::appendSerializedRows(
     return selectedColumns[outCol];
   };
 
-  for (uint64_t row = rowBegin; row < rowEnd; ++row) {
+  // Batch-resolve each bound column with the same idToStringAndType contract
+  // as Legacy (CSV quoting, vocab strings). Do not switch to the monomorphic
+  // writers here: those would change cell text.
+  const size_t n = static_cast<size_t>(rowEnd - rowBegin);
+  std::vector<std::vector<ResolvedCell>> resolved(numOutputCols);
+  for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
+    const auto col = columnAt(outCol);
+    if (!col.has_value()) {
+      continue;
+    }
+    const auto ids = idTable.getColumn(col.value()).subspan(rowBegin, n);
+    if (format == RowFormat::Csv) {
+      resolved[outCol] = resolveColumn<RowFormat::Csv>(index, ids, localVocab);
+    } else {
+      resolved[outCol] = resolveColumn<RowFormat::Tsv>(index, ids, localVocab);
+    }
+    AD_CORRECTNESS_CHECK(resolved[outCol].size() == n);
+  }
+
+  const char* separator = format == RowFormat::Csv ? "," : "\t";
+  for (size_t i = 0; i < n; ++i) {
     for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
       if (outCol > 0) {
-        builder.appendCopy(format == RowFormat::Csv ? "," : "\t");
+        builder.appendCopy(separator);
       }
-      const auto col = columnAt(outCol);
-      if (!col.has_value()) {
+      if (resolved[outCol].empty()) {
         continue;
       }
-      Id id = idTable(row, col.value());
-      if (format == RowFormat::Csv) {
-        appendResolvedId<RowFormat::Csv>(builder, index, id, localVocab);
-      } else {
-        appendResolvedId<RowFormat::Tsv>(builder, index, id, localVocab);
+      const auto& cell = resolved[outCol][i];
+      if (cell.has_value()) {
+        builder.appendCopy(cell.value().first);
       }
     }
     builder.appendCopy("\n");
