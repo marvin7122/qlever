@@ -270,7 +270,7 @@
   5. **Backpressure Safety:** If the network socket is choked by a slow client, chunk generation suspends until the socket drains, preventing unbounded memory growth.
 
 ### 3. Performance Rationale
-* **100% Hardware Concurrency on 1 Core:** The CPU core never sits idle waiting for network socket acknowledgments, and the network NIC never sits idle waiting for chunk formatting.
+* **Latency Hiding on 1 Core:** While one chunk is being transmitted, the worker can prepare the next chunk; backpressure may still suspend generation until the socket drains.
 * **Latency Hiding:** Hides up to 100% of network round-trip transmission latency.
 
 ### 4. Benchmarking & Verification Plan
