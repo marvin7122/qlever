@@ -84,7 +84,8 @@ bool ConstructDeduplicator::isNew(size_t templateTripleIdx,
                                   size_t rowIdxInIdTable,
                                   const PreprocessedConstructTemplate& tmpl,
                                   const BatchEvaluationContext& ctx) {
-  if (tmpl.tripleContainsBlankNode_[templateTripleIdx]) {
+  if (templateTripleIdx >= tmpl.tripleContainsBlankNode_.size() ||
+      tmpl.tripleContainsBlankNode_[templateTripleIdx]) {
     return true;
   }
   std::lock_guard lock{mutex_};
