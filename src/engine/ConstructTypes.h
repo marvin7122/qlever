@@ -142,8 +142,8 @@ struct PrecomputedVariable {
 
 // A blank node with precomputed prefix and suffix for fast evaluation. The
 // blank node format is: prefix + rowNumber + suffix, where prefix is "_:g" or
-// "_:u" (generated or user-defined) and suffix is "_" + label. This avoids
-// recomputing these constant parts for every result table row.
+// "_:g" for generated, "_:u" for user-defined blank nodes; suffix is "_" + label.
+// This avoids recomputing these constant parts for every result table row.
 struct PrecomputedBlankNode {
   // Heap allocation keeps the character storage stable when the enclosing
   // preprocessed template is moved into its shared owner.
