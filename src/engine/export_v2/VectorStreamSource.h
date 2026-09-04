@@ -39,7 +39,7 @@ struct VectorStreamConfig {
   RowsPerChunk rowsPerChunk = RowsPerChunk{8192};
 };
 
-// Keep rows whose ID in `column` equals `value`. Several filters are
+//  equals `column` equals `value`. Several filters are
 // conjoined.
 struct EqualityFilter {
   ColumnIndex column;
