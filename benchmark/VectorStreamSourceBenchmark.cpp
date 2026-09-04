@@ -12,9 +12,9 @@
 #include <iostream>
 #include <vector>
 
-#include "engine/IdTable.h"
 #include "engine/Result.h"
 #include "engine/export_v2/VectorStreamSource.h"
+#include "engine/idTable/IdTable.h"
 #include "global/Id.h"
 
 using namespace ql::engine::export_v2;
@@ -22,8 +22,9 @@ using namespace ql::engine::export_v2;
 namespace {
 
 // Create synthetic blocks of IdTables simulating upstream operator output.
-std::vector<Result::IdTableVocabPair> createSyntheticBlocks(
-    size_t numBlocks, size_t rowsPerBlock, size_t numCols) {
+std::vector<Result::IdTableVocabPair> createSyntheticBlocks(size_t numBlocks,
+                                                            size_t rowsPerBlock,
+                                                            size_t numCols) {
   ad_utility::AllocatorWithLimit<Id> allocator{
       ad_utility::makeAllocationMemoryLimitForTesting()};
   std::vector<Result::IdTableVocabPair> blocks;
@@ -46,10 +47,9 @@ void benchmarkChunkSizeSweep() {
   std::cout << "\n=======================================================\n";
   std::cout << "  WP2 VectorStreamSource: Chunk Size Sweep (50M Rows) \n";
   std::cout << "=======================================================\n";
-  std::cout << std::setw(15) << "Chunk Size" << " | "
-            << std::setw(15) << "Latency (ms)" << " | "
-            << std::setw(18) << "Throughput (M/s)" << " | "
-            << std::setw(15) << "ns / row" << "\n";
+  std::cout << std::setw(15) << "Chunk Size" << " | " << std::setw(15)
+            << "Latency (ms)" << " | " << std::setw(18) << "Throughput (M/s)"
+            << " | " << std::setw(15) << "ns / row" << "\n";
   std::cout << "-------------------------------------------------------\n";
 
   const size_t totalRows = 50'000'000;
@@ -78,10 +78,11 @@ void benchmarkChunkSizeSweep() {
     double mRowsPerSec = (totalReceived / 1'000'000.0) / (elapsedMs / 1000.0);
     double nsPerRow = (elapsedMs * 1'000'000.0) / totalReceived;
 
-    std::cout << std::setw(15) << chunkSize << " | "
-              << std::setw(15) << std::fixed << std::setprecision(2) << elapsedMs << " | "
-              << std::setw(18) << std::fixed << std::setprecision(2) << mRowsPerSec << " | "
-              << std::setw(15) << std::fixed << std::setprecision(2) << nsPerRow << "\n";
+    std::cout << std::setw(15) << chunkSize << " | " << std::setw(15)
+              << std::fixed << std::setprecision(2) << elapsedMs << " | "
+              << std::setw(18) << std::fixed << std::setprecision(2)
+              << mRowsPerSec << " | " << std::setw(15) << std::fixed
+              << std::setprecision(2) << nsPerRow << "\n";
   }
 }
 
@@ -89,10 +90,9 @@ void benchmarkFilterSelectivity() {
   std::cout << "\n=======================================================\n";
   std::cout << "  WP2 VectorStreamSource: Inlined Filter Selectivity   \n";
   std::cout << "=======================================================\n";
-  std::cout << std::setw(15) << "Selectivity" << " | "
-            << std::setw(15) << "Passed Rows" << " | "
-            << std::setw(15) << "Latency (ms)" << " | "
-            << std::setw(18) << "Throughput (M/s)" << "\n";
+  std::cout << std::setw(15) << "Selectivity" << " | " << std::setw(15)
+            << "Passed Rows" << " | " << std::setw(15) << "Latency (ms)"
+            << " | " << std::setw(18) << "Throughput (M/s)" << "\n";
   std::cout << "-------------------------------------------------------\n";
 
   const size_t totalRows = 20'000'000;
@@ -106,10 +106,12 @@ void benchmarkFilterSelectivity() {
   config.rowsPerChunk = RowsPerChunk{8192};
   VectorStreamSource source{config};
 
-  std::vector<std::pair<std::string, std::vector<EqualityFilter>>> filterConfigs = {
-      {"100% (No Filter)", {}},
-      {"2% (Exact Match)", {{1, Id::makeFromVocabIndex(VocabIndex::make(42))}}},
-  };
+  std::vector<std::pair<std::string, std::vector<EqualityFilter>>>
+      filterConfigs = {
+          {"100% (No Filter)", {}},
+          {"2% (Exact Match)",
+           {{1, Id::makeFromVocabIndex(VocabIndex::make(42))}}},
+      };
 
   for (const auto& [label, filters] : filterConfigs) {
     size_t totalReceived = 0;
@@ -125,10 +127,10 @@ void benchmarkFilterSelectivity() {
         std::chrono::duration<double, std::milli>(end - start).count();
     double mRowsPerSec = (totalRows / 1'000'000.0) / (elapsedMs / 1000.0);
 
-    std::cout << std::setw(15) << label << " | "
-              << std::setw(15) << totalReceived << " | "
-              << std::setw(15) << std::fixed << std::setprecision(2) << elapsedMs << " | "
-              << std::setw(18) << std::fixed << std::setprecision(2) << mRowsPerSec << "\n";
+    std::cout << std::setw(15) << label << " | " << std::setw(15)
+              << totalReceived << " | " << std::setw(15) << std::fixed
+              << std::setprecision(2) << elapsedMs << " | " << std::setw(18)
+              << std::fixed << std::setprecision(2) << mRowsPerSec << "\n";
   }
 }
 
