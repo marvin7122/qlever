@@ -27,9 +27,7 @@ TEST(SoftwarePipelinedPrefetcherTest, ProcessAllElementsCorrectly) {
 
   int sum = 0;
   SoftwarePipelinedPrefetcher<16>::processWithPrefetch(
-      ptrs, ptrs.size(), [&sum](const int* ptr) {
-        sum += *ptr;
-      });
+      ptrs, ptrs.size(), [&sum](const int* ptr) { sum += *ptr; });
 
   int expectedSum = (999 * 1000) / 2;
   EXPECT_EQ(sum, expectedSum);

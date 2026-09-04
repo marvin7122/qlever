@@ -23,8 +23,8 @@ template <size_t PrefetchDistance = 16>
 class SoftwarePipelinedPrefetcher {
  public:
   template <typename PointerArray, typename Consumer>
-  static void processWithPrefetch(
-      const PointerArray& ptrs, size_t count, Consumer&& consume) {
+  static void processWithPrefetch(const PointerArray& ptrs, size_t count,
+                                  Consumer&& consume) {
     for (size_t i = 0; i < count; ++i) {
       if (i + PrefetchDistance < count) {
         __builtin_prefetch(ptrs[i + PrefetchDistance], 0, 3);
