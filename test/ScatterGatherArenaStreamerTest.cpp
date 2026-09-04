@@ -169,6 +169,15 @@ TEST(ScatterGatherArenaStreamerTest, FinalizeToStringEmpty) {
   EXPECT_EQ(std::move(builder).finalizeToString(), "");
 }
 
+TEST(ScatterGatherArenaStreamerTest, AppendOwnedStringDoesNotCopyIntoArena) {
+  ScatterGatherChunkBuilder builder;
+  builder.appendOwned(std::string{"ab"});
+  builder.appendOwned(std::string{"cd"});
+  auto chunk = std::move(builder).finalize();
+  EXPECT_EQ(chunk.toString(), "abcd");
+  EXPECT_EQ(chunk.numSegments(), 2u);
+}
+
 TEST(ScatterGatherArenaStreamerTest, VisitSegmentsMatchesToString) {
   ImmutableByteBuffer arena{"XYZ"};
   ScatterGatherChunkBuilder builder;

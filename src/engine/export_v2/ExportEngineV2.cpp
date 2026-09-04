@@ -62,6 +62,21 @@ std::vector<ResolvedCell> resolveColumn(const Index& index,
                                                          escapeCell<Format>);
 }
 
+const qlever::export_v2::ImmutableByteBuffer& csvComma() {
+  static const qlever::export_v2::ImmutableByteBuffer buf{std::string(",")};
+  return buf;
+}
+
+const qlever::export_v2::ImmutableByteBuffer& tsvTab() {
+  static const qlever::export_v2::ImmutableByteBuffer buf{std::string("\t")};
+  return buf;
+}
+
+const qlever::export_v2::ImmutableByteBuffer& newline() {
+  static const qlever::export_v2::ImmutableByteBuffer buf{std::string("\n")};
+  return buf;
+}
+
 std::string makeHeaderLine(const parsedQuery::SelectClause& selectClause,
                            RowFormat format) {
   std::vector<std::string> variables =
@@ -102,7 +117,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
 
   {
     ScatterGatherChunkBuilder header;
-    header.appendCopy(makeHeaderLine(selectClause, format));
+    header.appendOwned(makeHeaderLine(selectClause, format));
     co_yield std::move(header);
   }
 
@@ -203,21 +218,21 @@ void ExportEngineV2::appendSerializedRows(
     AD_CORRECTNESS_CHECK(resolved[outCol].size() == n);
   }
 
-  const char* separator = format == RowFormat::Csv ? "," : "\t";
+  const auto& separator = format == RowFormat::Csv ? csvComma() : tsvTab();
   for (size_t i = 0; i < n; ++i) {
     for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
       if (outCol > 0) {
-        builder.appendCopy(separator);
+        builder.appendOwned(separator.slice(0, separator.size()));
       }
       if (resolved[outCol].empty()) {
         continue;
       }
-      const auto& cell = resolved[outCol][i];
+      auto& cell = resolved[outCol][i];
       if (cell.has_value()) {
-        builder.appendCopy(cell.value().first);
+        builder.appendOwned(std::move(cell.value().first));
       }
     }
-    builder.appendCopy("\n");
+    builder.appendOwned(newline().slice(0, newline().size()));
   }
 }
 
