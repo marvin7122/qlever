@@ -107,7 +107,7 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenForegroundLoadDecreases) {
   ElasticExportScheduler scheduler(4, 64);
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
-  // Initially 2 queries active (helpers disabled)
+  // Start with two active queries, so helpers are initially disabled.
   scheduler.onForegroundQueryStarted();
   scheduler.onForegroundQueryStarted();
   EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
