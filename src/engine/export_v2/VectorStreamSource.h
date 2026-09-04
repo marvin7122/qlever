@@ -82,7 +82,7 @@ class VectorStreamSource {
 
     for (auto&& block : blocks) {
       const auto& inputTable = block.idTable_;
-      if (!output.has_value()) {
+      if (!output) {
         output.emplace(
             IdTable{inputTable.numColumns(), inputTable.getAllocator()},
             LocalVocab{});
