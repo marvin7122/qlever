@@ -299,9 +299,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
     if (numManagers == 0) {
       throw std::invalid_argument("vocabBatchIoNumManagers must be greater than 0");
     }
-    if (ringSize == 0 || ringSize > std::numeric_limits<unsigned>::max()) {
-      throw std::invalid_argument("vocabBatchIoRingSize must be in range [1, UINT_MAX]");
-    }
+    AD_CONTRACT_CHECK(ringSize > 0 && ringSize <= std::numeric_limits<unsigned>::max());
     return {numManagers, ringSize};
   };
   auto [numManagers, ringSize] = getVocabBatchIoParams();
