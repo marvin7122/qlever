@@ -211,7 +211,8 @@ class EncodedIriManagerImpl {
 
   // The second half of `toString` above: combine the integer encoding of the
   // payload and the prefix string into a result string that represents an IRI.
-  // Note: This function expects, that the prefix starts with `<`.
+  // Static helper that combines the integer encoding of the payload and the
+  // prefix string into a result string that represents an IRI.
   static std::string toStringWithGivenPrefix(uint64_t digitEncoding,
                                              std::string_view prefix) {
     std::string result;
