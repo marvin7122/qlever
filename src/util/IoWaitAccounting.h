@@ -110,7 +110,7 @@ inline Registry& registry() {
   return registry;
 }
 
-// Adds this thread's counters to the registry on first use and folds them into
+// Add this thread's counters to the registry on first use and fold them into
 // `finished_` when the thread exits, so no sample is lost.
 struct ThreadRegistration {
   ThreadCounters counters_;
