@@ -40,6 +40,8 @@ namespace {
 
 using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
 
+static constexpr size_t kSelectExportBatchSize = 1024;
+
 
 // `0` for `construct-export-num-threads` (also used for SELECT export) means all logical cores.
 // The same parameter controls thread count for both CONSTRUCT and SELECT export.
@@ -950,7 +952,7 @@ ExportQueryExecutionTrees::constructQueryResultParallel(
   // are in flight so later chunks of a large block are not all materialized
   // before the first one is yielded.
   const size_t rowsPerChunk =
-      qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE;
+      kSelectExportBatchSize;
   const size_t window = 2 * numThreads;
   ad_utility::TaskQueue<false> queue{window, numThreads,
                                      "ConstructExportParallel"};
