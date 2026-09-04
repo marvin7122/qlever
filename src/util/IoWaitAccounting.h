@@ -223,7 +223,7 @@ inline WorkerSample& workerSample() {
   return sample;
 }
 
-// Reads `utime + stime` from a `/proc/.../stat` line. Both follow the comm
+// Read `utime + stime` from a `/proc/.../stat` line. Both follow the comm
 // field, which may itself contain spaces, so parse after the final ')'.
 inline uint64_t ticksFromStat(const std::string& stat) {
   const auto close = stat.rfind(')');
