@@ -49,9 +49,9 @@ struct EqualityFilter {
 // Rechunk QLever result blocks and push them into a synchronous sink.
 // The source is stateless, so concurrent and nested calls are independent.
 //
-// Each sink argument owns the local vocabulary entries referenced by its IDs.
-// It is valid only until the sink returns. A sink that retains data must clone
-// both `idTable_` and `localVocab_`.
+// The pair passed to the sink is source-owned and is valid only until the
+// sink returns. A sink that retains data must clone both `idTable_` and
+// `localVocab_`.
 class VectorStreamSource {
  public:
   explicit VectorStreamSource(VectorStreamConfig config = {})
