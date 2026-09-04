@@ -121,11 +121,13 @@ std::optional<JitBytecodeProgram> tryFoldEquality(
     }
     // Already-resolved `Id` constant. Floating-point payloads are excluded:
     // a bitwise comparison would consider two NaNs equal, while the legacy
-    // evaluation does not. `Bool`, `Undefined`, `Date` and `LocalVocabIndex`
-    // payloads are excluded because the legacy evaluation compares them
-    // numerically (`true == 1`), string-aware across vocabularies, or drops
-    // them, unlike a bitwise comparison. `Int` payloads fold with a
-    // `FoldIntEquality` precondition (no `Double`/`Bool` cells); all
+    // evaluation does not. `Undefined` payloads are excluded because the
+    // legacy evaluation drops them while a bitwise comparison would keep
+    // `UNDEF` cells. `LocalVocabIndex` payloads are excluded because the
+    // legacy evaluation compares them string-aware across vocabularies.
+    // `Bool`, `Date` and `GeoPoint` payloads are conservatively excluded
+    // (rare as filter constants). `Int` payloads fold with a
+    // `FoldIntEquality` precondition (no `Double` cells); all
     // vocabulary-backed payloads are bitwise-exact.
     if (auto id = getLiteralValue<ValueId>(*constChild)) {
       const auto datatype = id.value().getDatatype();

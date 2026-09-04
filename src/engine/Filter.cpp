@@ -145,7 +145,7 @@ CPP_template_def(int WIDTH,
   // `REGEX(?var, "^prefix")` resolved against the vocabulary once, without
   // per-row polymorphism or dictionary lookups). The folded program runs
   // only if its `CellRule` holds over the input cells (e.g. a folded
-  // `?var = <int>` diverges on `Double`/`Bool` cells, where the legacy
+  // `?var = <int>` diverges on `Double` cells, where the legacy
   // evaluation compares numerically).
   auto optFolded = ql::engine::jit::tryFoldStringFilterToJit(
       *_expression.getPimpl(), _subtree->getVariableColumns(),

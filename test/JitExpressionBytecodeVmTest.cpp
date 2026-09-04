@@ -381,11 +381,13 @@ TEST(JitExpressionBytecodeVmTest, DivisionFallsBackToLegacyEvaluation) {
             makeIdTableFromVector({{1, 2}, {2, 4}, {4, 2}, {1, 0}}, I));
 }
 
-TEST(JitExpressionBytecodeVmTest, FoldIntEqualityFallsBackOnDoubleAndBool) {
+TEST(JitExpressionBytecodeVmTest, FoldIntEqualityFallsBackOnDoubles) {
   // Regression test: a folded `?x = <int>` compares raw `ValueId` bits,
-  // but the legacy evaluation compares numerically (`1.0 == 1`,
-  // `true == 1`). The fold must only run when no `Double`/`Bool` cells
-  // occur, otherwise the legacy evaluation takes over and keeps them.
+  // but the legacy evaluation compares integers and doubles numerically
+  // (`1.0 == 1`). The fold must only run when no `Double` cells occur,
+  // otherwise the legacy evaluation takes over and keeps the `1.0` row.
+  // (`Bool` and `Undefined` cells need no guard: the legacy `=` drops them
+  // just like the bitwise comparison.)
   using namespace sparqlExpression;
   using namespace sparqlExpression::relational;
   auto I = ad_utility::testing::IntId;
@@ -411,10 +413,10 @@ TEST(JitExpressionBytecodeVmTest, FoldIntEqualityFallsBackOnDoubleAndBool) {
 
   auto result = filter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
   ASSERT_TRUE(result->isFullyMaterialized());
-  // `1`, `1.0` and `true` are all equal to `1` in the legacy evaluation.
+  // `1` and `1.0` are equal to `1` in the legacy evaluation; `true`, `2`
+  // and `UNDEF` are dropped (strict `=` typing, mismatch, error).
   EXPECT_EQ(result->idTableView(),
-            makeIdTableFromVector(
-                {{I(1)}, {Id::makeFromDouble(1.0)}, {Id::makeFromBool(true)}}));
+            makeIdTableFromVector({{I(1)}, {Id::makeFromDouble(1.0)}}));
 }
 
 TEST(JitExpressionBytecodeVmTest, ArithmeticFilterFallsBackOnDoubles) {

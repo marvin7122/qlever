@@ -68,8 +68,7 @@ struct Instruction {
 // datatypes are only known at runtime. The integer morsel kernels treat
 // every non-`Int` (non-`Bool`) cell as invalid (`UNDEF`), which matches the
 // legacy evaluation except in the following cases:
-// * `Double` cells: legacy arithmetic and comparisons compute doubles.
-// * `Bool` cells under bitwise `ID` equality: legacy `true == 1` holds.
+// * `Double` cells: legacy arithmetic, comparisons and `=` compute doubles.
 // * `Date` cells under `ADD`/`SUB`: legacy computes dates.
 // * Any non-`Int` cell under the native machine-code backend, which has no
 //   validity concept and reinterprets raw `ValueId` bits.
@@ -78,8 +77,10 @@ enum class CellRule {
   // every cell datatype except `LocalVocabIndex`, for which the legacy
   // evaluation compares string-aware while the kernels compare raw bits.
   BitwiseExact,
-  // Folded `?var = <int>`: legacy cross-type numeric equality (`5.0 == 5`,
-  // `true == 1`) requires the absence of `Double` and `Bool` cells.
+  // Folded `?var = <int>`: legacy `=` compares integers and doubles
+  // numerically (`5.0 == 5`), so `Double` cells must be absent. (`Bool`
+  // and `Undefined` cells need no guard: the legacy `=` drops them just
+  // like the bitwise comparison.)
   FoldIntEquality,
   // Integer arithmetic (`ADD`/`SUB`/`MUL`/`MOD`): requires the absence of
   // `Double` and `Date` cells.
@@ -1041,7 +1042,7 @@ class JitExpressionBytecodeVm {
       case CellRule::BitwiseExact:
         return !kinds.hasLocalVocab;
       case CellRule::FoldIntEquality:
-        return !kinds.hasDouble && !kinds.hasBool;
+        return !kinds.hasDouble;
       case CellRule::IntegerArithmetic:
         return !kinds.hasDouble && !kinds.hasDate;
       case CellRule::OrderedComparison:
