@@ -338,7 +338,7 @@ class ExportJobState final
           }
         }
       } else {
-        // Foreground load exceeded threshold; revoke helpers
+        // Revoke helpers when foreground load exceeds the threshold.
         currentEpoch_.store(newEpoch, std::memory_order_relaxed);
         if (activeHelpers_.load(std::memory_order_relaxed) > 0) {
           state_.store(SessionState::Revoking, std::memory_order_relaxed);
