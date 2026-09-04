@@ -23,6 +23,7 @@
 #include "util/CancellationHandle.h"
 #include "util/http/MediaTypes.h"
 #include "util/stream_generator.h"
+#include <functional>
 
 // Class for computing the result of an already parsed and planned query and
 // exporting it in different formats (TSV, CSV, Turtle, JSON, Binary).
@@ -265,7 +266,7 @@ class ExportQueryExecutionTrees {
     std::reference_wrapper<const Index> index_;
   };
 
-  // Format each live SELECT block on a `TaskQueue`. CSV and TSV only.
+  // Format each SELECT result block on a `TaskQueue`. CSV and TSV only.
   // Join the current block before the generator advances. The header is
   // yielded by the caller before this function runs.
   template <ad_utility::MediaType format>
