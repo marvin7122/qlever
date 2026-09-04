@@ -287,7 +287,8 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
       Id::makeUndefined(),
   };
 
-  // Unsorted input is fine: both helpers partition mixed datatypes.
+    // Unsorted input is fine: both helpers handle mixed datatypes the same
+  // way, so the sort is unnecessary for the comparison.
   auto batchResults = ql::exportIds::idsToStringAndType(
       index, ql::span<const Id>{ids}, localVocab);
 
