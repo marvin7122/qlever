@@ -293,19 +293,18 @@ void VocabularyOnDisk::open(const std::string& filename) {
   size_ = numOffsets - 1;
 
   // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
-  size_t numManagers =
-      getRuntimeParameter<&RuntimeParameters::vocabBatchIoNumManagers_>();
-  size_t ringSize =
-      getRuntimeParameter<&RuntimeParameters::vocabBatchIoRingSize_>();
-  // Ensure the pool has at least one manager to avoid blocking every `lookupBatch`.
-  // Reject values that do not fit into the `unsigned` ring size
-  // (instead of silently wrapping them).
-  if (numManagers == 0) {
-    throw std::invalid_argument("vocabBatchIoNumManagers must be greater than 0");
-  }
-  if (ringSize == 0 || ringSize > std::numeric_limits<unsigned>::max()) {
-    throw std::invalid_argument("vocabBatchIoRingSize must be in range [1, UINT_MAX]");
-  }
+  auto getVocabBatchIoParams = []() -> std::pair<size_t, size_t> {
+    size_t numManagers = getRuntimeParameter<&RuntimeParameters::vocabBatchIoNumManagers_>();
+    size_t ringSize = getRuntimeParameter<&RuntimeParameters::vocabBatchIoRingSize_>();
+    if (numManagers == 0) {
+      throw std::invalid_argument("vocabBatchIoNumManagers must be greater than 0");
+    }
+    if (ringSize == 0 || ringSize > std::numeric_limits<unsigned>::max()) {
+      throw std::invalid_argument("vocabBatchIoRingSize must be in range [1, UINT_MAX]");
+    }
+    return {numManagers, ringSize};
+  };
+  auto [numManagers, ringSize] = getVocabBatchIoParams();
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(numManagers);
   bool preferIoUring = true;
