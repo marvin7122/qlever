@@ -11,6 +11,7 @@
 #define QLEVER_SRC_UTIL_READONLYMMAP_H
 
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include <cstddef>
 #include <utility>
@@ -23,11 +24,18 @@ namespace ad_utility {
 // A read-only shared mapping of a byte range of a file, with RAII lifetime.
 // A default-constructed instance is unmapped; `map` establishes the mapping
 // and reports failure as `false` (never by throwing) so callers that own a
-// fallback path can degrade gracefully. Move-only: a moved-from instance is
+// fallback path can degrade gracefully. The requested file offset needs no
+// page alignment: it is rounded down internally and `data()` still points at
+// exactly the requested first byte. Move-only: a moved-from instance is
 // unmapped.
 class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
  private:
-  void* base_ = nullptr;
+  // Page-aligned base handed to `mmap`/`munmap`, or `nullptr` when unmapped.
+  void* alignedBase_ = nullptr;
+  // Bytes covered by the mapping starting at `alignedBase_`.
+  size_t mappedBytes_ = 0;
+  // Requested view into the mapping: `data()` plus `numBytes_`.
+  const void* data_ = nullptr;
   size_t numBytes_ = 0;
 
  public:
@@ -37,7 +45,9 @@ class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
   ReadOnlyMmap& operator=(const ReadOnlyMmap&) = delete;
 
   ReadOnlyMmap(ReadOnlyMmap&& other) noexcept
-      : base_{std::exchange(other.base_, nullptr)},
+      : alignedBase_{std::exchange(other.alignedBase_, nullptr)},
+        mappedBytes_{std::exchange(other.mappedBytes_, 0)},
+        data_{std::exchange(other.data_, nullptr)},
         numBytes_{std::exchange(other.numBytes_, 0)} {
     auto guard = makeInvariantGuard();
   }
@@ -45,7 +55,9 @@ class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
     auto guard = makeInvariantGuard();
     if (this != &other) {
       unmap();
-      base_ = std::exchange(other.base_, nullptr);
+      alignedBase_ = std::exchange(other.alignedBase_, nullptr);
+      mappedBytes_ = std::exchange(other.mappedBytes_, 0);
+      data_ = std::exchange(other.data_, nullptr);
       numBytes_ = std::exchange(other.numBytes_, 0);
     }
     return *this;
@@ -54,7 +66,9 @@ class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
   ~ReadOnlyMmap() { unmap(); }
 
   void checkInvariants() const {
-    AD_CORRECTNESS_CHECK((base_ == nullptr) == (numBytes_ == 0));
+    AD_CORRECTNESS_CHECK((alignedBase_ == nullptr) == (numBytes_ == 0));
+    AD_CORRECTNESS_CHECK((data_ == nullptr) == (numBytes_ == 0));
+    AD_CORRECTNESS_CHECK(mappedBytes_ >= numBytes_);
   }
 
   // Map `numBytes` starting at `fileOffset` of `fd` read-only. A no-op
@@ -65,15 +79,21 @@ class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
     if (isMapped()) {
       return true;
     }
-    if (numBytes == 0) {
+    if (numBytes == 0 || fileOffset < 0) {
       return false;
     }
-    void* base =
-        ::mmap(nullptr, numBytes, PROT_READ, MAP_SHARED, fd, fileOffset);
+    const size_t pageSize = static_cast<size_t>(::sysconf(_SC_PAGE_SIZE));
+    const auto offset = static_cast<uint64_t>(fileOffset);
+    const uint64_t alignedOffset = offset - offset % pageSize;
+    const size_t delta = static_cast<size_t>(offset - alignedOffset);
+    void* base = ::mmap(nullptr, numBytes + delta, PROT_READ, MAP_SHARED, fd,
+                        static_cast<off_t>(alignedOffset));
     if (base == MAP_FAILED) {
       return false;
     }
-    base_ = base;
+    alignedBase_ = base;
+    mappedBytes_ = numBytes + delta;
+    data_ = static_cast<const char*>(base) + delta;
     numBytes_ = numBytes;
     return true;
   }
@@ -83,20 +103,24 @@ class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
     // No guard: called from the destructor and the move assignment, where a
     // throwing exit check would be wrong. The body re-establishes the
     // invariant directly.
-    if (base_ != nullptr) {
-      if (::munmap(base_, numBytes_) != 0) {
+    if (alignedBase_ != nullptr) {
+      if (::munmap(alignedBase_, mappedBytes_) != 0) {
         AD_LOG_WARN << "munmap failed in `ReadOnlyMmap::unmap`.\n";
       }
-      base_ = nullptr;
+      alignedBase_ = nullptr;
+      mappedBytes_ = 0;
+      data_ = nullptr;
       numBytes_ = 0;
     }
   }
 
-  [[nodiscard]] bool isMapped() const noexcept { return base_ != nullptr; }
+  [[nodiscard]] bool isMapped() const noexcept {
+    return alignedBase_ != nullptr;
+  }
   // The mapped bytes; only valid when `isMapped()`.
   [[nodiscard]] const void* data() const {
     AD_CONTRACT_CHECK(isMapped());
-    return base_;
+    return data_;
   }
   [[nodiscard]] size_t size() const noexcept { return numBytes_; }
 };
