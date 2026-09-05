@@ -893,8 +893,8 @@ TEST(IndexRebuilder, serverIntegration) {
   // Perform the given `request` on the `threadPool` and return a future for the
   // response.
   auto performRequest = [&threadPool,
-                         &makeTask](serverTestHelpers::ReqT& request) {
-    return net::co_spawn(threadPool, makeTask(request), net::use_future);
+                         &makeTask](serverTestHelpers::ReqT request) {
+    return net::co_spawn(threadPool, makeTask(std::move(request)), net::use_future);
   };
 
   // Perform the given `request` on the `threadPool`, expect it to fail, and
