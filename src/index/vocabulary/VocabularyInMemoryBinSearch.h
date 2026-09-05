@@ -40,7 +40,7 @@ class VocabularyInMemoryBinSearch
   using Indices = std::vector<uint64_t>;
 
  private:
-  // Own the in-memory word storage together with the string views into it.
+  Own the in-memory word storage together with the string views into it.
   // The enclosing vocabulary can be closed or destroyed while a batch result
   // is still alive.
   class BatchLookupData : public VocabBatchStorage {
