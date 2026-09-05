@@ -39,6 +39,7 @@ struct BatchEvaluationResult {
   // not evaluated.
     // TODO<marvin7122> can this be a `vector`? How can we do this more cache
   // friendly. We always look at the same variables here.
+  // HashMap for sparse storage: only CONSTRUCT template variables evaluated.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> variablesByColumn_;
   size_t numRows_ = 0;
 
