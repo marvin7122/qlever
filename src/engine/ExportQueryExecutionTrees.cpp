@@ -43,8 +43,16 @@ namespace {
 static constexpr size_t kSelectExportBatchSize = 1024;
 
 
-// `0` for `construct-export-num-threads` (also used for SELECT export) means all logical cores.
-// The same parameter controls thread count for both CONSTRUCT and SELECT export.
+/**
+ * @brief Resolves the number of threads to use for export operations.
+ *
+ * Reads the runtime parameter `constructExportNumThreads_`. A value of 0
+ * means "use all logical cores", in which case the function returns
+ * std::max(1u, std::thread::hardware_concurrency()). Otherwise it returns
+ * the parameter value directly, ensuring at least one thread.
+ *
+ * @return The resolved thread count (minimum 1).
+ */
 size_t resolveExportNumThreads() {
   const size_t n =
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
