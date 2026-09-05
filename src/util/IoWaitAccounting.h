@@ -140,6 +140,7 @@ inline ThreadCounters& threadCounters() {
   return registration.counters_;
 }
 
+// Returns the current value of CLOCK_MONOTONIC in nanoseconds.
 inline uint64_t nowNanos() {
   timespec time{};
   clock_gettime(CLOCK_MONOTONIC, &time);
