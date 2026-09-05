@@ -132,7 +132,7 @@ class SplitVocabulary {
          }))...);
   }
 
-  // Bucket type used by the private `lookupBatch` helpers.
+
   using IndicesByMarker = std::array<std::vector<size_t>, numberOfVocabs>;
   using ResultsByMarker = std::array<VocabBatchLookupResult, numberOfVocabs>;
   // Partition marked indices into underlying vocabulary-local index lists.
