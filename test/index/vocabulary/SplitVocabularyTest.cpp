@@ -492,6 +492,55 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
 }
 
 // _____________________________________________________________________________
+TEST(Vocabulary, SplitVocabularyLookupBatchWithThreeVocabs) {
+  // Tests lookupBatch with a SplitVocabulary that has three underlying
+  // vocabularies, using mixed-marker indices (including duplicates and
+  // out-of-order) and verifies the returned views are in the original
+  // request order and reference the correct underlying words.
+  ThreeSplitVocabulary sv;
+  auto ww = sv.makeDiskWriterPtr("splitVocabLookupBatchThree.dat");
+  (*ww)("\"\"", true);
+  (*ww)("\"abc\"", true);
+  (*ww)("\"axyz\"", true);
+  (*ww)("\"xyz\"^^<http://example.com>", true);
+  (*ww)("\"xyz\"^^<blabliblu>", true);
+  (*ww)("\"zzz\"^^<blabliblu>", true);
+  ww->finish();
+  sv.readFromFile("splitVocabLookupBatchThree.dat");
+
+  // Indices: marker 0 (main), marker 1, marker 2, with duplicates and
+  // reordered. The three underlying vocabs contain:
+  //   vocab 0: "\"\"", "\"abc\"", "\"axyz\""
+  //   vocab 1: "\"xyz\"^^<http://example.com>"
+  //   vocab 2: "\"xyz\"^^<blabliblu>", "\"zzz\"^^<blabliblu>"
+  const std::array<size_t, 8> indices{
+      static_cast<size_t>(sv.addMarker(1, 0)),   // "\"abc\"" (vocab 0)
+      static_cast<size_t>(sv.addMarker(0, 1)),   // "\"xyz\"^^<http://example.com>" (vocab 1)
+      static_cast<size_t>(sv.addMarker(0, 2)),   // "\"xyz\"^^<blabliblu>" (vocab 2)
+      static_cast<size_t>(sv.addMarker(2, 0)),   // "\"axyz\"" (vocab 0)
+      static_cast<size_t>(sv.addMarker(1, 2)),   // "\"zzz\"^^<blabliblu>" (vocab 2)
+      static_cast<size_t>(sv.addMarker(0, 0)),   // "\"\"" (vocab 0)
+      static_cast<size_t>(sv.addMarker(0, 1)),   // duplicate: "\"xyz\"^^<http://example.com>"
+      static_cast<size_t>(sv.addMarker(1, 0)),   // duplicate: "\"abc\""
+  };
+  auto result = sv.lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv, result,
+                                                                indices);
+  EXPECT_ANY_THROW(sv.lookupBatch(ql::span<const size_t>{}));
+
+  // Also test with only a single marker (marker 2) to ensure single-marker
+  // path works correctly with three vocabularies.
+  const std::array<size_t, 3> markerTwoOnly{
+      static_cast<size_t>(sv.addMarker(0, 2)),
+      static_cast<size_t>(sv.addMarker(1, 2)),
+      static_cast<size_t>(sv.addMarker(0, 2)),
+  };
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      sv, sv.lookupBatch(markerTwoOnly), markerTwoOnly);
+  sv.close();
+}
+
+// _____________________________________________________________________________
 TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   // Create a `SplitVocabulary::WordWriter` and destruct it without a call to
   // `finish()`.
