@@ -34,13 +34,9 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
 // Matches an `EvaluatedTermRef` by checking the pointed-to term data.
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
-  return ::testing::AllOf(
-      ::testing::ResultOf(
-          [](const EvaluatedTermRef& r) { return r.data_->rdfTermString_; },
-          std::string(str)),
-      ::testing::ResultOf(
-          [](const EvaluatedTermRef& r) { return r.data_->rdfTermDataType_; },
-          ::testing::Eq(type)));
+    return AD_FIELD(EvaluatedTermRef, data_, ::testing::Pointee(::testing::AllOf(
+      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
+      AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type)))));
 };
 
 // Matches an `EvaluatedTriple` by applying `matchesEvaluatedTerm` with
