@@ -100,10 +100,9 @@ CPP_template(typename UnderlyingVocabulary,
   auto scanAll() const {
     return ad_utility::CachingTransformInputRange(
         underlyingVocabulary_.scanAll(),
-        [this, buffer = std::string{}](const IndexAndWord& compressed) mutable {
+        [this](const IndexAndWord& compressed) {
           const auto& [index, word] = compressed;
-          buffer = compressionWrapper_.decompress(word, getDecoderIdx(index));
-          return IndexAndWord{index, buffer};
+          return IndexAndWord{index, compressionWrapper_.decompress(word, getDecoderIdx(index))};
         });
   }
 
