@@ -1,4 +1,4 @@
-// Copyright 2025 - 2026, The QLever Authors, in particular:
+// Copyright 2025, The QLever Authors, in particular:
 //
 // 2025 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2025 - 2026 NN, BMW
