@@ -56,8 +56,9 @@ class VocabularyInternalExternal {
   std::string operator[](uint64_t i) const;
 
   // Delegate to `scanAll` of the underlying vocabulary. All words that are
-  // stored in the internal vocabulary, can also be found in the external
-  // vocabulary.
+  // stored in the internal vocabulary can also be found in the external
+  // vocabulary. The `externalVocab_` is the authoritative source of truth for
+  // `size()` and `scanAll()`.
   auto scanAll() const { return externalVocab_.scanAll(); }
 
   // Resolve `indices` in request order. Words present in `internalVocab_` are
