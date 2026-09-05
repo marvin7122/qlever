@@ -311,11 +311,10 @@ template <typename S, typename C, typename I>
 VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
-    return vocabulary_.lookupBatch(indices, builder);
-  } else {
-    return vocabulary_.lookupBatch(indices);
-  }
+  // `UnicodeVocabulary::lookupBatch` unconditionally provides the two-argument
+  // overload and dispatches internally (via `HasBuilderLookupBatch_v`), so no
+  // additional branching is needed here.
+  return vocabulary_.lookupBatch(indices, builder);
 }
 
 // _____________________________________________________________________________

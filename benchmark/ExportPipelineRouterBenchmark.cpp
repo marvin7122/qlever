@@ -16,24 +16,30 @@
 #include "parser/SparqlParser.h"
 
 using namespace ql::engine;
-using ad_utility::url_parser::ParamValueMap;
+using ExportPipelineRouter::ParamValueMap;
 
 int main(int argc, char** argv) {
   size_t numQueries = 1'000'000;
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg != "-p" && !arg.empty() && std::isdigit(static_cast<unsigned char>(arg[0]))) {
+    if (arg != "-p" && !arg.empty() &&
+        std::isdigit(static_cast<unsigned char>(arg[0]))) {
       numQueries = std::stoull(arg);
     }
   }
 
-  std::cout << "================================================================================\n";
-  std::cout << " QLever Fast-Path V2: Ingress Routing & Capability Inspection Microbenchmark\n";
+  std::cout << "==============================================================="
+               "=================\n";
+  std::cout << " QLever Fast-Path V2: Ingress Routing & Capability Inspection "
+               "Microbenchmark\n";
   std::cout << " Iterations: " << numQueries << " routing evaluations\n";
-  std::cout << "================================================================================\n\n";
+  std::cout << "==============================================================="
+               "=================\n\n";
 
-  auto selectQuery = SparqlParser::parseQuery(nullptr, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
-  auto constructQuery = SparqlParser::parseQuery(nullptr, "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
+  auto selectQuery =
+      SparqlParser::parseQuery(nullptr, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
+  auto constructQuery = SparqlParser::parseQuery(
+      nullptr, "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
   auto askQuery = SparqlParser::parseQuery(nullptr, "ASK WHERE { ?s ?p ?o }");
 
   ParamValueMap fastParams;
@@ -57,15 +63,22 @@ int main(int argc, char** argv) {
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;
 
-  double nsPerDecision = (elapsed.count() * 1e9) / static_cast<double>(numQueries);
-  double mDecisionsPerSec = static_cast<double>(numQueries) / (elapsed.count() * 1e6);
+  double nsPerDecision =
+      (elapsed.count() * 1e9) / static_cast<double>(numQueries);
+  double mDecisionsPerSec =
+      static_cast<double>(numQueries) / (elapsed.count() * 1e6);
 
   std::cout << "Results:\n";
-  std::cout << "  Total Elapsed: " << std::fixed << std::setprecision(4) << elapsed.count() << " s\n";
-  std::cout << "  Throughput:    " << std::fixed << std::setprecision(2) << mDecisionsPerSec << " Million decisions/sec\n";
-  std::cout << "  Latency:       " << std::fixed << std::setprecision(2) << nsPerDecision << " ns / decision\n";
-  std::cout << "  V2 Selections: " << dummyV2Count << " / " << numQueries << "\n";
-  std::cout << "================================================================================\n";
+  std::cout << "  Total Elapsed: " << std::fixed << std::setprecision(4)
+            << elapsed.count() << " s\n";
+  std::cout << "  Throughput:    " << std::fixed << std::setprecision(2)
+            << mDecisionsPerSec << " Million decisions/sec\n";
+  std::cout << "  Latency:       " << std::fixed << std::setprecision(2)
+            << nsPerDecision << " ns / decision\n";
+  std::cout << "  V2 Selections: " << dummyV2Count << " / " << numQueries
+            << "\n";
+  std::cout << "==============================================================="
+               "=================\n";
 
   return 0;
 }

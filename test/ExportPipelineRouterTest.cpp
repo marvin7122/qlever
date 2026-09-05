@@ -13,7 +13,7 @@
 #include "parser/SparqlParser.h"
 
 using namespace ql::engine;
-using ad_utility::url_parser::ParamValueMap;
+using ExportPipelineRouter::ParamValueMap;
 
 namespace {
 
@@ -38,19 +38,22 @@ TEST(ExportPipelineRouterTest, DefaultModeIsLegacyV1) {
 TEST(ExportPipelineRouterTest, UrlParamFastExportTruthySelectsV2) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
 
-  std::vector<std::string> truthyValues = {"1", "true", "TRUE", "yes", "YES", "on"};
+  std::vector<std::string> truthyValues = {"1",   "true", "TRUE",
+                                           "yes", "YES",  "on"};
   for (const auto& val : truthyValues) {
     ParamValueMap params;
     params["fast-export"] = {val};
     auto mode = ExportPipelineRouter::selectEngine(query, params);
-    EXPECT_EQ(mode, ExportEngineMode::FastStreamingV2) << "Failed for val: " << val;
+    EXPECT_EQ(mode, ExportEngineMode::FastStreamingV2)
+        << "Failed for val: " << val;
   }
 }
 
 TEST(ExportPipelineRouterTest, UrlParamFastExportFalsySelectsV1) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
 
-  std::vector<std::string> falsyValues = {"0", "false", "FALSE", "no", "NO", "off"};
+  std::vector<std::string> falsyValues = {"0",  "false", "FALSE",
+                                          "no", "NO",    "off"};
   for (const auto& val : falsyValues) {
     ParamValueMap params;
     params["fast-export"] = {val};
@@ -65,16 +68,20 @@ TEST(ExportPipelineRouterTest, UrlParamExportEngineV2) {
 
   ParamValueMap params;
   params["export-engine"] = {"v2"};
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params), ExportEngineMode::FastStreamingV2);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::FastStreamingV2);
 
   params["export-engine"] = {"fast"};
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params), ExportEngineMode::FastStreamingV2);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::FastStreamingV2);
 
   params["export-engine"] = {"legacy"};
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params), ExportEngineMode::LegacyV1);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::LegacyV1);
 
   params["export-engine"] = {"v1"};
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params), ExportEngineMode::LegacyV1);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::LegacyV1);
 }
 
 TEST(ExportPipelineRouterTest, HttpHeaderOverrides) {
@@ -101,8 +108,8 @@ TEST(ExportPipelineRouterTest, ServerDefaultModeConfiguration) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
   ParamValueMap params;
 
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(
-                query, params, std::nullopt, ExportEngineMode::LegacyV1),
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, std::nullopt,
+                                               ExportEngineMode::LegacyV1),
             ExportEngineMode::LegacyV1);
 
   EXPECT_EQ(ExportPipelineRouter::selectEngine(
@@ -116,7 +123,8 @@ TEST(ExportPipelineRouterTest, AskQueryNotEligibleForFastStreaming) {
   params["fast-export"] = {"1"};
 
   EXPECT_FALSE(ExportPipelineRouter::isEligibleForFastStreaming(query));
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params), ExportEngineMode::LegacyV1);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::LegacyV1);
 }
 
 TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
@@ -127,7 +135,8 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
   {
     ParamValueMap params;
     params["fast-export"] = {"1"};
-    std::string desc = ExportPipelineRouter::describeDecision(selectQuery, params);
+    std::string desc =
+        ExportPipelineRouter::describeDecision(selectQuery, params);
     EXPECT_THAT(desc, testing::HasSubstr("FastStreamingV2"));
     EXPECT_THAT(desc, testing::HasSubstr("Fast-Path V2 selected"));
   }
@@ -154,9 +163,11 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
   // 4. Default standard relational pipeline
   {
     ParamValueMap params;
-    std::string desc = ExportPipelineRouter::describeDecision(selectQuery, params);
+    std::string desc =
+        ExportPipelineRouter::describeDecision(selectQuery, params);
     EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
-    EXPECT_THAT(desc, testing::HasSubstr("default standard relational pipeline"));
+    EXPECT_THAT(desc,
+                testing::HasSubstr("default standard relational pipeline"));
   }
 }
 
