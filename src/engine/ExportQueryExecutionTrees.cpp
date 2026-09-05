@@ -56,6 +56,9 @@ static constexpr size_t kSelectExportBatchSize = 1024;
 size_t resolveExportNumThreads() {
   const size_t n =
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
+  // hardware_concurrency() is documented to potentially return 0 on
+  // platforms where the number of hardware cores cannot be determined.
+  AD_CORRECTNESS_CHECK(std::thread::hardware_concurrency() != 0);
   return n == 0 ? std::max(1u, std::thread::hardware_concurrency()) : n;
 }
 
