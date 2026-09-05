@@ -52,7 +52,8 @@ void VocabularyInMemoryBinSearch::close() {
     // Install a fresh empty buffer instead of clearing in place.
   // outstanding `VocabBatchLookupResult` still shares ownership of the old one
   // and must keep reading valid bytes.
-  words_ = std::make_shared<const Words>();
+  static const auto emptyWords = std::make_shared<const Words>();
+  words_ = emptyWords;
   indices_.clear();
 }
 
