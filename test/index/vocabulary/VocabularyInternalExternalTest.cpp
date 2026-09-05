@@ -27,6 +27,12 @@ using namespace vocabulary_test;
 // names, when other tests are run in parallel.
 std::string suffix = ".vocabularyInternalExternalTest.dat";
 
+// NOTE: Tests for `beginLookup`/`finishLookup` were added to this file
+// covering: all-RAM hits (BeginFinishLookupAllRamHits),
+// all-disk misses (BeginFinishLookupAllDiskMisses),
+// mixed hits/misses (BeginFinishLookupMixedHitsMisses), and
+// empty external handle case (BeginFinishLookupEmptyExternalHandle).
+
 // Store a VocabularyInternalExternal and read it back from file. For each
 // instance of `VocabularyCreator` that exists at the same time, a different
 // filename has to be chosen.
