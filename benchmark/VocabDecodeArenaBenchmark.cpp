@@ -162,7 +162,7 @@ DecodeStats runIntoBatch(const Vocab& vocab,
     const size_t bound =
         wrapper.maxDecompressedSize(w.compressed, w.decoderIdx);
     s.bytesBound += bound;
-    if (bound == 0) {
+        if (bound == 0) {
       views.emplace_back();
       continue;
     }
