@@ -81,13 +81,7 @@ std::string serializeSelectCsvTsvChunk(
   static constexpr char separator =
       format == ad_utility::MediaType::tsv ? '\t' : ',';
   constexpr auto& escapeFunction = format == ad_utility::MediaType::tsv
-                                       ? RdfEscaping::escapeForTsv
-                                       : RdfEscaping::escapeForCsv;
-  std::string out;
-  for (uint64_t i : chunk.view_) {
-    for (size_t j = 0; j < columns.size(); ++j) {
-      if (columns[j].has_value()) {
-        const auto& val = columns[j].value();
+                                       
         const Id id = chunk.tableWithVocab_.idTable()(i, val.columnIndex_);
         auto optionalStringAndType =
             ql::exportIds::idToStringAndType<format ==
