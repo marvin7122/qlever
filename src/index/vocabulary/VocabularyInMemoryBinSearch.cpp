@@ -28,7 +28,7 @@ std::optional<std::string_view> VocabularyInMemoryBinSearch::operator[](
     uint64_t index) const {
   auto it = ql::ranges::lower_bound(indices_, index);
   if (it != indices_.end() && *it == index) {
-    return (*words_)[it - indices_.begin()];
+    
   }
   return std::nullopt;
 }
