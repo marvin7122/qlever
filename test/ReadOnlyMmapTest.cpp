@@ -46,9 +46,9 @@ TEST(ReadOnlyMmap, MapsFileContents) {
   EXPECT_TRUE(mapping.isMapped());
   EXPECT_EQ(mapping.size(), payload.size());
   ASSERT_NE(mapping.data(), nullptr);
-  EXPECT_EQ(std::string_view{static_cast<const char*>(mapping.data()),
-                             mapping.size()},
-            payload);
+  std::string_view mapped{static_cast<const char*>(mapping.data()),
+                          mapping.size()};
+  EXPECT_EQ(mapped, payload);
 
   // A second `map` on an already mapped instance is a no-op success.
   EXPECT_TRUE(mapping.map(file.fd(), payload.size()));
@@ -63,9 +63,9 @@ TEST(ReadOnlyMmap, MapsSuffixAtOffset) {
 
   ReadOnlyMmap mapping;
   ASSERT_TRUE(mapping.map(file.fd(), 6, 4));
-  EXPECT_EQ(std::string_view{static_cast<const char*>(mapping.data()),
-                             mapping.size()},
-            "456789");
+  std::string_view mapped{static_cast<const char*>(mapping.data()),
+                          mapping.size()};
+  EXPECT_EQ(mapped, "456789");
 
   std::filesystem::remove(filename);
 }
@@ -98,9 +98,9 @@ TEST(ReadOnlyMmap, MoveTransfersMapping) {
   EXPECT_FALSE(moved.isMapped());
   EXPECT_TRUE(assigned.isMapped());
   EXPECT_EQ(assigned.data(), base);
-  EXPECT_EQ(std::string_view{static_cast<const char*>(assigned.data()),
-                             assigned.size()},
-            payload);
+  std::string_view mapped{static_cast<const char*>(assigned.data()),
+                          assigned.size()};
+  EXPECT_EQ(mapped, payload);
 
   std::filesystem::remove(filename);
 }
