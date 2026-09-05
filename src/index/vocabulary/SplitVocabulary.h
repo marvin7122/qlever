@@ -205,7 +205,6 @@ class SplitVocabulary {
   // underlying `lookupBatch`. The result order matches `indices`, including
   // duplicates and mixed markers.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    AD_CONTRACT_CHECK(!indices.empty());
 
     std::array<std::vector<size_t>, numberOfVocabs>
         underlyingVocabIndicesByMarker;
