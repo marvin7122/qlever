@@ -136,6 +136,10 @@ Server::HttpErrorResponse Server::reportHttpError(
     std::string_view message, http::status status, const RequestT& request,
     const MetricLabel& errorType) const {
   using namespace ad_utility::httpUtils;
+  AD_CONTRACT_CHECK(metrics_ != nullptr);
+  AD_CONTRACT_CHECK(!message.empty());
+  AD_CONTRACT_CHECK(to_status_class(status) == http::status_class::client_error ||
+                    to_status_class(status) == http::status_class::server_error);
   AD_LOG_ERROR << message << std::endl;
   metrics_->httpErrors_->Add(1, {errorType});
   return createHttpResponseFromString(std::string{message}, status, request,
