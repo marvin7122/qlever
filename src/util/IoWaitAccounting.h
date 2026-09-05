@@ -231,6 +231,8 @@ inline ThreadCounters total() {
 // application threads, but from several kernel workers performing blocking
 // reads at once. Sampling them separates "the export thread waited less" from
 // "more reads were in flight", which a single `cpu_s` figure cannot.
+//
+// Holds sampled statistics about the io_uring worker pool.
 struct WorkerSample {
   std::mutex mutex_;
   uint64_t maxWorkers_ = 0;   // highest `iou-wrk-` count seen
