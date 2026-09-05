@@ -498,7 +498,7 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
 
 // Direct tests of the private lookupBatch helpers (FRIEND_TEST).
 TEST(Vocabulary, SplitVocabularyPartitionUnderlyingIndicesByMarker) {
-  // Marker 0: plain words; marker 1: words starting with `"a`.
+  // Marker 0: indices 0 (""), 2 ("axyz"), 3 ("xyz"); marker 1: index 1 ("abc").
   const std::array<size_t, 5> indices{
       static_cast<size_t>(TwoSplitVocabulary::addMarker(3, 0)),
       static_cast<size_t>(TwoSplitVocabulary::addMarker(1, 1)),
