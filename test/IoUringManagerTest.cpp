@@ -398,7 +398,7 @@ TYPED_TEST(IoUringManagerTest, InvalidFdThrows) {
   constexpr int invalidFd = -1;
   AD_EXPECT_THROW_WITH_MESSAGE(
       manager.wait(batch.submitTo(manager, invalidFd)),
-      AnyOf(HasSubstr("pread failed"), HasSubstr("I/O error")));
+      AnyOf(HasSubstr("io_uring_wait_cqes failed")));
 }
 
 // A read that is fully satisfied returns the requested bytes from the requested
