@@ -38,7 +38,7 @@ using ad_utility::InputRangeTypeErased;
 
 namespace {
 
-using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
+
 
 static constexpr size_t kSelectExportBatchSize = 1024;
 
