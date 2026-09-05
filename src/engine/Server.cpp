@@ -76,6 +76,8 @@ Server::Server(
     AD_LOG_INFO << "Access token for restricted API calls is \"" << accessToken_
                 << "\"" << std::endl;
   }
+  AD_CONTRACT_CHECK(!accessToken_.empty(),
+                    "access token must be configured when access checking is enabled");
 }
 
 // _____________________________________________________________________________
