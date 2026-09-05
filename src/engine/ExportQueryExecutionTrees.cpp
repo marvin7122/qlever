@@ -995,8 +995,7 @@ ExportQueryExecutionTrees::selectQueryResultCsvTsvParallel(
     ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
     size_t numThreads, CancellationHandle cancellationHandle,
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
-  const size_t rowsPerChunk =
-      qlever::constructExport::ConstructTripleGenerator::BATCH_SIZE;
+  const size_t rowsPerChunk = kSelectExportBatchSize;
   const size_t window = 2 * numThreads;
   ad_utility::TaskQueue<false> queue{window, numThreads,
                                      "SelectExportParallel"};
