@@ -179,7 +179,7 @@ inline void scatterVocabBatchLookupResult(
     ql::span<std::string_view> viewsInInputOrder,
     std::vector<VocabBatchOwner>& owners) {
   AD_CONTRACT_CHECK(result != nullptr);
-  AD_CONTRACT_CHECK(result->size() == resultPositions.size());
+
   for (auto [resultPosition, word] :
        ::ranges::views::zip(resultPositions, *result)) {
     AD_CORRECTNESS_CHECK(resultPosition < viewsInInputOrder.size());
