@@ -254,13 +254,13 @@ void resolveNonVocabIndexIds(
 template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
           typename EscapeFunction>
 void finishResolveVocabIndexIds(
-    const Index& index, ql::span<const size_t> positions,
+    const Index& index, ql::span<const size_t> idIndices,
     std::unique_ptr<VocabLookupHandleBase> handle,
     ql::span<std::optional<std::pair<std::string, const char*>>> results,
     const EscapeFunction& escapeFunction) {
   auto vocabStrings =
       index.getImpl().getVocab().finishLookup(std::move(handle));
-  for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, positions)) {
+  for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, idIndices)) {
     results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
                                              returnOnlyLiterals>(
         LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
