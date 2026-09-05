@@ -103,13 +103,7 @@ uint64_t mixView(uint64_t checksum, std::string_view v) {
   rusage ru;
 
 
-double sec(const timeval& t) {
-  return static_cast<double>(t.tv_sec) +
-         static_cast<double>(t.tv_usec) / 1'000'000.0;
-}
 
-void adviseWillNeed(const std::string& path) {
-  int fd = ::open(path.c_str(), O_RDONLY);
   if (fd < 0) {
     return;
   }
