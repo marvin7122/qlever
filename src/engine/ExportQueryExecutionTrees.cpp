@@ -865,8 +865,8 @@ ExportQueryExecutionTrees::computeResult(
     // Arm the storage-wait accounting for this query and make sure the
   // reporter is started. Both are no-ops when the parameter is
   // off, which is the default.
-  const bool measureIoWait =
-      static_cast<bool>(getRuntimeParameter<&RuntimeParameters::measureIoWait_>());
+  const auto measureIoWait =
+      getRuntimeParameter<&RuntimeParameters::measureIoWait_>();
   ad_utility::ioWait::setEnabled(measureIoWait);
   if (measureIoWait) {
     ad_utility::ioWait::exitReporter();
