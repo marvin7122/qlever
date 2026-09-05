@@ -1012,7 +1012,7 @@ ExportQueryExecutionTrees::selectQueryResultCsvTsvParallel(
     while (nextGet < chunks.size()) {
       while (nextSubmit < chunks.size() && nextSubmit - nextGet < window) {
         futures[nextSubmit] =
-            queue.submit([&params, chunk = std::move(chunks[nextSubmit])]() {
+            queue.submit([params, chunk = std::move(chunks[nextSubmit])]() {
               return serializeSelectCsvTsvChunk<format>(chunk, params.columns_,
                                                         params.index_.get());
             });
