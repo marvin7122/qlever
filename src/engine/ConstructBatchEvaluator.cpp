@@ -94,9 +94,8 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   // resolved per block but never inserted into `idCache`: the
   // `LocalVocabEntry` they point to is owned by the current result block's
   // `LocalVocab` and would dangle once the export advances to the next block,
-  // making a later hash-colliding lookup compare against freed memory
-  // (heap-use-after-free in `LocalVocabEntry::compareThreeWay`). Resolving
-  // them per block is fine performance-wise: `LocalVocabEntry`s live in RAM,
+  // making a later hash-colliding lookup compare against freed memory.
+  // Resolving them per block is fine performance-wise: `LocalVocabEntry`s live in RAM,
   // so resolving them per block does not forgo any disk-I/O amortization that
   // batching would otherwise provide. (The depth-2 pipeline may trigger async
   // disk I/O for `VocabIndex` IDs in the same batch, but those are cached in
