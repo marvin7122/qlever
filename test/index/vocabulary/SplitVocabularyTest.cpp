@@ -491,6 +491,64 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
 }
 
 // _____________________________________________________________________________
+TEST(Vocabulary, SplitGeoVocabularyLookupBatchOnDisk) {
+  // Test `lookupBatch` for the OnDiskCompressedGeoSplit vocabulary type
+  // covering single-marker batches, mixed-marker batches, and duplicate indices.
+  RdfsVocabulary vocabulary;
+  vocabulary.resetToType(geoSplitVocabType);
+  auto wordCallback = vocabulary.makeWordWriterPtr("geoSplitLookupBatch.dat");
+  ASSERT_TRUE(vocabulary.isGeoInfoAvailable());
+
+  ASSERT_EQ((*wordCallback)("\"a\"", true), 0);
+  ASSERT_EQ((*wordCallback)("\"ab\"", true), 1);
+  ASSERT_EQ(
+      (*wordCallback)("\"LINESTRING(1 2, 3 4)\""
+                      "^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
+                      true),
+      (1ULL << 59));
+  ASSERT_EQ((*wordCallback)("\"ba\"", true), 2);
+  ASSERT_EQ((*wordCallback)("\"car\"@en", true), 3);
+  ASSERT_EQ(
+      (*wordCallback)("\"POLYGON((1 2, 3 4))\""
+                      "^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
+                      true),
+      (1ULL << 59) | 1);
+
+  wordCallback->finish();
+  vocabulary.readFromFile("geoSplitLookupBatch.dat");
+
+  const std::array<size_t, 4> singleMarkerNonGeo{
+      static_cast<size_t>(0), static_cast<size_t>(1),
+      static_cast<size_t>(3), static_cast<size_t>(2)};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      vocabulary, vocabulary.lookupBatch(singleMarkerNonGeo), singleMarkerNonGeo);
+
+  const std::array<size_t, 2> singleMarkerGeo{
+      static_cast<size_t>(1ULL << 59), static_cast<size_t>((1ULL << 59) | 1)};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      vocabulary, vocabulary.lookupBatch(singleMarkerGeo), singleMarkerGeo);
+
+  const std::array<size_t, 6> mixedMarker{
+      static_cast<size_t>((1ULL << 59) | 1), static_cast<size_t>(1),
+      static_cast<size_t>(1ULL << 59), static_cast<size_t>(0),
+      static_cast<size_t>(3), static_cast<size_t>(2)};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      vocabulary, vocabulary.lookupBatch(mixedMarker), mixedMarker);
+
+  const std::array<size_t, 8> mixedMarkerWithDuplicates{
+      static_cast<size_t>(0), static_cast<size_t>(1ULL << 59),
+      static_cast<size_t>(1), static_cast<size_t>(1ULL << 59),
+      static_cast<size_t>((1ULL << 59) | 1), static_cast<size_t>(2),
+      static_cast<size_t>(0), static_cast<size_t>(3)};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      vocabulary, vocabulary.lookupBatch(mixedMarkerWithDuplicates),
+      mixedMarkerWithDuplicates);
+
+  EXPECT_ANY_THROW(vocabulary.lookupBatch(ql::span<const size_t>{}));
+  vocabulary.close();
+}
+
+// _____________________________________________________________________________
 TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   // Create a `SplitVocabulary::WordWriter` and destruct it without a call to
   // `finish()`.
