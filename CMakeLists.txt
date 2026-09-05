@@ -668,9 +668,10 @@ set(ASMJIT_NO_CUSTOM_FLAGS ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
         asmjit
         GIT_REPOSITORY https://github.com/asmjit/asmjit.git
-        GIT_TAG b2d7c505372ae797ad8948174f8083818e381eb9 # master stable
-        # No GIT_SHALLOW: shallow clones cannot check out a pinned hash
-        # (CI failed with "unable to read tree"); asmjit is small.
+        GIT_TAG 6a6cca88d6dccef4c5c1d258b9e12d8699dff842 # master 2026-09-05
+        # No GIT_SHALLOW: shallow clones cannot check out a pinned hash.
+        # NOTE: the previously pinned b2d7c50 no longer exists upstream
+        # (history rewrite), which broke all CI fetches; repinned via API.
         EXCLUDE_FROM_ALL
         SYSTEM
 )

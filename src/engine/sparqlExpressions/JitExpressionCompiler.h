@@ -33,7 +33,8 @@ namespace ql::engine::jit {
 // Evaluates a contiguous morsel of 64 rows, writing a 64-bit match bitmask.
 //
 // Signature:
-//   size_t (*)(const uint64_t* const* columnPtrs, size_t numRows, uint64_t* outMatchMask)
+//   size_t (*)(const uint64_t* const* columnPtrs, size_t numRows, uint64_t*
+//   outMatchMask)
 // Returns total number of matching rows in the morsel.
 using NativeFilterMorselFn = size_t (*)(const uint64_t* const*, size_t,
                                         uint64_t*);

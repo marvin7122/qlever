@@ -6,12 +6,12 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of this project.
 
+#include <asmjit/x86.h>
+
 #include <chrono>
 #include <iostream>
 #include <memory>
 #include <vector>
-
-#include <asmjit/x86.h>
 
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 
@@ -37,29 +37,40 @@ struct ConstNode : public AstNode {
 
 struct MulNode : public AstNode {
   std::unique_ptr<AstNode> left, right;
-  MulNode(std::unique_ptr<AstNode> l, std::unique_ptr<AstNode> r) : left(std::move(l)), right(std::move(r)) {}
-  int64_t evaluate(const int64_t* row) const override { return left->evaluate(row) * right->evaluate(row); }
+  MulNode(std::unique_ptr<AstNode> l, std::unique_ptr<AstNode> r)
+      : left(std::move(l)), right(std::move(r)) {}
+  int64_t evaluate(const int64_t* row) const override {
+    return left->evaluate(row) * right->evaluate(row);
+  }
 };
 
 struct AddNode : public AstNode {
   std::unique_ptr<AstNode> left, right;
-  AddNode(std::unique_ptr<AstNode> l, std::unique_ptr<AstNode> r) : left(std::move(l)), right(std::move(r)) {}
-  int64_t evaluate(const int64_t* row) const override { return left->evaluate(row) + right->evaluate(row); }
+  AddNode(std::unique_ptr<AstNode> l, std::unique_ptr<AstNode> r)
+      : left(std::move(l)), right(std::move(r)) {}
+  int64_t evaluate(const int64_t* row) const override {
+    return left->evaluate(row) + right->evaluate(row);
+  }
 };
 
 struct GtNode : public AstNode {
   std::unique_ptr<AstNode> left, right;
-  GtNode(std::unique_ptr<AstNode> l, std::unique_ptr<AstNode> r) : left(std::move(l)), right(std::move(r)) {}
-  int64_t evaluate(const int64_t* row) const override { return (left->evaluate(row) > right->evaluate(row)) ? 1 : 0; }
+  GtNode(std::unique_ptr<AstNode> l, std::unique_ptr<AstNode> r)
+      : left(std::move(l)), right(std::move(r)) {}
+  int64_t evaluate(const int64_t* row) const override {
+    return (left->evaluate(row) > right->evaluate(row)) ? 1 : 0;
+  }
 };
 
 int main() {
   constexpr size_t NUM_ROWS = 10'000'000;
-  std::cout << "=================================================================\n";
+  std::cout
+      << "=================================================================\n";
   std::cout << "Comparative Benchmark: Virtual AST Tree vs JIT Bytecode VM ("
             << NUM_ROWS << " rows)\n";
   std::cout << "Expression: (col0 * 2) + col1 > 100\n";
-  std::cout << "=================================================================\n";
+  std::cout
+      << "=================================================================\n";
 
   std::vector<int64_t> col0(NUM_ROWS);
   std::vector<int64_t> col1(NUM_ROWS);
@@ -71,7 +82,8 @@ int main() {
   // 1. BASELINE: Virtual AST Tree Interpretation
   auto ast = std::make_unique<GtNode>(
       std::make_unique<AddNode>(
-          std::make_unique<MulNode>(std::make_unique<ColNode>(0), std::make_unique<ConstNode>(2)),
+          std::make_unique<MulNode>(std::make_unique<ColNode>(0),
+                                    std::make_unique<ConstNode>(2)),
           std::make_unique<ColNode>(1)),
       std::make_unique<ConstNode>(100));
 
@@ -109,15 +121,18 @@ int main() {
 
   std::cout << "\n--- Baseline: Virtual Method AST Tree ---\n";
   std::cout << "Runtime: " << astMs << " ms ("
-            << (NUM_ROWS / (astMs / 1000.0)) / 1e6 << " M rows/sec, matches: " << astMatches << ")\n";
+            << (NUM_ROWS / (astMs / 1000.0)) / 1e6
+            << " M rows/sec, matches: " << astMatches << ")\n";
 
   std::cout << "\n--- Prototype: JIT Bytecode VM ---\n";
   std::cout << "Runtime: " << jitMs << " ms ("
-            << (NUM_ROWS / (jitMs / 1000.0)) / 1e6 << " M rows/sec, matches: " << jitMatches << ")\n";
+            << (NUM_ROWS / (jitMs / 1000.0)) / 1e6
+            << " M rows/sec, matches: " << jitMatches << ")\n";
 
   // 3. TIER 2: Native x86-64 Machine-Code JIT via AsmJit
   // Generates native x86-64 loop: (col0 * 2) + col1 > 100
-  // Signature: size_t (*)(const int64_t* col0, const int64_t* col1, size_t count)
+  // Signature: size_t (*)(const int64_t* col0, const int64_t* col1, size_t
+  // count)
   using NativeFilterFunc = size_t (*)(const int64_t*, const int64_t*, size_t);
 
   asmjit::JitRuntime rt;
@@ -126,7 +141,9 @@ int main() {
   asmjit::x86::Compiler cc(&code);
 
   // Define function signature
-  asmjit::FuncNode* func = cc.add_func(asmjit::FuncSignature::build<size_t, const int64_t*, const int64_t*, size_t>());
+  asmjit::FuncNode* func =
+      cc.add_func(asmjit::FuncSignature::build<size_t, const int64_t*,
+                                               const int64_t*, size_t>());
 
   asmjit::x86::Gp ptr0 = cc.new_gp_ptr("ptr0");
   asmjit::x86::Gp ptr1 = cc.new_gp_ptr("ptr1");
@@ -153,11 +170,11 @@ int main() {
   asmjit::x86::Gp v1 = cc.new_gp64("v1");
   asmjit::x86::Gp sum = cc.new_gp64("sum");
 
-  cc.mov(v0, asmjit::x86::qword_ptr(ptr0, idx, 3)); // scale 8 = 1 << 3
+  cc.mov(v0, asmjit::x86::qword_ptr(ptr0, idx, 3));  // scale 8 = 1 << 3
   cc.mov(v1, asmjit::x86::qword_ptr(ptr1, idx, 3));
 
   // Compute: (v0 * 2) + v1
-  cc.lea(sum, asmjit::x86::qword_ptr(v1, v0, 1)); // sum = v1 + v0 * 2
+  cc.lea(sum, asmjit::x86::qword_ptr(v1, v0, 1));  // sum = v1 + v0 * 2
 
   // Compare > 100
   cc.cmp(sum, 100);
@@ -182,7 +199,8 @@ int main() {
   double compileUs = std::chrono::duration<double, std::micro>(c1 - c0).count();
 
   if (err != asmjit::Error::kOk || !nativeFn) {
-    std::cerr << "AsmJit compilation failed: code=" << static_cast<unsigned int>(err) << "\n";
+    std::cerr << "AsmJit compilation failed: code="
+              << static_cast<unsigned int>(err) << "\n";
     return 1;
   }
 
@@ -195,13 +213,18 @@ int main() {
   std::cout << "\n--- Tier 2: Native x86-64 Machine-Code JIT (AsmJit) ---\n";
   std::cout << "Compile Time: " << compileUs << " us\n";
   std::cout << "Runtime:      " << asmMs << " ms ("
-            << (NUM_ROWS / (asmMs / 1000.0)) / 1e6 << " M rows/sec, matches: " << asmjitMatches << ")\n";
+            << (NUM_ROWS / (asmMs / 1000.0)) / 1e6
+            << " M rows/sec, matches: " << asmjitMatches << ")\n";
 
-  std::cout << "\n=================================================================\n";
+  std::cout << "\n============================================================="
+               "====\n";
   std::cout << ">>> Bytecode VM vs Virtual AST: " << (astMs / jitMs) << "x\n";
-  std::cout << ">>> Native AsmJit vs Virtual AST: " << (astMs / asmMs) << "x faster!\n";
-  std::cout << ">>> Native AsmJit vs Bytecode VM:  " << (jitMs / asmMs) << "x faster!\n";
-  std::cout << "=================================================================\n";
+  std::cout << ">>> Native AsmJit vs Virtual AST: " << (astMs / asmMs)
+            << "x faster!\n";
+  std::cout << ">>> Native AsmJit vs Bytecode VM:  " << (jitMs / asmMs)
+            << "x faster!\n";
+  std::cout
+      << "=================================================================\n";
 
   return 0;
 }
