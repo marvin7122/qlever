@@ -59,9 +59,17 @@ size_t resolveExportNumThreads() {
   // platforms where the number of hardware cores cannot be determined.
   const auto hardwareConcurrency = std::thread::hardware_concurrency();
   AD_CONTRACT_CHECK(hardwareConcurrency != 0);
-  const size_t resolved = n == 0 ? std::max(1u, hardwareConcurrency) : n;
+  const size_t resolved = n == 0
+                     ? std::max(1u, hardwareConcurrency)
+                     : n;
   AD_CONTRACT_CHECK(resolved >= 1);
-  AD_CONTRACT_CHECK(resolved <= std::thread::hardware_concurrency() * 2 || n != 0);
+  if (n == 0) {
+    // When using auto-detected thread count, cap at 2x hardware concurrency.
+    // The multiplication cannot overflow because hardwareConcurrency is
+    // guaranteed <= SIZE_MAX / 2 (it's a core count, far below max).
+    const size_t maxThreads = hardwareConcurrency * 2;
+    AD_CONTRACT_CHECK(resolved <= maxThreads);
+  }
   return resolved;
 }
 
