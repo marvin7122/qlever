@@ -182,6 +182,7 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
 // _____________________________________________________________________________
 
 // Selectors for the two instrumented call sites.
+// Returns a reference to the pread counters within the given ThreadCounters.
 inline Counters& preadCounters(ThreadCounters& counters) {
   return counters.pread_;
 }
