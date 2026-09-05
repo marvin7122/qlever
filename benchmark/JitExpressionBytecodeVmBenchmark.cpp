@@ -196,7 +196,8 @@ class JitExpressionBytecodeVmBenchmark : public BenchmarkInterface {
     NativeFilterFunc nativeFn = nullptr;
     asmjit::Error err = rt.add(&nativeFn, &code);
     auto c1 = std::chrono::high_resolution_clock::now();
-    double compileUs = std::chrono::duration<double, std::micro>(c1 - c0).count();
+    double compileUs =
+        std::chrono::duration<double, std::micro>(c1 - c0).count();
 
     if (err != asmjit::Error::kOk || !nativeFn) {
       results.addMeasurement("Native AsmJit: COMPILATION FAILED",
