@@ -254,7 +254,7 @@ class SplitVocabulary {
     }
 
     std::array<std::vector<size_t>, numberOfVocabs> resultPositionByMarker;
-    for (auto [resultPosition, markedIndex] :
+    for (const auto& [resultPosition, markedIndex] :
          ::ranges::views::enumerate(indices)) {
       resultPositionByMarker[getMarker(markedIndex)].push_back(
           static_cast<size_t>(resultPosition));
