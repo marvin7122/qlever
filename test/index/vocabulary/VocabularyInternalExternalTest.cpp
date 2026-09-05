@@ -158,3 +158,64 @@ TEST(VocabularyInternalExternal, ScanAllEmptyVocabulary) {
   auto vocab = createVocabulary("ScanAllEmpty")(std::vector<std::string>{});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
 }
+
+// Test that `lookupBatch` with a mix of internal (RAM-cached) and external
+// (disk-only) indices returns results in request order and that the returned
+// `VocabBatchLookupResult` keeps both the internal vocabulary's word storage
+// and the external vocabulary's disk result alive (multi-owner semantics).
+TEST(VocabularyInternalExternal, LookupBatchMixedInternalExternalOwnersAlive) {
+  // Use the WordWriter directly to control which words go to internal vs external.
+  // Even indices (0, 2, 4) -> internal + external (isExternal = false)
+  // Odd indices  (1, 3)    -> external only (isExternal = true)
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  std::string filename = "LookupBatchMixedOwners" + suffix;
+  ad_utility::deleteFile(filename, false);
+  {
+    auto writerPtr = VocabularyInternalExternal::makeDiskWriterPtr(filename);
+    auto& writer = *writerPtr;
+    for (const auto& [i, word] : ::ranges::views::enumerate(words)) {
+      EXPECT_EQ(writer(word, i % 2 == 1), static_cast<uint64_t>(i));
+    }
+    writer.finish();
+  }
+  VocabularyInternalExternal vocab;
+  vocab.open(filename);
+
+  // Request indices in mixed order: external(1), internal(0), external(3),
+  // internal(4), internal(2), external(1 duplicate), internal(0 duplicate).
+  const std::array<size_t, 7> indices{1, 0, 3, 4, 2, 1, 0};
+  auto result = vocab.lookupBatch(indices);
+
+  // Validate results match operator[] in request order.
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+
+  // The result is a MultiOwnerVocabBatchLookupData that holds:
+  // - the external vocabulary's disk lookup result (for indices 1, 3)
+  // - the internal vocabulary's wordStorage (for indices 0, 2, 4)
+  // As long as `result` is alive, both owners are kept alive and all
+  // string_views remain valid. Accessing the views here validates this.
+  EXPECT_EQ((*result)[0], "beta");   // external
+  EXPECT_EQ((*result)[1], "alpha");  // internal
+  EXPECT_EQ((*result)[2], "delta");  // external
+  EXPECT_EQ((*result)[3], "epsilon"); // internal
+  EXPECT_EQ((*result)[4], "gamma");  // internal
+  EXPECT_EQ((*result)[5], "beta");   // external (duplicate)
+  EXPECT_EQ((*result)[6], "alpha");  // internal (duplicate)
+
+  // Also test the case where all indices hit internal (no external owner needed).
+  const std::array<size_t, 3> ramOnly{0, 2, 4};
+  auto ramResult = vocab.lookupBatch(ramOnly);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, ramResult, ramOnly);
+  EXPECT_EQ((*ramResult)[0], "alpha");
+  EXPECT_EQ((*ramResult)[1], "gamma");
+  EXPECT_EQ((*ramResult)[2], "epsilon");
+
+  // And the case where all indices hit external (no internal owner needed).
+  const std::array<size_t, 3> diskOnly{1, 3, 1};
+  auto diskResult = vocab.lookupBatch(diskOnly);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, diskResult, diskOnly);
+  EXPECT_EQ((*diskResult)[0], "beta");
+  EXPECT_EQ((*diskResult)[1], "delta");
+  EXPECT_EQ((*diskResult)[2], "beta");
+}
