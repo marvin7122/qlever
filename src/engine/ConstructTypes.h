@@ -66,8 +66,7 @@ struct EvaluatedTermRef {
   EvaluatedTermRef() = default;
   explicit EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
       : storage_{std::in_place_index<1>, std::move(keepAlive)} {
-    // data must match keepAlive.get()
-    (void)data;
+    AD_CONTRACT_CHECK(data == keepAlive.get());
   }
   explicit EvaluatedTermRef(std::unique_ptr<EvaluatedTermData> owned)
       : storage_{std::in_place_index<2>, std::move(owned)} {}
