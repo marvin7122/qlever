@@ -474,7 +474,7 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
 
 // _____________________________________________________________________________
 TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
-  // Mixed markers, reordered indices, and a duplicate must match `operator[]`.
+  // Test that mixed markers, reordered indices, and a duplicate match `operator[]`.
   TwoSplitVocabulary sv;
   const auto filename = gtestCurrentTestName();
   auto ww = sv.makeDiskWriterPtr(filename);
