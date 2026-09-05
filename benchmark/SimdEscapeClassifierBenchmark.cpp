@@ -52,8 +52,8 @@ double measure(const std::vector<std::string>& inputs, size_t length) {
 
 template <EscapeFormat Format>
 void measureFormat(std::string_view name, char escape) {
-  constexpr std::array lengths{size_t{10}, 16,  24,  31,  32,  48,  64,
-                               96,         128, 192, 250, 256, 512, 1024};
+  constexpr std::array<size_t, 14> lengths{10, 16,  24,  31,  32,  48,  64,
+                                           96, 128, 192, 250, 256, 512, 1024};
   for (const size_t length : lengths) {
     std::vector<std::string> inputs(4096, std::string(length, 'a'));
     for (size_t index = 0; index < inputs.size(); index += 12) {
