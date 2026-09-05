@@ -121,6 +121,7 @@ CPP_template(typename UnderlyingVocabulary,
     views.reserve(indices.size());
 
     for (const auto& [idx, word] : ::ranges::views::zip(indices, *compressed)) {
+            AD_CONTRACT_CHECK(getDecoderIdx(idx) < compressionWrapper_.numDecoders());
       std::string decompressed =
           compressionWrapper_.decompress(word, getDecoderIdx(idx));
       char* mem = static_cast<char*>(buffer->allocate(decompressed.size()));
