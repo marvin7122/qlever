@@ -36,7 +36,7 @@ std::optional<EvaluatedTermRef> instantiateTerm(
           if (!bound) {
             return std::nullopt;
           }
-          return EvaluatedTermRef{bound->get(), *bound};
+          return EvaluatedTermRef{bound->get(), {}};
         } else if constexpr (std::is_same_v<T, PrecomputedBlankNode>) {
           EvaluatedTerm owned = std::make_shared<const EvaluatedTermData>(
               EvaluatedTermData{
