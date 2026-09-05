@@ -79,8 +79,10 @@ TEST(AsyncChunkPipelineTest, CompletionDrainsQueuedChunksInOrder) {
   ASSERT_EQ(pipeline.push("second"), PushResult::Accepted);
   pipeline.finish();
 
-  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"first"})));
-  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"second"})));
+  EXPECT_EQ(static_cast<void>(pipeline.pop()),
+            static_cast<void>(std::make_optional(std::string{"first"})));
+  EXPECT_EQ(static_cast<void>(pipeline.pop()),
+            static_cast<void>(std::make_optional(std::string{"second"})));
   EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
 }
@@ -118,7 +120,8 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
   ASSERT_EQ(pipeline.push("before-error"), PushResult::Accepted);
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"producer failed"}));
 
-  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"before-error"})));
+  EXPECT_EQ(static_cast<void>(pipeline.pop()),
+            static_cast<void>(std::make_optional(std::string{"before-error"})));
   EXPECT_THROW(static_cast<void>(pipeline.pop()), std::runtime_error);
 }
 
@@ -130,9 +133,11 @@ TEST(AsyncChunkPipelineTest, BackpressureReusesFreedSlot) {
       std::async(std::launch::async, [&] { return pipeline.push("second"); });
 
   waitUntilProducerBlocks(pipeline);
-  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"first"})));
+  EXPECT_EQ(static_cast<void>(pipeline.pop()),
+            static_cast<void>(std::make_optional(std::string{"first"})));
   EXPECT_EQ(blockedPush.get(), PushResult::Accepted);
-  EXPECT_EQ(static_cast<void>(pipeline.pop()), static_cast<void>(std::make_optional(std::string{"second"})));
+  EXPECT_EQ(static_cast<void>(pipeline.pop()),
+            static_cast<void>(std::make_optional(std::string{"second"})));
   EXPECT_EQ(pipeline.stats().producerWaits_, 1);
 }
 
