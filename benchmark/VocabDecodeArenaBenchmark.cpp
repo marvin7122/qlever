@@ -245,22 +245,30 @@ int main(int argc, char** argv) {
     indexBatches.push_back(makeIndices(start, opt.batchSize, vocabSize));
   }
 
-  if (opt.layer == 0) {
-    fixture.resize(totalBatches);
-    for (size_t b = 0; b < totalBatches; ++b) {
-      auto compressed = vocab.lookupCompressedBatch(indexBatches[b]);
-      AD_CORRECTNESS_CHECK(compressed->size() == opt.batchSize);
-      fixture[b].reserve(opt.batchSize);
-      for (size_t i = 0; i < opt.batchSize; ++i) {
-        FixtureWord w;
-        w.compressed = std::string{(*compressed)[i]};
-        w.decoderIdx = vocab.decoderIndex(indexBatches[b][i]);
-        fixture[b].push_back(std::move(w));
-      }
+  fixture.resize(totalBatches);
+  for (size_t b = 0; b < totalBatches; ++b) {
+    auto compressed = vocab.lookupCompressedBatch(indexBatches[b]);
+    AD_CORRECTNESS_CHECK(compressed->size() == opt.batchSize);
+    fixture[b].reserve(opt.batchSize);
+    for (size_t i = 0; i < opt.batchSize; ++i) {
+      FixtureWord w;
+      w.compressed = std::string{(*compressed)[i]};
+      w.decoderIdx = vocab.decoderIndex(indexBatches[b][i]);
+      fixture[b].push_back(std::move(w));
+    }
+  }
+
+  if (opt.layer == 1) {
+    for (size_t b = 0; b < opt.warmupBatches; ++b) {
+      (void)runCopyBatch(vocab, fixture[b]);
     }
   } else {
     for (size_t b = 0; b < opt.warmupBatches; ++b) {
-      (void)runLookupBatch(vocab, indexBatches[b]);
+      if (opt.arm == "copy") {
+        (void)runCopyBatch(vocab, fixture[b]);
+      } else {
+        (void)runIntoBatch(vocab, fixture[b]);
+      }
     }
   }
 
