@@ -41,6 +41,7 @@ struct BatchEvaluationResult {
   // friendly. We always look at the same variables here.
   // HashMap for sparse storage: only CONSTRUCT template variables evaluated.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> variablesByColumn_;
+  // Number of rows in the result, used to avoid recomputing the size.
   size_t numRows_ = 0;
 
   const std::optional<EvaluatedTerm>& getVariable(ColumnIndex columnIndex,
