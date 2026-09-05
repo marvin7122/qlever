@@ -132,13 +132,14 @@ CPP_template(typename UnderlyingVocabulary,
   // TODO: Compact or tail-trim the PMR arena allocations so batch memory
   // tracks decoded payload sizes rather than maxDecompressedSize bounds.
   // Batch-read the compressed words from the underlying vocabulary, then
-  // decompress each word with the decoder of its block into memory owned by the
-  // returned result. Unlike `sequentialLookupBatch` (still used by
-  // `VocabularyInMemory::lookupBatch` as the generic fallback), this
-  // specialization decodes directly into a PMR arena instead of materializing
-  // owning `std::string`s per word. The order of words in the result matches
-  // `indices`. Return a `VocabBatchLookupResult` keeping the PMR monotonic
-  // buffer resource alive and providing `string_view`s for each requested index
+    // decompress each word with the decoder of its block into `builder`, which
+  // the caller finalizes to obtain the result. Unlike `sequentialLookupBatch`
+  // (still used by `VocabularyInMemory::lookupBatch` as the generic fallback),
+  // this specialization decodes directly into a PMR arena instead of
+  // materializing owning `std::string`s per word. The order of words in the
+  // result matches `indices`. The caller obtains a `VocabBatchLookupResult`
+  // by calling `std::move(builder).finalize()`, which keeps the PMR monotonic
+  // buffer resource alive and provides `string_view`s for each requested index
   // in `indices`. `indices` must not be empty.
   //
   // Note: each word reserves its full `maxDecompressedSize` bound in the
