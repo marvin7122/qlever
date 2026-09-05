@@ -273,6 +273,9 @@ inline uint64_t ticksFromStat(const std::string& stat) {
 }
 
 // One pass over `/proc/self/task`, recording the io_uring worker population.
+// Scans /proc/self/task to count threads and io_uring workers,
+// accumulates their CPU ticks, and updates the global WorkerSample with
+// the maximums seen so far.
 inline void sampleWorkers() {
   DIR* dir = opendir("/proc/self/task");
   if (dir == nullptr) {
