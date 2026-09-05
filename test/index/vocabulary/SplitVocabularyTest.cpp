@@ -74,7 +74,7 @@ const VocabularyType geoSplitVocabType{
 
 // _____________________________________________________________________________
 TEST(Vocabulary, SplitGeoVocab) {
-  // Check: Is a geo literal?
+  // Check whether the literal is a geo literal.
   ASSERT_EQ(SGV::getMarkerForWord(
                 "\"POLYGON((1 2, 3 4))\""
                 "^^<http://www.opengis.net/ont/geosparql#wktLiteral>"),
