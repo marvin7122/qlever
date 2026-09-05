@@ -143,7 +143,7 @@ void IoUringPolicy::addBatch(int fd,
     // request id (the SQE's `user_data`) verbatim into the matching completion,
     // so `drainOneCqe` can recover it.
     const uint64_t requestId = nextRequestIdToAssign_++;
-    inFlightReadsByRequestId_[requestId] = InFlightRead{handle, numBytesToRead};
+    inFlightReadsByRequestId_.emplace(requestId, InFlightRead{handle, numBytesToRead});
     io_uring_sqe_set_data64(sqe, requestId);
     numInFlightReadRequests_++;
   }
