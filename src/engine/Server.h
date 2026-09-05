@@ -192,6 +192,7 @@ class Server {
                       const RequestT& request,
                       const ad_utility::metrics::MetricLabel& errorType) const;
 
+  // ____________________________________________________________________________
   // The `HttpHandler` passed to `HttpServer` in `run()`. This function
   // satisfies the constraints for the `HttpHandler` in `HttpServer.h`.
   //
