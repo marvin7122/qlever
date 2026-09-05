@@ -21,9 +21,9 @@
 #include "parser/GraphPatternOperation.h"
 #include "parser/ParsedQuery.h"
 #include "util/Exception.h"
+#include "util/HashMap.h"
 #include "util/StringUtils.h"
 #include "util/http/MediaTypes.h"
-#include "util/http/UrlParser.h"
 
 namespace ql::engine {
 
@@ -73,7 +73,12 @@ enum class ExportSendMode { ConcatenatedString = 0, ScatterGather = 1 };
 // fallback)
 class ExportPipelineRouter {
  public:
-  using ParamValueMap = ad_utility::url_parser::ParamValueMap;
+  // Same type as `ad_utility::url_parser::ParamValueMap`, defined locally so
+  // this header (compiled into libqlever) does not pull in
+  // `util/http/UrlParser.h`, which requires `boost/url.hpp` (unavailable on
+  // the oldest supported Boost, 1.71, exercised by the C++17 CI job).
+  using ParamValueMap =
+      ad_utility::HashMap<std::string, std::vector<std::string>>;
 
   // ___________________________________________________________________________
   // Determine the appropriate export engine mode based on request metadata,

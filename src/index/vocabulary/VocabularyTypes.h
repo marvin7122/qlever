@@ -426,6 +426,22 @@ class ArenaVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// Whether `Vocab` provides the two-argument `lookupBatch` overload that writes
+// into an `ArenaVocabBatchBuilder` (currently only `CompressedVocabulary`).
+// A `void_t` detection trait rather than a `requires`-expression, because the
+// GCC 8 CI job compiles this header as C++17, where `requires` does not exist.
+template <typename Vocab, typename = void>
+struct HasBuilderLookupBatch : std::false_type {};
+template <typename Vocab>
+struct HasBuilderLookupBatch<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+template <typename Vocab>
+inline constexpr bool HasBuilderLookupBatch_v =
+    HasBuilderLookupBatch<Vocab>::value;
+
+// _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(

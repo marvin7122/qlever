@@ -17,6 +17,7 @@
 #include <optional>
 #include <queue>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include "util/Exception.h"
@@ -66,8 +67,18 @@ class AsyncChunkPipeline
   std::exception_ptr exception_;
   AsyncChunkPipelineStats stats_;
 
+  // Whether `ChunkType` provides `.size()`. Trait form (not a
+  // `requires`-expression) because the GCC 8 CI job compiles this header as
+  // C++17.
+  template <typename T, typename = void>
+  struct HasSizeMethod : std::false_type {};
+  template <typename T>
+  struct HasSizeMethod<T,
+                       std::void_t<decltype(std::declval<const T&>().size())>>
+      : std::true_type {};
+
   [[nodiscard]] static size_t chunkSize(const ChunkType& chunk) {
-    if constexpr (requires { chunk.size(); }) {
+    if constexpr (HasSizeMethod<ChunkType>::value) {
       return chunk.size();
     } else {
       return 0;
