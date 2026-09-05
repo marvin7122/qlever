@@ -33,13 +33,13 @@
 #include "engine/SparqlProtocol.h"
 #include "engine/UpdateMetadata.h"
 #include "engine/export_v2/ExportEngineV2.h"
+#include "engine/export_v2/ExportRingDriver.h"
 #include "engine/export_v2/ScatterGatherHttpBody.h"
 #include "global/RuntimeParameters.h"
 #include "libqlever/Qlever.h"
 #include "parser/ParsedQuery.h"
 #include "parser/SparqlParser.h"
 #include "util/AsioHelpers.h"
-#include "util/AsyncStream.h"
 #include "util/Exception.h"
 #include "util/MemorySize/MemorySize.h"
 #include "util/ParseableDuration.h"
@@ -974,14 +974,17 @@ CPP_template_def(typename RequestT)(
 }
 
 namespace {
-// Own `range` in the coroutine frame (parameter, not a `[&]` capture). Used to
-// attach `runStreamAsync` *outside* `ExportEngineV2::computeResultChunks`: a
-// producer thread nested in that coroutine failed to compile (91a9a7845).
-template <typename Range>
-cppcoro::generator<qlever::export_v2::ScatterGatherChunk> asScatterGatherBody(
-    Range range) {
-  for (auto& chunk : range) {
-    co_yield std::move(chunk);
+// Drain a ring driver into the generator the Beast writer consumes. The
+// driver itself lives in the send-function scope (never in a coroutine
+// frame); this adapter only forwards `pop()` calls and owns no state. It
+// replaces `runStreamAsync` on this path: same drain-then-throw failure
+// semantics, one fewer thread wakeup per chunk, plus ring statistics. (A
+// producer thread nested in `computeResultChunks` failed to compile,
+// 91a9a7845, which is why the driver lives here and not in the coroutine.)
+cppcoro::generator<qlever::export_v2::ScatterGatherChunk> drainDriver(
+    ql::engine::export_v2::ExportRingDriver& driver) {
+  while (auto chunk = driver.pop()) {
+    co_yield std::move(*chunk);
   }
 }
 }  // namespace
@@ -1039,27 +1042,38 @@ CPP_template_def(typename RequestT, typename SendT)(
                   << std::endl;
     } else {
       AD_LOG_INFO << "Using ExportEngineV2 scatter-gather HTTP body "
-                     "(async prefetch) for "
+                     "(ring pipeline) for "
                   << ad_utility::toString(mediaType) << " export" << std::endl;
       http::response<ql::engine::export_v2::scatter_gather_body> sgResponse{
           http::status::ok, request.version()};
       sgResponse.set(http::field::content_type,
                      ad_utility::toString(mediaType));
-      // Prefetch the next morsel on a producer thread owned by
-      // `runStreamAsync`, not by `computeResultChunks` (GCC coroutine frame).
+      // Serialize the next morsel on the ring driver's producer thread and
+      // overlap it with the socket send through the bounded ring. The driver
+      // lives in this function scope, never in the `computeResultChunks`
+      // coroutine frame (GCC rejects thread locals there, 91a9a7845).
       constexpr size_t kIovecPrefetchDepth = 2;
-      sgResponse.body() =
-          asScatterGatherBody(ad_utility::streams::runStreamAsync(
-              ExportEngineV2::computeResultChunks(
-                  parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-                  cancellationHandle, exportScheduler_.get()),
-              kIovecPrefetchDepth));
+      ql::engine::export_v2::ExportRingDriver driver{
+          ExportEngineV2::computeResultChunks(
+              parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+              cancellationHandle, exportScheduler_.get()),
+          kIovecPrefetchDepth};
+      sgResponse.body() = drainDriver(driver);
       sgResponse.keep_alive(request.keep_alive());
       sgResponse.prepare_payload();
+      const auto logRingStats = [&driver]() {
+        const auto ringStats = driver.stats();
+        AD_LOG_INFO << "ExportEngineV2 ring: " << ringStats.chunksProduced_
+                    << " chunks, " << ringStats.bytesProduced_ << " bytes, "
+                    << ringStats.producerWaits_ << " producer waits, "
+                    << ringStats.consumerWaits_ << " consumer waits"
+                    << std::endl;
+      };
       try {
         co_await send(std::move(sgResponse));
       } catch (const boost::system::system_error& e) {
         if (e.code().value() == EPIPE) {
+          logRingStats();
           co_return;
         }
         AD_LOG_ERROR << "Unexpected error while sending scatter-gather "
@@ -1067,6 +1081,7 @@ CPP_template_def(typename RequestT, typename SendT)(
                      << e.what() << std::endl;
         metrics_->sparqlErrors_->Add(1, {SparqlErrorType::systemError});
       }
+      logRingStats();
       co_return;
     }
   }
