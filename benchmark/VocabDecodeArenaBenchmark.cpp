@@ -141,7 +141,7 @@ struct DecodeStats {
 };
 
 DecodeStats runCopyBatch(const Vocab& vocab,
-                         ql::span<const FixtureWord> words) {
+                         ql::span<const FixtureWord> const& words) {
   DecodeStats s;
   auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
   std::vector<std::string_view> views;
