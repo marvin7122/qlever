@@ -10,12 +10,19 @@
 #include <iostream>
 #include <vector>
 
+#include "../benchmark/infrastructure/Benchmark.h"
+#include "../benchmark/infrastructure/BenchmarkMetadata.h"
 #include "global/Id.h"
 #include "index/PforDeltaBitPacking.h"
+#include "util/ConfigManager/ConfigManager.h"
 
 using namespace ql::index::compression;
 
-int main() {
+namespace ad_benchmark {
+
+namespace {
+
+void runComparativeBenchmark() {
   constexpr size_t NUM_BLOCKS = 100'000;
   constexpr size_t TOTAL_IDS = NUM_BLOCKS * 64;  // 6.4 million IDs
 
@@ -83,6 +90,20 @@ int main() {
             << (TOTAL_IDS / (decompressMs / 1000.0)) / 1e6 << " M IDs/sec)\n";
   std::cout
       << "=================================================================\n";
-
-  return 0;
 }
+
+}  // namespace
+
+class PforDeltaBitPackingBenchmark : public BenchmarkInterface {
+ public:
+  std::string name() const final { return "PFOR-DELTA Bit Packing Benchmark"; }
+
+  BenchmarkResults runAllBenchmarks() final {
+    runComparativeBenchmark();
+    return BenchmarkResults{};
+  }
+};
+
+AD_REGISTER_BENCHMARK(PforDeltaBitPackingBenchmark);
+
+}  // namespace ad_benchmark
