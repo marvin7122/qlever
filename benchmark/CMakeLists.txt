@@ -36,6 +36,7 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
-    addAndLinkBenchmark(SuccinctVocabularyTrieBenchmark global qlever_util)
+    add_executable(SuccinctVocabularyTrieBenchmark "SuccinctVocabularyTrieBenchmark.cpp")
+    qlever_target_link_libraries(SuccinctVocabularyTrieBenchmark benchmark global qlever_util)
 
 endif()
