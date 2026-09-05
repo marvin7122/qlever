@@ -96,7 +96,7 @@ class VocabularyInMemoryBinSearch
   // Return shared ownership of the word bytes. A batch-lookup result that
   // hands out `string_view`s into this vocabulary stores this pointer, so the
   // bytes cannot be freed while the result is alive.
-  std::shared_ptr<const Words> wordStorage() const { return words_; }
+  std::shared_ptr<const void> wordStorage() const { return words_; }
 
   // Generic serialization support.
   AD_SERIALIZE_FRIEND_FUNCTION(VocabularyInMemoryBinSearch) {
