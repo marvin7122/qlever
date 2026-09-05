@@ -248,6 +248,7 @@ inline WorkerSample& workerSample() {
 
 // Read `utime + stime` from a `/proc/.../stat` line. Both follow the comm
 // field, which may itself contain spaces, so parse after the final ')'.
+// Parses a /proc/<pid>/stat line and returns utime + stime (CPU ticks).
 inline uint64_t ticksFromStat(const std::string& stat) {
   const auto close = stat.rfind(')');
   if (close == std::string::npos) {
