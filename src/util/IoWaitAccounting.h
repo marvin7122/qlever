@@ -78,6 +78,8 @@ inline void setEnabled(bool value) {
   enabledFlag().store(value || envOverride(), std::memory_order_relaxed);
 }
 
+// _____________________________________________________________________________
+
 // One call site's totals.
 struct Counters {
   uint64_t nanos_ = 0;
@@ -148,6 +150,8 @@ inline uint64_t nowNanos() {
 }
 }  // namespace detail
 
+// _____________________________________________________________________________
+
 // Time the blocking call `callable` into `counters` when the instrumentation
 // is enabled, and call it directly otherwise. Return whatever `callable`
 // returns.
@@ -170,6 +174,8 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
   }
 }
 
+// _____________________________________________________________________________
+
 // Selectors for the two instrumented call sites.
 inline Counters& preadCounters(ThreadCounters& counters) {
   return counters.pread_;
@@ -180,6 +186,8 @@ inline Counters& ioUringWaitCounters(ThreadCounters& counters) {
 inline Counters& ioUringSubmitCounters(ThreadCounters& counters) {
   return counters.ioUringSubmit_;
 }
+
+// _____________________________________________________________________________
 
 // Totals over all threads, live and finished.
 inline ThreadCounters total() {
@@ -196,6 +204,8 @@ inline ThreadCounters total() {
   }
   return total;
 }
+
+// _____________________________________________________________________________
 
 // Kernel-side worker accounting.
 //
@@ -295,6 +305,8 @@ inline std::thread& reporterThread() {
   return thread;
 }
 }  // namespace detail
+
+// _____________________________________________________________________________
 
 // Format the current totals as one line.
 inline std::string report() {
