@@ -160,6 +160,28 @@ void Values::writeValues(IdTable* idTablePtr, LocalVocab* localVocab) {
   *idTablePtr = std::move(idTable).toDynamic();
 }
 
+// Explicit instantiation for commonly used widths
+template void Values::writeValues<1>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<2>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<3>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<4>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<5>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<6>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<7>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<8>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<9>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<10>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<11>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<12>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<13>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<14>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<15>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<16>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<17>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<18>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<19>(IdTable* idTablePtr, LocalVocab* localVocab);
+template void Values::writeValues<20>(IdTable* idTablePtr, LocalVocab* localVocab);
+
 // _____________________________________________________________________________
 std::unique_ptr<Operation> Values::cloneImpl() const {
   return std::make_unique<Values>(*this);
