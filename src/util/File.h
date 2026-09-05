@@ -188,6 +188,7 @@ class File {
     size_t bytesRead = 0;
     auto* to = static_cast<uint8_t*>(targetBuffer);
     while (bytesRead < nofBytesToRead) {
+      // Calculate remaining bytes to read in this iteration
       size_t toRead = nofBytesToRead - bytesRead;
 
             // Time because a cold `pread` blocks off-CPU, which `cpu_s` cannot
