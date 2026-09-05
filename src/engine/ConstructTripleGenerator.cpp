@@ -28,9 +28,7 @@ IdCache ConstructTripleGenerator::makeIdCache(
 
 namespace {
 
-std::shared_ptr<ConstructDeduplicator> makeDeduplicator(
-    const EvaluationConfig& config) {
-  if (config.sharedDeduplicator_) {
+
     return config.sharedDeduplicator_;
   }
   if (std::holds_alternative<DeduplicationMode::None>(config.mode_.value_)) {
