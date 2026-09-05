@@ -50,14 +50,17 @@ class SuccinctVocabularyTrie {
   }
 
   // Insert a mock test topology
-  void setMockTopology(const std::vector<uint64_t>& bits, const std::vector<char>& labels) {
+  void setMockTopology(const std::vector<uint64_t>& bits,
+                       const std::vector<char>& labels) {
     topologyBits_ = bits;
     labels_ = labels;
     totalNodes_ = labels.size();
   }
 
   [[nodiscard]] size_t totalNodes() const noexcept { return totalNodes_; }
-  [[nodiscard]] size_t bitVectorSize() const noexcept { return topologyBits_.size() * 64; }
+  [[nodiscard]] size_t bitVectorSize() const noexcept {
+    return topologyBits_.size() * 64;
+  }
 };
 
 }  // namespace ql::index::vocab
