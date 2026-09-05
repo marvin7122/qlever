@@ -32,8 +32,8 @@ TEST(RadixPartitionedHashJoinTest, BasicPartitionAndJoin) {
     rightTable.push_back({Id::makeFromInt(i), Id::makeFromInt(i * 100)});
   }
 
-  size_t matches = RadixPartitionedHashJoin<4>::executeJoinCount(
-      leftTable, 0, rightTable, 0);
+  size_t matches = RadixPartitionedHashJoin<4>::executeJoinCount(leftTable, 0,
+                                                                 rightTable, 0);
 
   // Overlap: keys [500..999] = 500 matching rows
   EXPECT_EQ(matches, 500u);
@@ -48,8 +48,8 @@ TEST(RadixPartitionedHashJoinTest, DisjointTablesZeroMatches) {
   leftTable.push_back({Id::makeFromInt(10)});
   rightTable.push_back({Id::makeFromInt(20)});
 
-  size_t matches = RadixPartitionedHashJoin<2>::executeJoinCount(
-      leftTable, 0, rightTable, 0);
+  size_t matches = RadixPartitionedHashJoin<2>::executeJoinCount(leftTable, 0,
+                                                                 rightTable, 0);
 
   EXPECT_EQ(matches, 0u);
 }

@@ -45,8 +45,8 @@ class RadixPartitionedHashJoin {
   };
 
   // Partition an IdTable by join column into 2^RadixBits cache-sized buckets.
-  static std::vector<PartitionBucket> partitionTable(
-      const IdTable& table, size_t joinColumnIndex) {
+  static std::vector<PartitionBucket> partitionTable(const IdTable& table,
+                                                     size_t joinColumnIndex) {
     std::vector<PartitionBucket> partitions(NUM_PARTITIONS);
     const size_t numRows = table.numRows();
 
@@ -58,9 +58,8 @@ class RadixPartitionedHashJoin {
   }
 
   // Count matches between two partitioned tables in cache-isolated loops.
-  static size_t executeJoinCount(
-      const IdTable& leftTable, size_t leftCol,
-      const IdTable& rightTable, size_t rightCol) {
+  static size_t executeJoinCount(const IdTable& leftTable, size_t leftCol,
+                                 const IdTable& rightTable, size_t rightCol) {
     auto leftPartitions = partitionTable(leftTable, leftCol);
     auto rightPartitions = partitionTable(rightTable, rightCol);
 
@@ -85,7 +84,8 @@ class RadixPartitionedHashJoin {
       // Probe right bucket
       for (size_t rRow : rightBucket) {
         Id probeKey = rightTable(rRow, rightCol);
-        auto it = std::lower_bound(buildKeys.begin(), buildKeys.end(), probeKey);
+        auto it =
+            std::lower_bound(buildKeys.begin(), buildKeys.end(), probeKey);
         if (it != buildKeys.end() && *it == probeKey) {
           totalMatches++;
         }
