@@ -39,7 +39,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   diskIndices.reserve(indices.size());
   diskSlots.reserve(indices.size());
 
-  for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
+  for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
     auto fromInternal = internalVocab_[idx];
     if (fromInternal.has_value()) {
       usesInternalVocabulary = true;
