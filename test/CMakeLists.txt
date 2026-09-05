@@ -634,6 +634,13 @@ endif()
 
 addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
 
+# Driver only needs the header-only ring + arena streamer; keep it off
+# engine/index like the arena test above.
+addLinkAndDiscoverTestNoLibs(ExportRingDriverTest)
+if (NOT SINGLE_TEST_BINARY)
+    target_compile_definitions(ExportRingDriverTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+endif()
+
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
 # range-v3 fails in IndexImpl / CompressedExternalIdTable).
 addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
