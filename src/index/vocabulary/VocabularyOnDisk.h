@@ -110,6 +110,13 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
 
+  // Whether the `.offsets` file is currently served from the memory mapping.
+  // A read-only diagnostic: all lookup paths check the mapping themselves
+  // and need no caller-side branching.
+  [[nodiscard]] bool offsetsAreMemoryMapped() const {
+    return offsetsMapping_.isMapped();
+  }
+
   // Default constructor for an empty vocabulary.
   VocabularyOnDisk() = default;
 
@@ -193,13 +200,6 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // `offsetsMapping_` when the mapping is active, a single positioned read
   // otherwise.
   OffsetPair offsetPairAt(size_t index) const;
-
-  // Whether the `.offsets` file is currently served from the memory mapping.
-  // Intended for tests and diagnostics; all lookup paths check the mapping
-  // themselves and need no caller-side branching.
-  [[nodiscard]] bool offsetsAreMemoryMapped() const {
-    return offsetsMapping_.isMapped();
-  }
 
   // Phase 1 of `lookupBatch`: the `OffsetPair` (16 bytes) for each requested
   // index, served from the memory mapping when active, otherwise read in a
