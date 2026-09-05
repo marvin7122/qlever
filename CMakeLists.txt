@@ -669,7 +669,8 @@ FetchContent_Declare(
         asmjit
         GIT_REPOSITORY https://github.com/asmjit/asmjit.git
         GIT_TAG b2d7c505372ae797ad8948174f8083818e381eb9 # master stable
-        GIT_SHALLOW TRUE
+        # No GIT_SHALLOW: shallow clones cannot check out a pinned hash
+        # (CI failed with "unable to read tree"); asmjit is small.
         EXCLUDE_FROM_ALL
         SYSTEM
 )
