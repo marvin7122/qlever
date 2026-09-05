@@ -152,9 +152,9 @@ DecodeStats runIntoBatch(const Vocab& vocab,
   auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
   std::vector<std::string_view> views;
   views.reserve(words.size());
-  std::string scratch;
-  const auto& wrapper = vocab.compressionWrapper();
+    const auto& wrapper = vocab.compressionWrapper();
   for (const auto& w : words) {
+    std::string scratch;
     const size_t bound =
         wrapper.maxDecompressedSize(w.compressed, w.decoderIdx);
     s.bytesBound += bound;
