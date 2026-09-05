@@ -26,7 +26,7 @@ using StringTriple = QueryExecutionTree::StringTriple;
 class ConstructDeduplicator;
 
 // Instantiates a single preprocessed term for a specific row.
-// For constants: Return a pointer into the precomputed term (no shared_ptr
+// For constants: return a pointer into the precomputed term (no shared_ptr
 //   copy). For variables: one shared_ptr copy from the batch/cache so the
 //   term outlives `batchResult`. For blank nodes: allocates a new term.
 std::optional<EvaluatedTermRef> instantiateTerm(
