@@ -67,7 +67,7 @@ class TripleDeduplicator {
       const QueryExecutionContext& queryExecutionContext);
 };
 
-// Deduplicator for a whole CONSTRUCT clause. It internally holds a
+// A deduplicator for a whole CONSTRUCT clause. It internally holds a
 // `TripleDeduplicator` (see above) and only emits triples that are not
 // duplicates according to `TripleDeduplicator::insert`. The actual
 // deduplication semantics depend on the `DeduplicationMode` (see the
