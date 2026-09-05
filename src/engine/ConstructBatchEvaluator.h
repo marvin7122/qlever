@@ -35,7 +35,7 @@ struct BatchEvaluationResult {
   // evaluated to the `EvaluatedVariableValues` for the variable that is stored
   // in that column. We use a hash map (instead of a dense vector) because the
   // set of evaluated columns may be sparse: some variables in the WHERE-clause
-  // (in the `IdTable`) may not appear in the CONSTRUCT template and are thus
+
   // not evaluated.
     // TODO<marvin7122> Consider using a vector for cache friendliness.
   // The same variables are always accessed here.
