@@ -164,13 +164,7 @@ inline uint64_t nowNanos() {
 // returns.
 template <typename Selector, typename Callable>
 decltype(auto) timed(Selector selector, Callable&& callable) {
-  if (!enabled()) {
-    return callable();
-  }
-  const uint64_t start = detail::nowNanos();
-  Counters& counters = selector(detail::threadCounters());
-  if constexpr (std::is_void_v<decltype(callable())>) {
-    callable();
+  
     counters.nanos_ += detail::nowNanos() - start;
     ++counters.calls_;
   } else {
