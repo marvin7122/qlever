@@ -131,11 +131,9 @@ class FsstDecoder {
         bound, [this, str](ql::span<char> out) {
           return decompressInto(str, out);
         });
-    AD_CORRECTNESS_CHECK(result.size() <= bound);
+        AD_CORRECTNESS_CHECK(result.size() <= bound);
     return result;
   }
-
-  // Duplicate decompress(std::string_view) definition removed.
 
   // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
