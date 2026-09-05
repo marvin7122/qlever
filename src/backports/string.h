@@ -20,8 +20,7 @@
 
 namespace ql {
 
-// Provide a C++17-compatible backport of C++23's `std::basic_string::resize_and_overwrite` as a free
-// function that takes the string as the first parameter.
+// Provide a C++17-compatible backport of C++23's `std::basic_string::resize_and_overwrite` as a free function that takes the string as the first parameter.
 CPP_template(typename CharT, typename Traits, typename Allocator,
              typename Operation)(
     requires ql::concepts::invocable<
