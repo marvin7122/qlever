@@ -234,8 +234,7 @@ struct RuntimeParameters {
   // Only blocks of this size or larger will be considered for vacuuming.
   SizeT vacuumMinimumBlockSize_{100, "vacuum-minimum-block-size"};
 
-  // The runtime log level. Messages with a higher level are suppressed. The
-  // compile-time level (CMake LOGLEVEL) still applies as an upper bound.
+  // The runtime log level. Messages with a higher level are suppressed.
   LogLevelParameter logLevel_{LogLevel{ad_utility::detail::defaultLogLevel},
                               "log-level"};
 
