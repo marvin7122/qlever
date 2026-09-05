@@ -134,3 +134,81 @@ TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
   VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
   EXPECT_TRUE(result->empty());
 }
+
+// Tests for `MixedVocabBatchLookupData`: the result type that combines words
+// read from disk via a batched read with words copied from an in-RAM vocabulary
+// (used by `VocabularyInternalExternal`). Test that `asResult` ownership
+// semantics keep the data alive after the original shared_ptr is dropped.
+TEST(MixedVocabBatchLookupData, AsResultOwnershipKeepsDataAlive) {
+  auto data = std::make_shared<MixedVocabBatchLookupData>();
+  data->internalWords_ = {"foo", "bar"};
+  data->views().emplace_back(data->internalWords_[0].data(), 3);
+  data->views().emplace_back(data->internalWords_[1].data(), 3);
+
+  VocabBatchLookupResult result = MixedVocabBatchLookupData::asResult(data);
+
+  ASSERT_EQ(result->size(), 2u);
+  EXPECT_EQ((*result)[0], "foo");
+  EXPECT_EQ((*result)[1], "bar");
+
+  // Drop our reference; the aliasing shared_ptr must keep the data alive.
+  data.reset();
+  EXPECT_EQ((*result)[0], "foo");
+  EXPECT_EQ((*result)[1], "bar");
+}
+
+// An empty mixed lookup result is valid: no views, empty span.
+TEST(MixedVocabBatchLookupData, AsResultEmpty) {
+  auto data = std::make_shared<MixedVocabBatchLookupData>();
+  VocabBatchLookupResult result = MixedVocabBatchLookupData::asResult(data);
+  EXPECT_TRUE(result->empty());
+}
+
+// Tests for `VocabLookupHandleBase` and `EagerVocabLookupHandle`: the
+// split-phase lookup handle that stores a completed result and returns it
+// when `finish()` is called.
+TEST(EagerVocabLookupHandle, FinishReturnsStoredResult) {
+  auto handle = std::make_unique<EagerVocabLookupHandle>();
+  handle->result_ = VocabBatchLookupResult{new ql::span<std::string_view>{}};
+
+  // finish() should return the stored result.
+  VocabBatchLookupResult result = handle->finish();
+  EXPECT_NE(result, nullptr);
+}
+
+// An empty eager handle finishes with an empty result.
+TEST(EagerVocabLookupHandle, EmptyFinishReturnsEmptyResult) {
+  auto handle = std::make_unique<EagerVocabLookupHandle>();
+  VocabBatchLookupResult result = handle->finish();
+  EXPECT_TRUE(result->empty());
+}
+
+// Tests for `HasBeginLookup` trait detection: the C++17 SFINAE-based trait
+// that determines whether a vocabulary type provides a split-phase `beginLookup`
+// member callable with `ql::span<const size_t>`.
+TEST(HasBeginLookupTrait, VocabularyInMemoryHasBeginLookup) {
+  constexpr bool has =
+      ad_utility::vocabulary::HasBeginLookup<VocabularyInMemory>::value;
+  EXPECT_TRUE(has);
+}
+
+TEST(HasBeginLookupTrait, CompressedVocabularyInMemoryHasBeginLookup) {
+  // CompressedVocabulary is a template; test with VocabularyInMemory as the
+  // underlying vocabulary.
+  using CompVocab = CompressedVocabulary<VocabularyInMemory>;
+  constexpr bool has =
+      ad_utility::vocabulary::HasBeginLookup<CompVocab>::value;
+  EXPECT_TRUE(has);
+}
+
+TEST(HasBeginLookupTrait, PolymorphicVocabularyHasBeginLookup) {
+  constexpr bool has =
+      ad_utility::vocabulary::HasBeginLookup<PolymorphicVocabulary>::value;
+  EXPECT_TRUE(has);
+}
+
+TEST(HasBeginLookupTrait, IntTypeNoBeginLookup) {
+  // A type without beginLookup should produce HasBeginLookup == false.
+  constexpr bool has = ad_utility::vocabulary::HasBeginLookup<int>::value;
+  EXPECT_FALSE(has);
+}
