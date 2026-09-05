@@ -120,9 +120,7 @@ CPP_template(typename UnderlyingVocabulary,
     std::vector<std::string_view> views;
     views.reserve(indices.size());
 
-    for (const auto& idxAndCompressedWord :
-         ::ranges::views::zip(indices, *compressedWords)) {
-      const auto& [idx, compressedWord] = idxAndCompressedWord;
+    for (const auto& [idx, compressedWord] : ::ranges::views::zip(indices, *compressedWords)) {
       // TODO<marvin>: The allocation pattern here can be improved (get some
       // bound in advance to pre-inform the allocator etc.). Also, consider to
       // reuse a buffer here.
