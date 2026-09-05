@@ -14,8 +14,11 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
+#include "parser/GraphPattern.h"
+#include "parser/GraphPatternOperation.h"
 #include "parser/ParsedQuery.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
@@ -31,6 +34,10 @@ enum class ExportEngineMode {
   FastStreamingV2 = 1  // Push-based zero-copy streaming engine
 };
 
+// How a V2 response is handed to Beast. ConcatenatedString is the curl-checked
+// default (`generator<std::string>`). ScatterGather is opt-in (`export-send`).
+enum class ExportSendMode { ConcatenatedString = 0, ScatterGather = 1 };
+
 // Return a human-readable representation of `ExportEngineMode`.
 [[nodiscard]] constexpr std::string_view toString(
     ExportEngineMode mode) noexcept {
@@ -39,6 +46,17 @@ enum class ExportEngineMode {
       return "LegacyV1";
     case ExportEngineMode::FastStreamingV2:
       return "FastStreamingV2";
+  }
+  return "Unknown";
+}
+
+[[nodiscard]] constexpr std::string_view toString(
+    ExportSendMode mode) noexcept {
+  switch (mode) {
+    case ExportSendMode::ConcatenatedString:
+      return "ConcatenatedString";
+    case ExportSendMode::ScatterGather:
+      return "ScatterGather";
   }
   return "Unknown";
 }
@@ -109,6 +127,28 @@ class ExportPipelineRouter {
     }
 
     return ExportEngineMode::LegacyV1;
+  }
+
+  // How V2 should hand bytes to HTTP. Default is concatenated strings.
+  // `export-send=iovec` (or header `X-QLever-Export-Send: iovec`) selects
+  // scatter-gather. Unknown values keep the default; this does not select V2.
+  [[nodiscard]] static ExportSendMode selectSendMode(
+      const ParamValueMap& parameters,
+      std::optional<std::string_view> exportSendHeader =
+          std::nullopt) noexcept {
+    if (const auto opt = getParameterValue(parameters, "export-send");
+        opt.has_value()) {
+      if (const auto parsed = parseSendMode(opt.value()); parsed.has_value()) {
+        return parsed.value();
+      }
+    }
+    if (exportSendHeader.has_value()) {
+      if (const auto parsed = parseSendMode(exportSendHeader.value());
+          parsed.has_value()) {
+        return parsed.value();
+      }
+    }
+    return ExportSendMode::ConcatenatedString;
   }
 
   // ___________________________________________________________________________
@@ -237,11 +277,82 @@ class ExportPipelineRouter {
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
   }
 
-  // Unsupported-construct detection is not implemented yet; all SELECT and
-  // CONSTRUCT queries are currently treated as eligible for the fast path.
-  [[nodiscard]] static bool hasUnsupportedConstructs(
-      const ParsedQuery&) noexcept {
+  [[nodiscard]] static std::optional<ExportSendMode> parseSendMode(
+      std::string_view val) noexcept {
+    const auto lower = ad_utility::getLowercase(std::string(val));
+    if (lower == "string" || lower == "concat" || lower == "concatenated") {
+      return ExportSendMode::ConcatenatedString;
+    }
+    if (lower == "iovec" || lower == "sg" || lower == "scatter-gather" ||
+        lower == "writev") {
+      return ExportSendMode::ScatterGather;
+    }
+    return std::nullopt;
+  }
+
+  // A graph pattern is unsupported when it plans to anything but a triple
+  // scan, join, filter, BIND, or inline VALUES. Every other operation
+  // (UNION, OPTIONAL, MINUS, SERVICE, subqueries, property paths, text and
+  // spatial search, DESCRIBE, LOAD, cached results) needs Legacy V1.
+  // `FILTER` needs no case: filters live in `GraphPattern::_filters` and plan
+  // to the eligible `Filter` operation. `GRAPH { }` groups still plan to
+  // scans and joins, so they recurse like plain groups.
+  [[nodiscard]] static bool graphPatternIsUnsupported(
+      const parsedQuery::GraphPattern& pattern) noexcept {
+    for (const auto& operation : pattern._graphPatterns) {
+      if (const auto* bgp =
+              std::get_if<parsedQuery::BasicGraphPattern>(&operation)) {
+        // A property path predicate (e.g. `?s <p>+ ?o`) plans to `TransPath`,
+        // not to a scan, so V2 cannot serve it. Plain IRIs and variable
+        // predicates stay eligible.
+        for (const auto& triple : bgp->_triples) {
+          if (std::holds_alternative<PropertyPath>(triple.p_) &&
+              !triple.getSimplePredicate().has_value()) {
+            return true;
+          }
+        }
+        continue;
+      }
+      if (std::holds_alternative<parsedQuery::Bind>(operation) ||
+          std::holds_alternative<parsedQuery::Values>(operation)) {
+        continue;
+      }
+      if (const auto* group =
+              std::get_if<parsedQuery::GroupGraphPattern>(&operation)) {
+        if (graphPatternIsUnsupported(group->_child)) {
+          return true;
+        }
+        continue;
+      }
+      return true;
+    }
     return false;
+  }
+
+  // V2 serves Scan/Join/Filter SELECT CSV/TSV with LIMIT/OFFSET only. Anything
+  // else (GROUP BY and other aggregation, HAVING, ORDER BY, DISTINCT/REDUCED,
+  // or an unsupported graph pattern, see above) transparently falls back to
+  // Legacy V1. CONSTRUCT stays eligible here so the router keeps selecting
+  // the fast path; `ExportEngineV2::canHandle` still serves CONSTRUCT from
+  // Legacy until SELECT CSV/TSV V2 works (Decision 4).
+  [[nodiscard]] static bool hasUnsupportedConstructs(
+      const ParsedQuery& query) noexcept {
+    if (query.isAggregatingQuery()) {
+      return true;
+    }
+    if (!query._havingClauses.empty()) {
+      return true;
+    }
+    if (!query._orderBy.empty()) {
+      return true;
+    }
+    if (query.hasSelectClause()) {
+      const auto& selectClause = query.selectClause();
+      if (selectClause.distinct_ || selectClause.reduced_) {
+        return true;
+      }
+    }
+    return graphPatternIsUnsupported(query._rootGraphPattern);
   }
 };
 

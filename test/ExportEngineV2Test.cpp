@@ -14,6 +14,11 @@
 #include "global/Id.h"
 #include "util/AllocatorTestHelpers.h"
 
+// Light-link smoke tests (NoLibs). Do not include ParsedQuery /
+// ExportEngineV2.h here — those pull GraphPatternOperation + range-v3 paths
+// that fail on cluster GCC 11. canHandle / live Server wiring are verified via
+// qlever-server builds.
+
 using namespace ql::engine::export_v2;
 using namespace qlever::export_v2;
 using ad_utility::testing::makeAllocator;

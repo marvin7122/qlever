@@ -42,9 +42,10 @@ static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunkBuilder>);
 TEST(ScatterGatherArenaStreamerTest, RejectsSlicesOutsideOwner) {
   ImmutableByteBuffer arena{"abc"};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      arena.slice(4, 0), ::testing::HasSubstr("offset_ <= owner_->size()"));
+      static_cast<void>(arena.slice(4, 0)),
+      ::testing::HasSubstr("offset_ <= owner_->size()"));
   AD_EXPECT_THROW_WITH_MESSAGE(
-      arena.slice(2, 2),
+      static_cast<void>(arena.slice(2, 2)),
       ::testing::HasSubstr("size_ <= owner_->size() - offset_"));
 }
 
@@ -144,6 +145,56 @@ TEST(ScatterGatherArenaStreamerTest, RejectsWriterWithoutProgress) {
             return ScatterGatherWriteAttempt{0, 0};
           }),
       ::testing::HasSubstr("attempt.bytesWritten_ > 0"));
+}
+
+TEST(ScatterGatherArenaStreamerTest, FinalizeToStringMovesCopyOnlyPayload) {
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy("ab");
+  builder.appendCopy("cd");
+  EXPECT_EQ(builder.size(), 4);
+  EXPECT_EQ(std::move(builder).finalizeToString(), "abcd");
+}
+
+TEST(ScatterGatherArenaStreamerTest, FinalizeToStringConcatenatesBorrowed) {
+  ImmutableByteBuffer arena{"XYZ"};
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy("<");
+  builder.appendOwned(arena.slice(0, 3));
+  builder.appendCopy(">");
+  EXPECT_EQ(std::move(builder).finalizeToString(), "<XYZ>");
+}
+
+TEST(ScatterGatherArenaStreamerTest, FinalizeToStringEmpty) {
+  ScatterGatherChunkBuilder builder;
+  EXPECT_TRUE(builder.empty());
+  EXPECT_EQ(std::move(builder).finalizeToString(), "");
+}
+
+TEST(ScatterGatherArenaStreamerTest, AppendOwnedStringDoesNotCopyIntoArena) {
+  ScatterGatherChunkBuilder builder;
+  builder.appendOwned(std::string{"ab"});
+  builder.appendOwned(std::string{"cd"});
+  auto chunk = std::move(builder).finalize();
+  EXPECT_EQ(chunk.toString(), "abcd");
+  EXPECT_EQ(chunk.numSegments(), 2u);
+}
+
+TEST(ScatterGatherArenaStreamerTest, VisitSegmentsMatchesToString) {
+  ImmutableByteBuffer arena{"XYZ"};
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy("<");
+  builder.appendOwned(arena.slice(0, 3));
+  builder.appendCopy(">");
+  auto chunk = std::move(builder).finalize();
+  std::string joined;
+  std::vector<size_t> sizes;
+  chunk.visitSegments([&](std::string_view bytes) {
+    joined.append(bytes);
+    sizes.push_back(bytes.size());
+  });
+  EXPECT_EQ(joined, chunk.toString());
+  EXPECT_EQ(joined, "<XYZ>");
+  EXPECT_EQ(sizes.size(), 3u);
 }
 
 TEST(ScatterGatherArenaStreamerTest, LimitsEachWritevBatch) {

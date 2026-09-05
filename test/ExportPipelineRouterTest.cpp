@@ -25,6 +25,8 @@ TEST(ExportPipelineRouterTest, ToStringFunction) {
   EXPECT_EQ(toString(ExportEngineMode::LegacyV1), "LegacyV1");
   EXPECT_EQ(toString(ExportEngineMode::FastStreamingV2), "FastStreamingV2");
   EXPECT_EQ(toString(static_cast<ExportEngineMode>(999)), "Unknown");
+  EXPECT_EQ(toString(ExportSendMode::ConcatenatedString), "ConcatenatedString");
+  EXPECT_EQ(toString(ExportSendMode::ScatterGather), "ScatterGather");
 }
 
 TEST(ExportPipelineRouterTest, DefaultModeIsLegacyV1) {
@@ -169,6 +171,96 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
     EXPECT_THAT(desc,
                 testing::HasSubstr("default standard relational pipeline"));
   }
+}
+
+TEST(ExportPipelineRouterTest, SelectSendModeDefaultIsConcatenatedString) {
+  ParamValueMap params;
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
+            ExportSendMode::ConcatenatedString);
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params, "unknown"),
+            ExportSendMode::ConcatenatedString);
+}
+
+TEST(ExportPipelineRouterTest, SelectSendModeUrlParam) {
+  ParamValueMap params;
+  params["export-send"] = {"iovec"};
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
+            ExportSendMode::ScatterGather);
+  params["export-send"] = {"string"};
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
+            ExportSendMode::ConcatenatedString);
+  params["export-send"] = {"writev"};
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
+            ExportSendMode::ScatterGather);
+}
+
+TEST(ExportPipelineRouterTest, UnsupportedConstructsFallBackToV1) {
+  // Each query requests V2 explicitly; every one must still route to Legacy.
+  const std::vector<std::string> ineligibleQueries = {
+      // Federated execution leaves this machine.
+      "SELECT * WHERE { SERVICE <http://example.org/sparql> { ?s ?p ?o } }",
+      // Aggregation, grouping, and modifiers V2 does not implement.
+      "SELECT ?s (COUNT(?o) AS ?c) WHERE { ?s ?p ?o } GROUP BY ?s",
+      "SELECT * WHERE { ?s ?p ?o } ORDER BY ?s",
+      "SELECT DISTINCT * WHERE { ?s ?p ?o }",
+      "SELECT REDUCED * WHERE { ?s ?p ?o }",
+      // Graph shapes outside Scan/Join/Filter.
+      "SELECT * WHERE { { ?s ?p ?o } UNION { ?a ?b ?c } }",
+      "SELECT * WHERE { ?s ?p ?o . OPTIONAL { ?s ?q ?r } }",
+      "SELECT * WHERE { ?s ?p ?o . MINUS { ?s ?q ?r } }",
+      "SELECT * WHERE { { SELECT ?s WHERE { ?s ?p ?o } } }",
+      "SELECT * WHERE { ?s <http://example.org/p>+ ?o }",
+  };
+  for (const auto& queryStr : ineligibleQueries) {
+    auto query = parse(queryStr);
+    ParamValueMap params;
+    params["fast-export"] = {"1"};
+    EXPECT_FALSE(ExportPipelineRouter::isEligibleForFastStreaming(query))
+        << "Failed for query: " << queryStr;
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+              ExportEngineMode::LegacyV1)
+        << "Failed for query: " << queryStr;
+  }
+}
+
+TEST(ExportPipelineRouterTest, EligibleShapesStillSelectV2) {
+  const std::vector<std::string> eligibleQueries = {
+      "SELECT * WHERE { ?s ?p ?o }",
+      "SELECT * WHERE { ?s ?p ?o . ?a ?b ?c . FILTER(?o > 5) }",
+      "SELECT * WHERE { ?s ?p ?o . BIND(1 AS ?x) }",
+      "SELECT * WHERE { ?s ?p ?o . VALUES ?v { 1 2 3 } }",
+      "SELECT * WHERE { ?s ?p ?o } LIMIT 10 OFFSET 5",
+  };
+  for (const auto& queryStr : eligibleQueries) {
+    auto query = parse(queryStr);
+    ParamValueMap params;
+    params["fast-export"] = {"1"};
+    EXPECT_TRUE(ExportPipelineRouter::isEligibleForFastStreaming(query))
+        << "Failed for query: " << queryStr;
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+              ExportEngineMode::FastStreamingV2)
+        << "Failed for query: " << queryStr;
+  }
+}
+
+TEST(ExportPipelineRouterTest, IneligibleQueryExplainsFallback) {
+  auto query = parse(
+      "SELECT * WHERE { SERVICE <http://example.org/sparql> "
+      "{ ?s ?p ?o } }");
+  ParamValueMap params;
+  params["fast-export"] = {"1"};
+  std::string desc = ExportPipelineRouter::describeDecision(query, params);
+  EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
+  EXPECT_THAT(desc, testing::HasSubstr("ineligible for V2 streaming"));
+}
+
+TEST(ExportPipelineRouterTest, SelectSendModeHeader) {
+  ParamValueMap params;
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params, "iovec"),
+            ExportSendMode::ScatterGather);
+  params["export-send"] = {"string"};
+  EXPECT_EQ(ExportPipelineRouter::selectSendMode(params, "iovec"),
+            ExportSendMode::ConcatenatedString);
 }
 
 }  // namespace

@@ -9,12 +9,18 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_MONOMORPHICSERIALIZERS_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_MONOMORPHICSERIALIZERS_H
 
+#include <absl/strings/str_format.h>
+
 #include <array>
+#include <cmath>
 #include <cstddef>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+
+#include "global/Id.h"
 
 namespace ql::engine::export_v2 {
 
@@ -46,12 +52,43 @@ struct IsStringLike<Value, std::void_t<decltype(std::string_view{
 template <typename Value>
 inline constexpr bool IsStringLike_v = IsStringLike<Value>::value;
 
+// Render a double exactly like Legacy CSV
+// (`ql::exportIds::idToStringAndTypeForEncodedValue` in
+// `src/index/ExportIds.cpp`): integral values get one decimal place (`1.0`,
+// never `1`), other values use
+// `%.13g` with a `.0` suffix when rounding removed the separator, and
+// non-finite values use the RDF spellings `NaN`/`INF`/`-INF`. `std::to_chars`
+// matches none of this, so the cell formats here instead of delegating to
+// `Writer::writeDouble`.
+[[nodiscard]] inline std::string formatLegacyDouble(double value) {
+  if (!std::isfinite(value)) {
+    if (std::isnan(value)) {
+      return "NaN";
+    }
+    return value > 0 ? "INF" : "-INF";
+  }
+  double intPart = 0.0;
+  if (std::modf(value, &intPart) == 0.0) {
+    // Integral doubles grow beyond any fixed buffer (`%.1f` of `1e300` is 301
+    // digits), so format dynamically, exactly like Legacy.
+    return absl::StrFormat("%.1f", value);
+  }
+  std::string out = absl::StrFormat("%.13g", value);
+  if (out.find_last_of(".e") == std::string::npos) {
+    out += ".0";
+  }
+  return out;
+}
+
 template <ColumnType Type, RowFormat Format>
 struct CellWriter {
   template <typename Writer, typename Value,
             std::enable_if_t<IsStringLike_v<Value>, int> = 0>
   static void write(Writer& writer, const Value& value) {
     const std::string_view string{value};
+    // Contract: for CSV/TSV the caller passes bare vocabulary content (Legacy
+    // strips `<>` and quotes before escaping), so the writer only escapes.
+    // Turtle keeps the bracketed/quoted representation instead.
     if constexpr (Type == ColumnType::Iri) {
       if constexpr (Format == RowFormat::Csv) {
         writer.writeEscapedCsv(string);
@@ -88,14 +125,19 @@ struct CellWriter {
   template <typename Writer, typename Value,
             std::enable_if_t<std::is_integral_v<Value>, int> = 0>
   static void write(Writer& writer, Value value) {
-    if constexpr (Type == ColumnType::Integer) {
-      writer.writeInteger(value);
-    } else if constexpr (Type == ColumnType::Boolean) {
-      writer.writeRaw(value ? "true" : "false");
-    } else {
-      static_assert(Type == ColumnType::Integer || Type == ColumnType::Boolean,
-                    "This column type requires a string or floating argument");
-    }
+    static_assert(Type == ColumnType::Integer,
+                  "This column type requires a string or floating argument");
+    writer.writeInteger(value);
+  }
+
+  // A Boolean column takes the `Id`, not a C++ `bool`: Legacy renders the
+  // stored literal (`true`/`false` or `0`/`1`, depending on how the `Id` was
+  // created, see `Id::getBoolLiteral`), which a bare `bool` cannot reproduce.
+  template <typename Writer>
+  static void write(Writer& writer, Id id) {
+    static_assert(Type == ColumnType::Boolean,
+                  "Only a Boolean column accepts an Id argument");
+    writer.writeRaw(id.getBoolLiteral());
   }
 
   template <typename Writer, typename Value,
@@ -103,7 +145,7 @@ struct CellWriter {
   static void write(Writer& writer, Value value) {
     static_assert(Type == ColumnType::Double,
                   "Only a Double column accepts floating arguments");
-    writer.writeDouble(value);
+    writer.writeRaw(formatLegacyDouble(value));
   }
 
   template <typename Writer>

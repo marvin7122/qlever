@@ -16,7 +16,7 @@
 #include "parser/SparqlParser.h"
 
 using namespace ql::engine;
-using ExportPipelineRouter::ParamValueMap;
+using ParamValueMap = ExportPipelineRouter::ParamValueMap;
 
 int main(int argc, char** argv) {
   size_t numQueries = 1'000'000;

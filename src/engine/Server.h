@@ -13,8 +13,10 @@
 #include <absl/functional/any_invocable.h>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "backports/filesystem.h"
@@ -25,6 +27,7 @@
 #include "engine/QueryExecutionContext.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
+#include "engine/export_v2/ElasticExportScheduler.h"
 #include "index/IdTableUtils.h"
 #include "index/Index.h"
 #include "libqlever/Qlever.h"
@@ -97,6 +100,12 @@ class Server {
   unsigned short port_;
   std::string accessToken_;
   bool noAccessCheck_;
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+  // Declared before `queryRegistry_` so the registry (and its start/end
+  // callbacks) is destroyed first.
+  std::unique_ptr<ad_utility::export_v2::ElasticExportScheduler>
+      exportScheduler_;
+#endif
   ad_utility::websocket::QueryRegistry queryRegistry_{};
 
   /// Non-owning reference to the `QueryHub` instance living inside
@@ -159,7 +168,10 @@ class Server {
   class MockSend {
    public:
     Awaitable<void> operator()(auto response) {
-      response_ = std::move(response);
+      using Sent = std::decay_t<decltype(response)>;
+      if constexpr (std::is_same_v<Sent, ResponseT>) {
+        response_ = std::move(response);
+      }
       co_return;
     }
 
@@ -452,13 +464,15 @@ class Server {
       std::optional<std::string_view> userTimeout, bool accessTokenOk) const;
 
   /// Send response for the streamable media types (tsv, csv, octet-stream,
-  /// turtle, sparqlJson, qleverJson).
+  /// turtle, sparqlJson, qleverJson). `params` feeds ExportPipelineRouter
+  /// (`fast-export`, `export-engine`) when selecting Legacy V1 vs Export V2.
   CPP_template(typename RequestT, typename SendT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<void> sendStreamableResponse(
           const RequestT& request, SendT& send, ad_utility::MediaType mediaType,
           const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
-          SharedCancellationHandle cancellationHandle) const;
+          SharedCancellationHandle cancellationHandle,
+          const ParamValueMap& params = {}) const;
 
   FRIEND_TEST(MaterializedViewsTest, serverIntegration);
 
