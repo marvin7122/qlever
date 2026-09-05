@@ -35,7 +35,9 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // external batch directly and must not allocate `diskSlots` or `assembled`.
   std::vector<size_t> diskIndices;
   std::vector<std::pair<size_t, std::string_view>> internalSlots;
+  std::vector<size_t> diskSlots;
   diskIndices.reserve(indices.size());
+  diskSlots.reserve(indices.size());
 
   for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
     auto fromInternal = internalVocab_[idx];
@@ -43,6 +45,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
       internalSlots.emplace_back(static_cast<size_t>(i), fromInternal.value());
     } else {
       diskIndices.push_back(idx);
+      diskSlots.push_back(i);
     }
   }
 
@@ -60,17 +63,6 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   if (!diskIndices.empty()) {
     // Mixed path only: input positions of disk misses, same order as
     // `diskIndices`.
-    std::vector<char> isInternal(indices.size(), 0);
-    for (const auto& [position, word] : internalSlots) {
-      isInternal[position] = 1;
-    }
-    std::vector<size_t> diskSlots;
-    diskSlots.reserve(diskIndices.size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-      if (isInternal[i] == 0) {
-        diskSlots.push_back(i);
-      }
-    }
     AD_CORRECTNESS_CHECK(diskSlots.size() == diskIndices.size());
 
     auto disk = externalVocab_.lookupBatch(diskIndices);
