@@ -88,7 +88,7 @@ class VocabBatchLookupResult {
     }
   }
 
-  // Provide the container and range interface.
+  // Returns size, empty, operator[], begin, end, data to provide a read-only range over the views.
   [[nodiscard]] size_t size() const noexcept { return span_.size(); }
   [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
   [[nodiscard]] std::string_view operator[](size_t index) const {
