@@ -285,6 +285,78 @@ TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
   EXPECT_ANY_THROW(vocab->lookupBatch(indices));
 }
 
+// `beginLookup` with empty indices must throw (consistent with `lookupBatch`).
+TEST(VocabularyOnDisk, BeginLookupEmptyIndicesThrows) {
+  auto vocab = createExampleVocabulary();
+  EXPECT_ANY_THROW(vocab->beginLookup(ql::span<const size_t>{}));
+}
+
+// `beginLookup`/`finishLookup` round-trip must equal `lookupBatch`.
+TEST(VocabularyOnDisk, BeginFinishLookupRoundTripMatchesLookupBatch) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
+  auto eager = vocab->lookupBatch(indices);
+  auto handle = vocab->beginLookup(indices);
+  auto split = vocab->finishLookup(std::move(handle));
+  ASSERT_EQ(eager->size(), split->size());
+  for (auto [i, expectedAndActual] :
+       ::ranges::views::enumerate(::ranges::views::zip(*eager, *split))) {
+    const auto& [expected, actual] = expectedAndActual;
+    EXPECT_EQ(expected, actual) << " at requested slot " << i;
+  }
+}
+
+// If an exception occurs between `beginLookup` and `finishLookup`, the
+// destructor of the returned handle must drain the in-flight offset reads and
+// return the `IoManager` to the pool (preventing a busy manager from being
+// reused while the kernel still writes into freed memory).
+TEST(VocabularyOnDisk, BeginLookupExceptionBetweenBeginAndFinishDrainsAndReturnsPool) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 3> indices{0, 1, 2};
+
+  // Capture the pool size before.
+  const size_t poolSizeBefore = vocab->ioManagers_->size();
+
+  // Create a handle but do NOT call `finishLookup`; let the handle go out of
+  // scope (simulating an exception between beginLookup and finishLookup).
+  {
+    auto handle = vocab->beginLookup(indices);
+    // Pool size should be reduced by 1 while the handle holds a manager.
+    EXPECT_EQ(vocab->ioManagers_->size(), poolSizeBefore - 1);
+    // Handle goes out of scope here; destructor drains and returns manager.
+  }
+  // After destructor runs, the manager must be back in the pool.
+  EXPECT_EQ(vocab->ioManagers_->size(), poolSizeBefore);
+}
+
+// `finishLookup` must return the `IoManager` to the pool on every exit path
+// (including exceptions from `manager_->wait` or `readStrings`).
+TEST(VocabularyOnDisk, FinishLookupReturnsManagerToPoolOnAllExitPaths) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 3> indices{0, 1, 2};
+
+  // Capture the pool size before.
+  const size_t poolSizeBefore = vocab->ioManagers_->size();
+
+  // Normal path: beginLookup -> finishLookup.
+  {
+    auto handle = vocab->beginLookup(indices);
+    EXPECT_EQ(vocab->ioManagers_->size(), poolSizeBefore - 1);
+    auto result = vocab->finishLookup(std::move(handle));
+    (void)result;  // suppress unused warning
+    EXPECT_EQ(vocab->ioManagers_->size(), poolSizeBefore);
+  }
+
+  // The pool size must remain stable across multiple round-trips.
+  for (int i = 0; i < 3; ++i) {
+    auto handle = vocab->beginLookup(indices);
+    auto result = vocab->finishLookup(std::move(handle));
+    (void)result;
+    EXPECT_EQ(vocab->ioManagers_->size(), poolSizeBefore)
+        << "after iteration " << i;
+  }
+}
+
 // Each batch yielded by `lookupBatchesStreamed` must equal the individual
 // `vocab[]` lookups for that batch's indices, and the batches must be yielded
 // in input order.
