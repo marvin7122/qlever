@@ -27,7 +27,7 @@ using namespace ad_utility::memory_literals;
 
 namespace {
 // _____________________________________________________________________________
-// A class that executes a passed function in its constructor.
+// Define a class that executes a passed function in its constructor.
 class Caller {
  public:
   explicit Caller(absl::FunctionRef<void()> f) { std::invoke(f); }
