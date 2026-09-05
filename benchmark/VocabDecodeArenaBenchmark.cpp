@@ -134,9 +134,8 @@ DecodeStats runCopyBatch(const Vocab& vocab,
     views.emplace_back(mem, n);
     s.checksum = mixView(s.checksum, views.back());
   }
-  volatile uint64_t keep = s.checksum;
+    volatile uint64_t keep = s.checksum;
   (void)keep;
-  (void)buffer;
   return s;
 }
 
