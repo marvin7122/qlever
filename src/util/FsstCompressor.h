@@ -52,7 +52,7 @@ constexpr CastToUnsignedPtr castToUnsignedPtr{};
 
 // _____________________________________________________________________________
 // Allocate `bound` bytes without zero-initialization, decode directly into the
-// string buffer, and resize to the actual decoded size.
+// Resize the string buffer to the actual decoded size.
 CPP_template(typename Decode)(
     requires ql::concepts::invocable<Decode, ql::span<char>>) std::string
     decompressToOwnedString(size_t bound, Decode decode) {
