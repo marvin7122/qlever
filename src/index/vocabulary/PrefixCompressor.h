@@ -53,8 +53,7 @@ class PrefixCompressor {
   };
 
   // ___________________________________________________________________________
-  // List of all prefixes, sorted descending by the length
-  // of the prefixes. Used for lookup when compressing.
+  // Store all prefixes sorted descending by length for lookup during compression.
   std::vector<PrefixCode> codeToPrefix_{};
 
   // ___________________________________________________________________________
