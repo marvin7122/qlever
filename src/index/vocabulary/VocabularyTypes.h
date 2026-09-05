@@ -36,7 +36,7 @@
 #include "util/Views.h"
 
 // _____________________________________________________________________________
-// Frozen owner of a batch's `string_view`s. Builders allocate and write;
+// Represent a frozen owner of a batch's `string_view`s. Builders allocate and write;
 // `viewSpan()` is not virtual: it always returns this object's
 // `views_`, which only a builder may fill via a derived constructor.
 class VocabBatchStorage {
