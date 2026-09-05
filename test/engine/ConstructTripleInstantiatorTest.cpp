@@ -175,6 +175,22 @@ TEST(InstantiateTerm, PrecomputedBlankNodeIgnoresBatchRowIdx) {
   EXPECT_THAT(r1, Optional(matchesEvaluatedTerm("_:u7_x", nullptr)));
 }
 
+// _____________________________________________________________________________
+TEST(InstantiateTerm, PrecomputedBlankNodeHasKeepAliveAndCorrectDataPointer) {
+  // When instantiating a blank node, a new EvaluatedTermData is allocated for
+  // each call. The returned EvaluatedTermRef must have a non-null keepAlive_
+  // that owns this data, and data_ must point to that same object.
+  auto batchResult = BatchEvaluationResult{{}, 1};
+  PreprocessedTerm preprocessed = PrecomputedBlankNode{"_:g", "_label"};
+
+  auto result = instantiateTerm(preprocessed, batchResult, 0, 42);
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_THAT(result, Optional(matchesEvaluatedTerm("_:g42_label", nullptr)));
+  EXPECT_NE(result->keepAlive_, nullptr);
+  EXPECT_EQ(result->data_, result->keepAlive_.get());
+}
+
 // ============================================================================
 //                      TESTS FOR `instantiateBatch`
 // ============================================================================
