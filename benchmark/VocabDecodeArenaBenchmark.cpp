@@ -98,13 +98,7 @@ struct FixtureWord {
 uint64_t mixView(uint64_t checksum, std::string_view v) {
   checksum = checksum * 1315423911ull + v.size();
   if (!v.empty()) {
-    checksum += static_cast<unsigned char>(v.front());
-    checksum += static_cast<unsigned char>(v.back()) << 8;
-  }
-  return checksum;
-}
-
-struct RusageSnap {
+    
   rusage ru;
 };
 
