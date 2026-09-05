@@ -58,8 +58,9 @@ size_t resolveExportNumThreads() {
       getRuntimeParameter<&RuntimeParameters::constructExportNumThreads_>();
   // hardware_concurrency() is documented to potentially return 0 on
   // platforms where the number of hardware cores cannot be determined.
-  AD_CORRECTNESS_CHECK(std::thread::hardware_concurrency() != 0);
-  return n == 0 ? std::max(1u, std::thread::hardware_concurrency()) : n;
+  const auto hardwareConcurrency = std::thread::hardware_concurrency();
+  AD_CORRECTNESS_CHECK(hardwareConcurrency != 0);
+  return n == 0 ? std::max(1u, hardwareConcurrency) : n;
 }
 
 // Format one SELECT CSV/TSV chunk. The header is not included.
