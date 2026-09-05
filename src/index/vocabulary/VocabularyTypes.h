@@ -236,8 +236,7 @@ class PmrVocabBatchLookupData : public VocabBatchStorage {
   };
 
   PmrVocabBatchLookupData(
-      Passkey,
-      std::unique_ptr<ql::pmr::memory_resource> upstream,
+      Passkey, std::unique_ptr<ql::pmr::memory_resource> upstream,
       std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
       std::vector<std::string_view> views)
       : VocabBatchStorage(std::move(views)),
@@ -264,8 +263,7 @@ class StringVectorVocabBatchLookupData : public VocabBatchStorage {
   static std::vector<std::string_view> viewsInto(
       const std::vector<std::string>& words) {
     return ::ranges::to_vector(
-        words |
-        ql::views::transform(ad_utility::staticCast<std::string_view>));
+        words | ql::views::transform(ad_utility::staticCast<std::string_view>));
   }
 
  public:
@@ -293,8 +291,7 @@ class MultiOwnerVocabBatchLookupData : public VocabBatchStorage {
     explicit Passkey() = default;
   };
 
-  MultiOwnerVocabBatchLookupData(Passkey,
-                                 std::vector<VocabBatchOwner> owners,
+  MultiOwnerVocabBatchLookupData(Passkey, std::vector<VocabBatchOwner> owners,
                                  std::vector<std::string_view> views)
       : VocabBatchStorage(std::move(views)), owners_{std::move(owners)} {}
 
@@ -427,6 +424,22 @@ class ArenaVocabBatchBuilder {
     return PmrVocabBatchLookupData::asResult(std::move(data));
   }
 };
+
+// _____________________________________________________________________________
+// Whether `Vocab` provides the two-argument `lookupBatch` overload that writes
+// into an `ArenaVocabBatchBuilder` (currently only `CompressedVocabulary`).
+// A `void_t` detection trait rather than a `requires`-expression, because the
+// GCC 8 CI job compiles this header as C++17, where `requires` does not exist.
+template <typename Vocab, typename = void>
+struct HasBuilderLookupBatch : std::false_type {};
+template <typename Vocab>
+struct HasBuilderLookupBatch<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+template <typename Vocab>
+inline constexpr bool HasBuilderLookupBatch_v =
+    HasBuilderLookupBatch<Vocab>::value;
 
 // _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
