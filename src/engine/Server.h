@@ -221,6 +221,7 @@ class Server {
   // individual WebSocket sessions to it.
   std::function<Awaitable<void>(const StringBodyRequest&,
                                 boost::asio::ip::tcp::socket)>
+// ____________________________________________________________________________
   makeWebSocketSessionSupplier(boost::asio::any_io_executor& ioExecutor);
   FRIEND_TEST(ServerTest, makeWebSocketSessionSupplier);
 
