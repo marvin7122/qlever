@@ -37,7 +37,7 @@ struct BatchEvaluationResult {
   // set of evaluated columns may be sparse: some variables in the WHERE-clause
 
   // not evaluated.
-    // TODO<marvin7122> Consider using a vector for cache friendliness.
+    // TODO marvin7122 Consider using a vector for cache friendliness.
   // The same variables are always accessed here.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> variablesByColumn_;
   size_t numRows_ = 0;
