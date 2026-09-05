@@ -121,6 +121,7 @@ CPP_template(typename UnderlyingVocabulary,
       // TODO<marvin>: The allocation pattern here can be improved (get some
       // bound in advance to pre-inform the allocator etc.). Also, consider to
       // reuse a buffer here.
+      AD_CORRECTNESS_CHECK(getDecoderIdx(idx) < compressionWrapper_.numDecoders());
       std::string decompressed =
           compressionWrapper_.decompress(compressedWord, getDecoderIdx(idx));
       // `memory_resource::allocate` returns `void*` to storage we own for
