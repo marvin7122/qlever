@@ -12,6 +12,9 @@
 #include "engine/CallFixedSize.h"
 #include "engine/ExistsJoin.h"
 #include "engine/QueryExecutionTree.h"
+#include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
+#include "engine/sparqlExpressions/JitExpressionCompiler.h"
+#include "engine/sparqlExpressions/JitStringFold.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
 #include "engine/sparqlExpressions/SparqlExpressionValueGetters.h"
@@ -137,6 +140,75 @@ CPP_template_def(int WIDTH,
   AD_CONTRACT_CHECK(inputTable.numColumns() == WIDTH || WIDTH == 0);
   IdTableStatic<WIDTH> resultTable =
       std::move(dynamicResultTable).toStatic<static_cast<size_t>(WIDTH)>();
+
+  // Attempt index-folded string filters (`?var = <constant>` and
+  // `REGEX(?var, "^prefix")` resolved against the vocabulary once, without
+  // per-row polymorphism or dictionary lookups). The folded program runs
+  // only if its `CellRule` holds over the input cells (e.g. a folded
+  // `?var = <int>` diverges on `Double` cells, where the legacy
+  // evaluation compares numerically).
+  auto optFolded = ql::engine::jit::tryFoldStringFilterToJit(
+      *_expression.getPimpl(), _subtree->getVariableColumns(),
+      getExecutionContext()->getIndex());
+  if (optFolded.has_value() &&
+      ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
+          optFolded->cellRule(),
+          ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+              optFolded.value(), inputTable, 0, inputTable.size(),
+              cancellationHandle_))) {
+    ql::engine::jit::JitExpressionBytecodeVm::executeFilter<WIDTH>(
+        optFolded.value(), inputTable, resultTable, cancellationHandle_);
+    dynamicResultTable = std::move(resultTable).toDynamic();
+    checkCancellation();
+    return;
+  }
+
+  // Probe-compile once for the JIT backends below. Programs containing
+  // `DIV_INT` are excluded: the backends implement truncating integer
+  // division, while the legacy evaluation divides via doubles (see
+  // `JitExpressionBytecodeVm::containsDivision`), so they can disagree.
+  // The native backend additionally requires all-`Int` cells (it has no
+  // validity concept and reinterprets raw `ValueId` bits); the bytecode
+  // backend requires the program's `CellRule` (see `CellRule`).
+  auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
+      *_expression.getPimpl(), _subtree->getVariableColumns());
+  bool useNativeJit = false;
+  bool useBytecodeJit = false;
+  if (optProgram.has_value() &&
+      !ql::engine::jit::JitExpressionBytecodeVm::containsDivision(
+          optProgram.value())) {
+    const auto kinds =
+        ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+            optProgram.value(), inputTable, 0, inputTable.size(),
+            cancellationHandle_);
+    useNativeJit = kinds.allInt;
+    useBytecodeJit =
+        ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
+            optProgram->cellRule(), kinds);
+  }
+
+  // Attempt Native x86-64 JIT (AsmJit) compilation & execution
+  if (useNativeJit) {
+    auto optJitCompiled = ql::engine::jit::JitExpressionCompiler::compile(
+        *_expression.getPimpl(), _subtree->getVariableColumns());
+    if (optJitCompiled.has_value()) {
+      optJitCompiled.value().executeFilter<WIDTH>(inputTable, resultTable,
+                                                  cancellationHandle_);
+      dynamicResultTable = std::move(resultTable).toDynamic();
+      checkCancellation();
+      return;
+    }
+  }
+
+  // Attempt JIT bytecode interpretation for simple expressions
+  if (useBytecodeJit) {
+    ql::engine::jit::JitExpressionBytecodeVm::executeFilter<WIDTH>(
+        optProgram.value(), inputTable, resultTable, cancellationHandle_);
+    dynamicResultTable = std::move(resultTable).toDynamic();
+    checkCancellation();
+    return;
+  }
+
   sparqlExpression::EvaluationContext evaluationContext(
       *getExecutionContext(), _subtree->getVariableColumns(),
       inputTable.template asStaticView<0>(),
