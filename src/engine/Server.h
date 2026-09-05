@@ -141,8 +141,10 @@ class Server {
   using SharedCancellationHandle = ad_utility::SharedCancellationHandle;
   using SharedTimeTracer = std::shared_ptr<ad_utility::timer::TimeTracer>;
   using PlannedQuery = qlever::PlannedQuery;
-  
-  
+  using HttpErrorResponse = ad_utility::httpUtils::ResponseT;
+  using StringBodyRequest =
+      boost::beast::http::request<boost::beast::http::string_body>;
+
   // inspect the response that would have been sent. A named type is required
   // here (rather than an ad-hoc lambda) because `process`/`handleHttpRequest`
   // are only defined in `Server.cpp`, so callers in other translation units
@@ -151,7 +153,7 @@ class Server {
   class MockSend {
    public:
     Awaitable<void> operator()(auto response) {
-      response_ = std::forward<ResponseT>(response);
+      response_ = std::move(response);
       co_return;
     }
 
