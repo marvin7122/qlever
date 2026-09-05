@@ -65,7 +65,7 @@ std::string runQueryStreamableResult(
 }
 
 // Run the given SPARQL `query` on the given Turtle `kg` and export the result
-// as JSON. `mediaType` must be `sparqlJSON` or `qleverJSON`.
+// as JSON. `mediaType` must be `ad_utility::MediaType::sparqlJSON` or `ad_utility::MediaType::qleverJSON` (qualify; remove any using-enum).
 nlohmann::json runJSONQuery(const std::string& kg, const std::string& query,
                             ad_utility::MediaType mediaType,
                             bool useTextIndex = false,
