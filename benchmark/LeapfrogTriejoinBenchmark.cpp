@@ -17,10 +17,13 @@ using namespace ql::engine::wcoj;
 
 int main() {
   constexpr size_t N = 2'000'000;
-  std::cout << "=================================================================\n";
-  std::cout << "Comparative Benchmark: Pairwise Binary Join vs Leapfrog Triejoin (WCOJ)\n";
+  std::cout
+      << "=================================================================\n";
+  std::cout << "Comparative Benchmark: Pairwise Binary Join vs Leapfrog "
+               "Triejoin (WCOJ)\n";
   std::cout << "3 sorted streams of " << N << " elements\n";
-  std::cout << "=================================================================\n";
+  std::cout
+      << "=================================================================\n";
 
   std::vector<Id> listA;
   std::vector<Id> listB;
@@ -78,23 +81,30 @@ int main() {
 
   auto leapfrogResult = LeapfrogJoin::intersect(iterators);
   auto p1 = std::chrono::high_resolution_clock::now();
-  double leapfrogMs = std::chrono::duration<double, std::milli>(p1 - p0).count();
+  double leapfrogMs =
+      std::chrono::duration<double, std::milli>(p1 - p0).count();
 
-  std::cout << "\n--- Baseline: Pairwise Binary Merge Join (Materializes Intermediate) ---\n";
+  std::cout << "\n--- Baseline: Pairwise Binary Merge Join (Materializes "
+               "Intermediate) ---\n";
   std::cout << "Runtime: " << binaryMs << " ms ("
-            << (N / (binaryMs / 1000.0)) / 1e6 << " M items/sec, intermediate size: "
-            << intermediateAB.size() << " rows)\n";
+            << (N / (binaryMs / 1000.0)) / 1e6
+            << " M items/sec, intermediate size: " << intermediateAB.size()
+            << " rows)\n";
 
-  std::cout << "\n--- Prototype: Leapfrog Triejoin (Zero Intermediate Allocation) ---\n";
+  std::cout << "\n--- Prototype: Leapfrog Triejoin (Zero Intermediate "
+               "Allocation) ---\n";
   std::cout << "Runtime: " << leapfrogMs << " ms ("
-            << (N / (leapfrogMs / 1000.0)) / 1e6 << " M items/sec, matches: "
-            << leapfrogResult.size() << ")\n";
+            << (N / (leapfrogMs / 1000.0)) / 1e6
+            << " M items/sec, matches: " << leapfrogResult.size() << ")\n";
 
-  std::cout << "\n=================================================================\n";
-  std::cout << ">>> Leapfrog WCOJ Speedup: " << (binaryMs / leapfrogMs) << "x faster\n";
+  std::cout << "\n============================================================="
+               "====\n";
+  std::cout << ">>> Leapfrog WCOJ Speedup: " << (binaryMs / leapfrogMs)
+            << "x faster\n";
   std::cout << ">>> Intermediate Memory Saved: "
             << (intermediateAB.size() * sizeof(Id)) / (1024 * 1024) << " MB\n";
-  std::cout << "=================================================================\n";
+  std::cout
+      << "=================================================================\n";
 
   return 0;
 }

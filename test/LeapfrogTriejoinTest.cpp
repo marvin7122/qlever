@@ -16,9 +16,15 @@
 using namespace ql::engine::wcoj;
 
 TEST(LeapfrogTriejoinTest, ThreeWayIntersection) {
-  std::vector<Id> listA = {Id::makeFromInt(1), Id::makeFromInt(3), Id::makeFromInt(5), Id::makeFromInt(7), Id::makeFromInt(9)};
-  std::vector<Id> listB = {Id::makeFromInt(2), Id::makeFromInt(3), Id::makeFromInt(6), Id::makeFromInt(7), Id::makeFromInt(10)};
-  std::vector<Id> listC = {Id::makeFromInt(3), Id::makeFromInt(4), Id::makeFromInt(7), Id::makeFromInt(8), Id::makeFromInt(11)};
+  std::vector<Id> listA = {Id::makeFromInt(1), Id::makeFromInt(3),
+                           Id::makeFromInt(5), Id::makeFromInt(7),
+                           Id::makeFromInt(9)};
+  std::vector<Id> listB = {Id::makeFromInt(2), Id::makeFromInt(3),
+                           Id::makeFromInt(6), Id::makeFromInt(7),
+                           Id::makeFromInt(10)};
+  std::vector<Id> listC = {Id::makeFromInt(3), Id::makeFromInt(4),
+                           Id::makeFromInt(7), Id::makeFromInt(8),
+                           Id::makeFromInt(11)};
 
   std::vector<LeapfrogIterator> iterators;
   iterators.emplace_back(listA);

@@ -32,21 +32,17 @@ class LeapfrogIterator {
     return currentIndex_ >= sortedKeys_.size();
   }
 
-  [[nodiscard]] Id key() const noexcept {
-    return sortedKeys_[currentIndex_];
-  }
+  [[nodiscard]] Id key() const noexcept { return sortedKeys_[currentIndex_]; }
 
-  void next() noexcept {
-    currentIndex_++;
-  }
+  void next() noexcept { currentIndex_++; }
 
   // Fast forward to the first key >= targetKey using binary search
   void seek(Id targetKey) noexcept {
     if (atEnd() || key() >= targetKey) {
       return;
     }
-    auto it = std::lower_bound(
-        sortedKeys_.begin() + currentIndex_, sortedKeys_.end(), targetKey);
+    auto it = std::lower_bound(sortedKeys_.begin() + currentIndex_,
+                               sortedKeys_.end(), targetKey);
     currentIndex_ = std::distance(sortedKeys_.begin(), it);
   }
 };
@@ -57,8 +53,7 @@ class LeapfrogIterator {
 // triangle queries, completely eliminating O(N^2) intermediate tables.
 class LeapfrogJoin {
  public:
-  static std::vector<Id> intersect(
-      std::vector<LeapfrogIterator>& iterators) {
+  static std::vector<Id> intersect(std::vector<LeapfrogIterator>& iterators) {
     std::vector<Id> result;
     if (iterators.empty()) {
       return result;
