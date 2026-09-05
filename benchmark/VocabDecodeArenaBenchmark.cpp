@@ -49,13 +49,14 @@ void usage(const char* argv0) {
 bool parseArgs(int argc, char** argv, Options& o) {
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
-    auto need = [&](const char* name) -> std::string {
+        auto need = [&](const char* name) -> std::string {
       if (i + 1 >= argc) {
         std::cerr << "missing value for " << name << "\n";
         return {};
       }
       return argv[++i];
     };
+    bool parseFailed = false;
     if (a == "--vocab") {
       o.vocab = need("--vocab");
     } else if (a == "--arm") {
