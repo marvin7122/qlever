@@ -196,9 +196,8 @@ class SplitVocabulary {
   void readFromFile(const std::string& filename);
 
   // ___________________________________________________________________________
-  // The item-at operator retrieves a word by a given index. The index is
-  // expected to have the marker bits set to indicate which underlying
-  // vocabulary is to be used.
+  // Retrieve a word by a given index. The index must have marker bits set
+  // to indicate the underlying vocabulary.
   // Note: The item-at operator needs to be defined in header to avoid some
   // serious compiler trouble.
   decltype(auto) operator[](uint64_t idx) const {
