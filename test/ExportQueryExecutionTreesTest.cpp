@@ -191,20 +191,20 @@ void runConstructQueryTestCase(
   auto cleanup = setRuntimeParameterForTest<
       &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
   auto trace = generateLocationTrace(l, "runConstructQueryTestCase");
-  using enum ad_utility::MediaType;
-  EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, tsv),
+
+  EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, ad_utility::MediaType::tsv),
             testCase.resultTsv);
-  EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, csv),
+  EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, ad_utility::MediaType::csv),
             testCase.resultCsv);
   auto resultJson = nlohmann::json::parse(
-      runQueryStreamableResult(testCase.kg, testCase.query, qleverJson));
+      runQueryStreamableResult(testCase.kg, testCase.query, ad_utility::MediaType::qleverJson));
   ASSERT_EQ(resultJson["query"], testCase.query);
   ASSERT_EQ(resultJson["resultSizeTotal"], testCase.resultSizeTotal);
   ASSERT_EQ(resultJson["resultSizeExported"], testCase.resultSizeExported);
   EXPECT_EQ(resultJson["res"], testCase.resultQLeverJSON);
-  EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, turtle),
+  EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, ad_utility::MediaType::turtle),
             testCase.resultTurtle);
-  EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, ntriples),
+  EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, ad_utility::MediaType::ntriples),
             testCase.resultNtriples);
 
   // Test the interaction of normal limit (the LIMIT of the query) and export
