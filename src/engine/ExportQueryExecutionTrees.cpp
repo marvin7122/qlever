@@ -58,8 +58,11 @@ size_t resolveExportNumThreads() {
   // hardware_concurrency() is documented to potentially return 0 on
   // platforms where the number of hardware cores cannot be determined.
   const auto hardwareConcurrency = std::thread::hardware_concurrency();
-  AD_CORRECTNESS_CHECK(hardwareConcurrency != 0);
-  return n == 0 ? std::max(1u, hardwareConcurrency) : n;
+  AD_CONTRACT_CHECK(hardwareConcurrency != 0);
+  const size_t resolved = n == 0 ? std::max(1u, hardwareConcurrency) : n;
+  AD_CONTRACT_CHECK(resolved >= 1);
+  AD_CONTRACT_CHECK(resolved <= std::thread::hardware_concurrency() * 2 || n != 0);
+  return resolved;
 }
 
 // Serialize one chunk of SELECT results to CSV or TSV format (no header).
