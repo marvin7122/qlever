@@ -162,8 +162,8 @@ void IoUringPolicy::wait(BatchHandle handle) {
   // Drain completions until this batch is gone. `drainOneCqe` erases a batch as
   // soon as its last read completes, so a present entry always still has
   // outstanding reads.
-  while (numInFlightReadRequestsPerBatch_.find(handle) !=
-         numInFlightReadRequestsPerBatch_.end()) {
+  const auto end = numInFlightReadRequestsPerBatch_.end();
+  while (numInFlightReadRequestsPerBatch_.find(handle) != end) {
     drainOneCqe();
   }
 }
