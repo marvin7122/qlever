@@ -1,4 +1,4 @@
-//   Copyright 2024 - 2026, University of Freiburg,
+//   Copyright 2024-2026, University of Freiburg,
 //   Chair of Algorithms and Data Structures.
 //   Authors:
 //     Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
