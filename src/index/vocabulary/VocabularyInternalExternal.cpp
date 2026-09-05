@@ -28,7 +28,9 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
-  AD_CONTRACT_CHECK(!indices.empty());
+  if (indices.empty()) {
+    return makeStringVectorVocabBatchLookupResult({});
+  }
 
   std::vector<std::string_view> assembled(indices.size());
   std::vector<size_t> diskIndices;
