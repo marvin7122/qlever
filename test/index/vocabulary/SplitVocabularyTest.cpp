@@ -526,8 +526,8 @@ using namespace splitVocabTestHelpers;
 
 // Share common SplitVocabulary setup across multiple tests.
 // Populates the vocabulary once per test suite with:
-//     and index 1: "" and index 1: "abc"; marker 1 with index 0: "xyz" and
-//     index 1: "axyz".
+//   marker 0: index 0 "" and index 1 "xyz"
+//   marker 1: index 0 "abc" and index 1 "axyz".
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
