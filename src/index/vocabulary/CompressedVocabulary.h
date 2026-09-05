@@ -110,8 +110,7 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
     // Batch-read the compressed words from the underlying vocabulary, then
-  // decompress each word with the decoder of its block. Match the result order
-  // to `indices`.
+  // decompress each word with the decoder of its block.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
