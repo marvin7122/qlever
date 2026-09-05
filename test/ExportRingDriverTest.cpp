@@ -43,7 +43,10 @@ ChunkGenerator chunksOf(std::vector<std::string> texts) {
 
 std::string popString(ExportRingDriver& driver) {
   auto chunk = driver.pop();
-  ASSERT_TRUE(chunk.has_value());
+  if (!chunk.has_value()) {
+    ADD_FAILURE() << "pop() returned an empty chunk";
+    return {};
+  }
   return chunk->toString();
 }
 
