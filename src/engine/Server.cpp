@@ -67,7 +67,7 @@ Server::Server(
       metricsReader_(std::move(metricsReader)) {
   AD_LOG_INFO << "Initializing server ..." << std::endl;
 
-  initializeServerMetrics(config.memoryLimit_);
+  
 
   if (noAccessCheck_) {
     AD_LOG_INFO << "No access token required for restricted API calls"
