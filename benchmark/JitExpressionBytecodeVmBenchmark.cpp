@@ -215,7 +215,7 @@ class JitExpressionBytecodeVmBenchmark : public BenchmarkInterface {
                            [&]() { return asmjitMatches; });
 
     // Add summary metadata
-    auto& generalMeta = results.getGeneralMetadata();
+    auto& generalMeta = getGeneralMetadata();
     generalMeta.addKeyValuePair("rows", NUM_ROWS);
     generalMeta.addKeyValuePair("expression", "(col0 * 2) + col1 > 100");
     generalMeta.addKeyValuePair("ast_ms", astMs);
