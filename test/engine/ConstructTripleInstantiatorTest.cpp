@@ -31,7 +31,7 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
       EvaluatedTermData{std::move(str), type});
 }
 
-// Matches an `EvaluatedTermRef` by checking the pointed-to term data.
+// Matches an `EvaluatedTermRef` by checking the pointed to term data.
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
     return AD_FIELD(EvaluatedTermRef, data_, ::testing::Pointee(::testing::AllOf(
