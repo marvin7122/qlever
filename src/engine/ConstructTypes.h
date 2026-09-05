@@ -42,7 +42,7 @@ struct EvaluatedTermData {
   const char* rdfTermDataType_;  // non-null iff encoded literal (case 1 above)
 
   //____________________________________________________________________________
-  EvaluatedTermData(std::string rdfTermString, const char* rdfTermDataType)
+  explicit EvaluatedTermData(std::string rdfTermString, const char* rdfTermDataType)
       : rdfTermString_{std::move(rdfTermString)},
         rdfTermDataType_{rdfTermDataType} {}
 };
