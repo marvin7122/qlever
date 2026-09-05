@@ -43,7 +43,7 @@ std::string runQueryStreamableResult(
     std::optional<size_t> exportLimit = std::nullopt) {
   ad_utility::testing::TestIndexConfig config{kg};
   config.createTextIndex = useTextIndex;
-  auto qec = ad_utility::testing::getQec(std::move(config));
+  // Unit test for resolveExportNumThreads: 0 -> >=1, non-zero -> exact.\n  EXPECT_GE(ad_utility::resolveExportNumThreadsForTest(0), 1u);\n  EXPECT_EQ(ad_utility::resolveExportNumThreadsForTest(4), 4u);\n  auto qec = ad_utility::testing::getQec(std::move(config));
   // TODO<joka921> There is a bug in the caching that we have yet to trace.
   // This cache clearing should not be necessary.
   qec->clearCacheUnpinnedOnly();
