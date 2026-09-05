@@ -120,11 +120,21 @@ void Server::configureQueryEventLog(const ql::filesystem::path& path) {
 }
 
 // _____________________________________________________________________________
+/**
+ * Report an HTTP error by logging it, recording a metric, and building a
+ * plain-text error response.
+ *
+ * @param message   Human-readable error message (will be logged and sent to the client).
+ * @param status    HTTP status code for the response.
+ * @param request   The incoming request (used to match version/keep-alive and for CORS headers added by the caller).
+ * @param errorType Metric label classifying the error (e.g., HttpErrorType::http, HttpErrorType::internal).
+ * @return A ready-to-send HTTP error response with text/plain body.
+ */
 CPP_template_def(typename RequestT)(
     requires ad_utility::httpUtils::HttpRequest<RequestT>)
-    Server::HttpErrorResponse Server::reportHttpError(
-        std::string_view message, http::status status, const RequestT& request,
-        const MetricLabel& errorType) const {
+Server::HttpErrorResponse Server::reportHttpError(
+    std::string_view message, http::status status, const RequestT& request,
+    const MetricLabel& errorType) const {
   using namespace ad_utility::httpUtils;
   AD_LOG_ERROR << message << std::endl;
   metrics_->httpErrors_->Add(1, {errorType});
