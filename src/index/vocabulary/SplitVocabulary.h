@@ -264,8 +264,7 @@ class SplitVocabulary {
   }
 
   // ___________________________________________________________________________
-  // The size of a SplitVocabulary is the sum of the sizes of the underlying
-  // vocabularies.
+  // Return the sum of the sizes of the underlying vocabularies.
   [[nodiscard]] uint64_t size() const {
     uint64_t total = 0;
     for (auto& vocab : underlying_) {
