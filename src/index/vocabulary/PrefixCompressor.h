@@ -38,7 +38,7 @@
 class PrefixCompressor {
  private:
   // ___________________________________________________________________________
-  // Simple class for a prefix and its code as members of the codebook.
+  // Represent a prefix and its code as members of the codebook.
   struct PrefixCode {
     PrefixCode() = default;
     PrefixCode(char code, std::string prefix)
