@@ -89,7 +89,7 @@ bool ConstructDeduplicator::isNew(size_t templateTripleIdx,
   }
   // Hold the lock around the shared ID-space filter, `dedupVocab_` and the `resetIfVocabTooLarge` call.
   // The caller formats the resulting triple to a string outside the lock, which keeps the parallel export path from serializing the expensive string formatting.
-  std::lock_guard lock{mutex_};
+    std::lock_guard lock{mutex_};
   // Reset only at a triple boundary, never mid-key (would dangle the key).
   resetIfVocabTooLarge();
   return filter_.insert(makeFullTripleKey(
