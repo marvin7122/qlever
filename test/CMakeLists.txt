@@ -249,7 +249,13 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
 if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    # The `server` library is not built on Emscripten, matching the pattern used
+    # for MaterializedViewsTest below.
+    if (TARGET server)
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    else ()
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine)
+    endif ()
 endif ()
 
 addLinkAndDiscoverTest(IdTableTest qlever_util)
