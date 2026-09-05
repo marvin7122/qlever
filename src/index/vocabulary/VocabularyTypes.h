@@ -146,7 +146,7 @@ inline VocabBatchLookupResult makeOwnedVocabBatch(
   char* buffer = data->buffer().data();
   for (std::string_view word : words) {
     if (word.empty()) {
-      data->views().push_back({});
+      data->views().push_back(std::string_view{buffer + offset, 0});
     } else {
       std::memcpy(buffer + offset, word.data(), word.size());
       data->views().push_back(std::string_view{buffer + offset, word.size()});
