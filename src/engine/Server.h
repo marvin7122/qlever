@@ -151,7 +151,7 @@ class Server {
   class MockSend {
    public:
     Awaitable<void> operator()(auto response) {
-      response_ = std::move(response);
+      response_ = std::forward<ResponseT>(response);
       co_return;
     }
 
