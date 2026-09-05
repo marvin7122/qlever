@@ -44,8 +44,21 @@ class VocabularyInMemoryBinSearch
 
   // Vocabularies are movable (but not copyable).
   VocabularyInMemoryBinSearch& operator=(
-      VocabularyInMemoryBinSearch&&) noexcept = default;
-  VocabularyInMemoryBinSearch(VocabularyInMemoryBinSearch&&) noexcept = default;
+      VocabularyInMemoryBinSearch&& other) noexcept {
+    if (this != &other) {
+      indices_ = std::move(other.indices_);
+      words_ = std::move(other.words_);
+      // Maintain invariant: words_ must not be null (see class comment).
+      other.words_ = std::make_shared<const Words>();
+    }
+    return *this;
+  }
+  VocabularyInMemoryBinSearch(VocabularyInMemoryBinSearch&& other) noexcept
+      : words_(std::move(other.words_)),
+        indices_(std::move(other.indices_)) {
+    // Maintain invariant: words_ must not be null (see class comment).
+    other.words_ = std::make_shared<const Words>();
+  }
 
   // Const access for the indices.
   const Indices& indices() const { return indices_; }
