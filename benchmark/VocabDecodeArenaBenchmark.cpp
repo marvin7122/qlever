@@ -92,7 +92,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
 }
 
 struct FixtureWord {
-  std::string compressed;
+  std::string_view compressed;
   size_t decoderIdx;
 };
 
