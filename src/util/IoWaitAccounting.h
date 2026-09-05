@@ -121,13 +121,7 @@ struct ThreadRegistration {
   ThreadRegistration() {
     auto& reg = registry();
     std::lock_guard lock{reg.mutex_};
-    reg.live_.push_back(&counters_);
-  }
-  ~ThreadRegistration() {
-    auto& reg = registry();
-    std::lock_guard lock{reg.mutex_};
-    reg.finished_.pread_.nanos_ += counters_.pread_.nanos_;
-    reg.finished_.pread_.calls_ += counters_.pread_.calls_;
+    
     reg.finished_.ioUringWait_.nanos_ += counters_.ioUringWait_.nanos_;
     reg.finished_.ioUringWait_.calls_ += counters_.ioUringWait_.calls_;
     reg.finished_.ioUringSubmit_.nanos_ += counters_.ioUringSubmit_.nanos_;
