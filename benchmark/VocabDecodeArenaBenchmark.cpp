@@ -2,7 +2,7 @@
 // Chair of Algorithms and Data Structures.
 // Author: Marvin Stoetzel <stoetzem@email.uni-freiburg.de>
 //
-// Isolate FSST decode-into-arena vs decode-then-copy-into-arena. No Turtle, no HTTP.
+// Isolate FSST decode-then-copy-into-arena vs decode-then-copy-into-arena. No Turtle, no HTTP.
 // Layer 0 decodes RAM-resident compressed words. Layer 1 times
 // CompressedVocabulary::lookupBatch after a warmup pass.
 
