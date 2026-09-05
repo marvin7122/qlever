@@ -16,6 +16,7 @@
 #include "engine/export_v2/VectorStreamSource.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
+#include "util/MemorySize/MemorySize.h"
 
 using namespace ql::engine::export_v2;
 
@@ -26,7 +27,7 @@ std::vector<Result::IdTableVocabPair> createSyntheticBlocks(size_t numBlocks,
                                                             size_t rowsPerBlock,
                                                             size_t numCols) {
   ad_utility::AllocatorWithLimit<Id> allocator{
-      ad_utility::makeAllocationMemoryLimitForTesting()};
+      ad_utility::makeAllocatorWithLimit<Id>(MemorySize::max())};
   std::vector<Result::IdTableVocabPair> blocks;
   blocks.reserve(numBlocks);
 
