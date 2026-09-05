@@ -333,7 +333,7 @@ class SplitVocabulary {
   }
 
   // ___________________________________________________________________________
-  // Shortcut to retrieve the first underlying vocabulary
+  // Return a reference to the first underlying vocabulary.
   AnyUnderlyingVocab& getUnderlyingMainVocabulary() { return underlying_[0]; }
   const AnyUnderlyingVocab& getUnderlyingMainVocabulary() const {
     return underlying_[0];
