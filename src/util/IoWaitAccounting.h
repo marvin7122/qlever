@@ -199,6 +199,7 @@ inline Counters& ioUringSubmitCounters(ThreadCounters& counters) {
 // _____________________________________________________________________________
 
 // Totals over all threads, live and finished.
+// Aggregates counters from all live threads and the finished accumulator.
 inline ThreadCounters total() {
   auto& reg = detail::registry();
   std::lock_guard lock{reg.mutex_};
