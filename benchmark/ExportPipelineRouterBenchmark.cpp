@@ -12,11 +12,11 @@
 #include <string>
 #include <vector>
 
-#include "engine/ExportPipelineRouter.h"
-#include "parser/SparqlParser.h"
+#include "src/engine/ExportPipelineRouter.h"
+#include "src/parser/SparqlParser.h"
 
 using namespace ql::engine;
-using ExportPipelineRouter::ParamValueMap;
+using ParamValueMap = ExportPipelineRouter::ParamValueMap;
 
 int main(int argc, char** argv) {
   size_t numQueries = 1'000'000;
