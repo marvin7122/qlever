@@ -141,6 +141,8 @@ struct ThreadRegistration {
 // owning core and the add needs no atomic.
 // Returns the thread‑local counters for the current thread, lazily
 // constructing a ThreadRegistration on first call.
+// Returns the thread‑local counters for the current thread, lazily
+// constructing a ThreadRegistration on first call.
 inline ThreadCounters& threadCounters() {
   thread_local ThreadRegistration registration;
   return registration.counters_;
