@@ -36,7 +36,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
-        add_executable(VocabDecodeArenaBenchmark VocabDecodeArenaBenchmark.cpp)
-    qlever_target_link_libraries(VocabDecodeArenaBenchmark vocabulary)
+    addAndLinkBenchmark(VocabDecodeArenaBenchmark vocabulary)
 
 endif()
