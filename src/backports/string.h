@@ -12,6 +12,7 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "backports/concepts.h"
 #include <cstddef>
@@ -35,10 +36,10 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
     __cpp_lib_string_resize_and_overwrite >= 202110L
   str.resize_and_overwrite(count, std::forward<Operation>(op));
 #else
-  str.resize(count);
-  const size_t newSize = std::forward<Operation>(op)(str.data(), count);
+  std::vector<CharT> buffer(count);
+  const size_t newSize = std::forward<Operation>(op)(buffer.data(), count);
   AD_CONTRACT_CHECK(newSize <= count);
-  str.resize(newSize);
+  str.assign(buffer.data(), newSize);
 #endif
 }
 
