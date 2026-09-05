@@ -122,8 +122,9 @@ DecodeStats runCopyBatch(const Vocab& vocab,
   std::vector<std::string_view> views;
   views.reserve(words.size());
   const auto& wrapper = vocab.compressionWrapper();
+  std::string decompressed;
   for (const auto& w : words) {
-    std::string decompressed = wrapper.decompress(w.compressed, w.decoderIdx);
+    decompressed = wrapper.decompress(w.compressed, w.decoderIdx);
     const size_t n = decompressed.size();
     const size_t bound =
         wrapper.maxDecompressedSize(w.compressed, w.decoderIdx);
