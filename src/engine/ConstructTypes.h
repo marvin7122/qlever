@@ -69,7 +69,9 @@ struct EvaluatedTermRef {
     AD_CONTRACT_CHECK(data == keepAlive.get());
   }
   explicit EvaluatedTermRef(std::unique_ptr<EvaluatedTermData> owned)
-      : storage_{std::in_place_index<2>, std::move(owned)} {}
+      : storage_{std::in_place_index<2>, std::move(owned)} {
+    AD_CONTRACT_CHECK(owned != nullptr);
+  }
 
   const EvaluatedTermData& operator*() const { return *get(); }
   const EvaluatedTermData* operator->() const { return get(); }
