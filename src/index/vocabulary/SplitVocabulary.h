@@ -209,7 +209,7 @@ class SplitVocabulary {
     std::array<std::vector<size_t>, numberOfVocabs>
         underlyingVocabIndicesByMarker;
 
-    for (auto markedIndex : indices) {
+    for (const auto& markedIndex : indices) {
       underlyingVocabIndicesByMarker[getMarker(markedIndex)].push_back(
           getVocabIndex(markedIndex));
     }
