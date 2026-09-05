@@ -198,8 +198,8 @@ class File {
             return pread(fd, to + bytesRead, toRead, offset + bytesRead);
           });
 
-      if (ret < 0) {
-        return ret;
+      if (ret <= 0) {
+        return ret == 0 ? bytesRead : ret;
       }
       bytesRead += ret;
     }
