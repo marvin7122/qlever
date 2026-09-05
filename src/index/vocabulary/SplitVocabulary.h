@@ -173,7 +173,7 @@ class SplitVocabulary {
   }
 
   // ___________________________________________________________________________
-  // Helper to detect if a "special" vocabulary is used.
+  // Detect whether a special vocabulary is used.
   static constexpr bool isSpecialVocabIndex(uint64_t indexWithMarker) {
     return getMarker(indexWithMarker) != 0;
   }
