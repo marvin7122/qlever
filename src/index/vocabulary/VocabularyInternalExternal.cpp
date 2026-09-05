@@ -22,6 +22,7 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   if (fromInternal.has_value()) {
     return std::string{fromInternal.value()};
   }
+  AD_CONTRACT_CHECK(i < size());
   return externalVocab_[i];
 }
 
