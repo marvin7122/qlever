@@ -11,8 +11,10 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "backports/memory_resource.h"
