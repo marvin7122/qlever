@@ -43,6 +43,7 @@ namespace {
 static constexpr size_t kSelectExportBatchSize = 1024;
 
 
+// _____________________________________________________________________________
 /**
  * @brief Resolves the number of threads for export operations.
  *
