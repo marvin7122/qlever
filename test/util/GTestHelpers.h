@@ -328,7 +328,7 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 // outside a running gtest (i.e. when `current_test_info()` returns nullptr).
 // Pass false when the caller is also used by non-test code (e.g. benchmarks),
 // in which case an empty string is returned instead.
-// tests embed '/' in their names). Shared implementation of
+// tests embed '/' in their names). Shared implementation of `sanitizeGtestName` and `gtestCurrentTestSuiteName`
 // `sanitizeGtestName` and `gtestCurrentTestSuiteName`.
 inline std::string sanitizeGtestName(const std::string& name) {
   return absl::StrReplaceAll(name, {{"/", "_"}});
