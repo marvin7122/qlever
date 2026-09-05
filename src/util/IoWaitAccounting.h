@@ -114,6 +114,8 @@ inline Registry& registry() {
 
 // Add this thread's counters to the registry on first use and fold them into
 // `finished_` when the thread exits, so no sample is lost.
+// RAII helper that registers this thread’s counters with the global registry
+// on construction and folds them into the finished totals on destruction.
 struct ThreadRegistration {
   ThreadCounters counters_;
   ThreadRegistration() {
