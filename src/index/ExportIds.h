@@ -239,9 +239,7 @@ void resolveNonVocabIndexIds(
   });
 }
 
-// Do not sort the batch by vocabulary position: the
-// io_uring backend reorders the reads anyway, and only the synchronous
-// fallback could profit from sequential file access.
+
 
     const Index& index, ql::span<const Id> ids,
     ql::span<const size_t> idIndices) {
