@@ -303,8 +303,7 @@ TEST_F(ConstructTripleGeneratorTest, acrossBatchBoundary) {
   }
 }
 
-// `construct-export-row-batch-size=1` still yields every row. The default
-// `BATCH_SIZE` is 1024; this covers a different chunking..
+// Setting row batch size to 1 still yields every row correctly.
 TEST_F(ConstructTripleGeneratorTest, rowBatchSizeOneYieldsEveryRow) {
   auto reset = setRuntimeParameterForTest<
       &RuntimeParameters::constructExportRowBatchSize_>(1);
