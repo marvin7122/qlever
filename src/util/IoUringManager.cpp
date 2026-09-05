@@ -113,7 +113,7 @@ void IoUringPolicy::addBatch(int fd,
                             targetBufferPerRequest)) {
     // The submission queue has no free slot (io_uring_sq_space_left == 0), so
     // make room: submit what we have prepared so far and block until enough
-    // completions have been drained.
+
     if (io_uring_sq_space_left(&ring_) == 0) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
