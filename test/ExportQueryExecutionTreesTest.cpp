@@ -224,7 +224,6 @@ void runAskQueryTestCase(
     const TestCaseAskQuery& testCase,
     ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
   auto trace = generateLocationTrace(l, "runAskQueryTestCase");
-  using enum ad_utility::MediaType;
   // TODO<joka921> match the exception
   EXPECT_ANY_THROW(runQueryStreamableResult(testCase.kg, testCase.query, tsv));
   EXPECT_ANY_THROW(runQueryStreamableResult(testCase.kg, testCase.query, csv));
