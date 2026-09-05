@@ -12,8 +12,8 @@
 #include <string>
 #include <vector>
 
-#include "engine/ExportPipelineRouter.h"
-#include "parser/SparqlParser.h"
+#include "src/engine/ExportPipelineRouter.h"
+#include "src/parser/SparqlParser.h"
 
 using namespace ql::engine;
 using ParamValueMap = ExportPipelineRouter::ParamValueMap;
