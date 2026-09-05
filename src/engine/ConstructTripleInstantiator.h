@@ -25,6 +25,7 @@ using StringTriple = QueryExecutionTree::StringTriple;
 
 class ConstructDeduplicator;
 
+// ______________
 // Instantiates a single preprocessed term for a specific row.
 // For constants: return a pointer into the precomputed term (no shared_ptr
 //   copy). For variables: one shared_ptr copy from the batch/cache so the
