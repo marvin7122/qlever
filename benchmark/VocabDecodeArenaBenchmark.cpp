@@ -130,13 +130,7 @@ DecodeStats runCopyBatch(const Vocab& vocab,
         wrapper.maxDecompressedSize(w.compressed, w.decoderIdx);
     s.bytesUsed += n;
     s.bytesBound += bound;
-    if (n == 0) {
-      views.emplace_back();
-      continue;
-    }
-    ql::pmr::polymorphic_allocator<char> allocator{buffer.get()};
-    char* mem = allocator.allocate(n);
-    ql::ranges::copy(decompressed, mem);
+    
     views.emplace_back(mem, n);
     s.checksum = mixView(s.checksum, views.back());
   }
