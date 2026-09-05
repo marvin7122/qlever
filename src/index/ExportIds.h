@@ -244,9 +244,9 @@ void resolveNonVocabIndexIds(
 // fallback could profit from sequential file access.
 inline std::unique_ptr<VocabLookupHandleBase> beginResolveVocabIndexIds(
     const Index& index, ql::span<const Id> ids,
-    ql::span<const size_t> positions) {
+    ql::span<const size_t> idIndices) {
   auto rawIndices = ::ranges::to_vector(
-      positions | ql::views::transform([&ids](size_t i) {
+      idIndices | ql::views::transform([&ids](size_t i) {
         return static_cast<size_t>(ids[i].getVocabIndex().get());
       }));
   return index.getImpl().getVocab().beginLookup(rawIndices);
