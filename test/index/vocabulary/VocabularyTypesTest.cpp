@@ -205,7 +205,7 @@ TEST(VocabBatchLookupData, KeepAliveOutlivesSharedWordStorage) {
 
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
 // used when words are produced incrementally with sizes not known up front
-// (e.g. decompressing one word at a time in `CompressedVocabulary`). Each word
+// (e.g. decompressing one word at a time in CompressedVocabulary). Each word
 // gets a pointer-stable allocation, so appending a later (differently sized)
 // word never invalidates an earlier `string_view`, unlike the single growing
 // buffer of `VocabBatchLookupData`, which would reallocate and leave the
