@@ -58,19 +58,28 @@ using EvaluatedTerm = std::shared_ptr<const EvaluatedTermData>;
 // eviction cannot destroy the bytes. For a blank node, `keepAlive_` owns the
 // newly allocated term.
 struct EvaluatedTermRef {
-  const EvaluatedTermData* data_ = nullptr;
-  EvaluatedTerm keepAlive_{};
-  // Use unique_ptr to avoid an atomic refcount; the object is never shared with the IdCache.
-  std::unique_ptr<EvaluatedTermData> owned_{};
+  // Tagged union: either a shared reference (keepAlive) or unique ownership (owned).
+  // Only one is engaged at a time. This avoids the redundant data_ pointer and
+  // reduces size from ~40 bytes to ~24 bytes (shared_ptr) / ~16 bytes (unique_ptr).
+  std::variant<std::monostate, EvaluatedTerm, std::unique_ptr<EvaluatedTermData>> storage_;
 
   EvaluatedTermRef() = default;
   explicit EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
-      : data_{data}, keepAlive_{std::move(keepAlive)} {}
+      : storage_{std::in_place_index<1>, std::move(keepAlive)} {
+    // data must match keepAlive.get()
+    (void)data;
+  }
   explicit EvaluatedTermRef(std::unique_ptr<EvaluatedTermData> owned)
-      : data_{owned.get()}, owned_{std::move(owned)} {}
+      : storage_{std::in_place_index<2>, std::move(owned)} {}
 
-  const EvaluatedTermData& operator*() const { return *data_; }
-  const EvaluatedTermData* operator->() const { return data_; }
+  const EvaluatedTermData& operator*() const { return *get(); }
+  const EvaluatedTermData* operator->() const { return get(); }
+  const EvaluatedTermData* get() const {
+    if (auto* p = std::get_if<1>(&storage_)) return p->get();
+    if (auto* p = std::get_if<2>(&storage_)) return p->get();
+    return nullptr;
+  }
+  bool has_value() const { return storage_.index() != 0; }
 };
 
 // A constant (`Iri` or `Literal`) whose string value is fully known at
