@@ -135,15 +135,25 @@ class SplitVocabulary {
 
   using IndicesByMarker = std::array<std::vector<size_t>, numberOfVocabs>;
   using ResultsByMarker = std::array<VocabBatchLookupResult, numberOfVocabs>;
+  // Generic partition-by-marker helper. The projection receives
+  // (position, markedIndex) and returns the value to store for that marker.
+  template <typename Proj>
+  static IndicesByMarker partitionByMarker(
+      ql::span<const size_t> indices, Proj&& proj) {
+    IndicesByMarker result;
+    for (auto [pos, markedIndex] : ::ranges::views::enumerate(indices)) {
+      result[getMarker(markedIndex)].push_back(
+          std::forward<Proj>(proj)(pos, markedIndex));
+    }
+    return result;
+  }
+
   // Partition marked indices into underlying vocabulary-local index lists.
   static IndicesByMarker partitionUnderlyingIndicesByMarker(
       ql::span<const size_t> indices) {
-    IndicesByMarker underlyingVocabIndicesByMarker;
-    for (auto markedIndex : indices) {
-      underlyingVocabIndicesByMarker[getMarker(markedIndex)].push_back(
-          getVocabIndex(markedIndex));
-    }
-    return underlyingVocabIndicesByMarker;
+    return partitionByMarker(
+        indices,
+        [](auto, auto markedIndex) { return getVocabIndex(markedIndex); });
   }
 
   // Hold each non-empty marker's batch and the count of non-empty markers.
@@ -177,13 +187,8 @@ class SplitVocabulary {
   // Partition each input position by marker for scattering mixed results.
   static IndicesByMarker partitionResultPositionsByMarker(
       ql::span<const size_t> indices) {
-    IndicesByMarker resultPositionByMarker;
-    for (auto [resultPosition, markedIndex] :
-         ::ranges::views::enumerate(indices)) {
-      resultPositionByMarker[getMarker(markedIndex)].push_back(
-          static_cast<size_t>(resultPosition));
-    }
-    return resultPositionByMarker;
+    return partitionByMarker(indices,
+                             [](auto pos, auto) { return pos; });
   }
 
   // Merge per-marker batches into one result in input order. Require more than
