@@ -281,6 +281,18 @@ inline void sampleWorkers() {
   sample.maxWorkers_ = std::max(sample.maxWorkers_, workers);
   sample.workerTicks_ = std::max(sample.workerTicks_, ticks);
 }
+
+// Shutdown flag for the reporter thread.
+inline std::atomic<bool>& shutdownRequested() {
+  static std::atomic<bool> flag{false};
+  return flag;
+}
+
+// Storage for the reporter thread so it can be joined on shutdown.
+inline std::thread& reporterThread() {
+  static std::thread thread;
+  return thread;
+}
 }  // namespace detail
 
 // Format the current totals as one line.
