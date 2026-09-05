@@ -245,6 +245,7 @@ void resolveNonVocabIndexIds(
     ql::span<const size_t> idIndices) {
   auto rawIndices = ::ranges::to_vector(
       idIndices | ql::views::transform([&ids](size_t i) {
+        AD_CONTRACT_CHECK(ids[i].getDatatype() == Datatype::VocabIndex);
         return static_cast<size_t>(ids[i].getVocabIndex().get());
       }));
   return index.getImpl().getVocab().beginLookup(rawIndices);
