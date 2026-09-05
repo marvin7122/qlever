@@ -101,13 +101,7 @@ uint64_t mixView(uint64_t checksum, std::string_view v) {
   if (!v.empty()) {
     
   rusage ru;
-};
 
-RusageSnap snapUsage() {
-  RusageSnap s{};
-  AD_CONTRACT_CHECK(getrusage(RUSAGE_SELF, &s.ru) == 0);
-  return s;
-}
 
 double sec(const timeval& t) {
   return static_cast<double>(t.tv_sec) +
