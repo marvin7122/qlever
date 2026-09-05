@@ -212,6 +212,7 @@ inline ThreadCounters total() {
 // reads at once. Sampling them separates "the export thread waited less" from
 // "more reads were in flight", which a single `cpu_s` figure cannot.
 struct WorkerSample {
+  std::mutex mutex_;
   uint64_t maxWorkers_ = 0;   // highest `iou-wrk-` count seen
   uint64_t maxThreads_ = 0;   // highest total task count seen
   uint64_t workerTicks_ = 0;  // utime + stime of `iou-wrk-` tasks, last sample
