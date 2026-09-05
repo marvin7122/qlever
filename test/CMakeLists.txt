@@ -630,6 +630,8 @@ addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
 addLinkAndDiscoverTest(AsyncChunkPipelineTest)
 if (NOT SINGLE_TEST_BINARY)
     target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+else ()
+    target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
 endif()
 
 addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
