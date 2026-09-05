@@ -143,6 +143,7 @@ struct ThreadRegistration {
 // constructing a ThreadRegistration on first call.
 // Returns the thread‑local counters for the current thread, lazily
 // constructing a ThreadRegistration on first call.
+// This selects the io_uring submit counters among others.
 inline ThreadCounters& threadCounters() {
   thread_local ThreadRegistration registration;
   return registration.counters_;
