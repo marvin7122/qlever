@@ -95,7 +95,7 @@ std::string serializeSelectCsvTsvChunk(
             ql::exportIds::idToStringAndType<format ==
                                              ad_utility::MediaType::csv>(
                 index, id, chunk.tableWithVocab_.localVocab(), escapeFunction);
-        if (optionalStringAndType.has_value()) [[likely]] {
+                if (optionalStringAndType.has_value()) [[likely]] {
           out += optionalStringAndType.value().first;
         }
       }
