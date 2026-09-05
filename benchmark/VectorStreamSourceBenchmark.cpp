@@ -12,13 +12,18 @@
 #include <iostream>
 #include <vector>
 
+#include "../benchmark/infrastructure/Benchmark.h"
+#include "../benchmark/infrastructure/BenchmarkMetadata.h"
 #include "engine/Result.h"
 #include "engine/export_v2/VectorStreamSource.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
+#include "util/ConfigManager/ConfigManager.h"
 #include "util/MemorySize/MemorySize.h"
 
 using namespace ql::engine::export_v2;
+
+namespace ad_benchmark {
 
 namespace {
 
@@ -44,7 +49,7 @@ std::vector<Result::IdTableVocabPair> createSyntheticBlocks(size_t numBlocks,
   return blocks;
 }
 
-void benchmarkChunkSizeSweep() {
+void benchmarkChunkSizeSweep(BenchmarkResults& results) {
   std::cout << "\n=======================================================\n";
   std::cout << "  WP2 VectorStreamSource: Chunk Size Sweep (50M Rows) \n";
   std::cout << "=======================================================\n";
@@ -84,10 +89,19 @@ void benchmarkChunkSizeSweep() {
               << std::setw(18) << std::fixed << std::setprecision(2)
               << mRowsPerSec << " | " << std::setw(15) << std::fixed
               << std::setprecision(2) << nsPerRow << "\n";
+
+    results.addMeasurement(absl::StrCat("ChunkSize_", chunkSize),
+                           [elapsedMs, mRowsPerSec, nsPerRow]() {
+                             // The measurement is done above; this lambda is
+                             // for the infrastructure.
+                             (void)elapsedMs;
+                             (void)mRowsPerSec;
+                             (void)nsPerRow;
+                           });
   }
 }
 
-void benchmarkFilterSelectivity() {
+void benchmarkFilterSelectivity(BenchmarkResults& results) {
   std::cout << "\n=======================================================\n";
   std::cout << "  WP2 VectorStreamSource: Inlined Filter Selectivity   \n";
   std::cout << "=======================================================\n";
@@ -132,13 +146,29 @@ void benchmarkFilterSelectivity() {
               << totalReceived << " | " << std::setw(15) << std::fixed
               << std::setprecision(2) << elapsedMs << " | " << std::setw(18)
               << std::fixed << std::setprecision(2) << mRowsPerSec << "\n";
+
+    results.addMeasurement(absl::StrCat("Filter_", label),
+                           [elapsedMs, mRowsPerSec]() {
+                             (void)elapsedMs;
+                             (void)mRowsPerSec;
+                           });
   }
 }
 
 }  // namespace
 
-int main() {
-  benchmarkChunkSizeSweep();
-  benchmarkFilterSelectivity();
-  return 0;
-}
+class VectorStreamSourceBenchmark : public BenchmarkInterface {
+ public:
+  std::string name() const final { return "WP2 VectorStreamSource Benchmarks"; }
+
+  BenchmarkResults runAllBenchmarks() final {
+    BenchmarkResults results{};
+    benchmarkChunkSizeSweep(results);
+    benchmarkFilterSelectivity(results);
+    return results;
+  }
+};
+
+AD_REGISTER_BENCHMARK(VectorStreamSourceBenchmark);
+
+}  // namespace ad_benchmark
