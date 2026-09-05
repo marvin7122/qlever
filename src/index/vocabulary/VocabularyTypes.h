@@ -169,7 +169,11 @@ struct MultiOwnerVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<VocabBatchOwner>> {};
 
 // Scatter one child batch into its positions in the combined result and retain
-// the child as an owner of the referenced word storage.
+// the child as an owner of the referenced word storage. The `result`'s views
+// point into storage owned by `result` (true by construction of vocabulary
+// lookup results). After this call `viewsInInputOrder` contains views into that
+// storage, now kept alive by `result` in `owners`. The caller must ensure
+// `owners` outlives all uses of `viewsInInputOrder`.
 inline void scatterVocabBatchLookupResult(
     VocabBatchLookupResult result, ql::span<const size_t> resultPositions,
     ql::span<std::string_view> viewsInInputOrder,
