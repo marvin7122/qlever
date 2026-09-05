@@ -61,7 +61,14 @@ size_t resolveExportNumThreads() {
   return n == 0 ? std::max(1u, hardwareConcurrency) : n;
 }
 
-// Format one SELECT CSV/TSV chunk. The header is not included.
+// Serialize one chunk of SELECT results to CSV or TSV format (no header).
+// Template parameter `format` must be `MediaType::csv` or `MediaType::tsv`.
+// Parameters:
+//   chunk   - TableWithRange containing a contiguous row range to serialize
+//   columns - ColumnIndicesAndTypes describing selected columns and their types
+//   index   - Index for resolving IRIs/literals from IDs
+// Returns the serialized chunk as a string (rows separated by '\n',
+// columns by ',' or '\t'). CSV uses RFC 4180 escaping; TSV uses tab escaping.
 template <ad_utility::MediaType format>
 std::string serializeSelectCsvTsvChunk(
     const TableWithRange& chunk,
