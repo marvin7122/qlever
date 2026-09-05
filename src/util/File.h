@@ -191,7 +191,7 @@ class File {
       // Calculate remaining bytes to read in this iteration
       size_t toRead = nofBytesToRead - bytesRead;
 
-            // Time because a cold `pread` blocks off-CPU, which `cpu_s` cannot
+      // Time because a cold `pread` blocks off-CPU, which `cpu_s` cannot
       // see. No-op unless `measure-io-wait` is set.
       const ssize_t ret =
           ad_utility::ioWait::timed(ad_utility::ioWait::preadCounters, [&]() {
