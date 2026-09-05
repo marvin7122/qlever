@@ -142,16 +142,14 @@ inline VocabBatchLookupResult makeOwnedVocabBatch(
     total += word.size();
   }
   data->buffer().resize(total);
-  data->views().resize(words.size());
   size_t offset = 0;
   char* buffer = data->buffer().data();
-  for (size_t i = 0; i < words.size(); ++i) {
-    const std::string_view word = words[i];
+  for (std::string_view word : words) {
     if (word.empty()) {
-      data->views()[i] = {};
+      data->views().push_back({});
     } else {
       std::memcpy(buffer + offset, word.data(), word.size());
-      data->views()[i] = std::string_view{buffer + offset, word.size()};
+      data->views().push_back(std::string_view{buffer + offset, word.size()});
     }
     offset += word.size();
   }
