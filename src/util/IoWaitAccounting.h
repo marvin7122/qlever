@@ -108,8 +108,8 @@ struct Registry {
   ThreadCounters finished_;
 };
 inline Registry& registry() {
-  static Registry registry;
-  return registry;
+  static Registry* registry = new Registry();
+  return *registry;
 }
 
 // Add this thread's counters to the registry on first use and fold them into
