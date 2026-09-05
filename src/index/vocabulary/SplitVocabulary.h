@@ -201,7 +201,7 @@ class SplitVocabulary {
     return scanAllImpl(std::make_index_sequence<numberOfVocabs>{});
   }
 
-  // Partition `indices` by marker and forward each group to the matching
+  
   // underlying `lookupBatch`. The result order matches `indices`, including
   // duplicates and mixed markers.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
