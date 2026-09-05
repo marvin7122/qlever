@@ -113,6 +113,7 @@ CPP_template(typename UnderlyingVocabulary,
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
 
     auto compressed = underlyingVocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(compressed != nullptr);
     AD_CORRECTNESS_CHECK(compressed->size() == indices.size());
 
     auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
