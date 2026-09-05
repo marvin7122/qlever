@@ -183,9 +183,9 @@ CPP_template_def(typename RequestT, typename SendT)(
     errorResponse = reportHttpError(e.what(), http::status::bad_request,
                                     request, HttpErrorType::internal);
   }
-  if (errorResponse.has_value()) {
+    if (errorResponse.has_value()) {
     co_return co_await sendWithAccessControlHeaders(
-        std::move(errorResponse.value()));
+        std::move(errorResponse).value());
   }
 }
 
