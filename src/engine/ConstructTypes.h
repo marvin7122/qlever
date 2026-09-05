@@ -53,7 +53,7 @@ using EvaluatedTerm = std::shared_ptr<const EvaluatedTermData>;
 
 // A term used while instantiating a CONSTRUCT triple. `data_` is never null
 // for an engaged `std::optional<EvaluatedTermRef>`. `keepAlive_` is empty when
-// `data_` points into a `PrecomputedConstant` that outlives the pipeline.
+// `data_` points into a `PrecomputedConstant` that outlives the ConstructTripleGenerator instance.
 // For a variable, `keepAlive_` copies the cache/batch `shared_ptr` so an LRU
 // eviction cannot destroy the bytes. For a blank node, `keepAlive_` owns the
 // newly allocated term.
