@@ -135,10 +135,15 @@ class Vocabulary {
   // Batch lookup: look up multiple indices at once and return their words.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
-    // Split-phase variant of `lookupBatch`. `beginLookup` submits the reads for
-  // `indices` without blocking and returns a handle; `finishLookup` blocks
-  // until those reads have completed and returns the resolved words. Let
-  // callers overlap vocabulary I/O with their own CPU work.
+  // Split-phase variant of `lookupBatch`. If the underlying vocabulary
+  // implements the `HasBeginLookup` concept, `beginLookup` submits the reads
+  // for `indices` without blocking and returns a handle; `finishLookup`
+  // then blocks until those reads complete and returns the resolved words,
+  // letting callers overlap vocabulary I/O with their own CPU work.
+  // For vocabulary types that do not provide true async I/O, `beginLookup`
+  // falls back to a synchronous `lookupBatch` and only the "split handle"
+  // call shape is preserved; it therefore blocks. The default-constructed
+  // `EagerVocabLookupHandle` is used in that fallback path.
   std::unique_ptr<VocabLookupHandleBase> beginLookup(
       ql::span<const size_t> indices) const;
   VocabBatchLookupResult finishLookup(
