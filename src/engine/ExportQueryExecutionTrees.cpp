@@ -99,7 +99,7 @@ std::string serializeSelectCsvTsvChunk(
           out += optionalStringAndType.value().first;
         }
       }
-      if (j + 1 < columns.size()) {
+            if (j + 1 < columns.size()) {
         out += separator;
       }
     }
