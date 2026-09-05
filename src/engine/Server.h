@@ -141,7 +141,7 @@ class Server {
   using SharedCancellationHandle = ad_utility::SharedCancellationHandle;
   using SharedTimeTracer = std::shared_ptr<ad_utility::timer::TimeTracer>;
   using PlannedQuery = qlever::PlannedQuery;
-  using HttpErrorResponse = ad_utility::httpUtils::ResponseT;
+  
   using StringBodyRequest =
       boost::beast::http::request<boost::beast::http::string_body>;
 
