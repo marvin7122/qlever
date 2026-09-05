@@ -8,7 +8,8 @@
 
 #include "engine/sparqlExpressions/JitExpressionCompiler.h"
 
-#include <asmjit/asmjit.h>
+#include <asmjit/core.h>
+#include <asmjit/x86.h>
 
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"

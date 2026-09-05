@@ -8,7 +8,8 @@
 
 #pragma once
 
-#include <asmjit/asmjit.h>
+#include <asmjit/core.h>
+#include <asmjit/x86.h>
 
 #include <bit>
 #include <cstdint>
