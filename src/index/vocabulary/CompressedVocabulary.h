@@ -107,6 +107,7 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   
+  //____________________________________________________________________________
   // decompress each word with the decoder of its block. The result order
   // matches `indices`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
