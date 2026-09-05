@@ -187,7 +187,7 @@ class SplitVocabulary {
   }
 
   // Merge per-marker batches into one result in input order. Require more than
-  // one non-empty marker; the single-marker fast path returns that batch from
+  // one non-empty marker; the single-marker fast path return that batch from
   // `lookupBatch` directly.
   static VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
       ql::span<const size_t> indices, MarkerBatchLookups markerLookups) {

@@ -29,6 +29,7 @@
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
 #include "util/TransparentFunctors.h"
+#include <memory>
 
 namespace detail {
 
@@ -70,7 +71,7 @@ CPP_template(typename UnderlyingVocabulary,
   // to support zero-copy deserialization itself, see
   // `SupportsZeroCopyDeserialization`). The `decoders` are small, so they are
   // simply read (and thus copied) as usual. The layout read here exactly
-  // matches the one written by the generic serialization function below. The
+  // match the one written by the generic serialization function below. The
   // returned vocabulary is only valid as long as the memory backing
   // `serializer`'s buffer is valid and unchanged.
   // Note: This has to use `CPP_template_2` (and not `CPP_template`), because
