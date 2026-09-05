@@ -151,8 +151,8 @@ void IoUringPolicy::addBatch(int fd,
       if (submitted <= 0) {
         AD_THROW("io_uring_submit failed in IoUringPolicy");
       }
-      AD_CORRECTNESS_CHECK(static_cast<size_t>(submitted) <= stillToSubmit);
-      stillToSubmit -= static_cast<size_t>(submitted);
+      AD_CORRECTNESS_CHECK(submitted <= static_cast<int>(stillToSubmit));
+      stillToSubmit -= submitted;
     }
   }
 }
