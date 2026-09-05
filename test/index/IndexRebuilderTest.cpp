@@ -886,7 +886,7 @@ TEST(IndexRebuilder, serverIntegration) {
 
   // Create a coroutine that lets the server process the given request.
   // and returns the response that would have been sent.
-  auto makeTask = [&server](serverTestHelpers::ReqT& request) {
+  auto makeTask = [&server](serverTestHelpers::ReqT request) {
     return serverTestHelpers::ServerForTesting::process(server, request);
   };
 
