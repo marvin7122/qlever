@@ -44,12 +44,10 @@ static constexpr size_t kSelectExportBatchSize = 1024;
 
 
 /**
- * @brief Resolves the number of threads to use for export operations.
+ * @brief Resolves the number of threads for export operations.
  *
- * Reads the runtime parameter `constructExportNumThreads_`. A value of 0
- * means "use all logical cores", in which case the function returns
- * std::max(1u, std::thread::hardware_concurrency()). Otherwise it returns
- * the parameter value directly, ensuring at least one thread.
+ * If the runtime parameter `constructExportNumThreads_` is 0, all available
+ * logical cores are used (minimum 1). Otherwise the configured value is used.
  *
  * @return The resolved thread count (minimum 1).
  */
