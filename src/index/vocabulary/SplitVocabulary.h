@@ -214,30 +214,43 @@ class SplitVocabulary {
           getVocabIndex(markedIndex));
     }
 
-    std::array<VocabBatchLookupResult, numberOfVocabs> lookupResultByMarker;
-    uint8_t numNonemptyMarkers = 0;
-    uint8_t lastNonemptyMarker = 0;
+    // Builder that pairs each per-marker batch with its non-emptiness by
+    // construction; the count and last-non-empty marker live with the result,
+    // not as separate caller-supplied tracking variables.
+    struct LookupResultBuilder {
+      std::array<VocabBatchLookupResult, numberOfVocabs> results{};
+      uint8_t numNonempty = 0;
+      uint8_t lastNonempty = 0;
+
+      void record(uint8_t marker, VocabBatchLookupResult result,
+                  size_t expectedSize) {
+        AD_CORRECTNESS_CHECK(results[marker] == nullptr);
+        AD_CORRECTNESS_CHECK(result->size() == expectedSize);
+        results[marker] = std::move(result);
+        ++numNonempty;
+        lastNonempty = marker;
+      }
+    };
+
+    LookupResultBuilder lookupResultByMarker;
     for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
-      if (underlyingVocabIndicesByMarker[marker].empty()) {
+      const auto& idxs = underlyingVocabIndicesByMarker[marker];
+      if (idxs.empty()) {
         continue;
       }
 
-      lookupResultByMarker[marker] = std::visit(
-          [&](const auto& vocab) {
-            return vocab.lookupBatch(underlyingVocabIndicesByMarker[marker]);
-          },
-          underlying_[marker]);
-
-      AD_CORRECTNESS_CHECK(lookupResultByMarker[marker]->size() ==
-                           underlyingVocabIndicesByMarker[marker].size());
-
-      ++numNonemptyMarkers;
-      lastNonemptyMarker = marker;
+      lookupResultByMarker.record(
+          marker,
+          std::visit(
+              [&](const auto& vocab) { return vocab.lookupBatch(idxs); },
+              underlying_[marker]),
+          idxs.size());
     }
 
     // One marker: return that batch. Mixed markers cannot share one buffer.
-    if (numNonemptyMarkers == 1) {
-      return std::move(lookupResultByMarker[lastNonemptyMarker]);
+    if (lookupResultByMarker.numNonempty == 1) {
+      return std::move(
+          lookupResultByMarker.results[lookupResultByMarker.lastNonempty]);
     }
 
     std::array<std::vector<size_t>, numberOfVocabs> resultPositionByMarker;
@@ -249,14 +262,14 @@ class SplitVocabulary {
 
     std::vector<std::string_view> viewsInInputOrder(indices.size());
     std::vector<VocabBatchOwner> owners;
-    owners.reserve(numNonemptyMarkers);
+    owners.reserve(lookupResultByMarker.numNonempty);
     for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
-      if (lookupResultByMarker[marker] == nullptr) {
+      if (lookupResultByMarker.results[marker] == nullptr) {
         continue;
       }
-      scatterVocabBatchLookupResult(std::move(lookupResultByMarker[marker]),
-                                    resultPositionByMarker[marker],
-                                    viewsInInputOrder, owners);
+      scatterVocabBatchLookupResult(
+          std::move(lookupResultByMarker.results[marker]),
+          resultPositionByMarker[marker], viewsInInputOrder, owners);
     }
     return keepAliveVocabBatch(std::move(owners), std::move(viewsInInputOrder));
   }
