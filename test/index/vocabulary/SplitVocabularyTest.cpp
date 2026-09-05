@@ -460,7 +460,7 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
 
 // _____________________________________________________________________________
 TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
-  // Mixed markers, reordered indices, and a duplicate must match `operator[]`.
+  // Mixed markers, reordered indices, and a duplicate must match operator[].
   TwoSplitVocabulary sv;
   auto ww = sv.makeDiskWriterPtr("splitVocabLookupBatch.dat");
   (*ww)("\"\"", true);
