@@ -150,7 +150,7 @@ CPP_template(typename UnderlyingVocabulary,
   // was constructed with the Index/query `AllocatorWithLimit`, those
   // allocations charge `--memory-max` and throw
   // `AllocationExceedsLimitException` instead of growing the process heap.
-  // Decompress into `builder`. The caller owns the arena and the allocator.
+  // Decompress into `VocabBatchLookupResult`. The caller owns the arena and the allocator.
   void lookupBatch(ql::span<const size_t> indices,
                    ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());
