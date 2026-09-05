@@ -107,12 +107,7 @@ uint64_t mixView(uint64_t checksum, std::string_view v) {
   if (fd < 0) {
     return;
   }
-  struct stat st {};
-  if (fstat(fd, &st) == 0 && st.st_size > 0) {
-    posix_fadvise(fd, 0, st.st_size, POSIX_FADV_WILLNEED);
-  }
-  ::close(fd);
-}
+  
 
 struct DecodeStats {
   uint64_t checksum = 0;
