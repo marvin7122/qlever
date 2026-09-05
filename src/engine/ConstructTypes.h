@@ -64,7 +64,7 @@ struct EvaluatedTermRef {
   std::unique_ptr<EvaluatedTermData> owned_{};
 
   EvaluatedTermRef() = default;
-  EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
+  explicit EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
       : data_{data}, keepAlive_{std::move(keepAlive)} {}
   explicit EvaluatedTermRef(std::unique_ptr<EvaluatedTermData> owned)
       : data_{owned.get()}, owned_{std::move(owned)} {}
