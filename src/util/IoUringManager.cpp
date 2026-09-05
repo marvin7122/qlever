@@ -170,8 +170,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
 
 //______________________________________________________________________________
 void IoUringPolicy::drainAtLeast(unsigned minComplete) {
-  AD_CORRECTNESS_CHECK(minComplete > 0);
-  AD_CORRECTNESS_CHECK(minComplete <= numInFlightReadRequests_);
+  AD_CORRECTNESS_CHECK(minComplete > 0 && minComplete <= numInFlightReadRequests_);
   io_uring_cqe* cqe = nullptr;
   const int ret =
       io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
