@@ -117,8 +117,11 @@ void IoUringPolicy::addBatch(int fd,
     if (io_uring_sq_space_left(&ring_) == 0) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
-      ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
+            int submitRet = ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
                                 [&]() { return io_uring_submit(&ring_); });
+      if (submitRet < 0) {
+        AD_THROW("io_uring_submit failed in IoUringPolicy::addBatch");
+      }
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
       }
