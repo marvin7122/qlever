@@ -3,7 +3,7 @@
 // Author: Marvin Stoetzel <stoetzem@email.uni-freiburg.de>
 //
 // Isolate FSST decode-then-copy-into-arena vs decode-then-copy-into-arena. No Turtle, no HTTP.
-// Layer 0 decodes RAM-resident compressed words. Layer 1 times
+// Layer 0 decodes RAM-resident compressed words. Layer 1 times.
 // CompressedVocabulary::lookupBatch after a warmup pass.
 
 #include <fcntl.h>
