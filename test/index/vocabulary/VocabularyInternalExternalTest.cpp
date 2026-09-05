@@ -118,8 +118,8 @@ TEST(VocabularyInternalExternal, AccessOperator) {
       createVocabularyFromDisk("AccessOperator2"));
 }
 
-// `lookupBatch` must match `operator[]` in request order, including cache
-// hits (even `i` in the writer: stored in RAM) and misses (odd `i`: disk
+// lookupBatch must match operator[] in request order, including cache
+// hits (even i in the writer: stored in RAM) and misses (odd i: disk
 // only), plus reordered and duplicated indices.
 TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
