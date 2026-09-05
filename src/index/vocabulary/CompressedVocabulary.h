@@ -117,7 +117,8 @@ CPP_template(typename UnderlyingVocabulary,
     std::vector<std::string_view> views;
     views.reserve(indices.size());
 
-    for (const auto& [idx, compressedWord] : ::ranges::views::zip(indices, *compressedWords)) {
+    auto decompressAndStore = [this, &buffer, &views](size_t idx,
+                                                       std::string_view compressedWord) {
       // TODO<marvin>: The allocation pattern here can be improved (get some
       // bound in advance to pre-inform the allocator etc.). Also, consider to
       // reuse a buffer here.
@@ -133,6 +134,10 @@ CPP_template(typename UnderlyingVocabulary,
       auto* mem = static_cast<char*>(buffer->allocate(decompressed.size()));
       std::memcpy(mem, decompressed.data(), decompressed.size());
       views.emplace_back(mem, decompressed.size());
+    };
+
+    for (const auto& [idx, compressedWord] : ::ranges::views::zip(indices, *compressedWords)) {
+      decompressAndStore(idx, compressedWord);
     }
 
     return makePmrVocabBatchLookupResult(std::move(buffer), std::move(views));
