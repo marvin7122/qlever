@@ -75,6 +75,7 @@ VocabBatchLookupResult VocabularyInternalExternal::finishLookup(
 
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::MixedLookupHandle::finish() {
+  // Note: This method consumes the MixedLookupHandle. Must not be called twice.
   auto data = std::make_shared<MixedVocabBatchLookupData>();
   data->internalWords_ = std::move(internalWords_);
   data->views_.resize(numIndices_);
