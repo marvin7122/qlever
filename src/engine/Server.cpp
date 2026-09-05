@@ -70,7 +70,7 @@ Server::Server(
   
 
   if (noAccessCheck_) {
-    AD_LOG_INFO << "No access token required for restricted API calls"
+    AD_LOG_INFO << "Access checking is disabled; no access token required for any API calls"
                 << std::endl;
   } else {
     AD_LOG_INFO << "Access token for restricted API calls is \"" << accessToken_
