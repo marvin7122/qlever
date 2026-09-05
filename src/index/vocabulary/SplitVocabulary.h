@@ -358,8 +358,7 @@ class SplitVocabulary {
   void open(const std::string& filename);
 
   // ___________________________________________________________________________
-  // This word writer writes words to different vocabularies depending on the
-  // result of SplitFunction.
+  // Write words to different vocabularies depending on the result of SplitFunction.
   class WordWriter : public WordWriterBase {
    private:
     UnderlyingWordWriterPtrsArray underlyingWordWriters_;
