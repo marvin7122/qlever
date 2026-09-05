@@ -150,8 +150,11 @@ void IoUringPolicy::addBatch(int fd,
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
-  ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
+    int submitRet = ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
                             [&]() { return io_uring_submit(&ring_); });
+  if (submitRet < 0) {
+    AD_THROW("io_uring_submit failed in IoUringPolicy::addBatch (final submit)");
+  }
 }
 
 //______________________________________________________________________________
