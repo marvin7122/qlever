@@ -119,8 +119,7 @@ CPP_template(typename UnderlyingVocabulary,
     std::vector<std::string_view> views;
     views.reserve(indices.size());
 
-    for (const auto& idxAndWord : ::ranges::views::zip(indices, *compressed)) {
-      const auto& [idx, word] = idxAndWord;
+    for (const auto& [idx, word] : ::ranges::views::zip(indices, *compressed)) {
       std::string decompressed =
           compressionWrapper_.decompress(word, getDecoderIdx(idx));
       char* mem = static_cast<char*>(buffer->allocate(decompressed.size()));
