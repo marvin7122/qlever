@@ -27,7 +27,7 @@ std::vector<Result::IdTableVocabPair> createSyntheticBlocks(size_t numBlocks,
                                                             size_t rowsPerBlock,
                                                             size_t numCols) {
   ad_utility::AllocatorWithLimit<Id> allocator{
-      ad_utility::makeAllocatorWithLimit<Id>(MemorySize::max())};
+      ad_utility::makeAllocatorWithLimit<Id>(ad_utility::MemorySize::max())};
   std::vector<Result::IdTableVocabPair> blocks;
   blocks.reserve(numBlocks);
 
