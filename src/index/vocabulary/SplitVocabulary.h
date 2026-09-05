@@ -233,7 +233,7 @@ class SplitVocabulary {
     };
 
     LookupResultBuilder lookupResultByMarker;
-    for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
+    for (uint8_t marker : ql::views::iota(uint8_t{0}, numberOfVocabs)) {
       const auto& idxs = underlyingVocabIndicesByMarker[marker];
       if (idxs.empty()) {
         continue;
@@ -263,7 +263,7 @@ class SplitVocabulary {
     std::vector<std::string_view> viewsInInputOrder(indices.size());
     std::vector<VocabBatchOwner> owners;
     owners.reserve(lookupResultByMarker.numNonempty);
-    for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
+    for (uint8_t marker : ql::views::iota(uint8_t{0}, numberOfVocabs)) {
       if (lookupResultByMarker.results[marker] == nullptr) {
         continue;
       }
