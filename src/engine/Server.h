@@ -142,13 +142,7 @@ class Server {
   using SharedTimeTracer = std::shared_ptr<ad_utility::timer::TimeTracer>;
   using PlannedQuery = qlever::PlannedQuery;
   
-  using StringBodyRequest =
-      boost::beast::http::request<boost::beast::http::string_body>;
-
-  // A `send` callable for `process`/`handleHttpRequest` that captures
-  // whatever response it is invoked with into `response_` instead of
-  // actually sending it. Used by friend test code (`ServerForTesting` and the
-  // `FRIEND_TEST`s above) to call `process`/`handleHttpRequest` directly and
+  
   // inspect the response that would have been sent. A named type is required
   // here (rather than an ad-hoc lambda) because `process`/`handleHttpRequest`
   // are only defined in `Server.cpp`, so callers in other translation units
