@@ -200,12 +200,7 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
 
   auto handle = std::make_unique<LookupHandle>();
   handle->vocab_ = this;
-  // Take a pooled `IoManager` into the handle as its sole owner immediately,
-  // before any code that can throw. From here on the handle's destructor is the
-  // only code that returns the manager to the pool, so it is returned on every
-  // exit path (including exceptions such as an out-of-range index) without a
-  // separate cleanup that could double-return it.
-  handle->manager_ = ioManagers_->pop().value();
+  handle->offsetBatch_ = {};  // Initialize to sentinel (default-constructed)
   handle->indices_.assign(indices.begin(), indices.end());
 
   // Submit the offset reads (Phase 1) without waiting for them: the caller
@@ -222,6 +217,13 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
+
+  // Take a pooled `IoManager` into the handle as its sole owner after all
+  // fallible setup. From here on the handle's destructor is the only code that
+  // returns the manager to the pool, so it is returned on every exit path
+  // (including exceptions from `addBatch`) without a separate cleanup that
+  // could double-return it.
+  handle->manager_ = ioManagers_->pop().value();
   handle->offsetBatch_ = handle->manager_->addBatch(offsetsFile_.fd(), sizes,
                                                     fileOffsets, targets);
 
@@ -261,7 +263,7 @@ VocabularyOnDisk::LookupHandle::~LookupHandle() {
   // `offsetPairs_`, which dies with this handle. Returning a busy manager
   // would let the next pool owner reuse the ring while the kernel still
   // writes into freed memory.
-  if (manager_) {
+  if (manager_ && offsetBatch_ != decltype(offsetBatch_){}) {
     ad_utility::terminateIfThrows(
         [this]() {
           manager_->wait(offsetBatch_);
