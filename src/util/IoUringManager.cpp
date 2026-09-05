@@ -9,14 +9,13 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "util/IoUringManager.h"
+#include "util/Exception.h"
+#include "util/IoWaitAccounting.h"
+#include "util/Log.h"
 
 #include <unistd.h>
 
 #include <stdexcept>
-
-#include "util/Exception.h"
-#include "util/IoWaitAccounting.h"
-#include "util/Log.h"
 
 namespace ad_utility {
 
