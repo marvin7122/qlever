@@ -110,6 +110,7 @@ class PrefixCompressor {
   // ___________________________________________________________________________
   // Decompress `compressedWord` into `out`. `out.size()` must be at least
   // `maxDecompressedSize(compressedWord)`. Return the number of bytes written.
+  // Zero-copy decompression into a pre-allocated buffer; avoids heap allocation.
   [[nodiscard]] size_t decompressInto(std::string_view compressedWord,
                                       ql::span<char> out) const {
     AD_CONTRACT_CHECK(!compressedWord.empty());
