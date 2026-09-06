@@ -460,7 +460,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Flush current chunk to sink in streaming mode.
+
   void flush() {
     if (writePos_ == 0) {
       return;
