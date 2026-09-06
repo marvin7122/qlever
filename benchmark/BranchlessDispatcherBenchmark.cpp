@@ -341,7 +341,7 @@ struct BenchmarkResult {
   uint64_t branchMisses_ = 0;
   double branchMissRate_ = 0.0;
   double branchMissesPerTerm_ = 0.0;
-  size_t bytesWritten_ = 0;
+  
 };
 
 template <typename Dispatcher>
