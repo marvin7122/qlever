@@ -81,7 +81,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
  public:
   ScatterGatherChunk() = default;
 
-  // Restricted constructor via Passkey from ScatterGatherChunkStreamer.
+    // Construct via Passkey from ScatterGatherChunkStreamer.
   ScatterGatherChunk(Passkey, std::vector<struct iovec> iovecs,
                      std::vector<char> headerBuffer, size_t totalBytes,
                      size_t numTriples, size_t zeroCopySpansCount,
