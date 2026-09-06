@@ -150,13 +150,7 @@ DecodeStats runDecompressIntoBatch(const Vocab& vocab,
     const auto& wrapper = vocab.compressionWrapper();
   std::string scratch;
   for (const auto& w : words) {
-    const size_t bound =
-        wrapper.maxDecompressedSize(w.compressed, w.decoderIdx);
-    s.bytesBound += bound;
-    if (bound == 0) {
-      views.emplace_back();
-      continue;
-    }
+    
     ql::pmr::polymorphic_allocator<char> allocator{buffer.get()};
     char* mem = allocator.allocate(bound);
     const size_t n = wrapper.decompressInto(
