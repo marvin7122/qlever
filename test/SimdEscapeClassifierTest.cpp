@@ -13,13 +13,7 @@
 
 using namespace ad_utility::simd;
 
-// ___________________________________________________________________________
-TEST(SimdEscapeClassifierTest, scanChunk32And16Turtle) {
-  // Test clean 32-byte chunk
-  std::string clean32 = "01234567890123456789012345678901";
-  auto maskClean = SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(clean32.data());
-  EXPECT_TRUE(maskClean.isAllClean());
-  EXPECT_FALSE(maskClean.hasEscape());
+
   EXPECT_EQ(maskClean.rawMask(), 0u);
   EXPECT_EQ(maskClean.countEscapes(), 0u);
   EXPECT_EQ(maskClean.firstEscapeIndex(), 32u);
