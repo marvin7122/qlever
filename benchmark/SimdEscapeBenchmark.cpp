@@ -28,7 +28,7 @@ namespace {
 
 using namespace ad_utility::simd;
 
-// Realistic synthetic literal generator targeting ~100 MB of dataset.
+// Generate a realistic synthetic literal dataset targeting ~100 MB.
 struct LiteralDataset {
   std::vector<std::string> literals;
   size_t totalBytes = 0;
