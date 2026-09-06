@@ -18,7 +18,7 @@
 using namespace ql::serialization;
 using namespace ql::export_formatting;
 
-// Helper that invokes the given callable with a FastExportStreamFormatter backed by a string sink and returns the formatted output as a std::string.
+// Invoke the given callable with a FastExportStreamFormatter backed by a string sink and return the formatted output as a std::string.
 template <typename Fn>
 std::string captureOutput(Fn&& fn) {
   std::string out;
