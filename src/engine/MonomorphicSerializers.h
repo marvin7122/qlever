@@ -457,13 +457,7 @@ class MonomorphicRowSerializer {
     static_assert(std::tuple_size_v<Tuple> == NUM_COLUMNS,
                   "Tuple size mismatch with monomorphic schema column count");
     serializeTupleCells<Format>(writer, tuple, std::make_index_sequence<NUM_COLUMNS>{});
-    detail::writeRowTerminator<Format>(writer);
-  }
-
-  // ___________________________________________________________________________
-  // High-throughput batch serialization over a collection of rows
-  template <ExportFormat Format, typename Writer, typename RowContainer>
-  static size_t serializeBatch(Writer& writer, const RowContainer& rows) {
+    
     size_t count = 0;
     for (const auto& row : rows) {
       serializeRow<Format>(writer, row);
