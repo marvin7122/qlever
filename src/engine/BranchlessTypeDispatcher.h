@@ -290,7 +290,7 @@ class BranchlessTypeDispatcher {
     return kDefaultTypeFormatLut;
   }
 
-  [[nodiscard]] static constexpr const LookupTable& turtleLut() noexcept {
+  [[nodiscard]] static constexpr const LookupTable& turtleLookupTable() noexcept {
     return kTurtleTypeFormatLut;
   }
 
