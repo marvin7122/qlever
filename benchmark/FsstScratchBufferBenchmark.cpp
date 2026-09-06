@@ -48,7 +48,8 @@ std::array<FsstDecoder, numberOfStages> decoders_;
   bool initialized_ = false;
 
  public:
-  FsstScratchBufferBenchmark() {
+  // Initialize the benchmark by preparing the compressed strings and the decoders for each stage.
+FsstScratchBufferBenchmark() {
     constexpr std::string_view alphabet{
         "abcdefghijklmnopqrstuvwxyz0123456789_:/.-#"};
     std::vector<std::string> words;
