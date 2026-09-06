@@ -232,6 +232,7 @@ class FsstRepeatedDecoder {
       return decoders_[0].decompressInto(str, out);
     } else {
       std::string scratch;
+      AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(str));
       return decompressInto(str, out, scratch);
     }
   }
