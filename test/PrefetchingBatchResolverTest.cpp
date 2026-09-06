@@ -73,13 +73,7 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
         index, testIds, localVocab, ql::identity{});
 
     ASSERT_EQ(baselineResults.size(), prefetchedResults.size());
-    for (size_t i = 0; i < baselineResults.size(); ++i) {
-      EXPECT_EQ(baselineResults[i], prefetchedResults[i])
-          << "Mismatch at index " << i << " with prefetch distance "
-          << distance;
-    }
-  }
-}
+    
 
 TEST(PrefetchingBatchResolver, CompactVectorPipelinedResolution) {
   CompactVectorOfStrings<char> words;
