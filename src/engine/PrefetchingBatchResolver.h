@@ -244,13 +244,7 @@ return config_.prefetchDistance;
   [[nodiscard]] std::vector<std::optional<std::pair<std::string, const char*>>>
   idsToStringAndType(
       const Index& index, ql::span<const Id> ids,
-      const LocalVocab& localVocab,
-      const EscapeFunction& escapeFunction = EscapeFunction{}) const {
-    std::vector<std::optional<std::pair<std::string, const char*>>> results(
-        ids.size());
-
-    if (ids.empty()) {
-      return results;
+      
     }
 
     ql::exportIds::PartitionedIdPositions positions =
