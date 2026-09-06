@@ -55,13 +55,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
     bool parseFailed = false;
     if (a == "--vocab") {
       o.vocab = need("--vocab");
-    } else if (a == "--arm") {
-      o.arm = need("--arm");
-    } else if (a == "--layer") {
-      o.layer = std::stoi(need("--layer"));
-    } else if (a == "--batch-size") {
-      o.batchSize = static_cast<size_t>(std::stoull(need("--batch-size")));
-    } else if (a == "--warmup-batches") {
+    
       o.warmupBatches =
           static_cast<size_t>(std::stoull(need("--warmup-batches")));
     } else if (a == "--timed-batches") {
