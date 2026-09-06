@@ -24,9 +24,9 @@
 #include <unistd.h>
 #endif
 
-#include "engine/BranchlessTypeDispatcher.h"
-#include "global/Id.h"
-#include "global/ValueId.h"
+#include "src/engine/BranchlessTypeDispatcher.h"
+#include "src/global/Id.h"
+#include "src/global/ValueId.h"
 
 using namespace ql::engine;
 
