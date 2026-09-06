@@ -144,13 +144,13 @@ class ScatterGatherBenchmarkRunner {
       formatter.writeRaw("\" .\n");
     }
 
-    auto summary = std::move(formatter).finalize();
+        auto summary = std::move(formatter).finalize();
     auto endTime = std::chrono::steady_clock::now();
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
     const double gbWritten =
-        static_cast<double>(summary.totalBytesWritten_) / (1024.0 * 1024.0 * 1024.0);
+        static_cast<double>(totalBytes) / (1024.0 * 1024.0 * 1024.0);
 
     return ScatterGatherBenchmarkMetric{
         .mode = "1. Contiguous Chunk Copy (Baseline)",
