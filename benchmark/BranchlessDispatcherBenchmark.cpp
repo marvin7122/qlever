@@ -109,7 +109,7 @@ class HardwarePerfCounter {
 };
 
 // _____________________________________________________________________________
-// Baseline 1: Standard switch-based branching dispatcher.
+// Implement baseline 1: standard switch-based branching dispatcher.
 struct BranchingSwitchDispatcher {
   static char* dispatchTermFormat(ValueId id, std::string_view rawTerm,
                                   char* out) noexcept {
