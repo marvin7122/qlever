@@ -162,7 +162,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
     lut[i] = TypeFormatDescriptor{"", "", &formatUndefined};
   }
 
-  // 0: Undefined
+  
   lut[static_cast<size_t>(Datatype::Undefined)] =
       TypeFormatDescriptor{"", "", &formatUndefined};
 
