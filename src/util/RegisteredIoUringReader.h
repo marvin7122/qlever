@@ -510,15 +510,14 @@ class RegisteredIoUringReader
       unregisterBuffers();
     }
 
-    registeredIovecs_.assign(iovecs.begin(), iovecs.end());
     int ret = io_uring_register_buffers(
-        &ring_, registeredIovecs_.data(),
-        static_cast<unsigned int>(registeredIovecs_.size()));
+        &ring_, iovecs.data(),
+        static_cast<unsigned int>(iovecs.size()));
     if (ret < 0) {
-      registeredIovecs_.clear();
       AD_THROW(absl::StrCat("io_uring_register_buffers failed (errno: ", -ret,
                             ")"));
     }
+    registeredIovecs_.assign(iovecs.begin(), iovecs.end());
     buffersRegistered_ = true;
 #else
     registeredIovecs_.assign(iovecs.begin(), iovecs.end());
