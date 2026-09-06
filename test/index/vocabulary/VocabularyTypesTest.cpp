@@ -22,6 +22,7 @@
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/File.h"
 #include "util/MemorySize/MemorySize.h"
+#include "util/GTestHelpers.h"
 
 using namespace ad_utility::memory_literals;
 

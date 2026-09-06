@@ -370,7 +370,7 @@ class ArenaVocabBatchBuilder {
   }
 
  public:
-  // Unlimited default PMR resource (tests and vocabs that do not see a query
+  // Default PMR resource (tests and vocabs that do not see a query
   // allocator).
   explicit ArenaVocabBatchBuilder(size_t expectedSize) {
     AD_CONTRACT_CHECK(expectedSize > 0);
@@ -390,7 +390,7 @@ class ArenaVocabBatchBuilder {
     initBuffer(upstream_.get());
   }
 
-  // Allocate storage inside the arena for up to `bound` bytes, invoke
+  //  bytes, invoke up to `bound` bytes, invoke
   // `decompress(destinationSpan)` to write the bytes, and register the view.
   template <typename DecompressFunc>
   void appendDecompressedWord(size_t bound, DecompressFunc&& decompress) {
