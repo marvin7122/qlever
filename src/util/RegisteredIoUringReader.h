@@ -430,6 +430,9 @@ class RegisteredIoUringReader
 
       other.filesRegistered_ = false;
       other.buffersRegistered_ = false;
+      other.numInFlightRequests_ = 0;
+      other.inFlightByReqId_.clear();
+      other.inFlightByBatchId_.clear();
     }
     return *this;
   }
