@@ -127,7 +127,7 @@ struct BranchingSwitchDispatcher {
           std::memcpy(out, "false", 5);
           out += 5;
         }
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", 45);
+        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", sizeof("\"^^<http://www.w3.org/2001/XMLSchema#boolean>") - 1);
         out += 45;
         return out;
       }
