@@ -68,7 +68,7 @@ static void simulateNetworkTransmission(size_t chunkBytes,
 }
 
 // _____________________________________________________________________________
-// Benchmark Result Record
+// Record benchmark run results.
 struct BenchmarkRunResult {
   std::string mode;
   size_t chunkSizeTriples;
