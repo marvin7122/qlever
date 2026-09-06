@@ -266,13 +266,7 @@ inline void resolveVocabIndexIdsPrefetched(
   PrefetchingBatchResolver resolver{
       PrefetchConfig{.prefetchDistance = PrefetchDistance}};
   resolver.resolveVocabIndexIds<removeQuotesAndAngleBrackets,
-                                returnOnlyLiterals>(
-      index, ids, positions, results, escapeFunction);
-}
-
-// _____________________________________________________________________________
-template <bool removeQuotesAndAngleBrackets = false,
-          bool returnOnlyLiterals = false,
+                                
           typename EscapeFunction = ql::identity,
           size_t PrefetchDistance = PrefetchingBatchResolver::DEFAULT_PREFETCH_DISTANCE>
 [[nodiscard]] inline std::vector<
