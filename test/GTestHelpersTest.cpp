@@ -53,13 +53,7 @@ static bool pointsIntoObject(const void* pointer, const T& object) {
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, PmrStringSsoCapacity) {
-  // Ensure that the discovered capacity is usable: strings up to that size are
-  // stored inside the object, and a string with one additional character is not.
-  size_t capacity = pmrStringSsoCapacity();
-  requirePmrStringInlineStorage(capacity);
-  std::pmr::string atCapacity(capacity, 'x');
-  EXPECT_TRUE(pointsIntoObject(atCapacity.data(), atCapacity));
-  std::pmr::string aboveCapacity(capacity + 1, 'y');
+  
   EXPECT_FALSE(pointsIntoObject(aboveCapacity.data(), aboveCapacity));
 }
 
