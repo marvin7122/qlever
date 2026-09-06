@@ -100,13 +100,7 @@ inline char* formatBoolean(ValueId id, std::string_view, char* out,
   const std::string_view val = kBoolStrings[static_cast<size_t>(id.getBool())];
   std::memcpy(out, val.data(), val.size());
   
-inline char* formatBlankNode(ValueId id, std::string_view, char* out,
-                             std::string_view prefix,
-                             std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
-  out = ptr;
+
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;
