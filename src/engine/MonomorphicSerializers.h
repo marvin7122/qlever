@@ -429,7 +429,7 @@ class MonomorphicRowSerializer {
           if constexpr (Is > 0) {
             detail::writeColumnDelimiter<Format>(writer);
           }
-          detail::MonomorphicCellWriter<ColumnTypes, Format>::write(writer, row[Is]);
+          detail::MonomorphicCellWriter<getColumnType<Is>(), Format>::write(writer, row[Is]);
         }(),
         ...);
   }
