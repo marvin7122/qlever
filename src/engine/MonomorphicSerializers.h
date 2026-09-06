@@ -92,8 +92,8 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 
   constexpr CellValue() noexcept = default;
 
-  explicit CellValue(std::string sv, ColumnType type = ColumnType::String) noexcept
-      : type_(type), stringVal_(std::move(sv)) {}
+  explicit CellValue(std::string_view sv, ColumnType type = ColumnType::String) noexcept
+      : type_(type), stringVal_(sv) {}
 
   explicit CellValue(const char* s, ColumnType type = ColumnType::String)
       : type_(type), stringVal_(s) {}
