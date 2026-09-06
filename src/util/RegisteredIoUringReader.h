@@ -543,13 +543,7 @@ class RegisteredIoUringReader
 
   // ___________________________________________________________________________
   // Block until all reads belonging to `batchId` have completed.
-  BatchResult waitBatch(BatchId batchId) {
-    auto guard = makeInvariantGuard();
-    if (batchId == 0) {
-      return BatchResult{0, 0, true};
-    }
-
-#ifdef QLEVER_HAS_LIBURING
+  
     if (!ringInitialized_) {
       return BatchResult{0, 0, true};
     }
