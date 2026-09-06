@@ -260,7 +260,8 @@ class PrefetchingBenchmark : public BenchmarkInterface {
     }
   }
 
-  BenchmarkResults runAllBenchmarks() override {
+     // ___________________________________________________________________________
+   BenchmarkResults runAllBenchmarks() override {
     BenchmarkResults results;
     auto& group = results.addGroup(
         "Random Vocabulary Resolution across 500,000 IDs (1M Vocabulary)");
