@@ -217,13 +217,7 @@ inline void writeFormattedDouble(Writer& writer, double val) noexcept {
       } else {
         writer.writeEscapedTurtleLiteral(sv);
       }
-    } else if constexpr (Type == ColumnType::BlankNode || Type == ColumnType::String) {
-      if constexpr (Format == ExportFormat::Csv) {
-        writer.writeEscapedCsv(sv);
-      } else if constexpr (Format == ExportFormat::Tsv) {
-        writer.writeEscapedTsv(sv);
-      } else {
-        writer.writeRaw(sv);
+    
       }
     } else {
       writer.writeRaw(sv);
