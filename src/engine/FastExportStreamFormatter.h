@@ -291,7 +291,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Fast IANA-TSV field serializer.
+
   void writeEscapedTsv(std::string_view field) {
     if (!detail::hasSpecialCharacters<detail::tsvSpecialTable>(field)) {
       writeRaw(field);
