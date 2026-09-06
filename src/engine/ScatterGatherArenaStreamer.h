@@ -516,8 +516,8 @@ class ScatterGatherChunkStreamer
 
   // ___________________________________________________________________________
   
-  // In streaming mode, forwards chunk to sink and returns std::nullopt.
-  // In batch mode, returns the assembled ScatterGatherChunk.
+  // In streaming mode, forward chunk to sink and return `std::nullopt`.
+  // In batch mode, return the assembled `ScatterGatherChunk`.
   std::optional<ScatterGatherChunk> flush() {
     if (currentSlices_.empty()) {
       return std::nullopt;
