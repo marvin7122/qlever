@@ -15,7 +15,7 @@
 
 #include <absl/strings/str_replace.h>
 
-#include "../benchmark/infrastructure/Benchmark.h"
+#include "benchmark/infrastructure/Benchmark.h"
 #include "engine/SimdEscapeClassifier.h"
 #include "util/Exception.h"
 #include "benchmark/infrastructure/Benchmark.h"
