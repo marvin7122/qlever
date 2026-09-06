@@ -420,7 +420,7 @@ class MonomorphicRowSerializer {
     }
   }
 
-  // Compile-time unrolled cell serialization from indexed span
+  // Compile-time unrolled cell serialization from indexed span.
   template <ExportFormat Format, typename Writer, size_t... Is>
   static void serializeSpanCells(Writer& writer, ql::span<const CellValue> row,
                                  std::index_sequence<Is...>) {
