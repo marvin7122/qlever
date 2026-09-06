@@ -241,7 +241,9 @@ inline char* formatQid(uint64_t id, char* out) noexcept {
 
 // _____________________________________________________________________________
 
+// Why: single‑pass formatting of a Wikidata property PID analogous to formatQid.
 inline char* formatPid(uint64_t id, char* out) noexcept {
+
   AD_CONTRACT_CHECK(out != nullptr);
   std::memcpy(out, WIKIDATA_PROPERTY_PREFIX.data(), WIKIDATA_PROPERTY_PREFIX.size());
   return formatUIntBranchless(id, out + WIKIDATA_PROPERTY_PREFIX.size());
