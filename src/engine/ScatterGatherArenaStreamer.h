@@ -71,7 +71,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
     std::vector<struct iovec> iovecs_; // Descriptors for external arena memory pages
     std::vector<char> headerBuffer_; // Owned buffer for delimiters and short tokens
     size_t totalBytes_ = 0; // Total byte length of the assembled chunk
-  size_t numTriples_ = 0;
+    size_t numTriples_ = 0; // Number of RDF triples contained in this chunk
   size_t zeroCopySpansCount_ = 0;
   size_t zeroCopyBytes_ = 0;
 
