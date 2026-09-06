@@ -153,7 +153,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
   [[nodiscard]] bool empty() const noexcept { return totalBytes_ == 0; }
 
   // ___________________________________________________________________________
-  // Transmit chunk directly via POSIX writev(2) in a loop until all bytes are sent.
+    // Transmit chunk directly via POSIX `writev(2)` in a loop until all bytes are sent.
   [[nodiscard]] ssize_t writeToFd(int fd) const {
     if (empty()) {
       return 0;
