@@ -150,7 +150,6 @@ return config_.prefetchDistance;
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t pfPos = positions[k];
       prefetchVocabEntry(&ids[pfPos]);
-      prefetchVocabEntry(&positions[k]);
     }
 
     // Main pipelined loop: prefetch row (i + distance) ahead while serializing row i
