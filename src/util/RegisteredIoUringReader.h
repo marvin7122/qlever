@@ -467,13 +467,7 @@ class RegisteredIoUringReader
     }
     registeredIovecs_.assign(iovecs.begin(), iovecs.end());
     buffersRegistered_ = true;
-#else
-    registeredIovecs_.assign(iovecs.begin(), iovecs.end());
-    buffersRegistered_ = true;
-#endif
-  }
 
-  void unregisterBuffers() noexcept {
 #ifdef QLEVER_HAS_LIBURING
     if (ringInitialized_ && buffersRegistered_) {
       io_uring_unregister_buffers(&ring_);
