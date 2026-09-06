@@ -252,28 +252,27 @@ QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
 
 #endif  // QLEVER_SIMD_X86
 
-// Portable scalar fallback for 32-byte chunks.
-template <EscapeFormat Format>
-[[nodiscard]] inline uint32_t scanChunk32Scalar(const char* data) noexcept {
-  uint32_t mask = 0;
-  for (uint32_t i = 0; i < 32; ++i) {
+template<std::size_t Bits, EscapeFormat Format>
+[[nodiscard]] inline auto scanChunkScalar(const char* data) noexcept {
+  using MaskType = std::conditional_t<Bits == 16, uint16_t, uint32_t>;
+  MaskType mask = 0;
+  for (std::size_t i = 0; i < Bits; ++i) {
     if (isEscapeChar<Format>(data[i])) {
-      mask |= (1u << i);
+      mask |= (MaskType(1) << i);
     }
   }
   return mask;
 }
 
-// Portable scalar fallback for 16-byte chunks.
-template <EscapeFormat Format>
+// Convenience aliases
+template<EscapeFormat Format>
+[[nodiscard]] inline uint32_t scanChunk32Scalar(const char* data) noexcept {
+  return scanChunkScalar<32, Format>(data);
+}
+
+template<EscapeFormat Format>
 [[nodiscard]] inline uint16_t scanChunk16Scalar(const char* data) noexcept {
-  uint16_t mask = 0;
-  for (uint32_t i = 0; i < 16; ++i) {
-    if (isEscapeChar<Format>(data[i])) {
-      mask |= (1u << i);
-    }
-  }
-  return mask;
+  return scanChunkScalar<16, Format>(data);
 }
 
 }  // namespace detail
