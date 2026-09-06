@@ -462,7 +462,7 @@ TEST_F(FsstRepeatedDecoderTest, decompressIntoMatchesDecompressOneStage) {
 }
 
 // _____________________________________________________________________________
-// See above, with two cascaded FSST stages.
+// Verify decompressInto == decompress byte-for-byte over two cascaded FSST stages.
 TEST_F(FsstRepeatedDecoderTest, decompressIntoMatchesDecompressTwoStages) {
   expectRepeatedDecompressIntoMatches<2>(
       {"alpha", "", "beta", "gamma-gamma-gamma", ""});
