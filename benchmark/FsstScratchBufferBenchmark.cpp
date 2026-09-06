@@ -37,7 +37,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     // views are destroyed before storage.
   } compressed_;
 
-  std::array<FsstDecoder, numberOfStages> decoders_;
+  // The FSST decoders for each stage of the repeated decompression.
+std::array<FsstDecoder, numberOfStages> decoders_;
   // Maximum fully decompressed size across the benchmark inputs, sizing the
   // final output buffer.
   size_t outputCapacity_ = 0;
