@@ -9,10 +9,12 @@
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "backports/algorithm.h"
+#include "backports/memory_resource.h"
 #include "index/ConstantsIndexBuilding.h"
 #include "index/vocabulary/CompressionWrappers.h"
 #include "index/vocabulary/PrefixCompressor.h"
