@@ -62,7 +62,7 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
   // 3: "\"^^<http://www.w3.org/2001/XMLSchema#string> .\n" (header)
   EXPECT_EQ(chunk.numSegments(), 3);
 
-  // Verify that the second iovec points directly to the arena memory
+  // Verify that the second iovec points directly to the arena memory.
   auto iovs = chunk.iovecs();
   EXPECT_EQ(iovs[1].iov_base, arenaLiteral.data());
   EXPECT_EQ(iovs[1].iov_len, arenaLiteral.size());
