@@ -39,7 +39,7 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
       [&](ScatterGatherChunk chunk) { chunks.push_back(std::move(chunk)); },
       config);
 
-    std::string largeLiteral = "This is a large literal string residing inside the memory arena.";
+    std::string largeLiteral =       "This is a large literal string residing inside the memory arena.";
     ASSERT_GE(largeLiteral.size(), 32);
 
   streamer.writeIri(ql::make_span("<http://example.org/sub>"));
