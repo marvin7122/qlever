@@ -218,7 +218,7 @@ struct BranchingSwitchDispatcher {
 };
 
 // _____________________________________________________________________________
-// Baseline 2: Chained if-else branching dispatcher.
+// Implement baseline 2: chained if-else branching dispatcher.
 struct BranchingIfElseDispatcher {
   static char* dispatchTermFormat(ValueId id, std::string_view rawTerm,
                                   char* out) noexcept {
