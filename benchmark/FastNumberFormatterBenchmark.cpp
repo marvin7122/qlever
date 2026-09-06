@@ -26,6 +26,7 @@ using namespace ad_utility;
 
 constexpr size_t NUM_INTEGERS = 1'000'000;
 
+// ___________
 // Benchmark suite comparing std::to_string, std::to_chars, and formatIntBranchless
 // Why: benchmark suite comparing std::to_string, std::to_chars, and formatIntBranchless for integer and QID formatting.
 class FastNumberFormatterBenchmark : public BenchmarkInterface {
