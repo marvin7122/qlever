@@ -201,13 +201,7 @@ struct BranchingSwitchDispatcher {
         out = p;
         return out;
       }
-      default:
-        return out;
-    }
-  }
-
-  static size_t dispatchBatchTermFormat(
-      ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
+      
       char* out) noexcept {
     char* curr = out;
     const size_t numTerms = ids.size();
