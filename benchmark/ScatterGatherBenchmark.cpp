@@ -46,13 +46,7 @@ constexpr size_t kDefaultZeroCopyThreshold = 64;
 // Memory arena simulating decompression pages for large RDF vocabulary terms.
 class SimulatedDecompressionArena {
  private:
-  std::vector<char> storage_;
-  std::vector<ql::span<const char>> literalSpans_;
-  std::vector<std::string> subjects_;
-  std::vector<std::string> predicates_;
-
- public:
-  SimulatedDecompressionArena(size_t numTriples, size_t literalSizeBytes) {
+  
     AD_CONTRACT_CHECK(numTriples > 0);
     AD_CONTRACT_CHECK(literalSizeBytes > 0);
 
