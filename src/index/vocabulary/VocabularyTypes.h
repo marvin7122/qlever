@@ -487,8 +487,8 @@ class MultiSourceVocabBatchAssembler
   }
 
   // ___________________________________________________________________________
-  // Scatter a child batch lookup result across the specified output positions
-  // and retain the child result object so its underlying string storage is kept
+    // Scatter a child batch lookup result across the specified output positions
+  // and retain the child's storage owner so its underlying string storage is kept
   // alive.
   void scatterSubBatchResultAtPositions(
       const VocabBatchLookupResult& subBatchResult,
