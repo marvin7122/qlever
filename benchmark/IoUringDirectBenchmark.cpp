@@ -42,6 +42,11 @@ constexpr size_t kDefaultBatchBlocks = 256;  // 1 MB per batch (256 * 4KB)
 
 // _____________________________________________________________________________
 // Generate a 1 GB simulated vocabulary binary file on disk.
+/**
+ * Helper that creates a temporary 1 GB binary file filled with simulated
+ * vocabulary data (random 64‑bit values). The file is automatically removed
+ * when the object is destroyed.
+ */
 class SimulatedVocabularyFile {
  private:
   std::string filePath_;
