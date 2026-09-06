@@ -41,6 +41,7 @@ TEST(PrefetchingBatchResolver, ConfigurationInvariants) {
 
   AD_EXPECT_THROW_WITH_MESSAGE(PrefetchConfig{.prefetchDistance = 0}.checkInvariants(), ::testing::HasSubstr("prefetchDistance > 0"));
   AD_EXPECT_THROW_WITH_MESSAGE(PrefetchConfig{.prefetchDistance = 129}.checkInvariants(), ::testing::HasSubstr("prefetchDistance <= 128"));
+  AD_EXPECT_THROW_WITH_MESSAGE(PrefetchConfig{.prefetchDistance = 255}.checkInvariants(), ::testing::HasSubstr("prefetchDistance <= 128"));
 }
 
 TEST(PrefetchingBatchResolver, PrefetchIntrinsicSmokeTest) {
