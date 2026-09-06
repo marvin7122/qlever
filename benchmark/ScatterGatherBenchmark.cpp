@@ -121,7 +121,8 @@ class ScatterGatherBenchmarkRunner {
   // Copies every byte of subject, predicate, and large literal into chunk buffer.
   static ScatterGatherBenchmarkMetric runContiguousCopy(
       const SimulatedDecompressionArena& arena,
-      size_t chunkSize = 1024 * 1024) {
+      size_t chunkSize = 1024 * 1024,
+      std::string* output = nullptr) {
     const size_t n = arena.numTriples();
     size_t chunksEmitted = 0;
     size_t totalBytes = 0;
@@ -132,6 +133,7 @@ class ScatterGatherBenchmarkRunner {
         [&](std::string_view chunk) {
           ++chunksEmitted;
           totalBytes += chunk.size();
+          if (output) output->append(chunk.data(), chunk.size());
         },
         chunkSize);
 
