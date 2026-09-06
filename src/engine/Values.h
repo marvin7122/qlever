@@ -76,5 +76,6 @@ class Values : virtual public Operation {
 std::shared_ptr<QueryExecutionTree> makeValuesForSingleValue(
     QueryExecutionContext* qec, const Variable& variable,
     const TripleComponent& value);
+#include "src/engine/Values.template"
 
 #endif  // QLEVER_SRC_ENGINE_VALUES_H
