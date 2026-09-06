@@ -214,6 +214,7 @@ int main(int argc, char** argv) {
   fixture.resize(totalBatches);
   for (size_t b = 0; b < totalBatches; ++b) {
     auto compressed = vocab.lookupCompressedBatch(indexBatches[b]);
+    AD_CORRECTNESS_CHECK(compressed != nullptr);
     AD_CORRECTNESS_CHECK(compressed->size() == opt.batchSize);
     fixture[b].reserve(opt.batchSize);
     for (size_t i = 0; i < opt.batchSize; ++i) {
