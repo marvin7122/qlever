@@ -33,6 +33,7 @@
 #include "util/HashMap.h"
 #include "util/Invariants.h"
 #include "util/Log.h"
+#include <absl/strings/str_cat.h>
 
 #if defined(__has_include)
 #if __has_include(<liburing.h>)
