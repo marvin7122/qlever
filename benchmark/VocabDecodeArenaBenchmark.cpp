@@ -154,13 +154,7 @@ DecodeStats runDecompressIntoBatch(const Vocab& vocab,
     ql::pmr::polymorphic_allocator<char> allocator{buffer.get()};
     char* mem = allocator.allocate(bound);
     const size_t n = wrapper.decompressInto(
-        w.compressed, w.decoderIdx, ql::span<char>{mem, bound}, scratch);
-    AD_CORRECTNESS_CHECK(n <= bound);
-    s.bytesUsed += n;
-    views.emplace_back(mem, n);
-    s.checksum = mixView(s.checksum, views.back());
-  }
-  volatile uint64_t keep = s.checksum;
+        
   (void)keep;
   return s;
 }
