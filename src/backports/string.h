@@ -20,7 +20,7 @@
 /**
  * @brief Resize a string and overwrite its contents via a user-provided operation.
  *
- * This function provides a C++17-compatible backport of C++23's std::basic_string::resize_and_overwrite.
+ * This Function provides a C++17-compatible backport of C++23's std::basic_string::resize_and_overwrite.
  * 
  * @tparam CharT   Character type of the string.
  * @tparam Traits  Traits type (defaults to std::char_traits<CharT>).
