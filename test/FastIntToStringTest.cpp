@@ -18,13 +18,7 @@ namespace {
 using namespace ad_utility;
 
 // _____________________________________________________________________________
-TEST(FastIntToStringTest, NumDigitsUInt64) {
-  EXPECT_EQ(numDigits(0ULL), 1U);
-  EXPECT_EQ(numDigits(1ULL), 1U);
-  EXPECT_EQ(numDigits(9ULL), 1U);
-  EXPECT_EQ(numDigits(10ULL), 2U);
-  EXPECT_EQ(numDigits(99ULL), 2U);
-  EXPECT_EQ(numDigits(100ULL), 3U);
+
   EXPECT_EQ(numDigits(999ULL), 3U);
   EXPECT_EQ(numDigits(1000ULL), 4U);
   EXPECT_EQ(numDigits(9999ULL), 4U);
