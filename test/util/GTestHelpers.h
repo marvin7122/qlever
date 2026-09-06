@@ -27,7 +27,7 @@
 #include "test/backports/algorithm.h"
 #include "test/backports/concepts.h"
 #include "test/backports/memory_resource.h"
-#include "backports/three_way_comparison.h"
+#include "test/backports/three_way_comparison.h"
 #include "util/Log.h"
 #include "util/SourceLocation.h"
 #include "util/TypeTraits.h"
