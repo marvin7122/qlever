@@ -6,7 +6,7 @@
 #ifndef QLEVER_SRC_ENGINE_BRANCHLESSTYPEDISPATCHER_H
 #define QLEVER_SRC_ENGINE_BRANCHLESSTYPEDISPATCHER_H
 
-#include <algorithm>
+
 #include <array>
 #include <charconv>
 #include <cstddef>
