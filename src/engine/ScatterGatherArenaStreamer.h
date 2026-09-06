@@ -504,11 +504,13 @@ class ScatterGatherChunkStreamer
                 ql::span<const ql::span<const char>> cells) {
     auto guard = makeInvariantGuard();
     const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
-    for (size_t i = 0; i < cells.size(); ++i) {
-      if (i > 0) {
+    bool first = true;
+    for (const auto& cell : cells) {
+      if (!first) {
         writeChar(delimiter);
       }
-      writeArenaSpan(cells[i]);
+      first = false;
+      writeArenaSpan(cell);
     }
     writeChar('\n');
   }
