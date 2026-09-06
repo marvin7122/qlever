@@ -20,13 +20,7 @@
 #endif
 
 #include "backports/concepts.h"
-#include "backports/span.h"
-#include "global/Constants.h"
-#include "global/Id.h"
-#include "global/VocabIndex.h"
-#include "index/ExportIds.h"
-#include "index/Index.h"
-#include "index/LocalVocab.h"
+
 #include "parser/LiteralOrIri.h"
 #include "util/Algorithm.h"
 #include "util/CompactStringVector.h"
