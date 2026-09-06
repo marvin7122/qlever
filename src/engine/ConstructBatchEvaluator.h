@@ -36,7 +36,7 @@ struct BatchEvaluationResult {
   // that column. The map is sparse because variables occurring in the WHERE
   // clause may not occur in the CONSTRUCT template and are therefore not
   // evaluated.
-  ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> variablesByColumn_;
+  ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> Result;
   size_t numRows_ = 0;
 
   const std::optional<EvaluatedTerm>& getVariable(ColumnIndex columnIndex,

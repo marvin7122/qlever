@@ -31,6 +31,7 @@
 #include "util/CompilerExtensions.h"
 #include "util/Exception.h"
 #include "util/ValueIdentity.h"
+#include "../util/ArenaVocabBatchBuilder.h"
 
 namespace ql::exportIds {
 
