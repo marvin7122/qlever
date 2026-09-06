@@ -186,6 +186,7 @@ struct DatasetStorage {
 // 4) Graph Edge:    <IRI, IRI, IRI>            (subject, rdf:type, class)
 // All strings are owned by stringPool_; string_views in tuples remain valid.
 // Each row vector (CellValue[]) has a matching tuple vector with typed fields.
+// _____________________________________________________________________________
 DatasetStorage generateBenchmarkDataset(size_t numRows) {
   DatasetStorage data;
   data.stringPool_.reserve(numRows * 4);
