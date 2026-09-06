@@ -105,6 +105,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
 }
 
 // Scan Turtle literals for escape characters using find_first_of.
+// Returns the index of the first Turtle escape character (", \, \n, \r) or npos.
 [[nodiscard]] size_t scalarFindFirstEscapeTurtle(std::string_view text) noexcept {
   return text.find_first_of("\"\\\n\r");
 }
