@@ -35,7 +35,7 @@ using TermFormatterFn = char* (*)(ValueId id, std::string_view rawTerm, char* ou
                                   std::string_view suffix) noexcept;
 
 // _____________________________________________________________________________
-// 16-entry lookup table descriptor mapping a 4-bit Datatype tag to delimiters
+// Lookup table entry descriptor mapping a 4-bit Datatype tag to delimiters
 // and a fast, branchless formatting function pointer.
 struct TypeFormatDescriptor {
   std::string_view prefix_{""};
