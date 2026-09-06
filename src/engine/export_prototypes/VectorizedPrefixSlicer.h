@@ -71,7 +71,9 @@ class VectorizedPrefixTable {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(entry.length <= sizeof(entry.data));
     std::memcpy(out, entry.data, entry.length);
-    return entry.length;
+    const size_t bytes_written = entry.length;
+    AD_CONTRACT_CHECK(bytes_written == entry.length);
+    return bytes_written;
   }
 
     // ___________________________________________________________________________
