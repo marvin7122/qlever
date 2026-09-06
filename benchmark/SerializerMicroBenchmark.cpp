@@ -50,7 +50,7 @@ struct AllocationTracker {
   }
 };
 
-// Global scalar new/delete instrumentation for allocation counting during benchmark runs.
+// Global scalar new/delete instrumentation for allocation counting during benchmark runs. Used by benchmarks that generate a configurable number of triples.
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
