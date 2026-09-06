@@ -490,20 +490,7 @@ class SimdEscapeClassifier {
   // ___________________________________________________________________________
   // Escape an RFC 4180 CSV field. If no special characters (", ,, \r, \n) are
   // present, returns input directly. Otherwise quotes and doubles internal quotes.
-  [[nodiscard]] static inline std::string escapeForCsv(std::string_view input) {
-    if (!hasEscapes<EscapeFormat::CsvSpecial>(input)) [[likely]] {
-      return std::string{input};
-    }
-    std::string result;
-    // Upper bound: 2 enclosing quotes + input with doubled quotes
-    result.resize(input.size() * 2 + 2);
-    char* out = result.data();
-    *out++ = '"';
-    out = copyAndEscape<EscapeFormat::CsvQuote>(input, out);
-    *out++ = '"';
-    result.resize(static_cast<size_t>(out - result.data()));
-    return result;
-  }
+  [[nodiscard]] static inline std::string escapeForCsv(std::string_view input);
 
   // ___________________________________________________________________________
   // Escape a field for IANA-TSV. If no tabs, newlines, carriage returns, or
