@@ -598,13 +598,7 @@ class RegisteredIoUringReader
     return filesRegistered_;
   }
   [[nodiscard]] bool isBuffersRegistered() const noexcept {
-    return buffersRegistered_;
-  }
-  [[nodiscard]] size_t inFlightCount() const noexcept {
-    return numInFlightRequests_;
-  }
-
- private:
+    
   void initRing() {
 #ifdef QLEVER_HAS_LIBURING
     int ret = io_uring_queue_init(config_.ringEntries, &ring_,
