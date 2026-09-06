@@ -69,7 +69,6 @@ CPP_template(typename Decode)(
     AD_CONTRACT_CHECK(bytesWritten <= bound);
     return bytesWritten;
   });
-  AD_CORRECTNESS_CHECK(result.size() <= bound);
   AD_CORRECTNESS_CHECK(result.size() == bytesWritten);
   return result;
 }
