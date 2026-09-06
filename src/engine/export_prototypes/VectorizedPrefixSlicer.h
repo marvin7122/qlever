@@ -6,7 +6,6 @@
 #pragma once
 
 #include <emmintrin.h>
-#include <smmintrin.h>
 
 #include <array>
 #include <cstddef>
