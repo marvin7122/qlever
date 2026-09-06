@@ -667,7 +667,7 @@ decltype(auto) dispatch4Col(ColumnType c0, ColumnType c1, ColumnType c2,
 }  // namespace detail
 
 // _____________________________________________________________________________
-// Main fast-path template dispatch entry point:
+// Dispatch to the fast-path monomorphic serializer.
 // Inspects the runtime schema and invokes `visitor` with the specialized
 // `MonomorphicRowSerializer<Types...>` (or falls back to `DynamicRowSerializer`).
 template <typename Visitor, typename... Args>
