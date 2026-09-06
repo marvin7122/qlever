@@ -238,7 +238,8 @@ class ScatterGatherBenchmarkRunner {
     };
   }
 
-  // 3. Simulated Kernel I/O Transmission (writev to /dev/null vs contiguous write)
+  
+  // 3. Zero-Copy Kernel writev(2) Transmission (direct to /dev/null)
   static ScatterGatherBenchmarkMetric runKernelScatterGatherTransmission(
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = 1024 * 1024) {
