@@ -190,7 +190,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 7: Date
+  
   lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
 
