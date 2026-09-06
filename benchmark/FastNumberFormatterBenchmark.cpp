@@ -264,7 +264,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto& m = group.addMeasurement("memcpy prefix + std::to_chars", [&]() {
           size_t bytes = 0;
           for (uint64_t id : qids) {
-                        std::memcpy(buffer, "http://www.wikidata.org/entity/Q", 32);
+                        std::memcpy(buffer, ad_utility::WIKIDATA_ENTITY_PREFIX, sizeof(ad_utility::WIKIDATA_ENTITY_PREFIX) - 1);
             auto [ptr, ec] = std::to_chars(buffer + 32, buffer + sizeof(buffer), id);
             bytes += static_cast<size_t>(ptr - buffer);
           }
