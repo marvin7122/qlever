@@ -54,7 +54,6 @@ enum class ColumnType : uint8_t {
 inline constexpr ColumnType IRI = ColumnType::Iri;
 
 inline constexpr ColumnType INT = ColumnType::Int;
-inline constexpr ColumnType DOUBLE = ColumnType::Double;
 inline constexpr ColumnType BLANK_NODE = ColumnType::BlankNode;
 inline constexpr ColumnType BOOLEAN = ColumnType::Boolean;
 inline constexpr ColumnType STRING = ColumnType::String;
