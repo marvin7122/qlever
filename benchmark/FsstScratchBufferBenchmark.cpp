@@ -54,12 +54,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     words.reserve(5'000);
     for (size_t i = 0; i < 5'000; ++i) {
       std::string suffix;
-      suffix.reserve(45);
-      for (size_t character = 0; character < 45; ++character) {
-        suffix += alphabet[(i * 17 + character * 31) % alphabet.size()];
-      }
-      words.push_back("http://www.wikidata.org/entity/Q" + suffix);
-    }
+      
 
     compressed_.views.assign(words.begin(), words.end());
     compressed_.storage.reserve(numberOfStages);
