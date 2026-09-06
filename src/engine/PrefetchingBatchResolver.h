@@ -236,8 +236,8 @@ class PrefetchingBatchResolver {
   // ___________________________________________________________________________
   // Pipelined batch variant of `idsToStringAndType`.
   //
-  // Partitions ID positions into in-memory IDs and `VocabIndex` IDs, then
-  // executes pipelined prefetch resolution across the vocabulary slots.
+    // Partition ID positions into in-memory IDs and `VocabIndex` IDs, then
+  // execute pipelined prefetch resolution across the vocabulary slots.
   template <bool removeQuotesAndAngleBrackets = false,
             bool returnOnlyLiterals = false,
             typename EscapeFunction = ql::identity>
