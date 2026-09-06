@@ -20,7 +20,7 @@
 #include "backports/span.h"
 #include "util/Exception.h"
 
-namespace qlever::export_pipeline {
+namespace qlever::export_prototypes {
 
 // _____________________________________________________________________________
 // Define standard known IRI prefix IDs for high-throughput vectorized emission.
