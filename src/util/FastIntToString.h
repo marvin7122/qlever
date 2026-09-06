@@ -68,23 +68,18 @@ inline void format8Digits(uint32_t v, char* dst) noexcept {
   AD_CONTRACT_CHECK(v < 100000000U);
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__SSE2__)
-  // SSE2 parallel vector radix conversion: decompose into 4 2-digit lanes
+  // Use the same branch‑free lookup‑table method as the fallback to avoid
+  // four extra divisions/modulos. The table is 64‑byte aligned and fits in L1.
   uint32_t q = v / 10000;
   uint32_t r = v % 10000;
-  uint16_t p0 = static_cast<uint16_t>(q / 100);
-  uint16_t p1 = static_cast<uint16_t>(q % 100);
-  uint16_t p2 = static_cast<uint16_t>(r / 100);
-  uint16_t p3 = static_cast<uint16_t>(r % 100);
-
-  __m128i pairs = _mm_setr_epi16(p0, p1, p2, p3, 0, 0, 0, 0);
-  // tens = (pairs * 52429) >> 19  (approx division by 10)
-  __m128i tens = _mm_srli_epi16(_mm_mulhi_epu16(pairs, _mm_set1_epi16(52429)), 3);
-  __m128i tens10 = _mm_mullo_epi16(tens, _mm_set1_epi16(10));
-  __m128i ones = _mm_sub_epi16(pairs, tens10);
-  // Little-endian layout: tens in low byte, ones in high byte
-  __m128i combined = _mm_or_si128(tens, _mm_slli_epi16(ones, 8));
-  __m128i ascii = _mm_add_epi8(combined, _mm_set1_epi8('0'));
-  _mm_storel_epi64(reinterpret_cast<__m128i*>(dst), ascii);
+  uint32_t d0 = (q / 100) * 2;
+  uint32_t d1 = (q % 100) * 2;
+  uint32_t d2 = (r / 100) * 2;
+  uint32_t d3 = (r % 100) * 2;
+  std::memcpy(dst + 0, &DIGIT_PAIRS[d0], 2);
+  std::memcpy(dst + 2, &DIGIT_PAIRS[d1], 2);
+  std::memcpy(dst + 4, &DIGIT_PAIRS[d2], 2);
+  std::memcpy(dst + 6, &DIGIT_PAIRS[d3], 2);
 #else
   // SWAR / lookup table fallback
   uint32_t q = v / 10000;
