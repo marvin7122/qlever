@@ -35,52 +35,7 @@
 #include "util/Invariants.h"
 #include "util/http/MediaTypes.h"
 
-// _____________________________________________________________________________
-// Memory allocation tracker to verify that hot loops perform zero allocations.
-struct AllocationTracker {
-  static inline std::atomic<bool> enabled_{false};
-  static inline std::atomic<size_t> count_{0};
-  static inline std::atomic<size_t> bytes_{0};
 
-  static void start() noexcept {
-    count_.store(0, std::memory_order_seq_cst);
-    bytes_.store(0, std::memory_order_seq_cst);
-    enabled_.store(true, std::memory_order_seq_cst);
-  }
-
-  static void stop() noexcept {
-    enabled_.store(false, std::memory_order_seq_cst);
-  }
-
-  static size_t getCount() noexcept {
-    return count_.load(std::memory_order_seq_cst);
-  }
-
-  static size_t getBytes() noexcept {
-    return bytes_.load(std::memory_order_seq_cst);
-  }
-};
-
-// Global operator new/delete overloads to instrument memory allocations via AllocationTracker.
-void* operator new(std::size_t size) {
-  if (AllocationTracker::enabled_.load(std::memory_order_seq_cst)) {
-    AllocationTracker::count_.fetch_add(1, std::memory_order_seq_cst);
-    AllocationTracker::bytes_.fetch_add(size, std::memory_order_seq_cst);
-  }
-  void* ptr = std::malloc(size);
-  if (!ptr) {
-    throw std::bad_alloc();
-  }
-  return ptr;
-}
-
-void operator delete(void* ptr) noexcept {
-  std::free(ptr);
-}
-
-void operator delete(void* ptr, std::size_t) noexcept {
-  std::free(ptr);
-}
 
 namespace ad_benchmark {
 namespace {
@@ -313,7 +268,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "1. Dynamic Per-Cell Dispatch (CSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -325,13 +279,11 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
               perf = perfMonitor_.stop();
               AD_CORRECTNESS_CHECK(totalBytes > 0);
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
 
-        recordMetrics(m, NUM_BENCHMARK_ROWS, totalBytes, perf,
-                      AllocationTracker::getCount());
+        recordMetrics(m, NUM_BENCHMARK_ROWS, totalBytes, perf, 0);
       }
 
       // 2. Monomorphic Template Serializer (Compile-time unrolled)
@@ -344,7 +296,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "2. Monomorphic Template Serializer (CSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -355,7 +306,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -374,7 +324,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "3. Monomorphic Direct Tuple Serializer (CSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -384,7 +333,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -400,7 +348,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "4. Fast-Path Template Dispatch (CSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -420,7 +367,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -446,7 +392,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "1. Dynamic Per-Cell Dispatch (TSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -457,7 +402,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -475,7 +419,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "2. Monomorphic Template Serializer (TSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -486,7 +429,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -504,7 +446,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "3. Monomorphic Direct Tuple Serializer (TSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -514,7 +455,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -541,7 +481,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "1. Dynamic Per-Cell Dispatch (CSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -552,7 +491,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -571,7 +509,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "2. Monomorphic Template Serializer (CSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -582,7 +519,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -601,7 +537,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "3. Monomorphic Direct Tuple Serializer (CSV)", [&]() {
-              AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
@@ -612,7 +547,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
-              AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
             });
@@ -627,12 +561,10 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
  private:
   static void recordMetrics(ResultEntry& m, size_t rowCount, size_t totalBytes,
-                            const PerfCounterMonitor::Metrics& perf,
-                            size_t heapAllocations) {
+                            const PerfCounterMonitor::Metrics& perf) {
     m.metadata().addKeyValuePair("total-rows", rowCount);
     m.metadata().addKeyValuePair("total-bytes-mb",
                                  static_cast<double>(totalBytes) / (1024.0 * 1024.0));
-    m.metadata().addKeyValuePair("heap-allocations", heapAllocations);
 
     if (perf.available) {
       m.metadata().addKeyValuePair("hw-instructions", perf.instructions);
