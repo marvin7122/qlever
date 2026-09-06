@@ -604,7 +604,7 @@ using IndicesAndPositionsByMarker =
 
 // _____________________________________________________________________________
 // Partition marked indices into paired (`underlyingIndex`, `resultPosition`)
-// lists per marker. For each input index, `getMarkerAndVocabIndex` extracts
+// lists per marker. For each input index, `getMarkerAndIndex` extracts
 // the marker that identifies the underlying vocabulary and the unmarked vocab
 // index; the index is paired with its position in the input, and both are
 // grouped by marker.
