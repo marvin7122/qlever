@@ -140,7 +140,7 @@ CPP_template(typename UnderlyingVocabulary,
   //____________________________________________________________________________
   // Wrap the underlying `scanAll` and decompress each word. Decode into one
   // reusable `buffer` owned by the transformation (plus `scratch` for the
-  // decoder). The buffer grows to the largest `maxDecompressedSize` bound
+  // decoder). Ensure the buffer grows to the largest `maxDecompressedSize` bound seen so far.
   // seen so far. `string_view` is a `string_view` into that buffer.
   // It is valid only until the next element is pulled; copy the bytes if
   // they must outlive the current iterator position. See `IndexAndWord`.
