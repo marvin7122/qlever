@@ -46,6 +46,8 @@ struct CastToUnsignedPtr {
   operator()(T ptr) const {
     using Res = std::conditional_t<ql::concepts::same_as<T, const char*>,
                                    const unsigned char*, unsigned char*>;
+    static_assert(sizeof(T) == sizeof(Res),
+                  "CastToUnsignedPtr requires same-sized types");
     return reinterpret_cast<Res>(ptr);
   }
 };
