@@ -136,12 +136,14 @@ class HardwarePerformanceMonitor {
     fdLlcAccess_ = openPerfCounter(PERF_TYPE_HW_CACHE, llcAccessConfig);
     fdLlcMiss_ = openPerfCounter(PERF_TYPE_HW_CACHE, llcMissConfig);
 
-    fdCacheMiss_ =
-        openPerfCounter(PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_MISSES);
-    fdCacheRef_ =
-        openPerfCounter(PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_REFERENCES);
+    // PERF_COUNT_HW_CACHE_MISSES and PERF_COUNT_HW_CACHE_REFERENCES are not used
+    // in reported metrics; skip opening to avoid unsupported-counter failures.
+    fdCacheMiss_ = -1;
+    fdCacheRef_ = -1;
 
-    supported_ = (fdCycles_ >= 0);
+    supported_ = (fdCycles_ >= 0 && fdInstructions_ >= 0 &&
+                  fdL1dAccess_ >= 0 && fdL1dMiss_ >= 0 &&
+                  fdLlcAccess_ >= 0 && fdLlcMiss_ >= 0);
 #else
     supported_ = false;
 #endif
