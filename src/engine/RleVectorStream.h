@@ -42,7 +42,9 @@ class RleVectorStream {
   }
 
   [[nodiscard]] size_t numRuns() const noexcept { return runs_.size(); }
-  [[nodiscard]] size_t totalRows() const noexcept { return totalUncompressedRows_; }
+  [[nodiscard]] size_t totalRows() const noexcept {
+    return totalUncompressedRows_;
+  }
 
   [[nodiscard]] ql::span<const Run> runs() const noexcept { return runs_; }
 

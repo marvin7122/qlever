@@ -20,8 +20,8 @@ int main() {
   constexpr size_t RUN_LENGTH = 10000;
   constexpr size_t TOTAL_ROWS = NUM_DISTINCT * RUN_LENGTH;  // 10,000,000 rows
 
-  std::cout << "Benchmarking RleVectorStream with " << TOTAL_ROWS << " uncompressed rows ("
-            << NUM_DISTINCT << " runs)...\n";
+  std::cout << "Benchmarking RleVectorStream with " << TOTAL_ROWS
+            << " uncompressed rows (" << NUM_DISTINCT << " runs)...\n";
 
   // Measure memory and allocation of uncompressed vector
   auto t0 = std::chrono::high_resolution_clock::now();
@@ -32,7 +32,8 @@ int main() {
     }
   }
   auto t1 = std::chrono::high_resolution_clock::now();
-  double uncompressedMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  double uncompressedMs =
+      std::chrono::duration<double, std::milli>(t1 - t0).count();
   std::cout << "Uncompressed Vector Generation: " << uncompressedMs << " ms ("
             << (TOTAL_ROWS * sizeof(Id)) / (1024 * 1024) << " MB RAM)\n";
 
@@ -45,14 +46,16 @@ int main() {
   auto t3 = std::chrono::high_resolution_clock::now();
   double rleMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
   std::cout << "RLE Stream Generation: " << rleMs << " ms ("
-            << (rleStream.numRuns() * sizeof(RleVectorStream::Run)) / 1024 << " KB RAM)\n";
+            << (rleStream.numRuns() * sizeof(RleVectorStream::Run)) / 1024
+            << " KB RAM)\n";
 
   // Measure Late Materialization
   auto t4 = std::chrono::high_resolution_clock::now();
   std::vector<Id> materialized(TOTAL_ROWS);
   rleStream.materialize(materialized);
   auto t5 = std::chrono::high_resolution_clock::now();
-  double materializeMs = std::chrono::duration<double, std::milli>(t5 - t4).count();
+  double materializeMs =
+      std::chrono::duration<double, std::milli>(t5 - t4).count();
   std::cout << "Late Materialization Throughput: "
             << (TOTAL_ROWS / (materializeMs / 1000.0)) / 1e6 << " M rows/sec ("
             << materializeMs << " ms)\n";
