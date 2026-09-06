@@ -386,6 +386,8 @@ template<EscapeFormat Format>
       uint32_t current = 0;
       while (mask != 0) {
         uint32_t next = static_cast<uint32_t>(std::countr_zero(mask));
+        AD_CONTRACT_CHECK(next < 32u);
+        AD_CONTRACT_CHECK(next >= current);
         uint32_t cleanLen = next - current;
         if (cleanLen > 0) {
           std::memcpy(dest, ptr + current, cleanLen);
