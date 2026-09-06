@@ -32,10 +32,12 @@ using EvaluatedVariableValues = std::vector<std::optional<EvaluatedTerm>>;
 // Result of batch-evaluating all variables for a batch of rows. Stores the
 // evaluated values per variable column and the number of rows in the batch.
 struct BatchEvaluationResult {
-  // Map each evaluated result column to the values of the variable stored in
-  // that column. The map is sparse because variables occurring in the WHERE
-  // clause may not occur in the CONSTRUCT template and are therefore not
-  // evaluated.
+    // `variablesByColumn_` maps a column index of the `Result` that is being
+  // evaluated to the `EvaluatedVariableValues` for the variable that is stored
+  // in that column. We use a hash map (instead of a dense vector) because the
+  // set of evaluated columns may be sparse: some variables in the WHERE-clause
+  // (in the `IdTable`) may not appear in the CONSTRUCT template and are thus
+  // not evaluated.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> Result;
   size_t numRows_ = 0;
 
