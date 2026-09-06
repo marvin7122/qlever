@@ -224,8 +224,14 @@ TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
 
   std::string readBuf(chunkOpt->totalBytes(), '\0');
   ssize_t bytesRead = ::read(pipeFds[0], readBuf.data(), readBuf.size());
-  ::close(pipeFds[0]);
 
   EXPECT_EQ(bytesRead, static_cast<ssize_t>(chunkOpt->totalBytes()));
   EXPECT_EQ(readBuf, chunkOpt->toString());
+
+  // Confirm pipe is fully drained (EOF).
+  char eofBuf[1];
+  ssize_t eofRead = ::read(pipeFds[0], eofBuf, 1);
+  EXPECT_EQ(eofRead, 0);
+
+  ::close(pipeFds[0]);
 }
