@@ -392,11 +392,15 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         asmjit::x86::Gp rawVal = regStack.back();
         regStack.pop_back();
         asmjit::x86::Gp year = cc.new_gp64("yearVal");
-        asmjit::CCFuncCall* yearCall =
-            cc.call(reinterpret_cast<uint64_t>(&decodeYearOrZeroForNative),
-                    asmjit::FuncSignature::build<int64_t, uint64_t>());
-        yearCall->set_arg(0, rawVal);
-        yearCall->set_ret(0, year);
+        // `x86::Compiler`'s emitter `call` overloads hide the `Compiler`
+        // function-call API, so qualify the base class explicitly.
+        asmjit::FuncCallNode* yearCall =
+            static_cast<asmjit::Compiler&>(cc).call(
+                asmjit::Imm(
+                    reinterpret_cast<uint64_t>(&decodeYearOrZeroForNative)),
+                asmjit::FuncSignature::build<int64_t, uint64_t>());
+        yearCall->setArg(0, rawVal);
+        yearCall->setRet(0, year);
         regStack.push_back(year);
         break;
       }
