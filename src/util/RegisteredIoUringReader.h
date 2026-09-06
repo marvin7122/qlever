@@ -325,13 +325,7 @@ class RegisteredIoUringReader
     size_t expectedBytes;
   };
   ad_utility::HashMap<uint64_t, InFlightMeta> inFlightByReqId_;
-  ad_utility::HashMap<BatchId, size_t> inFlightByBatchId_;
-  uint64_t nextReqId_ = 0;
-
- public:
-  explicit RegisteredIoUringReader(
-      RegisteredReaderConfig config = RegisteredReaderConfig{})
-      : config_{config} {
+  
     AD_CORRECTNESS_CHECK(!config_.useRegisteredBuffers || config_.useDirectIo);
     initRing();
   }
