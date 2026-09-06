@@ -174,7 +174,7 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
       auto& group = results.addGroup(formatName + " Serialization Comparison (1M Triples)");
       const ExportFormat exportFmt = toExportFormat(mediaType);
 
-      // 1. Baseline: string-constructing serialization
+
       {
         size_t baselineAllocations = 0;
         size_t totalBytesWritten = 0;
