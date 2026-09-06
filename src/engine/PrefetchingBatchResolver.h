@@ -55,11 +55,7 @@ inline void prefetchVocabEntry(const void* address) noexcept {
 #endif
 }
 
-// _____________________________________________________________________________
-// Helper for prefetching a typed pointer.
-template <typename T>
-inline void prefetchAddress(const T* address) noexcept {
-  prefetchVocabEntry(static_cast<const void*>(address));
+
 }
 
 // _____________________________________________________________________________
