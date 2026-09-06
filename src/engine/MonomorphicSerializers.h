@@ -90,19 +90,17 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 // Lightweight value holder representing a cell value across formats and types.
 struct CellValue {
   ColumnType type_ = ColumnType::Undefined;
-  std::string_view stringVal_{};
+  std::string stringVal_{};
   int64_t intVal_ = 0;
   double doubleVal_ = 0.0;
   bool boolVal_ = false;
 
   constexpr CellValue() noexcept = default;
 
-  explicit constexpr CellValue(std::string_view sv,
-                                     ColumnType type = ColumnType::String) noexcept
-      : type_(type), stringVal_(sv) {}
+  explicit CellValue(std::string sv, ColumnType type = ColumnType::String) noexcept
+      : type_(type), stringVal_(std::move(sv)) {}
 
-  explicit constexpr CellValue(const char* s,
-                                     ColumnType type = ColumnType::String) noexcept
+  explicit CellValue(const char* s, ColumnType type = ColumnType::String)
       : type_(type), stringVal_(s) {}
 
   explicit constexpr CellValue(int64_t v) noexcept
@@ -120,24 +118,24 @@ struct CellValue {
   explicit constexpr CellValue(bool v) noexcept
       : type_(ColumnType::Boolean), boolVal_(v) {}
 
-  [[nodiscard]] static constexpr CellValue makeIri(std::string_view iri) noexcept {
+  [[nodiscard]] static CellValue makeIri(std::string iri) noexcept {
     CellValue c;
     c.type_ = ColumnType::Iri;
-    c.stringVal_ = iri;
+    c.stringVal_ = std::move(iri);
     return c;
   }
 
-  [[nodiscard]] static constexpr CellValue makeLiteral(std::string_view lit) noexcept {
+  [[nodiscard]] static CellValue makeLiteral(std::string lit) noexcept {
     CellValue c;
     c.type_ = ColumnType::Literal;
-    c.stringVal_ = lit;
+    c.stringVal_ = std::move(lit);
     return c;
   }
 
-  [[nodiscard]] static constexpr CellValue makeBlankNode(std::string_view bnode) noexcept {
+  [[nodiscard]] static CellValue makeBlankNode(std::string bnode) noexcept {
     CellValue c;
     c.type_ = ColumnType::BlankNode;
-    c.stringVal_ = bnode;
+    c.stringVal_ = std::move(bnode);
     return c;
   }
 
