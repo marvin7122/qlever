@@ -247,7 +247,12 @@ class ScatterGatherBenchmarkRunner {
   static ScatterGatherBenchmarkMetric runKernelScatterGatherTransmission(
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = kDefaultChunkSize) {
-    int nullFd = ::open("/dev/null", O_WRONLY);
+    struct FdGuard {
+      int fd = -1;
+      ~FdGuard() { if (fd >= 0) ::close(fd); }
+    } nullFdGuard;
+    nullFdGuard.fd = ::open("/dev/null", O_WRONLY);
+    int nullFd = nullFdGuard.fd;
     if (nullFd < 0) {
       AD_THROW("Failed to open /dev/null");
     }
