@@ -90,129 +90,89 @@ TEST(FastIntToStringTest, NumDigitsUInt32) {
   EXPECT_EQ(numDigits(std::numeric_limits<uint32_t>::max()), 10U);
 }
 
-// _____________________________________________________________________________
-TEST(FastIntToStringTest, FormatUIntBranchless) {
+namespace {
+template <typename T, typename Gen>
+void runBranchlessFormatTest(const char* label,
+                             std::string_view (*formatFn)(T, char*),
+                             std::vector<T> boundaryValues,
+                             size_t iterations,
+                             Gen& gen) {
   char buf[64];
-
-  auto testValue = [&](uint64_t val) {
-    char* end = formatUIntBranchless(val, buf);
-    std::string_view actual(buf, end - buf);
-    EXPECT_EQ(actual, std::to_string(val)) << "Failed on value: " << val;
+  auto testValue = [&](T val) {
+    std::string_view actual = formatFn(val, buf);
+    EXPECT_EQ(actual, std::to_string(val)) << "Failed on " << label << " value: "
+                                            << val;
   };
 
-  // Boundary cases
-  testValue(0ULL);
-  testValue(1ULL);
-  testValue(9ULL);
-  testValue(10ULL);
-  testValue(42ULL);
-  testValue(99ULL);
-  testValue(100ULL);
-  testValue(999ULL);
-  testValue(1000ULL);
-  testValue(9999ULL);
-  testValue(10000ULL);
-  testValue(99999ULL);
-  testValue(100000ULL);
-  testValue(999999ULL);
-  testValue(1000000ULL);
-  testValue(9999999ULL);
-  testValue(10000000ULL);
-  testValue(99999999ULL);
-  testValue(100000000ULL);
-  testValue(999999999ULL);
-  testValue(1000000000ULL);
-  testValue(123456789ULL);
-  testValue(9999999999ULL);
-  testValue(10000000000ULL);
-  testValue(123456789012345678ULL);
-  testValue(10000000000000000000ULL);
-  testValue(std::numeric_limits<uint64_t>::max());
-
-  // Randomized tests across full 64-bit space
-  std::mt19937_64 gen(42);
-  for (size_t i = 0; i < 50000; ++i) {
-    testValue(gen());
+  for (const T& val : boundaryValues) {
+    testValue(val);
   }
+
+  for (size_t i = 0; i < iterations; ++i) {
+    testValue(static_cast<T>(gen()));
+  }
+}
+
+std::string_view formatUIntBranchlessView(uint64_t val, char* buf) {
+  return std::string_view(buf, formatUIntBranchless(val, buf) - buf);
+}
+
+std::string_view formatUInt32BranchlessView(uint32_t val, char* buf) {
+  return std::string_view(buf, formatUInt32Branchless(val, buf) - buf);
+}
+
+std::string_view formatIntBranchlessView(int64_t val, char* buf) {
+  return std::string_view(buf, formatIntBranchless(val, buf) - buf);
+}
+
+std::string_view formatInt32BranchlessView(int32_t val, char* buf) {
+  return std::string_view(buf, formatInt32Branchless(val, buf) - buf);
+}
+
+// _____________________________________________________________________________
+TEST(FastIntToStringTest, FormatUIntBranchless) {
+  std::mt19937_64 gen(42);
+  runBranchlessFormatTest<uint64_t>(
+      "uint64", formatUIntBranchlessView,
+      {0ULL,          1ULL,         9ULL,         10ULL,
+       42ULL,         99ULL,        100ULL,       999ULL,
+       1000ULL,       9999ULL,      10000ULL,     99999ULL,
+       100000ULL,     999999ULL,    1000000ULL,   9999999ULL,
+       10000000ULL,   99999999ULL,  100000000ULL, 999999999ULL,
+       1000000000ULL, 123456789ULL, 9999999999ULL, 10000000000ULL,
+       123456789012345678ULL, 10000000000000000000ULL,
+       std::numeric_limits<uint64_t>::max()},
+      50000, gen);
 }
 
 // _____________________________________________________________________________
 TEST(FastIntToStringTest, FormatUInt32Branchless) {
-  char buf[64];
-
-  auto testValue = [&](uint32_t val) {
-    char* end = formatUInt32Branchless(val, buf);
-    std::string_view actual(buf, end - buf);
-    EXPECT_EQ(actual, std::to_string(val)) << "Failed on 32-bit value: " << val;
-  };
-
-  testValue(0U);
-  testValue(1U);
-  testValue(42U);
-  testValue(99U);
-  testValue(100U);
-  testValue(12345U);
-  testValue(123456789U);
-  testValue(std::numeric_limits<uint32_t>::max());
-
   std::mt19937 gen(1337);
-  for (size_t i = 0; i < 10000; ++i) {
-    testValue(gen());
-  }
+  runBranchlessFormatTest<uint32_t>(
+      "uint32", formatUInt32BranchlessView,
+      {0U, 1U, 42U, 99U, 100U, 12345U, 123456789U,
+       std::numeric_limits<uint32_t>::max()},
+      10000, gen);
 }
 
 // _____________________________________________________________________________
 TEST(FastIntToStringTest, FormatIntBranchless) {
-  char buf[64];
-
-  auto testValue = [&](int64_t val) {
-    char* end = formatIntBranchless(val, buf);
-    std::string_view actual(buf, end - buf);
-    EXPECT_EQ(actual, std::to_string(val)) << "Failed on int64 value: " << val;
-  };
-
-  testValue(0);
-  testValue(1);
-  testValue(-1);
-  testValue(42);
-  testValue(-42);
-  testValue(100);
-  testValue(-100);
-  testValue(123456789);
-  testValue(-123456789);
-  testValue(std::numeric_limits<int64_t>::max());
-  testValue(std::numeric_limits<int64_t>::min());
-
   std::mt19937_64 gen(999);
-  for (size_t i = 0; i < 50000; ++i) {
-    testValue(static_cast<int64_t>(gen()));
-  }
+  runBranchlessFormatTest<int64_t>(
+      "int64", formatIntBranchlessView,
+      {0, 1, -1, 42, -42, 100, -100, 123456789, -123456789,
+       std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::min()},
+      50000, gen);
 }
 
 // _____________________________________________________________________________
 TEST(FastIntToStringTest, FormatInt32Branchless) {
-  char buf[64];
-
-  auto testValue = [&](int32_t val) {
-    char* end = formatInt32Branchless(val, buf);
-    std::string_view actual(buf, end - buf);
-    EXPECT_EQ(actual, std::to_string(val)) << "Failed on int32 value: " << val;
-  };
-
-  testValue(0);
-  testValue(1);
-  testValue(-1);
-  testValue(42);
-  testValue(-42);
-  testValue(100);
-  testValue(-100);
-  testValue(std::numeric_limits<int32_t>::max());
-  testValue(std::numeric_limits<int32_t>::min());
-
   std::mt19937 gen(2026);
-  for (size_t i = 0; i < 10000; ++i) {
-    testValue(static_cast<int32_t>(gen()));
-  }
+  runBranchlessFormatTest<int32_t>(
+      "int32", formatInt32BranchlessView,
+      {0, 1, -1, 42, -42, 100, -100,
+       std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min()},
+      10000, gen);
 }
 
 // _____________________________________________________________________________
