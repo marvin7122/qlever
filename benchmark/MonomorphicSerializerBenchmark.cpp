@@ -236,8 +236,7 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   std::string_view predArea = data.stringPool_[3];
 
   for (size_t i = 0; i < numRows; ++i) {
-    // Subjects
-    data.stringPool_.push_back("<http://example.org/entity/Q" + std::to_string(i) + ">");
+        data.stringPool_.push_back("<http://example.org/entity/Q" + std::to_string(i) + ">");
     std::string_view subj = data.stringPool_.back();
 
     // Literals
