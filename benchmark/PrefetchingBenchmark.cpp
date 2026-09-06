@@ -100,13 +100,7 @@ class HardwarePerformanceMonitor {
     pe.type = type;
     pe.size = sizeof(struct perf_event_attr);
     pe.config = config;
-    pe.disabled = 1;
-    pe.exclude_kernel = 1;
-    pe.exclude_hv = 1;
-
-    long fd = syscall(__NR_perf_event_open, &pe, 0, -1, groupFd, 0);
-    return static_cast<int>(fd);
-  }
+    
 
   static uint64_t readCounter(int fd) {
     if (fd < 0) return 0;
