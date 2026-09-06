@@ -389,7 +389,7 @@ template<EscapeFormat Format>
 #endif
 
     // Remaining tail bytes (0 to 31)
-    while (len > 0) {
+        while (len > 0) {
       if (detail::isEscapeChar<Format>(*ptr)) {
         dest = detail::emitEscape<Format>(*ptr, dest);
       } else {
