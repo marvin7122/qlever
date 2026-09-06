@@ -66,13 +66,7 @@ inline char* formatInteger(ValueId id, std::string_view, char* out,
 // Fast branchless formatter for double values.
 inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view prefix,
-                          std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 32, id.getDouble());
-  out = ptr;
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
+                          
   return out;
 }
 
