@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <memory>
+
 #include <numeric>
 #include <optional>
 #include <string>
