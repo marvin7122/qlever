@@ -76,9 +76,7 @@ class PerfCounterMonitor {
 #endif
 
  
-    isAvailable_ = (fdCycles_ >= 0 && fdInstructions_ >= 0 && fdBranches_ >= 0 && fdBranchMisses_ >= 0);
-#endif
-  }
+
 
     ~PerfCounterMonitor() noexcept {
 #ifdef __linux__
