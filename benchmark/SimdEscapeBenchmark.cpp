@@ -299,7 +299,7 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
         m.metadata().addKeyValuePair("escapes-found", totalEscapesFound);
       }
 
-      // SIMD Vector Scan (TSV)
+      // Benchmark SIMD vector scan for `TSV` format
       {
         size_t totalEscapesFound = 0;
         auto start = std::chrono::high_resolution_clock::now();
