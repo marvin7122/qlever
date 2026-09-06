@@ -109,7 +109,11 @@ CPP_template(typename UnderlyingVocabulary,
     
   // decompress each word with the decoder of its block.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    AD_CONTRACT_CHECK(!indices.empty());
+    if (indices.empty()) {
+      return makePmrVocabBatchLookupResult(
+          std::make_unique<ql::pmr::monotonic_buffer_resource>(),
+          std::vector<std::string_view>{});
+    }
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
 
