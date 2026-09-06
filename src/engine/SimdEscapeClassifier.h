@@ -83,6 +83,7 @@ class ChunkEscapeMask16 {
   [[nodiscard]] constexpr bool isAllClean() const noexcept { return mask_ == 0; }
   [[nodiscard]] constexpr uint16_t rawMask() const noexcept { return mask_; }
 
+  // Return the index of the first escape character, or 16 if none.
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
     return mask_ == 0 ? 16u : static_cast<uint32_t>(std::countr_zero(mask_));
   }
