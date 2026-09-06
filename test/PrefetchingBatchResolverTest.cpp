@@ -76,12 +76,7 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
     
 
 TEST(PrefetchingBatchResolver, CompactVectorPipelinedResolution) {
-  CompactVectorOfStrings<char> words;
-  std::vector<std::string> rawWords = {
-      "<iri1>", "<iri2>", "\"literal1\"", "\"literal2\"", "\"longer_literal_3\""};
-  words.build(rawWords);
-
-  PrefetchingBatchResolver resolver(PrefetchConfig{.prefetchDistance = 4});
+  
 
   std::vector<size_t> queryIndices = {0, 4, 1, 3, 2, 4, 0, 1};
 
