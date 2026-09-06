@@ -130,7 +130,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
   return std::string_view::npos;
 }
 
-// Baseline scalar Turtle literal escaping using absl::StrReplaceAll.
+// Escape Turtle literals using `absl::StrReplaceAll`.
 std::string scalarEscapeTurtleLiteral(std::string_view normLiteral) {
   if (normLiteral.size() < 2 || normLiteral.front() != '"') {
     return std::string{normLiteral};
