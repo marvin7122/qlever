@@ -280,18 +280,37 @@ class BranchlessTypeDispatcher {
     char* curr = out;
     const size_t numTerms = ids.size();
     
+  /// @brief Returns the default lookup table for N-Triples format.
+  /// @details Produces full RDF terms with explicit datatype IRIs.
+  ///   - IRIs: `<iri>`
+  ///   - Literals: `"value"^^<xsd:datatype>`
+  ///   - Blank nodes: `_:bn<index>`
+  /// @return Constexpr reference to the 16-entry N-Triples format lookup table.
   [[nodiscard]] static constexpr const LookupTable& defaultLut() noexcept {
-    // Return constexpr reference to default N-Triples format lookup table.
     return kDefaultTypeFormatLut;
   }
 
+  /// @brief Returns the lookup table for compact Turtle format.
+  /// @details Produces abbreviated terms where possible:
+  ///   - IRIs: `<iri>`
+  ///   - Plain literals: `"value"` (no datatype)
+  ///   - Typed literals (xsd:boolean, xsd:integer, xsd:double, xsd:dateTime, geo:wktLiteral):
+  ///     `"value"^^<datatype>`
+  ///   - Blank nodes: `_:bn<index>`
+  /// @return Constexpr reference to the 16-entry Turtle format lookup table.
   [[nodiscard]] static constexpr const LookupTable& turtleLookupTable() noexcept {
-    // Return constexpr reference to Turtle compact format lookup table.
     return kTurtleTypeFormatLut;
   }
 
+  /// @brief Returns the lookup table for raw vocabulary format.
+  /// @details Used when terms already contain their delimiters in the vocabulary store.
+  ///   No additional delimiters or datatype IRIs are added by the formatters.
+  ///   - IRIs/LocalVocab/EncodedVal: raw term (expected to include `<...>`)
+  ///   - TextRecordIndex/WordVocabIndex: raw term (expected to include `"..."`)
+  ///   - Bool/Int/Double/Date/GeoPoint: serialized from ValueId (no quotes/datatypes)
+  ///   - BlankNodeIndex: `_:bn<index>`
+  /// @return Constexpr reference to the 16-entry raw vocabulary format lookup table.
   [[nodiscard]] static constexpr const LookupTable& rawVocabLut() noexcept {
-    // Return constexpr reference to raw vocabulary format lookup table (no added delimiters).
     return kRawVocabTypeFormatLut;
   }
 };
