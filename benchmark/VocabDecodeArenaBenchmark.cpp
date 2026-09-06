@@ -178,6 +178,7 @@ DecodeStats runLookupBatch(const Vocab& vocab, ql::span<const size_t> indices) {
   AD_CORRECTNESS_CHECK(result != nullptr);
   for (const auto& v : *result) {
     s.bytesUsed += v.size();
+    s.bytesBound += v.size();
     s.checksum = mixView(s.checksum, v);
   }
   volatile uint64_t keep = s.checksum;
