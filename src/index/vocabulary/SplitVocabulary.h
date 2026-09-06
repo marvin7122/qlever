@@ -132,7 +132,7 @@ class SplitVocabulary {
              },
              underlying_[Is])} |
          ql::views::transform([](const IndexAndWord& indexAndWord) {
-           return IndexAndWord{addMarker(indexAndWord.index_, Is),
+           return IndexAndWord{addMarker(indexAndWord.index_, static_cast<uint8_t>(Is)),
                                indexAndWord.word_};
          }))...);
   }
