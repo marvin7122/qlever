@@ -480,7 +480,7 @@ class FastExportStreamFormatter
     flush();
     ExportStreamSummary summary{totalTriples_, totalBytesWritten_,
                                 chunksEmitted_};
-    // Invalidate buffer
+        // Invalidate buffer.
     bufferPtr_ = nullptr;
     bufferCapacity_ = 0;
     writePos_ = 0;
