@@ -58,9 +58,7 @@ TEST(BranchlessTypeDispatcherTest, FormatDouble) {
   char* end = BranchlessTypeDispatcher::dispatchTermFormat(
       id, "", buffer.data(), BranchlessTypeDispatcher::defaultLut());
   std::string_view result(buffer.data(), end - buffer.data());
-  EXPECT_TRUE(result.starts_with("\"3.14159"));
-  EXPECT_TRUE(
-      result.ends_with("\"^^<http://www.w3.org/2001/XMLSchema#double>"));
+  EXPECT_EQ(result, "\"3.14159\"^^<http://www.w3.org/2001/XMLSchema#double>");
 }
 
 TEST(BranchlessTypeDispatcherTest, FormatBoolean) {
