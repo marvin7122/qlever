@@ -55,7 +55,7 @@ inline constexpr size_t kDirectIoAlignment = 4096;
 // _____________________________________________________________________________
 // Check whether a pointer or size is 4KB page/block aligned.
 [[nodiscard]] constexpr bool isBlockAligned(uint64_t val) noexcept {
-  return (val % kDirectIoBlockSize) == 0;
+  return (val & (kDirectIoBlockSize - 1U)) == 0;
 }
 
 
