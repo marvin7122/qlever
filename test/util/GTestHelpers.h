@@ -326,17 +326,7 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 // Sanitizes the given raw gtest name by replacing every '/' with '_' (parameterized tests embed '/' in their names).
 std::string sanitizeGtestName(const std::string& name);
 
-inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
-  const auto* testInfo =
-      ::testing::UnitTest::GetInstance()->current_test_info();
-  if (assertInGtestEnvironment) {
-    AD_CORRECTNESS_CHECK(testInfo != nullptr);
-  }
-  return testInfo == nullptr
-             ? ""
-             : sanitizeGtestName(absl::StrCat(testInfo->test_suite_name(), "_",
-                                               testInfo->name()));
-}
+std::string gtestCurrentTestName(bool assertInGtestEnvironment = true);
 
 // _____________________________________________________________________________
 // Return the largest number of characters that a `ql::pmr::string` is
