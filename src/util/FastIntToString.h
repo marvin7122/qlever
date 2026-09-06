@@ -258,7 +258,7 @@ inline char* formatQid(uint64_t id, char* out) noexcept {
 }
 
 // _____________________________________________________________________________
-// Single-pass RDF Wikidata Property PID formatting ("http://www.wikidata.org/prop/direct/P" + id).
+
 inline char* formatPid(uint64_t id, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
   std::memcpy(out, WIKIDATA_PROPERTY_PREFIX.data(), WIKIDATA_PROPERTY_PREFIX.size());
