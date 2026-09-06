@@ -89,7 +89,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         m.metadata().addKeyValuePair("latency-ns-per-int", nsPerNum);
       }
 
-      // 2. std::to_chars (stack buffer, standard library fast path)
+      // 2. std::to_chars (stack buffer, zero-allocation)
       {
         size_t totalBytes = 0;
         char buffer[32];
