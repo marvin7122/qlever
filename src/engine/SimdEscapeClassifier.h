@@ -364,13 +364,7 @@ template<EscapeFormat Format>
         // Zero-escape fast path: 32 raw bytes copied with single memcpy.
         // Precondition: dest has at least 32 bytes available (caller allocates 2x input size for TSV/Turtle).
         std::memcpy(dest, ptr, 32);
-        dest += 32;
-        ptr += 32;
-        len -= 32;
-        continue;
-      }
-
-      // Escape characters present: process clean sub-slices and escapes
+        
       uint32_t current = 0;
       while (mask != 0) {
         uint32_t next = static_cast<uint32_t>(std::countr_zero(mask));
