@@ -257,13 +257,7 @@ struct BenchmarkMetric {
 
     auto endTime = std::chrono::steady_clock::now();
     return calculateMetric("4. io_uring O_DIRECT (Unpinned)", startTime,
-                           endTime, totalBytes, numBatches);
-  }
-
-  // 5. io_uring with Registered Files (IORING_REGISTER_FILES) + Unpinned Buffers
-  BenchmarkMetric runIoUringRegisteredFiles(bool randomAccess = false) {
-    DirectIoFile file(filePath_, /*useDirectIo=*/true);
-    AD_CONTRACT_CHECK(file.isOpen());
+                           
 
     RegisteredReaderConfig config;
     config.ringEntries = 512;
