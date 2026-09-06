@@ -133,7 +133,7 @@ std::string scalarEscapeTurtleLiteral(std::string_view normLiteral) {
   return result;
 }
 
-class SimdEscapeBenchmark : public BenchmarkInterface {
+class LiteralEscapeBenchmark : public BenchmarkInterface {
  private:
   LiteralDataset dataset_;
 
