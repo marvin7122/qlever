@@ -39,8 +39,7 @@ std::vector<fs::path> filesWithBaseNameAndSuffix(const fs::path& onDiskBase,
   // Materialize first: piping a prvalue `vector` into range-v3 views is deleted
   // (`!viewable_range`) on the cluster toolchains (GCC 11+/range-v3).
   auto entries = ::ranges::to_vector(ql::directoryRange(directory));
-  return entries |
-         v::filter(ql::isRegularFile) |
+  return entries | v::filter(ql::isRegularFile) |
          // Return the paths in the same form as `onDiskBase` (directory part of
          // `onDiskBase` plus the file name; an empty `parent` yields the bare
          // file name), so that they textually start with `onDiskBase`. Callers
