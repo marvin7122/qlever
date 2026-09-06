@@ -37,7 +37,6 @@ struct IndexPartition {
 };
 
 // _____________________________________________________________________________
-// _____________________________________________________________________________
 static IndexPartition partitionIndicesBySource(
     ql::span<const size_t> indices,
     const VocabularyInMemoryBinSearch& internalVocab) {
