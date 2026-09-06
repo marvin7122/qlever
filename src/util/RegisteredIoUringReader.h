@@ -505,13 +505,7 @@ class RegisteredIoUringReader
         while (numInFlightRequests_ >= config_.ringEntries) {
           drainOneCqe();
         }
-      }
-
-      io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-      AD_CORRECTNESS_CHECK(sqe != nullptr);
-
-      int targetFd = static_cast<int>(req.fileIndex);
-      if (filesRegistered_ && config_.useRegisteredFiles) {
+      
         AD_CONTRACT_CHECK(req.fileIndex < registeredFds_.size());
       } else if (filesRegistered_) {
         AD_CONTRACT_CHECK(req.fileIndex < registeredFds_.size());
