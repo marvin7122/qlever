@@ -13,7 +13,6 @@
 
 #include <array>
 #include <cmath>
-#include <concepts>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -42,8 +41,16 @@ enum class RowFormat { Csv, Tsv, Turtle, NTriples };
 
 namespace detail {
 
+// Whether `Value` converts to `std::string_view`. Trait form (not `concept`)
+// because the GCC 8 CI job compiles this header as C++17.
+template <typename Value, typename = void>
+struct IsStringLike : std::false_type {};
 template <typename Value>
-concept StringLike = requires(const Value& value) { std::string_view{value}; };
+struct IsStringLike<Value, std::void_t<decltype(std::string_view{
+                               std::declval<const Value&>()})>>
+    : std::true_type {};
+template <typename Value>
+inline constexpr bool IsStringLike_v = IsStringLike<Value>::value;
 
 // Render a double exactly like Legacy CSV
 // (`ql::exportIds::idToStringAndTypeForEncodedValue` in
@@ -75,7 +82,8 @@ concept StringLike = requires(const Value& value) { std::string_view{value}; };
 
 template <ColumnType Type, RowFormat Format>
 struct CellWriter {
-  template <typename Writer, StringLike Value>
+  template <typename Writer, typename Value,
+            std::enable_if_t<IsStringLike_v<Value>, int> = 0>
   static void write(Writer& writer, const Value& value) {
     const std::string_view string{value};
     // Contract: for CSV/TSV the caller passes bare vocabulary content (Legacy
@@ -114,7 +122,8 @@ struct CellWriter {
     }
   }
 
-  template <typename Writer, std::integral Value>
+  template <typename Writer, typename Value,
+            std::enable_if_t<std::is_integral_v<Value>, int> = 0>
   static void write(Writer& writer, Value value) {
     static_assert(Type == ColumnType::Integer,
                   "This column type requires a string or floating argument");
@@ -131,7 +140,8 @@ struct CellWriter {
     writer.writeRaw(id.getBoolLiteral());
   }
 
-  template <typename Writer, std::floating_point Value>
+  template <typename Writer, typename Value,
+            std::enable_if_t<std::is_floating_point_v<Value>, int> = 0>
   static void write(Writer& writer, Value value) {
     static_assert(Type == ColumnType::Double,
                   "Only a Double column accepts floating arguments");
