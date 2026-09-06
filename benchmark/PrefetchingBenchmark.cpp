@@ -185,7 +185,8 @@ class HardwarePerformanceMonitor {
     startTime_ = std::chrono::high_resolution_clock::now();
   }
 
-  [[nodiscard]] CounterSample stop() {
+     // ___________________________________________________________________________
+   [[nodiscard]] CounterSample stop() {
     stopTime_ = std::chrono::high_resolution_clock::now();
     CounterSample sample;
     sample.durationSeconds =
