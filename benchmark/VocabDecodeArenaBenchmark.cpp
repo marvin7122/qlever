@@ -176,7 +176,7 @@ DecodeStats runLookupBatch(const Vocab& vocab, ql::span<const size_t> indices) {
   if (indices.empty()) return DecodeStats{};
   auto result = vocab.lookupBatch(indices);
   AD_CORRECTNESS_CHECK(result != nullptr);
-  for (std::string_view v : *result) {
+  for (const auto& v : *result) {
     s.bytesUsed += v.size();
     s.checksum = mixView(s.checksum, v);
   }
