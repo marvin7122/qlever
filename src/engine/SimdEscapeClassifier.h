@@ -428,14 +428,14 @@ template<EscapeFormat Format>
     AD_CONTRACT_CHECK(posLastQuote != std::string_view::npos);
     AD_CONTRACT_CHECK(posLastQuote >= posSecondQuote);
 
+        std::string_view normalizedContent =
+        normLiteral.substr(1, posLastQuote - 1);
+
     // If there are only two quotes and no internal special characters, pass through
     if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
+        !hasEscapes<EscapeFormat::Turtle>(normalizedContent)) [[likely]] {
       return std::string{normLiteral};
     }
-
-    std::string_view normalizedContent =
-        normLiteral.substr(1, posLastQuote - 1);
     std::string result;
     result.resize(normLiteral.size() * 2 + 2);
     char* out = result.data();
