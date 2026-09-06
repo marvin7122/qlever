@@ -443,7 +443,7 @@ class MonomorphicRowSerializer {
           if constexpr (Is > 0) {
             detail::writeColumnDelimiter<Format>(writer);
           }
-          detail::MonomorphicCellWriter<ColumnTypes, Format>::write(writer,
+          detail::MonomorphicCellWriter<getColumnType<Is>(), Format>::write(writer,
                                                                    std::get<Is>(tuple));
         }(),
         ...);
