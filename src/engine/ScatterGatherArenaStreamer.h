@@ -148,12 +148,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
   [[nodiscard]] ssize_t writeToFd(int fd) const {
     if (empty()) {
       return 0;
-    }
-    AD_CONTRACT_CHECK(fd >= 0);
-
-    std::vector<struct iovec> remainingIov = iovecs_;
-    size_t offset = 0;
-    ssize_t totalWritten = 0;
+    
 
     while (offset < remainingIov.size()) {
       int count = static_cast<int>(
