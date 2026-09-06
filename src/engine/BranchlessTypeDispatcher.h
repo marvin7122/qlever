@@ -318,9 +318,9 @@ class BranchlessTypeDispatcher {
   }
 
   // ___________________________________________________________________________
-  // Batch format a contiguous slice of terms branchlessly.
+    // Batch format a contiguous slice of terms branchlessly.
   // Preconditions: `ids` and `rawTerms` must have identical lengths, and `out`
-  // must be non-null.
+  // must be non-null unless `ids` is empty.
   // Return: Total number of bytes written.
   static inline size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
