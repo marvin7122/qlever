@@ -200,13 +200,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
   }
 };
 
-// _____________________________________________________________________________
-// Deep Module: ScatterGatherChunkStreamer
-//
-// Assembles export chunks as a combination of fixed-size formatting headers and
-// direct zero-copy `ql::span<const char>` pointers to existing arena memory pages.
-// Automatically coalesces adjacent formatting tokens into unified header iovecs,
-// manages chunk limits (bytes & max iovecs), and emits `ScatterGatherChunk`s.
+
 class ScatterGatherChunkStreamer
     : public ad_utility::WithInvariants<ScatterGatherChunkStreamer> {
  public:
