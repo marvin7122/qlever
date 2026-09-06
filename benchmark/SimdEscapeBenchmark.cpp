@@ -350,7 +350,7 @@ class LiteralEscapeBenchmark : public BenchmarkInterface {
       {
         size_t totalEscapesFound = 0;
         auto start = std::chrono::high_resolution_clock::now();
-        auto& m = group.addMeasurement("SimdEscapeClassifier::findFirstEscape (TSV AVX2)", [&]() {
+                auto& m = group.addMeasurement("SimdEscapeClassifier::hasEscapes (TSV AVX2)", [&]() {
           size_t count = 0;
           for (const auto& lit : dataset_.literals) {
             if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Tsv>(lit)) {
