@@ -138,6 +138,8 @@ add_compile_definitions(QLEVER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
+
+addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
@@ -169,11 +171,13 @@ addLinkAndDiscoverTest(ValueIdComparatorsTest qlever_util)
 
 addLinkAndDiscoverTest(SparqlParserTest sparqlParser engine sparqlExpressions)
 
-addLinkAndDiscoverTest(VariableCounterTest sparqlParser engine)
-
 addLinkAndDiscoverTest(StringUtilsTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
+
+addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
+
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
 
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
@@ -183,6 +187,8 @@ addLinkAndDiscoverTestSerialNoLibs(ConcurrentCacheTest)
 
 # This test also seems to use the same filenames and should be fixed.
 addLinkAndDiscoverTest(FileTest)
+
+addLinkAndDiscoverTest(ReadOnlyMmapTest)
 
 addLinkAndDiscoverTest(Simple8bTest)
 
@@ -248,6 +254,10 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+endif ()
+
 addLinkAndDiscoverTest(IdTableTest qlever_util)
 
 addLinkAndDiscoverTest(TransitivePathTest engine)
@@ -307,6 +317,8 @@ addLinkAndDiscoverTest(SparqlExpressionTest sparqlExpressions index engine)
 addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions index engine)
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
+
+addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
 
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
@@ -409,6 +421,8 @@ addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpr
 
 addLinkAndDiscoverTest(ExceptionTest)
 
+addLinkAndDiscoverTestNoLibs(InvariantsTest)
+
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
 addLinkAndDiscoverTest(NowDatetimeExpressionTest index)
@@ -464,6 +478,8 @@ addLinkAndDiscoverTest(ComparisonWithNanTest)
 addLinkAndDiscoverTestNoLibs(ThreadSafeQueueTest)
 
 addLinkAndDiscoverTest(IdTableHelpersTest)
+
+# GTestHelpersTest is registered exactly once above.
 
 addLinkAndDiscoverTest(GeneratorTest)
 
@@ -524,6 +540,8 @@ addLinkAndDiscoverTest(GeneratorsTest)
 addLinkAndDiscoverTest(FilterTest engine)
 
 addLinkAndDiscoverTest(ResultTest engine)
+
+addLinkAndDiscoverTest(VectorStreamSourceTest engine)
 
 addLinkAndDiscoverTest(BlankNodeManagerTest)
 
@@ -600,3 +618,29 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+
+# Header-only util under export_v2; do not pull testUtil/index (cluster GCC
+# range-v3 needs -fpermissive for those translation units).
+addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
+
+addLinkAndDiscoverTest(AsyncChunkPipelineTest)
+if (NOT SINGLE_TEST_BINARY)
+    target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+else ()
+    target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+endif()
+
+addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+
+# Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
+# range-v3 fails in IndexImpl / CompressedExternalIdTable).
+addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
+if (NOT SINGLE_TEST_BINARY)
+    target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+endif()
