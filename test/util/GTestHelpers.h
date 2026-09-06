@@ -308,8 +308,13 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
   for (const auto& item : arg) {
     auto val = func(item);
     if (std::find(seen.begin(), seen.end(), val) != seen.end()) {
-      *result_listener << "duplicate value found: "
-                       << ::testing::PrintToString(val);
+      try {
+        *result_listener << "duplicate value found: "
+                         << ::testing::PrintToString(val);
+      } catch (...) {
+        *result_listener << "duplicate value found: <unprintable type> "
+                         << ::testing::internal::GetTypeName(typeid(val));
+      }
       return false;
     }
     seen.push_back(std::move(val));
