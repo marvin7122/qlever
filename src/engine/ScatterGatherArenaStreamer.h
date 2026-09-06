@@ -68,7 +68,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
   };
 
  private:
-  std::vector<struct iovec> iovecs_;
+    std::vector<struct iovec> iovecs_; // Descriptors for external arena memory pages
   std::vector<char> headerBuffer_;
   size_t totalBytes_ = 0;
   size_t numTriples_ = 0;
