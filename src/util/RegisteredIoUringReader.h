@@ -374,6 +374,7 @@ class RegisteredIoUringReader
   explicit RegisteredIoUringReader(
       RegisteredReaderConfig config = RegisteredReaderConfig{})
       : config_{config} {
+    AD_CORRECTNESS_CHECK(!config_.useRegisteredBuffers || config_.useDirectIo);
     initRing();
   }
 
