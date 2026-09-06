@@ -33,6 +33,7 @@
  * @post str.size() == newSize where newSize is the value returned by op, guaranteed <= count.
  */
 
+// ____________
 #include "util/Exception.h"
 
 namespace ql {
