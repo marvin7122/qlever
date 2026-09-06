@@ -247,7 +247,7 @@ class AsyncChunkPipeline
   }
 
   // ___________________________________________________________________________
-  // High-Level Adapter: Wrap an existing synchronous `cppcoro::generator`
+  // High-Level Adapter:  with asynchronous double-buffering.`cppcoro::generator`
   // with asynchronous double-buffering.
   //
   // Spawns a dedicated background worker to evaluate and buffer chunks ahead
@@ -305,7 +305,7 @@ class AsyncChunkPipeline
   // High-Level Adapter: Stream chunks from a producer callable into a
   // double-buffered generator.
   //
-  // The callable receives `ChunkSink<ChunkType>& sink` and calls `sink.push()`.
+  //  and calls `ChunkSink<ChunkType>& sink` and calls `sink.push()`.
   template <typename ProducerFunc>
   static cppcoro::generator<ChunkType> pipelineStream(
       ProducerFunc producerFunc, size_t capacity = 2) {
