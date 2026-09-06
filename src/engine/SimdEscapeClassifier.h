@@ -163,12 +163,7 @@ inline char* emitEscape(char c, char* dest) noexcept {
       return dest + 6;
     } else if (c == '\'') {
       std::memcpy(dest, "&apos;", 6);
-      return dest + 6;
-    }
-    *dest = c;
-    return dest + 1;
-  }
-}
+      
 
 #if defined(QLEVER_SIMD_X86)
 
