@@ -42,13 +42,7 @@ using namespace ql::engine::prefetch;
 class HardwarePerformanceMonitor {
  public:
   struct CounterSample {
-    uint64_t cpuCycles{0};
-    uint64_t instructions{0};
-    uint64_t l1dReadAccesses{0};
-    uint64_t l1dReadMisses{0};
-    uint64_t llcReadAccesses{0};
-    uint64_t llcReadMisses{0};
-    uint64_t hwCacheMisses{0};
+    
     uint64_t hwCacheReferences{0};
     double durationSeconds{0.0};
 
