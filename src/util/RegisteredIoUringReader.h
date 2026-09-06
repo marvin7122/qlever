@@ -543,7 +543,7 @@ class RegisteredIoUringReader
       }
 
       const uint64_t reqId = nextReqId_++;
-      inFlightByReqId_[reqId] = InFlightMeta{batchId, req.numBytes};
+      inFlightByReqId_.emplace(reqId, InFlightMeta{batchId, req.numBytes});
       io_uring_sqe_set_data64(sqe, reqId);
       ++numInFlightRequests_;
     }
