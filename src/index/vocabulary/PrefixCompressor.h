@@ -130,7 +130,7 @@ class PrefixCompressor {
       std::memcpy(out.data(), prefix.data(), prefix.size());
       outputSize = prefix.size();
     }
-    AD_CORRECTNESS_CHECK(rest.size() <= out.size() - outputSize);
+    AD_CORRECTNESS_CHECK(outputSize + rest.size() <= out.size());
     std::memcpy(out.data() + outputSize, rest.data(), rest.size());
     return outputSize + rest.size();
   }
