@@ -27,7 +27,8 @@ namespace detail {
 
 
 // _____________________________________________________________________________
-// Provide a `DIGIT_PAIRS` lookup table for radix-100 decomposition.
+// Why: provides a precomputed lookup table of all 100 two-digit pairs ("00".."99")
+// for radix-100 decomposition, enabling branchless digit-pair formatting via memcpy.
 
     "50515253545556575859"
     "60616263646566676869"
