@@ -23,6 +23,7 @@
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/http/MediaTypes.h"
+#include "benchmark/infrastructure/Benchmark.h"
 
 // _____________________________________________________________________________
 // Memory allocation tracker for measuring exact heap allocation counts.

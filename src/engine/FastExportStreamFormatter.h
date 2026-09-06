@@ -118,7 +118,7 @@ template <const std::array<bool, 256>& Table>
 // and tabular rows directly into pre-allocated memory chunks.
 //
 // Invariant Law: Never constructs temporary std::string objects during
-// formatting. All escaping, URI quoting, and datatype suffixes are written
+// formatting. All escaping, IRI quoting, and datatype suffixes are written
 // directly into the active chunk buffer.
 class FastExportStreamFormatter
     : public ad_utility::WithInvariants<FastExportStreamFormatter> {
