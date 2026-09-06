@@ -314,13 +314,7 @@ template<EscapeFormat Format>
         
     
   [[nodiscard]] static inline bool hasEscapes(std::string_view text) noexcept {
-    return findFirstEscape<Format>(text) != std::string_view::npos;
-  }
-
-  // ___________________________________________________________________________
-  // Scan `text` and populate chunk masks into a caller-provided span.
-  // Returns the number of chunk masks produced.
-  template <EscapeFormat Format = EscapeFormat::Turtle>
+    
   static inline size_t scanForEscapes(std::string_view text,
                                       ql::span<uint32_t> outMasks) noexcept {
     const char* ptr = text.data();
