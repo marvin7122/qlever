@@ -274,13 +274,7 @@ template<EscapeFormat Format>
   // Classify a 16-byte unaligned memory slice and return a 16-bit bitmask.
   template <EscapeFormat Format = EscapeFormat::Turtle>
   [[nodiscard]] static inline ChunkEscapeMask16 scanChunk16(
-      const char* data) noexcept {
-#if defined(QLEVER_SIMD_X86)
-    return ChunkEscapeMask16{detail::scanChunk16Sse2<Format>(data)};
-#else
-    return ChunkEscapeMask16{detail::scanChunk16Scalar<Format>(data)};
-#endif
-  }
+      
 
   // ___________________________________________________________________________
   // Check whether a single character requires escaping in the specified format.
