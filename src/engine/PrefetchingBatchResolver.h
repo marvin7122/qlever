@@ -109,8 +109,7 @@ class PrefetchingBatchResolver {
   }
 
   // ___________________________________________________________________________
-  // Pipelined batch lookup loop issuing prefetch requests K rows ahead during
-  // `resolveVocabIndexIds`.
+    // Pipeline batch lookups, issuing prefetch requests K rows ahead.
   //
   // Resolves the `VocabIndex` IDs at `positions` in `ids`, prefetching
   // future ID structures and vocabulary memory lines K iterations ahead
