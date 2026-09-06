@@ -335,6 +335,7 @@ class DynamicRowSerializer {
         detail::MonomorphicCellWriter<ColumnType::String, Format>::write(writer, cell);
         break;
       case ColumnType::Undefined:
+        AD_CONTRACT_CHECK(Format == ExportFormat::Turtle || Format == ExportFormat::NTriples || Format == ExportFormat::Csv || Format == ExportFormat::Tsv, "ColumnType::Undefined requires a text-based export format");
         detail::MonomorphicCellWriter<ColumnType::Undefined, Format>::write(writer, cell);
         break;
     }
