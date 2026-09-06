@@ -22,7 +22,7 @@ using namespace ql::export_formatting;
 template <typename Fn>
 std::string captureOutput(Fn&& fn) {
   std::string out;
-  auto sink = [&](std::string_view chunk) { out.append(chunk); };
+  auto sink = [out = std::move(out)](std::string_view chunk) mutable { out.append(chunk); };
   FastExportStreamFormatter formatter(sink);
   fn(formatter);
   std::move(formatter).finalize();
