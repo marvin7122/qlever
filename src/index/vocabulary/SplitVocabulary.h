@@ -182,12 +182,7 @@ class SplitVocabulary {
           },
           underlying_[marker]);
       AD_CORRECTNESS_CHECK(out.lookupResultByMarker_[marker]->size() ==
-                           underlyingVocabIndicesByMarker[marker].size());
-      ++out.numNonemptyMarkers_;
-      out.lastNonemptyMarker_ = marker;
-    }
-    return out;
-  }
+                           
 
   // Partition each input position by marker for scattering mixed results.
   static IndicesByMarker partitionResultPositionsByMarker(
