@@ -259,12 +259,7 @@ template<EscapeFormat Format>
 
 }  // namespace detail
 
-// _____________________________________________________________________________
-// SimdEscapeClassifier: Deep module for high-bandwidth SIMD literal scanning
-// and branchless escape formatting.
-class SimdEscapeClassifier {
- public:
-  // ___________________________________________________________________________
+
   // Classify a 32-byte unaligned memory slice and return a 32-bit bitmask.
   template <EscapeFormat Format = EscapeFormat::Turtle>
   [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32(
