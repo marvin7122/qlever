@@ -32,6 +32,8 @@ constexpr size_t NUM_INTEGERS = 1'000'000;
 class FastNumberFormatterBenchmark : public BenchmarkInterface {
 
  public:
+  
+// _____________________________________________________________________________
   std::string name() const final {
     return "Fast Number and RDF Entity Formatter Micro-Benchmark";
   }
