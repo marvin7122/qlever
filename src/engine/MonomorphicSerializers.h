@@ -733,7 +733,7 @@ decltype(auto) dispatchMonomorphicSerializer(ql::span<const ColumnType> schema,
     default: {
       DynamicRowSerializer dynamicSerializer(
           std::vector<ColumnType>(schema.begin(), schema.end()));
-      return visitor(dynamicSerializer, std::forward<Args>(args)...);
+      return visitor(std::move(dynamicSerializer), std::forward<Args>(args)...);
     }
   }
 }
