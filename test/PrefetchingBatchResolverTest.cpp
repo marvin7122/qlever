@@ -21,7 +21,7 @@
 #include "engine/PrefetchingBatchResolver.h"
 
 #include "global/Id.h"
-#include "global/VocabIndex.h"
+
 #include "index/ExportIds.h"
 #include "index/Index.h"
 #include "index/LocalVocab.h"
