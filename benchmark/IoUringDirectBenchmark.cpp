@@ -96,12 +96,7 @@ class SimulatedVocabularyFile {
       bytesWritten += writeChunkSize;
     }
 
-    ::fdatasync(fd);
-    ::close(fd);
-    std::free(writeBuf);
-    isCreated_ = true;
-    std::cout << "Done (1,073,741,824 bytes written)." << std::endl;
-  }
+    
 
   ~SimulatedVocabularyFile() {
     if (isCreated_ && !filePath_.empty()) {
