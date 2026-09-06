@@ -130,7 +130,7 @@ class PerfCounterMonitor {
     fdInstructions_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
     fdBranches_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
     fdBranchMisses_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES);
-    isAvailable_ = (fdCycles_ >= 0 && fdInstructions_ >= 0 && fdBranches_ >= 0);
+    isAvailable_ = (fdCycles_ >= 0 && fdInstructions_ >= 0 && fdBranches_ >= 0 && fdBranchMisses_ >= 0);
 #endif
   }
 
