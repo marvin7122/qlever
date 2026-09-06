@@ -194,7 +194,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
 
-  // 8: GeoPoint
+  
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
