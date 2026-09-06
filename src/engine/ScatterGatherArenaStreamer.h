@@ -475,7 +475,7 @@ class ScatterGatherChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Write a complete triple using EvaluatedTermData references.
+    // Write a complete triple using `EvaluatedTermData` references.
   void writeTriple(ExportFormat format,
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
