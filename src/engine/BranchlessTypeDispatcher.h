@@ -250,7 +250,9 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   return lut;
 }
 
-// Builds the 16-entry lookup table for raw vocabulary entries (where terms already contain quotes/delimiters).
+// Builds the 16-entry lookup table for raw vocabulary entries.
+// For types using `formatTermWithDelimiters` (IRIs, literals), the raw term already contains delimiters.
+// For other types, the value is serialized from the ValueId.
 constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   std::array<TypeFormatDescriptor, 16> lut{};
   for (size_t i = 0; i < 16; ++i) {
