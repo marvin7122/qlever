@@ -58,10 +58,7 @@ inline constexpr size_t kDirectIoAlignment = 4096;
   return (val % kDirectIoBlockSize) == 0;
 }
 
-[[nodiscard]] inline bool isPointerAligned(
-    const void* ptr, size_t alignment = kDirectIoAlignment) noexcept {
-  return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0;
-}
+
 
 // _____________________________________________________________________________
 // Wrap an open file descriptor with Direct I/O (O_DIRECT) support.
