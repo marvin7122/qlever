@@ -89,6 +89,7 @@ class VectorizedPrefixTable {
     std::memcpy(e.data, prefix.data(), prefix.size());
     e.length = static_cast<uint8_t>(prefix.size());
     AD_CONTRACT_CHECK(e.length <= sizeof(e.data));
+    AD_CONTRACT_CHECK(e.length <= sizeof(e.data));
   }
 };
 
