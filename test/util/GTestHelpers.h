@@ -324,6 +324,7 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 // Pass false when the caller is also used by non-test code (e.g. benchmarks),
 // in which case an empty string is returned instead.
 // Sanitizes the given raw gtest name by replacing every '/' with '_' (parameterized tests embed '/' in their names).
+// Why: provides a test‑specific identifier that can be used in logs or filenames, ensuring slash characters are replaced to avoid path issues.
 std::string sanitizeGtestName(const std::string& name);
 
 std::string gtestCurrentTestName(bool assertInGtestEnvironment = true);
