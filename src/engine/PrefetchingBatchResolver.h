@@ -46,6 +46,8 @@ inline void prefetchVocabEntry(const void* address,
   if (address == nullptr) {
     return;
   }
+
+
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
     defined(_M_IX86)
   _mm_prefetch(static_cast<const char*>(address), _MM_HINT_T0);
