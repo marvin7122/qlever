@@ -19,7 +19,8 @@
 #include <string_view>
 #include <vector>
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
+    defined(_M_IX86)
 #include <immintrin.h>
 #define QLEVER_SIMD_X86 1
 #endif
@@ -58,7 +59,9 @@ class ChunkEscapeMask32 {
       : mask_{mask} {}
 
   [[nodiscard]] constexpr bool hasEscape() const noexcept { return mask_ != 0; }
-  [[nodiscard]] constexpr bool isAllClean() const noexcept { return mask_ == 0; }
+  [[nodiscard]] constexpr bool isAllClean() const noexcept {
+    return mask_ == 0;
+  }
   [[nodiscard]] constexpr uint32_t rawMask() const noexcept { return mask_; }
 
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
@@ -80,7 +83,9 @@ class ChunkEscapeMask16 {
       : mask_{mask} {}
 
   [[nodiscard]] constexpr bool hasEscape() const noexcept { return mask_ != 0; }
-  [[nodiscard]] constexpr bool isAllClean() const noexcept { return mask_ == 0; }
+  [[nodiscard]] constexpr bool isAllClean() const noexcept {
+    return mask_ == 0;
+  }
   [[nodiscard]] constexpr uint16_t rawMask() const noexcept { return mask_; }
 
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
@@ -154,7 +159,7 @@ inline char* emitEscape(char c, char* dest) noexcept {
     *dest = c;
     return dest + 1;
   } else if constexpr (Format == EscapeFormat::CsvQuote ||
-                        Format == EscapeFormat::CsvSpecial) {
+                       Format == EscapeFormat::CsvSpecial) {
     if (c == '"') {
       dest[0] = '"';
       dest[1] = '"';
@@ -225,8 +230,7 @@ QLEVER_AVX2_TARGET [[nodiscard]] inline uint32_t scanChunk32Avx2(
     __m256i m4 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('"'));
     __m256i m5 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\''));
     __m256i match = _mm256_or_si256(
-        _mm256_or_si256(_mm256_or_si256(m1, m2), _mm256_or_si256(m3, m4)),
-        m5);
+        _mm256_or_si256(_mm256_or_si256(m1, m2), _mm256_or_si256(m3, m4)), m5);
     return static_cast<uint32_t>(_mm256_movemask_epi8(match));
   }
 }
@@ -241,16 +245,14 @@ QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
     __m128i m2 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\\'));
     __m128i m3 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\n'));
     __m128i m4 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\r'));
-    __m128i match =
-        _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
+    __m128i match = _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
     return static_cast<uint16_t>(_mm_movemask_epi8(match));
   } else if constexpr (Format == EscapeFormat::Tsv) {
     __m128i m1 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\t'));
     __m128i m2 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\n'));
     __m128i m3 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\r'));
     __m128i m4 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\\'));
-    __m128i match =
-        _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
+    __m128i match = _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
     return static_cast<uint16_t>(_mm_movemask_epi8(match));
   } else if constexpr (Format == EscapeFormat::CsvQuote) {
     __m128i match = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('"'));
@@ -260,8 +262,7 @@ QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
     __m128i m2 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8(','));
     __m128i m3 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\n'));
     __m128i m4 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\r'));
-    __m128i match =
-        _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
+    __m128i match = _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
     return static_cast<uint16_t>(_mm_movemask_epi8(match));
   } else if constexpr (Format == EscapeFormat::Xml) {
     __m128i m1 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('&'));
@@ -426,14 +427,15 @@ class SimdEscapeClassifier {
       std::string_view text) {
     size_t numChunks = (text.size() + 31) / 32;
     std::vector<uint32_t> masks(numChunks);
-    scanForEscapes<Format>(text, ql::span<uint32_t>{masks.data(), masks.size()});
+    scanForEscapes<Format>(text,
+                           ql::span<uint32_t>{masks.data(), masks.size()});
     return masks;
   }
 
   // ___________________________________________________________________________
   // High-performance branchless copier and escape serializer.
-  // Fast path copies 32-byte chunks with zero per-character checks when mask is 0.
-  // Returns pointer past the last written byte in `dest`.
+  // Fast path copies 32-byte chunks with zero per-character checks when mask is
+  // 0. Returns pointer past the last written byte in `dest`.
   template <EscapeFormat Format>
   static inline char* copyAndEscape(std::string_view input,
                                     char* dest) noexcept {
@@ -444,7 +446,8 @@ class SimdEscapeClassifier {
     while (len >= 32) {
       uint32_t mask = scanChunk32<Format>(ptr).rawMask();
       if (mask == 0) {
-        // Zero-escape fast path: 32 raw bytes copied with single vector instruction
+        // Zero-escape fast path: 32 raw bytes copied with single vector
+        // instruction
         std::memcpy(dest, ptr, 32);
         dest += 32;
         ptr += 32;
@@ -489,7 +492,8 @@ class SimdEscapeClassifier {
 
   // ___________________________________________________________________________
   // Escape an RFC 4180 CSV field. If no special characters (", ,, \r, \n) are
-  // present, returns input directly. Otherwise quotes and doubles internal quotes.
+  // present, returns input directly. Otherwise quotes and doubles internal
+  // quotes.
   [[nodiscard]] static inline std::string escapeForCsv(std::string_view input) {
     if (!hasEscapes<EscapeFormat::CsvSpecial>(input)) [[likely]] {
       return std::string{input};
@@ -506,8 +510,8 @@ class SimdEscapeClassifier {
   }
 
   // ___________________________________________________________________________
-  // Escape a field for IANA-TSV. If no tabs or newlines are present, returns input
-  // directly. Otherwise replaces tabs with spaces and newlines with \n.
+  // Escape a field for IANA-TSV. If no tabs or newlines are present, returns
+  // input directly. Otherwise replaces tabs with spaces and newlines with \n.
   [[nodiscard]] static inline std::string escapeForTsv(std::string_view input) {
     if (!hasEscapes<EscapeFormat::Tsv>(input)) [[likely]] {
       return std::string{input};
@@ -529,7 +533,8 @@ class SimdEscapeClassifier {
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
 
-    // If there are only two quotes and no internal special characters, pass through
+    // If there are only two quotes and no internal special characters, pass
+    // through
     if (posSecondQuote == posLastQuote &&
         !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
       return std::string{normLiteral};

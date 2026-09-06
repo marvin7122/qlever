@@ -226,27 +226,32 @@ TEST(FastIntToStringTest, FormatQidAndPid) {
   // QID tests
   {
     char* end = formatQid(42ULL, buf);
-    EXPECT_EQ(std::string_view(buf, end - buf), "http://www.wikidata.org/entity/Q42");
+    EXPECT_EQ(std::string_view(buf, end - buf),
+              "http://www.wikidata.org/entity/Q42");
   }
   {
     char* end = formatQid(1234567ULL, buf);
-    EXPECT_EQ(std::string_view(buf, end - buf), "http://www.wikidata.org/entity/Q1234567");
+    EXPECT_EQ(std::string_view(buf, end - buf),
+              "http://www.wikidata.org/entity/Q1234567");
   }
   {
     char* end = formatQid(115858349ULL, buf);
-    EXPECT_EQ(std::string_view(buf, end - buf), "http://www.wikidata.org/entity/Q115858349");
+    EXPECT_EQ(std::string_view(buf, end - buf),
+              "http://www.wikidata.org/entity/Q115858349");
   }
 
   // PID tests
   {
     char* end = formatPid(31ULL, buf);
-    EXPECT_EQ(std::string_view(buf, end - buf), "http://www.wikidata.org/prop/direct/P31");
+    EXPECT_EQ(std::string_view(buf, end - buf),
+              "http://www.wikidata.org/prop/direct/P31");
   }
 
   // Custom prefix tests
   {
     char* end = formatPrefixedId("http://example.org/item/", 98765ULL, buf);
-    EXPECT_EQ(std::string_view(buf, end - buf), "http://example.org/item/98765");
+    EXPECT_EQ(std::string_view(buf, end - buf),
+              "http://example.org/item/98765");
   }
   {
     char* end = formatPrefixedInt("http://example.org/temp/-", 555LL, buf);

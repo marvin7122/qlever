@@ -28,7 +28,8 @@ using namespace ad_utility;
 
 constexpr size_t NUM_INTEGERS = 1'000'000;
 
-// Benchmark suite comparing std::to_string, std::to_chars, and formatIntBranchless
+// Benchmark suite comparing std::to_string, std::to_chars, and
+// formatIntBranchless
 class FastNumberFormatterBenchmark : public BenchmarkInterface {
  public:
   std::string name() const final {
@@ -61,9 +62,11 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
 
     // Benchmark Group 1: Sequential 64-bit Integer Formatting
     {
-      auto& group = results.addGroup("Sequential Integer Formatting (1..1,000,000)");
+      auto& group =
+          results.addGroup("Sequential Integer Formatting (1..1,000,000)");
 
-      // 1. std::to_string (baseline: dynamic allocation + standard division loop)
+      // 1. std::to_string (baseline: dynamic allocation + standard division
+      // loop)
       {
         size_t totalBytes = 0;
         auto start = std::chrono::high_resolution_clock::now();
@@ -79,9 +82,9 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);
@@ -97,7 +100,8 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto& m = group.addMeasurement("std::to_chars", [&]() {
           size_t bytes = 0;
           for (int64_t val : sequentialInts) {
-            auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), val);
+            auto [ptr, ec] =
+                std::to_chars(buffer, buffer + sizeof(buffer), val);
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
@@ -106,9 +110,9 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);
@@ -133,9 +137,9 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);
@@ -146,7 +150,8 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
 
     // Benchmark Group 2: Full 64-bit Random Integer Formatting
     {
-      auto& group = results.addGroup("Random 64-bit Integer Formatting (1,000,000 ints)");
+      auto& group =
+          results.addGroup("Random 64-bit Integer Formatting (1,000,000 ints)");
 
       // 1. std::to_string
       {
@@ -164,9 +169,9 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);
@@ -182,7 +187,8 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto& m = group.addMeasurement("std::to_chars (random 64-bit)", [&]() {
           size_t bytes = 0;
           for (int64_t val : randomInts) {
-            auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), val);
+            auto [ptr, ec] =
+                std::to_chars(buffer, buffer + sizeof(buffer), val);
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
@@ -191,9 +197,9 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);
@@ -206,21 +212,22 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         size_t totalBytes = 0;
         char buffer[32];
         auto start = std::chrono::high_resolution_clock::now();
-        auto& m = group.addMeasurement("formatIntBranchless (random 64-bit)", [&]() {
-          size_t bytes = 0;
-          for (int64_t val : randomInts) {
-            char* end = formatIntBranchless(val, buffer);
-            bytes += static_cast<size_t>(end - buffer);
-          }
-          totalBytes = bytes;
-          return bytes;
-        });
+        auto& m =
+            group.addMeasurement("formatIntBranchless (random 64-bit)", [&]() {
+              size_t bytes = 0;
+              for (int64_t val : randomInts) {
+                char* end = formatIntBranchless(val, buffer);
+                bytes += static_cast<size_t>(end - buffer);
+              }
+              totalBytes = bytes;
+              return bytes;
+            });
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);
@@ -229,29 +236,33 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       }
     }
 
-    // Benchmark Group 3: RDF Wikidata QID Formatting ("http://www.wikidata.org/entity/Q" + id)
+    // Benchmark Group 3: RDF Wikidata QID Formatting
+    // ("http://www.wikidata.org/entity/Q" + id)
     {
-      auto& group = results.addGroup("RDF Wikidata Entity QID Formatting (1,000,000 QIDs)");
+      auto& group = results.addGroup(
+          "RDF Wikidata Entity QID Formatting (1,000,000 QIDs)");
 
       // 1. std::string concatenation
       {
         size_t totalBytes = 0;
         auto start = std::chrono::high_resolution_clock::now();
-        auto& m = group.addMeasurement("std::string concat (prefix + to_string)", [&]() {
-          size_t bytes = 0;
-          for (uint64_t id : qids) {
-            std::string s = "http://www.wikidata.org/entity/Q" + std::to_string(id);
-            bytes += s.size();
-          }
-          totalBytes = bytes;
-          return bytes;
-        });
+        auto& m = group.addMeasurement(
+            "std::string concat (prefix + to_string)", [&]() {
+              size_t bytes = 0;
+              for (uint64_t id : qids) {
+                std::string s =
+                    "http://www.wikidata.org/entity/Q" + std::to_string(id);
+                bytes += s.size();
+              }
+              totalBytes = bytes;
+              return bytes;
+            });
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);
@@ -268,7 +279,8 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
           size_t bytes = 0;
           for (uint64_t id : qids) {
             std::memcpy(buffer, "http://www.wikidata.org/entity/Q", 31);
-            auto [ptr, ec] = std::to_chars(buffer + 31, buffer + sizeof(buffer), id);
+            auto [ptr, ec] =
+                std::to_chars(buffer + 31, buffer + sizeof(buffer), id);
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
@@ -277,9 +289,9 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);
@@ -292,21 +304,22 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         size_t totalBytes = 0;
         char buffer[64];
         auto start = std::chrono::high_resolution_clock::now();
-        auto& m = group.addMeasurement("formatQid (Single-pass SIMD/LUT)", [&]() {
-          size_t bytes = 0;
-          for (uint64_t id : qids) {
-            char* end = formatQid(id, buffer);
-            bytes += static_cast<size_t>(end - buffer);
-          }
-          totalBytes = bytes;
-          return bytes;
-        });
+        auto& m =
+            group.addMeasurement("formatQid (Single-pass SIMD/LUT)", [&]() {
+              size_t bytes = 0;
+              for (uint64_t id : qids) {
+                char* end = formatQid(id, buffer);
+                bytes += static_cast<size_t>(end - buffer);
+              }
+              totalBytes = bytes;
+              return bytes;
+            });
         auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::high_resolution_clock::now() - start)
                              .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
+        double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
+                                    (static_cast<double>(elapsedNs) / 1e9)) /
+                                   1e6;
         double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
         m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
         m.metadata().addKeyValuePair("total-bytes", totalBytes);

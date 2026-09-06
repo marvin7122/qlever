@@ -48,15 +48,15 @@ class HardwarePerfCounter {
     pe.disabled = 1;
     pe.exclude_kernel = 1;
     pe.exclude_hv = 1;
-    return static_cast<int>(
-        syscall(__NR_perf_event_open, &pe, 0, -1, -1, 0));
+    return static_cast<int>(syscall(__NR_perf_event_open, &pe, 0, -1, -1, 0));
   }
 #endif
 
  public:
   HardwarePerfCounter() {
 #if defined(__linux__)
-    branchFd_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
+    branchFd_ =
+        openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
     missFd_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES);
     isSupported_ = (branchFd_ >= 0 && missFd_ >= 0);
 #endif
@@ -109,7 +109,8 @@ class HardwarePerfCounter {
 };
 
 // _____________________________________________________________________________
-// Synthetic dataset representing 2,000,000 rows with 50% unbound OPTIONAL columns.
+// Synthetic dataset representing 2,000,000 rows with 50% unbound OPTIONAL
+// columns.
 struct OptionalColumnDataset {
   std::vector<ValueId> columnData_;
   std::vector<std::string> stringTable_;
@@ -122,12 +123,14 @@ struct OptionalColumnDataset {
     ds.stringTable_.reserve(1000);
 
     for (size_t i = 0; i < 1000; ++i) {
-      ds.stringTable_.push_back("http://example.org/opt_val_" + std::to_string(i));
+      ds.stringTable_.push_back("http://example.org/opt_val_" +
+                                std::to_string(i));
     }
 
     std::mt19937 gen(seed);
     std::bernoulli_distribution isUnboundDist(unboundFraction);
-    std::uniform_int_distribution<size_t> strDist(0, ds.stringTable_.size() - 1);
+    std::uniform_int_distribution<size_t> strDist(0,
+                                                  ds.stringTable_.size() - 1);
 
     // Generate in blocks representing realistic SPARQL OPTIONAL matches
     for (size_t i = 0; i < numRows; ++i) {
@@ -143,7 +146,8 @@ struct OptionalColumnDataset {
 };
 
 // _____________________________________________________________________________
-// Baseline 1: Traditional cell-by-cell isUndefined() checking with scalar branching.
+// Baseline 1: Traditional cell-by-cell isUndefined() checking with scalar
+// branching.
 struct CellByCellScalarExporter {
   static char* exportCsv(ql::span<const ValueId> column, char* out) noexcept {
     for (const auto& id : column) {
@@ -174,7 +178,8 @@ struct SimdValidityBitmaskExporter {
       ValidityBitmask64 mask = SimdValidityScanner::scanBatch64(batchPtr);
 
       if (mask.allUnbound()) [[likely]] {
-        // Zero cell checks! 64 empty delimiter pairs written with single vectorized stores
+        // Zero cell checks! 64 empty delimiter pairs written with single
+        // vectorized stores
         out = SimdValidityScanner::writeUnboundRowsCsv(out, ',', '\n');
       } else if (mask.allValid()) {
         // All 64 bound
@@ -294,41 +299,39 @@ BenchmarkResult runBenchmark(const std::string& name,
 
   uint64_t avgBranches = totalBranches / iterations;
   uint64_t avgMisses = totalMisses / iterations;
-  double missRate =
-      avgBranches > 0
-          ? (100.0 * static_cast<double>(avgMisses) / static_cast<double>(avgBranches))
-          : 0.0;
+  double missRate = avgBranches > 0 ? (100.0 * static_cast<double>(avgMisses) /
+                                       static_cast<double>(avgBranches))
+                                    : 0.0;
   double missesPerRow = static_cast<double>(avgMisses) / totalRows;
 
-  return BenchmarkResult{name,         avgMs,         mRowsPerSec,
-                         nsPerRow,     avgBranches,   avgMisses,
-                         missRate,     missesPerRow,  bytesWritten};
+  return BenchmarkResult{name,     avgMs,        mRowsPerSec,
+                         nsPerRow, avgBranches,  avgMisses,
+                         missRate, missesPerRow, bytesWritten};
 }
 
 void printResults(const std::vector<BenchmarkResult>& results) {
-  std::cout << "\n========================================================================================================\n";
+  std::cout << "\n============================================================="
+               "===========================================\n";
   std::cout << " Optimization 23: SIMD Validity Bitmasks Microbenchmark\n";
-  std::cout << " Workload: 2,000,000 Rows with 50% Unbound OPTIONAL SPARQL Columns\n";
-  std::cout << "========================================================================================================\n\n";
+  std::cout
+      << " Workload: 2,000,000 Rows with 50% Unbound OPTIONAL SPARQL Columns\n";
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 
   std::cout << std::left << std::setw(32) << "Exporter Implementation"
-            << std::right << std::setw(12) << "Time (ms)"
-            << std::setw(18) << "Throughput (M/s)"
-            << std::setw(14) << "ns / row"
-            << std::setw(16) << "Branch Misses"
-            << std::setw(14) << "Miss Rate"
+            << std::right << std::setw(12) << "Time (ms)" << std::setw(18)
+            << "Throughput (M/s)" << std::setw(14) << "ns / row"
+            << std::setw(16) << "Branch Misses" << std::setw(14) << "Miss Rate"
             << std::setw(14) << "Misses/Row"
             << "\n";
   std::cout << std::string(120, '-') << "\n";
 
   for (const auto& r : results) {
-    std::cout << std::left << std::setw(32) << r.name_
-              << std::right << std::fixed << std::setprecision(2)
-              << std::setw(12) << r.elapsedMs_
-              << std::setw(18) << r.throughputMRowsPerSec_
-              << std::setw(14) << r.nsPerRow_
-              << std::setw(16) << r.branchMisses_
-              << std::setw(13) << r.branchMissRate_ << "%"
+    std::cout << std::left << std::setw(32) << r.name_ << std::right
+              << std::fixed << std::setprecision(2) << std::setw(12)
+              << r.elapsedMs_ << std::setw(18) << r.throughputMRowsPerSec_
+              << std::setw(14) << r.nsPerRow_ << std::setw(16)
+              << r.branchMisses_ << std::setw(13) << r.branchMissRate_ << "%"
               << std::setw(14) << std::setprecision(4) << r.branchMissesPerRow_
               << "\n";
   }
@@ -343,7 +346,8 @@ void printResults(const std::vector<BenchmarkResult>& results) {
               << std::fixed << std::setprecision(2) << speedup << "x (+"
               << ((speedup - 1.0) * 100.0) << "% throughput)\n";
   }
-  std::cout << "========================================================================================================\n\n";
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 }
 
 }  // namespace
@@ -363,9 +367,11 @@ int main(int argc, char** argv) {
 
   HardwarePerfCounter perf;
   if (perf.isSupported()) {
-    std::cout << "[Hardware Performance Counters: Enabled (Linux perf_event)]\n";
+    std::cout
+        << "[Hardware Performance Counters: Enabled (Linux perf_event)]\n";
   } else {
-    std::cout << "[Hardware Performance Counters: Unavailable / Restricted - timing only]\n";
+    std::cout << "[Hardware Performance Counters: Unavailable / Restricted - "
+                 "timing only]\n";
   }
 
   std::vector<BenchmarkResult> results;
@@ -374,7 +380,8 @@ int main(int argc, char** argv) {
   results.push_back(runBenchmark<CellByCellScalarExporter>(
       "Cell-by-Cell isUndefined()", dataset, outputBuffer, perf));
 
-  std::cout << "Running Optimization: SIMD Validity Bitmask (AVX2 Fast Path)...\n";
+  std::cout
+      << "Running Optimization: SIMD Validity Bitmask (AVX2 Fast Path)...\n";
   results.push_back(runBenchmark<SimdValidityBitmaskExporter>(
       "SIMD Validity Bitmask (AVX2)", dataset, outputBuffer, perf));
 

@@ -21,8 +21,8 @@
 #include <string_view>
 #include <vector>
 
-#include "backports/span.h"
 #include "backports/StartsWithAndEndsWith.h"
+#include "backports/span.h"
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
@@ -32,12 +32,7 @@
 namespace ql::export_formatting {
 
 // Export serialization formats supported by FastExportStreamFormatter.
-enum class ExportFormat {
-  Turtle,
-  NTriples,
-  Csv,
-  Tsv
-};
+enum class ExportFormat { Turtle, NTriples, Csv, Tsv };
 
 // Summary metrics returned upon finalizing an export stream.
 struct ExportStreamSummary {
@@ -146,7 +141,8 @@ class FastExportStreamFormatter
 
  public:
   // ___________________________________________________________________________
-  // Construct in streaming mode with an internal reusable chunk buffer and sink.
+  // Construct in streaming mode with an internal reusable chunk buffer and
+  // sink.
   explicit FastExportStreamFormatter(ChunkSink sink,
                                      size_t chunkSize = DEFAULT_CHUNK_SIZE)
       : managedBuffer_(std::max(chunkSize, SAFETY_WATERMARK * 2)),
@@ -192,9 +188,9 @@ class FastExportStreamFormatter
         writePos_ = 0;
       }
     } else {
-      AD_THROW(absl::StrCat("FastExportStreamFormatter buffer overflow: needed ",
-                            bytesNeeded, " bytes, remaining capacity ",
-                            bufferCapacity_ - writePos_));
+      AD_THROW(absl::StrCat(
+          "FastExportStreamFormatter buffer overflow: needed ", bytesNeeded,
+          " bytes, remaining capacity ", bufferCapacity_ - writePos_));
     }
   }
 
@@ -222,8 +218,8 @@ class FastExportStreamFormatter
   requires std::is_integral_v<IntegerType>
   void writeInteger(IntegerType value) noexcept {
     ensureAvailable(32);
-    auto [ptr, ec] = std::to_chars(
-        bufferPtr_ + writePos_, bufferPtr_ + bufferCapacity_, value);
+    auto [ptr, ec] = std::to_chars(bufferPtr_ + writePos_,
+                                   bufferPtr_ + bufferCapacity_, value);
     AD_CORRECTNESS_CHECK(ec == std::errc{});
     writePos_ = static_cast<size_t>(ptr - bufferPtr_);
   }
@@ -327,7 +323,8 @@ class FastExportStreamFormatter
 
     // If no internal special chars, write directly
     if (posSecondQuote == posLastQuote &&
-        !detail::hasSpecialCharacters<detail::turtleSpecialTable>(normLiteral)) {
+        !detail::hasSpecialCharacters<detail::turtleSpecialTable>(
+            normLiteral)) {
       writeRaw(normLiteral);
       return;
     }
@@ -506,7 +503,8 @@ class FastExportStreamFormatter
 };
 
 // Helper function to map ad_utility::MediaType to ExportFormat.
-[[nodiscard]] inline ExportFormat toExportFormat(ad_utility::MediaType mediaType) {
+[[nodiscard]] inline ExportFormat toExportFormat(
+    ad_utility::MediaType mediaType) {
   using enum ad_utility::MediaType;
   switch (mediaType) {
     case turtle:

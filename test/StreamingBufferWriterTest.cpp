@@ -28,7 +28,8 @@ TEST(StreamingBufferWriterTest, BasicStreamingWriteAndFlush) {
   constexpr size_t bufferSize = 1024;
   std::vector<char> rawBuffer(bufferSize, 0);
 
-  StreamingBufferWriter writer(std::span<char>{rawBuffer.data(), rawBuffer.size()});
+  StreamingBufferWriter writer(
+      std::span<char>{rawBuffer.data(), rawBuffer.size()});
   EXPECT_EQ(writer.capacity(), bufferSize);
   EXPECT_EQ(writer.bytesWritten(), 0);
   EXPECT_TRUE(writer.empty());
@@ -63,7 +64,8 @@ TEST(StreamingBufferWriterTest, OwningBufferConstructor) {
   writer.flush();
 
   EXPECT_EQ(writer.bytesWritten(), 256);
-  EXPECT_EQ(std::string_view(writer.data(), writer.bytesWritten()), testPayload);
+  EXPECT_EQ(std::string_view(writer.data(), writer.bytesWritten()),
+            testPayload);
 }
 
 // _____________________________________________________________________________
@@ -75,8 +77,10 @@ TEST(StreamingBufferWriterTest, VariousSizesAndUnalignedOffsets) {
   std::vector<char> srcMemory(totalBuffer);
   std::iota(srcMemory.begin(), srcMemory.end(), 1);
 
-  const std::vector<size_t> startOffsets = {0, 1, 3, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65};
-  const std::vector<size_t> testLengths = {0, 1, 2, 7, 15, 16, 17, 32, 63, 64, 65, 127, 128, 255, 512, 1024, 2048};
+  const std::vector<size_t> startOffsets = {0,  1,  3,  7,  15, 16, 17,
+                                            31, 32, 33, 63, 64, 65};
+  const std::vector<size_t> testLengths = {
+      0, 1, 2, 7, 15, 16, 17, 32, 63, 64, 65, 127, 128, 255, 512, 1024, 2048};
 
   for (size_t offset : startOffsets) {
     for (size_t len : testLengths) {
@@ -85,12 +89,14 @@ TEST(StreamingBufferWriterTest, VariousSizesAndUnalignedOffsets) {
       }
       std::fill(destMemory.begin(), destMemory.end(), 0);
 
-      StreamingBufferWriter writer(std::span<char>{destMemory.data() + offset, len});
+      StreamingBufferWriter writer(
+          std::span<char>{destMemory.data() + offset, len});
       writer.write(srcMemory.data(), len);
       writer.flush();
 
       EXPECT_EQ(writer.bytesWritten(), len);
-      EXPECT_TRUE(std::equal(srcMemory.begin(), srcMemory.begin() + len, destMemory.begin() + offset));
+      EXPECT_TRUE(std::equal(srcMemory.begin(), srcMemory.begin() + len,
+                             destMemory.begin() + offset));
     }
   }
 }

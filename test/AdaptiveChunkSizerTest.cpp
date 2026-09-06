@@ -24,8 +24,9 @@ using qlever::AdaptiveChunkStats;
 // =============================================================================
 static_assert(ad_utility::InvariantStatefulClass<AdaptiveChunkSizer>,
               "AdaptiveChunkSizer must satisfy InvariantStatefulClass concept");
-static_assert(ad_utility::InvariantStatefulClass<AdaptiveChunkBuffer>,
-              "AdaptiveChunkBuffer must satisfy InvariantStatefulClass concept");
+static_assert(
+    ad_utility::InvariantStatefulClass<AdaptiveChunkBuffer>,
+    "AdaptiveChunkBuffer must satisfy InvariantStatefulClass concept");
 
 // =============================================================================
 // Unit Tests for AdaptiveChunkSizer

@@ -48,15 +48,15 @@ class HardwarePerfCounter {
     pe.disabled = 1;
     pe.exclude_kernel = 1;
     pe.exclude_hv = 1;
-    return static_cast<int>(
-        syscall(__NR_perf_event_open, &pe, 0, -1, -1, 0));
+    return static_cast<int>(syscall(__NR_perf_event_open, &pe, 0, -1, -1, 0));
   }
 #endif
 
  public:
   HardwarePerfCounter() {
 #if defined(__linux__)
-    branchFd_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
+    branchFd_ =
+        openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
     missFd_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES);
     isSupported_ = (branchFd_ >= 0 && missFd_ >= 0);
 #endif
@@ -186,9 +186,8 @@ struct BranchingSwitchDispatcher {
         auto [str, type] = id.getGeoPoint().toStringAndType();
         std::memcpy(out, str.data(), str.size());
         out += str.size();
-        std::memcpy(out,
-                    "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
-                    52);
+        std::memcpy(
+            out, "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>", 52);
         out += 52;
         return out;
       }
@@ -331,7 +330,8 @@ struct BenchmarkDataset {
         ds.rawTerms_.push_back("");
       } else {
         // 10% Integers
-        ds.ids_.push_back(ValueId::makeFromInt(static_cast<int64_t>(i * 31 + 7)));
+        ds.ids_.push_back(
+            ValueId::makeFromInt(static_cast<int64_t>(i * 31 + 7)));
         ds.rawTerms_.push_back("");
       }
     }
@@ -377,8 +377,7 @@ BenchmarkResult runBenchmark(const std::string& name,
     uint64_t misses = 0;
     perf.stop(branches, misses);
 
-    totalMs +=
-        std::chrono::duration<double, std::milli>(t1 - t0).count();
+    totalMs += std::chrono::duration<double, std::milli>(t1 - t0).count();
     totalBranches += branches;
     totalMisses += misses;
   }
@@ -390,41 +389,40 @@ BenchmarkResult runBenchmark(const std::string& name,
 
   uint64_t avgBranches = totalBranches / iterations;
   uint64_t avgMisses = totalMisses / iterations;
-  double missRate =
-      avgBranches > 0
-          ? (100.0 * static_cast<double>(avgMisses) / static_cast<double>(avgBranches))
-          : 0.0;
+  double missRate = avgBranches > 0 ? (100.0 * static_cast<double>(avgMisses) /
+                                       static_cast<double>(avgBranches))
+                                    : 0.0;
   double missesPerTerm = static_cast<double>(avgMisses) / totalTerms;
 
-  return BenchmarkResult{name,         avgMs,         mTermsPerSec,
-                         nsPerTerm,    avgBranches,   avgMisses,
-                         missRate,     missesPerTerm, bytesWritten};
+  return BenchmarkResult{name,      avgMs,         mTermsPerSec,
+                         nsPerTerm, avgBranches,   avgMisses,
+                         missRate,  missesPerTerm, bytesWritten};
 }
 
 void printResults(const std::vector<BenchmarkResult>& results) {
-  std::cout << "\n========================================================================================================\n";
-  std::cout << " Optimization 15: Branchless LUT Type Dispatcher Microbenchmark\n";
-  std::cout << " Workload: Mixed RDF (50% IRIs, 30% Literals, 10% Blank Nodes, 10% Integers)\n";
-  std::cout << "========================================================================================================\n\n";
+  std::cout << "\n============================================================="
+               "===========================================\n";
+  std::cout
+      << " Optimization 15: Branchless LUT Type Dispatcher Microbenchmark\n";
+  std::cout << " Workload: Mixed RDF (50% IRIs, 30% Literals, 10% Blank Nodes, "
+               "10% Integers)\n";
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 
-  std::cout << std::left << std::setw(28) << "Dispatcher"
-            << std::right << std::setw(12) << "Time (ms)"
-            << std::setw(18) << "Throughput (M/s)"
-            << std::setw(15) << "ns / term"
-            << std::setw(16) << "Branch Misses"
-            << std::setw(14) << "Miss Rate"
+  std::cout << std::left << std::setw(28) << "Dispatcher" << std::right
+            << std::setw(12) << "Time (ms)" << std::setw(18)
+            << "Throughput (M/s)" << std::setw(15) << "ns / term"
+            << std::setw(16) << "Branch Misses" << std::setw(14) << "Miss Rate"
             << std::setw(15) << "Misses/Term"
             << "\n";
   std::cout << std::string(118, '-') << "\n";
 
   for (const auto& r : results) {
-    std::cout << std::left << std::setw(28) << r.name_
-              << std::right << std::fixed << std::setprecision(2)
-              << std::setw(12) << r.elapsedMs_
-              << std::setw(18) << r.throughputMTermsPerSec_
-              << std::setw(15) << r.nsPerTerm_
-              << std::setw(16) << r.branchMisses_
-              << std::setw(13) << r.branchMissRate_ << "%"
+    std::cout << std::left << std::setw(28) << r.name_ << std::right
+              << std::fixed << std::setprecision(2) << std::setw(12)
+              << r.elapsedMs_ << std::setw(18) << r.throughputMTermsPerSec_
+              << std::setw(15) << r.nsPerTerm_ << std::setw(16)
+              << r.branchMisses_ << std::setw(13) << r.branchMissRate_ << "%"
               << std::setw(15) << std::setprecision(4) << r.branchMissesPerTerm_
               << "\n";
   }
@@ -439,7 +437,8 @@ void printResults(const std::vector<BenchmarkResult>& results) {
               << std::fixed << std::setprecision(2) << speedup << "x (+"
               << ((speedup - 1.0) * 100.0) << "% throughput)\n";
   }
-  std::cout << "========================================================================================================\n\n";
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 }
 
 }  // namespace
@@ -459,9 +458,11 @@ int main(int argc, char** argv) {
 
   HardwarePerfCounter perf;
   if (perf.isSupported()) {
-    std::cout << "[Hardware Performance Counters: Enabled (Linux perf_event)]\n";
+    std::cout
+        << "[Hardware Performance Counters: Enabled (Linux perf_event)]\n";
   } else {
-    std::cout << "[Hardware Performance Counters: Unavailable / Restricted - timing only]\n";
+    std::cout << "[Hardware Performance Counters: Unavailable / Restricted - "
+                 "timing only]\n";
   }
 
   std::vector<BenchmarkResult> results;

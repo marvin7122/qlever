@@ -120,7 +120,8 @@ TEST(SimdValidityBitmaskTest, SimdScanBatch64AllCases) {
   std::vector<ValueId> batch(64, ValueId::makeUndefined());
 
   // Case 1: All unbound
-  ValidityBitmask64 maskUnbound = SimdValidityScanner::scanBatch64(batch.data());
+  ValidityBitmask64 maskUnbound =
+      SimdValidityScanner::scanBatch64(batch.data());
   EXPECT_TRUE(maskUnbound.allUnbound());
   EXPECT_EQ(maskUnbound.rawMask(), 0ULL);
   EXPECT_TRUE(SimdValidityScanner::isAllUnbound64(batch.data()));
@@ -206,8 +207,8 @@ TEST(SimdValidityBitmaskTest, RandomizedSimdScanning) {
 
     ValidityBitmask64 scanned = SimdValidityScanner::scanBatch64(batch.data());
     EXPECT_EQ(scanned.rawMask(), expectedMask)
-        << "Failed on trial " << trial << " with expected mask 0x"
-        << std::hex << expectedMask << " vs scanned 0x" << scanned.rawMask();
+        << "Failed on trial " << trial << " with expected mask 0x" << std::hex
+        << expectedMask << " vs scanned 0x" << scanned.rawMask();
   }
 }
 
@@ -270,7 +271,8 @@ TEST(SimdValidityBitmaskTest, VectorizedStoreCsvAndTsv) {
 
   // TSV store
   std::fill(buffer.begin(), buffer.end(), 'y');
-  char* nextTsv = SimdValidityScanner::writeUnboundBatchTsv(buffer.data(), '\t');
+  char* nextTsv =
+      SimdValidityScanner::writeUnboundBatchTsv(buffer.data(), '\t');
   EXPECT_EQ(nextTsv, buffer.data() + 64);
   for (size_t i = 0; i < 64; ++i) {
     EXPECT_EQ(buffer[i], '\t');
@@ -279,7 +281,8 @@ TEST(SimdValidityBitmaskTest, VectorizedStoreCsvAndTsv) {
 
   // Row pairs (CSV with newline: 64 * 2 = 128 bytes)
   std::string rowBuffer(256, 'z');
-  char* nextRowsCsv = SimdValidityScanner::writeUnboundRowsCsv(rowBuffer.data(), ',', '\n');
+  char* nextRowsCsv =
+      SimdValidityScanner::writeUnboundRowsCsv(rowBuffer.data(), ',', '\n');
   EXPECT_EQ(nextRowsCsv, rowBuffer.data() + 128);
   for (size_t i = 0; i < 64; ++i) {
     EXPECT_EQ(rowBuffer[i * 2], ',');
@@ -289,7 +292,8 @@ TEST(SimdValidityBitmaskTest, VectorizedStoreCsvAndTsv) {
 
   // Row pairs (TSV with newline: 64 * 2 = 128 bytes)
   std::fill(rowBuffer.begin(), rowBuffer.end(), 'w');
-  char* nextRowsTsv = SimdValidityScanner::writeUnboundRowsTsv(rowBuffer.data(), '\t', '\n');
+  char* nextRowsTsv =
+      SimdValidityScanner::writeUnboundRowsTsv(rowBuffer.data(), '\t', '\n');
   EXPECT_EQ(nextRowsTsv, rowBuffer.data() + 128);
   for (size_t i = 0; i < 64; ++i) {
     EXPECT_EQ(rowBuffer[i * 2], '\t');

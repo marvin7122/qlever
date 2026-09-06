@@ -30,8 +30,8 @@ namespace ql::engine {
 struct TypeFormatDescriptor;
 
 // Function pointer signature for single-pass term formatting.
-using TermFormatterFn = char* (*)(ValueId id, std::string_view rawTerm, char* out,
-                                  std::string_view prefix,
+using TermFormatterFn = char* (*)(ValueId id, std::string_view rawTerm,
+                                  char* out, std::string_view prefix,
                                   std::string_view suffix) noexcept;
 
 // _____________________________________________________________________________
@@ -54,8 +54,8 @@ namespace detail {
 
 // Fast branchless copy for terms with opening and closing delimiters.
 inline char* formatTermWithDelimiters(ValueId, std::string_view rawTerm,
-                                     char* out, std::string_view prefix,
-                                     std::string_view suffix) noexcept {
+                                      char* out, std::string_view prefix,
+                                      std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   std::memcpy(out, rawTerm.data(), rawTerm.size());
@@ -214,7 +214,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   return lut;
 }
 
-// Builds the 16-entry lookup table for Turtle export (compact literals/numbers).
+// Builds the 16-entry lookup table for Turtle export (compact
+// literals/numbers).
 constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   std::array<TypeFormatDescriptor, 16> lut{};
   for (size_t i = 0; i < 16; ++i) {
@@ -250,7 +251,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   return lut;
 }
 
-// Builds the 16-entry lookup table for raw vocabulary entries (where terms already contain quotes/delimiters).
+// Builds the 16-entry lookup table for raw vocabulary entries (where terms
+// already contain quotes/delimiters).
 constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   std::array<TypeFormatDescriptor, 16> lut{};
   for (size_t i = 0; i < 16; ++i) {

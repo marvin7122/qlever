@@ -84,7 +84,8 @@ inline void format8Digits(uint32_t v, char* dst) noexcept {
 
   __m128i pairs = _mm_setr_epi16(p0, p1, p2, p3, 0, 0, 0, 0);
   // tens = (pairs * 52429) >> 19  (approx division by 10)
-  __m128i tens = _mm_srli_epi16(_mm_mulhi_epu16(pairs, _mm_set1_epi16(52429)), 3);
+  __m128i tens =
+      _mm_srli_epi16(_mm_mulhi_epu16(pairs, _mm_set1_epi16(52429)), 3);
   __m128i tens10 = _mm_mullo_epi16(tens, _mm_set1_epi16(10));
   __m128i ones = _mm_sub_epi16(pairs, tens10);
   // Little-endian layout: tens in low byte, ones in high byte
@@ -152,7 +153,8 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 }
 
 // _____________________________________________________________________________
-// Branchless determination of the exact number of decimal digits for 32-bit uint.
+// Branchless determination of the exact number of decimal digits for 32-bit
+// uint.
 [[nodiscard]] inline constexpr uint32_t numDigits(uint32_t val) noexcept {
   return numDigits(static_cast<uint64_t>(val));
 }
@@ -160,7 +162,8 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 // _____________________________________________________________________________
 // Branchless, zero-allocation conversion of uint64_t to ASCII.
 // Writes digits directly to `out` and returns a pointer to one-past-the-end.
-// Precondition: `out` must point to a buffer with at least `numDigits(val)` bytes.
+// Precondition: `out` must point to a buffer with at least `numDigits(val)`
+// bytes.
 inline char* formatUIntBranchless(uint64_t val, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
   const uint32_t len = numDigits(val);
@@ -250,26 +253,30 @@ inline char* formatInt32Branchless(int32_t val, char* out) noexcept {
 }
 
 // _____________________________________________________________________________
-// Single-pass RDF Wikidata QID formatting ("http://www.wikidata.org/entity/Q" + id).
-// Writes prefix and ASCII digits directly into `out` with zero allocations.
-// Returns a pointer to one-past-the-end.
+// Single-pass RDF Wikidata QID formatting ("http://www.wikidata.org/entity/Q" +
+// id). Writes prefix and ASCII digits directly into `out` with zero
+// allocations. Returns a pointer to one-past-the-end.
 inline char* formatQid(uint64_t id, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
-  std::memcpy(out, WIKIDATA_ENTITY_PREFIX.data(), WIKIDATA_ENTITY_PREFIX.size());
+  std::memcpy(out, WIKIDATA_ENTITY_PREFIX.data(),
+              WIKIDATA_ENTITY_PREFIX.size());
   return formatUIntBranchless(id, out + WIKIDATA_ENTITY_PREFIX.size());
 }
 
 // _____________________________________________________________________________
-// Single-pass RDF Wikidata Property PID formatting ("http://www.wikidata.org/prop/direct/P" + id).
+// Single-pass RDF Wikidata Property PID formatting
+// ("http://www.wikidata.org/prop/direct/P" + id).
 inline char* formatPid(uint64_t id, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
-  std::memcpy(out, WIKIDATA_PROPERTY_PREFIX.data(), WIKIDATA_PROPERTY_PREFIX.size());
+  std::memcpy(out, WIKIDATA_PROPERTY_PREFIX.data(),
+              WIKIDATA_PROPERTY_PREFIX.size());
   return formatUIntBranchless(id, out + WIKIDATA_PROPERTY_PREFIX.size());
 }
 
 // _____________________________________________________________________________
 // Single-pass RDF IRI formatting with custom prefix and integer ID.
-inline char* formatPrefixedId(std::string_view prefix, uint64_t id, char* out) noexcept {
+inline char* formatPrefixedId(std::string_view prefix, uint64_t id,
+                              char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
   if (!prefix.empty()) {
     std::memcpy(out, prefix.data(), prefix.size());
@@ -279,7 +286,8 @@ inline char* formatPrefixedId(std::string_view prefix, uint64_t id, char* out) n
 
 // _____________________________________________________________________________
 // Single-pass RDF IRI formatting with custom prefix and signed integer ID.
-inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) noexcept {
+inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
+                               char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
   if (!prefix.empty()) {
     std::memcpy(out, prefix.data(), prefix.size());
@@ -299,8 +307,9 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) n
 
 [[nodiscard]] inline std::string formatIntToString(int64_t val) {
   const bool negative = val < 0;
-  const uint64_t uval = negative ? (static_cast<uint64_t>(0) - static_cast<uint64_t>(val))
-                                 : static_cast<uint64_t>(val);
+  const uint64_t uval =
+      negative ? (static_cast<uint64_t>(0) - static_cast<uint64_t>(val))
+               : static_cast<uint64_t>(val);
   const uint32_t len = numDigits(uval) + (negative ? 1 : 0);
   std::string s;
   s.resize(len);
