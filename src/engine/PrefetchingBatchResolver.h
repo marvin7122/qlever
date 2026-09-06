@@ -269,6 +269,19 @@ inline void resolveVocabIndexIdsPrefetched(
                                 
           typename EscapeFunction = ql::identity,
           size_t PrefetchDistance = PrefetchingBatchResolver::DEFAULT_PREFETCH_DISTANCE>
+/// @brief Resolves a batch of IDs to their string representations and type tags.
+///
+/// Creates a `PrefetchingBatchResolver` with the given `PrefetchDistance`
+/// and returns the result of `idsToStringAndType`. The returned vector
+/// contains one `std::optional<std::pair<std::string, const char*>>` per
+/// input ID: the string is the escaped representation, and the pointer
+/// refers to a null-terminated type string owned by the `Index` or
+/// `LocalVocab`.
+///
+/// **Pointer-lifetime invariant:** The `const char*` pointers are only
+/// valid while the underlying `Index` and `LocalVocab` objects are not
+/// modified, reordered, or destroyed. Callers must not persist these
+/// pointers beyond the scope in which those containers remain stable.
 [[nodiscard]] inline std::vector<
     std::optional<std::pair<std::string, const char*>>>
 idsToStringAndTypePrefetched(
