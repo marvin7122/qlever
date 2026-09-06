@@ -290,6 +290,7 @@ class SimdEscapeClassifier {
 
   // ___________________________________________________________________________
   // Check whether a single character requires escaping in the specified format.
+  // Returns true if the character @p c is an escape character for the given @p Format.
   template <EscapeFormat Format = EscapeFormat::Turtle>
   [[nodiscard]] constexpr static inline bool isEscapeChar(char c) noexcept {
     return detail::isEscapeChar<Format>(c);
