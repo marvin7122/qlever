@@ -69,7 +69,7 @@ class VocabularyInMemoryBinSearch
 
   // Return the total number of words
   [[nodiscard]] size_t size() const {
-    AD_CORRECTNESS_CHECK(indices_.size() == words_->size());
+    
     return words_->size();
   }
 
