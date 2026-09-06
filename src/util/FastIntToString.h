@@ -133,7 +133,7 @@ inline void format2Digits(uint32_t v, char* dst) noexcept {
 inline constexpr size_t MAX_INT64_ASCII_LENGTH = 22;
 inline constexpr size_t MAX_UINT64_ASCII_LENGTH = 21;
 
-// Standard Wikidata prefix constants
+
 inline constexpr std::string_view WIKIDATA_ENTITY_PREFIX =
     "http://www.wikidata.org/entity/Q";
 inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
