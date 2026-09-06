@@ -148,7 +148,7 @@ class DirectIoFile {
 };
 
 // _____________________________________________________________________________
-// Aligned PMR Memory Arena for DMA and io_uring fixed buffer registration.
+// Provide an aligned PMR memory arena for DMA and io_uring fixed buffer registration.
 // Guarantees 4KB page alignment for Direct I/O and zero-copy DMA pinning.
 class PinnedArena : public WithInvariants<PinnedArena> {
  private:
