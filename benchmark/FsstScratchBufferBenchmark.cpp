@@ -33,7 +33,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     std::vector<std::string> storage;
     std::vector<std::string_view> views;
 
-    // Views are into strings owned by storage; destruction order ensures
+    // Views are into strings owned by storage; the destruction order ensures
     // views are destroyed before storage.
   } compressed_;
 
