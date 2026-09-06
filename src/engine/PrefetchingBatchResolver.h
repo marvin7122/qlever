@@ -247,12 +247,7 @@ return config_.prefetchDistance;
       
     }
 
-    ql::exportIds::PartitionedIdPositions positions =
-        ql::exportIds::partitionIdPositions(ids);
-
-    // 1. Resolve non-VocabIndex IDs (encoded numeric values, LocalVocab, etc.)
-    ql::exportIds::resolveNonVocabIndexIds<removeQuotesAndAngleBrackets,
-                                          returnOnlyLiterals>(
+    
         index, ids, localVocab, positions.nonVocabIndexIndices_, results,
         escapeFunction);
 
