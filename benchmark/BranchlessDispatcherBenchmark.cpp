@@ -345,7 +345,7 @@ struct BenchmarkResult {
 };
 
 template <typename Dispatcher>
-BenchmarkResult runBenchmark(const std::string& name,
+BenchmarkResult runBenchmark(std::string name,
                              const BenchmarkDataset& ds,
                              std::vector<char>& outputBuffer,
                              HardwarePerfCounter& perf, size_t iterations = 5) {
