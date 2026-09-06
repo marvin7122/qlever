@@ -460,6 +460,10 @@ class RegisteredIoUringReader
   void registerBuffers(ql::span<const iovec> iovecs) {
     auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(!iovecs.empty());
+    for (const auto& iov : iovecs) {
+      AD_CONTRACT_CHECK(isPointerAligned(iov.iov_base));
+      AD_CONTRACT_CHECK(isBlockAligned(iov.iov_len));
+    }
 
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
