@@ -25,27 +25,7 @@
 namespace ad_benchmark {
 namespace {
 
-template <size_t N>
-size_t decodeRepeated(const std::array<FsstDecoder, N>& decoders,
-                      std::string_view compressed, ql::span<char> output,
-                      ql::span<char> scratch) {
-  AD_CONTRACT_CHECK(N > 0);
-  AD_CONTRACT_CHECK(!output.empty());
-  AD_CONTRACT_CHECK(!scratch.empty());
-  size_t destination = (N % 2 == 0) ? 1 : 0;
-  std::array<ql::span<char>, 2> buffers{output, scratch};
-  std::string_view input = compressed;
-  size_t bytesWritten = 0;
-  for (size_t stage = 0; stage < N; ++stage) {
-    bytesWritten =
-        decoders[N - 1 - stage].decompressInto(input, buffers[destination]);
-    AD_CONTRACT_CHECK(bytesWritten <= buffers[destination].size());
-    input = {buffers[destination].data(), bytesWritten};
-    destination ^= 1;
-  }
-  AD_CONTRACT_CHECK(bytesWritten <= output.size());
-  return bytesWritten;
-}
+
 
 class FsstScratchBufferBenchmark : public BenchmarkInterface {
  private:
