@@ -383,9 +383,11 @@ BenchmarkResult runBenchmark(const std::string& name,
   }
 
   double avgMs = totalMs / static_cast<double>(iterations);
-  double totalTerms = static_cast<double>(ds.ids_.size());
-  double mTermsPerSec = (totalTerms / (avgMs / 1000.0)) / 1e6;
-  double nsPerTerm = (avgMs * 1e6) / totalTerms;
+    double totalTerms = static_cast<double>(ds.ids_.size());
+  double mTermsPerSec = totalTerms > 0.0
+                            ? (totalTerms / (avgMs / 1000.0)) / 1e6
+                            : 0.0;
+  double nsPerTerm = totalTerms > 0.0 ? (avgMs * 1e6) / totalTerms : 0.0;
 
   uint64_t avgBranches = totalBranches / iterations;
   uint64_t avgMisses = totalMisses / iterations;
