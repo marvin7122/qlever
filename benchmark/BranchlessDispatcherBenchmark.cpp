@@ -32,7 +32,7 @@ using namespace ql::engine;
 namespace {
 
 // _____________________________________________________________________________
-// Linux perf_event hardware branch counter tracker.
+// Track Linux perf_event hardware branch counters.
 class HardwarePerfCounter {
  private:
 #if defined(__linux__)
