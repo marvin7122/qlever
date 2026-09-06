@@ -100,14 +100,10 @@ TEST(PrefetchingBatchResolver, CompactVectorPipelinedResolution) {
   PrefetchingBatchResolver resolver(PrefetchConfig{.prefetchDistance = 4});
 
   std::vector<size_t> queryIndices = {0, 4, 1, 3, 2, 4, 0, 1};
-  std::vector<std::string> resolvedWords(queryIndices.size());
 
-  resolver.resolveCompactVectorPipelined(
-      words, queryIndices,
-      [&resolvedWords](size_t slot, size_t, std::string_view view) {
-        resolvedWords[slot] = std::string(view);
-      });
+  auto resolvedWords = resolver.resolveCompactVectorPipelined(words, queryIndices);
 
+  ASSERT_EQ(resolvedWords.size(), queryIndices.size());
   for (size_t i = 0; i < queryIndices.size(); ++i) {
     EXPECT_EQ(resolvedWords[i], rawWords[queryIndices[i]]);
   }
