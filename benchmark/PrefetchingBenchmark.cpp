@@ -172,7 +172,8 @@ class HardwarePerformanceMonitor {
         }
       };
       resetAndEnable(fdCycles_);
-      resetAndEnable(fdInstructions_);
+      ioctl(fdInstructions_, PERF_EVENT_IOC_RESET, 0);
+      ioctl(fdInstructions_, PERF_EVENT_IOC_ENABLE, 0);
       resetAndEnable(fdL1dAccess_);
       resetAndEnable(fdL1dMiss_);
       resetAndEnable(fdLlcAccess_);
