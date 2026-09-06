@@ -147,7 +147,9 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 
 // _____________________________________________________________________________
 
+// Why: delegates to the uint64_t version for consistent branchless digit counting.
 [[nodiscard]] inline constexpr uint32_t numDigits(uint32_t val) noexcept {
+
   return numDigits(static_cast<uint64_t>(val));
 }
 
