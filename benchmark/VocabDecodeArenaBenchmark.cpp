@@ -141,7 +141,7 @@ DecodeStats runCopyBatch(const Vocab& vocab,
   return s;
 }
 
-DecodeStats runIntoBatch(const Vocab& vocab,
+DecodeStats runDecompressIntoBatch(const Vocab& vocab,
                          ql::span<const FixtureWord> const& words) {
   DecodeStats s;
   auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
