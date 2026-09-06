@@ -445,6 +445,7 @@ AD_REGISTER_BENCHMARK(IoUringDirectBenchmark);
 }  // namespace ad_benchmark
 
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
+// ____________
 // Standalone executable entry point
 int main(int argc, char** argv) {
   std::cout << "=================================================================\n";
