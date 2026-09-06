@@ -575,7 +575,6 @@ class RegisteredIoUringReader
       int targetFd = static_cast<int>(req.fileIndex);
       if (filesRegistered_ && config_.useRegisteredFiles) {
         AD_CONTRACT_CHECK(req.fileIndex < registeredFds_.size());
-        targetFd = static_cast<int>(req.fileIndex);
       }
 
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
