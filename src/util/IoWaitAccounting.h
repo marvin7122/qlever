@@ -292,7 +292,7 @@ inline void sampleWorkers() {
     const std::string base = std::string{"/proc/self/task/"} + entry->d_name;
     std::ifstream commFile{base + "/comm"};
     std::string comm;
-    if (!std::getline(commFile, comm) || comm.rfind("iou-wrk", 0) != 0) {
+    if (!std::getline(commFile, comm) || comm.compare(0, 7, "iou-wrk") != 0) {
       continue;
     }
     ++workers;
