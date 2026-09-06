@@ -103,11 +103,7 @@ class VocabularyInMemoryBinSearch
   void close();
 
   // Const access to the underlying words.
-  auto begin() const { return words_->begin(); }
-  auto end() const { return words_->end(); }
-
-  // Return shared ownership of the word bytes. A batch-lookup result that
-  // hands out `string_view`s into this vocabulary stores this pointer, so the
+  
   // bytes cannot be freed while the result is alive.
   std::shared_ptr<const void> wordStorage() const { return words_; }
 
