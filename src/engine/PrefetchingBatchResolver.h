@@ -109,10 +109,12 @@ class PrefetchingBatchResolver {
  public:
     // Construct a `PrefetchingBatchResolver` with the standard tuned prefetch distance of 8 rows.
   explicit PrefetchingBatchResolver(
-      PrefetchConfig config = PrefetchConfig{.prefetchDistance =
-                                                 DEFAULT_PREFETCH_DISTANCE})
+      PrefetchConfig config = PrefetchConfig::builder()
+                                  .withPrefetchDistance(DEFAULT_PREFETCH_DISTANCE)
+                                  .finalize())
       : config_{config} {
-    config_.checkInvariants();
+    AD_CONTRACT_CHECK(config_.prefetchDistance > 0);
+    AD_CONTRACT_CHECK(config_.prefetchDistance <= 128);
   }
 
   // ___________________________________________________________________________
