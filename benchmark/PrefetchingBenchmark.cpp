@@ -49,13 +49,7 @@ class HardwarePerformanceMonitor {
     [[nodiscard]] double l1dMissRatePercent() const noexcept {
       return l1dReadAccesses > 0
                  ? (100.0 * static_cast<double>(l1dReadMisses) /
-                    static_cast<double>(l1dReadAccesses))
-                 : 0.0;
-    }
-
-    [[nodiscard]] double llcMissRatePercent() const noexcept {
-      return llcReadAccesses > 0
-                 ? (100.0 * static_cast<double>(llcReadMisses) /
+                    
                     static_cast<double>(llcReadAccesses))
                  : 0.0;
     }
