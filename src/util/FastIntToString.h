@@ -144,6 +144,7 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
   if (val == 0) {
     return 1;
   }
+  AD_CONTRACT_CHECK(val != 0);
   const uint32_t bitWidth = 64 - std::countl_zero(val);
   const uint32_t p = (bitWidth * 1233) >> 12;
   return p + static_cast<uint32_t>(val >= detail::POWERS_OF_10_64[p]);
