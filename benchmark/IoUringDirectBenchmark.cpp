@@ -49,7 +49,7 @@ constexpr size_t kTotalBlocks = kTotalFileSizeBytes / kBlockSizeBytes;  // 262,1
 constexpr size_t kDefaultBatchBlocks = 256;  // 1 MB per batch (256 * 4KB)
 
 // _____________________________________________________________________________
-// Helper to generate a 1GB simulated vocabulary binary file on disk.
+// Generate a 1 GB simulated vocabulary binary file on disk.
 class SimulatedVocabularyFile {
  private:
   std::string filePath_;
