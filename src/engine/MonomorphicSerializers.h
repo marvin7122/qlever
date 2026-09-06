@@ -52,7 +52,7 @@ enum class ColumnType : uint8_t {
 
 // Convenient `constexpr` aliases.
 inline constexpr ColumnType IRI = ColumnType::Iri;
-inline constexpr ColumnType LITERAL = ColumnType::Literal;
+
 inline constexpr ColumnType INT = ColumnType::Int;
 inline constexpr ColumnType DOUBLE = ColumnType::Double;
 inline constexpr ColumnType BLANK_NODE = ColumnType::BlankNode;
