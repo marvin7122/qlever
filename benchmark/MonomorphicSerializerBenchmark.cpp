@@ -403,15 +403,19 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              dispatchMonomorphicSerializer(
-                  schema,
-                  [&]<ColumnType... Types>() {
-                    using Serializer = MonomorphicRowSerializer<Types...>;
-                    for (const auto& row : data_.tripleRows_) {
-                      Serializer::template serializeRow<ExportFormat::Csv>(
-                          formatter, ql::span<const CellValue>(row));
-                    }
-                  });
+              struct DispatchHelper {
+                FastExportStreamFormatter& formatter;
+                const std::vector<std::array<CellValue, 3>>& rows;
+
+                template <ColumnType... Types>
+                void operator()() const {
+                  using Serializer = MonomorphicRowSerializer<Types...>;
+                  for (const auto& row : rows) {
+                    Serializer::template serializeRow<ExportFormat::Csv>(formatter, ql::span<const CellValue>(row));
+                  }
+                }
+              };
+              dispatchMonomorphicSerializer(schema, DispatchHelper{formatter, data_.tripleRows_});
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
