@@ -56,8 +56,7 @@ TEST(PrefixCompressor, TooManyPrefixesThrow) {
   ASSERT_THROW(p.buildCodebook(tooManyPrefixes), ad_utility::Exception);
 }
 
-// _____________________________________________________________________________
-TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
+
   PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alph", "alpha", "al"});
   auto checkWord = [&](std::string_view word) {
