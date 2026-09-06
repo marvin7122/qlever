@@ -14,13 +14,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
 
-#if defined(__linux__)
-#include <linux/perf_event.h>
-#include <sys/ioctl.h>
-#include <sys/syscall.h>
-#include <unistd.h>
 #endif
 
 #include "../benchmark/infrastructure/Benchmark.h"
