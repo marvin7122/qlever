@@ -157,7 +157,7 @@ return config_.prefetchDistance;
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos]);
-        prefetchVocabEntry(&positions[i + distance]);
+
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
           const auto wordVocabIndex = pfId.getVocabIndex();
