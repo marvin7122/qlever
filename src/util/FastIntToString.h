@@ -133,7 +133,9 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 // _____________________________________________________________________________
 
 // Why: branchless digit count via log2 approximation. countl_zero gives bit width in O(1); multiply by 1233/4096 (~log10(2)) estimates decimal digits; conditional move corrects without branching.
+// Why: branchless approximation of decimal digit count using leading zeros and a correction step.
 [[nodiscard]] inline constexpr uint32_t numDigits(uint64_t val) noexcept {
+
   if (val == 0) {
     return 1;
   }
