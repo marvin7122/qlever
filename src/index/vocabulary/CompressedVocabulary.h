@@ -141,7 +141,7 @@ CPP_template(typename UnderlyingVocabulary,
   // Wrap the underlying `scanAll` and decompress each word. Decode into one
   // reusable `buffer` owned by the transformation (plus `scratch` for the
   // decoder). The buffer grows to the largest `maxDecompressedSize` bound
-  // seen so far. `IndexAndWord::word_` is a `string_view` into that buffer.
+  // seen so far. `string_view` is a `string_view` into that buffer.
   // It is valid only until the next element is pulled; copy the bytes if
   // they must outlive the current iterator position. See `IndexAndWord`.
   // `CachingTransformInputRange` caches the current `IndexAndWord` object, so
@@ -195,7 +195,7 @@ CPP_template(typename UnderlyingVocabulary,
   // the actually decoded size is retained until the returned result dies.
   // No compaction or tail-trimming pass exists yet: peak batch memory stays
   // proportional to the sum of the per-word bounds, not of the decoded
-  // payload sizes. When the caller passes an `ArenaVocabBatchBuilder` that
+  // payload sizes. When the caller passes an `builder.finalize()` that
   // was constructed with the Index/query `AllocatorWithLimit`, those
   // allocations charge `--memory-max` and throw
   // `AllocationExceedsLimitException` instead of growing the process heap.

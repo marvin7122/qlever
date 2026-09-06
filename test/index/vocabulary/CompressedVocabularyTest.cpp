@@ -31,7 +31,7 @@ namespace {
 using namespace vocabulary_test;
 using namespace ad_utility::vocabulary;
 
-// A stateless test "compressor" that applies a trivial transformation to a string.
+// A stateless test "decoder" that applies a trivial transformation to a string.
 // Satisfies the in-place decompression interface: `maxDecompressedSize` provides
 // the output bound, while `decompressInto` writes into caller-provided storage
 // and returns the number of bytes written.
