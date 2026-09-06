@@ -46,7 +46,7 @@ class PipelineCancelledException : public std::runtime_error {
 };
 
 // _____________________________________________________________________________
-// Diagnostic accounting and performance metrics for the double-buffering
+// Provide diagnostic accounting and performance metrics for the double-buffering pipeline.
 // pipeline. Encapsulates all bookkeeping so callers need not track state.
 struct PipelineStats {
   size_t totalChunksProduced{0};
