@@ -58,7 +58,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
     
     literal.push_back('"');
 
-    // 10% chance of UTF-8 content prefix
+    
     if (escapeProbDist(rng) < 10) {
       literal.append(utf8Words[utf8Dist(rng)]);
       literal.push_back(' ');
