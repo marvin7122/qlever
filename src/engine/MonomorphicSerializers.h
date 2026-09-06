@@ -97,27 +97,27 @@ struct CellValue {
 
   constexpr CellValue() noexcept = default;
 
-  /* implicit */ constexpr CellValue(std::string_view sv,
+  explicit constexpr CellValue(std::string_view sv,
                                      ColumnType type = ColumnType::String) noexcept
       : type_(type), stringVal_(sv) {}
 
-  /* implicit */ constexpr CellValue(const char* s,
+  explicit constexpr CellValue(const char* s,
                                      ColumnType type = ColumnType::String) noexcept
       : type_(type), stringVal_(s) {}
 
-  /* implicit */ constexpr CellValue(int64_t v) noexcept
+  explicit constexpr CellValue(int64_t v) noexcept
       : type_(ColumnType::Int), intVal_(v) {}
 
-  /* implicit */ constexpr CellValue(int v) noexcept
+  explicit constexpr CellValue(int v) noexcept
       : type_(ColumnType::Int), intVal_(v) {}
 
-  /* implicit */ constexpr CellValue(uint64_t v) noexcept
+  explicit constexpr CellValue(uint64_t v) noexcept
       : type_(ColumnType::Int), intVal_(static_cast<int64_t>(v)) {}
 
-  /* implicit */ constexpr CellValue(double v) noexcept
+  explicit constexpr CellValue(double v) noexcept
       : type_(ColumnType::Double), doubleVal_(v) {}
 
-  /* implicit */ constexpr CellValue(bool v) noexcept
+  explicit constexpr CellValue(bool v) noexcept
       : type_(ColumnType::Boolean), boolVal_(v) {}
 
   [[nodiscard]] static constexpr CellValue makeIri(std::string_view iri) noexcept {
