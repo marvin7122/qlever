@@ -76,13 +76,16 @@ class SimulatedDecompressionArena {
   }
 
   [[nodiscard]] size_t numTriples() const noexcept { return literalSpans_.size(); }
-  [[nodiscard]] ql::span<const char> getLiteralSpan(size_t index) const noexcept {
+    [[nodiscard]] ql::span<const char> getLiteralSpan(size_t index) const {
+    AD_CHECK(index < literalSpans_.size());
     return literalSpans_[index];
   }
-  [[nodiscard]] std::string_view getSubject(size_t index) const noexcept {
+  [[nodiscard]] std::string_view getSubject(size_t index) const {
+    AD_CHECK(index < subjects_.size());
     return subjects_[index];
   }
-  [[nodiscard]] std::string_view getPredicate(size_t index) const noexcept {
+  [[nodiscard]] std::string_view getPredicate(size_t index) const {
+    AD_CHECK(index < predicates_.size());
     return predicates_[index];
   }
 };
