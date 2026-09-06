@@ -80,12 +80,20 @@ class PerfCounterMonitor {
 #endif
   }
 
-  ~PerfCounterMonitor() noexcept {
+    ~PerfCounterMonitor() noexcept {
 #ifdef __linux__
-    if (fdCycles_ >= 0) close(fdCycles_);
-    if (fdInstructions_ >= 0) close(fdInstructions_);
-    if (fdBranches_ >= 0) close(fdBranches_);
-    if (fdBranchMisses_ >= 0) close(fdBranchMisses_);
+    if (fdCycles_ >= 0) {
+      close(fdCycles_);
+    }
+    if (fdInstructions_ >= 0) {
+      close(fdInstructions_);
+    }
+    if (fdBranches_ >= 0) {
+      close(fdBranches_);
+    }
+    if (fdBranchMisses_ >= 0) {
+      close(fdBranchMisses_);
+    }
 #endif
   }
 
