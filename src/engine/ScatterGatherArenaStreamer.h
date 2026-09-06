@@ -329,13 +329,7 @@ class ScatterGatherChunkStreamer
     currentChunkBytes_ += span.size();
     currentZeroCopyBytes_ += span.size();
     ++currentZeroCopySpans_;
-  }
-
-  // ___________________________________________________________________________
-  // Write an RDF IRI (wraps with <...> if not already enclosed or blank node).
-  void writeIri(ql::span<const char> iri) {
-    if (iri.empty()) {
-      return;
+  
     }
     std::string_view sv(iri.data(), iri.size());
     if ((ql::starts_with(sv, '<') && ql::ends_with(sv, '>')) ||
