@@ -113,27 +113,23 @@ class HardwarePerformanceMonitor {
  public:
   HardwarePerformanceMonitor() {
 #if defined(__linux__)
+    auto makeCacheConfig = [](uint64_t cacheType, uint64_t result) {
+      return cacheType | (PERF_COUNT_HW_CACHE_OP_READ << 8) | (result << 16);
+    };
+
     fdCycles_ = openPerfCounter(PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES);
     fdInstructions_ =
         openPerfCounter(PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
 
     // L1 Data Cache Access & Miss
-    uint64_t l1dAccessConfig = PERF_COUNT_HW_CACHE_L1D |
-                               (PERF_COUNT_HW_CACHE_OP_READ << 8) |
-                               (PERF_COUNT_HW_CACHE_RESULT_ACCESS << 16);
-    uint64_t l1dMissConfig = PERF_COUNT_HW_CACHE_L1D |
-                             (PERF_COUNT_HW_CACHE_OP_READ << 8) |
-                             (PERF_COUNT_HW_CACHE_RESULT_MISS << 16);
+    uint64_t l1dAccessConfig = makeCacheConfig(PERF_COUNT_HW_CACHE_L1D, PERF_COUNT_HW_CACHE_RESULT_ACCESS);
+    uint64_t l1dMissConfig = makeCacheConfig(PERF_COUNT_HW_CACHE_L1D, PERF_COUNT_HW_CACHE_RESULT_MISS);
     fdL1dAccess_ = openPerfCounter(PERF_TYPE_HW_CACHE, l1dAccessConfig);
     fdL1dMiss_ = openPerfCounter(PERF_TYPE_HW_CACHE, l1dMissConfig);
 
     // Last Level Cache (LLC/L3) Access & Miss
-    uint64_t llcAccessConfig = PERF_COUNT_HW_CACHE_LL |
-                               (PERF_COUNT_HW_CACHE_OP_READ << 8) |
-                               (PERF_COUNT_HW_CACHE_RESULT_ACCESS << 16);
-    uint64_t llcMissConfig = PERF_COUNT_HW_CACHE_LL |
-                             (PERF_COUNT_HW_CACHE_OP_READ << 8) |
-                             (PERF_COUNT_HW_CACHE_RESULT_MISS << 16);
+    uint64_t llcAccessConfig = makeCacheConfig(PERF_COUNT_HW_CACHE_LL, PERF_COUNT_HW_CACHE_RESULT_ACCESS);
+    uint64_t llcMissConfig = makeCacheConfig(PERF_COUNT_HW_CACHE_LL, PERF_COUNT_HW_CACHE_RESULT_MISS);
     fdLlcAccess_ = openPerfCounter(PERF_TYPE_HW_CACHE, llcAccessConfig);
     fdLlcMiss_ = openPerfCounter(PERF_TYPE_HW_CACHE, llcMissConfig);
 
