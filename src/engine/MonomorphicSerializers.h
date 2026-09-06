@@ -282,7 +282,7 @@ struct MonomorphicCellWriter {
   // Typed overload for EvaluatedTermData
   template <typename Writer>
   static void write(Writer& writer, const qlever::constructExport::EvaluatedTermData& term) {
-    writer.writeTerm(term, Format);
+    
   }
 };
 
