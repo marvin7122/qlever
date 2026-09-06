@@ -263,7 +263,9 @@ inline char* formatPrefixedId(std::string_view prefix, uint64_t id, char* out) n
 
 // _____________________________________________________________________________
 
+// Why: generic formatter for signed integers, copying a prefix then formatting the int via formatIntBranchless.
 inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) noexcept {
+
   AD_CONTRACT_CHECK(out != nullptr);
   if (!prefix.empty()) {
     std::memcpy(out, prefix.data(), prefix.size());
