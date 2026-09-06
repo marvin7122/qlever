@@ -52,13 +52,7 @@ class HardwarePerfCounter {
     pe.exclude_kernel = 1;
     pe.exclude_hv = 1;
     return static_cast<int>(
-        syscall(__NR_perf_event_open, &pe, 0, -1, -1, 0));
-  }
-#endif
-
- public:
-  HardwarePerfCounter() {
-#if defined(__linux__)
+        
     branchFd_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
     missFd_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES);
     isSupported_ = (branchFd_ >= 0 && missFd_ >= 0);
