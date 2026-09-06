@@ -41,8 +41,7 @@ namespace ql::engine::prefetch {
 // Compiler and architecture agnostic software cache prefetching intrinsic.
 // Issues a non-blocking CPU prefetch instruction for the memory address
 // into all cache levels (_MM_HINT_T0 on x86 / __builtin_prefetch locality 3).
-inline void prefetchVocabEntry(const void* address,
-                               [[maybe_unused]] int distance = 8) noexcept {
+inline void prefetchVocabEntry(const void* address) noexcept {
   if (address == nullptr) {
     return;
   }
@@ -140,24 +139,23 @@ return config_.prefetchDistance;
     // Warm-up pipeline: prefetch the first `distance` entries
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t pfPos = positions[k];
-      prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-      prefetchVocabEntry(&positions[k], static_cast<int>(distance));
+      prefetchVocabEntry(&ids[pfPos]);
+      prefetchVocabEntry(&positions[k]);
     }
 
     // Main pipelined loop: prefetch row (i + distance) ahead while serializing row i
     for (size_t i = 0; i < n; ++i) {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
-        prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        prefetchVocabEntry(&positions[i + distance],
-                           static_cast<int>(distance));
+        prefetchVocabEntry(&ids[pfPos]);
+        prefetchVocabEntry(&positions[i + distance]);
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
           const auto wordVocabIndex = pfId.getVocabIndex();
           // Prefetch the underlying index entry if possible
           const auto* vocabPtr =
               reinterpret_cast<const void*>(&index.getImpl());
-          prefetchVocabEntry(vocabPtr, static_cast<int>(distance));
+          prefetchVocabEntry(vocabPtr);
         }
       }
 
@@ -202,7 +200,7 @@ return config_.prefetchDistance;
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t idx = indices[k];
       if (idx < offsets.size()) {
-        prefetchVocabEntry(&offsets[idx], static_cast<int>(distance));
+        prefetchVocabEntry(&offsets[idx]);
       }
     }
 
@@ -212,7 +210,7 @@ return config_.prefetchDistance;
       if (i + distance < n) {
         const size_t pfIdx = indices[i + distance];
         if (pfIdx < offsets.size()) {
-          prefetchVocabEntry(&offsets[pfIdx], static_cast<int>(distance));
+          prefetchVocabEntry(&offsets[pfIdx]);
         }
       }
 
@@ -222,8 +220,7 @@ return config_.prefetchDistance;
         if (midIdx + 1 < offsets.size()) {
           const auto strOffset = offsets[midIdx];
           if (strOffset < data.size()) {
-            prefetchVocabEntry(data.data() + strOffset,
-                               static_cast<int>(distance / 2));
+            prefetchVocabEntry(data.data() + strOffset);
           }
         }
       }
