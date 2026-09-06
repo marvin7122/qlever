@@ -38,7 +38,9 @@ namespace detail {
 
 // _____________________________________________________________________________
 // Provide a powers of 10 lookup table for exact branchless digit length determination.
+// Why: exact powers of ten up to 10^20 for branchless digit-length calculation via comparison.
 inline constexpr uint64_t POWERS_OF_10_64[20] = {
+
     1ULL,
     10ULL,
     100ULL,
