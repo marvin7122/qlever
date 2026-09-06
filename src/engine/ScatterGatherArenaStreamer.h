@@ -428,8 +428,7 @@ class ScatterGatherChunkStreamer
       writeLiteral(objectLiteral, datatype, langTag);
     }
     writeRawHeader(trailer);
-    ++currentChunkTriples_;
-    ++totalTriples_;
+    incrementTripleCounters();
   }
 
   // ___________________________________________________________________________
