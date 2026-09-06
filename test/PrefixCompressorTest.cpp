@@ -161,3 +161,44 @@ TEST(PrefixCompressor, prefixCompression) {
   EXPECT_THAT(calculatePrefixes(input, 127),
               Contains(ContainsRegex("\nabc\t\n")));
 }
+
+// _____________________________________________________________________________
+TEST(PrefixCompressor, PrefixIndexBoundaryValues) {
+  // Test boundary values for prefixIndex method
+  // MIN_COMPRESSION_PREFIX = 129
+  // NUM_COMPRESSION_PREFIXES = 126
+  // Valid range: [129, 255)
+  // NO_PREFIX_CHAR = 255
+
+  // Exactly MIN_COMPRESSION_PREFIX (129) -> should return index 0
+  std::string word_min(1, static_cast<char>(MIN_COMPRESSION_PREFIX));
+  word_min += "test";
+  auto idx_min = PrefixCompressor::prefixIndex(word_min);
+  ASSERT_TRUE(idx_min.has_value());
+  EXPECT_EQ(*idx_min, 0u);
+
+  // MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES - 1 (129 + 126 - 1 = 254) -> should return index 125
+  std::string word_max_valid(1, static_cast<char>(MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES - 1));
+  word_max_valid += "test";
+  auto idx_max_valid = PrefixCompressor::prefixIndex(word_max_valid);
+  ASSERT_TRUE(idx_max_valid.has_value());
+  EXPECT_EQ(*idx_max_valid, NUM_COMPRESSION_PREFIXES - 1u);
+
+  // MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES (129 + 126 = 255) -> should return nullopt
+  std::string word_no_prefix(1, static_cast<char>(MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES));
+  word_no_prefix += "test";
+  auto idx_no_prefix = PrefixCompressor::prefixIndex(word_no_prefix);
+  EXPECT_FALSE(idx_no_prefix.has_value());
+
+  // Value below MIN_COMPRESSION_PREFIX (e.g., 0) -> should return nullopt
+  std::string word_below(1, static_cast<char>(0));
+  word_below += "test";
+  auto idx_below = PrefixCompressor::prefixIndex(word_below);
+  EXPECT_FALSE(idx_below.has_value());
+
+  // Value 255 (NO_PREFIX_CHAR) -> should return nullopt
+  std::string word_above(1, static_cast<char>(255));
+  word_above += "test";
+  auto idx_above = PrefixCompressor::prefixIndex(word_above);
+  EXPECT_FALSE(idx_above.has_value());
+}
