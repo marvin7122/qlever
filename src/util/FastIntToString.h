@@ -150,7 +150,7 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 }
 
 // _____________________________________________________________________________
-// Branchless determination of the exact number of decimal digits for 32-bit uint.
+
 [[nodiscard]] inline constexpr uint32_t numDigits(uint32_t val) noexcept {
   return numDigits(static_cast<uint64_t>(val));
 }
