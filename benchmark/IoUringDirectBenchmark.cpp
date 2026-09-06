@@ -179,12 +179,7 @@ struct BenchmarkMetric {
         }
         
 
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("2. Sync pread (O_DIRECT)", startTime, endTime,
-                           totalBytes, numBatches);
-  }
-
-  // 3. io_uring Standard (Unpinned buffers & Unregistered files)
+    
   BenchmarkMetric runIoUringUnpinned(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/false);
     AD_CONTRACT_CHECK(file.isOpen());
