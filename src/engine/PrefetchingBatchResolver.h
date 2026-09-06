@@ -157,13 +157,7 @@ return config_.prefetchDistance;
         prefetchVocabEntry(&ids[pfPos]);
       }
 
-      const size_t pos = positions[i];
-      const Id id = ids[pos];
-      const auto vocabIndex = id.getVocabIndex();
-      std::string_view word = index.indexToString(vocabIndex);
-
-      results[pos] =
-          ql::exportIds::literalOrIriToStringAndType<
+      
               removeQuotesAndAngleBrackets, returnOnlyLiterals>(
               LiteralOrIriView::fromStringRepresentation(word),
               escapeFunction);
