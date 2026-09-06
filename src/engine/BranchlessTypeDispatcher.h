@@ -182,7 +182,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 5: LocalVocabIndex
+  
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
