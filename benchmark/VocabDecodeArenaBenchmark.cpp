@@ -246,14 +246,16 @@ int main(int argc, char** argv) {
   }
 
 
-  const auto ru0 = snapUsage();
+    const auto ru0 = snapUsage();
   const auto t0 = std::chrono::steady_clock::now();
   DecodeStats agg;
+  ql::pmr::monotonic_buffer_resource buffer;
   if (opt.layer == 0) {
     for (size_t b = 0; b < opt.timedBatches; ++b) {
       const size_t i = opt.warmupBatches + b;
-      DecodeStats one = (opt.arm == "copy") ? runCopyBatch(vocab, fixture[i])
-                                            : runIntoBatch(vocab, fixture[i]);
+      DecodeStats one = (opt.arm == "copy")
+                            ? runCopyBatch(vocab, fixture[i], buffer)
+                            : runIntoBatch(vocab, fixture[i], buffer);
       agg.checksum ^= one.checksum;
       agg.bytesUsed += one.bytesUsed;
       agg.bytesBound += one.bytesBound;
