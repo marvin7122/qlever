@@ -235,3 +235,36 @@ TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
 
   ::close(pipeFds[0]);
 }
+
+TEST(ScatterGatherArenaStreamerTest, FlushEmptyStream) {
+  ScatterGatherConfig config;
+  config.zeroCopyThresholdBytes = 10;
+
+  ScatterGatherChunkStreamer streamer(config);
+  auto chunkOpt = streamer.flush();
+  EXPECT_FALSE(chunkOpt.has_value());
+}
+
+TEST(ScatterGatherArenaStreamerTest, FinalizeEmptyStream) {
+  ScatterGatherConfig config;
+
+  ScatterGatherChunkStreamer streamer(config);
+  auto summary = std::move(streamer).finalize();
+  EXPECT_EQ(summary.chunksEmitted_, 0);
+}
+
+TEST(ScatterGatherArenaStreamerTest, ArenaSpanZeroCopy) {
+  ScatterGatherConfig config;
+  config.zeroCopyThresholdBytes = 10;
+
+  std::string payload = "0123456789abcdefghijklmnopqrstuvwxyz";  // 36 bytes
+
+  ScatterGatherChunkStreamer streamer(config);
+  streamer.writeArenaSpan(
+      ql::span<const char>(payload.data(), payload.size()));
+  auto chunkOpt = streamer.flush();
+  ASSERT_TRUE(chunkOpt.has_value());
+  EXPECT_EQ(chunkOpt->zeroCopySpansCount(), 1);
+  EXPECT_EQ(chunkOpt->zeroCopyBytes(), payload.size());
+}
+
