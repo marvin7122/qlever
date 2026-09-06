@@ -173,7 +173,7 @@ class PrefetchingBatchResolver {
   }
 
   // ___________________________________________________________________________
-  // Pipelined batch lookup directly over CompactVectorOfStrings storage,
+    // Pipeline batch lookups directly over `CompactVectorOfStrings` storage,
   // issuing multi-stage prefetch intrinsics for offset table lines and
   // string payload cache lines K iterations ahead.
   template <typename CharType, typename MappingFunc>
