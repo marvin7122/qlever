@@ -186,7 +186,7 @@ inline char* emitEscape(char c, char* dest) noexcept {
 
 #if defined(QLEVER_SIMD_X86)
 
-// AVX2 32-byte vector classification.
+// Perform AVX2 32-byte vector classification.
 template <EscapeFormat Format>
 QLEVER_AVX2_TARGET [[nodiscard]] inline uint32_t scanChunk32Avx2(
     const char* data) noexcept {
