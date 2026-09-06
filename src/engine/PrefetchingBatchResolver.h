@@ -188,22 +188,22 @@ return config_.prefetchDistance;
 
     results.resize(n);
 
-    // Stage 1 warmup: prefetch offset table lines for the first `distance` items
-    for (size_t k = 0; k < std::min(distance, n); ++k) {
-      const size_t idx = indices[k];
+    auto prefetchOffsetIfValid = [&](size_t idx) {
       if (idx < offsets.size()) {
         prefetchVocabEntry(&offsets[idx]);
       }
+    };
+
+    // Stage 1 warmup: prefetch offset table lines for the first `distance` items
+    for (size_t k = 0; k < std::min(distance, n); ++k) {
+      prefetchOffsetIfValid(indices[k]);
     }
 
     // Main pipelined loop
     for (size_t i = 0; i < n; ++i) {
       // 1. Prefetch offset table line for (i + distance)
       if (i + distance < n) {
-        const size_t pfIdx = indices[i + distance];
-        if (pfIdx < offsets.size()) {
-          prefetchVocabEntry(&offsets[pfIdx]);
-        }
+        prefetchOffsetIfValid(indices[i + distance]);
       }
 
       // 2. Prefetch string character data line for (i + distance / 2)
