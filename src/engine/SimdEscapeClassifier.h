@@ -9,8 +9,6 @@
 #ifndef QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
 #define QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
 
-#include <algorithm>
-#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
