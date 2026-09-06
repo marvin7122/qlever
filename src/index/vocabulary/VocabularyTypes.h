@@ -152,7 +152,7 @@ class ContiguousVocabBatchLookupData : public VocabBatchStorage {
 // Builder for a contiguous batch lookup result. Allocates single contiguous
 // memory for all requested word sizes, generates direct destination targets for
 // asynchronous I/O (e.g. io_uring), and pre-computes the string_view for each
-// Allocate storage inside the arena for `bound` bytes, invoke `decompress(destinationSpan)` to write the bytes (up to `bound`), and register the view.
+
 class ContiguousVocabBatchBuilder {
  private:
   std::vector<char> buffer_;
