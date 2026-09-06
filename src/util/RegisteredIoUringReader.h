@@ -327,6 +327,7 @@ class RegisteredIoUringReader
   ad_utility::HashMap<uint64_t, InFlightMeta> inFlightByReqId_;
   
     AD_CORRECTNESS_CHECK(!config_.useRegisteredBuffers || config_.useDirectIo);
+    AD_CONTRACT_CHECK(config_.ringEntries > 0);
     initRing();
   }
 
