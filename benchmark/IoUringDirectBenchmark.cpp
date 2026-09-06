@@ -200,19 +200,21 @@ struct BenchmarkMetric {
 
     std::vector<uint64_t> offsets = generateOffsets(randomAccess);
     const size_t numBatches = offsets.size();
-    std::vector<BlockReadRequest> requests(batchBlocks_);
+    std::vector<BlockReadRequest> requests;
+    requests.reserve(batchBlocks_);
 
     auto startTime = std::chrono::steady_clock::now();
     size_t totalBytes = 0;
 
     for (size_t b = 0; b < numBatches; ++b) {
       uint64_t baseOffset = offsets[b];
+      requests.clear();
       for (size_t i = 0; i < batchBlocks_; ++i) {
         uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
         if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
           blockOffset = 0;
         }
-        requests[i] = BlockReadRequest(
+        requests.emplace_back(
             file.fd(), blockOffset, /*bufIndex=*/0, /*bufOffset=*/0,
             kBlockSizeBytes, bufferArena.getSlotSpan(i).data(),
             /*requireDirectIoAlignment=*/false);
