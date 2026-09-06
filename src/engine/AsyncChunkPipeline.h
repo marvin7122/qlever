@@ -35,7 +35,7 @@
 namespace qlever::export_pipeline {
 
 // _____________________________________________________________________________
-// Exception thrown or propagated when a pipeline consumer cancels early
+// Throw or propagate exception when a pipeline consumer cancels early.
 // (e.g. HTTP client disconnected, query timed out, or client socket broke).
 class PipelineCancelledException : public std::runtime_error {
  public:
