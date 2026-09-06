@@ -70,7 +70,18 @@ static void simulateNetworkTransmission(size_t chunkBytes,
 }
 
 // _____________________________________________________________________________
-// Record benchmark run results.
+// BenchmarkRunResult captures the outcome of a single export run.
+// Fields:
+//   mode                     – "Sync Lockstep" or "Async Double-Buffered"
+//   chunkSizeTriples         – number of triples per generated chunk
+//   latencyMs                – simulated network latency in milliseconds
+//   totalTriples             – total triples exported in the run
+//   totalBytes               – total bytes transmitted
+//   durationSeconds          – wall‑clock time of the run
+//   throughputMBPerSec       – data throughput in MiB/s
+//   throughputTriplesPerSec  – triple throughput in triples/s
+//   backpressureStalls       – times producer waited for buffer space (async only)
+//   consumerWaitStalls       – times consumer waited for data (async only)
 struct BenchmarkRunResult {
   std::string mode;
   size_t chunkSizeTriples;
