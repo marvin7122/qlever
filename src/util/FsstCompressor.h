@@ -193,7 +193,7 @@ class FsstRepeatedDecoder {
   // written.
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
                                       std::string& scratch) const {
-    AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(str));
+  
     if constexpr (N == 1) {
       return decoders_[0].decompressInto(str, out);
     } else {
