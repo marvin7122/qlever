@@ -99,7 +99,7 @@ class PrefixCompressor {
     const size_t rest = compressedWord.size() - 1;
 
     if (idx.has_value()) {
-      AD_CORRECTNESS_CHECK(*idx < prefixToCode_.size());
+      AD_CONTRACT_CHECK(*idx < prefixToCode_.size());
       const size_t prefixSize = prefixToCode_[*idx].size();
       AD_CORRECTNESS_CHECK(prefixSize <= std::numeric_limits<size_t>::max() - rest);
       return prefixSize + rest;
