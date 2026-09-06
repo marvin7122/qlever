@@ -34,6 +34,11 @@
 #include "backports/span.h"
 #include "util/Invariants.h"
 
+// SimdEscapeClassifier facade: provides SIMD‑accelerated escape detection and
+// serialization for multiple formats (CSV, TSV, Turtle, XML).
+// Dispatches to AVX2, SSE2, or scalar implementations based on compile‑time ISA.
+// Uses zero‑escape fast path: when a 32‑byte chunk mask is zero, copies raw bytes
+// with a single memcpy, avoiding per‑character checks.
 namespace ad_utility::simd {
 
 // List supported serialization formats for SIMD escape classification.
