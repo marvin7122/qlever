@@ -349,7 +349,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Write a single EvaluatedTermData term directly according to ExportFormat.
+
   void writeTerm(const qlever::constructExport::EvaluatedTermData& term,
                  ExportFormat format) {
     if (term.rdfTermDataType_ == nullptr) {
