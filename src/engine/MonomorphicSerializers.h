@@ -439,13 +439,7 @@ class MonomorphicRowSerializer {
  * @param cells One argument per column, in schema order.
  * The function static‑asserts that the number of arguments equals the schema width.
  */
-  template <ExportFormat Format, typename Writer, typename... CellArgs>
-  static void serializeRow(Writer& writer, const CellArgs&... cells) {
-    static_assert(sizeof...(CellArgs) == NUM_COLUMNS,
-                  "MonomorphicRowSerializer argument count mismatch with schema");
-    serializeVariadicCells<Format, Writer, 0>(writer, cells...);
-    detail::writeRowTerminator<Format>(writer);
-  }
+  
 
   // ___________________________________________________________________________
   // Serialize a single row from span of CellValue (compile-time unrolled)
