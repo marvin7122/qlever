@@ -140,8 +140,7 @@ class PrefixCompressor {
     return outputSize + rest.size();
   }
 
-  // ___________________________________________________________________________
-  // Decompress the given `compressedWord`.
+    // ___________________________________________________________________________
   [[nodiscard]] std::string decompress(std::string_view compressedWord) const {
     std::string result(maxDecompressedSize(compressedWord), '\0');
     const size_t numBytesWritten = decompressInto(
