@@ -270,7 +270,7 @@ class ScatterGatherChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Invariant verification (Law 3 & Architecture Standard § 3).
+    // Verify invariants (Law 3 & Architecture Standard § 3).
   void checkInvariants() const {
     size_t computedBytes = 0;
     size_t computedZcBytes = 0;
