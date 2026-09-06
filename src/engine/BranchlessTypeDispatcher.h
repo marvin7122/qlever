@@ -215,13 +215,24 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
 // For types using `formatTermWithDelimiters` (IRIs, literals), the raw term already contains delimiters.
 // For other types, the value is serialized from the ValueId.
 constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
-  std::array<TypeFormatDescriptor, 16> lut{};
-  for (size_t i = 0; i < 16; ++i) {
-    lut[i] = TypeFormatDescriptor{"", "", &formatUndefined};
-  }
-
-  lut[static_cast<size_t>(Datatype::Undefined)] =
-      TypeFormatDescriptor{"", "", &formatUndefined};
+    std::array<TypeFormatDescriptor, 16> lut = {
+      TypeFormatDescriptor{"", "", &formatUndefined}, // Undefined
+      TypeFormatDescriptor{"", "", &formatBoolean}, // Bool
+      TypeFormatDescriptor{"", "", &formatInteger}, // Int
+      TypeFormatDescriptor{"", "", &formatDouble}, // Double
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters}, // VocabIndex
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters}, // LocalVocabIndex
+      TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters}, // TextRecordIndex
+      TypeFormatDescriptor{"\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate}, // Date
+      TypeFormatDescriptor{"\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>", &formatGeoPoint}, // GeoPoint
+      TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters}, // WordVocabIndex
+      TypeFormatDescriptor{"_:bn", "", &formatBlankNode}, // BlankNodeIndex
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters}, // EncodedVal
+      TypeFormatDescriptor{"", "", &formatUndefined}, // 12
+      TypeFormatDescriptor{"", "", &formatUndefined}, // 13
+      TypeFormatDescriptor{"", "", &formatUndefined}, // 14
+      TypeFormatDescriptor{"", "", &formatUndefined} // 15
+  };
   lut[static_cast<size_t>(Datatype::Bool)] =
       TypeFormatDescriptor{"", "", &formatBoolean};
   lut[static_cast<size_t>(Datatype::Int)] =
