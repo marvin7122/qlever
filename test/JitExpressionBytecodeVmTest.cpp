@@ -749,10 +749,13 @@ TEST(JitExpressionBytecodeVmTest, MultiRangeOrKeepsSingleRangeRows) {
   program.addInstruction(OpCode::RET);
 
   auto V = [](uint64_t bits) { return Id::fromBits(bits); };
+  // NOTE: the datatype tag lives in the high `ValueId` bits, so `baseA + 200`
+  // is exactly `baseB` (and thus inside range B). The neither-row uses +150
+  // (vocabulary index 250), which is inside neither range.
   IdTable input =
       makeIdTableFromVector({{V(baseA + 10)},          // only range A -> keep
                              {V(baseB + 10)},          // only range B -> keep
-                             {V(baseA + 200)},         // neither -> drop
+                             {V(baseA + 150)},         // neither -> drop
                              {Id::makeUndefined()}});  // neither -> drop
   IdTableStatic<1> result =
       IdTable{1, ad_utility::makeUnlimitedAllocator<Id>()}.toStatic<1>();

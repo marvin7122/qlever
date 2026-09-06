@@ -38,8 +38,12 @@ std::optional<JitBytecodeProgram> JitExpressionBytecodeVm::compile(
               return false;
           }
         });
-    program.setCellRule(hasComparison ? CellRule::OrderedComparison
-                                      : CellRule::IntegerArithmetic);
+    const bool hasYearExtraction = std::any_of(
+        instructions.begin(), instructions.end(),
+        [](const Instruction& inst) { return inst.op == OpCode::YEAR_DATE; });
+    program.setCellRule(hasYearExtraction ? CellRule::YearExtraction
+                        : hasComparison   ? CellRule::OrderedComparison
+                                          : CellRule::IntegerArithmetic);
     return program;
   }
   return std::nullopt;
