@@ -62,12 +62,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
       
   if (o.vocab.empty() || (o.arm != "copy" && o.arm != "into") ||
       (o.layer != 0 && o.layer != 1) || o.batchSize == 0 ||
-      o.timedBatches == 0) {
-    usage(argv[0]);
-    return false;
-  }
-  return true;
-}
+      
 
 /// Fixture word used in vocabulary decode benchmarks.
 struct FixtureWord {
