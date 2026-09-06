@@ -80,8 +80,7 @@ class VectorizedPrefixTable {
     return entry.length;
   }
 
-  // ___________________________________________________________________________
-  // Returns the static singleton instance.
+    // ___________________________________________________________________________
   static const VectorizedPrefixTable& instance() noexcept {
     static const VectorizedPrefixTable table;
     return table;
