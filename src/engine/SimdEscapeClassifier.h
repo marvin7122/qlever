@@ -312,13 +312,7 @@ template<EscapeFormat Format>
 
     // Tail: 0 to 15 remaining bytes
         
-    }
-    return std::string_view::npos;
-  }
-
-  // ___________________________________________________________________________
-  // Check whether `text` contains any characters requiring escaping.
-  template <EscapeFormat Format = EscapeFormat::Turtle>
+    
   [[nodiscard]] static inline bool hasEscapes(std::string_view text) noexcept {
     return findFirstEscape<Format>(text) != std::string_view::npos;
   }
