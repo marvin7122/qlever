@@ -329,13 +329,7 @@ struct BenchmarkMetric {
       totalBytes += res.totalBytesRead;
     }
 
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("6. io_uring (Fully Registered Files+Buffers+O_DIRECT)",
-                           startTime, endTime, totalBytes, numBatches);
-  }
-
- private:
-  std::vector<uint64_t> generateOffsets(bool randomAccess) const {
+    
     const size_t batchSizeBytes = batchBlocks_ * kBlockSizeBytes;
     const size_t numBatches = kTotalFileSizeBytes / batchSizeBytes;
     std::vector<uint64_t> offsets(numBatches);
