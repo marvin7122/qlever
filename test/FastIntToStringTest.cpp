@@ -211,7 +211,7 @@ TEST(FastIntToStringTest, FormatQidAndPid) {
 TEST(FastIntToStringTest, FormatDetailFixedDigits) {
   char buf[16];
 
-  // 8 digits formatting
+  // 8-digit formatting
   detail::format8Digits(12345678U, buf);
   EXPECT_EQ(std::string_view(buf, 8), "12345678");
 
@@ -224,14 +224,14 @@ TEST(FastIntToStringTest, FormatDetailFixedDigits) {
   detail::format8Digits(99999999U, buf);
   EXPECT_EQ(std::string_view(buf, 8), "99999999");
 
-  // 4 digits formatting
+  // 4-digit formatting
   detail::format4Digits(1234U, buf);
   EXPECT_EQ(std::string_view(buf, 4), "1234");
 
   detail::format4Digits(7U, buf);
   EXPECT_EQ(std::string_view(buf, 4), "0007");
 
-  // 2 digits formatting
+  // 2-digit formatting
   detail::format2Digits(42U, buf);
   EXPECT_EQ(std::string_view(buf, 2), "42");
 
