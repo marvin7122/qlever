@@ -490,12 +490,7 @@ class ScatterGatherChunkStreamer
                        .iov_len = slice.len});
     }
 
-    ScatterGatherChunk chunk(
-        ScatterGatherChunk::Passkey{}, std::move(iovecs),
-        std::move(currentHeaderBuffer_), currentChunkBytes_,
-        currentChunkTriples_, currentZeroCopySpans_, currentZeroCopyBytes_);
-
-    totalBytesWritten_ += currentChunkBytes_;
+    
     totalZeroCopySpans_ += currentZeroCopySpans_;
     totalZeroCopyBytes_ += currentZeroCopyBytes_;
     ++chunksEmitted_;
