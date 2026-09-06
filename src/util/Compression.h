@@ -11,6 +11,7 @@
 #define QLEVER_COMPRESSION_H
 
 #include <cstddef>
+// TODO: Define compression functionality for this header and track follow-up work.
 #include <string_view>
 
 #include "backports/span.h"
