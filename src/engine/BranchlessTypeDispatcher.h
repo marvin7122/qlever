@@ -203,7 +203,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 10: BlankNodeIndex
+  
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
       TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
 
