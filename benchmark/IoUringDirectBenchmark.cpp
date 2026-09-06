@@ -290,12 +290,7 @@ struct BenchmarkMetric {
       totalBytes += res.totalBytesRead;
     }
 
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("5. io_uring (Registered Files + O_DIRECT)",
-                           startTime, endTime, totalBytes, numBatches);
-  }
-
-  // 6. io_uring Fully Registered: IORING_REGISTER_FILES + IORING_REGISTER_BUFFERS + O_DIRECT
+    
   BenchmarkMetric runIoUringFullyRegistered(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
