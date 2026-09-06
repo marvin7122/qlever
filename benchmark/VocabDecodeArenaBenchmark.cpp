@@ -56,13 +56,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
     if (a == "--vocab") {
       o.vocab = need("--vocab");
     
-      o.warmupBatches =
-          static_cast<size_t>(std::stoull(need("--warmup-batches")));
-    } else if (a == "--timed-batches") {
-      o.timedBatches =
-          static_cast<size_t>(std::stoull(need("--timed-batches")));
-    } else if (a == "--start-index") {
-      o.startIndex = static_cast<size_t>(std::stoull(need("--start-index")));
+      
     } else if (a == "-h" || a == "--help") {
       usage(argv[0]);
       return false;
