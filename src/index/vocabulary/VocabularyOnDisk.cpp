@@ -188,8 +188,7 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   std::vector<uint64_t> fileOffsets(numIndices);
   for (auto&& [size, fileOffset, offsetPair] :
        ::ranges::views::zip(sizes, fileOffsets, offsetPairs)) {
-    size = offsetPair.wordSize();
-    fileOffset = offsetPair.offset();
+    
   }
 
   AD_CORRECTNESS_CHECK(!sizes.empty());
