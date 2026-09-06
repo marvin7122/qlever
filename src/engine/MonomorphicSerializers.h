@@ -430,6 +430,15 @@ class MonomorphicRowSerializer {
 
   // ___________________________________________________________________________
   // Serialize a single row from variadic cell values (compile-time unrolled)
+  /**
+ * Serialize a single row given compile‑time cell values.
+ * @tparam Format Export format selector.
+ * @tparam Writer Writer satisfying FormatterWriter.
+ * @tparam CellArgs Types of the cell arguments (must match schema size).
+ * @param writer Output writer.
+ * @param cells One argument per column, in schema order.
+ * The function static‑asserts that the number of arguments equals the schema width.
+ */
   template <ExportFormat Format, typename Writer, typename... CellArgs>
   static void serializeRow(Writer& writer, const CellArgs&... cells) {
     static_assert(sizeof...(CellArgs) == NUM_COLUMNS,
