@@ -475,7 +475,7 @@ class FastExportStreamFormatter
 
   // ___________________________________________________________________________
 
-  // Consumes the formatter, flushes remaining content, and returns summary.
+  // Flushes remaining buffered content, invalidates the internal buffer, and returns export statistics.
   [[nodiscard]] ExportStreamSummary finalize() && {
     flush();
     ExportStreamSummary summary{totalTriples_, totalBytesWritten_,
