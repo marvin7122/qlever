@@ -231,7 +231,7 @@ QLEVER_AVX2_TARGET [[nodiscard]] inline uint32_t scanChunk32Avx2(
   }
 }
 
-// SSE2 16-byte vector classification.
+// Perform SSE2 16-byte vector classification.
 template <EscapeFormat Format>
 QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
     const char* data) noexcept {
