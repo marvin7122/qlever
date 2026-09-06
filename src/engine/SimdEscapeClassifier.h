@@ -159,13 +159,7 @@ inline char* emitEscape(char c, char* dest) noexcept {
       std::memcpy(dest, "&amp;", 5);
       return dest + 5;
     } else if (c == '<') {
-      std::memcpy(dest, "&lt;", 4);
-      return dest + 4;
-    } else if (c == '>') {
-      std::memcpy(dest, "&gt;", 4);
-      return dest + 4;
-    } else if (c == '"') {
-      std::memcpy(dest, "&quot;", 6);
+      
       return dest + 6;
     } else if (c == '\'') {
       std::memcpy(dest, "&apos;", 6);
