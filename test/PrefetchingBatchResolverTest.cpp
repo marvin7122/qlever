@@ -73,7 +73,7 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
 
   LocalVocab localVocab;
 
-  // Standard baseline resolution
+    // Resolve standard baseline
   auto baselineResults = ql::exportIds::idsToStringAndType(
       index, testIds, localVocab, ql::identity{});
 
