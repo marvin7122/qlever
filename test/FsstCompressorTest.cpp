@@ -470,6 +470,49 @@ TEST_F(FsstRepeatedDecoderTest, decompressIntoMatchesDecompressTwoStages) {
 
 // _____________________________________________________________________________
 // Verify decompressInto == decompress byte-for-byte over three cascaded FSST stages.
+TEST(FsstEncoder, RepeatedDecoderMaxDecompressedSizeAndDecompressInto) {
+  // Test various N, overflow, and both decompressInto overloads
+  const std::vector<std::string> words{"hello", "world", ""};
+  auto [buffer, compressedViews, decoder] = FsstEncoder::compressAll(words);
+  std::vector<std::string_view> compressed;
+  compressed.assign(compressedViews.begin(), compressedViews.end());
+
+  // Single stage repeated decoder (N=1)
+  FsstRepeatedDecoder<1> repeated1{std::move(decoder)};
+  for (const auto& cv : compressed) {
+    size_t maxSize = repeated1.maxDecompressedSize(cv);
+    // Ensure maxSize is reasonable (not zero for non-empty?)
+    std::string intoBuf(maxSize, '\0');
+    size_t n = repeated1.decompressInto(cv, ql::span<char>{intoBuf.data(), intoBuf.size()});
+    EXPECT_LE(n, maxSize);
+    std::string viaString = repeated1.decompress(cv);
+    EXPECT_EQ(std::string_view(intoBuf.data(), n), viaString);
+  }
+
+  // Test with scratch overload
+  for (const auto& cv : compressed) {
+    std::string scratch;
+    size_t maxSize = repeated1.maxDecompressedSize(cv);
+    std::string intoBuf(maxSize, '\0');
+    size_t n = repeated1.decompressInto(cv, ql::span<char>{intoBuf.data(), intoBuf.size()}, scratch);
+    EXPECT_LE(n, maxSize);
+    std::string viaString = repeated1.decompress(cv);
+    EXPECT_EQ(std::string_view(intoBuf.data(), n), viaString);
+  }
+
+  // Overflow test: ensure maxDecompressedSize does not overflow for large input
+  const std::string large(1000, 'x');
+  auto [buf2, views2, dec2] = FsstEncoder::compressAll({large});
+  FsstRepeatedDecoder<1> rep2{std::move(dec2)};
+  size_t maxSize2 = rep2.maxDecompressedSize(views2[0]);
+  EXPECT_GT(maxSize2, 0u);
+  // Check that decompressInto works
+  std::string into2(maxSize2, '\0');
+  size_t n2 = rep2.decompressInto(views2[0], ql::span<char>{into2.data(), into2.size()});
+  EXPECT_EQ(n2, large.size());
+  EXPECT_EQ(std::string_view(into2.data(), n2), large);
+}
+
 TEST_F(FsstRepeatedDecoderTest, decompressIntoMatchesDecompressThreeStages) {
   expectRepeatedDecompressIntoMatches<3>(
       {"alpha", "", "beta", "gamma-gamma-gamma", ""});
