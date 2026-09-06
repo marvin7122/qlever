@@ -74,6 +74,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
           size_t bytes = 0;
           for (int64_t val : sequentialInts) {
             auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), val);
+            AD_CONTRACT_CHECK(ec == std::errc{});
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
