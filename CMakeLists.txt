@@ -119,11 +119,6 @@ message(STATUS "QLEVER_NO_UNDEFINED_SYMBOLS is ${QLEVER_NO_UNDEFINED_SYMBOLS}")
 # has to load all the shared libraries again.
 option(QLEVER_ONE_TEST_CASE_PER_FILE "Register one `ctest` test per test binary instead of one per gtest case" OFF)
 
-option(QLEVER_ENABLE_EXPORT_V2 "Compile the experimental export V2 path" OFF)
-if (QLEVER_ENABLE_EXPORT_V2)
-    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2=1)
-endif ()
-
 # Disable nlohmann implicit conversions (e.g. json → std::string) globally so
 # all TUs, including those compiled via PCH, see the same flag value.
 add_compile_definitions(JSON_USE_IMPLICIT_CONVERSIONS=0)
@@ -156,9 +151,12 @@ if (EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
     add_compile_definitions(QLEVER_EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
 endif()
 
+# Compile Export Engine V2 sources into the server by default. Request routing
+# still defaults to Legacy V1 unless `fast-export=1` / `export-engine=v2` /
+# `X-QLever-Export-Engine` opts in (see ExportPipelineRouter).
 option(QLEVER_ENABLE_EXPORT_V2 "Enable Fast-Path Streaming Export Engine V2" ON)
 if (QLEVER_ENABLE_EXPORT_V2)
-    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2)
+    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2=1)
 endif()
 
 # Select the memory-allocator backend that `qlever::Allocator` resolves to

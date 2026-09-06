@@ -25,7 +25,8 @@ namespace {
 class MockInvariantClass
     : public ad_utility::WithInvariants<MockInvariantClass> {
  public:
-  // Counts invariant-check invocations; mutable for use in checkInvariants() const.
+  // Counts invariant-check invocations; mutable for use in checkInvariants()
+  // const.
   mutable size_t checkCount_{0};
   // Test control state used to simulate violated entry or exit invariants.
   bool failInvariants_{false};
@@ -47,10 +48,12 @@ class MockInvariantClass
 };
 
 // _____________________________________________________________________________
-// Define a class that lacks `checkInvariants() const` to verify concept failure.
+// Define a class that lacks `checkInvariants() const` to verify concept
+// failure.
 struct ClassWithoutInvariants {};
 
-// Check the invariant-stateful-class concept for supported and unsupported types.
+// Check the invariant-stateful-class concept for supported and unsupported
+// types.
 static_assert(ad_utility::InvariantStatefulClass<MockInvariantClass>);
 static_assert(!ad_utility::InvariantStatefulClass<ClassWithoutInvariants>);
 

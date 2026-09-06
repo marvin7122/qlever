@@ -206,6 +206,17 @@ class ScatterGatherChunk
     return result;
   }
 
+  // Call `visitor(std::string_view)` for each owned segment. Views are valid
+  // only while this chunk is alive; the HTTP writer stores the chunk as a
+  // member for that reason.
+  template <typename Visitor>
+  void visitSegments(Visitor&& visitor) const {
+    for (const auto& segment : segments_) {
+      visitor(std::string_view{segment.owner_->data() + segment.offset_,
+                               segment.size_});
+    }
+  }
+
   [[nodiscard]] ScatterGatherWriteResult writeToFd(
       int fd, const IsCancelled& isCancelled = [] { return false; }) const {
     AD_CONTRACT_CHECK(fd >= 0);
@@ -255,6 +266,9 @@ class ScatterGatherChunkBuilder
     AD_CORRECTNESS_CHECK(total == totalBytes_);
   }
 
+  [[nodiscard]] size_t size() const noexcept { return totalBytes_; }
+  [[nodiscard]] bool empty() const noexcept { return totalBytes_ == 0; }
+
   void appendCopy(std::string_view bytes) {
     auto guard = makeInvariantGuard();
     if (bytes.empty()) {
@@ -281,6 +295,18 @@ class ScatterGatherChunkBuilder
         {std::move(bytes.owner_), bytes.offset_, bytes.size_, false});
   }
 
+  // Take ownership of `bytes` without copying the payload into copiedBytes_.
+  void appendOwned(std::string bytes) {
+    auto guard = makeInvariantGuard();
+    if (bytes.empty()) {
+      return;
+    }
+    const size_t size = bytes.size();
+    auto owner = std::make_shared<const std::string>(std::move(bytes));
+    segments_.push_back({std::move(owner), 0, size, false});
+    totalBytes_ += size;
+  }
+
   [[nodiscard]] ScatterGatherChunk finalize() && {
     auto guard = makeInvariantGuard();
     auto copiedOwner =
@@ -296,6 +322,21 @@ class ScatterGatherChunkBuilder
     segments_.clear();
     totalBytes_ = 0;
     return ScatterGatherChunk{std::move(result), totalBytes};
+  }
+
+  // Consumes the builder. Copy-only payloads (the live SELECT CSV/TSV path)
+  // move `copiedBytes_` out; mixed borrowed segments fall back to concat.
+  [[nodiscard]] std::string finalizeToString() && {
+    auto guard = makeInvariantGuard();
+    const bool hasBorrowed = std::any_of(
+        segments_.begin(), segments_.end(),
+        [](const PendingSegment& segment) { return !segment.copied_; });
+    if (!hasBorrowed) {
+      segments_.clear();
+      totalBytes_ = 0;
+      return std::move(copiedBytes_);
+    }
+    return std::move(*this).finalize().toString();
   }
 };
 
