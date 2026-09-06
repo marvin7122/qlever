@@ -226,6 +226,12 @@ class PinnedArena : public WithInvariants<PinnedArena> {
 // Describe a block read request with invariant proofs.
 // Uses a tagged union to enforce mutual exclusion between registered-buffer
 // and direct-memory read paths (Heuristic 2: pair buffers and views by construction).
+//
+// Field documentation:
+// - fileIndex: Index into the registered file table for io_uring fixed-file I/O.
+// - fileOffset: Byte offset in the file; must be 4KB-aligned for O_DIRECT.
+// - numBytes: Number of bytes to read; must be a multiple of 4KB.
+// - target: Variant holding either a registered buffer index or a direct memory span.
 struct BlockReadRequest {
   uint32_t fileIndex = 0;       // Index into registered file table
   uint64_t fileOffset = 0;      // File byte offset (4KB aligned for O_DIRECT)
