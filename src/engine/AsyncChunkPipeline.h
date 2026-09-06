@@ -247,8 +247,7 @@ class AsyncChunkPipeline
   }
 
   // ___________________________________________________________________________
-  // High-Level Adapter:  with asynchronous double-buffering.`cppcoro::generator`
-  // with asynchronous double-buffering.
+  // Wrap an existing synchronous `cppcoro::generator` with asynchronous double-buffering.
   //
   // Spawns a dedicated background worker to evaluate and buffer chunks ahead
   // of the consumer, overlapping compute and network I/O.
