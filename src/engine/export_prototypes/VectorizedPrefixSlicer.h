@@ -55,7 +55,7 @@ class VectorizedPrefixTable {
     initEntry(WellKnownPrefixId::RdfSyntax, kRdfSyntaxPrefix);
     initEntry(WellKnownPrefixId::RdfsSchema, kRdfsSchemaPrefix);
     initEntry(WellKnownPrefixId::OwlOntology, kOwlOntologyPrefix);
-    initEntry(WellKnownPrefixId::SchemaOrg, kSchemaOrgPrefix);
+    initEntry(WellKnownPrefixId::SchemaOrg, "http://schema.org/");
     initEntry(WellKnownPrefixId::XmlSchema, kXmlSchemaPrefix);
   }
 
