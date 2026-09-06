@@ -28,7 +28,7 @@ namespace ad_utility {
 namespace detail {
 
 // _____________________________________________________________________________
-// 2-digit lookup table for radix-100 decomposition.
+// Provide a `DIGIT_PAIRS` lookup table for radix-100 decomposition.
 // Contains 100 pairs of ASCII digits ("00", "01", ..., "99").
 alignas(64) inline constexpr char DIGIT_PAIRS[200] =
     "00010203040506070809"
