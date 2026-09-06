@@ -292,11 +292,9 @@ idsToStringAndTypePrefetched(
     const Index& index, ql::span<const Id> ids,
     const LocalVocab& localVocab,
     const EscapeFunction& escapeFunction = EscapeFunction{}) {
-  PrefetchingBatchResolver resolver{
-      PrefetchConfig{.prefetchDistance = PrefetchDistance}};
-  return resolver.idsToStringAndType<removeQuotesAndAngleBrackets,
-                                     returnOnlyLiterals>(
-      index, ids, localVocab, escapeFunction);
+  return PrefetchingBatchResolver{PrefetchConfig{.prefetchDistance = PrefetchDistance}}
+      .idsToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+          index, ids, localVocab, escapeFunction);
 }
 
 } // namespace detail
