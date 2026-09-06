@@ -227,7 +227,7 @@ class PinnedArena : public WithInvariants<PinnedArena> {
 struct BlockReadRequest {
   uint32_t fileIndex = 0;       // Index into registered file table
   uint64_t fileOffset = 0;      // File byte offset (4KB aligned for O_DIRECT)
-  uint32_t numBytes = 0;        // Number of bytes to read (multiple of 4KB)
+  uint32_t numBytes;        // Number of bytes to read (multiple of 4KB)
 
   struct RegisteredBuffer {
     uint32_t bufferIndex = 0;   // Registered buffer index
