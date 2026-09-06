@@ -119,13 +119,7 @@ struct BenchmarkMetric {
   std::string name;
   double elapsedSeconds = 0.0;
   double throughputMBs = 0.0;
-  double throughputGBs = 0.0;
-  double iops = 0.0;
-  double avgBatchLatencyUs = 0.0;
-  double speedupVsBaseline = 1.0;
-};
-
-// _____________________________________________________________________________
+  
 // Benchmark test harness evaluating I/O paradigms across the 1GB simulated dataset.
 /**
  * Executes a series of I/O benchmarks (sync pread, io_uring variants) on a
