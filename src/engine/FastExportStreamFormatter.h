@@ -78,7 +78,7 @@ inline constexpr auto csvSpecialTable = makeCsvSpecialTable();
 inline constexpr auto tsvSpecialTable = makeTsvSpecialTable();
 inline constexpr auto turtleSpecialTable = makeTurtleSpecialTable();
 
-// High-throughput 64-bit unrolled SWAR lookup scanner.
+
 // Scans 8 bytes at a time; compilers auto-vectorize this loop effortlessly.
 template <const std::array<bool, 256>& Table>
 [[nodiscard]] inline bool hasSpecialCharacters(std::string_view sv) noexcept {
