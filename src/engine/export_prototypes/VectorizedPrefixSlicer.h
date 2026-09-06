@@ -40,7 +40,7 @@ constexpr std::string_view kXmlSchemaPrefix = "http://www.w3.org/2001/XMLSchema#
 class VectorizedPrefixTable {
  public:
     // Stores a prefix aligned to 16 bytes with its length.
-  struct PrefixEntry {
+  alignas(16) struct PrefixEntry {
     alignas(16) char data[48];
     size_t length;
   };
