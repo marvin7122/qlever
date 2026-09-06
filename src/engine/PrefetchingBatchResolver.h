@@ -60,17 +60,35 @@ inline void prefetchVocabEntry(const void* address) noexcept {
 
 // _____________________________________________________________________________
 // Configuration options for software prefetching batch resolution.
+// Invariant-bearing type: only constructible via Builder::finalize() which enforces
+// prefetchDistance in [1, 128]. Prevents invalid configuration at the type level.
 struct PrefetchConfig {
   // Number of rows/iterations to prefetch ahead of the current serialization
   // cursor. Typically 4 to 16 iterations hide DRAM/L3 cache miss latency (~60ns)
   // while keeping L1 cache lines active.
   size_t prefetchDistance{8};
 
-  // Explicit validation of configuration invariants.
-  void checkInvariants() const {
-    AD_CONTRACT_CHECK(prefetchDistance > 0);
-    AD_CONTRACT_CHECK(prefetchDistance <= 128);
-  }
+  struct Builder {
+    size_t prefetchDistance = DEFAULT_PREFETCH_DISTANCE;
+
+    Builder& withPrefetchDistance(size_t d) noexcept {
+      prefetchDistance = d;
+      return *this;
+    }
+
+    // Consuming finalize: validates invariants and returns invariant-bearing PrefetchConfig.
+    [[nodiscard]] PrefetchConfig finalize() && {
+      AD_CONTRACT_CHECK(prefetchDistance > 0);
+      AD_CONTRACT_CHECK(prefetchDistance <= 128);
+      return PrefetchConfig{prefetchDistance};
+    }
+  };
+
+  static Builder builder() noexcept { return {}; }
+
+private:
+  explicit PrefetchConfig(size_t d) noexcept : prefetchDistance(d) {}
+  friend struct Builder;
 };
 
 // _____________________________________________________________________________
