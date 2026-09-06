@@ -199,7 +199,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
 
-  // 9: WordVocabIndex
+  
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
