@@ -359,7 +359,7 @@ class AsyncChunkPipeline
 };
 
 // _____________________________________________________________________________
-// Sink handle provided to producer callbacks in `pipelineStream`.
+// Provide sink handle to producer callbacks in `pipelineStream`.
 template <typename ChunkType = std::string>
 class ChunkSink {
  private:
