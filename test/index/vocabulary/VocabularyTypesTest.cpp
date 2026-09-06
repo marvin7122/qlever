@@ -210,9 +210,8 @@ TEST_F(VocabBatchLookupDataVocabTest, MultiSourceAssemblerOutlivesClose) {
 }
 
 // _____________________________________________________________________________
-// Same guarantee when the vocabulary object is destroyed entirely while the
-// batch result still lives: shared ownership of the word storage keeps the
-// bytes alive past the destructor.
+// Verify that a batch result outlives vocabulary destruction: shared ownership
+// of the word storage keeps the bytes alive past the destructor.
 TEST_F(VocabBatchLookupDataVocabTest,
        MultiSourceAssemblerOutlivesVocabularyDestruction) {
   auto vocabulary = std::make_optional(buildVocab("other-word"));
