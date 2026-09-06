@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <iterator>
 
 #if defined(__linux__)
 #include <linux/perf_event.h>
@@ -213,7 +214,7 @@ struct BranchingSwitchDispatcher {
     for (size_t i = 0; i < numTerms; ++i) {
       curr = dispatchTermFormat(ids[i], rawTerms[i], curr);
     }
-    return static_cast<size_t>(curr - out);
+    return static_cast<size_t>(std::distance(out, curr));
   }
 };
 
