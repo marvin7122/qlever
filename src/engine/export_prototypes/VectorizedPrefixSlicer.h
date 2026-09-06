@@ -23,7 +23,7 @@
 namespace qlever::export_pipeline {
 
 // _____________________________________________________________________________
-// Standard known IRI prefix IDs for high-throughput single-instruction emission.
+// Standard known IRI prefix IDs for high-throughput vectorized emission.
 enum class WellKnownPrefixId : uint8_t {
   WikidataEntity = 0,    // http://www.wikidata.org/entity/
   WikidataDirectProp,    // http://www.wikidata.org/prop/direct/
