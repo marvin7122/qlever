@@ -134,31 +134,48 @@ Result Values::computeResult([[maybe_unused]] bool requestLaziness) {
 }
 
 // ____________________________________________________________________________
-template <size_t I>
-void Values::writeValues(IdTable* idTablePtr, LocalVocab* localVocab) {
-  IdTableStatic<I> idTable = std::move(*idTablePtr).toStatic<I>();
-  idTable.resize(parsedValues_._values.size());
-  size_t rowIdx = 0;
-  std::vector<size_t> numLocalVocabPerColumn(idTable.numColumns());
-  for (auto& row : parsedValues_._values) {
-    for (size_t colIdx = 0; colIdx < idTable.numColumns(); colIdx++) {
-      const TripleComponent& tc = row[colIdx];
-      // TODO<joka921> We don't want to move, but also don't want to
-      // unconditionally copy.
-      Id id = toValueId(TripleComponent{tc}, getIndex(), *localVocab);
-      idTable(rowIdx, colIdx) = id;
-      if (id.getDatatype() == Datatype::LocalVocabIndex) {
-        ++numLocalVocabPerColumn[colIdx];
-      }
-    }
-    rowIdx++;
-  }
-  AD_CORRECTNESS_CHECK(rowIdx == parsedValues_._values.size());
-  AD_LOG_INFO << "Number of tuples in VALUES clause: " << rowIdx << std::endl;
-  AD_LOG_INFO << "Number of entries in local vocabulary per column: "
-              << absl::StrJoin(numLocalVocabPerColumn, ", ") << std::endl;
-  *idTablePtr = std::move(idTable).toDynamic();
-}
+
+// Explicit instantiation for commonly used widths
+template void Values::writeValues<1>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<2>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<3>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<4>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<5>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<6>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<7>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<8>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<9>(IdTable* idTablePtr,
+                                     LocalVocab* localVocab);
+template void Values::writeValues<10>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<11>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<12>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<13>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<14>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<15>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<16>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<17>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<18>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<19>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
+template void Values::writeValues<20>(IdTable* idTablePtr,
+                                      LocalVocab* localVocab);
 
 // _____________________________________________________________________________
 std::unique_ptr<Operation> Values::cloneImpl() const {
