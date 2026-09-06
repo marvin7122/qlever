@@ -235,7 +235,7 @@ struct BlockReadRequest {
   };
 
   struct DirectMemory {
-    char* destination = nullptr;  // Target memory address (4KB aligned)
+    ql::span<char> destination;  // Target memory span (4KB aligned, borrows from caller)
   };
 
   std::variant<RegisteredBuffer, DirectMemory> target;
@@ -256,21 +256,21 @@ struct BlockReadRequest {
 
   // Direct-memory read constructor
   BlockReadRequest(uint32_t fIndex, uint64_t fOffset, uint32_t bytes,
-                   char* dest)
+                   ql::span<char> dest)
       : fileIndex{fIndex},
         fileOffset{fOffset},
         numBytes{bytes},
         target{DirectMemory{dest}} {
     AD_CONTRACT_CHECK(numBytes > 0);
-    AD_CONTRACT_CHECK(destination != nullptr);
+    AD_CONTRACT_CHECK(!dest.empty());
     AD_CONTRACT_CHECK(isBlockAligned(fileOffset));
     AD_CONTRACT_CHECK(isBlockAligned(numBytes));
-    AD_CONTRACT_CHECK(isPointerAligned(destination));
+    AD_CONTRACT_CHECK(isPointerAligned(dest.data()));
   }
 
  private:
   [[nodiscard]] char* destination() const {
-    return std::get<DirectMemory>(target).destination;
+    return std::get<DirectMemory>(target).destination.data();
   }
 };
 
