@@ -26,6 +26,7 @@ namespace {
 class FsstScratchBufferBenchmark : public BenchmarkInterface {
  private:
   // Model a fixed three-stage repeated-FSST decode pipeline.
+  // TODO<marvin> Consider making stage count configurable if multi-stage benchmarks are needed.
   static constexpr size_t numberOfStages = 3;
 
   struct CompressedData {
