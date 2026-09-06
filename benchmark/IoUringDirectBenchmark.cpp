@@ -366,7 +366,7 @@ struct BenchmarkMetric {
 // Print the benchmark results table.
 void printResultsTable(std::string_view accessMode,
                        std::vector<BenchmarkMetric>& results) {
-  if (results.empty()) return;
+  if (results.empty()) { return; }
 
   double baselineThroughput = results[0].throughputMBs;
   for (auto& r : results) {
