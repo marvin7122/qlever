@@ -301,6 +301,10 @@ struct RegisteredReaderConfig {
 };
 
 // _____________________________________________________________________________
+// Why: Provides a high-level io_uring wrapper that amortizes kernel fixed-file
+// and fixed-buffer registration overhead across many I/O operations, enabling
+// high-throughput asynchronous reads with minimal per-request bookkeeping.
+//
 // Deep Module: RegisteredIoUringReader
 //
 // Encapsulates kernel fixed-file table registration (`IORING_REGISTER_FILES`),
