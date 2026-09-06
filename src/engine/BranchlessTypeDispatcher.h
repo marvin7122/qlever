@@ -297,6 +297,7 @@ class BranchlessTypeDispatcher {
   }
 
   [[nodiscard]] static constexpr const LookupTable& rawVocabLut() noexcept {
+    // Return constexpr reference to raw vocabulary format lookup table (no added delimiters).
     return kRawVocabTypeFormatLut;
   }
 };
