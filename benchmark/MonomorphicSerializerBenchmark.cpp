@@ -41,12 +41,19 @@ using namespace ql::export_formatting;
 class PerfCounterMonitor {
  public:
   struct Metrics {
+    // Total CPU cycles retired (hardware event: PERF_COUNT_HW_CPU_CYCLES)
     uint64_t cycles = 0;
+    // Total instructions retired (hardware event: PERF_COUNT_HW_INSTRUCTIONS)
     uint64_t instructions = 0;
+    // Total branch instructions retired (hardware event: PERF_COUNT_HW_BRANCH_INSTRUCTIONS)
     uint64_t branches = 0;
+    // Total branch misses (hardware event: PERF_COUNT_HW_BRANCH_MISSES)
     uint64_t branchMisses = 0;
+    // Instructions per cycle, derived as instructions / cycles (0.0 if cycles == 0)
     double ipc = 0.0;
+    // Branch miss rate in percent, derived as (branchMisses / branches) * 100.0
     double branchMissRate;
+    // Whether hardware performance counters were available and read successfully
     bool available = false;
   };
 
