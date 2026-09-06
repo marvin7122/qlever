@@ -392,7 +392,7 @@ class DynamicRowSerializer : public ad_utility::WithInvariants<DynamicRowSeriali
 // _____________________________________________________________________________
 // MonomorphicRowSerializer<ColumnTypes...>:
 // Compile-time specialized and loop-unrolled row serializer.
-// Eliminates all runtime branches, dynamic type switches, and virtual dispatch.
+// Eliminates runtime branches for per-cell type dispatch, dynamic type switches, and virtual dispatch.
 template <ColumnType... ColumnTypes>
 class MonomorphicRowSerializer {
  public:
