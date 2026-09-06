@@ -247,13 +247,29 @@ class ScatterGatherBenchmarkRunner {
   static ScatterGatherBenchmarkMetric runKernelScatterGatherTransmission(
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = kDefaultChunkSize) {
-    struct FdGuard {
-      int fd = -1;
-      ~FdGuard() { if (fd >= 0) ::close(fd); }
-    } nullFdGuard;
-    nullFdGuard.fd = ::open("/dev/null", O_WRONLY);
-    int nullFd = nullFdGuard.fd;
-    if (nullFd < 0) {
+    class ScopedFd {
+     public:
+      explicit ScopedFd(int fd = -1) noexcept : fd_(fd) {}
+      ~ScopedFd() { if (fd_ >= 0) ::close(fd_); }
+      ScopedFd(const ScopedFd&) = delete;
+      ScopedFd& operator=(const ScopedFd&) = delete;
+      ScopedFd(ScopedFd&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
+      ScopedFd& operator=(ScopedFd&& other) noexcept {
+        if (this != &other) {
+          if (fd_ >= 0) ::close(fd_);
+          fd_ = other.fd_;
+          other.fd_ = -1;
+        }
+        return *this;
+      }
+      [[nodiscard]] int get() const noexcept { return fd_; }
+      [[nodiscard]] explicit operator bool() const noexcept { return fd_ >= 0; }
+     private:
+      int fd_ = -1;
+    };
+
+    ScopedFd nullFd(::open("/dev/null", O_WRONLY));
+    if (!nullFd) {
       AD_THROW("Failed to open /dev/null");
     }
 
@@ -272,7 +288,7 @@ class ScatterGatherBenchmarkRunner {
         [&](ScatterGatherChunk chunk) {
           totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
-          chunk.writeToFd(nullFd);
+          chunk.writeToFd(nullFd.get());
         },
         config);
 
@@ -290,7 +306,6 @@ class ScatterGatherBenchmarkRunner {
 
     auto summary = std::move(streamer).finalize();
     auto endTime = std::chrono::steady_clock::now();
-    ::close(nullFd);
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
