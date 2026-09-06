@@ -207,7 +207,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
       TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
 
-  // 11: EncodedVal
+  
   lut[static_cast<size_t>(Datatype::EncodedVal)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
