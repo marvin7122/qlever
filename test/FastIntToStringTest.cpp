@@ -142,9 +142,8 @@ TEST(FastIntToStringTest, FormatUInt32Branchless) {
 
   auto testValue = [&](uint32_t val) {
     char* end = formatUInt32Branchless(val, buf);
-    std::string expected = std::to_string(val);
-    std::string actual(buf, end - buf);
-    EXPECT_EQ(actual, expected) << "Failed on 32-bit value: " << val;
+    std::string_view actual(buf, end - buf);
+    EXPECT_EQ(actual, std::to_string(val)) << "Failed on 32-bit value: " << val;
   };
 
   testValue(0U);
