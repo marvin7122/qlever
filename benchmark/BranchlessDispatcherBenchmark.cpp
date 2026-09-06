@@ -90,10 +90,10 @@ class HardwarePerfCounter {
     if (isSupported_) {
       ioctl(branchFd_, PERF_EVENT_IOC_DISABLE, 0);
       ioctl(missFd_, PERF_EVENT_IOC_DISABLE, 0);
-      ssize_t r1 = read(branchFd_, &branchCount, sizeof(uint64_t));
+            ssize_t r1 = read(branchFd_, &branchCount, sizeof(uint64_t));
       ssize_t r2 = read(missFd_, &missCount, sizeof(uint64_t));
-      (void)r1;
-      (void)r2;
+      if (r1 != sizeof(uint64_t)) branchCount = 0;
+      if (r2 != sizeof(uint64_t)) missCount = 0;
     } else {
       branchCount = 0;
       missCount = 0;
