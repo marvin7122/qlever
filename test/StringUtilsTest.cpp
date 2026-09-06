@@ -572,3 +572,31 @@ TEST(StringUtils, commonPrefix) {
   EXPECT_EQ(ad_utility::commonPrefix("ab", "b"), "");
   EXPECT_EQ(ad_utility::commonPrefix("b", "ab"), "");
 }
+
+// _____________________________________________________________________________
+TEST(StringUtils, decodeToOwnedString) {
+  using ad_utility::decodeToOwnedString;
+  // A zero bound should return an empty string without invoking the decode
+  // callable.
+  {
+    bool called = false;
+    auto result =
+        decodeToOwnedString(0, [&called](ql::span<char>) { called = true; });
+    EXPECT_EQ(result, "");
+    EXPECT_FALSE(called);
+  }
+  // Normal case: the decoder writes fewer bytes than the bound.
+  {
+    std::string_view expected = "ab";
+    auto result = decodeToOwnedString(
+        expected.size(), [expected](ql::span<char> out) {
+          std::copy(expected.begin(), expected.end(), out.begin());
+          return expected.size();
+        });
+    EXPECT_EQ(result, expected);
+  }
+  // Contract violation: the decoder writes more bytes than the bound, which
+  // should trigger the contract check in `decodeToOwnedString`.
+  EXPECT_DEATH_IF_SUPPORTED(
+      decodeToOwnedString(2, [](ql::span<char>) { return 3; }), "");
+}
