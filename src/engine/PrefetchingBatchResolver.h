@@ -95,7 +95,7 @@ class PrefetchingBatchResolver {
   PrefetchConfig config_;
 
  public:
-  // Default constructor with standard tuned prefetch distance of 8 rows.
+    // Construct a `PrefetchingBatchResolver` with the standard tuned prefetch distance of 8 rows.
   explicit PrefetchingBatchResolver(
       PrefetchConfig config = PrefetchConfig{.prefetchDistance =
                                                  DEFAULT_PREFETCH_DISTANCE})
