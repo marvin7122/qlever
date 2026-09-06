@@ -215,7 +215,6 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Write an integer directly without heap allocation.
   template <typename IntegerType>
   requires std::is_integral_v<IntegerType>
   void writeInteger(IntegerType value) noexcept {
