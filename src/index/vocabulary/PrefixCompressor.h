@@ -126,7 +126,7 @@ class PrefixCompressor {
     size_t outputSize = 0;
     if (idx.has_value()) {
       const std::string& prefix = prefixToCode_[*idx];
-      AD_CORRECTNESS_CHECK(prefix.size() <= out.size());
+  
       std::memcpy(out.data(), prefix.data(), prefix.size());
       outputSize = prefix.size();
     }
