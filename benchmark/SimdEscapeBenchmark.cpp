@@ -113,15 +113,9 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
   return std::string_view::npos;
 }
 
-// Scan TSV literals for escape characters with a scalar loop.
+// Scan TSV literals for escape characters using find_first_of.
 [[nodiscard]] size_t scalarFindFirstEscapeTsv(std::string_view text) noexcept {
-  for (size_t i = 0; i < text.size(); ++i) {
-    char c = text[i];
-    if (c == '\t' || c == '\n' || c == '\r' || c == '\\') {
-      return i;
-    }
-  }
-  return std::string_view::npos;
+  return text.find_first_of("\t\n\r\\");
 }
 
 // Escape Turtle literals using `absl::StrReplaceAll`.
