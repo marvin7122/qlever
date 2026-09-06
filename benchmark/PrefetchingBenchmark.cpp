@@ -102,8 +102,10 @@ class HardwarePerformanceMonitor {
     pe.config = config;
     
 
-  static uint64_t readCounter(int fd) {
-    if (fd < 0) return 0;
+    static uint64_t readCounter(int fd) {
+    if (fd < 0) {
+      return 0;
+    }
     uint64_t count = 0;
     ssize_t res = ::read(fd, &count, sizeof(uint64_t));
     return res == sizeof(uint64_t) ? count : 0;
