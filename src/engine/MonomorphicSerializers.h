@@ -502,7 +502,7 @@ class MonomorphicRowSerializer {
 
 namespace detail {
 
-// Fast-path dispatch for 1-column schemas
+// Fast-path dispatch for 1-column schemas.
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
   switch (c0) {
