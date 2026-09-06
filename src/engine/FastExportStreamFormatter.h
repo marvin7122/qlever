@@ -268,7 +268,6 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Fast RFC 4180 CSV field serializer with branchless escape scanning.
   void writeEscapedCsv(std::string_view field) {
     if (!detail::hasSpecialCharacters<detail::csvSpecialTable>(field)) {
       writeRaw(field);
