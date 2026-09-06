@@ -106,12 +106,7 @@ inline char* formatBoolean(ValueId id, std::string_view, char* out,
   return out;
 }
 
-// Fast branchless formatter for date values.
-inline char* formatDate(ValueId id, std::string_view, char* out,
-                        std::string_view prefix,
-                        std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
+
   auto [str, type] = id.getDate().toStringAndType();
   std::memcpy(out, str.data(), str.size());
   out += str.size();
