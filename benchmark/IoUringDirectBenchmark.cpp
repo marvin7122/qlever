@@ -177,12 +177,7 @@ struct BenchmarkMetric {
         if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
           blockOffset = 0;
         }
-        RegisteredIoUringReader::readSync(file.fd(), blockOffset,
-                                          bufferArena.getSlotSpan(i),
-                                          /*directIo=*/true);
-        totalBytes += kBlockSizeBytes;
-      }
-    }
+        
 
     auto endTime = std::chrono::steady_clock::now();
     return calculateMetric("2. Sync pread (O_DIRECT)", startTime, endTime,
