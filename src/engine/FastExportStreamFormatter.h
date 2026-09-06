@@ -314,7 +314,7 @@ class FastExportStreamFormatter
 
   // ___________________________________________________________________________
   // Fast Turtle / NTriples normalized literal serializer.
-  // Escapes backslashes, quotes, and newlines inside the literal content.
+    // Escapes backslashes, quotes, newlines, and carriage returns inside the literal content.
   void writeEscapedTurtleLiteral(std::string_view normLiteral) {
     AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'));
     size_t posSecondQuote = normLiteral.find('"', 1);
