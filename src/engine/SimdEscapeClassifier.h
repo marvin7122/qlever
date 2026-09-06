@@ -182,13 +182,7 @@ inline char* emitEscape(char c, char* dest) noexcept {
     __m256i match =
         _mm256_or_si256(_mm256_or_si256(m1, m2), _mm256_or_si256(m3, m4));
     return static_cast<uint32_t>(_mm256_movemask_epi8(match));
-  } else if constexpr (Format == EscapeFormat::CsvQuote) {
-    __m256i match = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('"'));
-    return static_cast<uint32_t>(_mm256_movemask_epi8(match));
-  } else if constexpr (Format == EscapeFormat::CsvSpecial) {
-    __m256i m1 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('"'));
-    __m256i m2 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8(','));
-    __m256i m3 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\n'));
+  
     __m256i m4 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\r'));
     __m256i match =
         _mm256_or_si256(_mm256_or_si256(m1, m2), _mm256_or_si256(m3, m4));
