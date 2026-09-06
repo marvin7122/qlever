@@ -120,13 +120,7 @@ inline char* formatBoolean(ValueId id, std::string_view, char* out,
 
 // No-op formatter for undefined or unmapped datatype slots.
 inline char* formatUndefined(ValueId, std::string_view, char* out,
-                             std::string_view, std::string_view) noexcept {
-  return out;
-}
-
-// Builds the default 16-entry lookup table for standard RDF N-Triples export.
-constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
-  std::array<TypeFormatDescriptor, 16> lut{};
+                             
   for (size_t i = 0; i < 16; ++i) {
     lut[i] = TypeFormatDescriptor{"", "", &formatUndefined};
   }
