@@ -30,7 +30,7 @@ namespace ql::engine::prefetch {
 
 // _____________________________________________________________________________
 // Compiler and architecture agnostic software cache prefetching intrinsic.
-// Issues a non-blocking CPU prefetch instruction for the memory address
+
 // into all cache levels (_MM_HINT_T0 on x86 / __builtin_prefetch locality 3).
 inline void prefetchVocabEntry(const void* address) noexcept {
   if (address == nullptr) {
