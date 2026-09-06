@@ -300,8 +300,8 @@ CPP_template(typename T, typename ArrayType, typename MakeMatcher)(
 }
 
 // Matcher that takes a range of arguments, applies the `func` to them, and
-// asserts, that the results are all unique. Is currently implemented using a
-// linear find, s.t. we don't require hashing support for the projection result,
+// asserts that the results are all unique. Is currently implemented using a
+// linear find, such that we don't require hashing support for the projection result,
 // but therefore has a quadratic runtime.
 MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
   std::vector<decltype(func(*arg.begin()))> seen;
