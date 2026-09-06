@@ -51,6 +51,7 @@ class SimulatedDecompressionArena {
     AD_CONTRACT_CHECK(literalSizeBytes > 0);
 
     const size_t totalArenaBytes = numTriples * literalSizeBytes;
+    AD_CONTRACT_CHECK(literalSizeBytes <= SIZE_MAX / numTriples);
     storage_.resize(totalArenaBytes);
 
     // Populate arena with simulated literal strings containing text, numbers, and symbols
