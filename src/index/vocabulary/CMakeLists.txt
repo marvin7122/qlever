@@ -1,5 +1,5 @@
 # All the vocabularies, including the `RdfsVocabulary` (`Vocabulary.cpp`) that
-# combines them, and the `EncodedIriManager` (`EncodedIriManager.cpp`) that
+# Combine them and encode suitable IRIs directly in an `Id`.
 # encodes suitable IRIs directly in an `Id` instead of storing them in a
 # vocabulary. The latter two used to live in `src/index` and to be compiled into
 # the `index` library, but they belong here: neither of them uses a single symbol
