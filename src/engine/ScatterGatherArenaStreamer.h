@@ -404,7 +404,7 @@ class ScatterGatherChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Write a single EvaluatedTermData term.
+  
   void writeTerm(const qlever::constructExport::EvaluatedTermData& term,
                  ExportFormat format) {
     if (term.rdfTermDataType_ == nullptr) {
