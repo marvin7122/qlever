@@ -378,7 +378,7 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
 // clobber deeper frames. Returns the last byte written, read back through the
 // `volatile` buffer, so callers can assert that the stack was actually
 // overwritten with the sentinel.
-template <size_t NumBytes = 4096>
+CPP_template(size_t NumBytes = 4096)
 [[gnu::noinline]] char clobberStack(char sentinel = '#') {
   // `volatile` prevents the compiler from optimizing the stack writes away.
   static_assert(NumBytes > 0, "clobberStack requires a non-empty buffer");
