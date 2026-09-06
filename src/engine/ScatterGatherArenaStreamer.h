@@ -564,7 +564,7 @@ class ScatterGatherChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Finalizing typestate transition (Law 2 / Law 3 & Architecture Standard § 3).
+    // Finalize the typestate transition (Law 2 / Law 3 & Architecture Standard § 3).
   // Consumes the streamer, flushes remaining chunk, and returns summary metrics.
   [[nodiscard]] ExportStreamSummary finalize() && {
     flush();
