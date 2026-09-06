@@ -161,10 +161,7 @@ return config_.prefetchDistance;
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
           const auto wordVocabIndex = pfId.getVocabIndex();
-          // Prefetch the underlying index entry if possible
-          const auto* vocabPtr =
-              reinterpret_cast<const void*>(&index.getImpl());
-          prefetchVocabEntry(vocabPtr);
+
         }
       }
 
