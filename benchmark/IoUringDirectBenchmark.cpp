@@ -408,6 +408,7 @@ void printResultsTable(std::string_view accessMode,
  * unpinned, io_uring O_DIRECT, registered files, fully registered DMA) on a
  * 1 GB simulated vocabulary file. Integrated via `AD_REGISTER_BENCHMARK`.
  */
+// ____________
 class IoUringDirectBenchmark : public BenchmarkInterface {
  public:
   std::string name() const final {
