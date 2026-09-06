@@ -454,7 +454,7 @@ class LiteralEscapeBenchmark : public BenchmarkInterface {
   }
 };
 
-AD_REGISTER_BENCHMARK(SimdEscapeBenchmark);
+AD_REGISTER_BENCHMARK(LiteralEscapeBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
