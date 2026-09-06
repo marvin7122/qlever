@@ -47,7 +47,7 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
   streamer.writeIri(ql::span<const char>("<http://example.org/pred>"));
   streamer.writeChar(' ');
   streamer.writeLiteral(
-      ql::span<const char>(arenaLiteral.data(), arenaLiteral.size()),
+            ql::span<const char>(largeLiteral.data(), largeLiteral.size()),
       "http://www.w3.org/2001/XMLSchema#string");
   streamer.writeRawHeader(" .\n");
 
