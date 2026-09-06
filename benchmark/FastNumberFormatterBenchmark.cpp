@@ -61,30 +61,14 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       auto& group = results.addGroup("Sequential Integer Formatting (1..1,000,000)");
 
       // 1. std::to_string (baseline: dynamic allocation + standard division loop)
-      {
-        size_t totalBytes = 0;
-        auto start = std::chrono::high_resolution_clock::now();
-        auto& m = group.addMeasurement("std::to_string", [&]() {
-          size_t bytes = 0;
-          for (int64_t val : sequentialInts) {
-            std::string s = std::to_string(val);
-            bytes += s.size();
-          }
-          totalBytes = bytes;
-          return bytes;
-        });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
-        double throughputMPerSec =
-            (static_cast<double>(NUM_INTEGERS) / (static_cast<double>(elapsedNs) / 1e9)) /
-            1e6;
-        double nsPerNum = static_cast<double>(elapsedNs) / NUM_INTEGERS;
-        m.metadata().addKeyValuePair("numbers-formatted", NUM_INTEGERS);
-        m.metadata().addKeyValuePair("total-bytes", totalBytes);
-        m.metadata().addKeyValuePair("throughput-m-per-sec", throughputMPerSec);
-        m.metadata().addKeyValuePair("latency-ns-per-int", nsPerNum);
-      }
+            runMeasurement(group, "std::to_string", [&]() {
+        size_t bytes = 0;
+        for (int64_t val : sequentialInts) {
+          std::string s = std::to_string(val);
+          bytes += s.size();
+        }
+        return bytes;
+      });
 
       // 2. std::to_chars (stack buffer, zero-allocation)
       {
