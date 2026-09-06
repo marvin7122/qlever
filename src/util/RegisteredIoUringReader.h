@@ -265,7 +265,7 @@ class PinnedArena : public WithInvariants<PinnedArena> {
 // _____________________________________________________________________________
 // Describe a block read request with invariant proofs.
 struct BlockReadRequest {
-  uint32_t fileIndex = 0;    // Registered file index (or raw fd if unpinned)
+  uint32_t fileIndex = 0;    // Index into registered file table (or raw fd when not using registration)
   uint64_t fileOffset = 0;   // File byte offset (4KB aligned for O_DIRECT)
   uint32_t bufferIndex = 0;  // Registered buffer index
   uint32_t bufferOffset = 0;  // Offset within registered buffer (4KB aligned)
