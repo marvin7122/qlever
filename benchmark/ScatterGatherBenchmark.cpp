@@ -4,7 +4,7 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <fcntl.h>
-#include <sys/stat.h>
+
 #include <sys/uio.h>
 #include <unistd.h>
 
