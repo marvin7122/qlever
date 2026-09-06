@@ -38,6 +38,8 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
     return "Fast Number and RDF Entity Formatter Micro-Benchmark";
   }
 
+  
+// _____________________________________________________________________________
   BenchmarkResults runAllBenchmarks() final {
     BenchmarkResults results{};
 
