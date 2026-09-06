@@ -371,13 +371,7 @@ template<EscapeFormat Format>
         AD_CONTRACT_CHECK(next < 32u);
         AD_CONTRACT_CHECK(next >= current);
         uint32_t cleanLen = next - current;
-        if (cleanLen > 0) {
-          std::memcpy(dest, ptr + current, cleanLen);
-          dest += cleanLen;
-        }
-        dest = detail::emitEscape<Format>(ptr[next], dest);
-        current = next + 1;
-        mask &= (mask - 1);  // Clear lowest set bit
+        
       }
       if (current < 32) {
         std::memcpy(dest, ptr + current, 32 - current);
