@@ -265,33 +265,60 @@ class PinnedArena : public WithInvariants<PinnedArena> {
 
 // _____________________________________________________________________________
 // Describe a block read request with invariant proofs.
+// Uses a tagged union to enforce mutual exclusion between registered-buffer
+// and direct-memory read paths (Heuristic 2: pair buffers and views by construction).
 struct BlockReadRequest {
-  uint32_t fileIndex = 0;    // Index into registered file table (or raw fd when not using registration)
-  uint64_t fileOffset = 0;   // File byte offset (4KB aligned for O_DIRECT)
-  uint32_t bufferIndex = 0;  // Registered buffer index
-  uint32_t bufferOffset = 0;  // Offset within registered buffer (4KB aligned)
-  uint32_t numBytes = 0;      // Number of bytes to read (multiple of 4KB)
-  char* destination = nullptr;  // Target memory address (4KB aligned)
+  uint32_t fileIndex = 0;       // Index into registered file table
+  uint64_t fileOffset = 0;      // File byte offset (4KB aligned for O_DIRECT)
+  uint32_t numBytes = 0;        // Number of bytes to read (multiple of 4KB)
+
+  struct RegisteredBuffer {
+    uint32_t bufferIndex = 0;   // Registered buffer index
+    // bufferOffset removed: fixed buffers read into entire iovec; no per-read offset
+  };
+
+  struct DirectMemory {
+    char* destination = nullptr;  // Target memory address (4KB aligned)
+  };
+
+  std::variant<RegisteredBuffer, DirectMemory> target;
 
   BlockReadRequest() = default;
 
+  // Registered-buffer read constructor
   BlockReadRequest(uint32_t fIndex, uint64_t fOffset, uint32_t bufIndex,
-                   uint32_t bufOffset, uint32_t bytes, char* dest,
-                   bool requireDirectIoAlignment = true)
+                   uint32_t bytes)
       : fileIndex{fIndex},
         fileOffset{fOffset},
-        bufferIndex{bufIndex},
-        bufferOffset{bufOffset},
         numBytes{bytes},
-        destination{dest} {
+        target{RegisteredBuffer{bufIndex}} {
+    AD_CONTRACT_CHECK(numBytes > 0);
+    if (requireDirectIoAlignment) {
+      AD_CONTRACT_CHECK(isBlockAligned(fileOffset));
+      AD_CONTRACT_CHECK(isBlockAligned(numBytes));
+    }
+  }
+
+  // Direct-memory read constructor
+  BlockReadRequest(uint32_t fIndex, uint64_t fOffset, uint32_t bytes,
+                   char* dest)
+      : fileIndex{fIndex},
+        fileOffset{fOffset},
+        numBytes{bytes},
+        target{DirectMemory{dest}} {
     AD_CONTRACT_CHECK(numBytes > 0);
     AD_CONTRACT_CHECK(destination != nullptr);
     if (requireDirectIoAlignment) {
       AD_CONTRACT_CHECK(isBlockAligned(fileOffset));
-      AD_CONTRACT_CHECK(isBlockAligned(bufferOffset));
       AD_CONTRACT_CHECK(isBlockAligned(numBytes));
       AD_CONTRACT_CHECK(isPointerAligned(destination));
     }
+  }
+
+ private:
+  static constexpr bool requireDirectIoAlignment = true;
+  [[nodiscard]] char* destination() const {
+    return std::get<DirectMemory>(target).destination;
   }
 };
 
