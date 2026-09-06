@@ -12,11 +12,7 @@
 #include <string_view>
 #include <vector>
 
-#include "engine/BranchlessTypeDispatcher.h"
-#include "global/Id.h"
-#include "global/ValueId.h"
 
-using namespace ql::engine;
 
 TEST(BranchlessTypeDispatcherTest, FormatIri) {
   std::array<char, 256> buffer{};
