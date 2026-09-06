@@ -292,6 +292,7 @@ class BranchlessTypeDispatcher {
   }
 
   [[nodiscard]] static constexpr const LookupTable& turtleLookupTable() noexcept {
+    // Return constexpr reference to Turtle compact format lookup table.
     return kTurtleTypeFormatLut;
   }
 
