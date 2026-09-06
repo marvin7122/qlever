@@ -35,7 +35,7 @@ class Caller {
 };
 
 // _____________________________________________________________________________
-// A class inheriting from `WordWriterBase` that throws when initializing a
+// A class inheriting from `WordWriterBase` that throws when initializing a member.
 // member.
 class WordWriterThrowing : public WordWriterBase {
  private:
