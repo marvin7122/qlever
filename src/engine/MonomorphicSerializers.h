@@ -574,7 +574,7 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
   }
 }
 
-// Fast-path dispatch for 3-column schemas (standard RDF triples and graph tables)
+// Fast-path dispatch for 3-column schemas (standard RDF triples and graph tables).
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch3Col(ColumnType c0, ColumnType c1, ColumnType c2,
                             Visitor&& visitor, Args&&... args) {
