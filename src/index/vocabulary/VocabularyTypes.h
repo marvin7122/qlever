@@ -339,8 +339,9 @@ inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
 
 // _____________________________________________________________________________
 // Decompress a single word into `destination` (which must hold at least `bound`
-// bytes) using `decompress(span)`. Returns a string_view to the decompressed
-// word.
+// bytes) using `decompress(span)` where `span` has exactly `bound` bytes.
+// Returns a string_view to the decompressed word. If `bound == 0`, returns
+// empty string_view without calling `decompress`.
 template <typename DecompressFunc>
 std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
                                     DecompressFunc&& decompress) {
