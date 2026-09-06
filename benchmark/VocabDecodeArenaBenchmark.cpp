@@ -29,7 +29,7 @@ using Vocab = CompressedVocabulary<VocabularyInternalExternal>;
 namespace {
 
 struct Options {
-  std::string vocab;
+    std::string vocabPrefix;
   std::string arm{"copy"};
   int layer = 0;
   size_t batchSize = 1024;
