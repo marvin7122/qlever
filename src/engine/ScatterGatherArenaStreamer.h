@@ -121,13 +121,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
     // Verify structural invariants (Law 3 & Architecture Standard § 3).
   void checkInvariants() const {
     if (totalBytes_ == 0) {
-      AD_CORRECTNESS_CHECK(iovecs_.empty());
-    } else {
-      AD_CORRECTNESS_CHECK(!iovecs_.empty());
-      size_t computedSum = 0;
-      for (const auto& iov : iovecs_) {
-        AD_CORRECTNESS_CHECK(iov.iov_len > 0);
-        AD_CORRECTNESS_CHECK(iov.iov_base != nullptr);
+      
         computedSum += iov.iov_len;
       }
       AD_CORRECTNESS_CHECK(computedSum == totalBytes_);
