@@ -515,7 +515,7 @@ class RegisteredIoUringReader
 
   // ___________________________________________________________________________
   // Submit a batch of block read requests to the kernel.
-  // Supports registered files, registered fixed buffers, and Direct I/O.
+  // Support registered files, registered fixed buffers, and Direct I/O.
   [[nodiscard]] BatchId submitBatch(ql::span<const BlockReadRequest> requests) {
     auto guard = makeInvariantGuard();
     if (requests.empty()) {
