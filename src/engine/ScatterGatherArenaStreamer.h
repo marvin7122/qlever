@@ -73,7 +73,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
     size_t totalBytes_ = 0; // Total byte length of the assembled chunk
     size_t numTriples_ = 0; // Number of RDF triples contained in this chunk
     size_t zeroCopySpansCount_ = 0; // Count of zero‑copied arena spans
-  size_t zeroCopyBytes_ = 0;
+    size_t zeroCopyBytes_ = 0; // Total bytes contributed by zero‑copied spans
 
  public:
   ScatterGatherChunk() = default;
