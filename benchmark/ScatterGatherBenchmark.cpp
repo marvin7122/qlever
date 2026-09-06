@@ -320,11 +320,11 @@ void printBenchmarkTable(
   std::cout << "\n=======================================================================================================\n";
   std::cout << "  BENCHMARK: Literal Export Streamer (Term Literal Size: "
             << literalSize << " bytes, " << metrics[0].numTriples << " Triples)\n";
-  std::cout << "  Total Output: "
+    std::cout << "  Total Output: "
             << std::fixed << std::setprecision(2)
             << (static_cast<double>(metrics[0].totalBytesWritten) / (1024.0 * 1024.0))
             << " MB | Zero-Copy Payload: "
-            << (static_cast<double>(metrics[1].totalZeroCopyBytes) / (1024.0 * 1024.0))
+            << (metrics.size() >= 2 ? (static_cast<double>(metrics[1].totalZeroCopyBytes) / (1024.0 * 1024.0)) : 0.0)
             << " MB\n";
   std::cout << "=======================================================================================================\n";
   std::cout << std::left << std::setw(42) << "Streaming Mode"
