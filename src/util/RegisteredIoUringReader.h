@@ -293,10 +293,8 @@ struct BlockReadRequest {
         numBytes{bytes},
         target{RegisteredBuffer{bufIndex}} {
     AD_CONTRACT_CHECK(numBytes > 0);
-    if (requireDirectIoAlignment) {
-      AD_CONTRACT_CHECK(isBlockAligned(fileOffset));
-      AD_CONTRACT_CHECK(isBlockAligned(numBytes));
-    }
+    AD_CONTRACT_CHECK(isBlockAligned(fileOffset));
+    AD_CONTRACT_CHECK(isBlockAligned(numBytes));
   }
 
   // Direct-memory read constructor
@@ -308,15 +306,12 @@ struct BlockReadRequest {
         target{DirectMemory{dest}} {
     AD_CONTRACT_CHECK(numBytes > 0);
     AD_CONTRACT_CHECK(destination != nullptr);
-    if (requireDirectIoAlignment) {
-      AD_CONTRACT_CHECK(isBlockAligned(fileOffset));
-      AD_CONTRACT_CHECK(isBlockAligned(numBytes));
-      AD_CONTRACT_CHECK(isPointerAligned(destination));
-    }
+    AD_CONTRACT_CHECK(isBlockAligned(fileOffset));
+    AD_CONTRACT_CHECK(isBlockAligned(numBytes));
+    AD_CONTRACT_CHECK(isPointerAligned(destination));
   }
 
  private:
-  static constexpr bool requireDirectIoAlignment = true;
   [[nodiscard]] char* destination() const {
     return std::get<DirectMemory>(target).destination;
   }
