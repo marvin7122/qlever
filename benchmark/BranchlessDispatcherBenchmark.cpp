@@ -77,10 +77,12 @@ class HardwarePerfCounter {
   void start() noexcept {
 #if defined(__linux__)
     if (isSupported_) {
-      ioctl(branchFd_, PERF_EVENT_IOC_RESET, 0);
-      ioctl(missFd_, PERF_EVENT_IOC_RESET, 0);
-      ioctl(branchFd_, PERF_EVENT_IOC_ENABLE, 0);
-      ioctl(missFd_, PERF_EVENT_IOC_ENABLE, 0);
+            if (ioctl(branchFd_, PERF_EVENT_IOC_RESET, 0) != 0 ||
+          ioctl(missFd_, PERF_EVENT_IOC_RESET, 0) != 0 ||
+          ioctl(branchFd_, PERF_EVENT_IOC_ENABLE, 0) != 0 ||
+          ioctl(missFd_, PERF_EVENT_IOC_ENABLE, 0) != 0) {
+        isSupported_ = false;
+      }
     }
 #endif
   }
