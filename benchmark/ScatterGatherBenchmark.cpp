@@ -48,6 +48,9 @@ using ql::export_streaming::ScatterGatherChunk;
 using ql::export_streaming::ScatterGatherChunkStreamer;
 using ql::export_streaming::ScatterGatherConfig;
 
+constexpr size_t kDefaultChunkSize = 1024 * 1024;
+constexpr size_t kDefaultZeroCopyThreshold = 64;
+
 // _____________________________________________________________________________
 // Memory arena simulating decompression pages for large RDF vocabulary terms.
 class SimulatedDecompressionArena {
@@ -121,7 +124,7 @@ class ScatterGatherBenchmarkRunner {
   // Copies every byte of subject, predicate, and large literal into chunk buffer.
   static ScatterGatherBenchmarkMetric runContiguousCopy(
       const SimulatedDecompressionArena& arena,
-      size_t chunkSize = 1024 * 1024,
+      size_t chunkSize = kDefaultChunkSize,
       std::string* output = nullptr) {
     const size_t n = arena.numTriples();
     size_t chunksEmitted = 0;
@@ -179,8 +182,8 @@ class ScatterGatherBenchmarkRunner {
   // are referenced directly from arena memory without copying.
   static ScatterGatherBenchmarkMetric runScatterGatherStream(
       const SimulatedDecompressionArena& arena,
-      size_t chunkSize = 1024 * 1024,
-      size_t zeroCopyThreshold = 64) {
+      size_t chunkSize = kDefaultChunkSize,
+      size_t zeroCopyThreshold = kDefaultZeroCopyThreshold) {
     const size_t n = arena.numTriples();
     size_t chunksEmitted = 0;
     size_t totalBytes = 0;
@@ -243,7 +246,7 @@ class ScatterGatherBenchmarkRunner {
   // 3. Zero-Copy Kernel writev(2) Transmission (direct to /dev/null)
   static ScatterGatherBenchmarkMetric runKernelScatterGatherTransmission(
       const SimulatedDecompressionArena& arena,
-      size_t chunkSize = 1024 * 1024) {
+      size_t chunkSize = kDefaultChunkSize) {
     int nullFd = ::open("/dev/null", O_WRONLY);
     if (nullFd < 0) {
       AD_THROW("Failed to open /dev/null");
@@ -253,7 +256,7 @@ class ScatterGatherBenchmarkRunner {
     ScatterGatherConfig config;
     config.maxChunkBytes = chunkSize;
     config.maxIovecs = 1024;
-    config.zeroCopyThresholdBytes = 64;
+    config.zeroCopyThresholdBytes = kDefaultZeroCopyThreshold;
 
     size_t totalBytes = 0;
     size_t totalZeroCopyBytes = 0;
