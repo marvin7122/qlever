@@ -454,29 +454,21 @@ class ScatterGatherChunkStreamer
                    std::string_view langTag = "") {
     auto guard = makeInvariantGuard();
 
+    auto [delim, trailer] = formatDelimiterAndTrailer(format);
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeIri(subject);
-      writeChar(' ');
+      writeChar(delim);
       writeIri(predicate);
-      writeChar(' ');
+      writeChar(delim);
       writeLiteral(objectLiteral, datatype, langTag);
-      writeRawHeader(" .\n");
-    } else if (format == ExportFormat::Csv) {
-      writeArenaSpan(subject);
-      writeChar(',');
-      writeArenaSpan(predicate);
-      writeChar(',');
-      writeLiteral(objectLiteral, datatype, langTag);
-      writeChar('\n');
     } else {
-      AD_CORRECTNESS_CHECK(format == ExportFormat::Tsv);
       writeArenaSpan(subject);
-      writeChar('\t');
+      writeChar(delim);
       writeArenaSpan(predicate);
-      writeChar('\t');
+      writeChar(delim);
       writeLiteral(objectLiteral, datatype, langTag);
-      writeChar('\n');
     }
+    writeRawHeader(trailer);
     ++currentChunkTriples_;
     ++totalTriples_;
   }
