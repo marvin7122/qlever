@@ -149,13 +149,7 @@ inline char* emitEscape(char c, char* dest) noexcept {
       dest[1] = '\\';
       return dest + 2;
     }
-    *dest = c;
-    return dest + 1;
-  } else if constexpr (Format == EscapeFormat::CsvQuote ||
-                        Format == EscapeFormat::CsvSpecial) {
-    if (c == '"') {
-      dest[0] = '"';
-      dest[1] = '"';
+    
       return dest + 2;
     }
     *dest = c;
