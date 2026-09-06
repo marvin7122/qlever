@@ -248,7 +248,7 @@ inline char* formatInt32Branchless(int32_t val, char* out) noexcept {
 }
 
 // _____________________________________________________________________________
-// Single-pass RDF Wikidata QID formatting ("http://www.wikidata.org/entity/Q" + id).
+
 // Writes prefix and ASCII digits directly into `out` with zero allocations.
 // Returns a pointer to one-past-the-end.
 inline char* formatQid(uint64_t id, char* out) noexcept {
