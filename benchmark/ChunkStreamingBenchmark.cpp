@@ -234,7 +234,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
           syncRes = runSyncLockstep(chunkSize, latencyMs);
         });
 
-        // Measure Async Double-Buffered
+        // Measure asynchronous double-buffered export.
         BenchmarkRunResult asyncRes{};
         results.addMeasurement("Async Double-Buffered: " + testDesc,
                                [this, chunkSize, latencyMs, &asyncRes]() {
