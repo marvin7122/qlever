@@ -226,7 +226,6 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Write an IRI: wraps with <...> if not already enclosed.
   void writeIri(std::string_view iri) {
     if (ql::starts_with(iri, '<') && ql::ends_with(iri, '>')) {
       writeRaw(iri);
