@@ -67,7 +67,7 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
   EXPECT_EQ(iovs[1].iov_base, arenaLiteral.data());
   EXPECT_EQ(iovs[1].iov_len, arenaLiteral.size());
 
-  // Verify flattened string representation
+  // Verify flattened string representation.
   std::string fullStr = chunk.toString();
   EXPECT_EQ(
       fullStr,
