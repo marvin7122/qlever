@@ -404,7 +404,14 @@ class ScatterGatherChunkStreamer
     }
   }
 
-  // ___________________________________________________________________________
+  // Boolean literals are stored as "1"/"0" (length 1) or "true"/"false"
+  // (length > 1). Only the latter can be emitted without the datatype
+  // in Turtle/CSV/TSV, so we use this predicate to select the short form.
+  static bool isBooleanShortForm(std::string_view sv) {
+    return sv.length() > 1;
+  }
+
+  // _________________________________________________________________________
   
   void writeTerm(const qlever::constructExport::EvaluatedTermData& term,
                  ExportFormat format) {
