@@ -359,7 +359,7 @@ class AsyncChunkPipeline
 };
 
 // _____________________________________________________________________________
-// Provide sink handle to producer callbacks in `pipelineStream`.
+// Provide a lightweight sink object that producer callbacks can use to push chunks into the pipeline. The sink forwards push() calls to the underlying AsyncChunkPipeline and also exposes cancellation state.
 template <typename ChunkType = std::string>
 class ChunkSink {
  private:
