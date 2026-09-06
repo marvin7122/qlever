@@ -77,13 +77,7 @@ private:
 };
 
 // _____________________________________________________________________________
-// Deep Module: PrefetchingBatchResolver encapsulates software pipelining and
-// CPU cache prefetching during vocabulary index and ID batch resolution.
-//
-// Invariant & Design Standard (ARCHITECTURE.md):
-// - Hides all pipeline iteration state, prefetch distance mechanics, and
-//   boundary draining.
-// - Zero bookkeeping leakage: returns complete, verified result vectors or fills
+
 //   pre-sized caller result spans.
 // - Defines edge cases away: gracefully handles empty inputs and inputs
 //   smaller than the prefetch distance.
