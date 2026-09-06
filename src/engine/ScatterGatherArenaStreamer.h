@@ -314,11 +314,7 @@ class ScatterGatherChunkStreamer
       return;
     }
 
-    // Short strings are copied directly into the header buffer to avoid iovec explosion
-    if (span.size() < config_.zeroCopyThresholdBytes) {
-      writeRawHeader(std::string_view(span.data(), span.size()));
-      return;
-    }
+    
 
     if (!currentSlices_.empty() &&
         (currentChunkBytes_ + span.size() > config_.maxChunkBytes ||
