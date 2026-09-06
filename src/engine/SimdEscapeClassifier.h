@@ -449,6 +449,7 @@ template<EscapeFormat Format>
 
     std::string_view suffix = normLiteral.substr(posLastQuote + 1);
     if (!suffix.empty()) {
+      AD_CONTRACT_CHECK(out + suffix.size() <= result.data() + result.size());
       std::memcpy(out, suffix.data(), suffix.size());
       out += suffix.size();
     }
