@@ -299,7 +299,9 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) n
   return s;
 }
 
+// Why: returns a std::string containing a full Wikidata QID IRI, pre‑sized to avoid reallocations.
 [[nodiscard]] inline std::string formatQidToString(uint64_t id) {
+
   const size_t totalLen = WIKIDATA_ENTITY_PREFIX.size() + numDigits(id);
   AD_CONTRACT_CHECK(totalLen > 0);
   std::string s;
