@@ -112,6 +112,7 @@ class PrefetchingBatchResolver {
       PrefetchConfig config)
       : config_{std::move(config)} {
     AD_CONTRACT_CHECK(config_.prefetchDistance > 0);
+    AD_CONTRACT_CHECK(config_.prefetchDistance <= 128);
   }
 
   // ___________________________________________________________________________
