@@ -32,7 +32,7 @@
 namespace ad_benchmark {
 namespace {
 
-using namespace ad_utility::export_prototypes;
+
 
 // Define constants for the 1 GB simulated vocabulary file.
 constexpr size_t kTotalFileSizeBytes = 1024ULL * 1024ULL * 1024ULL;  // 1 GB
