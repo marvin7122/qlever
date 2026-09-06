@@ -78,8 +78,8 @@ TEST(AsyncChunkPipelineTest, CompletionDrainsQueuedChunksInOrder) {
   ASSERT_EQ(pipeline.push("first"), PushResult::Accepted);
   ASSERT_EQ(pipeline.push("second"), PushResult::Accepted);
   pipeline.finish();
-  pipeline.pop();  // consume "first"
-  pipeline.pop();  // consume "second"
+  static_cast<void>(pipeline.pop());  // consume "first"
+  static_cast<void>(pipeline.pop());  // consume "second"
   EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
 }
@@ -116,8 +116,9 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
       {.capacity_ = 2, .runtimeEnabled_ = true}};
   ASSERT_EQ(pipeline.push("before-error"), PushResult::Accepted);
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"producer failed"}));
-  pipeline.pop();  // consume the element
-  EXPECT_THROW(pipeline.pop(), std::runtime_error);
+  static_cast<void>(pipeline.pop());  // consume the element
+  // Use a lambda to discard the nodiscard return value while still checking the exception
+  EXPECT_THROW([&] { static_cast<void>(pipeline.pop()); }(), std::runtime_error);
 }
 
 TEST(AsyncChunkPipelineTest, BackpressureReusesFreedSlot) {
@@ -128,9 +129,9 @@ TEST(AsyncChunkPipelineTest, BackpressureReusesFreedSlot) {
       std::async(std::launch::async, [&] { return pipeline.push("second"); });
 
   waitUntilProducerBlocks(pipeline);
-  pipeline.pop();  // consume "first"
+  static_cast<void>(pipeline.pop());  // consume "first"
   EXPECT_EQ(blockedPush.get(), PushResult::Accepted);
-  pipeline.pop();  // consume "second"
+  static_cast<void>(pipeline.pop());  // consume "second"
   EXPECT_EQ(pipeline.stats().producerWaits_, 1);
 }
 
