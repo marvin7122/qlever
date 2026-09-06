@@ -116,12 +116,7 @@ inline char* formatBoolean(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [str, type] = id.getGeoPoint().toStringAndType();
-  std::memcpy(out, str.data(), str.size());
-  out += str.size();
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
-}
+  
 
 // No-op formatter for undefined or unmapped datatype slots.
 inline char* formatUndefined(ValueId, std::string_view, char* out,
