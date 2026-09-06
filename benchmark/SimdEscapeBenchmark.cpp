@@ -119,7 +119,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
   return std::string_view::npos;
 }
 
-// Baseline scalar character-by-character scanner for TSV.
+// Scan TSV literals for escape characters with a scalar loop.
 [[nodiscard]] size_t scalarFindFirstEscapeTsv(std::string_view text) noexcept {
   for (size_t i = 0; i < text.size(); ++i) {
     char c = text[i];
