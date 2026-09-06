@@ -286,6 +286,11 @@ class DynamicRowSerializer {
     AD_CONTRACT_CHECK(!schema_.empty());
   }
 
+    explicit DynamicRowSerializer(ql::span<const ColumnType> schema)
+      : schema_(schema.begin(), schema.end()) {
+    AD_CONTRACT_CHECK(!schema_.empty());
+  }
+
 
 
   [[nodiscard]] const std::vector<ColumnType>& schema() const noexcept {
