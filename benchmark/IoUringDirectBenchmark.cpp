@@ -126,13 +126,7 @@ struct BenchmarkMetric {
  * 1 GB simulated vocabulary file. Each `run…` method performs a full scan
  * using the indicated I/O paradigm and returns a `BenchmarkMetric`.
  */
-class IoUringDirectBenchmarkRunner {
- private:
-  std::string filePath_;
-  size_t batchBlocks_ = kDefaultBatchBlocks;
 
- public:
-  explicit IoUringDirectBenchmarkRunner(
       const std::string& filePath, size_t batchBlocks = kDefaultBatchBlocks)
       : filePath_{filePath}, batchBlocks_{batchBlocks} {}
 
