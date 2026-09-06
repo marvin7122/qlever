@@ -188,6 +188,7 @@ struct DatasetStorage {
 // Each row vector (CellValue[]) has a matching tuple vector with typed fields.
 // _____________________________________________________________________________
 DatasetStorage generateBenchmarkDataset(size_t numRows) {
+  AD_CHECK(numRows > 0);
   DatasetStorage data;
   data.stringPool_.reserve(numRows * 4);
   data.tripleRows_.reserve(numRows);
