@@ -248,12 +248,7 @@ return config_.prefetchDistance;
     }
 
     
-        index, ids, localVocab, positions.nonVocabIndexIndices_, results,
-        escapeFunction);
-
-    // 2. Resolve VocabIndex IDs with pipelined prefetching
-    resolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-        index, ids, positions.vocabIndexIndices_, results, escapeFunction);
+        
 
     return results;
   }
