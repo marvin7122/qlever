@@ -99,13 +99,7 @@ inline char* formatBoolean(ValueId id, std::string_view, char* out,
   out += prefix.size();
   const std::string_view val = kBoolStrings[static_cast<size_t>(id.getBool())];
   std::memcpy(out, val.data(), val.size());
-  out += val.size();
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
-}
-
-// Fast branchless formatter for blank node indices.
+  
 inline char* formatBlankNode(ValueId id, std::string_view, char* out,
                              std::string_view prefix,
                              std::string_view suffix) noexcept {
