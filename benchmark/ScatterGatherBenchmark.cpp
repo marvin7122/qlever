@@ -100,7 +100,6 @@ class SimulatedDecompressionArena {
 };
 
 // _____________________________________________________________________________
-// Benchmark result metrics record
 struct ScatterGatherBenchmarkMetric {
   std::string mode;
   size_t literalSizeBytes = 0;
