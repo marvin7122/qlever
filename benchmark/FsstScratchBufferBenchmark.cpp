@@ -71,13 +71,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
       }
       decoders_[stage] = std::move(decoder);
       compressed_.storage.push_back(std::move(storage));
-    }
-
-    for (const std::string_view& compressed : compressed_) {
-      outputCapacity_ = std::max(
-          outputCapacity_,
-          FsstRepeatedDecoder<numberOfStages>::maxDecompressedSize(compressed));
-    }
+    
     
     auto& group = results.addGroup(
         
