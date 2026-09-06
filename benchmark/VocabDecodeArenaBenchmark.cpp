@@ -201,6 +201,7 @@ int main(int argc, char** argv) {
     std::cerr << "Error: vocabulary is empty or failed to open: " << opt.vocab << "\n";
     return 1;
   }
+  AD_CORRECTNESS_CHECK(vocabSize > 0);
 
 
   const size_t totalBatches = opt.warmupBatches + opt.timedBatches;
