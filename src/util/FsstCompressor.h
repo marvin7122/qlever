@@ -129,10 +129,15 @@ class FsstDecoder {
   // should use `decompressInto` instead.
   [[nodiscard]] std::string decompress(std::string_view str) const {
     const size_t bound = maxDecompressedSize(str);
-    std::string result = ad_utility::decodeToOwnedString(
-        bound, [this, str](ql::span<char> out) {
-          return decompressInto(str, out);
-        });
+    AD_CONTRACT_CHECK(bound <= std::numeric_limits<size_t>::max());
+    size_t bytesWritten = 0;
+    std::string result;
+    ql::resize_and_overwrite(result, bound, [&](char* buf, size_t count) {
+      bytesWritten = decompressInto(str, ql::span<char>{buf, count});
+      AD_CONTRACT_CHECK(bytesWritten <= bound);
+      return bytesWritten;
+    });
+    AD_CORRECTNESS_CHECK(result.size() == bytesWritten);
     AD_CORRECTNESS_CHECK(result.size() <= bound);
     return result;
   }
