@@ -53,7 +53,7 @@ enum class ColumnType : uint8_t {
   Undefined = 7
 };
 
- aliases.constexpr aliases
+// Convenient `constexpr` aliases.
 inline constexpr ColumnType IRI = ColumnType::Iri;
 inline constexpr ColumnType LITERAL = ColumnType::Literal;
 inline constexpr ColumnType INT = ColumnType::Int;
