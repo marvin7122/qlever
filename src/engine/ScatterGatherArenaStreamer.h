@@ -324,7 +324,7 @@ class ScatterGatherChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Append a single character to the formatting header.
+  
   void writeChar(char c) { writeRawHeader(std::string_view(&c, 1)); }
 
   // ___________________________________________________________________________
