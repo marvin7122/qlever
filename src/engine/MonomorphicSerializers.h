@@ -686,9 +686,9 @@ decltype(auto) dispatch4Col(ColumnType c0, ColumnType c1, ColumnType c2,
     }
   }
 
-  // Fallback
+    // Fallback
   DynamicRowSerializer dynamicSerializer({c0, c1, c2, c3});
-  return visitor(dynamicSerializer, std::forward<Args>(args)...);
+  return visitor(std::move(dynamicSerializer), std::forward<Args>(args)...);
 }
 
 }  // namespace detail
