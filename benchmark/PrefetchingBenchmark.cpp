@@ -172,7 +172,8 @@ class HardwarePerformanceMonitor {
      // ___________________________________________________________________________
    [[nodiscard]] bool isSupported() const noexcept { return supported_; }
 
-  void start() {
+     // ___________________________________________________________________________
+   void start() {
 #if defined(__linux__)
     if (supported_) {
       auto resetAndEnable = [](int fd) {
