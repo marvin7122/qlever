@@ -276,7 +276,7 @@ inline char* formatPrefixedId(std::string_view prefix, uint64_t id, char* out) n
 }
 
 // _____________________________________________________________________________
-// Single-pass RDF IRI formatting with custom prefix and signed integer ID.
+
 inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
   if (!prefix.empty()) {
