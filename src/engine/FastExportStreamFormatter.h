@@ -240,7 +240,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Write a blank node with prefix, ID, and optional suffix.
+
   void writeBlankNode(std::string_view prefix, uint64_t id,
                       std::string_view suffix = "") {
     writeRaw(prefix);
