@@ -18,7 +18,6 @@
 #include "global/Constants.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
-#include "util/Exception.h"
 #include "util/Invariants.h"
 
 namespace ql::engine {
