@@ -84,6 +84,7 @@ class HardwarePerformanceMonitor {
       return 0;
     }
     uint64_t count = 0;
+    // Read 64-bit hardware counter; return 0 on error or short read.
     ssize_t res = ::read(fd, &count, sizeof(uint64_t));
     return res == sizeof(uint64_t) ? count : 0;
   }
