@@ -180,13 +180,7 @@ inline void writeFormattedDouble(Writer& writer, double val) noexcept {
       } else if constexpr (Format == ExportFormat::Tsv) {
         
       writeFormattedDouble(writer, cell.doubleVal_);
-    } else if constexpr (Type == ColumnType::BlankNode) {
-      writer.writeRaw(cell.stringVal_);
-    } else if constexpr (Type == ColumnType::Boolean) {
-      writer.writeRaw(cell.boolVal_ ? "true" : "false");
-    } else if constexpr (Type == ColumnType::String) {
-      if constexpr (Format == ExportFormat::Csv) {
-        writer.writeEscapedCsv(cell.stringVal_);
+    
       } else if constexpr (Format == ExportFormat::Tsv) {
         writer.writeEscapedTsv(cell.stringVal_);
       } else {
