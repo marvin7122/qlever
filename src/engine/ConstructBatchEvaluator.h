@@ -33,8 +33,8 @@ struct BatchEvaluationResult {
     // `variablesByColumn_` maps a column index of the `Result` that is being
   // evaluated to the `EvaluatedVariableValues` for the variable that is stored
   // in that column. We use a hash map (instead of a dense vector) because the
-  // set of evaluated columns may be sparse: some variables in the WHERE-clause
-  // (in the `IdTable`) may not appear in the CONSTRUCT template and are thus
+  // set of evaluated columns may be sparse: some variables in the `WHERE clause`
+  // (in the `IdTable`) may not appear in the `CONSTRUCT template` and are thus
   // not evaluated.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> Result;
   size_t numRows_ = 0;
