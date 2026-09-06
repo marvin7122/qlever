@@ -105,7 +105,9 @@ inline void format8Digits(uint32_t v, char* dst) noexcept {
 
 // _____________________________________________________________________________
 // Fast 4-digit formatting
+// Why: formats four decimal digits via the digit-pair lookup table.
 inline void format4Digits(uint32_t v, char* dst) noexcept {
+
   AD_CONTRACT_CHECK(dst != nullptr);
   AD_CONTRACT_CHECK(v < 10000U);
   uint32_t d0 = (v / 100) * 2;
