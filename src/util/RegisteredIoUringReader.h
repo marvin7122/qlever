@@ -295,7 +295,7 @@ struct BlockReadRequest {
 };
 
 // _____________________________________________________________________________
-// Result of a completed I/O batch.
+// Represent the result of a completed I/O batch.
 struct BatchResult {
   size_t requestsCompleted = 0;
   size_t totalBytesRead = 0;
