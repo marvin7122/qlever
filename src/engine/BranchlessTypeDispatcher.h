@@ -55,7 +55,8 @@ inline char* formatInteger(ValueId id, std::string_view, char* out,
                            std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 24, id.getInt());
+    auto [ptr, ec] = std::to_chars(out, out + 24, id.getInt());
+  AD_CONTRACT_CHECK(ec == std::errc());
   out = ptr;
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
