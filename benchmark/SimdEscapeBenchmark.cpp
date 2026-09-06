@@ -55,7 +55,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
     std::string literal;
     literal.reserve(length + 32);
 
-    // Literal starting quote
+    
     literal.push_back('"');
 
     // 10% chance of UTF-8 content prefix
