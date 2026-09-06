@@ -30,7 +30,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   static constexpr size_t numberOfStages = 3;
 
   struct CompressedData {
-    std::vector<std::shared_ptr<std::string>> storage;
+    std::vector<std::string> storage;
     std::vector<std::string_view> views;
 
     // Views are into strings owned by storage; destruction order ensures
