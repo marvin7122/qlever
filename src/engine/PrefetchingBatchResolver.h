@@ -140,6 +140,9 @@ return config_.prefetchDistance;
 
     
 
+    const size_t n = positions.size();
+    const size_t distance = config_.prefetchDistance;
+
     // Warm-up pipeline: prefetch the first `distance` entries
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t pfPos = positions[k];
