@@ -287,6 +287,7 @@ class BranchlessTypeDispatcher {
 
   // Access to built-in lookup tables.
   [[nodiscard]] static constexpr const LookupTable& defaultLut() noexcept {
+    // Return constexpr reference to default N-Triples format lookup table.
     return kDefaultTypeFormatLut;
   }
 
