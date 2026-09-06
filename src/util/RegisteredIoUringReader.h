@@ -556,16 +556,23 @@ class RegisteredIoUringReader
 
     size_t completed = 0;
     size_t totalBytes = 0;
+    bool success = true;
 
     while (inFlightByBatchId_.find(batchId) != inFlightByBatchId_.end()) {
-      auto [bytesRead, bId] = drainOneCqe();
-      if (bId == batchId) {
-        ++completed;
-        totalBytes += bytesRead;
+      try {
+        auto [bytesRead, bId] = drainOneCqe();
+        if (bId == batchId) {
+          ++completed;
+          totalBytes += bytesRead;
+        }
+      } catch (const std::exception& e) {
+        success = false;
+        AD_LOG_WARN << "I/O error in batch " << batchId << ": " << e.what()
+                    << std::endl;
       }
     }
 
-    return BatchResult{completed, totalBytes, true};
+    return BatchResult{completed, totalBytes, success};
 #else
     return BatchResult{0, 0, true};
 #endif
