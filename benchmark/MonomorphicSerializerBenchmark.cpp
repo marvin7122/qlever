@@ -324,6 +324,7 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
+              AD_CORRECTNESS_CHECK(totalBytes > 0);
               AllocationTracker::stop();
               totalBytes = summary.totalBytesWritten_;
               return totalBytes;
