@@ -416,10 +416,13 @@ template<EscapeFormat Format>
   // Escapes internal quotes ("), backslashes (\\), and newlines (\n, \r).
   [[nodiscard]] static inline std::string validRDFLiteralFromNormalized(
       std::string_view normLiteral) {
+    AD_CONTRACT_CHECK(!normLiteral.empty());
     AD_CONTRACT_CHECK(ql::starts_with(normLiteral, '"'));
     size_t posSecondQuote = normLiteral.find('"', 1);
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
+    AD_CONTRACT_CHECK(posLastQuote != std::string_view::npos);
+    AD_CONTRACT_CHECK(posLastQuote >= posSecondQuote);
 
     // If there are only two quotes and no internal special characters, pass through
     if (posSecondQuote == posLastQuote &&
