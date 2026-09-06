@@ -38,7 +38,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   } compressed_;
 
   std::array<FsstDecoder, numberOfStages> decoders_;
-  // Maximum fully decompressed size across the benchmark inputs; sizes the
+  // Maximum fully decompressed size across the benchmark inputs, sizing the
   // final output buffer.
   size_t outputCapacity_ = 0;
   // Bound required for intermediate repeated-FSST stages, avoiding a full-size
