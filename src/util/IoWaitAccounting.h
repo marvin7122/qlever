@@ -383,6 +383,8 @@ inline void startReporter() {
 }
 
 // Also report on a normal exit, for interactive use.
+// Prints the I/O wait accounting report to stderr when the program
+// exits normally (destructor runs).
 struct ExitReporter {
   ~ExitReporter() { std::fprintf(stderr, "%s\n", report().c_str()); }
 };
