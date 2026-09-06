@@ -112,6 +112,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
       group.addMeasurement("full-size uninitialized scratch", [&] {
         auto output = std::make_unique<char[]>(outputCapacity_);
         auto scratch = std::make_unique<char[]>(outputCapacity_);
+        AD_CONTRACT_CHECK(outputCapacity_ > 0);
         return runDecodeMeasurement({output.get(), outputCapacity_},
                                     {scratch.get(), outputCapacity_});
       });
