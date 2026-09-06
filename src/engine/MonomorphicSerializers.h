@@ -434,7 +434,7 @@ class MonomorphicRowSerializer {
         ...);
   }
 
-  // Compile-time unrolled cell serialization from tuple
+  // Compile-time unrolled cell serialization from tuple.
   template <ExportFormat Format, typename Writer, typename Tuple, size_t... Is>
   static void serializeTupleCells(Writer& writer, const Tuple& tuple,
                                   std::index_sequence<Is...>) {
