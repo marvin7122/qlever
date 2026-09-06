@@ -8,9 +8,17 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 
-#include <gtest/gtest_prod.h>
-
 #include <array>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <gtest/gtest_prod.h>
 #include <cstdint>
 #include <memory>
 #include <optional>
