@@ -1772,7 +1772,7 @@ tryEvaluateAggregateChildExpressionJit(
   const size_t begin = evaluationContext._beginIndex;
   const size_t end = evaluationContext._endIndex;
   if (!ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
-          program->cellRule(),
+          program->cellRule(), program.value(),
           ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
               program.value(), evaluationContext._inputTable, begin,
               end > begin ? end - begin : 0,

@@ -193,7 +193,7 @@ IdTable Bind::computeExpressionBind(
       ql::engine::jit::JitExpressionBytecodeVm::hasExactIntegerSemantics(
           optProgram.value()) &&
       ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
-          optProgram->cellRule(),
+          optProgram->cellRule(), optProgram.value(),
           ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
               optProgram.value(), idTable, 0, idTable.size(),
               cancellationHandle_))) {

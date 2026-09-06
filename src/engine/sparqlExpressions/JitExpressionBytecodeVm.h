@@ -51,11 +51,22 @@ enum class OpCode : uint8_t {
   // 64-bit ID of a column, `CMP_EQ_ID` compares raw ID bits for equality,
   // and `IN_ID_RANGE` checks `lo <= id < hi` in unsigned `ValueId` bit
   // order, where `arg` indexes the program's ID range table. `OR_BOOL`
-  // pops two boolean values and pushes their disjunction.
+  // pops two boolean values and pushes their disjunction, `AND_BOOL` their
+  // conjunction. Both implement Kleene three-valued logic together with the
+  // kernels' validity masks: a `True` operand decides the `OR` (a `False`
+  // operand the `AND`) even when the other operand is invalid, exactly like
+  // the legacy `AndLambda`/`OrLambda` (where invalid means dropped rows).
   LOAD_COL_ID,
   CMP_EQ_ID,
   IN_ID_RANGE,
   OR_BOOL,
+  AND_BOOL,
+  // Date support for `YEAR(?var)`. `LOAD_COL_DATE` pushes the uninterpreted
+  // 64-bit ID of a column (invalid unless the cell holds a `Date`),
+  // `YEAR_DATE` replaces raw date bits by the year and is invalid for
+  // non-date payloads (including durations), mirroring `ExtractYear`.
+  LOAD_COL_DATE,
+  YEAR_DATE,
   RET
 };
 
@@ -88,7 +99,37 @@ enum class CellRule {
   // Programs with comparisons: only `Int`, `Bool` and `Undefined` cells
   // are exact (legacy compares strings, dates and mixed numerics).
   OrderedComparison,
+  // Programs with `YEAR_DATE`: like `OrderedComparison`, but `Date` cells
+  // are additionally allowed. Exactness then requires that every `Date`
+  // cell only reaches `YEAR_DATE` positions (a bare integer load or
+  // comparison of a date diverges: the kernels drop the row while the
+  // legacy evaluation computes date arithmetic or ordering). This is
+  // enforced per column by `satisfiesCellRule`, using the load kinds
+  // derived from the program's instructions.
+  YearExtraction,
 };
+
+// How a program loads a column, derived from its `LOAD_*` instructions.
+// Used to constrain `Date` cells to `YEAR_DATE` positions (see
+// `CellRule::YearExtraction`).
+enum class ColumnLoadKind { Int, Id, Date };
+
+// Decode the year from raw `ValueId` bits, mirroring `ExtractYear` (see
+// `DateExpressions.cpp`) exactly: the legacy `DateValueGetter` yields the
+// stored `DateYearOrDuration` for every `Date` cell (including durations)
+// and `ExtractYear` applies `DateYearOrDuration::getYear` to it, so calling
+// the same two functions here is bit-identical by construction, including
+// for directly stored large years and durations. Returns `nullopt` for
+// non-`Date` cells, for which the legacy evaluation yields `UNDEF` (dropped
+// rows, like the kernels' invalid lanes). Implemented once so all backends
+// share it.
+inline std::optional<int64_t> decodeYearFromDateBits(uint64_t rawBits) {
+  const ValueId id = ValueId::fromBits(rawBits);
+  if (id.getDatatype() != Datatype::Date) {
+    return std::nullopt;
+  }
+  return id.getDate().getYear();
+}
 
 class JitBytecodeProgram {
  private:
@@ -232,6 +273,21 @@ class JitBytecodeProgram {
           int64_t b = stack[--sp];
           int64_t a = stack[--sp];
           stack[sp++] = (a || b) ? 1 : 0;
+          break;
+        }
+        case OpCode::AND_BOOL: {
+          int64_t b = stack[--sp];
+          int64_t a = stack[--sp];
+          stack[sp++] = (a && b) ? 1 : 0;
+          break;
+        }
+        case OpCode::LOAD_COL_DATE:
+          stack[sp++] = rowColumns[inst.arg];
+          break;
+        case OpCode::YEAR_DATE: {
+          const auto year =
+              decodeYearFromDateBits(static_cast<uint64_t>(stack[--sp]));
+          stack[sp++] = year.value_or(0);
           break;
         }
         case OpCode::RET:
@@ -542,18 +598,99 @@ class JitExpressionBytecodeVm {
             size_t bIdx = sp;
             sp--;
             size_t aIdx = sp;
+            // Kleene logic: a `True` operand decides the disjunction even
+            // when the other operand is invalid (matches `OrLambda`, where
+            // invalid rows are dropped, i.e. only `True` keeps a row).
             uint64_t mask = 0;
+            uint64_t decided = 0;
+            const uint64_t validA = validity[aIdx];
+            const uint64_t validB = validity[bIdx];
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              if (stack[aIdx][i] || stack[bIdx][i]) {
+              const bool a = stack[aIdx][i] != 0;
+              const bool b = stack[bIdx][i] != 0;
+              const bool knownA = (validA >> i) & 1;
+              const bool knownB = (validB >> i) & 1;
+              if ((a && knownA) || (b && knownB)) {
                 mask |= (1ULL << i);
+                decided |= (1ULL << i);
+              } else if (knownA && knownB) {
+                decided |= (1ULL << i);
               }
             }
-            validity[sp] = mask & validity[aIdx] & validity[bIdx] & batchMask;
+            validity[sp] = decided & batchMask;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
               stack[sp][i] = (mask >> i) & 1;
             }
+            sp++;
+            break;
+          }
+          case OpCode::AND_BOOL: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+            // Kleene logic: a `False` operand decides the conjunction even
+            // when the other operand is invalid (matches `AndLambda`).
+            uint64_t mask = 0;
+            uint64_t decided = 0;
+            const uint64_t validA = validity[aIdx];
+            const uint64_t validB = validity[bIdx];
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              const bool a = stack[aIdx][i] != 0;
+              const bool b = stack[bIdx][i] != 0;
+              const bool knownA = (validA >> i) & 1;
+              const bool knownB = (validB >> i) & 1;
+              if ((!a && knownA) || (!b && knownB)) {
+                decided |= (1ULL << i);
+              } else if (knownA && knownB) {
+                decided |= (1ULL << i);
+                if (a && b) {
+                  mask |= (1ULL << i);
+                }
+              }
+            }
+            validity[sp] = decided & batchMask;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = (mask >> i) & 1;
+            }
+            sp++;
+            break;
+          }
+          case OpCode::LOAD_COL_DATE: {
+            const int64_t* colData = inputColumns[inst.arg] + rowOffset;
+            uint64_t dateMask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = colData[i];
+              if (ValueId::fromBits(static_cast<uint64_t>(colData[i]))
+                      .getDatatype() == Datatype::Date) {
+                dateMask |= (1ULL << i);
+              }
+            }
+            validity[sp] = dateMask;
+            sp++;
+            break;
+          }
+          case OpCode::YEAR_DATE: {
+            sp--;
+            size_t aIdx = sp;
+            uint64_t yearMask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              const auto year =
+                  decodeYearFromDateBits(static_cast<uint64_t>(stack[aIdx][i]));
+              if (year.has_value()) {
+                stack[sp][i] = year.value();
+                yearMask |= (1ULL << i);
+              } else {
+                stack[sp][i] = 0;
+              }
+            }
+            validity[sp] = yearMask & validity[aIdx] & batchMask;
             sp++;
             break;
           }
@@ -889,18 +1026,100 @@ class JitExpressionBytecodeVm {
             size_t bIdx = sp;
             sp--;
             size_t aIdx = sp;
+            // Kleene logic: a `True` operand decides the disjunction even
+            // when the other operand is invalid (matches `OrLambda`, where
+            // invalid rows are dropped, i.e. only `True` keeps a row).
             uint64_t mask = 0;
+            uint64_t decided = 0;
+            const uint64_t validA = validity[aIdx];
+            const uint64_t validB = validity[bIdx];
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              if (stack[aIdx][i] || stack[bIdx][i]) {
+              const bool a = stack[aIdx][i] != 0;
+              const bool b = stack[bIdx][i] != 0;
+              const bool knownA = (validA >> i) & 1;
+              const bool knownB = (validB >> i) & 1;
+              if ((a && knownA) || (b && knownB)) {
                 mask |= (1ULL << i);
+                decided |= (1ULL << i);
+              } else if (knownA && knownB) {
+                decided |= (1ULL << i);
               }
             }
-            validity[sp] = mask & validity[aIdx] & validity[bIdx] & batchMask;
+            validity[sp] = decided & batchMask;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
               stack[sp][i] = (mask >> i) & 1;
             }
+            sp++;
+            break;
+          }
+          case OpCode::AND_BOOL: {
+            sp--;
+            size_t bIdx = sp;
+            sp--;
+            size_t aIdx = sp;
+            // Kleene logic: a `False` operand decides the conjunction even
+            // when the other operand is invalid (matches `AndLambda`).
+            uint64_t mask = 0;
+            uint64_t decided = 0;
+            const uint64_t validA = validity[aIdx];
+            const uint64_t validB = validity[bIdx];
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              const bool a = stack[aIdx][i] != 0;
+              const bool b = stack[bIdx][i] != 0;
+              const bool knownA = (validA >> i) & 1;
+              const bool knownB = (validB >> i) & 1;
+              if ((!a && knownA) || (!b && knownB)) {
+                decided |= (1ULL << i);
+              } else if (knownA && knownB) {
+                decided |= (1ULL << i);
+                if (a && b) {
+                  mask |= (1ULL << i);
+                }
+              }
+            }
+            validity[sp] = decided & batchMask;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              stack[sp][i] = (mask >> i) & 1;
+            }
+            sp++;
+            break;
+          }
+          case OpCode::LOAD_COL_DATE: {
+            auto colSpan = inputTable.getColumn(inst.arg);
+            const Id* colData = colSpan.data() + rowOffset;
+            uint64_t dateMask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              Id id = colData[i];
+              stack[sp][i] = id.getBits();
+              if (id.getDatatype() == Datatype::Date) {
+                dateMask |= (1ULL << i);
+              }
+            }
+            validity[sp] = dateMask;
+            sp++;
+            break;
+          }
+          case OpCode::YEAR_DATE: {
+            sp--;
+            size_t aIdx = sp;
+            uint64_t yearMask = 0;
+#pragma GCC unroll 8
+            for (size_t i = 0; i < batchSize; ++i) {
+              const auto year =
+                  decodeYearFromDateBits(static_cast<uint64_t>(stack[aIdx][i]));
+              if (year.has_value()) {
+                stack[sp][i] = year.value();
+                yearMask |= (1ULL << i);
+              } else {
+                stack[sp][i] = 0;
+              }
+            }
+            validity[sp] = yearMask & validity[aIdx] & batchMask;
             sp++;
             break;
           }
@@ -967,7 +1186,9 @@ class JitExpressionBytecodeVm {
   // Datatype presence in a program's referenced columns over a row range.
   // `Undefined` cells are always exact (both sides drop them) and are not
   // tracked.
-  struct ColumnKinds {
+  // Datatype presence flags shared by the program-wide `ColumnKinds` and
+  // the per-column breakdown below.
+  struct ColumnKindFlags {
     bool hasDouble = false;
     bool hasBool = false;
     bool hasDate = false;
@@ -977,12 +1198,49 @@ class JitExpressionBytecodeVm {
     // Any cell that is not `Int`, `Bool`, `Undefined`, `Double`, `Date` or
     // `LocalVocabIndex` (vocabulary indices, literals, geo points, ...).
     bool hasOther = false;
-    bool allInt = true;
   };
+
+  struct ColumnKinds : ColumnKindFlags {
+    bool allInt = true;
+    // Per-column presence in first-use order without duplicates, used by
+    // `CellRule::YearExtraction` to constrain `Date` cells to `YEAR_DATE`
+    // positions (see `satisfiesCellRule`).
+    std::vector<std::pair<ColumnIndex, ColumnKindFlags>> perColumn;
+  };
+
+  // Classify one cell into `flags`. Returns true for `Int` cells (used for
+  // `ColumnKinds::allInt`).
+  static bool classifyCellInto(Id id, ColumnKindFlags& flags) {
+    switch (id.getDatatype()) {
+      case Datatype::Int:
+        return true;
+      case Datatype::Double:
+        flags.hasDouble = true;
+        return false;
+      case Datatype::Bool:
+        flags.hasBool = true;
+        return false;
+      case Datatype::Date:
+        flags.hasDate = true;
+        return false;
+      case Datatype::LocalVocabIndex:
+        flags.hasLocalVocab = true;
+        flags.hasOther = true;
+        return false;
+      case Datatype::Undefined:
+        return false;
+      default:
+        flags.hasOther = true;
+        return false;
+    }
+  }
 
   // Scan the program's referenced columns over `[begin, begin + numRows)`
   // for the datatypes that constrain exact execution (see `CellRule`).
-  // Short-circuits once every kind is present.
+  // Short-circuits once every kind is present. NOTE: the short-circuit only
+  // fires when `hasDouble`, `hasBool`, `hasDate` and `hasOther` are all set,
+  // which rejects every rule on the aggregate flags alone, so the possibly
+  // incomplete `perColumn` breakdown stays sound.
   template <typename Table>
   static ColumnKinds scanColumnKinds(const JitBytecodeProgram& program,
                                      const Table& inputTable, size_t begin,
@@ -994,50 +1252,81 @@ class JitExpressionBytecodeVm {
     for (ColumnIndex col : program.referencedColumns()) {
       auto colSpan = inputTable.getColumn(col);
       const Id* colData = colSpan.data() + begin;
+      ColumnKindFlags colFlags;
       for (size_t i = 0; i < numRows; ++i) {
         if (cancellationHandle && (++checked % (64 * 1024) == 0)) {
           cancellationHandle->throwIfCancelled();
         }
-        switch (colData[i].getDatatype()) {
-          case Datatype::Int:
-            break;
-          case Datatype::Double:
-            kinds.hasDouble = true;
-            kinds.allInt = false;
-            break;
-          case Datatype::Bool:
-            kinds.hasBool = true;
-            kinds.allInt = false;
-            break;
-          case Datatype::Date:
-            kinds.hasDate = true;
-            kinds.allInt = false;
-            break;
-          case Datatype::LocalVocabIndex:
-            kinds.hasLocalVocab = true;
-            kinds.hasOther = true;
-            kinds.allInt = false;
-            break;
-          case Datatype::Undefined:
-            kinds.allInt = false;
-            break;
-          default:
-            kinds.hasOther = true;
-            kinds.allInt = false;
-            break;
+        if (!classifyCellInto(colData[i], colFlags)) {
+          kinds.allInt = false;
         }
-        if (kinds.hasDouble && kinds.hasBool && kinds.hasDate &&
-            kinds.hasOther) {
-          return kinds;
+      }
+      kinds.hasDouble = kinds.hasDouble || colFlags.hasDouble;
+      kinds.hasBool = kinds.hasBool || colFlags.hasBool;
+      kinds.hasDate = kinds.hasDate || colFlags.hasDate;
+      kinds.hasLocalVocab = kinds.hasLocalVocab || colFlags.hasLocalVocab;
+      kinds.hasOther = kinds.hasOther || colFlags.hasOther;
+      auto sameColumn = [&col](const auto& entry) {
+        return entry.first == col;
+      };
+      if (std::find_if(kinds.perColumn.begin(), kinds.perColumn.end(),
+                       sameColumn) == kinds.perColumn.end()) {
+        kinds.perColumn.emplace_back(col, colFlags);
+      } else {
+        // Duplicate references merge flags (idempotent for the aggregate).
+        for (auto& entry : kinds.perColumn) {
+          if (entry.first == col) {
+            entry.second.hasDouble =
+                entry.second.hasDouble || colFlags.hasDouble;
+            entry.second.hasBool = entry.second.hasBool || colFlags.hasBool;
+            entry.second.hasDate = entry.second.hasDate || colFlags.hasDate;
+            entry.second.hasLocalVocab =
+                entry.second.hasLocalVocab || colFlags.hasLocalVocab;
+            entry.second.hasOther = entry.second.hasOther || colFlags.hasOther;
+          }
         }
+      }
+      if (kinds.hasDouble && kinds.hasBool && kinds.hasDate && kinds.hasOther) {
+        return kinds;
       }
     }
     return kinds;
   }
 
+  // How a program loads each column, derived from its `LOAD_*` instructions
+  // (at most one entry per load; columns may appear multiple times).
+  static std::vector<std::pair<ColumnIndex, ColumnLoadKind>> columnLoadKinds(
+      const JitBytecodeProgram& program) {
+    std::vector<std::pair<ColumnIndex, ColumnLoadKind>> loads;
+    for (const auto& inst : program.instructions()) {
+      switch (inst.op) {
+        case OpCode::LOAD_COL_INT:
+          loads.emplace_back(static_cast<ColumnIndex>(inst.arg),
+                             ColumnLoadKind::Int);
+          break;
+        case OpCode::LOAD_COL_ID:
+          loads.emplace_back(static_cast<ColumnIndex>(inst.arg),
+                             ColumnLoadKind::Id);
+          break;
+        case OpCode::LOAD_COL_DATE:
+          loads.emplace_back(static_cast<ColumnIndex>(inst.arg),
+                             ColumnLoadKind::Date);
+          break;
+        default:
+          break;
+      }
+    }
+    return loads;
+  }
+
   // True if executing a program with the given `CellRule` over cells of the
-  // scanned kinds matches the legacy evaluation (see `CellRule`).
-  static bool satisfiesCellRule(CellRule rule, const ColumnKinds& kinds) {
+  // scanned kinds matches the legacy evaluation (see `CellRule`). The
+  // `YearExtraction` rule additionally constrains `Date` cells to
+  // `YEAR_DATE` positions using the program's loads, so it takes the
+  // program as well.
+  static bool satisfiesCellRule(CellRule rule,
+                                const JitBytecodeProgram& program,
+                                const ColumnKinds& kinds) {
     switch (rule) {
       case CellRule::BitwiseExact:
         return !kinds.hasLocalVocab;
@@ -1048,8 +1337,46 @@ class JitExpressionBytecodeVm {
       case CellRule::OrderedComparison:
         return !kinds.hasDouble && !kinds.hasBool && !kinds.hasDate &&
                !kinds.hasOther;
+      case CellRule::YearExtraction:
+        return satisfiesYearExtractionRule(program, kinds);
     }
     AD_FAIL();
+  }
+
+  // The `YearExtraction` rule (see `CellRule`): like `OrderedComparison`
+  // but with `Date` cells allowed, provided every load of a date-containing
+  // column is a `DATE` load. `Bool` cells stay excluded: integer loads map
+  // them to 0/1 while the legacy numeric evaluation rejects them.
+  static bool satisfiesYearExtractionRule(const JitBytecodeProgram& program,
+                                          const ColumnKinds& kinds) {
+    if (kinds.hasDouble || kinds.hasBool || kinds.hasOther) {
+      return false;
+    }
+    if (!kinds.hasDate) {
+      return true;
+    }
+    const auto loads = columnLoadKinds(program);
+    for (const auto& [col, flags] : kinds.perColumn) {
+      if (!flags.hasDate) {
+        continue;
+      }
+      bool dateLoaded = false;
+      for (const auto& [loadCol, kind] : loads) {
+        if (loadCol == col) {
+          if (kind != ColumnLoadKind::Date) {
+            return false;
+          }
+          dateLoaded = true;
+        }
+      }
+      // A date-containing column that the program never loads cannot affect
+      // execution, but that contradicts the scan over referenced columns, so
+      // reject defensively (performance, never correctness).
+      if (!dateLoaded) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // Evaluate an integer-valued program (see `hasExactIntegerSemantics`) over

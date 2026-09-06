@@ -545,13 +545,13 @@ TEST(JitExpressionBytecodeVmTest, ScanColumnKindsAndCellRules) {
   EXPECT_TRUE(kinds.hasOther);
   EXPECT_FALSE(kinds.allInt);
   EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
-      CellRule::BitwiseExact, kinds));
+      CellRule::BitwiseExact, program, kinds));
   EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
-      CellRule::FoldIntEquality, kinds));
+      CellRule::FoldIntEquality, program, kinds));
   EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
-      CellRule::IntegerArithmetic, kinds));
+      CellRule::IntegerArithmetic, program, kinds));
   EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
-      CellRule::OrderedComparison, kinds));
+      CellRule::OrderedComparison, program, kinds));
 
   // Pure integers satisfy every rule (the native backend additionally
   // requires `allInt`, which holds here).
@@ -561,20 +561,20 @@ TEST(JitExpressionBytecodeVmTest, ScanColumnKindsAndCellRules) {
   EXPECT_TRUE(intKinds.allInt);
   EXPECT_FALSE(intKinds.hasDouble);
   EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(CellRule::BitwiseExact,
-                                                         intKinds));
+                                                         program, intKinds));
   EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
-      CellRule::FoldIntEquality, intKinds));
+      CellRule::FoldIntEquality, program, intKinds));
   EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
-      CellRule::IntegerArithmetic, intKinds));
+      CellRule::IntegerArithmetic, program, intKinds));
   EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
-      CellRule::OrderedComparison, intKinds));
+      CellRule::OrderedComparison, program, intKinds));
 
   // An empty range scans nothing and satisfies every rule.
   auto emptyKinds =
       JitExpressionBytecodeVm::scanColumnKinds(program, mixed, 0, 0);
   EXPECT_TRUE(emptyKinds.allInt);
   EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
-      CellRule::OrderedComparison, emptyKinds));
+      CellRule::OrderedComparison, program, emptyKinds));
 }
 
 TEST(JitExpressionBytecodeVmTest, ExecuteIntColumn) {
@@ -650,4 +650,300 @@ TEST(JitExpressionBytecodeVmTest, BindOperationIntegration) {
         << "row " << i;
   }
   EXPECT_EQ(table(5, 1), Id::makeUndefined());
+}
+
+TEST(JitExpressionBytecodeVmTest, AndOrLoweringWithKleeneSemantics) {
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  auto U = Id::makeUndefined();
+
+  // AST: (?x > 1) && (?y < 10). Conjunction with an UNDEF side drops the
+  // row, like the legacy `AndLambda`.
+  auto andExpr = makeAndExpression(
+      std::make_unique<GreaterThanExpression>(
+          std::array<SparqlExpression::Ptr, 2>{
+              std::make_unique<VariableExpression>(Variable{"?x"}),
+              std::make_unique<IdExpression>(I(1))}),
+      std::make_unique<LessThanExpression>(std::array<SparqlExpression::Ptr, 2>{
+          std::make_unique<VariableExpression>(Variable{"?y"}),
+          std::make_unique<IdExpression>(I(10))}));
+
+  VariableToColumnMap varColMap;
+  varColMap[Variable{"?x"}] = makeAlwaysDefinedColumn(0);
+  varColMap[Variable{"?y"}] = makeAlwaysDefinedColumn(1);
+
+  auto optAnd = JitExpressionBytecodeVm::compile(*andExpr, varColMap);
+  ASSERT_TRUE(optAnd.has_value());
+  const auto& andProg = optAnd.value();
+  EXPECT_TRUE(std::any_of(
+      andProg.instructions().begin(), andProg.instructions().end(),
+      [](const auto& inst) { return inst.op == OpCode::AND_BOOL; }));
+
+  IdTable andInput =
+      makeIdTableFromVector({{I(2), I(5)},   // true && true -> keep
+                             {I(0), I(5)},   // false && true -> drop
+                             {I(2), I(50)},  // true && false -> drop
+                             {U, I(5)},      // undef && true -> drop
+                             {I(0), U},      // false && undef -> drop
+                             {U, U}});       // undef && undef -> drop
+  IdTableStatic<2> andResult =
+      IdTable{2, ad_utility::makeUnlimitedAllocator<Id>()}.toStatic<2>();
+  JitExpressionBytecodeVm::executeFilter<2>(andProg, andInput, andResult);
+  EXPECT_EQ(std::move(andResult).toDynamic(),
+            makeIdTableFromVector({{I(2), I(5)}}));
+
+  // AST: (?x > 100) || (?y < 10). Kleene disjunction: a `True` side keeps
+  // the row even when the other side is UNDEF (matches `OrLambda`).
+  auto orExpr = makeOrExpression(
+      std::make_unique<GreaterThanExpression>(
+          std::array<SparqlExpression::Ptr, 2>{
+              std::make_unique<VariableExpression>(Variable{"?x"}),
+              std::make_unique<IdExpression>(I(100))}),
+      std::make_unique<LessThanExpression>(std::array<SparqlExpression::Ptr, 2>{
+          std::make_unique<VariableExpression>(Variable{"?y"}),
+          std::make_unique<IdExpression>(I(10))}));
+
+  auto optOr = JitExpressionBytecodeVm::compile(*orExpr, varColMap);
+  ASSERT_TRUE(optOr.has_value());
+  const auto& orProg = optOr.value();
+
+  IdTable orInput =
+      makeIdTableFromVector({{I(2), I(5)},     // false || true -> keep
+                             {I(200), I(50)},  // true || false -> keep
+                             {I(200), I(5)},   // true || true -> keep
+                             {I(2), I(50)},    // false || false -> drop
+                             {U, I(5)},        // undef || true -> keep (Kleene)
+                             {I(200), U},      // true || undef -> keep (Kleene)
+                             {U, I(50)},       // undef || false -> drop
+                             {U, U}});         // undef || undef -> drop
+  IdTableStatic<2> orResult =
+      IdTable{2, ad_utility::makeUnlimitedAllocator<Id>()}.toStatic<2>();
+  JitExpressionBytecodeVm::executeFilter<2>(orProg, orInput, orResult);
+  EXPECT_EQ(std::move(orResult).toDynamic(),
+            makeIdTableFromVector({{I(2), I(5)},
+                                   {I(200), I(50)},
+                                   {I(200), I(5)},
+                                   {U, I(5)},
+                                   {I(200), U}}));
+}
+
+TEST(JitExpressionBytecodeVmTest, MultiRangeOrKeepsSingleRangeRows) {
+  // Regression test: `OR_BOOL` over several `IN_ID_RANGE` checks (as
+  // emitted by `tryFoldPrefixRegex` for multiple vocabulary ranges) must
+  // keep rows that match exactly one range. Each range check is invalid
+  // outside its own range, so a naive validity conjunction drops such rows
+  // while the legacy disjunction keeps them.
+  const uint64_t baseA =
+      Id::makeFromVocabIndex(VocabIndex::make(100)).getBits();
+  const uint64_t baseB =
+      Id::makeFromVocabIndex(VocabIndex::make(300)).getBits();
+  JitBytecodeProgram program;
+  program.addReferencedColumn(0);
+  const size_t rangeA = program.addIdRange(baseA, baseA + 100);
+  const size_t rangeB = program.addIdRange(baseB, baseB + 100);
+  program.addInstruction(OpCode::LOAD_COL_ID, 0);
+  program.addInstruction(OpCode::IN_ID_RANGE, static_cast<int64_t>(rangeA));
+  program.addInstruction(OpCode::LOAD_COL_ID, 0);
+  program.addInstruction(OpCode::IN_ID_RANGE, static_cast<int64_t>(rangeB));
+  program.addInstruction(OpCode::OR_BOOL);
+  program.addInstruction(OpCode::RET);
+
+  auto V = [](uint64_t bits) { return Id::fromBits(bits); };
+  IdTable input =
+      makeIdTableFromVector({{V(baseA + 10)},          // only range A -> keep
+                             {V(baseB + 10)},          // only range B -> keep
+                             {V(baseA + 200)},         // neither -> drop
+                             {Id::makeUndefined()}});  // neither -> drop
+  IdTableStatic<1> result =
+      IdTable{1, ad_utility::makeUnlimitedAllocator<Id>()}.toStatic<1>();
+  JitExpressionBytecodeVm::executeFilter<1>(program, input, result);
+  EXPECT_EQ(std::move(result).toDynamic(),
+            makeIdTableFromVector({{V(baseA + 10)}, {V(baseB + 10)}}));
+}
+
+TEST(JitExpressionBytecodeVmTest, YearLoweringAndRule) {
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  auto U = Id::makeUndefined();
+  auto D = [](int year, int month, int day) {
+    return Id::makeFromDate(DateYearOrDuration(Date(year, month, day)));
+  };
+
+  VariableToColumnMap varColMap;
+  varColMap[Variable{"?d"}] = makeAlwaysDefinedColumn(0);
+
+  // AST: YEAR(?d) >= 1800 (the date-range benchmark shape without the
+  // conjunction).
+  auto yearGe = std::make_unique<GreaterEqualExpression>(
+      std::array<SparqlExpression::Ptr, 2>{
+          makeYearExpression(
+              std::make_unique<VariableExpression>(Variable{"?d"})),
+          std::make_unique<IdExpression>(I(1800))});
+  auto optYear = JitExpressionBytecodeVm::compile(*yearGe, varColMap);
+  ASSERT_TRUE(optYear.has_value());
+  const auto& yearProg = optYear.value();
+  EXPECT_EQ(yearProg.cellRule(), CellRule::YearExtraction);
+
+  IdTable dates = makeIdTableFromVector({{D(1850, 5, 1)},    // keep
+                                         {D(1800, 1, 1)},    // keep (boundary)
+                                         {D(1799, 12, 31)},  // drop
+                                         {D(2000, 6, 30)},   // keep
+                                         {I(1850)},  // not a date -> drop
+                                         {U}});      // drop
+  auto dateKinds = JitExpressionBytecodeVm::scanColumnKinds(yearProg, dates, 0,
+                                                            dates.size());
+  EXPECT_TRUE(dateKinds.hasDate);
+  EXPECT_EQ(dateKinds.perColumn.size(), 1u);
+  EXPECT_TRUE(dateKinds.perColumn.at(0).second.hasDate);
+  EXPECT_TRUE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::YearExtraction, yearProg, dateKinds));
+
+  IdTableStatic<1> yearResult =
+      IdTable{1, ad_utility::makeUnlimitedAllocator<Id>()}.toStatic<1>();
+  JitExpressionBytecodeVm::executeFilter<1>(yearProg, dates, yearResult);
+  EXPECT_EQ(std::move(yearResult).toDynamic(),
+            makeIdTableFromVector(
+                {{D(1850, 5, 1)}, {D(1800, 1, 1)}, {D(2000, 6, 30)}}));
+
+  // A date column that is also loaded as `Int` rejects the rule: integer
+  // loads of dates diverge from the legacy date arithmetic and ordering.
+  JitBytecodeProgram intLoad;
+  intLoad.addInstruction(OpCode::LOAD_COL_INT, 0);
+  intLoad.addInstruction(OpCode::LOAD_CONST_INT, 1);
+  intLoad.addInstruction(OpCode::ADD_INT);
+  intLoad.addInstruction(OpCode::RET);
+  intLoad.addReferencedColumn(0);
+  intLoad.setCellRule(CellRule::YearExtraction);
+  auto intKinds =
+      JitExpressionBytecodeVm::scanColumnKinds(intLoad, dates, 0, dates.size());
+  EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::YearExtraction, intLoad, intKinds));
+
+  // Doubles keep rejecting the rule even next to dates.
+  IdTable withDoubles =
+      makeIdTableFromVector({{D(1850, 5, 1)}, {Id::makeFromDouble(1.5)}});
+  auto doubleKinds = JitExpressionBytecodeVm::scanColumnKinds(
+      yearProg, withDoubles, 0, withDoubles.size());
+  EXPECT_FALSE(JitExpressionBytecodeVm::satisfiesCellRule(
+      CellRule::YearExtraction, yearProg, doubleKinds));
+}
+
+TEST(JitExpressionBytecodeVmTest, LifespanAndDateRangeEndToEnd) {
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  auto U = Id::makeUndefined();
+  auto D = [](int year, int month, int day) {
+    return Id::makeFromDate(DateYearOrDuration(Date(year, month, day)));
+  };
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  // Lifespan shape: YEAR(?death) - YEAR(?birth) > 90.
+  IdTable lifespanInput = makeIdTableFromVector({{D(1900, 1, 1), D(1800, 1, 1)},
+                                                 {D(1850, 1, 1), D(1800, 1, 1)},
+                                                 {U, D(1800, 1, 1)},
+                                                 {D(1900, 1, 1), I(1800)}});
+  ValuesForTesting lifespanValues{qec,
+                                  std::move(lifespanInput),
+                                  {Variable{"?death"}, Variable{"?birth"}},
+                                  false,
+                                  {},
+                                  LocalVocab{},
+                                  std::nullopt,
+                                  true};
+  QueryExecutionTree lifespanSubTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(lifespanValues))};
+  auto lifespanExpr = std::make_unique<GreaterThanExpression>(
+      std::array<SparqlExpression::Ptr, 2>{
+          makeSubtractExpression(
+              makeYearExpression(
+                  std::make_unique<VariableExpression>(Variable{"?death"})),
+              makeYearExpression(
+                  std::make_unique<VariableExpression>(Variable{"?birth"}))),
+          std::make_unique<IdExpression>(I(90))});
+  Filter lifespanFilter{
+      qec,
+      std::make_shared<QueryExecutionTree>(std::move(lifespanSubTree)),
+      {std::move(lifespanExpr), "YEAR(?death) - YEAR(?birth) > 90"}};
+  auto lifespanResult =
+      lifespanFilter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(lifespanResult->isFullyMaterialized());
+  EXPECT_EQ(lifespanResult->idTableView(),
+            makeIdTableFromVector({{D(1900, 1, 1), D(1800, 1, 1)}}));
+
+  // Date-range shape: YEAR(?d) >= 1800 && YEAR(?d) < 1900.
+  IdTable rangeInput = makeIdTableFromVector({{D(1850, 6, 15)},
+                                              {D(1799, 12, 31)},
+                                              {D(1900, 1, 1)},
+                                              {D(1800, 1, 1)},
+                                              {I(1850)},
+                                              {U}});
+  ValuesForTesting rangeValues{
+      qec, std::move(rangeInput), {Variable{"?d"}}, false,
+      {},  LocalVocab{},          std::nullopt,     true};
+  QueryExecutionTree rangeSubTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(rangeValues))};
+  auto rangeExpr = makeAndExpression(
+      std::make_unique<GreaterEqualExpression>(
+          std::array<SparqlExpression::Ptr, 2>{
+              makeYearExpression(
+                  std::make_unique<VariableExpression>(Variable{"?d"})),
+              std::make_unique<IdExpression>(I(1800))}),
+      std::make_unique<LessThanExpression>(std::array<SparqlExpression::Ptr, 2>{
+          makeYearExpression(
+              std::make_unique<VariableExpression>(Variable{"?d"})),
+          std::make_unique<IdExpression>(I(1900))}));
+  Filter rangeFilter{
+      qec,
+      std::make_shared<QueryExecutionTree>(std::move(rangeSubTree)),
+      {std::move(rangeExpr), "YEAR(?d) >= 1800 && YEAR(?d) < 1900"}};
+  auto rangeResult =
+      rangeFilter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(rangeResult->isFullyMaterialized());
+  EXPECT_EQ(rangeResult->idTableView(),
+            makeIdTableFromVector({{D(1850, 6, 15)}, {D(1800, 1, 1)}}));
+}
+
+TEST(JitExpressionBytecodeVmTest, NativeAndFilterEndToEnd) {
+  // All-`Int` conjunction: the `Filter` engages the native AsmJit backend
+  // (`allInt`), which validates the `AND_BOOL` machine-code lowering.
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  VectorTable data;
+  for (int64_t i = 0; i < 100; ++i) {
+    data.push_back({i, 100 - i});
+  }
+  IdTable inputTable = makeIdTableFromVector(data, I);
+  ValuesForTesting values{qec,
+                          std::move(inputTable),
+                          {Variable{"?a"}, Variable{"?b"}},
+                          false,
+                          {},
+                          LocalVocab{},
+                          std::nullopt,
+                          true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+
+  // (?a > 10) && (?b < 90): rows 11..99 except where mirrored, i.e. rows
+  // with a in [11, 99] and b = 100 - a < 90, i.e. a in [11, 99].
+  auto expr = makeAndExpression(
+      std::make_unique<GreaterThanExpression>(
+          std::array<SparqlExpression::Ptr, 2>{
+              std::make_unique<VariableExpression>(Variable{"?a"}),
+              std::make_unique<IdExpression>(I(10))}),
+      std::make_unique<LessThanExpression>(std::array<SparqlExpression::Ptr, 2>{
+          std::make_unique<VariableExpression>(Variable{"?b"}),
+          std::make_unique<IdExpression>(I(90))}));
+  Filter filter{qec,
+                std::make_shared<QueryExecutionTree>(std::move(subTree)),
+                {std::move(expr), "(?a > 10) && (?b < 90)"}};
+  auto result = filter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  // a in [11, 99] (89 rows): b = 100 - a in [1, 89], all < 90.
+  EXPECT_EQ(result->idTableView().size(), 89u);
+  EXPECT_EQ(result->idTableView()(0, 0), I(11));
 }

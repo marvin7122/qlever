@@ -152,7 +152,7 @@ CPP_template_def(int WIDTH,
       getExecutionContext()->getIndex());
   if (optFolded.has_value() &&
       ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
-          optFolded->cellRule(),
+          optFolded->cellRule(), optFolded.value(),
           ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
               optFolded.value(), inputTable, 0, inputTable.size(),
               cancellationHandle_))) {
@@ -184,7 +184,7 @@ CPP_template_def(int WIDTH,
     useNativeJit = kinds.allInt;
     useBytecodeJit =
         ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
-            optProgram->cellRule(), kinds);
+            optProgram->cellRule(), optProgram.value(), kinds);
   }
 
   // Attempt Native x86-64 JIT (AsmJit) compilation & execution

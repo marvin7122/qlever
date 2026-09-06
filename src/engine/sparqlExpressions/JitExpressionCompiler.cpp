@@ -327,6 +327,27 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         regStack.push_back(a);
         break;
       }
+      case OpCode::AND_BOOL: {
+        if (regStack.size() < 2) return std::nullopt;
+        asmjit::x86::Gp b = regStack.back();
+        regStack.pop_back();
+        asmjit::x86::Gp a = regStack.back();
+        regStack.pop_back();
+        // Value-only conjunction: the native backend only runs over
+        // all-`Int` cells (`Filter` requires `allInt`), where no lane is
+        // ever invalid, so plain bitwise `and_` matches the Kleene
+        // `AND_BOOL` of the bytecode kernels. The final `test`
+        // treats any nonzero value as a match.
+        cc.and_(a, b);
+        regStack.push_back(a);
+        break;
+      }
+      case OpCode::LOAD_COL_DATE:
+      case OpCode::YEAR_DATE:
+        // Date programs never reach the native backend (`allInt` excludes
+        // `Date` cells); decline so the caller falls through to the
+        // bytecode backend.
+        return std::nullopt;
       case OpCode::RET:
         break;
     }

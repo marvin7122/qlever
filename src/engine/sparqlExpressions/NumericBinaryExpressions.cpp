@@ -538,6 +538,39 @@ CPP_template(typename BinaryPrefilterExpr, typename NaryOperation)(
   }
 
   // _____________________________________________________________________________
+  // Lower `&&`/`||` to `AND_BOOL`/`OR_BOOL`. The kernels implement Kleene
+  // three-valued logic via their validity masks (see `OpCode`), which
+  // matches `AndLambda`/`OrLambda` on filter outcomes: only `True` keeps a
+  // row, `False` and invalid rows are dropped alike. Non-boolean integer
+  // children compose via the kernels' nonzero test, matching the effective
+  // boolean value; other datatypes cannot reach this lowering because the
+  // program's `CellRule` excludes them.
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    const auto& children = this->children();
+    if (children.empty()) {
+      return false;
+    }
+    if (!children[0] || !children[0]->compileToJit(program, varColMap)) {
+      return false;
+    }
+    for (size_t i = 1; i < children.size(); ++i) {
+      if (!children[i] || !children[i]->compileToJit(program, varColMap)) {
+        return false;
+      }
+      if constexpr (std::is_same_v<BinaryPrefilterExpr,
+                                   prefilterExpressions::AndExpression>) {
+        program.addInstruction(ql::engine::jit::OpCode::AND_BOOL);
+      } else {
+        static_assert(std::is_same_v<BinaryPrefilterExpr,
+                                     prefilterExpressions::OrExpression>);
+        program.addInstruction(ql::engine::jit::OpCode::OR_BOOL);
+      }
+    }
+    return true;
+  }
+
+  // _____________________________________________________________________________
   bool isResultAlwaysDefined(const VariableToColumnMap& map) const override {
     auto isAlwaysDefined = [&map](const auto& child) {
       return child->isResultAlwaysDefined(map);
