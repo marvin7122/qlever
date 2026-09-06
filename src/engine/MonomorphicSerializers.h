@@ -298,7 +298,7 @@ inline void writeColumnDelimiter(Writer& writer) noexcept {
   }
 }
 
-// Row terminator emitter helper
+// Row terminator emitter helper.
 template <ExportFormat Format, typename Writer>
 inline void writeRowTerminator(Writer& writer) noexcept {
   if constexpr (Format == ExportFormat::Turtle || Format == ExportFormat::NTriples) {
