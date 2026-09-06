@@ -309,6 +309,14 @@ class DynamicRowSerializer {
   }
 
   // Dynamic per-cell dispatch with inner loop branching
+  /**
+ * Serialize a single cell according to the runtime column type.
+ * @tparam Format The export format (CSV, TSV, Turtle, NTriples).
+ * @tparam Writer A type satisfying the FormatterWriter concept.
+ * @param writer Output writer.
+ * @param type Column type of the cell (runtime value).
+ * @param cell The cell value to emit.
+ */
   template <ExportFormat Format, typename Writer>
   void serializeCell(Writer& writer, ColumnType type, const CellValue& cell) const {
     switch (type) {
