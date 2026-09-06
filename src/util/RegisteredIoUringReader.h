@@ -341,12 +341,8 @@ class RegisteredIoUringReader
   RegisteredIoUringReader(const RegisteredIoUringReader&) = delete;
   RegisteredIoUringReader& operator=(const RegisteredIoUringReader&) = delete;
 
-  RegisteredIoUringReader(RegisteredIoUringReader&& other) noexcept
-      : config_{other.config_},
-#ifdef QLEVER_HAS_LIBURING
-        ring_{other.ring_},
-        ringInitialized_{other.ringInitialized_},
-#endif
+    RegisteredIoUringReader(RegisteredIoUringReader&&) = delete;
+  RegisteredIoUringReader& operator=(RegisteredIoUringReader&&) = delete;
         filesRegistered_{other.filesRegistered_},
         buffersRegistered_{other.buffersRegistered_},
         registeredFds_{std::move(other.registeredFds_)},
