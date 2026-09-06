@@ -275,7 +275,9 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) n
 
 // _____________________________________________________________________________
 
+// Why: returns a std::string containing the unsigned integer, pre‑sized to avoid reallocations.
 [[nodiscard]] inline std::string formatUIntToString(uint64_t val) {
+
   const uint32_t len = numDigits(val);
   AD_CONTRACT_CHECK(len >= 1);
   std::string s;
