@@ -524,7 +524,7 @@ decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
   }
 }
 
-// Fast-path dispatch for 2-column schemas
+// Fast-path dispatch for 2-column schemas.
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
                             Args&&... args) {
