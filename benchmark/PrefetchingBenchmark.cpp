@@ -169,7 +169,8 @@ class HardwarePerformanceMonitor {
 #endif
   }
 
-  [[nodiscard]] bool isSupported() const noexcept { return supported_; }
+     // ___________________________________________________________________________
+   [[nodiscard]] bool isSupported() const noexcept { return supported_; }
 
   void start() {
 #if defined(__linux__)
