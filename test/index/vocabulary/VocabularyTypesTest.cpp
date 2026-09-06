@@ -193,9 +193,7 @@ class VocabBatchLookupDataVocabTest : public ::testing::Test {
 };
 
 // _____________________________________________________________________________
-// A batch result obtained from `VocabularyInMemoryBinSearch` stays valid when
-// the vocabulary is `close()`d afterwards: the result owns the bytes, and
-// `close()` only installs a fresh empty buffer instead of mutating the old one.
+// Verify that a batch result obtained from `VocabularyInMemoryBinSearch` stays valid when the vocabulary is `close()`d afterwards: the result owns the bytes, and `close()` only installs a fresh empty buffer instead of mutating the old one.
 TEST_F(VocabBatchLookupDataVocabTest, MultiSourceAssemblerOutlivesClose) {
   auto vocabulary = buildVocab("ram-word");
   const std::array<size_t, 1> positions{0};
