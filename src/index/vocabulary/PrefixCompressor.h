@@ -86,21 +86,7 @@ class PrefixCompressor {
   // [MIN_COMPRESSION_PREFIX, MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES);
   // otherwise return `std::nullopt`.
   [[nodiscard]] static std::optional<size_t> prefixIndex(
-      std::string_view compressedWord) {
-    if (compressedWord.empty()) {
-      return std::nullopt;
-    }
-    const auto leadingByte = static_cast<uint8_t>(compressedWord.front());
-
-    if (leadingByte >= MIN_COMPRESSION_PREFIX &&
-        leadingByte < MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES) {
-      const size_t index = leadingByte - MIN_COMPRESSION_PREFIX;
-      // The surrounding range check establishes that `index` is a valid prefix code.
-      return index;
-    }
-
-    return std::nullopt;
-  }
+      std::string_view compressedWord);
 
   // ___________________________________________________________________________
   // Return the exact decompressed size of `compressedWord`.
