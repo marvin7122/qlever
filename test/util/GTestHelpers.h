@@ -424,14 +424,6 @@ template <size_t NumBytes = 4096>
 // by '_' (parameterized test suites embed '/' in their names).
 // Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
 // test.
-inline std::string gtestCurrentTestSuiteName(
-    bool assertInGtestEnvironment = true) {
-  const auto* testSuite =
-      ::testing::UnitTest::GetInstance()->current_test_suite();
-  if (assertInGtestEnvironment) {
-    AD_CORRECTNESS_CHECK(testSuite != nullptr);
-  }
-  return testSuite == nullptr ? "" : sanitizeGtestName(testSuite->name());
-}
+std::string gtestCurrentTestSuiteName(bool assertInGtestEnvironment = true);
 
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H
