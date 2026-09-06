@@ -43,7 +43,7 @@ alignas(64) inline constexpr char DIGIT_PAIRS[200] =
     "90919293949596979899";
 
 // _____________________________________________________________________________
-// Powers of 10 lookup table for exact branchless digit length determination.
+// Provide a powers of 10 lookup table for exact branchless digit length determination.
 inline constexpr uint64_t POWERS_OF_10_64[20] = {
     1ULL,
     10ULL,
