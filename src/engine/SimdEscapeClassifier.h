@@ -34,7 +34,6 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
-#include "util/Exception.h"
 #include "util/Invariants.h"
 
 namespace ad_utility::simd {
