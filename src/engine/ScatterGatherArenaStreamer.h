@@ -283,13 +283,7 @@ class ScatterGatherChunkStreamer
     if (!currentSlices_.empty() && !currentSlices_.back().isArena) {
       auto& last = currentSlices_.back();
       currentHeaderBuffer_.insert(currentHeaderBuffer_.end(), sv.begin(),
-                                  sv.end());
-      last.len += sv.size();
-    } else {
-      size_t offset = currentHeaderBuffer_.size();
-      currentHeaderBuffer_.insert(currentHeaderBuffer_.end(), sv.begin(),
-                                  sv.end());
-      currentSlices_.push_back(SliceRecord{.isArena = false,
+                                  
                                            .arenaPtr = nullptr,
                                            .headerOffset = offset,
                                            .len = sv.size()});
