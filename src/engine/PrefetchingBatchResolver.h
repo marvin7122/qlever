@@ -105,7 +105,8 @@ class PrefetchingBatchResolver {
 
   // ___________________________________________________________________________
   [[nodiscard]] size_t prefetchDistance() const noexcept {
-    return config_.prefetchDistance;
+    // Lifetime: returns a copy of the prefetch distance, valid for the object's lifetime.
+return config_.prefetchDistance;
   }
 
   // ___________________________________________________________________________
