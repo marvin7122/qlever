@@ -213,7 +213,9 @@ inline char* formatIntBranchless(int64_t val, char* out) noexcept {
 
 // _____________________________________________________________________________
 
+// Why: converts int32_t to ASCII, handling sign, then delegates to the unsigned 32‑bit version.
 inline char* formatInt32Branchless(int32_t val, char* out) noexcept {
+
   AD_CONTRACT_CHECK(out != nullptr);
   uint32_t uval;
   if (val < 0) {
