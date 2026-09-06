@@ -36,8 +36,7 @@ enum class WellKnownPrefixId : uint8_t {
 };
 
 // _____________________________________________________________________________
-// Vectorized Prefix Table: Aligns common IRI prefixes to 16-byte boundaries so
-// they can be copied into chunk buffers using 1-3 SSE2/AVX instructions.
+// Align common IRI prefixes to 16-byte boundaries for vectorized copy into chunk buffers.
 class VectorizedPrefixTable {
  public:
   struct PrefixEntry {
