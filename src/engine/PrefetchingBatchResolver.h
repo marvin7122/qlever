@@ -188,7 +188,7 @@ return config_.prefetchDistance;
 
     results.resize(n);
 
-    auto prefetchOffsetIfValid = [&](size_t idx) {
+    auto prefetchOffsetIfValid = [offsets](size_t idx) {
       if (idx < offsets.size()) {
         prefetchVocabEntry(&offsets[idx]);
       }
