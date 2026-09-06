@@ -292,7 +292,7 @@ TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
 }
 
 // _____________________________________________________________________________
-// Verify that a legitimately empty word does not trip any correctness check:
+// Verify that a legitimately empty word does not trip any correctness check.
 // the filled/unfilled invariant is structural, not based on the view contents.
 TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerToleratesEmptyWord) {
   auto batch = makeStringVectorVocabBatchLookupResult({"", "x"});
