@@ -448,9 +448,9 @@ TEST(VocabularyTypes, sequentialLookupBatchWithMissingWords) {
 
   // The opted-in vocabulary reports the placeholder for the missing word.
   auto result = sequentialLookupBatch(VocabWithHolesPlaceholder{}, indices);
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "word");
-  EXPECT_EQ((*result)[1], placeholderForMissingVocabIndex(5));
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0], "word");
+  EXPECT_EQ(result[1], placeholderForMissingVocabIndex(5));
 
   // The vocabulary that has not opted in throws.
   AD_EXPECT_THROW_WITH_MESSAGE(
