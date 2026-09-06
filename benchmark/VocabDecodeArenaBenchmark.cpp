@@ -196,8 +196,8 @@ int main(int argc, char** argv) {
 
     Vocab vocab;
   vocab.open(opt.vocab);
-  AD_CONTRACT_CHECK(vocab.size() > 0);
   const size_t vocabSize = vocab.size();
+  AD_CONTRACT_CHECK(vocabSize > 0);
 
 
   const size_t totalBatches = opt.warmupBatches + opt.timedBatches;
