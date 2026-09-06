@@ -432,7 +432,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Convenience overload for EvaluatedTriple struct.
+
   void writeTriple(ExportFormat format,
                    const qlever::constructExport::EvaluatedTriple& triple) {
     AD_CONTRACT_CHECK(triple.subject_ != nullptr);
