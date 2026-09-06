@@ -36,13 +36,7 @@
 #define QLEVER_HAS_BENCHMARK_INFRASTRUCTURE 1
 #endif
 
-namespace ad_benchmark {
-namespace {
 
-using ql::export_formatting::ExportFormat;
-using ql::export_formatting::FastExportStreamFormatter;
-using ql::export_streaming::ScatterGatherChunk;
-using ql::export_streaming::ScatterGatherChunkStreamer;
 using ql::export_streaming::ScatterGatherConfig;
 
 constexpr size_t kDefaultChunkSize = 1024 * 1024;
