@@ -75,6 +75,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
   return true;
 }
 
+/// Fixture word used in vocabulary decode benchmarks.
 struct FixtureWord {
   std::string compressed;
   size_t decoderIdx;
