@@ -211,8 +211,8 @@ return config_.prefetchDistance;
         const size_t midIdx = indices[i + (distance / 2)];
         if (midIdx + 1 < offsets.size()) {
           const auto strOffset = offsets[midIdx];
-          if (strOffset < data.size()) {
-            prefetchVocabEntry(data.data() + strOffset);
+          if (strOffset < data.size() * sizeof(CharType)) {
+            prefetchVocabEntry(static_cast<const char*>(static_cast<const void*>(data.data())) + strOffset);
           }
         }
       }
