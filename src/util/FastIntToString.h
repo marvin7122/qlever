@@ -168,19 +168,23 @@ inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
   const uint32_t len = numDigits(val);
   char* p = out + len;
+  AD_CONTRACT_CHECK(p >= out);
 
   while (val >= 100) {
     uint32_t rem = val % 100;
     val /= 100;
     p -= 2;
+    AD_CONTRACT_CHECK(p >= out);
     std::memcpy(p, &detail::DIGIT_PAIRS[rem * 2], 2);
   }
 
   if (val < 10) {
     --p;
+    AD_CONTRACT_CHECK(p >= out);
     *p = static_cast<char>('0' + val);
   } else {
     p -= 2;
+    AD_CONTRACT_CHECK(p >= out);
     std::memcpy(p, &detail::DIGIT_PAIRS[val * 2], 2);
   }
 
