@@ -554,7 +554,10 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
       return InnerDispatch<ColumnType::Boolean>::apply(std::forward<Visitor>(visitor), c1,
                                                        std::forward<Args>(args)...);
     case ColumnType::String:
+      return InnerDispatch<ColumnType::String>::apply(std::forward<Visitor>(visitor), c1,
+                                                       std::forward<Args>(args)...);
     default:
+      AD_CONTRACT_CHECK(false, "Unexpected ColumnType in dispatch2Col outer switch");
       return InnerDispatch<ColumnType::String>::apply(std::forward<Visitor>(visitor), c1,
                                                        std::forward<Args>(args)...);
   }
