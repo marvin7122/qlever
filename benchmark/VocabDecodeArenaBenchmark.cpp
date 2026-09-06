@@ -200,8 +200,9 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  Vocab vocab;
+    Vocab vocab;
   vocab.open(opt.vocab);
+  AD_CONTRACT_CHECK(vocab.size() > 0);
   const size_t vocabSize = vocab.size();
 
 
