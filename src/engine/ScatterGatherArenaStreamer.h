@@ -219,13 +219,7 @@ class ScatterGatherChunkStreamer
   bool isStreaming_ = false;
 
   std::vector<SliceRecord> currentSlices_;
-  std::vector<char> currentHeaderBuffer_;
-  size_t currentChunkBytes_ = 0;
-  size_t currentChunkTriples_ = 0;
-  size_t currentZeroCopySpans_ = 0;
-  size_t currentZeroCopyBytes_ = 0;
-
-  // Aggregated export lifetime metrics
+  
   uint64_t totalTriples_ = 0;
   uint64_t totalBytesWritten_ = 0;
   uint64_t chunksEmitted_ = 0;
