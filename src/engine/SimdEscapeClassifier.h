@@ -42,6 +42,10 @@
 namespace ad_utility::simd {
 
 // List supported serialization formats for SIMD escape classification.
+/**
+ * @brief Enum class describing supported serialization formats for SIMD escape classification.
+ * Provides type safety and semantic meaning over raw integer masks.
+ */
 enum class EscapeFormat {
   CsvQuote,    // Escape quotes (")
   CsvSpecial,  // RFC 4180 special characters (", ,, \r, \n)
