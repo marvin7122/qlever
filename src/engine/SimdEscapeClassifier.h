@@ -55,13 +55,7 @@ enum class EscapeFormat {
 };
 
 // Describe an invariant-bearing 32-bit classification mask for a 32-byte SIMD chunk.
-class ChunkEscapeMask32 {
- private:
-  uint32_t mask_ = 0;
 
- public:
-  constexpr explicit ChunkEscapeMask32(uint32_t mask = 0) noexcept
-      : mask_{mask} {}
 
   [[nodiscard]] constexpr bool hasEscape() const noexcept { return mask_ != 0; }
   [[nodiscard]] constexpr bool isAllClean() const noexcept { return mask_ == 0; }
