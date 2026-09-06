@@ -112,6 +112,9 @@ class SimulatedVocabularyFile {
 
 // _____________________________________________________________________________
 // Benchmark result metrics struct.
+/**
+ * Holds the results of a single I/O benchmark run.
+ */
 struct BenchmarkMetric {
   std::string name;
   double elapsedSeconds = 0.0;
