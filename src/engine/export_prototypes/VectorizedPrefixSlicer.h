@@ -65,7 +65,7 @@ class VectorizedPrefixTable {
   [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id, char* out) const noexcept {
     AD_CHECK(out != nullptr);
     AD_CHECK(static_cast<size_t>(id) < static_cast<size_t>(WellKnownPrefixId::Count));
-    const size_t idx = static_cast<size_t>(id);
+    const size_t idx = static_cast<size_t>(id);  // out must point to a buffer of at least 48 bytes
     if (idx >= entries_.size()) {
       return 0;
     }
