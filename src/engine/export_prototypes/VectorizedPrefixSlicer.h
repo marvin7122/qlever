@@ -30,13 +30,7 @@ constexpr std::string_view kXmlSchemaPrefix = "http://www.w3.org/2001/XMLSchema#
 
 // _____________________________________________________________________________
 // Define standard known IRI prefix IDs for high-throughput vectorized emission.
-enum class WellKnownPrefixId : uint8_t {
-  WikidataEntity = 0,    // http://www.wikidata.org/entity/
-  WikidataDirectProp,    // http://www.wikidata.org/prop/direct/
-  RdfSyntax,             // http://www.w3.org/1999/02/22-rdf-syntax-ns#
-  RdfsSchema,            // http://www.w3.org/2000/01/rdf-schema#
-  OwlOntology,           // http://www.w3.org/2002/07/owl#
-  SchemaOrg,             // http://schema.org/
+
   XmlSchema,             // http://www.w3.org/2001/XMLSchema#
   Count
 };
