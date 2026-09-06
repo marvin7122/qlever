@@ -171,7 +171,7 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
 }
 
 // _____________________________________________________________________________
-// Fixture for the "batch result outlives its vocabulary" tests: provides a
+// Fixture for the "batch result outlives its vocabulary" tests. Provides a
 // one-word `VocabularyInMemoryBinSearch` built via a `WordWriter`, with
 // per-test filenames so the suites are independent.
 class VocabBatchLookupDataVocabTest : public ::testing::Test {
