@@ -45,7 +45,8 @@ TEST(PrefetchingBatchResolver, ConfigurationInvariants) {
 
 TEST(PrefetchingBatchResolver, PrefetchIntrinsicSmokeTest) {
   int x = 42;
-  // Verify prefetch does not fault on null or valid pointers
+    // Verify that prefetchVocabEntry and prefetchAddress do not throw
+  // for null pointers, valid pointers, and explicit prefetch distances.
   EXPECT_NO_THROW(prefetchVocabEntry(nullptr));
   EXPECT_NO_THROW(prefetchVocabEntry(&x));
   EXPECT_NO_THROW(prefetchVocabEntry(&x, 16));
