@@ -283,6 +283,7 @@ class FsstEncoder {
   // Compress a single string.
   std::string compress(std::string_view word) {
     size_t len = word.size();
+    AD_CONTRACT_CHECK(len <= std::numeric_limits<size_t>::max() / 8);
     std::string output;
     output.resize(7 + 2 * len);
     unsigned char* dummyOutput;
