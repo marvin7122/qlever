@@ -120,13 +120,7 @@ std::string scalarEscapeTurtleLiteral(std::string_view normLiteral) {
   if (normLiteral.size() < 2 || normLiteral.front() != '"') {
     return std::string{normLiteral};
   }
-  size_t posSecondQuote = normLiteral.find('"', 1);
-  size_t posLastQuote = normLiteral.rfind('"');
-  if (posSecondQuote == posLastQuote &&
-      normLiteral.find_first_of("\\\n\r") == std::string_view::npos) {
-    return std::string{normLiteral};
-  }
-  std::string_view content = normLiteral.substr(1, posLastQuote - 1);
+  
   std::string escaped = absl::StrReplaceAll(
       content,
       {{R"(\)", R"(\\)"}, {"\n", "\\n"}, {"\r", "\\r"}, {R"(")", R"(\")"}});
