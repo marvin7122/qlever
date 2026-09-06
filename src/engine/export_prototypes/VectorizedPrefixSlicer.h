@@ -23,6 +23,16 @@
 namespace qlever::export_prototypes {
 
 // _____________________________________________________________________________
+// Single source of truth for well-known IRI prefixes.
+constexpr std::string_view kWikidataEntityPrefix = "http://www.wikidata.org/entity/";
+constexpr std::string_view kWikidataDirectPropPrefix = "http://www.wikidata.org/prop/direct/";
+constexpr std::string_view kRdfSyntaxPrefix = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+constexpr std::string_view kRdfsSchemaPrefix = "http://www.w3.org/2000/01/rdf-schema#";
+constexpr std::string_view kOwlOntologyPrefix = "http://www.w3.org/2002/07/owl#";
+constexpr std::string_view kSchemaOrgPrefix = "http://schema.org/";
+constexpr std::string_view kXmlSchemaPrefix = "http://www.w3.org/2001/XMLSchema#";
+
+// _____________________________________________________________________________
 // Define standard known IRI prefix IDs for high-throughput vectorized emission.
 enum class WellKnownPrefixId : uint8_t {
   WikidataEntity = 0,    // http://www.wikidata.org/entity/
@@ -49,13 +59,13 @@ class VectorizedPrefixTable {
 
  public:
   VectorizedPrefixTable() noexcept {
-    initEntry(WellKnownPrefixId::WikidataEntity, "http://www.wikidata.org/entity/");
-    initEntry(WellKnownPrefixId::WikidataDirectProp, "http://www.wikidata.org/prop/direct/");
-    initEntry(WellKnownPrefixId::RdfSyntax, "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-    initEntry(WellKnownPrefixId::RdfsSchema, "http://www.w3.org/2000/01/rdf-schema#");
-    initEntry(WellKnownPrefixId::OwlOntology, "http://www.w3.org/2002/07/owl#");
-    initEntry(WellKnownPrefixId::SchemaOrg, "http://schema.org/");
-    initEntry(WellKnownPrefixId::XmlSchema, "http://www.w3.org/2001/XMLSchema#");
+    initEntry(WellKnownPrefixId::WikidataEntity, kWikidataEntityPrefix);
+    initEntry(WellKnownPrefixId::WikidataDirectProp, kWikidataDirectPropPrefix);
+    initEntry(WellKnownPrefixId::RdfSyntax, kRdfSyntaxPrefix);
+    initEntry(WellKnownPrefixId::RdfsSchema, kRdfsSchemaPrefix);
+    initEntry(WellKnownPrefixId::OwlOntology, kOwlOntologyPrefix);
+    initEntry(WellKnownPrefixId::SchemaOrg, kSchemaOrgPrefix);
+    initEntry(WellKnownPrefixId::XmlSchema, kXmlSchemaPrefix);
   }
 
   // ___________________________________________________________________________
