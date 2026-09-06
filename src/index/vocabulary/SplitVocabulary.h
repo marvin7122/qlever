@@ -11,7 +11,7 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 
-#include <gtest/gtest_prod.h>
+
 
 #include <array>
 #include <cstdint>
