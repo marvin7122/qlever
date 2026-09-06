@@ -114,13 +114,7 @@ inline void format4Digits(uint32_t v, char* dst) noexcept {
   std::memcpy(dst + 2, &DIGIT_PAIRS[d1], 2);
 }
 
-// _____________________________________________________________________________
-// Fast 2-digit formatting
-inline void format2Digits(uint32_t v, char* dst) noexcept {
-  AD_CONTRACT_CHECK(dst != nullptr);
-  AD_CONTRACT_CHECK(v < 100U);
-  std::memcpy(dst, &DIGIT_PAIRS[v * 2], 2);
-}
+
 
 }  // namespace detail
 
