@@ -194,14 +194,16 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-    Vocab vocab;
-  vocab.open(opt.vocab);
-  const size_t vocabSize = vocab.size();
-  if (vocabSize == 0) {
-    std::cerr << "Error: vocabulary is empty or failed to open: " << opt.vocab << "\n";
+  Vocab vocab;
+  if (!vocab.open(opt.vocab)) {
+    std::cerr << "Error: failed to open vocabulary: " << opt.vocab << "\n";
     return 1;
   }
-  AD_CORRECTNESS_CHECK(vocabSize > 0);
+  const size_t vocabSize = vocab.size();
+  if (vocabSize == 0) {
+    std::cerr << "Error: vocabulary is empty: " << opt.vocab << "\n";
+    return 1;
+  }
 
 
   const size_t totalBatches = opt.warmupBatches + opt.timedBatches;
