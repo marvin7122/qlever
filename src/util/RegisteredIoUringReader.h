@@ -543,9 +543,7 @@ class RegisteredIoUringReader
   // Support registered files, registered fixed buffers, and Direct I/O.
   [[nodiscard]] BatchId submitBatch(ql::span<const BlockReadRequest> requests) {
     auto guard = makeInvariantGuard();
-    if (requests.empty()) {
-      return 0;
-    }
+    AD_CONTRACT_CHECK(!requests.empty());
 
     const BatchId batchId = nextBatchId_++;
 
