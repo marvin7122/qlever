@@ -84,13 +84,7 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
     case ColumnType::Undefined:
       return "Undefined";
   }
-  return "Unknown";
-}
-
-// _____________________________________________________________________________
-// Lightweight value holder representing a cell value across formats and types.
-struct CellValue {
-  ColumnType type_ = ColumnType::Undefined;
+  
   std::string stringVal_{};
   int64_t intVal_ = 0;
   double doubleVal_ = 0.0;
