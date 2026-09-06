@@ -46,7 +46,7 @@ class PerfCounterMonitor {
     uint64_t branches = 0;
     uint64_t branchMisses = 0;
     double ipc = 0.0;
-    double branchMissRate = 0.0;
+    double branchMissRate;
     bool available = false;
   };
 
