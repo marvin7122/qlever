@@ -474,7 +474,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Finalizing typestate transition (Law 2 / Law 3).
+
   // Consumes the formatter, flushes remaining content, and returns summary.
   [[nodiscard]] ExportStreamSummary finalize() && {
     flush();
