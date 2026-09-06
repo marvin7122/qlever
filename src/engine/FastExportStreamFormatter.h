@@ -442,7 +442,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Write a tabular row for SELECT query export.
+
   void writeRow(ExportFormat format, ql::span<const std::string_view> cells) {
     auto guard = makeInvariantGuard();
     const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
