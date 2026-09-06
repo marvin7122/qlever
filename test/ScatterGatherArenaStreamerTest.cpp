@@ -68,7 +68,7 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
 
   // Verify that the second iovec points directly to the arena memory.
   auto iovs = chunk.iovecs();
-  EXPECT_EQ(iovs[1].iov_base, arenaLiteral.data());
+    EXPECT_EQ(iovs[1].iov_base, largeLiteral.data());
   EXPECT_EQ(iovs[1].iov_len, arenaLiteral.size());
 
   // Verify flattened string representation.
