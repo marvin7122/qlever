@@ -18,6 +18,8 @@
 #include "engine/ScatterGatherArenaStreamer.h"
 #include "engine/export_prototypes/FastExportStreamFormatter.h"
 
+#include "util/GTestHelpers.h"
+
 using namespace ql::export_streaming;
 using ql::export_formatting::ExportFormat;
 using qlever::constructExport::EvaluatedTermData;
@@ -27,6 +29,8 @@ static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunk>);
 static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunkStreamer>);
 
 TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
+  ad_utility::source_location loc = AD_CURRENT_SOURCE_LOC();
+  auto trace = generateLocationTrace(loc);
   ScatterGatherConfig config;
   config.zeroCopyThresholdBytes = 32;
 
