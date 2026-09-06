@@ -231,7 +231,9 @@ inline char* formatInt32Branchless(int32_t val, char* out) noexcept {
 
 // Writes prefix and ASCII digits directly into `out` with zero allocations.
 // Returns a pointer to one-past-the-end.
+// Why: single‑pass formatting of a Wikidata QID by copying the prefix then appending the ID via formatUIntBranchless.
 inline char* formatQid(uint64_t id, char* out) noexcept {
+
   AD_CONTRACT_CHECK(out != nullptr);
   std::memcpy(out, WIKIDATA_ENTITY_PREFIX.data(), WIKIDATA_ENTITY_PREFIX.size());
   return formatUIntBranchless(id, out + WIKIDATA_ENTITY_PREFIX.size());
