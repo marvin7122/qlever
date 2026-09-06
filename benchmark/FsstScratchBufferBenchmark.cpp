@@ -47,6 +47,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   // Bound required for intermediate repeated-FSST stages, avoiding a full-size
   // scratch allocation.
   size_t intermediateCapacity_ = 0;
+  bool initialized_ = false;
 
  public:
   FsstScratchBufferBenchmark() {
