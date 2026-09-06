@@ -357,13 +357,7 @@ template<EscapeFormat Format>
   /// \param input The input string view to copy and escape.
   /// \param dest Pointer to the destination buffer.
   /// \return Pointer past the last written byte in the destination buffer.
-  template <EscapeFormat Format>
-  static inline char* copyAndEscape(std::string_view input,
-                                    char* dest) noexcept {
-    const char* ptr = input.data();
-    size_t len = input.size();
-
-#if defined(QLEVER_SIMD_X86)
+  
     while (len >= 32) {
       uint32_t mask = scanChunk32<Format>(ptr).rawMask();
       if (mask == 0) {
