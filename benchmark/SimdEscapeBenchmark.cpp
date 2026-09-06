@@ -102,15 +102,9 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
   return text.find_first_of("\"\\\n\r");
 }
 
-// Scan CSV Special literals for escape characters with a scalar loop.
+// Scan CSV Special literals for escape characters using find_first_of.
 [[nodiscard]] size_t scalarFindFirstEscapeCsv(std::string_view text) noexcept {
-  for (size_t i = 0; i < text.size(); ++i) {
-    char c = text[i];
-    if (c == '"' || c == ',' || c == '\r' || c == '\n') {
-      return i;
-    }
-  }
-  return std::string_view::npos;
+  return text.find_first_of("\",\r\n");
 }
 
 // Scan TSV literals for escape characters using find_first_of.
