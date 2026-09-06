@@ -299,8 +299,8 @@ class DynamicRowSerializer {
   std::vector<ColumnType> schema_;
 
  public:
-  explicit DynamicRowSerializer(std::vector<ColumnType> schema)
-      : schema_(std::move(schema)) {
+    explicit DynamicRowSerializer(const std::vector<ColumnType>& schema)
+      : schema_(schema) {
     AD_CONTRACT_CHECK(!schema_.empty());
   }
 
