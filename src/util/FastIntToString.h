@@ -162,7 +162,9 @@ inline char* formatUIntBranchless(uint64_t val, char* out) noexcept;
 // _____________________________________________________________________________
 
 // Why: branchless formatting of a 32-bit unsigned integer using digit-pair lookup.
+// Why: converts uint32_t to ASCII using the same branchless 2‑digit chunk method.
 inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
+
   AD_CONTRACT_CHECK(out != nullptr);
   const uint32_t len = numDigits(val);
   char* p = out + len;
