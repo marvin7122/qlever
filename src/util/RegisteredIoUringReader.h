@@ -148,7 +148,7 @@ class PinnedArena : public WithInvariants<PinnedArena> {
       AD_THROW("posix_memalign failed to allocate pinned buffer arena");
     }
 
-        // Invariant-checked descriptor
+    // Invariant-checked descriptor
     std::memset(rawBuffer_, 0, totalBytes_);
 
     iovecs_.reserve(numSlots_);
