@@ -113,6 +113,7 @@ class HardwarePerformanceMonitor {
 #endif
 
  public:
+// _____________________________________________________________________________
   HardwarePerformanceMonitor() {
 #if defined(__linux__)
     auto makeCacheConfig = [](uint64_t cacheType, uint64_t result) {
