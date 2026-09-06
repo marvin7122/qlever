@@ -11,6 +11,7 @@
 #include "engine/CallFixedSize.h"
 #include "engine/ExistsJoin.h"
 #include "engine/QueryExecutionTree.h"
+#include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
 #include "util/ChunkedForLoop.h"
@@ -180,6 +181,31 @@ Result Bind::computeResult(bool requestLaziness) {
 IdTable Bind::computeExpressionBind(
     LocalVocab* localVocab, IdTable idTable,
     const sparqlExpression::SparqlExpression* expression) const {
+  // Attempt JIT compiled evaluation for integer-valued expressions (integer
+  // arithmetic over integer inputs, e.g. `BIND(?price * ?qty AS ?total)`).
+  // This covers the `ORDER BY` sort keys and `GROUP BY` aliases that the
+  // planner lowers to `Bind`. Programs with division, comparisons, or ID
+  // operations have no legacy-identical integer semantics and fall back to
+  // the generic evaluation below.
+  auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
+      *expression, _subtree->getVariableColumns());
+  if (optProgram.has_value() &&
+      ql::engine::jit::JitExpressionBytecodeVm::hasExactIntegerSemantics(
+          optProgram.value()) &&
+      ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
+          optProgram->cellRule(), optProgram.value(),
+          ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+              optProgram.value(), idTable, 0, idTable.size(),
+              cancellationHandle_))) {
+    idTable.addEmptyColumn();
+    const ColumnIndex outputColumn = idTable.numColumns() - 1;
+    ql::engine::jit::JitExpressionBytecodeVm::executeIntColumn(
+        optProgram.value(), idTable, idTable, outputColumn,
+        cancellationHandle_);
+    checkCancellation();
+    return idTable;
+  }
+
   sparqlExpression::EvaluationContext evaluationContext(
       *getExecutionContext(), _subtree->getVariableColumns(),
       idTable.asStaticView<0>(), getExecutionContext()->getAllocator(),

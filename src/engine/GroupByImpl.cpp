@@ -21,6 +21,7 @@
 #include "engine/sparqlExpressions/CountStarExpression.h"
 #include "engine/sparqlExpressions/ExistsExpression.h"
 #include "engine/sparqlExpressions/GroupConcatExpression.h"
+#include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/LiteralExpression.h"
 #include "engine/sparqlExpressions/SampleExpression.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
@@ -1745,6 +1746,50 @@ void GroupByImpl::evaluateAlias(
 }
 
 // _____________________________________________________________________________
+// Evaluate the child expression of an aggregate function via the JIT integer
+// column execution when it performs actual integer computation (e.g.
+// `SUM(?x * ?y)`). Bare variables are already plain column reads and
+// constants are cheap in the legacy evaluation, so those keep the generic
+// path. Returns `std::nullopt` to fall back otherwise.
+static std::optional<sparqlExpression::ExpressionResult>
+tryEvaluateAggregateChildExpressionJit(
+    const sparqlExpression::SparqlExpression* child,
+    sparqlExpression::EvaluationContext& evaluationContext) {
+  using namespace sparqlExpression;
+  if (child->getVariableOrNullopt().has_value() ||
+      child->isConstantExpression()) {
+    return std::nullopt;
+  }
+  auto program = ql::engine::jit::JitExpressionBytecodeVm::compile(
+      *child, evaluationContext._variableToColumnMap);
+  if (!program.has_value() ||
+      !ql::engine::jit::JitExpressionBytecodeVm::hasExactIntegerSemantics(
+          program.value())) {
+    return std::nullopt;
+  }
+  // The integer kernels diverge from the legacy evaluation on `Double`
+  // (`Date`) cells, which compute doubles (dates) instead of `UNDEF`.
+  const size_t begin = evaluationContext._beginIndex;
+  const size_t end = evaluationContext._endIndex;
+  if (!ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
+          program->cellRule(), program.value(),
+          ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+              program.value(), evaluationContext._inputTable, begin,
+              end > begin ? end - begin : 0,
+              evaluationContext.cancellationHandle_))) {
+    return std::nullopt;
+  }
+  VectorWithMemoryLimit<Id> result(end > begin ? end - begin : 0,
+                                   evaluationContext._allocator);
+  if (!result.empty()) {
+    ql::engine::jit::JitExpressionBytecodeVm::executeIntColumnInto(
+        program.value(), evaluationContext._inputTable, begin, result.size(),
+        result.data(), evaluationContext.cancellationHandle_);
+  }
+  return ExpressionResult{std::move(result)};
+}
+
+// _____________________________________________________________________________
 sparqlExpression::ExpressionResult
 GroupByImpl::evaluateChildExpressionOfAggregateFunction(
     const HashMapAggregateInformation& aggregate,
@@ -1773,8 +1818,15 @@ GroupByImpl::evaluateChildExpressionOfAggregateFunction(
   bool isCountStar =
       dynamic_cast<sparqlExpression::CountStarExpression*>(aggregate.expr_);
   AD_CORRECTNESS_CHECK(isCountStar || exprChildren.size() == 1);
-  return isCountStar ? Id::makeFromBool(true)
-                     : exprChildren[0]->evaluate(&evaluationContext);
+  if (isCountStar) {
+    return Id::makeFromBool(true);
+  }
+  // Fast path for computed integer child expressions like `SUM(?x * ?y)`.
+  if (auto jitResult = tryEvaluateAggregateChildExpressionJit(
+          exprChildren[0].get(), evaluationContext)) {
+    return std::move(jitResult.value());
+  }
+  return exprChildren[0]->evaluate(&evaluationContext);
 }
 
 // _____________________________________________________________________________
