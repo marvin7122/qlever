@@ -356,6 +356,9 @@ inline std::string report() {
 // async-signal-safe. A poller that keeps a complete report on disk is correct
 // whatever kills the process, and also captures the worker population *while*
 // the query runs, which is when the workers exist.
+// Starts a detached background thread that, every 250 ms, samples the
+// io_uring worker pool and writes the current report to the file
+// specified by the environment variable QLEVER_IO_WAIT_REPORT (if set).
 inline void startReporter() {
   static std::once_flag once;
   std::call_once(once, []() {
