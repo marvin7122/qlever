@@ -337,40 +337,7 @@ std::string gtestCurrentTestName(bool assertInGtestEnvironment = true);
 // below. The SSO capacity of `std::basic_string` is implementation-defined
 // (e.g. 15 characters for libstdc++ and 22 for libc++), so it is determined
 // here by probing rather than hardcoded.
-inline size_t pmrStringSsoCapacity() {
-  // A counting memory resource lets us detect an allocation directly instead of
-  // guessing from pointer addresses: a string uses SSO exactly when
-  // constructing it performs no allocation through its allocator.
-  struct CountingMemoryResource : public std::pmr::memory_resource {
-   private:
-    std::pmr::memory_resource* upstream_ = std::pmr::get_default_resource();
-    size_t numAllocations_ = 0;
-
-    void* do_allocate(size_t bytes, size_t alignment) override {
-      ++numAllocations_;
-      return upstream_->allocate(bytes, alignment);
-    }
-    void do_deallocate(void* ptr, size_t bytes, size_t alignment) override {
-      upstream_->deallocate(ptr, bytes, alignment);
-    }
-    bool do_is_equal(
-        const std::pmr::memory_resource& other) const noexcept override {
-      return this == &other;
-    }
-
-   public:
-    size_t numAllocations() const { return numAllocations_; }
-  };
-  const std::string sample(sizeof(ql::pmr::string), 's');
-  for (size_t size = sample.size(); size > 0; --size) {
-    CountingMemoryResource resource;
-    ql::pmr::string pmrSample{sample.data(), size, &resource};
-    if (resource.numAllocations() == 0) {
-      return size;
-    }
-  }
-  return 0;
-}
+size_t pmrStringSsoCapacity();
 
 // _____________________________________________________________________________
 // Check the explicit platform premise that `ql::pmr::string` stores strings of
