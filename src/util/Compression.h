@@ -18,7 +18,7 @@
 
 namespace ad_utility {
 
-// Compression functionality is intentionally not declared in this header.
+// Placeholder header. Compression functionality is declared in `util/FsstCompressor.h`.
 
 }  // namespace ad_utility
 
