@@ -290,7 +290,10 @@ return config_.prefetchDistance;
 
 // _____________________________________________________________________________
 // Free convenience functions mirroring `ql::exportIds` interface with
-// prefetching enabled.
+// prefetching enabled.  Kept in an internal detail namespace to satisfy
+// Parnas modularity – they are not part of the public module interface.
+namespace detail {
+
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
           typename EscapeFunction = ql::identity,
@@ -324,6 +327,8 @@ idsToStringAndTypePrefetched(
                                      returnOnlyLiterals>(
       index, ids, localVocab, escapeFunction);
 }
+
+} // namespace detail
 
 }  // namespace ql::engine::prefetch
 
