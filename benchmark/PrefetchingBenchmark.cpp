@@ -208,13 +208,7 @@ class HardwarePerformanceMonitor {
       disableFd(fdCacheMiss_);
       disableFd(fdCacheRef_);
 
-      sample.cpuCycles = readCounter(fdCycles_);
-      sample.instructions = readCounter(fdInstructions_);
-      sample.l1dReadAccesses = readCounter(fdL1dAccess_);
-      sample.l1dReadMisses = readCounter(fdL1dMiss_);
-      sample.llcReadAccesses = readCounter(fdLlcAccess_);
-      sample.llcReadMisses = readCounter(fdLlcMiss_);
-      sample.hwCacheMisses = readCounter(fdCacheMiss_);
+      
       sample.hwCacheReferences = readCounter(fdCacheRef_);
     }
 #endif
