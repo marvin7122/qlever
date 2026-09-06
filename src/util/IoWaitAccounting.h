@@ -359,13 +359,7 @@ inline std::string report() {
 // Starts a detached background thread that, every 250 ms, samples the
 // io_uring worker pool and writes the current report to the file
 // specified by the environment variable QLEVER_IO_WAIT_REPORT (if set).
-inline void startReporter() {
-  static std::once_flag once;
-  std::call_once(once, []() {
-    const char* path = std::getenv("QLEVER_IO_WAIT_REPORT");
-    if (path == nullptr) {
-      return;
-    }
+
     std::thread{[file = std::string{path}]() {
       while (true) {
         detail::sampleWorkers();
