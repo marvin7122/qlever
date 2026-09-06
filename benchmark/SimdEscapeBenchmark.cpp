@@ -21,6 +21,7 @@
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "engine/SimdEscapeClassifier.h"
 #include "util/Exception.h"
+#include "benchmark/infrastructure/Benchmark.h"
 
 namespace ad_benchmark {
 namespace {
