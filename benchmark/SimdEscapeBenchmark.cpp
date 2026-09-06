@@ -31,6 +31,12 @@ struct LiteralDataset {
   size_t totalBytes = 0;
 };
 
+/**
+ * Generate a synthetic literal dataset resembling real RDF literals.
+ * @param targetBytes Approximate total size of all literals (default 100 MiB).
+ * The generator mixes alphanumerics, UTF‑8 words, language tags, and injects
+ * escape characters (", \, \n, \r) with realistic probabilities.
+ */
 LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 * 1024) {
   LiteralDataset dataset;
   constexpr std::string_view alphaNum =
