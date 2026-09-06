@@ -63,7 +63,7 @@ inline constexpr ColumnType BOOLEAN = ColumnType::Boolean;
 inline constexpr ColumnType STRING = ColumnType::String;
 inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 
-// Human-readable string representation of ColumnType
+// Human-readable string representation of `ColumnType`.
 [[nodiscard]] constexpr std::string_view toString(ColumnType type) noexcept {
   switch (type) {
     case ColumnType::Iri:
