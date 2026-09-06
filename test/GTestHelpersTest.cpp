@@ -44,7 +44,7 @@ INSTANTIATE_TEST_SUITE_P(CustomInstantiation, GTestHelpersParameterizedTest,
 
 // _____________________________________________________________________________
 // Return true iff `pointer` points inside the object storage of `object`.
-template <typename T>
+CPP_template(typename T)
 static bool pointsIntoObject(const void* pointer, const T& object) {
   const auto start = reinterpret_cast<std::uintptr_t>(&object);
   const auto address = reinterpret_cast<std::uintptr_t>(pointer);
