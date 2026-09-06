@@ -303,7 +303,7 @@ struct BatchResult {
 };
 
 // _____________________________________________________________________________
-// Configuration options for RegisteredIoUringReader.
+// Configure the RegisteredIoUringReader.
 struct RegisteredReaderConfig {
   unsigned ringEntries = 512;
   bool useDirectIo = true;
