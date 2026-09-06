@@ -103,7 +103,7 @@ class AsyncChunkPipeline
   AsyncChunkPipeline& operator=(AsyncChunkPipeline&&) = delete;
 
   // ___________________________________________________________________________
-  // Destructor cancels the pipeline and wakes any blocked threads.
+  // Cancel the pipeline and wake any blocked threads.
   ~AsyncChunkPipeline() { cancel(); }
 
   // ___________________________________________________________________________
