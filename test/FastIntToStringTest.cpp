@@ -289,6 +289,9 @@ TEST(FastIntToStringTest, StringWrappers) {
   EXPECT_EQ(formatIntToString(-987654321LL), "-987654321");
   EXPECT_EQ(formatIntToString(0LL), "0");
   EXPECT_EQ(formatQidToString(42ULL), "http://www.wikidata.org/entity/Q42");
+  EXPECT_EQ(formatQidToString(0ULL), "http://www.wikidata.org/entity/Q0");
+  EXPECT_EQ(formatQidToString(9999999999999999999ULL),
+            "http://www.wikidata.org/entity/Q9999999999999999999");
 }
 
 }  // namespace
