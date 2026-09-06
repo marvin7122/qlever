@@ -325,6 +325,8 @@ inline std::thread& reporterThread() {
 // _____________________________________________________________________________
 
 // Format the current totals as one line.
+// Formats the current I/O wait accounting totals into a one‑line
+// human‑readable string suitable for logging or file output.
 inline std::string report() {
   const ThreadCounters counters = total();
   const WorkerSample& sample = detail::workerSample();
