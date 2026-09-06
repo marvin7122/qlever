@@ -220,13 +220,7 @@ QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
     return static_cast<uint16_t>(_mm_movemask_epi8(match));
   } else if constexpr (Format == EscapeFormat::CsvSpecial) {
     __m128i m1 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('"'));
-    __m128i m2 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8(','));
-    __m128i m3 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\n'));
-    __m128i m4 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\r'));
-    __m128i match =
-        _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
-    return static_cast<uint16_t>(_mm_movemask_epi8(match));
-  } else if constexpr (Format == EscapeFormat::Xml) {
+    
     __m128i m1 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('&'));
     __m128i m2 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('<'));
     __m128i m3 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('>'));
