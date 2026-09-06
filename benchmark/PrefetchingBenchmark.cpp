@@ -17,7 +17,7 @@
 
 #endif
 
-#include "../benchmark/infrastructure/Benchmark.h"
+#include "benchmark/infrastructure/Benchmark.h"
 #include "engine/PrefetchingBatchResolver.h"
 #include "global/Constants.h"
 #include "global/Id.h"
