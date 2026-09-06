@@ -178,7 +178,6 @@ class IoUringDirectBenchmarkRunner {
   // 2. Synchronous pread() with Direct I/O (O_DIRECT)
   BenchmarkMetric runSyncDirectPread(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
-    AD_CONTRACT_CHECK(file.isOpen());
 
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
     std::vector<uint64_t> offsets = generateOffsets(randomAccess);
