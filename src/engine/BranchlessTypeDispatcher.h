@@ -312,6 +312,7 @@ class BranchlessTypeDispatcher {
     const uint8_t typeTag =
         static_cast<uint8_t>(id.getBits() >> ValueId::numDataBits) & 0x0F;
     const auto& desc = lut[typeTag];
+    AD_CONTRACT_CHECK(desc.formatFn_ != nullptr);
     return desc.formatFn_(id, rawTerm, out, desc.prefix_, desc.suffix_);
   }
 
