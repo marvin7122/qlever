@@ -197,12 +197,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
-      TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
-  lut[static_cast<size_t>(Datatype::EncodedVal)] =
-      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
-
-  return lut;
-}
+      
 
 // Builds the 16-entry lookup table for raw vocabulary entries.
 // For types using `formatTermWithDelimiters` (IRIs, literals), the raw term already contains delimiters.
