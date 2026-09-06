@@ -271,13 +271,7 @@ struct BranchingIfElseDispatcher {
         out += 5;
       }
       std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", 45);
-      out += 45;
-      return out;
-    }
-    return out;
-  }
-
-  static size_t dispatchBatchTermFormat(
+      
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
       char* out) noexcept {
     char* curr = out;
