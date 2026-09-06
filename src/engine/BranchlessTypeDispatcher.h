@@ -184,13 +184,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   lut[static_cast<size_t>(Datatype::Undefined)] =
       TypeFormatDescriptor{"", "", &formatUndefined};
   lut[static_cast<size_t>(Datatype::Bool)] =
-      TypeFormatDescriptor{"", "", &formatBoolean};
-  lut[static_cast<size_t>(Datatype::Int)] =
-      TypeFormatDescriptor{"", "", &formatInteger};
-  lut[static_cast<size_t>(Datatype::Double)] =
-      TypeFormatDescriptor{"", "", &formatDouble};
-  lut[static_cast<size_t>(Datatype::VocabIndex)] =
-      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+      
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
