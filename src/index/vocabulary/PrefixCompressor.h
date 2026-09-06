@@ -90,6 +90,8 @@ class PrefixCompressor {
 
   // ___________________________________________________________________________
   // Return the exact decompressed size of `compressedWord`.
+  // Use this to size an output buffer before calling `decompressInto` for
+  // allocation-free decompression.
   [[nodiscard]] size_t maxDecompressedSize(
       std::string_view compressedWord) const {
     AD_CONTRACT_CHECK(!compressedWord.empty());
