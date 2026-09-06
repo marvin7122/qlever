@@ -249,7 +249,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Write a literal with optional datatype or language tag.
+
   void writeLiteral(std::string_view content, std::string_view datatype = "",
                     std::string_view langTag = "") {
     writeChar('"');
