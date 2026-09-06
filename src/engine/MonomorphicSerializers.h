@@ -526,49 +526,60 @@ decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
                             Args&&... args) {
-  auto inner = [&](auto t0) {
-    switch (c1) {
-      case ColumnType::Iri:
-        return visitor.template operator()<decltype(t0)::value, ColumnType::Iri>(
-            std::forward<Args>(args)...);
-      case ColumnType::Literal:
-        return visitor.template operator()<decltype(t0)::value, ColumnType::Literal>(
-            std::forward<Args>(args)...);
-      case ColumnType::Int:
-        return visitor.template operator()<decltype(t0)::value, ColumnType::Int>(
-            std::forward<Args>(args)...);
-      case ColumnType::Double:
-        return visitor.template operator()<decltype(t0)::value, ColumnType::Double>(
-            std::forward<Args>(args)...);
-      case ColumnType::BlankNode:
-        return visitor.template operator()<decltype(t0)::value, ColumnType::BlankNode>(
-            std::forward<Args>(args)...);
-      case ColumnType::Boolean:
-        return visitor.template operator()<decltype(t0)::value, ColumnType::Boolean>(
-            std::forward<Args>(args)...);
-      case ColumnType::String:
-      default:
-        return visitor.template operator()<decltype(t0)::value, ColumnType::String>(
-            std::forward<Args>(args)...);
+  template <ColumnType C0>
+  struct InnerDispatch {
+    template <typename V, typename... VArgs>
+    static decltype(auto) apply(V&& visitor, ColumnType c1, VArgs&&... args) {
+      switch (c1) {
+        case ColumnType::Iri:
+          return visitor.template operator()<C0, ColumnType::Iri>(
+              std::forward<VArgs>(args)...);
+        case ColumnType::Literal:
+          return visitor.template operator()<C0, ColumnType::Literal>(
+              std::forward<VArgs>(args)...);
+        case ColumnType::Int:
+          return visitor.template operator()<C0, ColumnType::Int>(
+              std::forward<VArgs>(args)...);
+        case ColumnType::Double:
+          return visitor.template operator()<C0, ColumnType::Double>(
+              std::forward<VArgs>(args)...);
+        case ColumnType::BlankNode:
+          return visitor.template operator()<C0, ColumnType::BlankNode>(
+              std::forward<VArgs>(args)...);
+        case ColumnType::Boolean:
+          return visitor.template operator()<C0, ColumnType::Boolean>(
+              std::forward<VArgs>(args)...);
+        case ColumnType::String:
+        default:
+          return visitor.template operator()<C0, ColumnType::String>(
+              std::forward<VArgs>(args)...);
+      }
     }
   };
 
   switch (c0) {
     case ColumnType::Iri:
-      return inner(std::integral_constant<ColumnType, ColumnType::Iri>{});
+      return InnerDispatch<ColumnType::Iri>::apply(std::forward<Visitor>(visitor), c1,
+                                                   std::forward<Args>(args)...);
     case ColumnType::Literal:
-      return inner(std::integral_constant<ColumnType, ColumnType::Literal>{});
+      return InnerDispatch<ColumnType::Literal>::apply(std::forward<Visitor>(visitor), c1,
+                                                       std::forward<Args>(args)...);
     case ColumnType::Int:
-      return inner(std::integral_constant<ColumnType, ColumnType::Int>{});
+      return InnerDispatch<ColumnType::Int>::apply(std::forward<Visitor>(visitor), c1,
+                                                   std::forward<Args>(args)...);
     case ColumnType::Double:
-      return inner(std::integral_constant<ColumnType, ColumnType::Double>{});
+      return InnerDispatch<ColumnType::Double>::apply(std::forward<Visitor>(visitor), c1,
+                                                      std::forward<Args>(args)...);
     case ColumnType::BlankNode:
-      return inner(std::integral_constant<ColumnType, ColumnType::BlankNode>{});
+      return InnerDispatch<ColumnType::BlankNode>::apply(std::forward<Visitor>(visitor), c1,
+                                                         std::forward<Args>(args)...);
     case ColumnType::Boolean:
-      return inner(std::integral_constant<ColumnType, ColumnType::Boolean>{});
+      return InnerDispatch<ColumnType::Boolean>::apply(std::forward<Visitor>(visitor), c1,
+                                                       std::forward<Args>(args)...);
     case ColumnType::String:
     default:
-      return inner(std::integral_constant<ColumnType, ColumnType::String>{});
+      return InnerDispatch<ColumnType::String>::apply(std::forward<Visitor>(visitor), c1,
+                                                       std::forward<Args>(args)...);
   }
 }
 
