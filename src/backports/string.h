@@ -17,6 +17,22 @@
 #include "backports/concepts.h"
 #include <cstddef>
 
+/**
+ * @brief Resize a string and overwrite its contents via a user-provided operation.
+ *
+ * This function provides a C++17-compatible backport of C++23's std::basic_string::resize_and_overwrite.
+ * 
+ * @tparam CharT   Character type of the string.
+ * @tparam Traits  Traits type (defaults to std::char_traits<CharT>).
+ * @tparam Allocator Allocator type (defaults to std::allocator<CharT>).
+ * @tparam Operation Callable that receives a pointer to a buffer and a size, and returns the number of characters written.
+ * @param str      The string to resize.
+ * @param count    Desired size after operation.
+ * @param op       Operation callable; must be invocable as size_t op(CharT* buffer, size_t count).
+ *                 The operation must not write more than count characters.
+ * @post str.size() == newSize where newSize is the value returned by op, guaranteed <= count.
+ */
+
 #include "util/Exception.h"
 
 namespace ql {
