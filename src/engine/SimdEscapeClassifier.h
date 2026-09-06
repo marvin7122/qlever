@@ -407,6 +407,7 @@ template<EscapeFormat Format>
   // with \\.
   [[nodiscard]] static inline std::string escapeForTsv(std::string_view input) {
     if (!hasEscapes<EscapeFormat::Tsv>(input)) [[likely]] {
+    AD_CONTRACT_CHECK(!input.empty());
       return std::string{input};
     }
     std::string result;
