@@ -51,12 +51,16 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
  private:
   // Model a fixed three-stage repeated-FSST decode pipeline.
   static constexpr size_t numberOfStages = 3;
-  // Keep views into the compressed strings retained by `decoderStorage_`.
-  std::vector<std::string_view> compressed_;
+
+  struct CompressedData {
+    std::vector<std::shared_ptr<std::string>> storage;
+    std::vector<std::string_view> views;
+
+    // Views are into strings owned by storage; destruction order ensures
+    // views are destroyed before storage.
+  } compressed_;
+
   std::array<FsstDecoder, numberOfStages> decoders_;
-  // Retain ownership of the compressed strings for the lifetime of the views in
-  // `compressed_`.
-  std::vector<std::shared_ptr<std::string>> decoderStorage_;
   // Maximum fully decompressed size across the benchmark inputs; sizes the
   // final output buffer.
   size_t outputCapacity_ = 0;
@@ -79,14 +83,14 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
       words.push_back("http://www.wikidata.org/entity/Q" + suffix);
     }
 
-    compressed_.assign(words.begin(), words.end());
-    decoderStorage_.reserve(numberOfStages);
+    compressed_.views.assign(words.begin(), words.end());
+    compressed_.storage.reserve(numberOfStages);
     for (size_t stage = 0; stage < numberOfStages; ++stage) {
       auto [storage, compressed, decoder] =
-          FsstEncoder::compressAll(compressed_);
-      compressed_ = std::move(compressed);
+          FsstEncoder::compressAll(compressed_.views);
+      compressed_.views = std::move(compressed);
       decoders_[stage] = std::move(decoder);
-      decoderStorage_.push_back(std::move(storage));
+      compressed_.storage.push_back(std::move(storage));
     }
 
     for (const std::string_view& compressed : compressed_) {
@@ -127,7 +131,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
                                     ql::span<char> scratch) {
       size_t totalBytes = 0;
       for (size_t repetition = 0; repetition < repetitions; ++repetition) {
-        for (const auto& compressed : compressed_) {
+        for (const auto& compressed : compressed_.views) {
           totalBytes += decodeRepeated(decoders_, compressed, output, scratch);
         }
       }
