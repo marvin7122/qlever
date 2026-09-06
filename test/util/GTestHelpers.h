@@ -361,13 +361,13 @@ size_t pmrStringSsoCapacity();
 // it relies on instead of silently depending on one STL's limit.
 inline void requirePmrStringInlineStorage(size_t maxSize) {
   AD_CONTRACT_CHECK(maxSize > 0);
-  const size_t capacity = pmrStringSsoCapacity();
+  static const size_t cachedCapacity = pmrStringSsoCapacity();
   AD_CORRECTNESS_CHECK(
-      capacity >= maxSize,
+      cachedCapacity >= maxSize,
       absl::StrCat("Platform premise violated: std::pmr::string does not "
                    "store ",
                    maxSize, " characters on this platform (capacity: ",
-                   capacity, ")"));
+                   cachedCapacity, ")"));
 }
 
 // _____________________________________________________________________________
