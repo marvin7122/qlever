@@ -69,7 +69,7 @@ struct PrefetchConfig {
     }
   };
 
-  static Builder builder() noexcept { return {}; }
+  // ___________________________________________________________________________\n  static Builder builder() noexcept { return {}; }
 
 private:
   explicit PrefetchConfig(size_t d) noexcept : prefetchDistance(d) {}
