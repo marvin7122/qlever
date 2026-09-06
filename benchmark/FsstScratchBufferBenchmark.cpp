@@ -47,6 +47,8 @@ size_t decodeRepeated(const std::array<FsstDecoder, N>& decoders,
   return bytesWritten;
 }
 
+// ____________________________________________________________________________
+
 class FsstScratchBufferBenchmark : public BenchmarkInterface {
  private:
   // Model a fixed three-stage repeated-FSST decode pipeline.
