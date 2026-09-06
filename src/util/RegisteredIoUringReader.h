@@ -197,6 +197,7 @@ class PinnedArena : public WithInvariants<PinnedArena> {
   [[nodiscard]] size_t slotSize() const noexcept { return slotSize_; }
   [[nodiscard]] size_t totalBytes() const noexcept { return totalBytes_; }
   [[nodiscard]] char* data() noexcept { return rawBuffer_.data(); }
+  [[nodiscard]] const char* data() const noexcept { return rawBuffer_.data(); }
 
 
   // Access a specific block slot as a span.
