@@ -448,6 +448,4 @@ template<EscapeFormat Format>
   }
 };
 
-}  // namespace ad_utility::simd
 
-#endif  // QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
