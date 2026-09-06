@@ -583,54 +583,77 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
   }
 }
 
+// Hot 3-column schema registry and dispatch helper.
+template <typename Visitor, typename... Args>
+decltype(auto) dispatch3ColHot(size_t index, Visitor&& visitor, Args&&... args) {
+  switch (index) {
+    case 0:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Iri>(
+          std::forward<Args>(args)...);
+    case 1:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>(
+          std::forward<Args>(args)...);
+    case 2:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Int>(
+          std::forward<Args>(args)...);
+    case 3:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Double>(
+          std::forward<Args>(args)...);
+    case 4:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::BlankNode>(
+          std::forward<Args>(args)...);
+    case 5:
+      return visitor.template operator()<ColumnType::BlankNode, ColumnType::Iri, ColumnType::Iri>(
+          std::forward<Args>(args)...);
+    case 6:
+      return visitor.template operator()<ColumnType::BlankNode, ColumnType::Iri, ColumnType::Literal>(
+          std::forward<Args>(args)...);
+    case 7:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Literal, ColumnType::Int>(
+          std::forward<Args>(args)...);
+    case 8:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Literal, ColumnType::Double>(
+          std::forward<Args>(args)...);
+    case 9:
+      return visitor.template operator()<ColumnType::Literal, ColumnType::Literal, ColumnType::Literal>(
+          std::forward<Args>(args)...);
+    case 10:
+      return visitor.template operator()<ColumnType::Int, ColumnType::Int, ColumnType::Int>(
+          std::forward<Args>(args)...);
+    default:
+      break;
+  }
+
+  // Unreachable for valid indices; defensive fallback.
+  DynamicRowSerializer dynamicSerializer(
+      {ColumnType::Undefined, ColumnType::Undefined, ColumnType::Undefined});
+  return visitor(dynamicSerializer, std::forward<Args>(args)...);
+}
+
 // Fast-path dispatch for common 3-column SPARQL schemas.
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch3Col(ColumnType c0, ColumnType c1, ColumnType c2,
                             Visitor&& visitor, Args&&... args) {
-  // Check common 3-column SPARQL schemas first for lightning-fast branch prediction.
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Iri) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Iri>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Literal) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Int) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Int>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Double) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Double>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::BlankNode) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::BlankNode>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::BlankNode && c1 == ColumnType::Iri && c2 == ColumnType::Iri) {
-    return visitor.template operator()<ColumnType::BlankNode, ColumnType::Iri, ColumnType::Iri>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::BlankNode && c1 == ColumnType::Iri && c2 == ColumnType::Literal) {
-    return visitor.template operator()<ColumnType::BlankNode, ColumnType::Iri, ColumnType::Literal>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Literal && c2 == ColumnType::Int) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Literal, ColumnType::Int>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Literal && c2 == ColumnType::Double) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Literal, ColumnType::Double>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Literal && c1 == ColumnType::Literal && c2 == ColumnType::Literal) {
-    return visitor.template operator()<ColumnType::Literal, ColumnType::Literal, ColumnType::Literal>(
-        std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Int && c1 == ColumnType::Int && c2 == ColumnType::Int) {
-    return visitor.template operator()<ColumnType::Int, ColumnType::Int, ColumnType::Int>(
-        std::forward<Args>(args)...);
+  static constexpr std::array<std::array<ColumnType, 3>, 11> kHot3ColSchemas = {{
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::Iri}},
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::Literal}},
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::Int}},
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::Double}},
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::BlankNode}},
+    {{ColumnType::BlankNode, ColumnType::Iri, ColumnType::Iri}},
+    {{ColumnType::BlankNode, ColumnType::Iri, ColumnType::Literal}},
+    {{ColumnType::Iri, ColumnType::Literal, ColumnType::Int}},
+    {{ColumnType::Iri, ColumnType::Literal, ColumnType::Double}},
+    {{ColumnType::Literal, ColumnType::Literal, ColumnType::Literal}},
+    {{ColumnType::Int, ColumnType::Int, ColumnType::Int}}
+  }};
+
+  std::array<ColumnType, 3> key = {c0, c1, c2};
+  for (size_t i = 0; i < kHot3ColSchemas.size(); ++i) {
+    if (std::equal(key.begin(), key.end(), kHot3ColSchemas[i].begin())) {
+      return dispatch3ColHot(i, std::forward<Visitor>(visitor),
+                             std::forward<Args>(args)...);
+    }
   }
 
   // Fallback to dynamic serializer for rare 3-column combinations.
@@ -638,34 +661,52 @@ decltype(auto) dispatch3Col(ColumnType c0, ColumnType c1, ColumnType c2,
   return visitor(dynamicSerializer, std::forward<Args>(args)...);
 }
 
+// Hot 4-column schema registry and dispatch helper.
+template <typename Visitor, typename... Args>
+decltype(auto) dispatch4ColHot(size_t index, Visitor&& visitor, Args&&... args) {
+  switch (index) {
+    case 0:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Iri,
+                                         ColumnType::Iri>(std::forward<Args>(args)...);
+    case 1:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Iri,
+                                         ColumnType::Literal>(std::forward<Args>(args)...);
+    case 2:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Literal, ColumnType::Int,
+                                         ColumnType::Double>(std::forward<Args>(args)...);
+    case 3:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Int,
+                                         ColumnType::Double>(std::forward<Args>(args)...);
+    case 4:
+      return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal,
+                                         ColumnType::Literal>(std::forward<Args>(args)...);
+    default:
+      break;
+  }
+
+  DynamicRowSerializer dynamicSerializer(
+      {ColumnType::Undefined, ColumnType::Undefined, ColumnType::Undefined, ColumnType::Undefined});
+  return visitor(dynamicSerializer, std::forward<Args>(args)...);
+}
+
 // Fast-path dispatch for 4-column schemas.
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch4Col(ColumnType c0, ColumnType c1, ColumnType c2,
                             ColumnType c3, Visitor&& visitor, Args&&... args) {
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Iri &&
-      c3 == ColumnType::Iri) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Iri,
-                                       ColumnType::Iri>(std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Iri &&
-      c3 == ColumnType::Literal) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Iri,
-                                       ColumnType::Literal>(std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Literal && c2 == ColumnType::Int &&
-      c3 == ColumnType::Double) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Literal, ColumnType::Int,
-                                       ColumnType::Double>(std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Int &&
-      c3 == ColumnType::Double) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Int,
-                                       ColumnType::Double>(std::forward<Args>(args)...);
-  }
-  if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Literal &&
-      c3 == ColumnType::Literal) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal,
-                                       ColumnType::Literal>(std::forward<Args>(args)...);
+  static constexpr std::array<std::array<ColumnType, 4>, 5> kHot4ColSchemas = {{
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::Iri, ColumnType::Iri}},
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::Iri, ColumnType::Literal}},
+    {{ColumnType::Iri, ColumnType::Literal, ColumnType::Int, ColumnType::Double}},
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::Int, ColumnType::Double}},
+    {{ColumnType::Iri, ColumnType::Iri, ColumnType::Literal, ColumnType::Literal}}
+  }};
+
+  std::array<ColumnType, 4> key = {c0, c1, c2, c3};
+  for (size_t i = 0; i < kHot4ColSchemas.size(); ++i) {
+    if (std::equal(key.begin(), key.end(), kHot4ColSchemas[i].begin())) {
+      return dispatch4ColHot(i, std::forward<Visitor>(visitor),
+                             std::forward<Args>(args)...);
+    }
   }
 
   // Fallback
