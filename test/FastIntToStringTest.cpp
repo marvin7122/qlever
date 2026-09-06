@@ -195,9 +195,8 @@ TEST(FastIntToStringTest, FormatInt32Branchless) {
 
   auto testValue = [&](int32_t val) {
     char* end = formatInt32Branchless(val, buf);
-    std::string expected = std::to_string(val);
-    std::string actual(buf, end - buf);
-    EXPECT_EQ(actual, expected) << "Failed on int32 value: " << val;
+    std::string_view actual(buf, end - buf);
+    EXPECT_EQ(actual, std::to_string(val)) << "Failed on int32 value: " << val;
   };
 
   testValue(0);
