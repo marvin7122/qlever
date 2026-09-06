@@ -388,6 +388,8 @@ inline void startReporter() {
 struct ExitReporter {
   ~ExitReporter() { std::fprintf(stderr, "%s\n", report().c_str()); }
 };
+// Returns a reference to a process‑wide ExitReporter, initializing
+// the background reporting thread on first call.
 inline const ExitReporter& exitReporter() {
   static ExitReporter reporter;
   startReporter();
