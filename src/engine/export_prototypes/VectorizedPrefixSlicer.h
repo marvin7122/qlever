@@ -85,7 +85,8 @@ class VectorizedPrefixTable {
   void initEntry(WellKnownPrefixId id, std::string_view prefix) noexcept {
     auto& e = entries_[static_cast<size_t>(id)];
     AD_CONTRACT_CHECK(prefix.size() <= sizeof(e.data));
-    std::memset(e.data, 0, sizeof(e.data));
+        std::memset(e.data, 0, sizeof(e.data));
+    AD_CHECK(prefix.size() <= sizeof(e.data));
     std::memcpy(e.data, prefix.data(), prefix.size());
     e.length = static_cast<uint8_t>(prefix.size());
     AD_CONTRACT_CHECK(e.length <= sizeof(e.data));
