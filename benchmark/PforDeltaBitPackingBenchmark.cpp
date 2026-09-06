@@ -47,6 +47,7 @@ void runComparativeBenchmark() {
   }
   auto b1 = std::chrono::high_resolution_clock::now();
   double baseMs = std::chrono::duration<double, std::milli>(b1 - b0).count();
+  static_cast<void>(baseMs);  // Suppress unused variable warning
   size_t baseBytes = TOTAL_IDS * sizeof(Id);
 
   // 2. PROTOTYPE: PFOR-DELTA Compression & Decompression
@@ -60,6 +61,7 @@ void runComparativeBenchmark() {
   auto c1 = std::chrono::high_resolution_clock::now();
   double compressMs =
       std::chrono::duration<double, std::milli>(c1 - c0).count();
+  static_cast<void>(compressMs);  // Suppress unused variable warning
 
   // Measure Decompression
   auto d0 = std::chrono::high_resolution_clock::now();
