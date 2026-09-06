@@ -346,6 +346,7 @@ class RegisteredIoUringReader
     : public WithInvariants<RegisteredIoUringReader> {
  public:
   using BatchId = uint64_t;
+ public:
 
  private:
   RegisteredReaderConfig config_;
