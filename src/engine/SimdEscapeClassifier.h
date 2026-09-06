@@ -354,6 +354,7 @@ template<EscapeFormat Format>
       uint32_t tailMask = 0;
       for (size_t i = 0; i < len; ++i) {
         if (detail::isEscapeChar<Format>(ptr[i])) {
+          AD_CONTRACT_CHECK(i < 32);
           tailMask |= (1u << i);
         }
       }
