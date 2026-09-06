@@ -324,13 +324,7 @@ struct BenchmarkMetric {
         }
         // Zero-copy DMA fixed buffer request
         requests[i] = BlockReadRequest(
-            /*fileIndex=*/0, blockOffset, /*bufferIndex=*/static_cast<uint32_t>(i),
-            /*bufferOffset=*/0, kBlockSizeBytes,
-            bufferArena.getSlotSpan(i).data(),
-            /*requireDirectIoAlignment=*/true);
-      }
-
-      auto batchId = reader.submitBatch(requests);
+            
       auto res = reader.waitBatch(batchId);
       totalBytes += res.totalBytesRead;
     }
