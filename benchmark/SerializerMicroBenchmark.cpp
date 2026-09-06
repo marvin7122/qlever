@@ -214,7 +214,7 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
               size_t bytes = 0;
               size_t chunkCount = 0;
 
-              // Chunk sink receives 1MB memory views directly
+                            // Chunk sink receives memory views (up to 1MB) directly
               auto sink = [&](std::string_view chunk) {
                 bytes += chunk.size();
                 ++chunkCount;
