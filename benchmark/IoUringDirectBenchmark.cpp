@@ -21,12 +21,7 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
-#include "backports/span.h"
-#include "util/Exception.h"
-#include "util/Log.h"
-#include "util/RegisteredIoUringReader.h"
 
 // Optional inclusion of QLever benchmark infrastructure
 #if __has_include("../benchmark/infrastructure/Benchmark.h")
