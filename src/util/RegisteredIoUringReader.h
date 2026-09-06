@@ -122,8 +122,8 @@ class DirectIoFile {
 // Guarantees 4KB page alignment for Direct I/O and zero-copy DMA pinning.
 class PinnedArena : public WithInvariants<PinnedArena> {
  private:
-  using AlignedBufferPtr = std::unique_ptr<void, decltype(&std::free)>;
-  AlignedBufferPtr rawBuffer_{nullptr, &std::free};
+  using RawBuffer = std::vector<char, ad_utility::AlignedAllocator<char, kDirectIoAlignment>>;
+  RawBuffer rawBuffer_;
   size_t totalBytes_ = 0;
   size_t slotSize_ = 0;
   size_t numSlots_ = 0;
@@ -143,18 +143,11 @@ class PinnedArena : public WithInvariants<PinnedArena> {
     numSlots_ = numSlots;
     totalBytes_ = numSlots * slotSizeBytes;
 
-    void* allocatedPtr = nullptr;
-    int ret = posix_memalign(&allocatedPtr, kDirectIoAlignment, totalBytes_);
-    if (ret != 0 || allocatedPtr == nullptr) {
-      AD_THROW("posix_memalign failed to allocate pinned buffer arena");
-    }
-    rawBuffer_.reset(allocatedPtr);
-
-    // Invariant-checked descriptor
-    std::memset(rawBuffer_.get(), 0, totalBytes_);
+    rawBuffer_.resize(totalBytes_);
+    std::memset(rawBuffer_.data(), 0, totalBytes_);
 
     iovecs_.reserve(numSlots_);
-    auto* basePtr = static_cast<char*>(rawBuffer_.get());
+    auto* basePtr = rawBuffer_.data();
     for (size_t i = 0; i < numSlots_; ++i) {
       iovecs_.push_back(
           iovec{.iov_base = basePtr + (i * slotSize_), .iov_len = slotSize_});
@@ -163,33 +156,25 @@ class PinnedArena : public WithInvariants<PinnedArena> {
     checkInvariants();
   }
 
-  ~PinnedArena() {
-    if (rawBuffer_ != nullptr) {
-      std::free(rawBuffer_);
-      rawBuffer_ = nullptr;
-    }
-  }
+  ~PinnedArena() = default;
 
   PinnedArena(const PinnedArena&) = delete;
   PinnedArena& operator=(const PinnedArena&) = delete;
 
   PinnedArena(PinnedArena&& other) noexcept
-      : rawBuffer_{std::exchange(other.rawBuffer_, nullptr)},
-        totalBytes_{std::exchange(other.totalBytes_, 0)},
+      : totalBytes_{std::exchange(other.totalBytes_, 0)},
         slotSize_{std::exchange(other.slotSize_, 0)},
         numSlots_{std::exchange(other.numSlots_, 0)},
-        iovecs_{std::move(other.iovecs_)} {}
+        iovecs_{std::move(other.iovecs_)},
+        rawBuffer_{std::move(other.rawBuffer_)} {}
 
   PinnedArena& operator=(PinnedArena&& other) noexcept {
     if (this != &other) {
-      if (rawBuffer_ != nullptr) {
-        std::free(rawBuffer_);
-      }
-      rawBuffer_ = std::exchange(other.rawBuffer_, nullptr);
       totalBytes_ = std::exchange(other.totalBytes_, 0);
       slotSize_ = std::exchange(other.slotSize_, 0);
       numSlots_ = std::exchange(other.numSlots_, 0);
       iovecs_ = std::move(other.iovecs_);
+      rawBuffer_ = std::move(other.rawBuffer_);
     }
     return *this;
   }
@@ -197,13 +182,13 @@ class PinnedArena : public WithInvariants<PinnedArena> {
   // Structural Invariant Verification (Law 3 & Architecture Standard)
   void checkInvariants() const {
     if (numSlots_ > 0) {
-      AD_CORRECTNESS_CHECK(rawBuffer_ != nullptr);
+      AD_CORRECTNESS_CHECK(!rawBuffer_.empty());
       AD_CORRECTNESS_CHECK(totalBytes_ == numSlots_ * slotSize_);
-      AD_CORRECTNESS_CHECK(isPointerAligned(rawBuffer_));
+      AD_CORRECTNESS_CHECK(isPointerAligned(rawBuffer_.data()));
       AD_CORRECTNESS_CHECK(isBlockAligned(slotSize_));
       AD_CORRECTNESS_CHECK(iovecs_.size() == numSlots_);
     } else {
-      AD_CORRECTNESS_CHECK(rawBuffer_ == nullptr);
+      AD_CORRECTNESS_CHECK(rawBuffer_.empty());
       AD_CORRECTNESS_CHECK(totalBytes_ == 0);
     }
   }
@@ -211,22 +196,22 @@ class PinnedArena : public WithInvariants<PinnedArena> {
   [[nodiscard]] size_t numSlots() const noexcept { return numSlots_; }
   [[nodiscard]] size_t slotSize() const noexcept { return slotSize_; }
   [[nodiscard]] size_t totalBytes() const noexcept { return totalBytes_; }
-  [[nodiscard]] char* data() noexcept { return static_cast<char*>(rawBuffer_); }
+  [[nodiscard]] char* data() noexcept { return rawBuffer_.data(); }
   [[nodiscard]] const char* data() const noexcept {
-    return static_cast<const char*>(rawBuffer_);
+    return rawBuffer_.data();
   }
 
   // Access a specific block slot as a span.
   [[nodiscard]] ql::span<char> getSlotSpan(size_t slotIndex) {
     AD_CONTRACT_CHECK(slotIndex < numSlots_);
-    auto* slotPtr = static_cast<char*>(rawBuffer_) + (slotIndex * slotSize_);
+    auto* slotPtr = rawBuffer_.data() + (slotIndex * slotSize_);
     return {slotPtr, slotSize_};
   }
 
   [[nodiscard]] ql::span<const char> getSlotSpan(size_t slotIndex) const {
     AD_CONTRACT_CHECK(slotIndex < numSlots_);
     const auto* slotPtr =
-        static_cast<const char*>(rawBuffer_) + (slotIndex * slotSize_);
+        rawBuffer_.data() + (slotIndex * slotSize_);
     return {slotPtr, slotSize_};
   }
 
