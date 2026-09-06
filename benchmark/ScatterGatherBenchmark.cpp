@@ -104,13 +104,7 @@ struct ScatterGatherBenchmarkMetric {
   size_t literalSizeBytes = 0;
   size_t numTriples = 0;
   size_t totalBytesWritten = 0;
-  size_t totalZeroCopyBytes = 0;
-  double elapsedSeconds = 0.0;
-  double throughputMBs = 0.0;
-  double throughputGBs = 0.0;
-  double memoryBandwidthSavedGBs = 0.0;
-  double speedupVsBaseline = 1.0;
-};
+  
 
 // _____________________________________________________________________________
 // Benchmark Runner comparing Contiguous Copy vs Zero-Copy Scatter-Gather.
