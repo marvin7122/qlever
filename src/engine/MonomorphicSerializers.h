@@ -61,6 +61,11 @@ inline constexpr ColumnType STRING = ColumnType::String;
 inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 
 // Human-readable string representation of `ColumnType`.
+/**
+ * Convert a ColumnType enum value to its human‑readable name.
+ * @param type The column type to convert.
+ * @return A static string view with the name (e.g. "IRI", "Literal").
+ */
 [[nodiscard]] constexpr std::string_view toString(ColumnType type) noexcept {
   switch (type) {
     case ColumnType::Iri:
