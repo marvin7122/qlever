@@ -668,8 +668,9 @@ decltype(auto) dispatch4Col(ColumnType c0, ColumnType c1, ColumnType c2,
 
 // _____________________________________________________________________________
 // Dispatch to the fast-path monomorphic serializer.
-// Inspects the runtime schema and invokes `visitor` with the specialized
-// `MonomorphicRowSerializer<Types...>` (or falls back to `DynamicRowSerializer`).
+// Inspects the runtime schema and invokes the visitor with column types as
+// template parameters for the fast paths (1–4 columns), or with a
+// `DynamicRowSerializer` instance for the fallback.
 template <typename Visitor, typename... Args>
 decltype(auto) dispatchMonomorphicSerializer(ql::span<const ColumnType> schema,
                                             Visitor&& visitor, Args&&... args) {
