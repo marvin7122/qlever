@@ -52,6 +52,8 @@ static std::string generateRdfChunk(size_t numTriples, size_t chunkIndex) {
 
 // _____________________________________________________________________________
 // Helper to simulate network socket transmission delay (latency + bandwidth delay).
+// Simulates transmission on a 1 Gbps (125 MB/s) link (~8 ns per byte).
+// Only sleeps if the wire delay exceeds 100 µs.
 static void simulateNetworkTransmission(size_t chunkBytes,
                                         std::chrono::milliseconds latency) {
   if (latency > 0ms) {
