@@ -280,7 +280,7 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
  public:
   MonomorphicSerializerBenchmark() {
-    std::cout << "Initializing MonomorphicSerializerBenchmark (1,000,000 Rows)..."
+
               << std::endl;
     data_ = generateBenchmarkDataset(NUM_BENCHMARK_ROWS);
     std::cout << "Synthetic dataset generation complete." << std::endl;
