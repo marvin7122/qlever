@@ -399,7 +399,6 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Write a complete EvaluatedTriple directly to the active chunk.
   void writeTriple(ExportFormat format,
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
