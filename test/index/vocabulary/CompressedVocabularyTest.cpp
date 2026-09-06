@@ -125,8 +125,8 @@ using Compressors =
 template <typename Compressor>
 struct CompressedVocabularyF : public testing::Test {
   static_assert(ad_utility::vocabulary::CompressionWrapper<Compressor>);
-  // Return a lambda that takes a vector of strings, builds a
-  // CompressedVocabulary containing those strings, and returns that
+    // Return a lambda that takes a vector of strings, builds a
+  // `CompressedVocabulary` containing those strings, and returns that
   // vocabulary.
   static auto createCompressedVocabulary() {
     return [](const std::vector<std::string>& words,
