@@ -49,13 +49,7 @@ class ScatterGatherChunkStreamer;
 };
 
 // _____________________________________________________________________________
-// An invariant-proven assembled scatter-gather chunk containing an array of
-// `struct iovec` descriptors referencing external arena memory pages alongside
-// an owned local header buffer for formatting delimiters and short tokens.
-class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk> {
- public:
-  // Architecture Standard § 3.1: Passkey Idiom for restricted construction.
-  class Passkey {
+
    private:
     friend class ScatterGatherChunkStreamer;
     explicit Passkey() = default;
