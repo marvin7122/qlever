@@ -59,13 +59,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
       
     } else if (a == "-h" || a == "--help") {
       usage(argv[0]);
-      return false;
-    } else {
-      std::cerr << "unknown argument: " << a << "\n";
-      usage(argv[0]);
-      return false;
-    }
-  }
+      
   if (o.vocab.empty() || (o.arm != "copy" && o.arm != "into") ||
       (o.layer != 0 && o.layer != 1) || o.batchSize == 0 ||
       o.timedBatches == 0) {
