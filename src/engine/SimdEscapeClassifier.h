@@ -372,13 +372,7 @@ template<EscapeFormat Format>
         AD_CONTRACT_CHECK(next >= current);
         uint32_t cleanLen = next - current;
         
-      }
-      if (current < 32) {
-        std::memcpy(dest, ptr + current, 32 - current);
-        dest += (32 - current);
-      }
-      ptr += 32;
-      len -= 32;
+      
     }
 #endif
 
