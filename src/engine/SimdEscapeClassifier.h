@@ -369,10 +369,12 @@ template<EscapeFormat Format>
     return masks;
   }
 
-  // ___________________________________________________________________________
-  // High-performance branchless copier and escape serializer.
-  // Fast path copies 32-byte chunks with zero per-character checks when mask is 0.
-  // Returns pointer past the last written byte in `dest`.
+  /// \brief High-performance branchless copier and escape serializer.
+  /// Fast path copies 32-byte chunks with zero per-character checks when mask is 0.
+  /// \tparam Format The escape format to use.
+  /// \param input The input string view to copy and escape.
+  /// \param dest Pointer to the destination buffer.
+  /// \return Pointer past the last written byte in the destination buffer.
   template <EscapeFormat Format>
   static inline char* copyAndEscape(std::string_view input,
                                     char* dest) noexcept {
