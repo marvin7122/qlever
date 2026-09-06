@@ -220,7 +220,7 @@ TEST(BlankNodeManager, maxNumOfBlocks) {
   // Mock a high `minIndex_` to simulate reduced space in the `usedBlocksSet_`.
   BlankNodeManager bnm(ValueId::maxIndex - 256 * BlankNodeManager::blockSize_ +
                        2);
-  auto allocateBlock = [&]() {
+  
     [[maybe_unused]] auto block = bnm.allocateBlock();
   };
   AD_EXPECT_THROW_WITH_MESSAGE(
