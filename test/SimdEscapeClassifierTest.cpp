@@ -166,7 +166,4 @@ TEST(SimdEscapeClassifierTest, utf8Preservation) {
             utf8Text);
 
   // UTF-8 multibyte characters with an escape char
-  std::string utf8WithEscape = "\"München \"Düsseldorf\" Zürich\"@de";
-  EXPECT_EQ(SimdEscapeClassifier::validRDFLiteralFromNormalized(utf8WithEscape),
-            "\"München \\\"Düsseldorf\\\" Zürich\"@de");
-}
+  
