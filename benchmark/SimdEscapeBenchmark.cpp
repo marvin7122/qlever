@@ -182,9 +182,9 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
       return m;
     };
 
-    // =========================================================================
+        // _______________________________________________________________________
     // Group 1: Scanning & Classification Throughput
-    // =========================================================================
+    // _______________________________________________________________________
     {
       auto& group = results.addGroup("1. Literal Escape Scanning Throughput (100 MB)");
 
