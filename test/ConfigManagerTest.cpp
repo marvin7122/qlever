@@ -939,7 +939,7 @@ TEST(ConfigManagerTest, ParseShortHandTest) {
   // Is the "No Change" unchanged?
   checkOption(noChange, noChangeInt, true, 10);
 
-  // Multiple key value pairs with the same key are not allowed.
+  // Do not allow multiple key value pairs with the same key.
   AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::ConfigManager::parseShortHand(
                                                                       R"(complicatedKey:42, complicatedKey:43)");
                                , ::testing::ContainsRegex("'complicatedKey'"));
