@@ -318,8 +318,7 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 }
 
 // _____________________________________________________________________________
-// Returns "<TestSuiteName>_<TestName>" for the currently running gtest, with
-// any '/' replaced by '_' (parameterized tests embed '/' in their names).
+// Return "<TestSuiteName>_<TestName>" for the currently running gtest, with any '/' replaced by '_'.
 // If `assertInGtestEnvironment` is true (the default), crashes if called
 // outside a running gtest (i.e. when `current_test_info()` returns nullptr).
 // Pass false when the caller is also used by non-test code (e.g. benchmarks),
