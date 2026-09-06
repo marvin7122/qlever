@@ -81,13 +81,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     }
     
     auto& group = results.addGroup(
-        "Three-stage FSST scratch-buffer strategies (5,000 words)");
-    const auto parseEnvironmentSize = [](const char* value,
-                                         size_t defaultValue) {
-      if (value == nullptr) return defaultValue;
-      errno = 0;
-      char* end = nullptr;
-      const unsigned long parsed = std::strtoul(value, &end, 10);
+        
       AD_CONTRACT_CHECK(end != value && *end == '\0' && errno != ERANGE);
       return static_cast<size_t>(parsed);
     };
