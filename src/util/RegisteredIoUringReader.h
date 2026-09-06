@@ -694,7 +694,7 @@ class RegisteredIoUringReader
       inFlightByBatchId_.erase(batchIt);
     }
 
-    return {static_cast<size_t>(res), meta.batchId};
+    return DrainResult{static_cast<size_t>(res), meta.batchId, true};
   }
 #endif
 
