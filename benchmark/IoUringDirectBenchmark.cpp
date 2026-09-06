@@ -66,13 +66,7 @@ class SimulatedVocabularyFile {
     // Allocate 4KB aligned write buffer
     void* writeBuf = nullptr;
     constexpr size_t writeChunkSize = 1024 * 1024;  // 1 MB chunks
-    if (posix_memalign(&writeBuf, kDirectIoAlignment, writeChunkSize) != 0) {
-      ::close(fd);
-      AD_THROW("posix_memalign failed");
-    }
-
-    auto* bytePtr = static_cast<char*>(writeBuf);
-    std::mt19937_64 rng(42);
+    
 
     // Populate with simulated vocabulary entries: prefix IDs, string tokens, offsets
     size_t bytesWritten = 0;
