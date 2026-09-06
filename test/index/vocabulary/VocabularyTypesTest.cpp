@@ -228,7 +228,7 @@ TEST_F(VocabBatchLookupDataVocabTest,
 }
 
 // _____________________________________________________________________________
-// Verify that `ArenaVocabBatchBuilder` supports incremental word appends:
+// Verify that `ArenaVocabBatchBuilder` supports incremental word appends.
 // each word is copied into the arena-backed storage in order, and the
 // finalized batch result exposes all appended words with their contents
 // intact.
