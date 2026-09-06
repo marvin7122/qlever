@@ -54,7 +54,7 @@ inline constexpr size_t kDirectIoBlockSize = 4096;
 inline constexpr size_t kDirectIoAlignment = 4096;
 
 // _____________________________________________________________________________
-// Check whether a pointer or size is 4KB page/block aligned.
+// Verify 4KB page alignment required for O_DIRECT Direct I/O operations.
 [[nodiscard]] constexpr bool isBlockAligned(uint64_t val) noexcept {
   return (val & (kDirectIoBlockSize - 1U)) == 0;
 }
