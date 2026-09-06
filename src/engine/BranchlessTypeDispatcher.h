@@ -111,13 +111,7 @@ inline char* formatBoolean(ValueId id, std::string_view, char* out,
   std::memcpy(out, str.data(), str.size());
   out += str.size();
   std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
-}
-
-// Fast branchless formatter for GeoPoint values.
-inline char* formatGeoPoint(ValueId id, std::string_view, char* out,
-                            std::string_view prefix,
+  
                             std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
