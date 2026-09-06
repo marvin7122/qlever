@@ -220,12 +220,7 @@ struct BenchmarkMetric {
       totalBytes += res.totalBytesRead;
     }
 
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("3. io_uring (Unpinned + Unregistered)", startTime,
-                           endTime, totalBytes, numBatches);
-  }
-
-  // 4. io_uring with O_DIRECT (Unpinned buffers)
+    
   BenchmarkMetric runIoUringDirectUnpinned(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
