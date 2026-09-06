@@ -82,13 +82,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     
     auto& group = results.addGroup(
         
-      AD_CONTRACT_CHECK(end != value && *end == '\0' && errno != ERANGE);
-      return static_cast<size_t>(parsed);
-    };
-    const size_t selectedStrategy =
-        parseEnvironmentSize(std::getenv("FSST_SCRATCH_ONLY"), 3);
-    // Bound the benchmark workload even when configured through the
-    // environment.
+      
     constexpr size_t maxRepetitions = 1'000'000;
     const size_t repetitions =
         parseEnvironmentSize(std::getenv("FSST_SCRATCH_INNER_REPETITIONS"), 1);
