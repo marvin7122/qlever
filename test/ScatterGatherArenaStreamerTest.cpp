@@ -58,7 +58,7 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
   const auto& chunk = chunks[0];
   EXPECT_GT(chunk.totalBytes(), 0);
   EXPECT_EQ(chunk.zeroCopySpansCount(), 1);
-  EXPECT_EQ(chunk.zeroCopyBytes(), arenaLiteral.size());
+    EXPECT_EQ(chunk.zeroCopyBytes(), largeLiteral.size());
 
   // Check that the header and spans are coalesced.
   // 1: "<http://example.org/sub> <http://example.org/pred> \"" (header)
