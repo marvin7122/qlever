@@ -175,7 +175,7 @@ class AsyncChunkPipeline
   // Consumer API: Retrieve the next chunk.
   // Block if buffer is currently empty and production is still ongoing.
   // Return `std::nullopt` when stream is finished and all chunks were consumed.
-  // Rethrows captured producer exception if one occurred.
+  // Rethrow captured producer exception if one occurred.
   std::optional<ChunkType> pop() {
     auto guard = this->makeInvariantGuard();
     std::unique_lock<std::mutex> lock(mutex_);
