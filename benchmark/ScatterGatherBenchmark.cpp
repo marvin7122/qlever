@@ -271,13 +271,7 @@ class ScatterGatherBenchmarkRunner {
     config.zeroCopyThresholdBytes = kDefaultZeroCopyThreshold;
 
     size_t totalBytes = 0;
-    size_t totalZeroCopyBytes = 0;
-
-    auto startTime = std::chrono::steady_clock::now();
-
-    ScatterGatherChunkStreamer streamer(
-        [&](ScatterGatherChunk chunk) {
-          totalBytes += chunk.totalBytes();
+    
           totalZeroCopyBytes += chunk.zeroCopyBytes();
           chunk.writeToFd(nullFd.get());
         },
