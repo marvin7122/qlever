@@ -117,8 +117,11 @@ class DirectIoFile {
 };
 
 // _____________________________________________________________________________
-// Provide an aligned PMR memory arena for DMA and io_uring fixed buffer registration.
-// Guarantees 4KB page alignment for Direct I/O and zero-copy DMA pinning.
+// PinnedArena provides a page-aligned memory arena for io_uring fixed-buffer
+// registration and Direct I/O. The kernel requires DMA-pinned buffers to be
+// page-aligned; this class guarantees 4KB alignment for every slot and exposes
+// iovecs suitable for bulk IORING_REGISTER_BUFFERS, eliminating per-I/O
+// get_user_pages() and TLB shootdowns.
 class PinnedArena : public WithInvariants<PinnedArena> {
  private:
   using RawBuffer = std::vector<char, ad_utility::AlignedAllocator<char, kDirectIoAlignment>>;
