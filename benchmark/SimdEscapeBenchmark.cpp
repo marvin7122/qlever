@@ -370,9 +370,9 @@ class LiteralEscapeBenchmark : public BenchmarkInterface {
       }
     }
 
-    // =========================================================================
+        // _______________________________________________________________________
     // Group 2: End-to-End Literal Formatting & Escaping Throughput
-    // =========================================================================
+    // _______________________________________________________________________
     {
       auto& group = results.addGroup("2. End-to-End Escaping & Formatting Throughput (100 MB)");
 
