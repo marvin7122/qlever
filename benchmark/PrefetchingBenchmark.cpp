@@ -154,13 +154,7 @@ class HardwarePerformanceMonitor {
       }
     };
     closeFd(fdCycles_);
-    closeFd(fdInstructions_);
-    closeFd(fdL1dAccess_);
-    closeFd(fdL1dMiss_);
-    closeFd(fdLlcAccess_);
-    closeFd(fdLlcMiss_);
-    closeFd(fdCacheMiss_);
-    closeFd(fdCacheRef_);
+    
 #endif
   }
 
