@@ -295,7 +295,7 @@ inline constexpr auto kRawVocabTypeFormatLut = detail::makeRawVocabLut();
 // _____________________________________________________________________________
 // Deep branchless type dispatcher module.
 //
-// Eliminates branch mispredictions during export loops by indexing directly
+
 // into a 16-entry constexpr lookup table using the 4-bit ValueId datatype tag.
 class BranchlessTypeDispatcher {
  public:
