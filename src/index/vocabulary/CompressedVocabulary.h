@@ -143,7 +143,7 @@ CPP_template(typename UnderlyingVocabulary,
   // decoder). Ensure the buffer grows to the largest `maxDecompressedSize` bound seen so far.
   // seen so far. `string_view` is a `string_view` into that buffer.
   // It is valid only until the next element is pulled; copy the bytes if
-  // they must outlive the current iterator position. See `IndexAndWord`.
+  // they must outlive the current iterator position. See `IndexAndWord`. The 'scratch' is a temporary buffer.
   // `CachingTransformInputRange` caches the current `IndexAndWord` object, so
   // repeated dereference of the same iterator is stable. It does not copy
   // the decoded bytes. A view retained from a previous element is stale
