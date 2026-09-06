@@ -196,7 +196,9 @@ inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
 // Writes sign (if negative) and digits directly to `out`.
 // Returns a pointer to one-past-the-end.
 // Precondition: `out` must point to a buffer of at least 20 bytes (sign + up to 19 digits).
+// Why: converts int64_t to ASCII, handling sign and INT64_MIN safely, then delegates to the unsigned version.
 inline char* formatIntBranchless(int64_t val, char* out) noexcept {
+
   AD_CONTRACT_CHECK(out != nullptr);
   uint64_t uval;
   if (val < 0) {
