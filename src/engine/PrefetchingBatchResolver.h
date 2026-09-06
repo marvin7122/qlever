@@ -89,6 +89,7 @@ struct PrefetchingBatchResolver {
   PrefetchConfig config_;
 
  public:
+  // ___________________________________________________________________________\
     // Construct a `PrefetchingBatchResolver` with the standard tuned prefetch distance of 8 rows.
   explicit PrefetchingBatchResolver(
       PrefetchConfig config)
