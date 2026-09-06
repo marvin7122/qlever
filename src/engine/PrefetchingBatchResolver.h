@@ -178,19 +178,21 @@ return config_.prefetchDistance;
     // Pipeline batch lookups directly over `CompactVectorOfStrings` storage,
   // issuing multi-stage prefetch intrinsics for offset table lines and
   // string payload cache lines K iterations ahead.
-  template <typename CharType, typename MappingFunc>
-  void resolveCompactVectorPipelined(
+  template <typename CharType>
+  std::vector<std::basic_string<CharType>> resolveCompactVectorPipelined(
       const CompactVectorOfStrings<CharType>& words,
-      ql::span<const size_t> indices,
-      MappingFunc&& mappingFunc) const {
+      ql::span<const size_t> indices) const {
+    std::vector<std::basic_string<CharType>> results;
     if (indices.empty() || !words.ready()) {
-      return;
+      return results;
     }
 
     const size_t n = indices.size();
     const size_t distance = config_.prefetchDistance;
     const auto offsets = words.offsetsSpan();
     const auto data = words.dataSpan();
+
+    results.resize(n);
 
     // Stage 1 warmup: prefetch offset table lines for the first `distance` items
     for (size_t k = 0; k < std::min(distance, n); ++k) {
@@ -231,8 +233,10 @@ return config_.prefetchDistance;
       const CharType* strPtr = data.data() + curOffset;
       std::basic_string_view<CharType> view(strPtr, strLen);
 
-      mappingFunc(i, curIdx, view);
+      results[i] = std::basic_string<CharType>(view);
     }
+
+    return results;
   }
 
   // ___________________________________________________________________________
