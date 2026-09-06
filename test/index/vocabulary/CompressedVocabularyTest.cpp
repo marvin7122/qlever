@@ -51,7 +51,7 @@ struct DummyDecoder {
   }
 
   static std::string decompress(std::string_view compressed) {
-    std::string result{compressed.size(), '\0'};
+    std::string result(compressed.size(), '\0');
     decompressInto(compressed, ql::span<char>{result.data(), result.size()});
     return result;
   }
