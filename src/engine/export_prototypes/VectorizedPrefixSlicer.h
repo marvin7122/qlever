@@ -68,6 +68,8 @@ class VectorizedPrefixTable {
       return 0;
     }
     const auto& entry = entries_[idx];
+    AD_CONTRACT_CHECK(out != nullptr);
+    AD_CONTRACT_CHECK(entry.length <= sizeof(entry.data));
     std::memcpy(out, entry.data, entry.length);
     return entry.length;
   }
