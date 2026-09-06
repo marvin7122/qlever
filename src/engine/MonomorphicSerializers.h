@@ -262,8 +262,8 @@ inline void writeFormattedDouble(Writer& writer, double val) noexcept {
     }
   }
 
-  // Typed overload for floating point values
-  template <typename Writer, typename T>
+    // Typed overload for floating point values
+  CPP_template(typename Writer, typename T)
   requires std::is_floating_point_v<T>
   static void write(Writer& writer, T val) {
     writeFormattedDouble(writer, static_cast<double>(val));
