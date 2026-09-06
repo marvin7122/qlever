@@ -173,6 +173,7 @@ DecodeStats runIntoBatch(const Vocab& vocab,
 
 DecodeStats runLookupBatch(const Vocab& vocab, ql::span<const size_t> indices) {
   DecodeStats s;
+  AD_CONTRACT_CHECK(indices.size() > 0);
   auto result = vocab.lookupBatch(indices);
   for (std::string_view v : *result) {
     s.bytesUsed += v.size();
