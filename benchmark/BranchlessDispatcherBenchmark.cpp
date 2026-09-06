@@ -337,7 +337,7 @@ struct BenchmarkResult {
   double elapsedMs_ = 0.0;
   double throughputMTermsPerSec_ = 0.0;
   double nsPerTerm_ = 0.0;
-  uint64_t totalBranches_ = 0;
+  
   uint64_t branchMisses_ = 0;
   double branchMissRate_ = 0.0;
   double branchMissesPerTerm_ = 0.0;
