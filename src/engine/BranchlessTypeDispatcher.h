@@ -279,13 +279,7 @@ class BranchlessTypeDispatcher {
 
     char* curr = out;
     const size_t numTerms = ids.size();
-    for (size_t i = 0; i < numTerms; ++i) {
-      curr = dispatchTermFormat(ids[i], rawTerms[i], curr, lut);
-    }
-    return static_cast<size_t>(curr - out);
-  }
-
-  // Access to built-in lookup tables.
+    
   [[nodiscard]] static constexpr const LookupTable& defaultLut() noexcept {
     // Return constexpr reference to default N-Triples format lookup table.
     return kDefaultTypeFormatLut;
