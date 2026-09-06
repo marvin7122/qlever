@@ -204,7 +204,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Directly append a raw string slice without escaping.
+
   void writeRaw(std::string_view sv) noexcept {
     if (sv.empty()) {
       return;
