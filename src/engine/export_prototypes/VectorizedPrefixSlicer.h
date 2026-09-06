@@ -63,6 +63,8 @@ class VectorizedPrefixTable {
   // Write a well-known prefix into `out` using 128-bit vector stores.
   // Return the number of bytes written.
   [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id, char* out) const noexcept {
+    AD_CHECK(out != nullptr);
+    AD_CHECK(static_cast<size_t>(id) < static_cast<size_t>(WellKnownPrefixId::Count));
     const size_t idx = static_cast<size_t>(id);
     if (idx >= entries_.size()) {
       return 0;
