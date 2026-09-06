@@ -152,7 +152,8 @@ class DirectIoFile {
 // Guarantees 4KB page alignment for Direct I/O and zero-copy DMA pinning.
 class PinnedArena : public WithInvariants<PinnedArena> {
  private:
-  void* rawBuffer_ = nullptr;
+  using AlignedBufferPtr = std::unique_ptr<void, decltype(&std::free)>;
+  AlignedBufferPtr rawBuffer_{nullptr, &std::free};
   size_t totalBytes_ = 0;
   size_t slotSize_ = 0;
   size_t numSlots_ = 0;
