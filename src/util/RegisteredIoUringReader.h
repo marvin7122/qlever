@@ -104,34 +104,7 @@ class DirectIoFile {
     return *this;
   }
 
-  void open(std::string_view path, bool useDirectIo, bool readOnly = true) {
-    close();
-    path_ = std::string(path);
-    isDirect_ = useDirectIo;
-
-    int flags = readOnly ? O_RDONLY : O_RDWR;
-#ifdef O_DIRECT
-    if (useDirectIo) {
-      flags |= O_DIRECT;
-    }
-#endif
-#ifdef O_NOATIME
-    flags |= O_NOATIME;
-#endif
-
-    fd_ = ::open(path_.c_str(), flags);
-    if (fd_ < 0) {
-      AD_THROW(absl::StrCat("Failed to open file: ", path_,
-                            " (errno: ", strerror(errno), ")"));
-    }
-
-    struct stat st {};
-    if (::fstat(fd_, &st) != 0) {
-      close();
-      AD_THROW(absl::StrCat("Failed to stat file: ", path_));
-    }
-    fileSize_ = static_cast<uint64_t>(st.st_size);
-  }
+  void open(std::string_view path, bool useDirectIo, bool readOnly = true);
 
   void close() noexcept {
     if (fd_ >= 0) {
