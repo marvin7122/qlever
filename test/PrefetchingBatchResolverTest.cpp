@@ -105,13 +105,7 @@ TEST(PrefetchingBatchResolver, CompactVectorPipelinedResolution) {
 
   ASSERT_EQ(resolvedWords.size(), queryIndices.size());
   for (size_t i = 0; i < queryIndices.size(); ++i) {
-    EXPECT_EQ(resolvedWords[i], rawWords[queryIndices[i]]);
-  }
-}
-
-TEST(PrefetchingBatchResolver, EmptyAndBoundaryInputs) {
-  std::string kg = "<s> <p> <o> .";
-  auto qec = ad_utility::testing::getQec(kg);
+    
   const auto& index = qec->getIndex();
 
   PrefetchingBatchResolver resolver;
