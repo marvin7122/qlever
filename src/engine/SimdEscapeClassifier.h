@@ -317,7 +317,7 @@ template<EscapeFormat Format>
 #endif
 
     // Tail: 0 to 15 remaining bytes
-    while (len > 0) {
+        while (len > 0) {
       if (detail::isEscapeChar<Format>(*ptr)) {
         return offset;
       }
