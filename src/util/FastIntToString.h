@@ -156,7 +156,7 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 }
 
 // _____________________________________________________________________________
-// Branchless, zero-allocation conversion of uint64_t to ASCII.
+
 // Writes digits directly to `out` and returns a pointer to one-past-the-end.
 // Precondition: `out` must point to a buffer with at least `numDigits(val)` bytes.
 inline char* formatUIntBranchless(uint64_t val, char* out) noexcept {
