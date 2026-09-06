@@ -26,7 +26,6 @@
 #include "benchmark/infrastructure/Benchmark.h"
 
 // _____________________________________________________________________________
-// Memory allocation tracker for measuring exact heap allocation counts.
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
