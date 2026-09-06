@@ -212,7 +212,7 @@ class ScatterGatherBenchmarkRunner {
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
     const double gbWritten =
-        static_cast<double>(summary.totalBytesWritten_) / (1024.0 * 1024.0 * 1024.0);
+        static_cast<double>(totalBytes) / (1024.0 * 1024.0 * 1024.0);
     const double gbZeroCopy =
         static_cast<double>(totalZeroCopyBytes) / (1024.0 * 1024.0 * 1024.0);
 
@@ -220,7 +220,7 @@ class ScatterGatherBenchmarkRunner {
         .mode = "2. Zero-Copy Scatter-Gather Streamer",
         .literalSizeBytes = arena.getLiteralSpan(0).size(),
         .numTriples = n,
-        .totalBytesWritten = summary.totalBytesWritten_,
+        .totalBytesWritten = totalBytes,
         .totalZeroCopyBytes = totalZeroCopyBytes,
         .elapsedSeconds = elapsedSec,
         .throughputMBs =
