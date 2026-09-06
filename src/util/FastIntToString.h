@@ -129,7 +129,7 @@ inline void format2Digits(uint32_t v, char* dst) noexcept {
 
 // _____________________________________________________________________________
 // Maximum character buffer length required for any 64-bit integer formatted
-// to ASCII (including potential negative sign and null terminator).
+// to ASCII (including potential negative sign, but not a null terminator).
 inline constexpr size_t MAX_INT64_ASCII_LENGTH = 22;
 inline constexpr size_t MAX_UINT64_ASCII_LENGTH = 21;
 
