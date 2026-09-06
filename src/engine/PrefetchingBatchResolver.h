@@ -154,9 +154,7 @@ return config_.prefetchDistance;
     for (size_t i = 0; i < n; ++i) {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
-        if (pfPos < ids.size()) {
-          prefetchVocabEntry(&ids[pfPos]);
-        }
+        prefetchVocabEntry(&ids[pfPos]);
       }
 
       const size_t pos = positions[i];
