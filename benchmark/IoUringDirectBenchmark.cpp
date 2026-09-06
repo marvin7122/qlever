@@ -52,12 +52,7 @@ class SimulatedVocabularyFile {
   std::string filePath_;
   bool isCreated_ = false;
 
- public:
-  explicit SimulatedVocabularyFile(
-      std::string_view pathTemplate = "/tmp/qlever_vocab_sim_XXXXXX.bin") {
-    char tempPath[256];
-    std::strncpy(tempPath, pathTemplate.data(), sizeof(tempPath) - 1);
-    tempPath[sizeof(tempPath) - 1] = '\0';
+ 
 
     int fd = mkstemps(tempPath, 4);
     if (fd < 0) {
