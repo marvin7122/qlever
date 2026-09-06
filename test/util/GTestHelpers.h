@@ -385,12 +385,7 @@ CPP_template(size_t NumBytes = 4096)
   volatile char buffer[NumBytes];
   for (size_t i = 0; i < NumBytes; ++i) {
     buffer[i] = sentinel;
-  }
-  // Compiler barrier: prevents the optimizer from eliding the stack writes or
-  // reordering them past the return. Not a hardware memory fence.
-  asm volatile("" : : "r"(buffer) : "memory");
-  return buffer[NumBytes - 1];
-}
+  
 
 // _____________________________________________________________________________
 // Return the name of the currently running test suite, with any '/' replaced
