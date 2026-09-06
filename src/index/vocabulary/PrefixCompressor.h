@@ -124,10 +124,16 @@ class PrefixCompressor {
   // `maxDecompressedSize(compressedWord)`. Return the number of bytes written.
   [[nodiscard]] size_t decompressInto(std::string_view compressedWord,
                                       ql::span<char> out) const {
-    AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(compressedWord));
-
+    AD_CONTRACT_CHECK(!compressedWord.empty());
     const auto idx = prefixIndex(compressedWord);
-    const std::string_view rest = compressedWord.substr(1);
+    const std::string_view rest = compressedWord.empty() ? std::string_view() : compressedWord.substr(1);
+    size_t prefixSize = 0;
+    if (idx.has_value()) {
+      prefixSize = prefixToCode_[*idx].size();
+    }
+    size_t needed = prefixSize + rest.size();
+    AD_CONTRACT_CHECK(out.size() >= needed);
+
     size_t outputSize = 0;
     if (idx.has_value()) {
       const std::string& prefix = prefixToCode_[*idx];
