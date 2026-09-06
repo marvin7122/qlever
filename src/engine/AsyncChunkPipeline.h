@@ -372,7 +372,7 @@ class ChunkSink {
   }
 
   // Push chunk into the pipeline, blocking on backpressure if full.
-  // Returns true on success; false if cancelled.
+  // Return true on success; false if cancelled.
   bool push(ChunkType chunk) { return pipeline_->push(std::move(chunk)); }
 
   // Check whether consumer cancelled early.
