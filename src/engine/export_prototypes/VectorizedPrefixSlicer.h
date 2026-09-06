@@ -84,7 +84,6 @@ class VectorizedPrefixTable {
   // Initialize a PrefixEntry by zero-filling the data buffer and copying the prefix.
   void initEntry(WellKnownPrefixId id, std::string_view prefix) noexcept {
     auto& e = entries_[static_cast<size_t>(id)];
-    std::memset(e.data, 0, sizeof(e.data));
     std::memcpy(e.data, prefix.data(), prefix.size());
     e.length = prefix.size();
     AD_CONTRACT_CHECK(e.length <= 48);
