@@ -122,7 +122,7 @@ TEST(PrefetchingBatchResolver, EmptyAndBoundaryInputs) {
   PrefetchingBatchResolver resolver;
   LocalVocab localVocab;
 
-  // Empty IDs span
+    // Test empty IDs span
   auto emptyResults = resolver.idsToStringAndType(
       index, ql::span<const Id>{}, localVocab);
   EXPECT_TRUE(emptyResults.empty());
