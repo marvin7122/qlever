@@ -35,7 +35,7 @@
 namespace ql::serialization {
 
 using ql::export_formatting::ExportFormat;
-using ql::export_formatting::FastExportStreamFormatter;
+
 
 // _____________________________________________________________________________
 // Fundamental column and cell datatypes in SPARQL query engine export pipelines.
