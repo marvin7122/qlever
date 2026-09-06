@@ -256,6 +256,7 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
               << std::endl;
     data_ = generateBenchmarkDataset(NUM_BENCHMARK_ROWS);
+    AD_CHECK(data_.tripleRows_.size() == NUM_BENCHMARK_ROWS);
     std::cout << "Synthetic dataset generation complete." << std::endl;
   }
 
