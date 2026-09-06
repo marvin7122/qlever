@@ -198,7 +198,6 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
-  // Directly append a raw character.
   void writeChar(char c) noexcept {
     ensureAvailable(1);
     bufferPtr_[writePos_++] = c;
