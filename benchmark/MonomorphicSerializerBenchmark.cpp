@@ -224,10 +224,10 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   data.relationalTuples_.reserve(numRows);
 
   // Common IRIs
-  data.stringPool_.push_back("<http://www.w3.org/2000/01/rdf-schema#label>");
-  data.stringPool_.push_back("<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>");
-  data.stringPool_.push_back("<http://example.org/prop/population>");
-  data.stringPool_.push_back("<http://example.org/prop/areaSqKm>");
+  data.stringPool_.emplace_back("<http://www.w3.org/2000/01/rdf-schema#label>");
+  data.stringPool_.emplace_back("<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>");
+  data.stringPool_.emplace_back("<http://example.org/prop/population>");
+  data.stringPool_.emplace_back("<http://example.org/prop/areaSqKm>");
 
   std::string_view predLabel = data.stringPool_[0];
   std::string_view predType = data.stringPool_[1];
@@ -235,13 +235,13 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   std::string_view predArea = data.stringPool_[3];
 
   for (size_t i = 0; i < numRows; ++i) {
-        data.stringPool_.push_back("<http://example.org/entity/Q" + std::to_string(i) + ">");
+        data.stringPool_.emplace_back("<http://example.org/entity/Q" + std::to_string(i) + ">");
     std::string_view subj = data.stringPool_.back();
 
-        data.stringPool_.push_back("\"Metropolitan City Name " + std::to_string(i) + "\"@en");
+        data.stringPool_.emplace_back("\"Metropolitan City Name " + std::to_string(i) + "\"@en");
     std::string_view literal = data.stringPool_.back();
 
-        data.stringPool_.push_back("<http://example.org/class/City>");
+        data.stringPool_.emplace_back("<http://example.org/class/City>");
     std::string_view classCity = data.stringPool_.back();
 
     int64_t popVal = static_cast<int64_t>(100'000 + (i % 5'000'000));
