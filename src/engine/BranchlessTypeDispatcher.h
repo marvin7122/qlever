@@ -174,7 +174,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::Int)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#integer>", &formatInteger};
 
-  // 3: Double
+  
   lut[static_cast<size_t>(Datatype::Double)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#double>", &formatDouble};
 
