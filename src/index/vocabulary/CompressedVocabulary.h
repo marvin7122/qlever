@@ -123,9 +123,9 @@ CPP_template(typename UnderlyingVocabulary,
 
     auto decompressAndStore = [this, &buffer, &views](size_t idx,
                                                        std::string_view compressedWord) {
-      // TODO<marvin>: The allocation pattern here can be improved (get some
-      // bound in advance to pre-inform the allocator etc.). Also, consider to
-      // reuse a buffer here.
+            // TODO<marvin>: The allocation pattern here can be improved (get some
+      // bound in advance to pre-inform the allocator etc.). Also, consider
+      // reusing a buffer here.
       AD_CORRECTNESS_CHECK(getDecoderIdx(idx) < compressionWrapper_.numDecoders());
       std::string decompressed =
           compressionWrapper_.decompress(compressedWord, getDecoderIdx(idx));
