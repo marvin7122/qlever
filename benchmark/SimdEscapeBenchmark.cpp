@@ -146,13 +146,7 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
               << " MB total)." << std::endl;
   }
 
-  std::string name() const final {
-    return "SIMD Literal Escape Classification & Formatting (100 MB)";
-  }
-
-  BenchmarkResults runAllBenchmarks() final {
-    BenchmarkResults results;
-    const double totalMB = static_cast<double>(dataset_.totalBytes) / (1024.0 * 1024.0);
+  
     const size_t numLiterals = dataset_.literals.size();
     const double totalGB = static_cast<double>(dataset_.totalBytes) / 1e9;
 
