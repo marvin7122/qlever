@@ -50,7 +50,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         std::cerr << "missing value for " << name << "\n";
         return {};
       }
-      return argv[++i];
+      return argv[++i];  // TODO: handle invalid integer strings
     };
     bool parseFailed = false;
     if (a == "--vocab") {
