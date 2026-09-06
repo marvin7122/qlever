@@ -147,8 +147,8 @@ class PrefixCompressor {
   // ___________________________________________________________________________
   // From the given list of prefixes, build the internal data structure for
   // efficient lookup. The prefixes do not have to be in any specific order. The
-  // type of `prefixes` can be any type for which `for (const string& el :
-  // prefixes) {...}` works.
+  // type of `prefixes` can be any range type for which
+  // `for (const auto& el : prefixes) {...}` works.
   // TODO<joka921> Make this a part of the constructor, as soon as we have
   // integrated this code into qlever.
   template <typename StringRange>
