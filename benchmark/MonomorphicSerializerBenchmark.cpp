@@ -112,8 +112,7 @@ class PerfCounterMonitor {
   bool isAvailable_ = false;
 
   static int openPerfEvent(uint32_t type, uint64_t config) noexcept {
-    struct perf_event_attr pe;
-    std::memset(&pe, 0, sizeof(struct perf_event_attr));
+    struct perf_event_attr pe{};
     pe.type = type;
     pe.size = sizeof(struct perf_event_attr);
     pe.config = config;
