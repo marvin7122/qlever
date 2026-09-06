@@ -232,6 +232,7 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
  private:
   DatasetStorage data_;
   PerfCounterMonitor perfMonitor_;
+  size_t bytesSink_ = 0;
 
  public:
   MonomorphicSerializerBenchmark() {
