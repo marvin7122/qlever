@@ -22,7 +22,9 @@
 
 namespace ad_utility {
 
+// Why: internal helpers for fast integer-to-string conversion (lookup tables, SIMD/SWAR routines).
 namespace detail {
+
 
 // _____________________________________________________________________________
 // Provide a `DIGIT_PAIRS` lookup table for radix-100 decomposition.
