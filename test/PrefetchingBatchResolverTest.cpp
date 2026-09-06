@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "engine/PrefetchingBatchResolver.h"
-#include "global/Constants.h"
+
 #include "global/Id.h"
 #include "global/VocabIndex.h"
 #include "index/ExportIds.h"
