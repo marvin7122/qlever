@@ -130,7 +130,7 @@ class PerfCounterMonitor {
       if (m.cycles > 0) {
         m.ipc = static_cast<double>(m.instructions) / static_cast<double>(m.cycles);
       }
-      if (m.branches > 0) {
+      if (m.branches > 0 && fdBranchMisses_ >= 0) {
         m.branchMissRate =
             static_cast<double>(m.branchMisses) / static_cast<double>(m.branches) * 100.0;
       }
