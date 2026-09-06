@@ -43,8 +43,7 @@
 // Frozen owner of a batch's `string_view`s. Builders allocate and write;
 // their `finalize() &&` produces a `VocabBatchLookupResult` that holds a
 // Ensure `shared_ptr<const VocabBatchStorage>` has no mutators; `viewSpan()` returns the view span.
-// not virtual: it always returns this object's `views_`, which only a builder
-// may fill via a derived constructor.
+// Return the view span; only a builder may populate the views via a derived constructor.
 class VocabBatchStorage {
   std::vector<std::string_view> views_;
 
