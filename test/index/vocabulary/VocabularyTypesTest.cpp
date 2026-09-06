@@ -50,7 +50,7 @@ class WordWriterThrowing : public WordWriterBase {
 };
 
 // _____________________________________________________________________________
-// A class inheriting from `WordWriterBase` that doesn't call finish.
+// Omit calling finish in a WordWriterBase subclass.
 class WordWriterNoFinish : public WordWriterBase {
  public:
   WordWriterNoFinish() {}
