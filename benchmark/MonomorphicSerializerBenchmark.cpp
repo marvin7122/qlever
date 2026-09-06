@@ -147,6 +147,7 @@ class PerfCounterMonitor {
 // Synthetic dataset generators for 1,000,000 rows across diverse query schemas.
 constexpr size_t NUM_BENCHMARK_ROWS = 1'000'000;
 
+// _____________________________________________________________________________
 struct DatasetStorage {
   // String pool keeping views valid across runs
   std::vector<std::string> stringPool_;
