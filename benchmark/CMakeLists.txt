@@ -36,4 +36,8 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    # RleVectorStreamBenchmark has its own main function, so link against benchmark library (without main)
+    add_executable(RleVectorStreamBenchmark RleVectorStreamBenchmark.cpp)
+    qlever_target_link_libraries(RleVectorStreamBenchmark benchmark global qlever_util)
+
 endif()
