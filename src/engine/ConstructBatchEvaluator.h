@@ -2,7 +2,7 @@
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
-// You may not use this file except in compliance with the Apache 2.0 License,
+  // You may not use this file except in compliance with the `Apache 2.0 License`.
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_ENGINE_CONSTRUCTBATCHEVALUATOR_H
