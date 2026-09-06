@@ -226,13 +226,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   lut[static_cast<size_t>(Datatype::Int)] =
       TypeFormatDescriptor{"", "", &formatInteger};
   lut[static_cast<size_t>(Datatype::Double)] =
-      TypeFormatDescriptor{"", "", &formatDouble};
-  lut[static_cast<size_t>(Datatype::VocabIndex)] =
-      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
-  lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
-      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
-  lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
-      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
+      
   lut[static_cast<size_t>(Datatype::Date)] =
       TypeFormatDescriptor{"", "", &formatDate};
   lut[static_cast<size_t>(Datatype::GeoPoint)] =
