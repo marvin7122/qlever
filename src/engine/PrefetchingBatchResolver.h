@@ -97,8 +97,8 @@ private:
 //   boundary draining.
 // - Zero bookkeeping leakage: returns complete, verified result vectors or fills
 //   pre-sized caller result spans.
-// - Defines edge cases away: gracefully handles empty inputs, inputs smaller
-//   than the prefetch distance, and mixed datatypes without branching anomalies.
+// - Defines edge cases away: gracefully handles empty inputs and inputs
+//   smaller than the prefetch distance.
 class PrefetchingBatchResolver {
  public:
   static constexpr size_t DEFAULT_PREFETCH_DISTANCE = 8;
