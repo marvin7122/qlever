@@ -48,7 +48,7 @@ enum class EscapeFormat {
   Xml          // XML special characters (&, <, >, ", ')
 };
 
-// Invariant-bearing 32-bit classification mask for a 32-byte SIMD chunk.
+// Describe an invariant-bearing 32-bit classification mask for a 32-byte SIMD chunk.
 class ChunkEscapeMask32 {
  private:
   uint32_t mask_ = 0;
