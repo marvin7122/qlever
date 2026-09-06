@@ -629,7 +629,7 @@ decltype(auto) dispatch3Col(ColumnType c0, ColumnType c1, ColumnType c2,
   return visitor(dynamicSerializer, std::forward<Args>(args)...);
 }
 
-// Fast-path dispatch for 4-column schemas
+// Fast-path dispatch for 4-column schemas.
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch4Col(ColumnType c0, ColumnType c1, ColumnType c2,
                             ColumnType c3, Visitor&& visitor, Args&&... args) {
