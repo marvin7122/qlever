@@ -245,15 +245,6 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (opt.layer == 0) {
-    for (size_t b = 0; b < opt.warmupBatches; ++b) {
-      if (opt.arm == "copy") {
-        (void)runCopyBatch(vocab, fixture[b]);
-      } else {
-        (void)runIntoBatch(vocab, fixture[b]);
-      }
-    }
-  }
 
   const auto ru0 = snapUsage();
   const auto t0 = std::chrono::steady_clock::now();
