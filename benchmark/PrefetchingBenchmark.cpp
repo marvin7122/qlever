@@ -256,7 +256,7 @@ class PrefetchingBenchmark : public BenchmarkInterface {
     return "Optimization 16: Software Cache Prefetching Benchmark";
   }
 
-  // Generate 1M realistic vocabulary words and 500k uniformly randomized lookup IDs
+    // Generate 1M realistic vocabulary words and 500k uniformly randomized lookup IDs.
   void setupSyntheticVocabulary() {
     std::vector<std::string> words;
     words.reserve(NUM_VOCAB_ENTRIES);
