@@ -506,8 +506,10 @@ class SimdEscapeClassifier {
   }
 
   // ___________________________________________________________________________
-  // Escape a field for IANA-TSV. If no tabs or newlines are present, returns input
-  // directly. Otherwise replaces tabs with spaces and newlines with \n.
+  // Escape a field for IANA-TSV. If no tabs, newlines, carriage returns, or
+  // backslashes are present, returns input directly. Otherwise replaces tabs
+  // with spaces, newlines with \n, carriage returns with \r, and backslashes
+  // with \\.
   [[nodiscard]] static inline std::string escapeForTsv(std::string_view input) {
     if (!hasEscapes<EscapeFormat::Tsv>(input)) [[likely]] {
       return std::string{input};
