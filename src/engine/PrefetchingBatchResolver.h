@@ -206,6 +206,7 @@ return config_.prefetchDistance;
         prefetchOffsetIfValid(indices[i + distance]);
       }
 
+            // TODO<marvin> Ensure distance/2 >= 1 or handle small prefetch distances to avoid ineffective prefetch.
       // 2. Prefetch string character data line for (i + distance / 2)
       if (i + (distance / 2) < n) {
         const size_t midIdx = indices[i + (distance / 2)];
