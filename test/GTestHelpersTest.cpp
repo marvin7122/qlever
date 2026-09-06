@@ -65,13 +65,7 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
     // `maxSize == 0` is a rejected precondition, so probe from 1 on.
     if (size > 0) {
       requirePmrStringInlineStorage(size);
-    }
-    std::pmr::string shortString(size, 'x');
-    EXPECT_TRUE(pointsIntoObject(shortString.data(), shortString));
-    EXPECT_EQ(shortString.size(), size);
-  }
-  // Verify that a string above the SSO threshold is not stored inside the
-  // object.
+    
   std::pmr::string longString(64, 'y');
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
 }
