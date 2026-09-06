@@ -263,13 +263,7 @@ template<EscapeFormat Format>
   // Classify a 32-byte unaligned memory slice and return a 32-bit bitmask.
   template <EscapeFormat Format = EscapeFormat::Turtle>
   [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32(
-      const char* data) noexcept {
-#if defined(QLEVER_SIMD_X86)
-    return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
-#else
-    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
-#endif
-  }
+      
 
   // ___________________________________________________________________________
   // Classify a 16-byte unaligned memory slice and return a 16-bit bitmask.
