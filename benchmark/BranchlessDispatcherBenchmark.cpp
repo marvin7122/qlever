@@ -300,37 +300,38 @@ struct BenchmarkDataset {
   std::vector<std::string> stringStorage_;
   std::vector<std::string_view> rawTerms_;
 
-  static BenchmarkDataset generate(size_t numTerms, uint32_t seed = 42) {
+  static BenchmarkDataset generate(size_t numTerms, uint32_t seed = 42,
+                                     double iriRatio = 0.5,
+                                     double literalRatio = 0.3,
+                                     double blankNodeRatio = 0.1,
+                                     double intRatio = 0.1) {
     BenchmarkDataset ds;
     ds.ids_.reserve(numTerms);
     ds.stringStorage_.reserve(numTerms);
     ds.rawTerms_.reserve(numTerms);
 
     std::mt19937 gen(seed);
-    std::uniform_int_distribution<int> dist(0, 99);
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
 
     for (size_t i = 0; i < numTerms; ++i) {
-      int roll = dist(gen);
-      if (roll < 50) {
-        // 50% IRIs
+      double roll = dist(gen);
+      double cum = 0.0;
+      if ((cum += iriRatio) > roll) {
         ds.ids_.push_back(ValueId::makeFromVocabIndex(VocabIndex::make(i)));
         ds.stringStorage_.push_back("http://example.org/entity/resource_" +
                                     std::to_string(i % 10000));
         ds.rawTerms_.push_back(ds.stringStorage_.back());
-      } else if (roll < 80) {
-        // 30% Literals
+      } else if ((cum += literalRatio) > roll) {
         ds.ids_.push_back(
             ValueId::makeFromTextRecordIndex(TextRecordIndex::make(i)));
         ds.stringStorage_.push_back("Sample textual literal term value " +
                                     std::to_string(i % 5000));
         ds.rawTerms_.push_back(ds.stringStorage_.back());
-      } else if (roll < 90) {
-        // 10% Blank Nodes
+      } else if ((cum += blankNodeRatio) > roll) {
         ds.ids_.push_back(
             ValueId::makeFromBlankNodeIndex(BlankNodeIndex::make(i % 100000)));
         ds.rawTerms_.push_back("");
       } else {
-        // 10% Integers
         ds.ids_.push_back(ValueId::makeFromInt(static_cast<int64_t>(i * 31 + 7)));
         ds.rawTerms_.push_back("");
       }
