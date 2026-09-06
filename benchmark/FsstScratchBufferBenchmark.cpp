@@ -21,6 +21,8 @@ namespace {
 
 
 
+
+// _____________________________________________________________________________
 class FsstScratchBufferBenchmark : public BenchmarkInterface {
  private:
   // Model a fixed three-stage repeated-FSST decode pipeline.
