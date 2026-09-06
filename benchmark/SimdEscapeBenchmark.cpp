@@ -157,6 +157,27 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
     BenchmarkResults results;
     const double totalMB = static_cast<double>(dataset_.totalBytes) / (1024.0 * 1024.0);
     const size_t numLiterals = dataset_.literals.size();
+    const double totalGB = static_cast<double>(dataset_.totalBytes) / 1e9;
+
+    // Helper to run a measurement, time it, and populate common metadata.
+    auto runMeasurement = [&](BenchmarkGroup& group,
+                              std::string_view name,
+                              auto&& benchmarkLambda,
+                              double inputBytes = dataset_.totalBytes,
+                              size_t* outCounter = nullptr) {
+      auto start = std::chrono::high_resolution_clock::now();
+      auto& m = group.addMeasurement(name, std::forward<decltype(benchmarkLambda)>(benchmarkLambda));
+      auto end = std::chrono::high_resolution_clock::now();
+      double seconds = std::chrono::duration<double>(end - start).count();
+      double throughputGBs = (inputBytes / 1e9) / seconds;
+
+      m.metadata().addKeyValuePair("total-bytes-mb", totalMB);
+      m.metadata().addKeyValuePair("throughput-gb-s", throughputGBs);
+      if (outCounter) {
+        m.metadata().addKeyValuePair("escapes-found", *outCounter);
+      }
+      return m;
+    };
 
     // =========================================================================
     // Group 1: Scanning & Classification Throughput
@@ -167,25 +188,78 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
       // Baseline: Scalar Turtle Scan
       {
         size_t totalEscapesFound = 0;
-        auto start = std::chrono::high_resolution_clock::now();
-        auto& m = group.addMeasurement("Scalar character-by-character scan (Turtle)", [&]() {
-          size_t count = 0;
-          for (const auto& lit : dataset_.literals) {
-            if (scalarFindFirstEscapeTurtle(lit) != std::string_view::npos) {
-              ++count;
-            }
-          }
-          totalEscapesFound = count;
-          return dataset_.totalBytes;
-        });
-        auto end = std::chrono::high_resolution_clock::now();
-        double seconds = std::chrono::duration<double>(end - start).count();
-        double throughputGBs = (static_cast<double>(dataset_.totalBytes) / 1e9) / seconds;
-
-        m.metadata().addKeyValuePair("total-bytes-mb", totalMB);
-        m.metadata().addKeyValuePair("total-literals", numLiterals);
-        m.metadata().addKeyValuePair("throughput-gb-s", throughputGBs);
-        m.metadata().addKeyValuePair("escapes-found", totalEscapesFound);
+        runMeasurement(group, "Scalar character-by-character scan (Turtle)",
+                       [&]() {
+                         size_t count = 0;
+                         for (const auto& lit : dataset_.literals) {
+                           if (scalarFindFirstEscapeTurtle(lit) != std::string_view::npos) {
+                             ++count;
+                           }
+                         }
+                         totalEscapesFound = count;
+                         return dataset_.totalBytes;
+                       },
+                       dataset_.totalBytes, &totalEscapesFound);
+        runMeasurement(group, "SimdEscapeClassifier::findFirstEscape (Turtle AVX2)",
+                       [&]() {
+                         size_t count = 0;
+                         for (const auto& lit : dataset_.literals) {
+                           if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Turtle>(lit)) {
+                             ++count;
+                           }
+                         }
+                         totalEscapesFound = count;
+                         return dataset_.totalBytes;
+                       },
+                       dataset_.totalBytes, &totalEscapesFound);
+        runMeasurement(group, "Scalar character-by-character scan (CSV)",
+                       [&]() {
+                         size_t count = 0;
+                         for (const auto& lit : dataset_.literals) {
+                           if (scalarFindFirstEscapeCsv(lit) != std::string_view::npos) {
+                             ++count;
+                           }
+                         }
+                         totalEscapesFound = count;
+                         return dataset_.totalBytes;
+                       },
+                       dataset_.totalBytes, &totalEscapesFound);
+        runMeasurement(group, "SimdEscapeClassifier::findFirstEscape (CSV AVX2)",
+                       [&]() {
+                         size_t count = 0;
+                         for (const auto& lit : dataset_.literals) {
+                           if (SimdEscapeClassifier::hasEscapes<EscapeFormat::CsvSpecial>(lit)) {
+                             ++count;
+                           }
+                         }
+                         totalEscapesFound = count;
+                         return dataset_.totalBytes;
+                       },
+                       dataset_.totalBytes, &totalEscapesFound);
+        runMeasurement(group, "Scalar character-by-character scan (TSV)",
+                       [&]() {
+                         size_t count = 0;
+                         for (const auto& lit : dataset_.literals) {
+                           if (scalarFindFirstEscapeTsv(lit) != std::string_view::npos) {
+                             ++count;
+                           }
+                         }
+                         totalEscapesFound = count;
+                         return dataset_.totalBytes;
+                       },
+                       dataset_.totalBytes, &totalEscapesFound);
+        runMeasurement(group, "SimdEscapeClassifier::findFirstEscape (TSV AVX2)",
+                       [&]() {
+                         size_t count = 0;
+                         for (const auto& lit : dataset_.literals) {
+                           if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Tsv>(lit)) {
+                             ++count;
+                           }
+                         }
+                         totalEscapesFound = count;
+                         return dataset_.totalBytes;
+                       },
+                       dataset_.totalBytes, &totalEscapesFound);
       }
 
       // SIMD Vector Scan (Turtle)
