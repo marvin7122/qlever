@@ -31,6 +31,7 @@
 #include <string_view>
 
 #include "util/TypeTraits.h"
+#include "util/StringUtils.h"
 #include <utility>
 
 namespace detail {
@@ -127,7 +128,7 @@ class FsstDecoder {
   // should use `decompressInto` instead.
   [[nodiscard]] std::string decompress(std::string_view str) const {
     const size_t bound = maxDecompressedSize(str);
-    std::string result = detail::decompressToOwnedString(
+    std::string result = ad_utility::decodeToOwnedString(
         bound, [this, str](ql::span<char> out) {
           return decompressInto(str, out);
         });
