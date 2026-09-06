@@ -167,9 +167,8 @@ TEST(FastIntToStringTest, FormatIntBranchless) {
 
   auto testValue = [&](int64_t val) {
     char* end = formatIntBranchless(val, buf);
-    std::string expected = std::to_string(val);
-    std::string actual(buf, end - buf);
-    EXPECT_EQ(actual, expected) << "Failed on int64 value: " << val;
+    std::string_view actual(buf, end - buf);
+    EXPECT_EQ(actual, std::to_string(val)) << "Failed on int64 value: " << val;
   };
 
   testValue(0);
