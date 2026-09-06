@@ -298,8 +298,9 @@ struct BranchingIfElseDispatcher {
 // Distribute 50% IRIs, 30% literals, 10% blank nodes, 10% integers.
 struct BenchmarkDataset {
   std::vector<ValueId> ids_;
-  std::vector<std::string> stringStorage_;
   std::vector<std::string_view> rawTerms_;
+ private:
+  std::vector<std::string> stringStorage_;
 
   static BenchmarkDataset generate(size_t numTerms, uint32_t seed = 42,
                                      double iriRatio = 0.5,
