@@ -47,12 +47,7 @@ TEST(PrefetchingBatchResolver, ConfigurationInvariants) {
 
 
 TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
-  std::string kg =
-      "<s> <p> \"first\" . <s> <p> \"second\" . <s> <p> \"third\" . <s> <p> "
-      "\"fourth\" . <s> <p> 123 . <s> <p> <http://example.org/resource> .";
-  auto qec = ad_utility::testing::getQec(kg);
-  const auto& index = qec->getIndex();
-  auto getId = ad_utility::testing::makeGetId(index);
+  
 
   std::vector<Id> testIds = {
       getId("\"first\""),
