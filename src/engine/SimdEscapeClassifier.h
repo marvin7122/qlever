@@ -70,7 +70,7 @@ class ChunkEscapeMask32 {
   }
 };
 
-// Invariant-bearing 16-bit classification mask for a 16-byte SIMD chunk.
+// Describe an invariant-bearing 16-bit classification mask for a 16-byte SIMD chunk.
 class ChunkEscapeMask16 {
  private:
   uint16_t mask_ = 0;
