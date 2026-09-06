@@ -339,12 +339,13 @@ template<EscapeFormat Format>
     size_t len = text.size();
     size_t maskIdx = 0;
 
-    while (len >= 32 && maskIdx < outMasks.size()) {
+        AD_CONTRACT_CHECK(outMasks.size() >= (text.size() + 31) / 32);
+    while (len >= 32) {
       outMasks[maskIdx++] = scanChunk32<Format>(ptr).rawMask();
       ptr += 32;
       len -= 32;
     }
-    if (len > 0 && maskIdx < outMasks.size()) {
+    if (len > 0) {
       uint32_t tailMask = 0;
       for (size_t i = 0; i < len; ++i) {
         if (detail::isEscapeChar<Format>(ptr[i])) {
