@@ -126,16 +126,19 @@ class PerfCounterMonitor {
         read(fdInstructions_, &m.instructions, sizeof(m.instructions)) > 0 &&
         read(fdBranches_, &m.branches, sizeof(m.branches)) > 0) {
       m.available = true;
-            if (fdBranchMisses_ >= 0) {
+      bool branchMissesAvailable = false;
+      if (fdBranchMisses_ >= 0) {
         auto res = read(fdBranchMisses_, &m.branchMisses, sizeof(m.branchMisses));
-        if (res <= 0) {
+        if (res > 0) {
+          branchMissesAvailable = true;
+        } else {
           m.branchMisses = 0;
         }
       }
       if (m.cycles > 0) {
         m.ipc = static_cast<double>(m.instructions) / static_cast<double>(m.cycles);
       }
-      if (m.branches > 0 && fdBranchMisses_ >= 0) {
+      if (m.branches > 0 && branchMissesAvailable) {
         m.branchMissRate =
             static_cast<double>(m.branchMisses) / static_cast<double>(m.branches) * 100.0;
       }
