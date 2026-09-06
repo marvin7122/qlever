@@ -307,7 +307,7 @@ struct BenchmarkDataset {
                                      double literalRatio = 0.3,
                                      double blankNodeRatio = 0.1,
                                      double intRatio = 0.1) {
-    BenchmarkDataset ds;
+    auto ds = BenchmarkDataset{};
     ds.ids_.reserve(numTerms);
     ds.stringStorage_.reserve(numTerms);
     ds.rawTerms_.reserve(numTerms);
