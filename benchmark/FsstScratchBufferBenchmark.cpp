@@ -79,13 +79,7 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
           outputCapacity_,
           FsstRepeatedDecoder<numberOfStages>::maxDecompressedSize(compressed));
     }
-    intermediateCapacity_ = outputCapacity_ / FsstDecoder::maxExpansionFactor;
-  }
-
-  std::string name() const final { return "FSST scratch buffer strategies"; }
-
-  BenchmarkResults runAllBenchmarks() final {
-    BenchmarkResults results;
+    
     auto& group = results.addGroup(
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
     const auto parseEnvironmentSize = [](const char* value,
