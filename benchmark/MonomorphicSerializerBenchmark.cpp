@@ -148,17 +148,24 @@ struct DatasetStorage {
   // String pool keeping views valid across runs
   std::vector<std::string> stringPool_;
 
-  // Pre-allocated rows for each schema
+  // Pre-allocated rows for each schema (CellValue arrays)
+  // Schema: <IRI, IRI, LITERAL> — standard RDF triples
   std::vector<std::array<CellValue, 3>> tripleRows_;
+  // Schema: <IRI, IRI, INT> — metric/property rows
   std::vector<std::array<CellValue, 3>> metricRows_;
+  // Schema: <IRI, LITERAL, INT, DOUBLE> — 4-column relational
   std::vector<std::array<CellValue, 4>> relationalRows_;
+  // Schema: <IRI, IRI, IRI> — graph edges (subject, type, class)
   std::vector<std::array<CellValue, 3>> graphEdgeRows_;
 
-  // Typed tuples for monomorphic direct testing
+  // Typed tuples for monomorphic direct testing (avoid CellValue overhead)
+  // Matches tripleRows_: (subject IRI, predicate IRI, object literal)
   std::vector<std::tuple<std::string_view, std::string_view, std::string_view>>
       tripleTuples_;
+  // Matches metricRows_: (subject IRI, predicate IRI, integer value)
   std::vector<std::tuple<std::string_view, std::string_view, int64_t>>
       metricTuples_;
+  // Matches relationalRows_: (subject IRI, literal, int, double)
   std::vector<std::tuple<std::string_view, std::string_view, int64_t, double>>
       relationalTuples_;
 };
