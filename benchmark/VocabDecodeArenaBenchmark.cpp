@@ -197,7 +197,10 @@ int main(int argc, char** argv) {
     Vocab vocab;
   vocab.open(opt.vocab);
   const size_t vocabSize = vocab.size();
-  AD_CONTRACT_CHECK(vocabSize > 0);
+  if (vocabSize == 0) {
+    std::cerr << "Error: vocabulary is empty or failed to open: " << opt.vocab << "\n";
+    return 1;
+  }
 
 
   const size_t totalBatches = opt.warmupBatches + opt.timedBatches;
