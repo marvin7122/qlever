@@ -47,6 +47,10 @@ double measure(const std::vector<std::string>& inputs, size_t length) {
       std::chrono::duration<double, std::nano>(elapsed).count();
   static volatile size_t observedChecksum;
   observedChecksum = checksum;
+  // A discarded read counts as a use and keeps `-Wunused-but-set-variable`
+  // quiet; the volatile store itself already pins the value against
+  // dead-store elimination.
+  (void)observedChecksum;
   return nanoseconds / bytes;
 }
 
