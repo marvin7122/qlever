@@ -4,7 +4,7 @@
 // Note: UFR stands for University of Freiburg, Chair of Algorithms and Data Structures
 //
 // State that this file may be used only under the Apache 2.0 License,
-// which can be found in the `LICENSE` file at the root of the QLever project.
+// Direct the reader to the LICENSE file in the project root for details.
 
 #ifndef QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
 #define QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
