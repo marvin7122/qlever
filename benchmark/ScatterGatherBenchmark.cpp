@@ -237,6 +237,7 @@ class ScatterGatherBenchmarkRunner {
   static ScatterGatherBenchmarkMetric runKernelScatterGatherTransmission(
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = kDefaultChunkSize) {
+    // RAII wrapper for a file descriptor.
     class ScopedFd {
      public:
       explicit ScopedFd(int fd = -1) noexcept : fd_(fd) {}
