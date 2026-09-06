@@ -285,6 +285,7 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) n
 
 [[nodiscard]] inline std::string formatQidToString(uint64_t id) {
   const size_t totalLen = WIKIDATA_ENTITY_PREFIX.size() + numDigits(id);
+  AD_CONTRACT_CHECK(totalLen > 0);
   std::string s;
   s.resize(totalLen);
   formatQid(id, s.data());
