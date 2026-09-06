@@ -315,6 +315,4 @@ class BranchlessTypeDispatcher {
   }
 };
 
-}  // namespace ql::engine
 
-#endif  // QLEVER_SRC_ENGINE_BRANCHLESSTYPEDISPATCHER_H
