@@ -9,7 +9,6 @@
 #include <string_view>
 #include <vector>
 
-#include "../util/GTestHelpers.h"
 #include "engine/SimdEscapeClassifier.h"
 
 using namespace ad_utility::simd;
