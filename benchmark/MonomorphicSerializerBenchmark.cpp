@@ -347,7 +347,7 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
         size_t totalBytes = 0;
 
         auto& m = group.addMeasurement(
-            "4. Fast-Path Template Dispatch (CSV)", [&]() {
+            "4. Fast-Path Template Dispatch (CSV)", [&, schema]() {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
