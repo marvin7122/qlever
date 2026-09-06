@@ -13,6 +13,7 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <random>
 #include <string>
 #include <string_view>
@@ -39,11 +40,8 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
     BenchmarkResults results{};
 
     // Generate test data: 1,000,000 integers
-    std::vector<int64_t> sequentialInts;
-    sequentialInts.reserve(NUM_INTEGERS);
-    for (size_t i = 1; i <= NUM_INTEGERS; ++i) {
-      sequentialInts.push_back(static_cast<int64_t>(i));
-    }
+    std::vector<int64_t> sequentialInts(NUM_INTEGERS);
+    std::iota(sequentialInts.begin(), sequentialInts.end(), int64_t{1});
 
     std::vector<int64_t> randomInts;
     randomInts.reserve(NUM_INTEGERS);
