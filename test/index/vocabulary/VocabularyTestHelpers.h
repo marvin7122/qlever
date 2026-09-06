@@ -303,8 +303,8 @@ std::vector<std::pair<uint64_t, std::string>> scanAllToIndexAndWordVector(
 inline constexpr std::array<std::string_view, 4> defaultTestWords{
     "alpha", "beta", "delta", "gamma"};
 
-// Feed `words` into an already-constructed word `writer` and `finish()` it. The
-// `words` must be sorted.
+// Feed `words` into an already‑constructed `Writer` object and `finish()` it.
+// The `Writer` must accept `(std::string_view, bool)` and have a `void finish()` method; `words` must be sorted.
 template <typename Writer, typename Range = ql::span<const std::string_view>>
 void writeWordsAndFinish(Writer& writer,
                          const Range& words = defaultTestWords) {
