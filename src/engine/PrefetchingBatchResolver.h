@@ -81,8 +81,8 @@ private:
 //   pre-sized caller result spans.
 // - Defines edge cases away: gracefully handles empty inputs and inputs
 //   smaller than the prefetch distance.
-class PrefetchingBatchResolver {
- public:
+struct PrefetchingBatchResolver {
+
   static constexpr size_t DEFAULT_PREFETCH_DISTANCE = 8;
 
  private:
