@@ -166,7 +166,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::Undefined)] =
       TypeFormatDescriptor{"", "", &formatUndefined};
 
-  // 1: Bool
+  
   lut[static_cast<size_t>(Datatype::Bool)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", &formatBoolean};
 
