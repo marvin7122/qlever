@@ -48,7 +48,6 @@ struct ExportStreamSummary {
 
 namespace detail {
 
-// Fast 256-entry lookup tables for character class checks.
 constexpr std::array<bool, 256> makeCsvSpecialTable() {
   std::array<bool, 256> table{};
   table[static_cast<uint8_t>(',')] = true;
