@@ -168,13 +168,7 @@ inline char* emitEscape(char c, char* dest) noexcept {
 #if defined(QLEVER_SIMD_X86)
 
 // Perform AVX2 32-byte vector classification.
-template <EscapeFormat Format>
-QLEVER_AVX2_TARGET [[nodiscard]] inline uint32_t scanChunk32Avx2(
-    const char* data) noexcept {
-  __m256i chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data));
-  if constexpr (Format == EscapeFormat::Turtle) {
-    __m256i m1 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('"'));
-    __m256i m2 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\\'));
+
     __m256i m3 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\n'));
     __m256i m4 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\r'));
     __m256i match =
