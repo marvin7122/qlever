@@ -219,10 +219,14 @@ struct MonomorphicCellWriter {
       } else {
         writer.writeRaw(cell.stringVal_);
       }
-    } else {
+        } else {
       // ColumnType::Undefined
       if constexpr (Format == ExportFormat::Turtle || Format == ExportFormat::NTriples) {
         writer.writeRaw("UNDEF");
+      } else if constexpr (Format == ExportFormat::Csv || Format == ExportFormat::Tsv) {
+        writer.writeRaw("");
+      } else {
+        AD_CONTRACT_CHECK(false, "Unhandled export format for Undefined column type");
       }
     }
   }
