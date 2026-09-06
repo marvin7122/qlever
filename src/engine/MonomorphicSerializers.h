@@ -173,13 +173,7 @@ namespace detail {
 template <typename Writer>
 inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   
-}
 
-// _____________________________________________________________________________
-// Monomorphic cell serializer specialized by compile-time ColumnType and ExportFormat.
-template <ColumnType Type, ExportFormat Format>
-struct MonomorphicCellWriter {
-  template <typename Writer>
   static void write(Writer& writer, const CellValue& cell) {
     if constexpr (Type == ColumnType::Iri) {
       if constexpr (Format == ExportFormat::Csv) {
