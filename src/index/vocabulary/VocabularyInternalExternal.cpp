@@ -29,7 +29,7 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 // Partition input indices into internal-vocabulary hits and indices that must
 // be resolved by the external vocabulary, while keeping their positions in the
 // original input. Keeping the two groups separate allows each vocabulary to be
-// batch-looked-up independently; the stored result positions are required to
+// looked up in batches independently; the stored result positions are required to
 // restore the original request order when the sub-results are assembled.
 struct IndexPartition {
   MarkerIndicesAndPositions internalSlots_;
