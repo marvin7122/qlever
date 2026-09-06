@@ -249,7 +249,7 @@ class AsyncChunkPipeline
   // ___________________________________________________________________________
   // Wrap an existing synchronous `cppcoro::generator` with asynchronous double-buffering.
   //
-  // Spawns a dedicated background worker to evaluate and buffer chunks ahead
+  // Spawn a dedicated background worker to evaluate and buffer chunks ahead of the consumer, overlapping compute and network I/O.
   // of the consumer, overlapping compute and network I/O.
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
   static cppcoro::generator<ChunkType> makeDoubleBuffered(
