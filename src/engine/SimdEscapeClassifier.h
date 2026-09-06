@@ -300,6 +300,10 @@ class SimdEscapeClassifier {
   // Scan an arbitrary string slice for escape characters using vectorized SIMD.
   // Returns the index of the first escape character, or std::string_view::npos.
   template <EscapeFormat Format = EscapeFormat::Turtle>
+  /// \brief Returns the index of the first escape character in @p text, or std::string_view::npos if none.
+  /// \tparam Format The escape format to use (defaults to Turtle).
+  /// \param text The input string view to scan.
+  /// \return Index of first escape character, or std::string_view::npos.
   [[nodiscard]] static inline size_t findFirstEscape(
       std::string_view text) noexcept {
     const char* ptr = text.data();
