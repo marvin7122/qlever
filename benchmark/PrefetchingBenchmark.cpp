@@ -215,13 +215,7 @@ class HardwarePerformanceMonitor {
 class PrefetchingBenchmark : public BenchmarkInterface {
  private:
   static constexpr size_t NUM_VOCAB_ENTRIES = 1'000'000;
-  static constexpr size_t NUM_LOOKUP_IDS = 500'000;
-
-  CompactVectorOfStrings<char> vocabWords_;
-  std::vector<Id> lookupIds_;
-  std::vector<size_t> lookupPositions_;
-
- public:
+  
   PrefetchingBenchmark() {
     setupSyntheticVocabulary();
   }
