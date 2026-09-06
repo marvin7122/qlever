@@ -111,16 +111,15 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
 
   // ___________________________________________________________________________
   // Execute synchronous lockstep export for a given configuration.
-  BenchmarkRunResult runSyncLockstep(size_t chunkSize, size_t latencyMs) const {
-    const size_t numChunks = (totalTriples_ + chunkSize - 1) / chunkSize;
+    BenchmarkRunResult runSyncLockstep(size_t chunkSize, size_t latencyMs) const {
+    const size_t numChunks = computeNumChunks(totalTriples_, chunkSize);
     const auto latency = std::chrono::milliseconds(latencyMs);
 
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
     size_t totalBytes = 0;
 
     for (size_t c = 0; c < numChunks; ++c) {
-      const size_t currentChunkSize =
-          std::min(chunkSize, totalTriples_ - c * chunkSize);
+      const size_t currentChunkSize = computeCurrentChunkSize(chunkSize, totalTriples_, c);
 
       // Phase 1: CPU evaluates and formats chunk (lockstep: network sits idle)
       std::string chunk = generateRdfChunk(currentChunkSize, c);
@@ -133,7 +132,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     timer.stop();
     const double duration =
         ad_utility::timer::Timer::toSeconds(timer.value());
-    const double mb = static_cast<double>(totalBytes) / (1024.0 * 1024.0);
+    auto [throughputMBPerSec, throughputTriplesPerSec] = computeThroughput(totalBytes, totalTriples_, duration);
 
     return BenchmarkRunResult{
         .mode = "Sync Lockstep",
@@ -142,9 +141,8 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
         .totalTriples = totalTriples_,
         .totalBytes = totalBytes,
         .durationSeconds = duration,
-        .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
-        .throughputTriplesPerSec =
-            duration > 0 ? (static_cast<double>(totalTriples_) / duration) : 0.0,
+        .throughputMBPerSec = throughputMBPerSec,
+        .throughputTriplesPerSec = throughputTriplesPerSec,
     };
   }
 
