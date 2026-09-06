@@ -38,13 +38,7 @@ struct Options {
   size_t startIndex = 0;
 };
 
-void usage(const char* argv0) {
-  std::cerr
-      << "Usage: " << argv0
-      << " --vocab <prefix> --arm copy|into --layer 0|1"
-         " [--batch-size 1024] [--warmup-batches 100] [--timed-batches 10000]"
-         " [--start-index 0]\n"
-         "  prefix is the path passed to CompressedVocabulary::open\n"
+
          "  (Wikidata: .../wikidata.vocabulary).\n";
 }
 
