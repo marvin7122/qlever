@@ -192,6 +192,10 @@ return config_.prefetchDistance;
     const auto offsets = words.offsetsSpan();
     const auto data = words.dataSpan();
 
+    AD_EXPENSIVE_CHECK(ql::ranges::all_of(indices, [&offsets](size_t idx) {
+      return idx + 1 < offsets.size();
+    }));
+
     results.resize(n);
 
     // Stage 1 warmup: prefetch offset table lines for the first `distance` items
