@@ -178,13 +178,7 @@ inline void writeFormattedDouble(Writer& writer, double val) noexcept {
       if constexpr (Format == ExportFormat::Csv) {
         writer.writeEscapedCsv(cell.stringVal_);
       } else if constexpr (Format == ExportFormat::Tsv) {
-        writer.writeEscapedTsv(cell.stringVal_);
-      } else {
-        writer.writeEscapedTurtleLiteral(cell.stringVal_);
-      }
-    } else if constexpr (Type == ColumnType::Int) {
-      writer.writeInteger(cell.intVal_);
-    } else if constexpr (Type == ColumnType::Double) {
+        
       writeFormattedDouble(writer, cell.doubleVal_);
     } else if constexpr (Type == ColumnType::BlankNode) {
       writer.writeRaw(cell.stringVal_);
