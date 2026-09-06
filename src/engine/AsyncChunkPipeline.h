@@ -301,7 +301,7 @@ class AsyncChunkPipeline
   }
 
   // ___________________________________________________________________________
-  // High-Level Adapter: Stream chunks from a producer callable into a
+  // High-Level Adapter: Stream chunks from a producer callable into a double-buffered generator.
   // double-buffered generator.
   //
   //  and calls `ChunkSink<ChunkType>& sink` and calls `sink.push()`.
