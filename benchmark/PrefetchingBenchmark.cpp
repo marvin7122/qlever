@@ -61,12 +61,7 @@ class HardwarePerformanceMonitor {
     }
   };
 
- private:
-  bool supported_{false};
-  int fdCycles_{-1};
-  int fdInstructions_{-1};
-  int fdL1dAccess_{-1};
-  int fdL1dMiss_{-1};
+ 
   int fdLlcAccess_{-1};
   int fdLlcMiss_{-1};
   int fdCacheMiss_{-1};
