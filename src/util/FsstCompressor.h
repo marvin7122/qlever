@@ -211,13 +211,7 @@ class FsstRepeatedDecoder {
       // For even `N`, write the first stage to `scratch` and the last to `out`.
       // For odd `N`, write the first and last stages to `out`.
       size_t targetBufferIdx = (N % 2 == 0) ? 1 : 0;
-      std::string_view input = str;
-      size_t bytesWritten = 0;
-      for (const auto& decoder : decoders_ | ::ranges::views::reverse) {
-        bytesWritten =
-            decoder.decompressInto(input, buffers[targetBufferIdx]);
-        input = std::string_view{buffers[targetBufferIdx].data(), bytesWritten};
-        targetBufferIdx ^= 1;
+      
       }
       return bytesWritten;
     }
