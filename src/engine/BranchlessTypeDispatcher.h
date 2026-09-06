@@ -38,13 +38,7 @@ struct TypeFormatDescriptor {
                                  std::string_view suffix,
                                  TermFormatterFn formatFn) noexcept
       : prefix_{prefix}, suffix_{suffix}, formatFn_{formatFn} {}
-};
 
-namespace detail {
-
-// Fast branchless copy for terms with opening and closing delimiters.
-inline char* formatTermWithDelimiters(ValueId, std::string_view rawTerm,
-                                     char* out, std::string_view prefix,
                                      std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
