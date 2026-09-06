@@ -106,8 +106,10 @@ struct CellValue {
   explicit constexpr CellValue(int v) noexcept
       : type_(ColumnType::Int), intVal_(v) {}
 
-  explicit constexpr CellValue(uint64_t v) noexcept
-      : type_(ColumnType::Int), intVal_(static_cast<int64_t>(v)) {}
+  explicit CellValue(uint64_t v) noexcept
+      : type_(ColumnType::Int), intVal_(static_cast<int64_t>(v)) {
+    AD_CONTRACT_CHECK(v <= static_cast<uint64_t>(INT64_MAX));
+  }
 
   explicit constexpr CellValue(double v) noexcept
       : type_(ColumnType::Double), doubleVal_(v) {}
