@@ -311,13 +311,7 @@ template<EscapeFormat Format>
 #endif
 
     // Tail: 0 to 15 remaining bytes
-        while (len > 0) {
-      if (detail::isEscapeChar<Format>(*ptr)) {
-        return offset;
-      }
-      ++ptr;
-      --len;
-      ++offset;
+        
     }
     return std::string_view::npos;
   }
