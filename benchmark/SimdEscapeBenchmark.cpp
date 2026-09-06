@@ -26,6 +26,10 @@ namespace {
 using namespace ad_utility::simd;
 
 // Generate a realistic synthetic literal dataset targeting ~100 MB.
+/**
+ * Dataset container for synthetic RDF literals used in escape benchmarks.
+ * Holds generated literal strings and their total byte count.
+ */
 struct LiteralDataset {
   std::vector<std::string> literals;
   size_t totalBytes = 0;
