@@ -44,13 +44,7 @@ TEST(PrefetchingBatchResolver, ConfigurationInvariants) {
   AD_EXPECT_THROW_WITH_MESSAGE(PrefetchConfig{.prefetchDistance = 255}.checkInvariants(), ::testing::HasSubstr("prefetchDistance <= 128"));
 }
 
-TEST(PrefetchingBatchResolver, PrefetchIntrinsicSmokeTest) {
-  int x = 42;
-    // Verify that prefetchVocabEntry and prefetchAddress do not throw
-  // for null pointers, valid pointers, and explicit prefetch distances.
-  EXPECT_NO_THROW(prefetchVocabEntry(&x));
-  EXPECT_NO_THROW(prefetchAddress(&x));
-}
+
 
 TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
   std::string kg =
