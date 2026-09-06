@@ -12,7 +12,7 @@
 #include "backports/span.h"
 #include "index/vocabulary/PrefixCompressor.h"
 #include "index/vocabulary/PrefixHeuristic.h"
-#include "util/GTestHelpers.h"
+
 #include "util/Views.h"
 
 TEST(PrefixCompressor, CompressionPreservesWords) {
