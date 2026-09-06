@@ -143,16 +143,18 @@ class PinnedArena : public WithInvariants<PinnedArena> {
     numSlots_ = numSlots;
     totalBytes_ = numSlots * slotSizeBytes;
 
-    int ret = posix_memalign(&rawBuffer_, kDirectIoAlignment, totalBytes_);
-    if (ret != 0 || rawBuffer_ == nullptr) {
+    void* allocatedPtr = nullptr;
+    int ret = posix_memalign(&allocatedPtr, kDirectIoAlignment, totalBytes_);
+    if (ret != 0 || allocatedPtr == nullptr) {
       AD_THROW("posix_memalign failed to allocate pinned buffer arena");
     }
+    rawBuffer_.reset(allocatedPtr);
 
     // Invariant-checked descriptor
-    std::memset(rawBuffer_, 0, totalBytes_);
+    std::memset(rawBuffer_.get(), 0, totalBytes_);
 
     iovecs_.reserve(numSlots_);
-    auto* basePtr = static_cast<char*>(rawBuffer_);
+    auto* basePtr = static_cast<char*>(rawBuffer_.get());
     for (size_t i = 0; i < numSlots_; ++i) {
       iovecs_.push_back(
           iovec{.iov_base = basePtr + (i * slotSize_), .iov_len = slotSize_});
