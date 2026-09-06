@@ -339,7 +339,8 @@ class ScatterGatherChunkStreamer
   }
 
   // ___________________________________________________________________________
-  // Append a zero-copy arena span referencing external memory pages.
+    // Append an arena span, zero-copying it if it exceeds the threshold,
+  // otherwise copying it into the header buffer to avoid iovec explosion.
   void writeArenaSpan(ql::span<const char> span) {
     if (span.empty()) {
       return;
