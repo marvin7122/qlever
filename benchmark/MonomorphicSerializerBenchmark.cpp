@@ -4,7 +4,7 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <atomic>
-#include <chrono>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
