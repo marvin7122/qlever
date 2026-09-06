@@ -209,7 +209,7 @@ int main(int argc, char** argv) {
   const size_t totalBatches = opt.warmupBatches + opt.timedBatches;
   adviseWillNeed(opt.vocab + ".words");
 
-  std::vector<std::vector<FixtureWord>> fixture;
+    std::vector<std::vector<FixtureWord>> fixtures;
   std::vector<std::vector<size_t>> indexBatches;
   indexBatches.reserve(totalBatches);
   for (size_t b = 0; b < totalBatches; ++b) {
