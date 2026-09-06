@@ -226,6 +226,7 @@ class FastExportStreamFormatter
   }
 
   // ___________________________________________________________________________
+  // Write an IRI or blank node. If already wrapped in <> or starts with _: it is written as-is; otherwise wrapped in <>.
   void writeIri(std::string_view iri) {
     if (ql::starts_with(iri, '<') && ql::ends_with(iri, '>')) {
       writeRaw(iri);
