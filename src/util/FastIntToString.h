@@ -286,7 +286,9 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) n
   return s;
 }
 
+// Why: returns a std::string containing the signed integer, pre‑sized to avoid reallocations.
 [[nodiscard]] inline std::string formatIntToString(int64_t val) {
+
   const bool negative = val < 0;
   const uint64_t uval = negative ? (static_cast<uint64_t>(0) - static_cast<uint64_t>(val))
                                  : static_cast<uint64_t>(val);
