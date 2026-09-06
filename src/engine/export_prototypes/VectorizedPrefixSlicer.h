@@ -72,7 +72,11 @@ class VectorizedPrefixTable {
   // Write a well-known prefix into `out` using 128-bit vector stores.
   // Return the number of bytes written.
   [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id, char* out) const noexcept {
-    const auto& entry = entries_[static_cast<size_t>(id)];
+    const size_t idx = static_cast<size_t>(id);
+    if (idx >= entries_.size()) {
+      return 0;
+    }
+    const auto& entry = entries_[idx];
     std::memcpy(out, entry.data, entry.length);
     return entry.length;
   }
