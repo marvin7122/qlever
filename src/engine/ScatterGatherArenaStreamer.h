@@ -390,7 +390,8 @@ class ScatterGatherChunkStreamer
       return;
     }
 
-    // Encoded literal value (e.g. integer, decimal, boolean, double)
+        // Encoded literal value (e.g. integer, decimal, boolean, double)
+    // TODO<marvin> Extend short-form handling to double/float and other XSD numeric types.
     const bool includeDataType = (format == ExportFormat::NTriples);
     const auto* i = static_cast<const char*>(XSD_INT_TYPE);
     const auto* d = static_cast<const char*>(XSD_DECIMAL_TYPE);
