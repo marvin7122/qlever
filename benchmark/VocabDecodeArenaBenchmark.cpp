@@ -175,15 +175,15 @@ DecodeStats runLookupBatch(const Vocab& vocab, ql::span<const size_t> indices) {
 }
 
 std::vector<size_t> makeIndices(size_t start, size_t batch, size_t vocabSize) {
-  std::vector<size_t> idx;
-  idx.reserve(batch);
+  std::vector<size_t> indices;
+  indices.reserve(batch);
   size_t cur = start % vocabSize;
   for (size_t i = 0; i < batch; ++i) {
-    idx.push_back(cur);
+    indices.push_back(cur);
     ++cur;
     if (cur == vocabSize) cur = 0;
   }
-  return idx;
+  return indices;
 }
 
 }  // namespace
