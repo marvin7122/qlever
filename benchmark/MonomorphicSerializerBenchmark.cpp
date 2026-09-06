@@ -173,6 +173,13 @@ struct DatasetStorage {
       relationalTuples_;
 };
 
+// Generate a synthetic dataset of 'numRows' rows across four schemas:
+// 1) Triple:        <IRI, IRI, LITERAL>        (RDF subject-predicate-object)
+// 2) Metric:        <IRI, IRI, INT>            (subject, property, integer value)
+// 3) Relational:    <IRI, LITERAL, INT, DOUBLE> (4-column relational)
+// 4) Graph Edge:    <IRI, IRI, IRI>            (subject, rdf:type, class)
+// All strings are owned by stringPool_; string_views in tuples remain valid.
+// Each row vector (CellValue[]) has a matching tuple vector with typed fields.
 DatasetStorage generateBenchmarkDataset(size_t numRows) {
   DatasetStorage data;
   data.stringPool_.reserve(numRows * 4);
