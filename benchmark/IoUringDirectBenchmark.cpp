@@ -414,6 +414,11 @@ void printResultsTable(std::string_view accessMode,
 
 #ifdef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 // Integration into QLever's Benchmark Framework
+/**
+ * QLever benchmark that measures six I/O strategies (sync pread, io_uring
+ * unpinned, io_uring O_DIRECT, registered files, fully registered DMA) on a
+ * 1 GB simulated vocabulary file. Integrated via `AD_REGISTER_BENCHMARK`.
+ */
 class IoUringDirectBenchmark : public BenchmarkInterface {
  public:
   std::string name() const final {
