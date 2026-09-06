@@ -30,7 +30,7 @@
 #include "util/IndexTestHelpers.h"
 
 using namespace ql::engine::prefetch;
-using namespace std::string_literals;
+
 
 namespace {
 
