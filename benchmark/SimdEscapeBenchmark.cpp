@@ -84,7 +84,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
     
     literal.push_back('"');
 
-    // 25% chance of language tag
+    
     if (escapeProbDist(rng) < 25) {
       literal.append("@en");
     }
