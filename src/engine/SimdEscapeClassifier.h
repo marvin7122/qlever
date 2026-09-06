@@ -295,13 +295,7 @@ template<EscapeFormat Format>
   [[nodiscard]] static inline size_t findFirstEscape(
       std::string_view text) noexcept {
     const char* ptr = text.data();
-    size_t len = text.size();
-    size_t offset = 0;
-
-#if defined(QLEVER_SIMD_X86)
-    // Fast path: 32-byte AVX2 vector blocks
-    while (len >= 32) {
-      ChunkEscapeMask32 mask = scanChunk32<Format>(ptr);
+    
       if (mask.hasEscape()) {
         return offset + mask.firstEscapeIndex();
       }
