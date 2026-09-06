@@ -233,15 +233,13 @@ class FsstRepeatedDecoder {
   // Decompress a single string. Callers that already own an output buffer
   // should use `decompressInto` instead.
   std::string decompress(std::string_view str) const {
-    if constexpr (N == 1) {
-      return decoders_[0].decompress(str);
-    } else {
-      std::string current = decoders_[N - 1].decompress(str);
-      for (size_t stage = 1; stage < N; ++stage) {
-        current = decoders_[N - 1 - stage].decompress(current);
-      }
-      return current;
-    }
+    const size_t bound = maxDecompressedSize(str);
+    std::string result = detail::decompressToOwnedString(
+        bound, [this, str](ql::span<char> out) {
+          return decompressInto(str, out);
+        });
+    AD_CORRECTNESS_CHECK(result.size() <= bound);
+    return result;
   }
 
   // ___________________________________________________________________________
