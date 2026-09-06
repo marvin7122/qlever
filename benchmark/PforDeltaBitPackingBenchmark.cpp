@@ -85,7 +85,11 @@ void runComparativeBenchmark() {
   std::cout << ">>> Memory Compression Ratio: "
             << static_cast<double>(baseBytes) / compressedBytes << "x\n";
 
-  std::cout << "\n--- Decompression Throughput ---\n";
+  std::cout << "\n--- Throughput ---\n";
+  std::cout << "Baseline Copy/Scan:     " << baseMs << " ms ("
+            << (TOTAL_IDS / (baseMs / 1000.0)) / 1e6 << " M IDs/sec)\n";
+  std::cout << "PFOR-DELTA Compression: " << compressMs << " ms ("
+            << (TOTAL_IDS / (compressMs / 1000.0)) / 1e6 << " M IDs/sec)\n";
   std::cout << "PFOR-DELTA Decompress:  " << decompressMs << " ms ("
             << (TOTAL_IDS / (decompressMs / 1000.0)) / 1e6 << " M IDs/sec)\n";
   std::cout
