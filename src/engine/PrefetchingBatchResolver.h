@@ -66,7 +66,7 @@ struct PrefetchConfig {
   // Number of rows/iterations to prefetch ahead of the current serialization
   // cursor. Typically 4 to 16 iterations hide DRAM/L3 cache miss latency (~60ns)
   // while keeping L1 cache lines active.
-  size_t prefetchDistance{8};
+  size_t prefetchDistance;
 
   struct Builder {
     size_t prefetchDistance = DEFAULT_PREFETCH_DISTANCE;
