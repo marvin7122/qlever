@@ -15,6 +15,7 @@
 #include "engine/Filter.h"
 #include "engine/ValuesForTesting.h"
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
+#include "engine/sparqlExpressions/JitExpressionCompiler.h"
 #include "engine/sparqlExpressions/LiteralExpression.h"
 #include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/sparqlExpressions/RelationalExpressions.h"
@@ -949,4 +950,56 @@ TEST(JitExpressionBytecodeVmTest, NativeAndFilterEndToEnd) {
   // a in [11, 99] (89 rows): b = 100 - a in [1, 89], all < 90.
   EXPECT_EQ(result->idTableView().size(), 89u);
   EXPECT_EQ(result->idTableView()(0, 0), I(11));
+}
+
+TEST(JitExpressionBytecodeVmTest, NativeYearFilterEndToEnd) {
+  // `YEAR(?d) >= 1800` over a mixed date/int column: the native AsmJit
+  // backend compiles the program (no longer declining date loads) and the
+  // `Filter` engages it through the relaxed `YearExtraction` gate, which
+  // validates the `LOAD_COL_DATE`/`YEAR_DATE` machine-code lowering and
+  // the per-row validity flag (non-`Date` cells drop, even the `Int`
+  // whose value would compare true as a year).
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  auto D = [](int year, int month, int day) {
+    return Id::makeFromDate(DateYearOrDuration(Date(year, month, day)));
+  };
+
+  VariableToColumnMap varColMap;
+  varColMap[Variable{"?d"}] = makeAlwaysDefinedColumn(0);
+  auto yearGe = std::make_unique<GreaterEqualExpression>(
+      std::array<SparqlExpression::Ptr, 2>{
+          makeYearExpression(
+              std::make_unique<VariableExpression>(Variable{"?d"})),
+          std::make_unique<IdExpression>(I(1800))});
+  // The native compiler accepts the date program (previously nullopt).
+  auto optNative = JitExpressionCompiler::compile(*yearGe, varColMap);
+  ASSERT_TRUE(optNative.has_value());
+
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+  IdTable inputTable =
+      makeIdTableFromVector({{D(1850, 5, 1)},    // keep
+                             {D(1800, 1, 1)},    // keep (boundary)
+                             {D(1799, 12, 31)},  // drop
+                             {D(2000, 6, 30)},   // keep
+                             {I(1900)}});        // not a date -> drop
+  ValuesForTesting values{qec, std::move(inputTable), {Variable{"?d"}}, false,
+                          {},  LocalVocab{},          std::nullopt,     true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+  auto expr = std::make_unique<GreaterEqualExpression>(
+      std::array<SparqlExpression::Ptr, 2>{
+          makeYearExpression(
+              std::make_unique<VariableExpression>(Variable{"?d"})),
+          std::make_unique<IdExpression>(I(1800))});
+  Filter filter{qec,
+                std::make_shared<QueryExecutionTree>(std::move(subTree)),
+                {std::move(expr), "YEAR(?d) >= 1800"}};
+  auto result = filter.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  EXPECT_EQ(result->idTableView().size(), 3u);
+  EXPECT_EQ(result->idTableView()(0, 0), D(1850, 5, 1));
+  EXPECT_EQ(result->idTableView()(1, 0), D(1800, 1, 1));
+  EXPECT_EQ(result->idTableView()(2, 0), D(2000, 6, 30));
 }

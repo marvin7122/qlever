@@ -131,6 +131,15 @@ inline std::optional<int64_t> decodeYearFromDateBits(uint64_t rawBits) {
   return id.getDate().getYear();
 }
 
+// Year extraction for the native machine-code backend (see
+// `JitExpressionCompiler`): like `decodeYearFromDateBits`, but returns 0
+// for non-`Date` cells. The emitter tracks date validity separately (a
+// non-`Date` cell must drop the row even when a decoded 0 compares true),
+// so all backends share this one definition.
+inline int64_t decodeYearOrZeroForNative(uint64_t rawBits) {
+  return decodeYearFromDateBits(rawBits).value_or(0);
+}
+
 class JitBytecodeProgram {
  private:
   std::vector<Instruction> code_;
@@ -1184,14 +1193,18 @@ class JitExpressionBytecodeVm {
   }
 
   // Datatype presence in a program's referenced columns over a row range.
-  // `Undefined` cells are always exact (both sides drop them) and are not
-  // tracked.
+  // `Undefined` cells are always exact under the bytecode kernels (invalid
+  // lanes drop them, like the legacy evaluation), so the `CellRule` checks
+  // ignore them. The native machine-code backend has no validity concept
+  // and would unpack them to keepable values, so `hasUndefined` lets its
+  // gate exclude them explicitly.
   // Datatype presence flags shared by the program-wide `ColumnKinds` and
   // the per-column breakdown below.
   struct ColumnKindFlags {
     bool hasDouble = false;
     bool hasBool = false;
     bool hasDate = false;
+    bool hasUndefined = false;
     // `LocalVocabIndex` cells compare string-aware in the legacy evaluation
     // (against vocabulary-backed bounds), but bitwise in the kernels.
     bool hasLocalVocab = false;
@@ -1228,6 +1241,7 @@ class JitExpressionBytecodeVm {
         flags.hasOther = true;
         return false;
       case Datatype::Undefined:
+        flags.hasUndefined = true;
         return false;
       default:
         flags.hasOther = true;
@@ -1264,6 +1278,7 @@ class JitExpressionBytecodeVm {
       kinds.hasDouble = kinds.hasDouble || colFlags.hasDouble;
       kinds.hasBool = kinds.hasBool || colFlags.hasBool;
       kinds.hasDate = kinds.hasDate || colFlags.hasDate;
+      kinds.hasUndefined = kinds.hasUndefined || colFlags.hasUndefined;
       kinds.hasLocalVocab = kinds.hasLocalVocab || colFlags.hasLocalVocab;
       kinds.hasOther = kinds.hasOther || colFlags.hasOther;
       auto sameColumn = [&col](const auto& entry) {
@@ -1280,6 +1295,8 @@ class JitExpressionBytecodeVm {
                 entry.second.hasDouble || colFlags.hasDouble;
             entry.second.hasBool = entry.second.hasBool || colFlags.hasBool;
             entry.second.hasDate = entry.second.hasDate || colFlags.hasDate;
+            entry.second.hasUndefined =
+                entry.second.hasUndefined || colFlags.hasUndefined;
             entry.second.hasLocalVocab =
                 entry.second.hasLocalVocab || colFlags.hasLocalVocab;
             entry.second.hasOther = entry.second.hasOther || colFlags.hasOther;

@@ -34,6 +34,17 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
     return std::nullopt;
   }
 
+  // Date programs need a per-row validity flag (see `LOAD_COL_DATE`): the
+  // native backend has no validity masks, and a non-`Date` cell must drop
+  // the row even when later comparisons happen to hold.
+  bool hasDateLoad = false;
+  for (const auto& inst : instructions) {
+    if (inst.op == OpCode::LOAD_COL_DATE) {
+      hasDateLoad = true;
+      break;
+    }
+  }
+
   auto rt = std::make_shared<asmjit::JitRuntime>();
   asmjit::CodeHolder code;
   code.init(rt->environment());
@@ -61,6 +72,8 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
   cc.xor_(totalMatches, totalMatches);
   cc.xor_(matchMask, matchMask);
   cc.xor_(idx, idx);
+  // Per-row date validity (only materialized for date programs).
+  asmjit::x86::Gp dateValid = cc.new_gp64("dateValid");
 
   // Load individual column data pointers: colData[i] = colPtrs[i]
   std::vector<asmjit::x86::Gp> colBaseRegs;
@@ -77,6 +90,10 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
   cc.bind(loopStart);
   cc.cmp(idx, countReg);
   cc.jge(loopEnd);
+  // Fresh validity for every row (only materialized for date programs).
+  if (hasDateLoad) {
+    cc.mov(dateValid, 1);
+  }
 
   // Simulated virtual stack for registers during bytecode lowering
   std::vector<asmjit::x86::Gp> regStack;
@@ -333,21 +350,56 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         regStack.pop_back();
         asmjit::x86::Gp a = regStack.back();
         regStack.pop_back();
-        // Value-only conjunction: the native backend only runs over
-        // all-`Int` cells (`Filter` requires `allInt`), where no lane is
-        // ever invalid, so plain bitwise `and_` matches the Kleene
-        // `AND_BOOL` of the bytecode kernels. The final `test`
+        // Value-only conjunction: outside date loads no lane is ever invalid
+        // (the `Filter` gate allows only all-`Int` cells, or `Date` cells
+        // confined to `LOAD_COL_DATE` positions whose invalidity the final
+        // `dateValid` conjunction captures), so plain bitwise `and_` matches
+        // the Kleene `AND_BOOL` of the bytecode kernels. The final `test`
         // treats any nonzero value as a match.
         cc.and_(a, b);
         regStack.push_back(a);
         break;
       }
-      case OpCode::LOAD_COL_DATE:
-      case OpCode::YEAR_DATE:
-        // Date programs never reach the native backend (`allInt` excludes
-        // `Date` cells); decline so the caller falls through to the
-        // bytecode backend.
-        return std::nullopt;
+      case OpCode::LOAD_COL_DATE: {
+        // Push the raw 64-bit `ValueId` bits like `LOAD_COL_ID`, and clear
+        // the date-validity flag unless the cell holds a `Date` (tag in the
+        // high bits, payload below). Non-`Date` cells (including durations)
+        // must drop the row, like the kernels' invalid lanes.
+        size_t colIdx = 0;
+        for (size_t i = 0; i < referencedCols.size(); ++i) {
+          if (referencedCols[i] == static_cast<ColumnIndex>(inst.arg)) {
+            colIdx = i;
+            break;
+          }
+        }
+        asmjit::x86::Gp rawVal = cc.new_gp64("rawDate");
+        cc.mov(rawVal, asmjit::x86::qword_ptr(colBaseRegs[colIdx], idx, 3));
+        asmjit::x86::Gp tag = cc.new_gp64("dateTag");
+        cc.mov(tag, rawVal);
+        cc.shr(tag, static_cast<int64_t>(ValueId::numDataBits));
+        asmjit::Label dateOk = cc.new_label();
+        cc.cmp(tag, static_cast<int64_t>(Datatype::Date));
+        cc.je(dateOk);
+        cc.xor_(dateValid, dateValid);
+        cc.bind(dateOk);
+        regStack.push_back(rawVal);
+        break;
+      }
+      case OpCode::YEAR_DATE: {
+        // Year extraction via the shared helper (0 for non-`Date` cells;
+        // those rows are already excluded through `dateValid`).
+        if (regStack.empty()) return std::nullopt;
+        asmjit::x86::Gp rawVal = regStack.back();
+        regStack.pop_back();
+        asmjit::x86::Gp year = cc.new_gp64("yearVal");
+        asmjit::CCFuncCall* yearCall =
+            cc.call(reinterpret_cast<uint64_t>(&decodeYearOrZeroForNative),
+                    asmjit::FuncSignature::build<int64_t, uint64_t>());
+        yearCall->set_arg(0, rawVal);
+        yearCall->set_ret(0, year);
+        regStack.push_back(year);
+        break;
+      }
       case OpCode::RET:
         break;
     }
@@ -356,6 +408,11 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
   // Top of stack is the boolean filter outcome for the current row
   if (!regStack.empty()) {
     asmjit::x86::Gp resultCond = regStack.back();
+    // Non-`Date` cells must drop the row even when the computed outcome
+    // holds (e.g. a decoded 0 comparing true).
+    if (hasDateLoad) {
+      cc.and_(resultCond, dateValid);
+    }
     asmjit::x86::Gp one = cc.new_gp64("one");
     cc.mov(one, 1);
     cc.shl(one, idx.r8());

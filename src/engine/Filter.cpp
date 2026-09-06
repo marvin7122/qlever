@@ -167,9 +167,12 @@ CPP_template_def(int WIDTH,
   // `DIV_INT` are excluded: the backends implement truncating integer
   // division, while the legacy evaluation divides via doubles (see
   // `JitExpressionBytecodeVm::containsDivision`), so they can disagree.
-  // The native backend additionally requires all-`Int` cells (it has no
-  // validity concept and reinterprets raw `ValueId` bits); the bytecode
-  // backend requires the program's `CellRule` (see `CellRule`).
+  // The native backend requires all-`Int` cells (it has no validity concept
+  // and reinterprets raw `ValueId` bits), extended to `YearExtraction`
+  // programs whose `Date` cells are confined to `LOAD_COL_DATE` positions:
+  // the emitter tracks those through a per-row validity flag, while
+  // `Undefined` cells stay excluded (they would unpack to keepable values).
+  // The bytecode backend requires the program's `CellRule` (see `CellRule`).
   auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
       *_expression.getPimpl(), _subtree->getVariableColumns());
   bool useNativeJit = false;
@@ -181,10 +184,14 @@ CPP_template_def(int WIDTH,
         ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
             optProgram.value(), inputTable, 0, inputTable.size(),
             cancellationHandle_);
-    useNativeJit = kinds.allInt;
     useBytecodeJit =
         ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
             optProgram->cellRule(), optProgram.value(), kinds);
+    useNativeJit =
+        kinds.allInt ||
+        (useBytecodeJit &&
+         optProgram->cellRule() == ql::engine::jit::CellRule::YearExtraction &&
+         !kinds.hasUndefined);
   }
 
   // Attempt Native x86-64 JIT (AsmJit) compilation & execution
