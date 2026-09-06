@@ -21,7 +21,9 @@
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+#if defined(__linux__)
 #include <unistd.h>
+#endif
 #endif
 
 #include "src/engine/BranchlessTypeDispatcher.h"
