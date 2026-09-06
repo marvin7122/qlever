@@ -160,36 +160,7 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 
 // Writes digits directly to `out` and returns a pointer to one-past-the-end.
 // Precondition: `out` must point to a buffer with at least `numDigits(val)` bytes.
-inline char* formatUIntBranchless(uint64_t val, char* out) noexcept {
-  AD_CONTRACT_CHECK(out != nullptr);
-  const uint32_t len = numDigits(val);
-  char* p = out + len;
-
-  while (val >= 100000000ULL) {
-    uint32_t rem = static_cast<uint32_t>(val % 100000000ULL);
-    val /= 100000000ULL;
-    p -= 8;
-    detail::format8Digits(rem, p);
-  }
-
-  uint32_t val32 = static_cast<uint32_t>(val);
-  while (val32 >= 100) {
-    uint32_t rem = val32 % 100;
-    val32 /= 100;
-    p -= 2;
-    std::memcpy(p, &detail::DIGIT_PAIRS[rem * 2], 2);
-  }
-
-  if (val32 < 10) {
-    --p;
-    *p = static_cast<char>('0' + val32);
-  } else {
-    p -= 2;
-    std::memcpy(p, &detail::DIGIT_PAIRS[val32 * 2], 2);
-  }
-
-  return out + len;
-}
+inline char* formatUIntBranchless(uint64_t val, char* out) noexcept;
 
 // _____________________________________________________________________________
 
