@@ -45,13 +45,7 @@ using ql::export_formatting::ExportStreamSummary;
 // Forward declaration
 class ScatterGatherChunkStreamer;
 
-// _____________________________________________________________________________
-// Configuration options for ScatterGatherChunkStreamer.
-struct ScatterGatherConfig {
-  size_t maxChunkBytes = 1024 * 1024;        // Target chunk size: 1 MB
-  size_t maxIovecs = 1024;                  // Max iovecs per chunk (<= UIO_MAXIOV)
-  size_t zeroCopyThresholdBytes = 64;       // Spans >= threshold are zero-copy
-  size_t initialHeaderCapacity = 64 * 1024; // 64 KB initial header buffer
+
 };
 
 // _____________________________________________________________________________
