@@ -577,7 +577,7 @@ class RegisteredIoUringReader
       }
 
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
-        AD_CONTRACT_CHECK(req.bufferIndex < registeredIovecs_.size());
+        AD_CORRECTNESS_CHECK(req.bufferIndex < registeredIovecs_.size());
         // Fixed buffer read with kernel page-pinning
         io_uring_prep_read_fixed(sqe, targetFd, nullptr, req.numBytes,
                                  req.fileOffset, req.bufferIndex);
