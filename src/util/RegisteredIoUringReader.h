@@ -175,6 +175,7 @@ class PinnedArena : public WithInvariants<PinnedArena> {
       numSlots_ = std::exchange(other.numSlots_, 0);
       iovecs_ = std::move(other.iovecs_);
       rawBuffer_ = std::move(other.rawBuffer_);
+      checkInvariants();
     }
     return *this;
   }
