@@ -379,7 +379,8 @@ template<EscapeFormat Format>
     while (len >= 32) {
       uint32_t mask = scanChunk32<Format>(ptr).rawMask();
       if (mask == 0) {
-        // Zero-escape fast path: 32 raw bytes copied with single vector instruction
+        // Zero-escape fast path: 32 raw bytes copied with single memcpy.
+        // Precondition: dest has at least 32 bytes available (caller allocates 2x input size for TSV/Turtle).
         std::memcpy(dest, ptr, 32);
         dest += 32;
         ptr += 32;
