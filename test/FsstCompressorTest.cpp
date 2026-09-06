@@ -398,6 +398,63 @@ TEST(FsstEncoder, DecompressIntoMatchesDecompress) {
 }
 
 // _____________________________________________________________________________
+// Goal: test FsstDecoder::maxDecompressedSize and decompressInto boundary
+// conditions, overflow, buffer sizing, and empty input.
+TEST(FsstDecoder, MaxDecompressedSizeAndDecompressInto) {
+  const std::vector<std::string> words{"hello", "world", "", "x"};
+  auto [buffer, compressedViews, decoder] = FsstEncoder::compressAll(words);
+  std::vector<std::string_view> compressed;
+  compressed.assign(compressedViews.begin(), compressedViews.end());
+
+  // Test maxDecompressedSize for each compressed word
+  for (const auto& cv : compressed) {
+    size_t maxSize = decoder.maxDecompressedSize(cv);
+    EXPECT_GT(maxSize, 0u);
+    // Verify it's at least the decompressed size
+    std::string viaString = decoder.decompress(cv);
+    EXPECT_LE(viaString.size(), maxSize);
+  }
+
+  // Empty input: maxDecompressedSize should handle empty string_view
+  size_t emptyMax = decoder.maxDecompressedSize("");
+  EXPECT_GE(emptyMax, 0u);
+
+  // Large input overflow boundary: compress a very large string
+  const std::string large(10000, 'a');
+  auto [buf2, views2, dec2] = FsstEncoder::compressAll({large});
+  size_t largeMax = dec2.maxDecompressedSize(views2[0]);
+  EXPECT_GT(largeMax, 0u);
+  EXPECT_GE(largeMax, large.size());
+
+  // Test decompressInto with exact-sized buffer
+  for (const auto& cv : compressed) {
+    size_t maxSize = decoder.maxDecompressedSize(cv);
+    std::string intoBuf(maxSize, '\0');
+    size_t n = decoder.decompressInto(cv, ql::span<char>{intoBuf.data(), intoBuf.size()});
+    std::string viaString = decoder.decompress(cv);
+    EXPECT_EQ(n, viaString.size());
+    EXPECT_EQ(std::string_view(intoBuf.data(), n), viaString);
+  }
+
+  // Test decompressInto with larger-than-needed buffer
+  for (const auto& cv : compressed) {
+    size_t maxSize = decoder.maxDecompressedSize(cv);
+    std::string intoBuf(maxSize + 100, '\0');
+    size_t n = decoder.decompressInto(cv, ql::span<char>{intoBuf.data(), intoBuf.size()});
+    std::string viaString = decoder.decompress(cv);
+    EXPECT_EQ(n, viaString.size());
+    EXPECT_EQ(std::string_view(intoBuf.data(), n), viaString);
+  }
+
+  // Test decompressInto with empty input
+  {
+    std::string intoBuf(10, '\0');
+    size_t n = decoder.decompressInto("", ql::span<char>{intoBuf.data(), intoBuf.size()});
+    EXPECT_EQ(n, 0u);
+  }
+}
+
+// _____________________________________________________________________________
 class FsstRepeatedDecoderTest : public ::testing::Test {
  protected:
   // ___________________________________________________________________________
