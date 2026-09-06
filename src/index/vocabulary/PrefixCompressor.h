@@ -29,7 +29,7 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/StringUtils.h"
 
-// TODO<joka921> Include the relevant constants directly here.
+// Include the relevant constants directly here.
 
 // ____________________________________________________________________________
 /// Compression and decompression of words given a codebook of common prefixes.
