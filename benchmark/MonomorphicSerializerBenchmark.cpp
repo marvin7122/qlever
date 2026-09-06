@@ -110,10 +110,13 @@ class PerfCounterMonitor {
 #endif
   }
 
-  [[nodiscard]] Metrics stop() noexcept {
+    [[nodiscard]] Metrics stop() noexcept {
     Metrics m;
 #ifdef __linux__
-    if (!isAvailable_) return m;
+    if (!isAvailable_) {
+      return m;
+    }
+
     ioctl(fdCycles_, PERF_EVENT_IOC_DISABLE, 0);
     ioctl(fdInstructions_, PERF_EVENT_IOC_DISABLE, 0);
     ioctl(fdBranches_, PERF_EVENT_IOC_DISABLE, 0);
