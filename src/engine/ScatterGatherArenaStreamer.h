@@ -205,7 +205,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
   }
 
   // ___________________________________________________________________________
-  // Flatten chunk into a std::string.
+    // Flatten chunk into a `std::string`.
   [[nodiscard]] std::string toString() const {
     std::string result;
     result.resize(totalBytes_);
