@@ -393,20 +393,20 @@ class ScatterGatherBenchmark : public BenchmarkInterface {
     const size_t numTriples = 200'000;
 
     for (size_t litSize : literalSizes) {
-      SimulatedDecompressionArena arena(numTriples, litSize);
+      auto arena = std::make_shared<SimulatedDecompressionArena>(numTriples, litSize);
       const std::string groupName = "Literal Size " + std::to_string(litSize) + " B";
       auto& group = results.addGroup(groupName);
 
-      group.addMeasurement("Contiguous Chunk Copy", [&]() {
-        return ScatterGatherBenchmarkRunner::runContiguousCopy(arena).totalBytesWritten;
+      group.addMeasurement("Contiguous Chunk Copy", [arena]() {
+        return ScatterGatherBenchmarkRunner::runContiguousCopy(*arena).totalBytesWritten;
       });
 
-      group.addMeasurement("Scatter-Gather Arena Stream", [&]() {
-        return ScatterGatherBenchmarkRunner::runScatterGatherStream(arena).totalBytesWritten;
+      group.addMeasurement("Scatter-Gather Arena Stream", [arena]() {
+        return ScatterGatherBenchmarkRunner::runScatterGatherStream(*arena).totalBytesWritten;
       });
 
-      group.addMeasurement("Scatter-Gather Kernel writev", [&]() {
-        return ScatterGatherBenchmarkRunner::runKernelScatterGatherTransmission(arena).totalBytesWritten;
+      group.addMeasurement("Scatter-Gather Kernel writev", [arena]() {
+        return ScatterGatherBenchmarkRunner::runKernelScatterGatherTransmission(*arena).totalBytesWritten;
       });
     }
 
