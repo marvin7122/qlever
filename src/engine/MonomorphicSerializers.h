@@ -263,8 +263,8 @@ struct MonomorphicCellWriter {
     }
   }
 
-  // Typed overload for integral values
-  template <typename Writer, typename T>
+    // Typed overload for integral values
+  CPP_template(typename Writer, typename T)
   requires std::is_integral_v<T>
   static void write(Writer& writer, T val) {
     if constexpr (Type == ColumnType::Boolean) {
