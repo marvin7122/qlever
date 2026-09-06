@@ -237,7 +237,7 @@ struct WorkerSample {
   std::mutex mutex_;
   uint64_t maxWorkers_ = 0;   // highest `iou-wrk-` count seen
   uint64_t maxThreads_ = 0;   // highest total task count seen
-  uint64_t workerTicks_ = 0;  // utime + stime of `iou-wrk-` tasks, last sample
+  uint64_t workerTicks_ = 0;  // utime + stime of `iou-wrk-` tasks, maximum across samples
 };
 
 namespace detail {
