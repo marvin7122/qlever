@@ -258,7 +258,7 @@ inline void resolveVocabIndexIdsPrefetched(
     ql::span<std::optional<std::pair<std::string, const char*>>> results,
     const EscapeFunction& escapeFunction = EscapeFunction{}) {
   PrefetchingBatchResolver resolver{
-      PrefetchConfig{.prefetchDistance = PrefetchDistance}};
+      std::move(PrefetchConfig::builder().withPrefetchDistance(PrefetchDistance)).finalize()};
   resolver.resolveVocabIndexIds<removeQuotesAndAngleBrackets,
                                 
           typename EscapeFunction = ql::identity,
