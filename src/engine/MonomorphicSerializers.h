@@ -521,8 +521,10 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
         case ColumnType::Boolean:
           return visitor.template operator()<C0, ColumnType::Boolean>(
               std::forward<VArgs>(args)...);
+        case ColumnType::Undefined:
+          return visitor.template operator()<C0, ColumnType::Undefined>(
+              std::forward<VArgs>(args)...);
         case ColumnType::String:
-        default:
           return visitor.template operator()<C0, ColumnType::String>(
               std::forward<VArgs>(args)...);
       }
