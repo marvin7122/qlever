@@ -49,12 +49,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       randomInts.push_back(static_cast<int64_t>(rng()));
     }
 
-    std::vector<uint64_t> qids;
-    qids.reserve(NUM_INTEGERS);
-    std::uniform_int_distribution<uint64_t> qidDist(1, 120'000'000);
-    for (size_t i = 0; i < NUM_INTEGERS; ++i) {
-      qids.push_back(qidDist(rng));
-    }
+    
 
     // Benchmark Group 1: Sequential 64-bit Integer Formatting
     {
