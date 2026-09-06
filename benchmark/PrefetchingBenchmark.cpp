@@ -150,12 +150,7 @@ class HardwarePerformanceMonitor {
   }
 
      // ___________________________________________________________________________
-   ~HardwarePerformanceMonitor() {
-#if defined(__linux__)
-    auto closeFd = [](int& fd) {
-      if (fd >= 0) {
-        ::close(fd);
-        fd = -1;
+   
       }
     };
     closeFd(fdCycles_);
