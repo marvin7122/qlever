@@ -75,7 +75,7 @@ class PrefixCompressor {
   [[nodiscard]] std::string compress(std::string_view word) const {
     for (const auto& p : codeToPrefix_) {
       if (ql::starts_with(word, p.prefix_)) {
-        return p.code_ + std::string_view(word).substr(p.prefix_.size());
+        return p.code_ + word.substr(p.prefix_.size());
       }
     }
     return static_cast<char>(NO_PREFIX_CHAR) + word;
