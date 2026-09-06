@@ -118,7 +118,7 @@ class AsyncChunkPipeline
 
   // ___________________________________________________________________________
   // Producer API: Push a newly generated chunk into the pipeline.
-  // Blocks if buffer is full (backpressure) until a slot is freed.
+  // Block if buffer is full (backpressure) until a slot is freed.
   // Returns true on success; returns false if pipeline is cancelled.
   bool push(ChunkType chunk) {
     auto guard = this->makeInvariantGuard();
