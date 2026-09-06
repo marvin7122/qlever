@@ -420,13 +420,7 @@ class RegisteredIoUringReader
         &ring_, registeredFds_.data(),
         static_cast<unsigned int>(registeredFds_.size()));
     if (ret < 0) {
-      registeredFds_.clear();
-      AD_THROW(absl::StrCat("io_uring_register_files failed (errno: ", -ret,
-                            ")"));
-    }
-    filesRegistered_ = true;
-#else
-    registeredFds_.assign(fds.begin(), fds.end());
+      
     filesRegistered_ = true;
 #endif
   }
