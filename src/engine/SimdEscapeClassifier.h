@@ -299,13 +299,7 @@ template<EscapeFormat Format>
       if (mask.hasEscape()) {
         return offset + mask.firstEscapeIndex();
       }
-      ptr += 32;
-      len -= 32;
-      offset += 32;
-    }
-
-    // Secondary path: 16-byte SSE2 vector block
-    if (len >= 16) {
+      
       ChunkEscapeMask16 mask = scanChunk16<Format>(ptr);
       if (mask.hasEscape()) {
         return offset + mask.firstEscapeIndex();
