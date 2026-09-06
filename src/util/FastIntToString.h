@@ -251,7 +251,9 @@ inline char* formatPid(uint64_t id, char* out) noexcept {
 
 // _____________________________________________________________________________
 
+// Why: generic formatter that copies an arbitrary prefix then appends the integer ID.
 inline char* formatPrefixedId(std::string_view prefix, uint64_t id, char* out) noexcept {
+
   AD_CONTRACT_CHECK(out != nullptr);
   if (!prefix.empty()) {
     std::memcpy(out, prefix.data(), prefix.size());
