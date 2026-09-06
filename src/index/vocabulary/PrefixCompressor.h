@@ -78,7 +78,7 @@ class PrefixCompressor {
         return p.code_ + word.substr(p.prefix_.size());
       }
     }
-    return static_cast<char>(NO_PREFIX_CHAR) + word;
+    return std::string(1, static_cast<char>(NO_PREFIX_CHAR)) + word;
   }
 
   // ___________________________________________________________________________
