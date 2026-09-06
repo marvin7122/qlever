@@ -127,6 +127,11 @@ struct BenchmarkMetric {
 
 // _____________________________________________________________________________
 // Benchmark test harness evaluating I/O paradigms across the 1GB simulated dataset.
+/**
+ * Executes a series of I/O benchmarks (sync pread, io_uring variants) on a
+ * 1 GB simulated vocabulary file. Each `run…` method performs a full scan
+ * using the indicated I/O paradigm and returns a `BenchmarkMetric`.
+ */
 class IoUringDirectBenchmarkRunner {
  private:
   std::string filePath_;
