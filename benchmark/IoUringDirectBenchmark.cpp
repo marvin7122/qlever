@@ -225,11 +225,7 @@ struct BenchmarkMetric {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
 
-    RegisteredReaderConfig config;
-    config.ringEntries = 512;
-    config.useDirectIo = true;
-    config.useRegisteredFiles = false;
-    config.useRegisteredBuffers = false;
+    
 
     RegisteredIoUringReader reader(config);
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
