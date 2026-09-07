@@ -48,7 +48,7 @@ class RleVectorStream {
 
   [[nodiscard]] ql::span<const Run> runs() const noexcept { return runs_; }
 
-  // Late materialization: expands RLE runs directly into destination buffer
+    // Late-materialize the RLE runs directly into the destination `span<Id>`.
   void materialize(ql::span<Id> dest) const {
     AD_CORRECTNESS_CHECK(dest.size() >= totalUncompressedRows_);
     size_t outIdx = 0;
