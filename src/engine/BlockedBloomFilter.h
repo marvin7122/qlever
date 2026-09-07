@@ -6,6 +6,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <vector>
 
@@ -50,34 +51,46 @@ class BlockedBloomFilter {
  public:
   explicit BlockedBloomFilter(size_t expectedElements,
                               double falsePositiveRate = 0.01) {
+    assert(falsePositiveRate > 0.0 && falsePositiveRate < 1.0);
     // Sizing: ~10 bits per element for ~1% FPR.
     size_t targetBits = static_cast<size_t>(expectedElements * (-std::log(falsePositiveRate) / std::log(2.0)));
     numBlocks_ =
         std::max(1UL, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK);
     blocks_.resize(numBlocks_);
+    assert(numBlocks_ > 0);
+    assert(blocks_.size() == numBlocks_);
   }
 
   void insert(Id id) noexcept {
+    assert(numBlocks_ > 0);
+    assert(blocks_.size() == numBlocks_);
     uint64_t hash = hashId(id);
-    size_t blockIdx = (hash >> 32) % (numBlocks_ ? numBlocks_ : 1);
+    size_t blockIdx = (hash >> 32) % numBlocks_;
+    assert(blockIdx < numBlocks_);
     uint32_t key = static_cast<uint32_t>(hash);
 
-    
     Block& blk = blocks_[blockIdx];
     for (int i = 0; i < 8; ++i) {
       uint32_t bitPos = (key * SALTS[i]) >> 27;  // 0..31
+      assert(bitPos < 32);
+      assert(i * 2 < 16);
       blk.words[i * 2] |= (1U << bitPos);
     }
   }
 
   [[nodiscard]] bool contains(Id id) const noexcept {
+    assert(numBlocks_ > 0);
+    assert(blocks_.size() == numBlocks_);
     uint64_t hash = hashId(id);
     size_t blockIdx = (hash >> 32) % numBlocks_;
+    assert(blockIdx < numBlocks_);
     uint32_t key = static_cast<uint32_t>(hash);
 
     const Block& blk = blocks_[blockIdx];
     for (int i = 0; i < 8; ++i) {
       uint32_t bitPos = (key * SALTS[i]) >> 27;
+      assert(bitPos < 32);
+      assert(i * 2 < 16);
       if ((blk.words[i * 2] & (1U << bitPos)) == 0) {
         return false;
       }
