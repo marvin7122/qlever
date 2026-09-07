@@ -180,7 +180,7 @@ class CompactVectorOfStrings {
     }
   }
 
- private:
+ public:
   // Return a read-only view of the data, regardless of whether the storage
   // currently owns its elements or is a non-owning view.
   DataView dataSpan() const {
@@ -195,6 +195,8 @@ class CompactVectorOfStrings {
         [](const auto& x) -> OffsetView { return {x.data(), x.size()}; },
         offsets_);
   }
+
+ private:
 
   // Access the owned vector alternatives. Throws (via `std::get`) if this
   // object is currently a non-owning view, which is a programming error (a
