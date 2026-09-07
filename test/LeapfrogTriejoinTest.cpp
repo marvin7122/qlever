@@ -34,6 +34,8 @@ TEST(LeapfrogTriejoinTest, ThreeWayIntersection) {
   auto matches = LeapfrogJoin::intersect(iterators);
 
   // Common elements across all three lists: 3 and 7
+  auto l = ad_utility::source_location::current();
+  auto trace = generateLocationTrace(l);
   ASSERT_EQ(matches.size(), 2u);
   EXPECT_EQ(matches[0], Id::makeFromInt(3));
   EXPECT_EQ(matches[1], Id::makeFromInt(7));
