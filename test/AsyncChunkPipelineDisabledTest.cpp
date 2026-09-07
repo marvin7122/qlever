@@ -11,12 +11,14 @@
 
 #include <string>
 
-#include "engine/export_v2/AsyncChunkPipeline.h"
+// This test file is only compiled when export_v2 is disabled
+#if !defined(QLEVER_ENABLE_EXPORT_V2) || !QLEVER_ENABLE_EXPORT_V2
+
+#include "src/engine/export_v2/AsyncChunkPipeline.h"
 
 namespace {
 
 TEST(AsyncChunkPipelineDisabledTest, CompileTimeSwitchOverridesRuntimeOptIn) {
-  static_assert(!qlever::export_v2::kExportV2CompiledIn);
   qlever::export_v2::AsyncChunkPipeline<std::string> pipeline{
       {.capacity_ = 2, .runtimeEnabled_ = true}};
 
@@ -26,3 +28,5 @@ TEST(AsyncChunkPipelineDisabledTest, CompileTimeSwitchOverridesRuntimeOptIn) {
 }
 
 }  // namespace
+
+#endif  // export_v2 disabled

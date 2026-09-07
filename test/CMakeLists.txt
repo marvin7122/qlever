@@ -316,7 +316,11 @@ addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions ind
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
 
-addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+# GCC 11's coroutine support crashes on some lambda-coroutine patterns used in
+# this test (internal compiler error: in build_special_member_call, at cp/call.c).
+if (NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "12.0.0"))
+    addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+endif ()
 
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
@@ -634,7 +638,9 @@ else ()
     target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
 endif()
 
-addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+if (NOT QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+endif()
 
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
 # range-v3 fails in IndexImpl / CompressedExternalIdTable).
