@@ -181,6 +181,8 @@ addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
 
 addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
 
+addLinkAndDiscoverTestNoLibs(StreamingBufferWriterTest)
+
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
 addLinkAndDiscoverTest(CacheTest)
