@@ -57,6 +57,10 @@ int main(int argc, char** argv) {
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;
 
+    if (numQueries == 0) {
+    std::cerr << "Error: Number of queries must be greater than zero.\n";
+    return 1;
+  }
   double nsPerDecision =
       (elapsed.count() * 1e9) / static_cast<double>(numQueries);
   double mDecisionsPerSec =
