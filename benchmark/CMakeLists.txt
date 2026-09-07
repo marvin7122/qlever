@@ -13,7 +13,7 @@ if (NOT _NO_BENCHMARK)
     add_library(benchmarkWithMain infrastructure/BenchmarkMain.cpp)
     qlever_target_link_libraries(benchmarkWithMain benchmark)
 
-    # Link binary ${basename} against the benchmark library (with default main),
+        # Link `${basename}` against the benchmark library (with default main).
     # and all libraries that are specified as additional arguments.
     function (linkBenchmark basename)
         qlever_target_link_libraries(${basename} benchmarkWithMain ${ARGN})
