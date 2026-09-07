@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
   for (size_t i = 0; i < NUM_DISTINCT; ++i) {
     
 
-  // Measure Late Materialization
+    // Measurement Late Materialization
   auto t4 = std::chrono::high_resolution_clock::now();
   std::vector<Id> materialized(TOTAL_ROWS);
   rleStream.materialize(materialized);
