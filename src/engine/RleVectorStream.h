@@ -50,8 +50,8 @@ class RleVectorStream {
     explicit Builder(RleVectorStream* stream) : stream_(stream) {}
     Builder(const Builder&) = delete;
     Builder& operator=(const Builder&) = delete;
-    Builder(Builder&&) = delete;
-    Builder& operator=(Builder&&) = delete;
+    Builder(Builder&&) = default;
+    Builder& operator=(Builder&&) = default;
     Builder& add(Id value, size_t length) {
       stream_->append(value, length);
       return *this;
