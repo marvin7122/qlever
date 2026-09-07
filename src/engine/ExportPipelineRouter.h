@@ -129,7 +129,7 @@ class ExportPipelineRouter {
 
  private:
     // Look up `key` in `ParamValueMap` and return its value.
-  [[nodiscard]] static std::optional<std::string_view> getParameterValue(
+  [[nodiscard]] static std::optional<std::string> getParameterValue(
       const ParamValueMap& parameters, std::string_view key) noexcept {
     auto it = parameters.find(key);
     if (it != parameters.end() && !it->second.empty()) {
