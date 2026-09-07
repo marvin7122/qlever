@@ -73,6 +73,9 @@ int main(int argc, char* argv[]) {
 
   // 2. PROTOTYPE: Leapfrog Triejoin (WCOJ simultaneous 3-way intersection)
   auto p0 = std::chrono::high_resolution_clock::now();
+    AD_CHECK(std::is_sorted(listA.begin(), listA.end()));
+  AD_CHECK(std::is_sorted(listB.begin(), listB.end()));
+  AD_CHECK(std::is_sorted(listC.begin(), listC.end()));
   std::vector<LeapfrogIterator> iterators;
   iterators.emplace_back(listA);
   iterators.emplace_back(listB);
