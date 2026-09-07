@@ -14,7 +14,9 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 
+#include "parser/GraphPatternOperation.h"
 #include "parser/ParsedQuery.h"
 #include "util/Exception.h"
 #include "util/StringUtils.h"
@@ -113,7 +115,8 @@ class ExportPipelineRouter {
   // endpoints).
   [[nodiscard]] static bool isEligibleForFastStreaming(
       const ParsedQuery& query) noexcept {
-    // CONSTRUCT and SELECT queries are currently eligible.
+    // CONSTRUCT and SELECT queries without unsupported constructs (see
+    // `hasUnsupportedConstructs`) are eligible.
     if (query.hasConstructClause() || query.hasSelectClause()) {
       if (hasUnsupportedConstructs(query)) {
         return false;
@@ -231,10 +234,70 @@ class ExportPipelineRouter {
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
   }
 
-  // Unsupported-construct detection is not implemented yet; all SELECT and
-  // CONSTRUCT queries are currently treated as eligible for the fast path.
+  // Return true if `query` contains constructs the V2 streaming engine
+  // cannot execute yet. Fail-closed: anything beyond conjunctive triple
+  // matching with FILTER, BIND, and VALUES is routed to Legacy V1. Each
+  // exclusion below maps to a capability the first V2 executor lacks, and
+  // is relaxed by the work package that implements it.
   [[nodiscard]] static bool hasUnsupportedConstructs(
-      const ParsedQuery&) noexcept {
+      const ParsedQuery& query) noexcept {
+    // Solution modifiers that require blocking operators or aggregation.
+    if (!query._groupByVariables.empty() || !query._havingClauses.empty() ||
+        !query._orderBy.empty()) {
+      return true;
+    }
+    // The V2 engine reads the implicit default graph.
+    if (!query.datasetClauses_.isUnconstrainedOrWithClause()) {
+      return true;
+    }
+    if (query.hasSelectClause()) {
+      const auto& selectClause = query.selectClause();
+      // Aliases cover aggregate and scalar select expressions uniformly for
+      // now; DISTINCT and REDUCED require post-hoc deduplication state.
+      if (selectClause.distinct_ || selectClause.reduced_ ||
+          !selectClause.getAliases().empty()) {
+        return true;
+      }
+    }
+    return graphPatternHasUnsupportedConstructs(query._rootGraphPattern);
+  }
+
+  // Recursively check `pattern` (including FILTER and BIND expressions) for
+  // operations beyond plain matching. Only `BasicGraphPattern`, `Bind`,
+  // `Values`, and plain (non-GRAPH) groups are eligible; `FILTER EXISTS`
+  // carries a nested query and fails closed like a subquery.
+  [[nodiscard]] static bool graphPatternHasUnsupportedConstructs(
+      const parsedQuery::GraphPattern& pattern) noexcept {
+    namespace pq = parsedQuery;
+    for (const auto& filter : pattern._filters) {
+      if (!filter.expression_.getExistsExpressions().empty()) {
+        return true;
+      }
+    }
+    for (const auto& operation : pattern._graphPatterns) {
+      if (std::holds_alternative<pq::GroupGraphPattern>(operation)) {
+        const auto& group = std::get<pq::GroupGraphPattern>(operation);
+        if (!std::holds_alternative<std::monostate>(group.graphSpec_)) {
+          return true;
+        }
+        if (graphPatternHasUnsupportedConstructs(group._child)) {
+          return true;
+        }
+        continue;
+      }
+      if (std::holds_alternative<pq::Bind>(operation)) {
+        const auto& bind = std::get<pq::Bind>(operation);
+        if (!bind._expression.getExistsExpressions().empty()) {
+          return true;
+        }
+        continue;
+      }
+      if (std::holds_alternative<pq::BasicGraphPattern>(operation) ||
+          std::holds_alternative<pq::Values>(operation)) {
+        continue;
+      }
+      return true;
+    }
     return false;
   }
 };
