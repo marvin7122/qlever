@@ -283,7 +283,7 @@
 # Phase 6: End-to-End Server Integration, Bit-Equivalence & Differential Profiling
 
 ```
-                            Full Server Verification Pipeline
+                            Full Server Verification Pipeline (reference hardware)
        ┌───────────────────────────────────────────────────────────────────────┐
        │ EndToEndExportBenchmark (5,000,000 Rows Wikidata / Synthetic Dataset) │
        └───────────────────────────────────┬───────────────────────────────────┘
