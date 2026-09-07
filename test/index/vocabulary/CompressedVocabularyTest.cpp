@@ -753,16 +753,18 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
       ::testing::HasSubstr("out.size() >= compressed.size()"));
 
   // Out-of-range decoder indices must be rejected for all dispatching
-  // methods rather than silently reading out of bounds.
+  // methods rather than silently reading out of bounds. The bounds-checked
+  // methods reject via contract check (`ad_utility::Exception`); only
+  // `decompress` (which indexes with `.at()`) throws `std::out_of_range`.
   const size_t invalidIndex = mux.numDecoders();
   EXPECT_THROW(
       static_cast<void>(mux.maxDecompressedSize(compressed, invalidIndex)),
-      std::out_of_range);
+      ad_utility::Exception);
   EXPECT_THROW(
       static_cast<void>(mux.decompressInto(
           compressed, invalidIndex,
           ql::span<char>{outputBuffer.data(), outputBuffer.size()}, scratch)),
-      std::out_of_range);
+      ad_utility::Exception);
   EXPECT_THROW(static_cast<void>(mux.decompress(compressed, invalidIndex)),
                std::out_of_range);
 }

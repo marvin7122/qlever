@@ -221,6 +221,7 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    AD_CONTRACT_CHECK(!indices.empty());
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
     return std::move(builder).finalize();
