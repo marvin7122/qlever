@@ -642,7 +642,13 @@ if (QLEVER_ENABLE_EXPORT_V2)
     endif()
 endif ()
 
-addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+# Not in `SINGLE_TEST_BINARY`: the test `#undef`s `QLEVER_ENABLE_EXPORT_V2`,
+# but `kExportV2CompiledIn` is an inline variable, so mixing this translation
+# unit (macro off) with the others (macro on) in one binary is an ODR
+# violation and the linker keeps the `true` definition.
+if (NOT SINGLE_TEST_BINARY)
+    addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+endif ()
 
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
 # range-v3 fails in IndexImpl / CompressedExternalIdTable).
