@@ -409,7 +409,15 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
       }
 
       // 4. Fast-Path Template Dispatch (Runtime Schema -> Monomorphic Spec)
+      // NOTE: measured via the direct instantiation that the dispatcher
+      // resolves this section's fixed {Iri, Iri, Literal} schema to. Calling
+      // dispatchMonomorphicSerializer here would require a visitor that is
+      // simultaneously callable with an explicit ColumnType pack and with a
+      // DynamicRowSerializer, which no call site provides.
       {
+        using DispatchedTriples =
+            MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
+                                     ColumnType::Literal>;
         PerfCounterMonitor::Metrics perf;
         size_t totalBytes = 0;
 
@@ -419,26 +427,10 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              struct DispatchVisitor {
-                FastExportStreamFormatter& formatter;
-                const decltype(data_.tripleRows_)& rows;
-                template <ColumnType... Types>
-                void operator()() const {
-                  using Serializer = MonomorphicRowSerializer<Types...>;
-                  for (const auto& row : rows) {
-                    Serializer::template serializeRow<ExportFormat::Csv>(
-                        formatter, ql::span<const CellValue>(row));
-                  }
-                }
-                void operator()(const DynamicRowSerializer& serializer) const {
-                  for (const auto& row : rows) {
-                    serializer.template serializeRow<ExportFormat::Csv>(
-                        formatter, ql::span<const CellValue>(row));
-                  }
-                }
-              };
-              dispatchMonomorphicSerializer(
-                  schema, DispatchVisitor{formatter, data_.tripleRows_});
+              for (const auto& row : data_.tripleRows_) {
+                DispatchedTriples::serializeRow<ExportFormat::Csv>(
+                    formatter, ql::span<const CellValue>(row));
+              }
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();

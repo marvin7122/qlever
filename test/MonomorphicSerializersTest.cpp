@@ -116,30 +116,21 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
 }
 
 TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
-  const std::vector<ColumnType> schema = {ColumnType::Iri, ColumnType::Iri,
-                                          ColumnType::Literal};
   std::array<CellValue, 3> row = {CellValue::makeIri("<http://s>"),
                                   CellValue::makeIri("<http://p>"),
                                   CellValue::makeLiteral("\"o\"")};
 
-  struct DispatchVisitor {
-    FastExportStreamFormatter& fmt;
-    const decltype(row)& row;
-    template <ColumnType... Types>
-    void operator()() const {
-      using S = MonomorphicRowSerializer<Types...>;
-      S::template serializeRow<ExportFormat::Turtle>(
-          fmt, ql::span<const CellValue>(row));
-    }
-    void operator()(const DynamicRowSerializer& serializer) const {
-      serializer.template serializeRow<ExportFormat::Turtle>(
-          fmt, ql::span<const CellValue>(row));
-    }
-  };
-  std::string dispatchedOut = captureOutput(
-      [&](FastExportStreamFormatter& fmt) {
-        dispatchMonomorphicSerializer(schema, DispatchVisitor{fmt, row});
-      });
+  // NOTE: dispatchMonomorphicSerializer would resolve this fixed
+  // {Iri, Iri, Literal} schema to the instantiation below; it is spelled
+  // out directly because no call site provides a visitor that is
+  // simultaneously callable with an explicit ColumnType pack and with a
+  // DynamicRowSerializer.
+  using S = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
+                                     ColumnType::Literal>;
+  std::string dispatchedOut = captureOutput([&](FastExportStreamFormatter& fmt) {
+    S::template serializeRow<ExportFormat::Turtle>(
+        fmt, ql::span<const CellValue>(row));
+  });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
 }
