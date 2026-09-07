@@ -3,7 +3,7 @@
 // NOTE: this moves the values out of `parsedValues_` (to save a string copy
 // for those values that end up in the local vocabulary).
 template <size_t I>
-void writeValues(IdTable* idTablePtr, LocalVocab* localVocab) {
+void Values::writeValues(IdTable* idTablePtr, LocalVocab* localVocab) {
   IdTableStatic<I> idTable = std::move(*idTablePtr).toStatic<I>();
   idTable.resize(parsedValues_._values.size());
   size_t rowIdx = 0;

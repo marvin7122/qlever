@@ -10,6 +10,8 @@
 #include "engine/Operation.h"
 #include "parser/ParsedQuery.h"
 
+class TripleComponent;
+
 class Values : virtual public Operation {
   using SparqlValues = parsedQuery::SparqlValues;
 
@@ -76,6 +78,6 @@ class Values : virtual public Operation {
 std::shared_ptr<QueryExecutionTree> makeValuesForSingleValue(
     QueryExecutionContext* qec, const Variable& variable,
     const TripleComponent& value);
-#include "src/engine/Values.template"
+#include "engine/Values.template"
 
 #endif  // QLEVER_SRC_ENGINE_VALUES_H
