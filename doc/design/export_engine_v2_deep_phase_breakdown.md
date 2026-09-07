@@ -11,17 +11,17 @@
 ```
                           V2 Streaming Engine Feature Stack
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Phase 1: Ingress Routing, Feature Gating & Automatic Fallback Engine                        │
+│ Phase 1: Ingress Routing, Feature Gating & Automatic Fallback Engine                        │ ← TODO: track in #<issue>
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Phase 2: Push-Based Vectorized Stream Execution (Zero-Intermediate Materialization)        │
+│ Phase 2: Push-Based Vectorized Stream Execution (Zero-Intermediate Materialization)        │ ← TODO: track in #<issue>
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Phase 3: Monomorphic Template Schema Specialization & SIMD Radix/Escape Kernels             │
+│ Phase 3: Monomorphic Template Schema Specialization & SIMD Radix/Escape Kernels             │ ← TODO: track in #<issue>
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Phase 4: Zero-Copy Memory Arena Scatter-Gather Streaming (`struct iovec` / `writev`)        │
+│ Phase 4: Zero-Copy Memory Arena Scatter-Gather Streaming (`struct iovec` / `writev`)        │ ← TODO: track in #<issue>
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Phase 5: Asynchronous Double-Buffered Backpressure Ring (Compute/Network Decoupling)       │
+│ Phase 5: Asynchronous Double-Buffered Backpressure Ring (Compute/Network Decoupling)       │ ← TODO: track in #<issue>
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Phase 6: End-to-End Server Pipeline Integration, Bit-Equivalence & Differential Profiling   │
+│ Phase 6: End-to-End Server Pipeline Integration, Bit-Equivalence & Differential Profiling   │ ← TODO: track in #<issue>
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
