@@ -61,6 +61,14 @@ struct EvaluatedTermRef {
   const EvaluatedTermData* data_ = nullptr;
   EvaluatedTerm keepAlive_{};
 
+  EvaluatedTermRef() = default;
+  EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
+      : data_{data}, keepAlive_{std::move(keepAlive)} {}
+  // Implicit conversion from an owning term: borrows `term` and keeps it
+  // alive, so callers can write `EvaluatedTriple{term, ...}` directly.
+  EvaluatedTermRef(const EvaluatedTerm& term)
+      : data_{term.get()}, keepAlive_{term} {}
+
   const EvaluatedTermData& operator*() const { return *data_; }
   const EvaluatedTermData* operator->() const { return data_; }
 };

@@ -38,8 +38,8 @@ std::optional<EvaluatedTermRef> instantiateTerm(
           }
           return EvaluatedTermRef{bound->get(), *bound};
         } else if constexpr (std::is_same_v<T, PrecomputedBlankNode>) {
-          EvaluatedTerm owned = std::make_shared<const EvaluatedTermData>(
-              EvaluatedTermData{
+          EvaluatedTerm owned =
+              std::make_shared<const EvaluatedTermData>(EvaluatedTermData{
                   absl::StrCat(t.prefix_, rowIdxTotal, t.suffix_), nullptr});
           return EvaluatedTermRef{owned.get(), std::move(owned)};
         } else {
