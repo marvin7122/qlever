@@ -207,16 +207,34 @@ CPP_template(typename UnderlyingVocabulary,
     AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
 
     std::string scratch;
-    for (const auto& [idx, compressedWord] :
-         ::ranges::views::zip(indices, compressedWords)) {
-      const size_t decoderIdx = getDecoderIdx(idx);
+    auto appendDecoded = [&](std::string_view compressedWord,
+                             size_t decoderIdx) {
       AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
           [&](ql::span<char> outSpan) {
-            return compressionWrapper_.decompressInto(
-                compressedWord, decoderIdx, outSpan, scratch);
+            return compressionWrapper_.decompressInto(compressedWord,
+                                                      decoderIdx, outSpan,
+                                                      scratch);
           });
+    };
+    for (const auto& [idx, compressedWord] :
+         ::ranges::views::zip(indices, compressedWords)) {
+      // NOTE: Like `operator[]`, translate the index to a position exactly
+      // once. A hole has no stored word to decompress (see `getDecoderIdx`),
+      // so report the placeholder instead of decoding garbage.
+      if constexpr (underlyingHasHoles) {
+        auto position = underlyingVocabulary_.positionOfIndex(idx);
+        if (!position.has_value()) {
+          builder.appendWord(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+          continue;
+        }
+        appendDecoded(compressedWord,
+                      getDecoderIdxFromPosition(position.value()));
+      } else {
+        appendDecoded(compressedWord, getDecoderIdx(idx));
+      }
     }
   }
 
