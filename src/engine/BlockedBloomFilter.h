@@ -51,7 +51,7 @@ class BlockedBloomFilter {
   explicit BlockedBloomFilter(size_t expectedElements,
                               double falsePositiveRate = 0.01) {
     // Sizing: ~10 bits per element for ~1% FPR.
-    size_t targetBits = static_cast<size_t>(expectedElements * 10);
+    size_t targetBits = static_cast<size_t>(expectedElements * (-std::log(falsePositiveRate) / std::log(2.0)));
     numBlocks_ =
         std::max(1UL, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK);
     blocks_.resize(numBlocks_);
