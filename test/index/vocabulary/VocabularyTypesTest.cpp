@@ -248,10 +248,10 @@ TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
   auto batch = makeStringVectorVocabBatchLookupResult({"only-one"});
   MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 2> positions{0, 1};
-  // Test a mismatch between two target positions and one batch word.
+  // Test a mismatch between two result positions and one batch word.
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.scatterSubBatchResultAtPositions(std::move(batch), positions),
-      ::testing::HasSubstr("subBatchResult.size() == targetPositions.size()"));
+      ::testing::HasSubstr("subBatchResult.size() == resultPositions.size()"));
 }
 
 // _____________________________________________________________________________
