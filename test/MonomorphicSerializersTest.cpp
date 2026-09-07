@@ -122,13 +122,23 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
                                   CellValue::makeIri("<http://p>"),
                                   CellValue::makeLiteral("\"o\"")};
 
-  std::string dispatchedOut =
-      captureOutput([&](FastExportStreamFormatter& fmt) {
-        dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
-          using S = MonomorphicRowSerializer<Types...>;
-          S::template serializeRow<ExportFormat::Turtle>(
-              fmt, ql::span<const CellValue>(row));
-        });
+  struct DispatchVisitor {
+    FastExportStreamFormatter& fmt;
+    const decltype(row)& row;
+    template <ColumnType... Types>
+    void operator()() const {
+      using S = MonomorphicRowSerializer<Types...>;
+      S::template serializeRow<ExportFormat::Turtle>(
+          fmt, ql::span<const CellValue>(row));
+    }
+    void operator()(const DynamicRowSerializer& serializer) const {
+      serializer.template serializeRow<ExportFormat::Turtle>(
+          fmt, ql::span<const CellValue>(row));
+    }
+  };
+  std::string dispatchedOut = captureOutput(
+      [&](FastExportStreamFormatter& fmt) {
+        dispatchMonomorphicSerializer(schema, DispatchVisitor{fmt, row});
       });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
