@@ -213,9 +213,8 @@ CPP_template(typename UnderlyingVocabulary,
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
           [&](ql::span<char> outSpan) {
-            return compressionWrapper_.decompressInto(compressedWord,
-                                                      decoderIdx, outSpan,
-                                                      scratch);
+            return compressionWrapper_.decompressInto(
+                compressedWord, decoderIdx, outSpan, scratch);
           });
     };
     for (const auto& [idx, compressedWord] :
