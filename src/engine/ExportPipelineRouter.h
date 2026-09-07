@@ -149,8 +149,8 @@ class ExportPipelineRouter {
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
   }
 
-  // Unsupported-construct detection is not implemented yet; all SELECT and
-  // CONSTRUCT queries are currently treated as eligible for the fast path.
+  // TODO: Implement unsupported-construct detection for FastStreamingV2 eligibility.
+  // Currently all SELECT and CONSTRUCT queries are treated as eligible.
   // A SERVICE clause requires contacting a remote endpoint and streaming
   // results from it, which is incompatible with FastStreamingV2's zero-copy
   // push-based model until proper service forwarding is implemented.
