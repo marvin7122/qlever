@@ -233,9 +233,10 @@ struct RuntimeParameters {
 
   // Controls deduplication of triples in CONSTRUCT query results.
   
-  // "lru:<positive integer>": one shared LRU cache stores at most that many
+    // "lru:<positive integer>": one shared LRU cache stores at most that many
   // recently seen unique full triple keys; bounded memory, partial
   // deduplication.
+  // TODO<marvin7122> Implement the shared LRU cache for the lru:<N> deduplication mode.
   // NOTE: This parameter was introduced in a separate PR. See PR #XXXX for details.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
