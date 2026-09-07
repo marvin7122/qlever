@@ -81,27 +81,38 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
   }
 
   while (true) {
-    Id currentKey = iterators[p].key();
-
-    if (currentKey == maxKey) {
-      // All iterators match on this key!
-      result.push_back(currentKey);
-      iterators[p].next();
-      if (iterators[p].atEnd()) {
-        break;
+    // Find iterator with smallest current key
+    size_t minIndex = 0;
+    for (size_t i = 1; i < k; ++i) {
+      if (iterators[i].key() < iterators[minIndex].key()) {
+        minIndex = i;
       }
-      maxKey = iterators[p].key();
-    } else {
-      // Leapfrog forward to maxKey
-      iterators[p].seek(maxKey);
-      if (iterators[p].atEnd()) {
-        break;
-      }
-      maxKey = iterators[p].key();
     }
 
-    // Move to next iterator in round-robin fashion
-    p = (p + 1) % k;
+    Id minKey = iterators[minIndex].key();
+
+    // Find maximum key across all iterators
+    Id maxKey = minKey;
+    for (size_t i = 0; i < k; ++i) {
+      if (iterators[i].key() > maxKey) {
+        maxKey = iterators[i].key();
+      }
+    }
+
+    if (minKey == maxKey) {
+      // All iterators match on this key!
+      result.push_back(minKey);
+      iterators[minIndex].next();
+      if (iterators[minIndex].atEnd()) {
+        break;
+      }
+    } else {
+      // Leapfrog forward to minKey
+      iterators[minIndex].seek(minKey);
+      if (iterators[minIndex].atEnd()) {
+        break;
+      }
+    }
   }
 
   return result;
