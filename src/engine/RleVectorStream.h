@@ -33,6 +33,7 @@ namespace ql::engine::rle {
 // 3. After construction, materialize() contracts guarantee correct output size and ordering.
 class RleVectorStream {
  public:
+  // Represents a contiguous run of identical values.
   struct Run {
     Id value_{Id::makeUndefined()};
     size_t length_ = 0;
