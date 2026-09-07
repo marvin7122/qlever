@@ -54,8 +54,12 @@ class BlockedBloomFilter {
     assert(falsePositiveRate > 0.0 && falsePositiveRate < 1.0);
     // Sizing: ~10 bits per element for ~1% FPR.
     size_t targetBits = static_cast<size_t>(expectedElements * (-std::log(falsePositiveRate) / std::log(2.0)));
-    numBlocks_ =
+    size_t rawBlocks =
         std::max(1UL, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK);
+    numBlocks_ = 1;
+    while (numBlocks_ < rawBlocks) {
+      numBlocks_ <<= 1;
+    }
     blocks_.resize(numBlocks_);
     assert(numBlocks_ > 0);
     assert(blocks_.size() == numBlocks_);
@@ -65,7 +69,7 @@ class BlockedBloomFilter {
     assert(numBlocks_ > 0);
     assert(blocks_.size() == numBlocks_);
     uint64_t hash = hashId(id);
-    size_t blockIdx = (hash >> 32) % numBlocks_;
+    size_t blockIdx = (hash >> 32) & (numBlocks_ - 1);
     assert(blockIdx < numBlocks_);
     uint32_t key = static_cast<uint32_t>(hash);
 
@@ -82,7 +86,7 @@ class BlockedBloomFilter {
     assert(numBlocks_ > 0);
     assert(blocks_.size() == numBlocks_);
     uint64_t hash = hashId(id);
-    size_t blockIdx = (hash >> 32) % numBlocks_;
+    size_t blockIdx = (hash >> 32) & (numBlocks_ - 1);
     assert(blockIdx < numBlocks_);
     uint32_t key = static_cast<uint32_t>(hash);
 
