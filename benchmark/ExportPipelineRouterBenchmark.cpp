@@ -24,13 +24,7 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg != "-p" && !arg.empty() &&
-        std::isdigit(static_cast<unsigned char>(arg[0]))) {
-      numQueries = std::stoull(arg);
-    }
-  }
-
-  std::cout << "==============================================================="
-               "=================\n";
+        
   std::cout << " QLever Fast-Path V2: Ingress Routing & Capability Inspection "
                "Microbenchmark\n";
   std::cout << " Iterations: " << numQueries << " routing evaluations\n";
