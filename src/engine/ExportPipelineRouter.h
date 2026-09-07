@@ -198,8 +198,8 @@ class ExportPipelineRouter {
         }
       }
       if (std::holds_alternative<parsedQuery::Minus>(operation)) {
-        if (hasUnsupportedConstructsImpl(
-                operation.get<parsedQuery::Minus>()._child)) {
+        const auto& minus = operation.get<parsedQuery::Minus>();
+        if (hasUnsupportedConstructsImpl(minus._child)) {
           return true;
         }
       }
