@@ -210,11 +210,10 @@ class ExportPipelineRouter {
           return true;
         }
       }
-      if (std::holds_alternative<parsedQuery::TransPath>(operation)) {
-        if (hasUnsupportedConstructsImpl(
-                operation.get<parsedQuery::TransPath>()._childGraphPattern)) {
-          return true;
-        }
+      if (std::holds_alternative<parsedQuery::TransPath>(operation) &&
+          hasUnsupportedConstructsImpl(
+              operation.get<parsedQuery::TransPath>()._childGraphPattern)) {
+        return true;
       }
     }
     return false;
