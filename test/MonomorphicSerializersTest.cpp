@@ -115,6 +115,24 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
   EXPECT_EQ(dynamicOut, "<http://example.org/x>,\"test\",42\n");
 }
 
+// Visitor serving both `dispatchMonomorphicSerializer` call forms (see the
+// benchmark of the same name). Namespace scope is required because member
+// templates are not allowed in local classes.
+struct MonomorphicDispatchTestVisitor {
+  FastExportStreamFormatter& fmt;
+  const std::array<CellValue, 3>& row;
+  template <ColumnType... Types>
+  void operator()() const {
+    using S = MonomorphicRowSerializer<Types...>;
+    S::template serializeRow<ExportFormat::Turtle>(
+        fmt, ql::span<const CellValue>(row));
+  }
+  void operator()(DynamicRowSerializer& dynamicSerializer) const {
+    dynamicSerializer.template serializeRow<ExportFormat::Turtle>(
+        fmt, ql::span<const CellValue>(row));
+  }
+};
+
 TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
   const std::vector<ColumnType> schema = {ColumnType::Iri, ColumnType::Iri,
                                           ColumnType::Literal};
@@ -122,24 +140,10 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
                                   CellValue::makeIri("<http://p>"),
                                   CellValue::makeLiteral("\"o\"")};
 
-  struct DispatchVisitor {
-    FastExportStreamFormatter& fmt;
-    const decltype(row)& row;
-    template <ColumnType... Types>
-    void operator()() const {
-      using S = MonomorphicRowSerializer<Types...>;
-      S::template serializeRow<ExportFormat::Turtle>(
-          fmt, ql::span<const CellValue>(row));
-    }
-    void operator()(DynamicRowSerializer& dynamicSerializer) const {
-      dynamicSerializer.template serializeRow<ExportFormat::Turtle>(
-          fmt, ql::span<const CellValue>(row));
-    }
-  };
-
   std::string dispatchedOut =
       captureOutput([&](FastExportStreamFormatter& fmt) {
-        dispatchMonomorphicSerializer(schema, DispatchVisitor{fmt, row});
+        dispatchMonomorphicSerializer(schema,
+                                      MonomorphicDispatchTestVisitor{fmt, row});
       });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");

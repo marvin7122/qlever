@@ -101,7 +101,13 @@ class SimulatedVocabularyFile {
       bytesWritten += writeChunkSize;
     }
 
+    // macOS has no `fdatasync`; plain `fsync` is the portable equivalent
+    // for a benchmark setup file.
+#if defined(__APPLE__)
+    ::fsync(fd);
+#else
     ::fdatasync(fd);
+#endif
     ::close(fd);
     std::free(writeBuf);
     isCreated_ = true;

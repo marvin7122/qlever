@@ -285,6 +285,29 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
 // _____________________________________________________________________________
 // Benchmark class comparing Dynamic Per-Cell Dispatch vs Monomorphic Template
 // Serializers
+// Visitor serving both `dispatchMonomorphicSerializer` call forms: the
+// static `MonomorphicRowSerializer<Types...>` fast path and the
+// `DynamicRowSerializer` fallback. Namespace scope is required because
+// member templates are not allowed in local classes.
+struct MonomorphicDispatchVisitor {
+  FastExportStreamFormatter& formatter;
+  const std::vector<std::array<CellValue, 3>>& rows;
+  template <ColumnType... Types>
+  void operator()() const {
+    using Serializer = MonomorphicRowSerializer<Types...>;
+    for (const auto& row : rows) {
+      Serializer::template serializeRow<ExportFormat::Csv>(
+          formatter, ql::span<const CellValue>(row));
+    }
+  }
+  void operator()(DynamicRowSerializer& dynamicSerializer) const {
+    for (const auto& row : rows) {
+      dynamicSerializer.template serializeRow<ExportFormat::Csv>(
+          formatter, ql::span<const CellValue>(row));
+    }
+  }
+};
+
 class MonomorphicSerializerBenchmark : public BenchmarkInterface {
  private:
   DatasetStorage data_;
@@ -419,29 +442,9 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              // Visitor serving both dispatch forms: the static
-              // `MonomorphicRowSerializer<Types...>` fast path and the
-              // `DynamicRowSerializer` fallback.
-              struct DispatchVisitor {
-                FastExportStreamFormatter& formatter;
-                const decltype(data_)& rows;
-                template <ColumnType... Types>
-                void operator()() const {
-                  using Serializer = MonomorphicRowSerializer<Types...>;
-                  for (const auto& row : rows.tripleRows_) {
-                    Serializer::template serializeRow<ExportFormat::Csv>(
-                        formatter, ql::span<const CellValue>(row));
-                  }
-                }
-                void operator()(DynamicRowSerializer& dynamicSerializer) const {
-                  for (const auto& row : rows.tripleRows_) {
-                    dynamicSerializer.template serializeRow<ExportFormat::Csv>(
-                        formatter, ql::span<const CellValue>(row));
-                  }
-                }
-              };
-              dispatchMonomorphicSerializer(schema,
-                                            DispatchVisitor{formatter, data_});
+              dispatchMonomorphicSerializer(
+                  schema,
+                  MonomorphicDispatchVisitor{formatter, data_.tripleRows_});
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
