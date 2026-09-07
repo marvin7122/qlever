@@ -112,13 +112,7 @@ class AdaptiveChunkSizer
   // Construct with custom configuration.
   explicit AdaptiveChunkSizer(AdaptiveChunkConfig config)
       : config_{std::move(config)},
-        currentChunkBytesTarget_{config_.initialChunkBytes_},
-        estimatedRowBytes_{config_.initialEstimatedRowBytes_} {
-    AD_CONTRACT_CHECK(config_.initialChunkBytes_ > 0);
-    AD_CONTRACT_CHECK(config_.maxChunkBytes_ >= config_.initialChunkBytes_);
-    AD_CONTRACT_CHECK(config_.growthFactor_ >= 1.0);
-    AD_CONTRACT_CHECK(config_.initialEstimatedRowBytes_ > 0.0);
-    AD_CONTRACT_CHECK(config_.minChunkRows_ >= 1);
+        
     AD_CONTRACT_CHECK(config_.maxChunkRows_ >= config_.minChunkRows_);
   }
 
