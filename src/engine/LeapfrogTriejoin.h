@@ -70,8 +70,7 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
     }
   }
 
-  // Sort iterators by current key
-  size_t k = iterators.size();
+  // Note: iterators are mutated via seek/next; consider passing by value for explicit ownership.
   size_t p = 0;  // pointer to iterator with smallest key
   Id maxKey = iterators[0].key();
   for (size_t i = 1; i < k; ++i) {
