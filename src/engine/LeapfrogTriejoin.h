@@ -30,7 +30,7 @@ class LeapfrogIterator {
     AD_CHECK(std::is_sorted(sortedKeys_.begin(), sortedKeys_.end()));
   }
 
-  /// Check if the iterator has reached the end of the sorted keys.
+  /// @brief Check if the iterator has reached the end of the sorted keys.
   /// @return true if current position is past the last element, false otherwise.
   [[nodiscard]] bool atEnd() const noexcept {
     ADL_CORRECTNESS_CHECK(currentIndex_ <= sortedKeys_.size());
