@@ -318,7 +318,9 @@ addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions ind
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
 
-addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+endif ()
 
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
@@ -623,24 +625,32 @@ addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
 
 addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
 
-addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+endif ()
 
 # Header-only util under export_v2; do not pull testUtil/index (cluster GCC
 # range-v3 needs -fpermissive for those translation units).
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
 
-addLinkAndDiscoverTest(AsyncChunkPipelineTest)
-if (NOT SINGLE_TEST_BINARY)
-    target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
-else ()
-    target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
-endif()
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(AsyncChunkPipelineTest)
+    if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    else ()
+        target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
+endif ()
 
 addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
 
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
 # range-v3 fails in IndexImpl / CompressedExternalIdTable).
-addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
-if (NOT SINGLE_TEST_BINARY)
-    target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
-endif()
+# Requires the enabled pipeline (`PipelineMorselIntegration` pushes with
+# `runtimeEnabled_ = true` and expects `Accepted`).
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
+    if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
+endif ()

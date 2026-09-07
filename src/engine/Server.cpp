@@ -32,8 +32,10 @@
 #include "engine/ResponseJson.h"
 #include "engine/SparqlProtocol.h"
 #include "engine/UpdateMetadata.h"
+#if defined(QLEVER_ENABLE_EXPORT_V2)
 #include "engine/export_v2/ExportEngineV2.h"
 #include "engine/export_v2/ScatterGatherHttpBody.h"
+#endif
 #include "global/RuntimeParameters.h"
 #include "libqlever/Qlever.h"
 #include "parser/ParsedQuery.h"
