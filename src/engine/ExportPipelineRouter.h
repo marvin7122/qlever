@@ -113,15 +113,11 @@ class ExportPipelineRouter {
   [[nodiscard]] static bool isEligibleForFastStreaming(
       const ParsedQuery& query) noexcept {
     // All CONSTRUCT and SELECT queries are currently eligible (unsupported-construct detection is not yet implemented).
-    if (query.hasConstructClause() || query.hasSelectClause()) {
-      if (hasUnsupportedConstructs(query)) {
-        return false;
-      }
-      return true;
-    }
-
+    if (!(query.hasConstructClause() || query.hasSelectClause())) {
         // ASK and DESCRIBE currently use standard evaluation.
-    return false;
+        return false;
+    }
+    return !hasUnsupportedConstructs(query);
   }
 
   // ___________________________________________________________________________
