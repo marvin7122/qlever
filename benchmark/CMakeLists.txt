@@ -34,7 +34,7 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ParallelMergeBenchmark testUtil)
 
-            addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
+                addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
     addAndLinkBenchmark(ExportPipelineRouterBenchmark engine sparqlParser qlever_util)
 
