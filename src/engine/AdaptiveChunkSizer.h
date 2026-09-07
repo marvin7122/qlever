@@ -237,13 +237,7 @@ class AdaptiveChunkSizer
   }
 
   // ___________________________________________________________________________
-  // Convenience alias for recordChunk.
-  void recordChunkFlushed(size_t bytesWritten, size_t rowCount) {
-    recordChunk(bytesWritten, rowCount);
-  }
-
-  // ___________________________________________________________________________
-  // Reset sizer back to initial 64 KB state (e.g. for re-using across queries).
+  // Reset sizer back to initial 64 KB state (e.g. for reusing across queries).
   void reset() noexcept {
     auto guard = makeInvariantGuard();
     currentChunkBytesTarget_ = config_.initialChunkBytes_;
