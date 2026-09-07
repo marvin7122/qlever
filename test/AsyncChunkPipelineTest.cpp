@@ -119,7 +119,7 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"producer failed"}));
 
   EXPECT_EQ(pipeline.pop(), "before-error");
-  EXPECT_THROW(pipeline.pop(), std::runtime_error);
+  EXPECT_THROW(static_cast<void>(pipeline.pop()), std::runtime_error);
 }
 
 TEST(AsyncChunkPipelineTest, BackpressureReusesFreedSlot) {
