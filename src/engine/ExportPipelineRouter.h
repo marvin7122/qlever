@@ -143,15 +143,12 @@ class ExportPipelineRouter {
   }
 
   [[nodiscard]] static ExportEngineMode evaluateEligibility(
-      const ParsedQuery& query, ExportEngineMode targetMode) noexcept {
-    if (targetMode == ExportEngineMode::FastStreamingV2) {
-      if (isEligibleForFastStreaming(query)) {
-        return ExportEngineMode::FastStreamingV2;
-      }
-      // Transparent fallback to Legacy V1
-      return ExportEngineMode::LegacyV1;
+      const ParsedQuery& query) noexcept {
+    if (isEligibleForFastStreaming(query)) {
+      return ExportEngineMode::FastStreamingV2;
     }
-    return targetMode;
+    // Transparent fallback to Legacy V1
+    return ExportEngineMode::LegacyV1;
   }
 
   [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
