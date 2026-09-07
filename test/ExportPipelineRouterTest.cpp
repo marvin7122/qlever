@@ -11,6 +11,7 @@
 
 #include "engine/ExportPipelineRouter.h"
 #include "parser/SparqlParser.h"
+#include <vector>
 
 using namespace ql::engine;
 using ad_utility::url_parser::ParamValueMap;
