@@ -69,13 +69,7 @@ class ExportPipelineRouter {
       return ExportEngineMode::LegacyV1;
     }
 
-    if (optExportEngine.has_value()) {
-      const auto optVal =
-          ad_utility::getLowercase(std::string(optExportEngine.value()));
-      if (optVal == "v2" || optVal == "fast") {
-        return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-      } else if (optVal == "v1" || optVal == "legacy") {
-        return ExportEngineMode::LegacyV1;
+    
       }
     }
 
