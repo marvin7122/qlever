@@ -101,8 +101,7 @@ int main() {
                "====\n";
   std::cout << ">>> Leapfrog WCOJ Speedup: " << (binaryMs / leapfrogMs)
             << "x faster\n";
-  std::cout << ">>> Intermediate Memory Saved: "
-            << (intermediateAB.size() * sizeof(Id)) / (1024 * 1024) << " MB\n";
+  
   std::cout
       << "=================================================================\n";
 
