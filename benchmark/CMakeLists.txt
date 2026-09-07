@@ -33,7 +33,7 @@ if (NOT _NO_BENCHMARK)
         linkBenchmark(${baseName} ${ARGN})
     endfunction()
 
-    # Compile the benchmark and link it without the default main.
+        # Compile the benchmark and link it without the default main.
     # Usage: addAndLinkBenchmarkNoMain(baseName, [additionalLibraries...])
     #   - baseName: The name of the benchmark file without the .cpp ending.
     function(addAndLinkBenchmarkNoMain baseName)
