@@ -74,13 +74,7 @@ int main(int argc, char* argv[]) {
   // 2. PROTOTYPE: Leapfrog Triejoin (WCOJ simultaneous 3-way intersection)
   auto p0 = std::chrono::high_resolution_clock::now();
   
-  std::vector<LeapfrogIterator> iterators;
-  iterators.emplace_back(listA);
-  iterators.emplace_back(listB);
-  iterators.emplace_back(listC);
-
-  auto leapfrogResult = LeapfrogJoin::intersect(iterators);
-  auto p1 = std::chrono::high_resolution_clock::now();
+  
   double leapfrogMs =
       std::chrono::duration<double, std::milli>(p1 - p0).count();
 
