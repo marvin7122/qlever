@@ -2,7 +2,7 @@
 
 **Target Branch:** `feat/export-engine-v2-streaming`  
 **Repository:** `marvin7122/qlever`  
-**Design Standard:** `~/ARCHITECTURE.md` (7 Universal Laws) & Single-Core/Elastic Multi-Core Discipline  
+**Design Standard:** (7 Universal Laws) & Single-Core/Elastic Multi-Core Discipline  
 
 ---
 
