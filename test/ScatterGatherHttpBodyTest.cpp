@@ -49,12 +49,15 @@ std::string concatBuffers(
 scatter_gather_body::value_type emptyGenerator() { co_return; }
 
 scatter_gather_body::value_type singleChunkGenerator() {
-  co_yield makeChunk({"ab", "cde"});
+  auto chunk = makeChunk({"ab", "cde"});
+  co_yield chunk;
 }
 
 scatter_gather_body::value_type chunkSkippingGenerator() {
-  co_yield makeChunk({});
-  co_yield makeChunk({"xy"});
+  auto emptyChunk = makeChunk({});
+  co_yield emptyChunk;
+  auto secondChunk = makeChunk({"xy"});
+  co_yield secondChunk;
 }
 
 scatter_gather_body::value_type immediateThrowGenerator() {
@@ -63,7 +66,8 @@ scatter_gather_body::value_type immediateThrowGenerator() {
 }
 
 scatter_gather_body::value_type throwAfterChunkGenerator() {
-  co_yield makeChunk({"ok"});
+  auto chunk = makeChunk({"ok"});
+  co_yield chunk;
   throw std::runtime_error("Test Exception");
   co_return;
 }
