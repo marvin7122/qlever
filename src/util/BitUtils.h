@@ -5,8 +5,12 @@
 #ifndef QLEVER_BITUTILS_H
 #define QLEVER_BITUTILS_H
 
+#include <absl/numeric/bits.h>
+
 #include <cmath>
+#include <cstddef>
 #include <exception>
+#include <functional>
 
 #include "util/Exception.h"
 #include "util/TypeTraits.h"
@@ -64,6 +68,21 @@ constexpr auto unsignedTypeForNumberOfBitsImpl() {
 template <uint8_t numBits>
 using unsignedTypeForNumberOfBits =
     decltype(detail::unsignedTypeForNumberOfBitsImpl<numBits>());
+
+// Calls `fn(idx)` for each set bit index of `bits`, from lowest to highest,
+// stopping early (equivalent to `break`) if `fn` returns `false`. Runs in
+// O(popcount(bits)) time: `bits & (bits - 1)` clears the lowest set bit each
+// iteration, so unset bits are never visited.
+CPP_template(typename F)(
+    requires InvocableWithConvertibleReturnType<
+        F, bool, uint8_t>) inline void forEachSetBit(uint64_t bits, F&& fn) {
+  while (bits != 0) {
+    if (!std::invoke(fn, static_cast<uint8_t>(absl::countr_zero(bits)))) {
+      return;
+    }
+    bits &= bits - 1;
+  }
+}
 }  // namespace ad_utility
 
 #endif  // QLEVER_BITUTILS_H
