@@ -18,7 +18,7 @@ namespace ql::engine::rle {
 
 // _____________________________________________________________________________
 // Run-Length Encoded (RLE) Vector Stream for Late Materialization:
-// Passes repeated predicate and subject IDs as (ValueId, RunLength) pairs,
+// Passes repeated predicate and subject IDs as (Id, RunLength) pairs,
 // avoiding copying millions of redundant IDs across query execution tree nodes.
 class RleVectorStream {
  public:
