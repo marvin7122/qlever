@@ -1,6 +1,6 @@
 # QLever Fast-Path Streaming Export Engine (V2): Deep Phase Specification
 
-**Status:** Approved Master Architecture RFC  
+**Status:** Approved Master Architecture RFC
 **Target Repository:** `marvin7122/qlever` (`feat/export-engine-v2-streaming`)  
 **Design Standard:** Grounded in `doc/design/ARCHITECTURE.md` (7 Universal Laws) & Single-Core CPU Discipline  
 
