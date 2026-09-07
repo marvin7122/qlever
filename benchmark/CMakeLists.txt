@@ -36,7 +36,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
-    add_executable(SimdEscapeClassifierBenchmark SimdEscapeClassifierBenchmark.cpp)
-    qlever_target_link_libraries(SimdEscapeClassifierBenchmark engine)
+    addAndLinkBenchmark(SimdEscapeClassifierBenchmark engine)
 
 endif()
