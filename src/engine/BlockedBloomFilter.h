@@ -101,13 +101,7 @@ class BlockedBloomFilter {
   [[nodiscard]] std::vector<size_t> pruneNonMatchingIndices(
       ql::span<const Id> candidateKeys) const {
     std::vector<size_t> matchingIndices;
-    matchingIndices.reserve(candidateKeys.size());
-    for (size_t i = 0; i < candidateKeys.size(); ++i) {
-      if (contains(candidateKeys[i])) {
-        matchingIndices.push_back(i);
-      }
-    }
-    return matchingIndices;
+    
   }
 
   [[nodiscard]] size_t numBlocks() const noexcept { return numBlocks_; }
