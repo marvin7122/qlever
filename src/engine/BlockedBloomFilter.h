@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <vector>
 
 #include "backports/span.h"
