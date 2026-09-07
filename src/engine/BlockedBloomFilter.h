@@ -77,8 +77,8 @@ class BlockedBloomFilter {
     for (int i = 0; i < 8; ++i) {
       uint32_t bitPos = (key * SALTS[i]) >> 27;  // 0..31
       assert(bitPos < 32);
-      assert(i * 2 < 16);
-      blk.words[i * 2] |= (1U << bitPos);
+      assert(i < 16);
+      blk.words[i] |= (1U << bitPos);
     }
   }
 
@@ -94,8 +94,8 @@ class BlockedBloomFilter {
     for (int i = 0; i < 8; ++i) {
       uint32_t bitPos = (key * SALTS[i]) >> 27;
       assert(bitPos < 32);
-      assert(i * 2 < 16);
-      if ((blk.words[i * 2] & (1U << bitPos)) == 0) {
+      assert(i < 16);
+      if ((blk.words[i] & (1U << bitPos)) == 0) {
         return false;
       }
     }
