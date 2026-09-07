@@ -48,11 +48,13 @@ int main() {
   auto b3 = std::chrono::high_resolution_clock::now();
   double baseProbeMs = std::chrono::duration<double, std::milli>(b3 - b2).count();
 
-  // 2. PROTOTYPE: BlockedBloomFilter (Cache-Line Aligned)
+    // 2. PROTOTYPE: BlockedBloomFilter (Cache-Line Aligned)
   auto p0 = std::chrono::high_resolution_clock::now();
   BlockedBloomFilter blockedFilter{NUM_ELEMENTS, 0.01};
   for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
     blockedFilter.insert(data[i]);
+    // Verify immediate insertion correctness (optional, can be removed for speed).
+    // EXPECT_TRUE(blockedFilter.contains(data[i])); // In production code.
   }
   auto p1 = std::chrono::high_resolution_clock::now();
   double protoInsertMs = std::chrono::duration<double, std::milli>(p1 - p0).count();
