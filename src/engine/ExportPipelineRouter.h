@@ -201,44 +201,13 @@ class ExportPipelineRouter {
                         " [Reason: ", reason, "]");
   }
 
- private:
-  // Heterogeneous, zero-allocation parameter lookup on ParamValueMap.
-  [[nodiscard]] static std::optional<std::string_view> getParameterValue(
-      const ParamValueMap& parameters, std::string_view key) noexcept {
-    auto it = parameters.find(key);
-    if (it != parameters.end() && !it->second.empty()) {
-      return it->second.front();
-    }
-    return std::nullopt;
-  }
-
-  [[nodiscard]] static ExportEngineMode evaluateEligibility(
-      const ParsedQuery& query, ExportEngineMode targetMode) noexcept {
-    if (targetMode == ExportEngineMode::FastStreamingV2) {
-      if (isEligibleForFastStreaming(query)) {
-        return ExportEngineMode::FastStreamingV2;
-      }
-      // Transparent fallback to Legacy V1
-      return ExportEngineMode::LegacyV1;
-    }
-    return targetMode;
-  }
-
-  [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
-  }
-
-  [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "0" || lower == "false" || lower == "no" || lower == "off";
-  }
-
+  // ___________________________________________________________________________
   // Return true if `query` contains constructs the V2 streaming engine
   // cannot execute yet. Fail-closed: anything beyond conjunctive triple
   // matching with FILTER, BIND, and VALUES is routed to Legacy V1. Each
   // exclusion below maps to a capability the first V2 executor lacks, and
-  // is relaxed by the work package that implements it.
+  // is relaxed by the work package that implements it. Public so the
+  // eligibility envelope is directly unit-testable.
   [[nodiscard]] static bool hasUnsupportedConstructs(
       const ParsedQuery& query) noexcept {
     // Solution modifiers that require blocking operators or aggregation.
@@ -299,6 +268,39 @@ class ExportPipelineRouter {
       return true;
     }
     return false;
+  }
+
+ private:
+  // Heterogeneous, zero-allocation parameter lookup on ParamValueMap.
+  [[nodiscard]] static std::optional<std::string_view> getParameterValue(
+      const ParamValueMap& parameters, std::string_view key) noexcept {
+    auto it = parameters.find(key);
+    if (it != parameters.end() && !it->second.empty()) {
+      return it->second.front();
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static ExportEngineMode evaluateEligibility(
+      const ParsedQuery& query, ExportEngineMode targetMode) noexcept {
+    if (targetMode == ExportEngineMode::FastStreamingV2) {
+      if (isEligibleForFastStreaming(query)) {
+        return ExportEngineMode::FastStreamingV2;
+      }
+      // Transparent fallback to Legacy V1
+      return ExportEngineMode::LegacyV1;
+    }
+    return targetMode;
+  }
+
+  [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
+    auto lower = ad_utility::getLowercase(std::string(val));
+    return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
+  }
+
+  [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
+    auto lower = ad_utility::getLowercase(std::string(val));
+    return lower == "0" || lower == "false" || lower == "no" || lower == "off";
   }
 };
 
