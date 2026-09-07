@@ -24,7 +24,10 @@ namespace ql::engine::rle {
 // _____________________________________________________________________________
 // Run-Length Encoded (RLE) Vector Stream for Late Materialization:
 // Passes repeated predicate and subject IDs as (Id, RunLength) pairs,
-// avoiding copying millions of redundant IDs across query execution tree nodes.
+// Architectural contracts:
+// 1. The stream maintains valid RLE invariants: runs_ and totalUncompressedRows_ are consistent.
+// 2. Appends preserve RLE compression by merging consecutive identical values.
+// 3. After construction, materialize() contracts guarantee correct output size and ordering.
 class RleVectorStream {
  public:
   struct Run {
