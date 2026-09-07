@@ -10,6 +10,8 @@
 #include "engine/Operation.h"
 #include "parser/ParsedQuery.h"
 
+class TripleComponent;
+
 class Values : virtual public Operation {
   using SparqlValues = parsedQuery::SparqlValues;
 
@@ -68,12 +70,12 @@ class Values : virtual public Operation {
   //
   // NOTE: this moves the values out of `parsedValues_` (to save a string copy
   // for those values that end up in the local vocabulary).
+  template <size_t I>
   void writeValues(IdTable* idTablePtr, LocalVocab* localVocab);
 };
 
-// Helper to create a 1-row VALUES tree for a single variable and value.
+// Create a one-row `VALUES` clause that binds `value` to `variable`.
 std::shared_ptr<QueryExecutionTree> makeValuesForSingleValue(
-    QueryExecutionContext* qec, const Variable& variable,
-    const TripleComponent& value);
+    QueryExecutionContext* qec, Variable variable, TripleComponent value);
 
 #endif  // QLEVER_SRC_ENGINE_VALUES_H
