@@ -138,6 +138,8 @@ add_compile_definitions(QLEVER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
+
+addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
@@ -409,6 +411,8 @@ addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpr
 
 addLinkAndDiscoverTest(ExceptionTest)
 
+addLinkAndDiscoverTestNoLibs(InvariantsTest)
+
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
 addLinkAndDiscoverTest(NowDatetimeExpressionTest index)
@@ -571,6 +575,8 @@ addLinkAndDiscoverTestNoLibs(ConstexprMapTest)
 addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(ZeroCopySocketSenderTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
