@@ -81,8 +81,8 @@ int main(int argc, char* argv[]) {
   std::cout << "\n--- Baseline: Pairwise Binary Merge Join (Materializes "
                "Intermediate) ---\n";
   std::cout << "Runtime: " << binaryMs << " ms ("
-            << (N / (binaryMs / 1000.0)) / 1e6
-            << " M items/sec, intermediate size: " << intermediateAB.size()
+            << (binaryResult.size() / (binaryMs / 1000.0)) / 1e6
+            << " M results/sec, intermediate size: " << intermediateAB.size()
             << " rows)\n";
 
   std::cout << "\n--- Prototype: Leapfrog Triejoin (Zero Intermediate "
