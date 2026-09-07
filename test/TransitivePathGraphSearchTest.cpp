@@ -9,6 +9,7 @@
 
 #include <gmock/gmock.h>
 
+#include <chrono>
 #include <limits>
 #include <memory>
 #include <thread>
@@ -275,11 +276,24 @@ TEST(GraphSearchTestExtraTests, cancellationCheck) {
   // handle's watchdog write logs containing the algorithmName specified in
   // checkCancellation.
   ep.cancellationHandle_->startWatchDog();
-  std::this_thread::sleep_for(2 * DESIRED_CANCELLATION_CHECK_INTERVAL);
-  ep.checkCancellation("TEST");
+  // The watchdog needs two iterations of `DESIRED_CANCELLATION_CHECK_INTERVAL`
+  // to reach `CHECK_WINDOW_MISSED`, and each call to `checkCancellation`
+  // resets the watchdog state. A single fixed sleep is racy on loaded CI
+  // runners, where the watchdog thread might not be scheduled in time (this
+  // repeatedly failed on the macOS conan CI job), so poll until the message
+  // is logged or a generous timeout expires. The poll period is deliberately
+  // larger than two intervals, so that the watchdog can reach
+  // `CHECK_WINDOW_MISSED` between two polls.
+  const std::string expectedMessage =
+      "The TEST graph search algorithm received a cancellation signal.";
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds{30};
+  while (stream.str().find(expectedMessage) == std::string::npos) {
+    ASSERT_LT(std::chrono::steady_clock::now(), deadline)
+        << "Timed out waiting for the watchdog cancellation log message.";
+    std::this_thread::sleep_for(3 * DESIRED_CANCELLATION_CHECK_INTERVAL);
+    ep.checkCancellation("TEST");
+  }
 
-  EXPECT_THAT(
-      stream.str(),
-      HasSubstr(
-          "The TEST graph search algorithm received a cancellation signal."));
+  EXPECT_THAT(stream.str(), HasSubstr(expectedMessage));
 }
