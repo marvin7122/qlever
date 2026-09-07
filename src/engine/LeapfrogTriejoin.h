@@ -67,9 +67,7 @@ namespace ql::engine::wcoj {
 
 std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
   std::vector<Id> result;
-  if (iterators.empty()) {
-    return result;
-  }
+  AD_CHECK(!iterators.empty());
 
   for (const auto& it : iterators) {
     if (it.atEnd()) {
