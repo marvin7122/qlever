@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <algorithm>
 
 #include "backports/span.h"
 
@@ -77,9 +78,8 @@ class RleVectorStream {
   void materialize(ql::span<Id> dest) const {
     size_t outIdx = 0;
     for (const auto& run : runs_) {
-      for (size_t k = 0; k < run.length_; ++k) {
-        dest[outIdx++] = run.value_;
-      }
+      std::fill_n(dest.data() + outIdx, run.length_, run.value_);
+      outIdx += run.length_;
     }
   }
 };
