@@ -51,7 +51,7 @@ enum class ExportEngineMode {
 // - Law 1: Deep Module (concise public interface, encapsulated plan analysis)
 // - Law 2: Zero Bookkeeping Leakage (caller never manages routing internals)
 // - Law 4: Defining Errors Out of Existence (unsupported shapes safely
-// fallback)
+// fall back)
 class ExportPipelineRouter {
  public:
   using ParamValueMap = ad_utility::url_parser::ParamValueMap;
