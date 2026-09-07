@@ -26,7 +26,7 @@ if (NOT _NO_BENCHMARK)
     endfunction()
 
     # Compile the benchmark and link it.
-    # Usage: addAndLinkBenchmark(baseName, [additionalLibraries...])
+    # Usage: addAndLinkBenchmark(.cpp, [additionalLibraries...])
     #   - baseName: The name of the benchmark file without the .cpp ending.
     function(addAndLinkBenchmark baseName)
         add_executable(${baseName}  "${baseName}.cpp")
