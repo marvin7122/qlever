@@ -119,9 +119,7 @@ class BlockedBloomFilter {
 };
 
 // _____________________________________________________________________________
-// Semi-join pushdown helper: populates a BlockedBloomFilter from the build-side
-// (smaller table's join column) during join preparation and probes probe-side
-// candidate keys to prune non-matching rows before buffer materialization.
+// Semi-join pushdown helper: populate a BlockedBloomFilter from the build-side join column during join preparation and probe probe-side candidate keys to prune non-matching rows before buffer materialization.
 class SemiJoinPushdownHelper {
  private:
   BlockedBloomFilter filter_;
