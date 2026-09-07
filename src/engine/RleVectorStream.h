@@ -66,6 +66,7 @@ class RleVectorStream {
  public:
   Builder beginBuild() { return Builder(this); }
   void append(const Id& value, size_t length) {
+    AD_CHECK(length > 0);
     if (!runs_.empty() && runs_.back().value_ == value) {
       runs_.back().length_ += length;
     } else {
