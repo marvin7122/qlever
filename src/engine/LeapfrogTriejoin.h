@@ -35,7 +35,7 @@ class LeapfrogIterator {
   [[nodiscard]] bool atEnd() const {
     ADL_CORRECTNESS_CHECK(currentIndex_ <= sortedKeys_.size());
     bool result = currentIndex_ >= sortedKeys_.size();
-    ADL_CORRECTNESS_CHECK(result ? currentIndex_ == sortedKeys_.size() : currentIndex_ < sortedKeys_.size());
+
     return result;
   }
 
