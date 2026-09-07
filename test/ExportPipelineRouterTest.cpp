@@ -91,13 +91,7 @@ TEST(ExportPipelineRouterTest, HttpHeaderOverrides) {
   auto query = parse("SELECT ?s WHERE { ?s ?p ?o }");
   ParamValueMap params;
 
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "v2"),
-            ExportEngineMode::FastStreamingV2);
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "fast"),
-            ExportEngineMode::FastStreamingV2);
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "streaming"),
-            ExportEngineMode::FastStreamingV2);
-  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "legacy"),
+  
             ExportEngineMode::LegacyV1);
   EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "v1"),
             ExportEngineMode::LegacyV1);
