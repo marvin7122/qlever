@@ -36,7 +36,7 @@ class BlockedBloomFilter {
   std::vector<Block> blocks_;
   size_t numBlocks_ = 0;
 
-  // Salt constants for generating 8 bit positions inside the 512-bit block
+  // Salt constants for generating 8 bit positions inside the 512-bit block.
   static constexpr uint32_t SALTS[8] = {0x47b6137b, 0x44974d91, 0x8824ad5b,
                                         0xa2b7289d, 0x705495c7, 0x2df1424b,
                                         0x9efc4947, 0x5c6bfb31};
