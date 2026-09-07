@@ -38,10 +38,10 @@ int main() {
   auto b1 = std::chrono::high_resolution_clock::now();
   double baseInsertMs = std::chrono::duration<double, std::milli>(b1 - b0).count();
 
-  size_t baseHits = 0;
+    size_t baseHits = 0;
   auto b2 = std::chrono::high_resolution_clock::now();
   for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-    if (baseSet.contains(data[i].getBits())) {
+    if (baseSet.find(data[i].getBits()) != baseSet.end()) {
       baseHits++;
     }
   }
