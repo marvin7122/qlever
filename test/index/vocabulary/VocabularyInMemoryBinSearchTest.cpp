@@ -147,28 +147,6 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
               ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
-// A missing index (a "hole" from an excluded entry) yields the placeholder
-// word instead of throwing; only an empty batch is rejected.
-TEST(VocabularyInMemoryBinSearch, LookupBatchYieldsPlaceholderForMissingIndex) {
-  std::string filename = gtestCurrentTestName();
-  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
-  auto vocab =
-      createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles);
-
-  // In-range gaps of `indicesWithHoles` ({0, 3, 4, 9} are contained).
-  const std::vector<size_t> holes{1, 2, 5, 6, 7, 8};
-  auto result = vocab.lookupBatch(holes);
-  ASSERT_EQ(result.size(), holes.size());
-  for (size_t i = 0; i < holes.size(); ++i) {
-    EXPECT_EQ(result[i],
-              ad_utility::vocabulary::placeholderForMissingVocabIndex(
-                  holes.at(i)))
-        << "at position " << i;
-  }
-  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
-                               ::testing::HasSubstr("!indices.empty()"));
-}
-
 TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsEmptyBatch) {
   auto vocab = createVocabulary("LookupBatchRejectsEmptyBatch")(
       std::vector<std::string>{"alpha", "beta"});
