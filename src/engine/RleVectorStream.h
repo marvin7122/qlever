@@ -72,13 +72,27 @@ class RleVectorStream {
     } else {
       runs_.push_back({value, length});
     }
-    
+    totalUncompressedRows_ += length;
+  }
+
+  void validateInvariants() const {
+    size_t calculatedRows = 0;
+    for (size_t i = 0; i < runs_.size(); ++i) {
+      AD_CHECK(runs_[i].length_ > 0);
+      calculatedRows += runs_[i].length_;
+      if (i > 0) {
+        AD_CHECK(runs_[i].value_ != runs_[i - 1].value_);
+      }
+    }
+    AD_CHECK(calculatedRows == totalUncompressedRows_);
+  }
 
   [[nodiscard]] ql::span<const Run> runs() const noexcept { return runs_; }
   [[nodiscard]] ql::span<const Run> runs() && = delete;
 
-    // Late-materialize the RLE runs directly into the destination `span<Id>`.
+  // Late-materialize the RLE runs directly into the destination `span<Id>`.
   void materialize(ql::span<Id> dest) const {
+    AD_CHECK(dest.size() == totalUncompressedRows_);
     size_t outIdx = 0;
     for (const auto& run : runs_) {
       std::fill_n(dest.data() + outIdx, run.length_, run.value_);
