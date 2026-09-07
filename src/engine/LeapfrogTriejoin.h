@@ -16,6 +16,7 @@ namespace ql::engine::wcoj {
 
 // _____________________________________________________________________________
 // Provide sorted trie iterator interface for `LeapfrogTriejoin`.
+// TODO<marvin7122> Prototype implementation; further optimization and integration needed.
 class LeapfrogIterator {
  private:
   ql::span<const Id> sortedKeys_;
