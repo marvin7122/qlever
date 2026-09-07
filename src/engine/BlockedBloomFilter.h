@@ -94,7 +94,7 @@ class BlockedBloomFilter {
   }
 
   // Check whether a candidate key passes the filter.
-  [[nodiscard]] bool passesFilter(Id id) const noexcept { return contains(id); }
+    [[nodiscard]] bool passesFilter(const Id& id) const noexcept { return contains(id); }
 
   // Probe incoming candidate keys to prune non-matching row indices before
   // buffer materialization.
