@@ -29,7 +29,7 @@ class RleVectorStream {
  public:
   struct Run {
     Id value_{Id::makeUndefined()};
-    uint32_t length_ = 0;
+    size_t length_ = 0;
   };
 
  private:
@@ -41,7 +41,7 @@ class RleVectorStream {
     RleVectorStream* stream_;
   public:
     explicit Builder(RleVectorStream* stream) : stream_(stream) {}
-    Builder& add(Id value, uint32_t length) {
+    Builder& add(Id value, size_t length) {
       stream_->append(value, length);
       return *this;
     }
@@ -54,7 +54,7 @@ class RleVectorStream {
 
  public:
   Builder beginBuild() { return Builder(this); }
-  void append(Id value, uint32_t length) {
+  void append(Id value, size_t length) {
     if (!runs_.empty() && runs_.back().value_ == value) {
       runs_.back().length_ += length;
     } else {
@@ -75,7 +75,7 @@ class RleVectorStream {
     AD_CORRECTNESS_CHECK(dest.size() >= totalUncompressedRows_);
     size_t outIdx = 0;
     for (const auto& run : runs_) {
-      for (uint32_t k = 0; k < run.length_; ++k) {
+      for (size_t k = 0; k < run.length_; ++k) {
         dest[outIdx++] = run.value_;
       }
     }
