@@ -52,11 +52,13 @@ struct EvaluatedTermData {
 using EvaluatedTerm = std::shared_ptr<const EvaluatedTermData>;
 
 // A term used while instantiating a CONSTRUCT triple. `data_` is never null
-// for an engaged `std::optional<EvaluatedTermRef>`. `keepAlive_` is empty when
-// `data_` points into a `PrecomputedConstant` that outlives the pipeline.
-// For a variable, `keepAlive_` copies the cache/batch `shared_ptr` so an LRU
-// eviction cannot destroy the bytes. For a blank node, `keepAlive_` owns the
-// newly allocated term.
+// for an engaged `std::optional<EvaluatedTermRef>`. `keepAlive_` always owns
+// the term `data_` points to, so an `EvaluatedTriple` is self-contained and
+// may outlive the pipeline that instantiated it (e.g. collected into a
+// vector and formatted later): for a constant it shares ownership of the
+// precomputed term, for a variable it copies the cache/batch `shared_ptr`
+// so an LRU eviction cannot destroy the bytes, and for a blank node it owns
+// the newly allocated term.
 struct EvaluatedTermRef {
   const EvaluatedTermData* data_ = nullptr;
   EvaluatedTerm keepAlive_{};

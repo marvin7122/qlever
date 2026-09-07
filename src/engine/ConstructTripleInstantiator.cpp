@@ -29,7 +29,13 @@ std::optional<EvaluatedTermRef> instantiateTerm(
         using T = std::decay_t<decltype(t)>;
 
         if constexpr (std::is_same_v<T, PrecomputedConstant>) {
-          return EvaluatedTermRef{t.evaluatedTerm_.get(), {}};
+          // Copy the `shared_ptr` (one atomic refcount increment per triple
+          // position and row): the term itself is precomputed once and shared
+          // across all rows, so no per-row allocation happens. The copy is
+          // required for soundness: triples routinely outlive the pipeline
+          // that owns the precomputed template (e.g. collected into a vector
+          // and formatted later), so a non-owning borrow would dangle.
+          return EvaluatedTermRef{t.evaluatedTerm_.get(), t.evaluatedTerm_};
         } else if constexpr (std::is_same_v<T, PrecomputedVariable>) {
           const std::optional<EvaluatedTerm>& bound =
               batchResult.getVariable(t.columnIndex_, rowIdxInBatch);
