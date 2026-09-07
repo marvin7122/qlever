@@ -54,15 +54,14 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
   const auto& index = qec->getIndex();
   auto getId = ad_utility::testing::makeGetId(index);
 
-  std::vector<Id> testIds = {
-      getId("\"first\""),
-      getId("<s>"),
-      ad_utility::testing::IntId(123),
-      getId("\"second\""),
-      getId("<http://example.org/resource>"),
-      getId("\"third\""),
-      getId("\"fourth\""),
-      ad_utility::testing::UndefId()};
+  std::vector<Id> testIds = {getId("\"first\""),
+                             getId("<s>"),
+                             ad_utility::testing::IntId(123),
+                             getId("\"second\""),
+                             getId("<http://example.org/resource>"),
+                             getId("\"third\""),
+                             getId("\"fourth\""),
+                             ad_utility::testing::UndefId()};
 
   LocalVocab localVocab;
 
@@ -74,8 +73,8 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
   for (size_t distance : {1, 2, 4, 8, 16}) {
     PrefetchingBatchResolver resolver(
         PrefetchConfig{.prefetchDistance = distance});
-    auto prefetchedResults = resolver.idsToStringAndType(
-        index, testIds, localVocab, ql::identity{});
+    auto prefetchedResults =
+        resolver.idsToStringAndType(index, testIds, localVocab, ql::identity{});
 
     ASSERT_EQ(baselineResults.size(), prefetchedResults.size());
     for (size_t i = 0; i < baselineResults.size(); ++i) {
@@ -88,8 +87,8 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
 
 TEST(PrefetchingBatchResolver, CompactVectorPipelinedResolution) {
   CompactVectorOfStrings<char> words;
-  std::vector<std::string> rawWords = {
-      "<iri1>", "<iri2>", "\"literal1\"", "\"literal2\"", "\"longer_literal_3\""};
+  std::vector<std::string> rawWords = {"<iri1>", "<iri2>", "\"literal1\"",
+                                       "\"literal2\"", "\"longer_literal_3\""};
   words.build(rawWords);
 
   PrefetchingBatchResolver resolver(PrefetchConfig{.prefetchDistance = 4});
@@ -117,8 +116,8 @@ TEST(PrefetchingBatchResolver, EmptyAndBoundaryInputs) {
   LocalVocab localVocab;
 
   // Empty IDs span
-  auto emptyResults = resolver.idsToStringAndType(
-      index, ql::span<const Id>{}, localVocab);
+  auto emptyResults =
+      resolver.idsToStringAndType(index, ql::span<const Id>{}, localVocab);
   EXPECT_TRUE(emptyResults.empty());
 
   // Empty positions

@@ -95,10 +95,10 @@ class ZeroCopyBufferPool : public WithInvariants<ZeroCopyBufferPool> {
     bufferSizeBytes_ = bufferSizeBytes;
     totalBytes_ = numBuffers_ * bufferSizeBytes_;
 
-    int ret =
-        posix_memalign(&rawBuffer_, kZeroCopyPageAlignment, totalBytes_);
+    int ret = posix_memalign(&rawBuffer_, kZeroCopyPageAlignment, totalBytes_);
     if (ret != 0 || rawBuffer_ == nullptr) {
-      AD_THROW("posix_memalign failed to allocate zero-copy pinned buffer pool");
+      AD_THROW(
+          "posix_memalign failed to allocate zero-copy pinned buffer pool");
     }
 
     // Pre-fault memory pages before registration to avoid soft page faults
@@ -405,7 +405,8 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
 
     if (config_.useZeroCopy) {
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
-        // Zero-Copy Send with Registered Fixed Buffer (Opcode: IORING_OP_SEND_ZC)
+        // Zero-Copy Send with Registered Fixed Buffer (Opcode:
+        // IORING_OP_SEND_ZC)
         io_uring_prep_send_zc_fixed(sqe, sockfd, slotSpan.data(), numBytes,
                                     flags, zcFlags, bufferIndex);
       } else {
@@ -492,7 +493,9 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
   [[nodiscard]] const ZeroCopyBufferPool& bufferPool() const noexcept {
     return bufferPool_;
   }
-  [[nodiscard]] ZeroCopyBufferPool& bufferPool() noexcept { return bufferPool_; }
+  [[nodiscard]] ZeroCopyBufferPool& bufferPool() noexcept {
+    return bufferPool_;
+  }
 
   [[nodiscard]] size_t inFlightRequests() const noexcept {
     return numInFlightRequests_;
@@ -524,9 +527,9 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
  private:
   void initRing() {
 #ifdef QLEVER_HAS_LIBURING
-    int ret = io_uring_queue_init(
-        static_cast<unsigned int>(config_.ringEntries), &ring_,
-        config_.additionalFlags);
+    int ret =
+        io_uring_queue_init(static_cast<unsigned int>(config_.ringEntries),
+                            &ring_, config_.additionalFlags);
     if (ret < 0) {
       ringInitialized_ = false;
       AD_LOG_WARN << "io_uring_queue_init failed (errno: " << -ret

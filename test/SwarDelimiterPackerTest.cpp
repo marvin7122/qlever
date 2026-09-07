@@ -101,9 +101,9 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
   buffer.fill('X');
 
   // Test writing 3-byte delimiter
-  char* next = SwarDelimiterPacker::writeDelim64(buffer.data(),
-                                                SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.pattern(),
-                                                SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.len());
+  char* next = SwarDelimiterPacker::writeDelim64(
+      buffer.data(), SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.pattern(),
+      SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.len());
   EXPECT_EQ(next, buffer.data() + 3);
   EXPECT_EQ(buffer[0], '>');
   EXPECT_EQ(buffer[1], ' ');
@@ -112,16 +112,16 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
 
   // Test writing 4-byte delimiter
   buffer.fill('Z');
-  next = SwarDelimiterPacker::writeDelim64(buffer.data(),
-                                          SwarDelimiterPacker::TRIPLE_O_IRI_END.pattern(),
-                                          SwarDelimiterPacker::TRIPLE_O_IRI_END.len());
+  next = SwarDelimiterPacker::writeDelim64(
+      buffer.data(), SwarDelimiterPacker::TRIPLE_O_IRI_END.pattern(),
+      SwarDelimiterPacker::TRIPLE_O_IRI_END.len());
   EXPECT_EQ(next, buffer.data() + 4);
   EXPECT_EQ(std::string_view(buffer.data(), 4), "> .\n");
 
   // Test writing 1-byte delimiter
   buffer.fill('Y');
   next = SwarDelimiterPacker::writeDelim64(buffer.data(),
-                                          SwarDelimiterPacker::TSV_TAB, 1);
+                                           SwarDelimiterPacker::TSV_TAB, 1);
   EXPECT_EQ(next, buffer.data() + 1);
   EXPECT_EQ(buffer[0], '\t');
 
@@ -160,8 +160,10 @@ TEST(SwarDelimiterPackerTest, WriteDelimPackedDescriptor) {
   buffer.fill('\0');
 
   char* p = buffer.data();
-  p = SwarDelimiterPacker::writeDelim(p, SwarDelimiterPacker::TRIPLE_S_TO_P_IRI);
-  p = SwarDelimiterPacker::writeDelim(p, SwarDelimiterPacker::TRIPLE_P_TO_O_LIT);
+  p = SwarDelimiterPacker::writeDelim(p,
+                                      SwarDelimiterPacker::TRIPLE_S_TO_P_IRI);
+  p = SwarDelimiterPacker::writeDelim(p,
+                                      SwarDelimiterPacker::TRIPLE_P_TO_O_LIT);
   p = SwarDelimiterPacker::writeDelim(p, SwarDelimiterPacker::TRIPLE_O_LIT_END);
 
   EXPECT_EQ(p, buffer.data() + 10);
@@ -187,43 +189,86 @@ TEST(SwarDelimiterPackerTest, WriteDelim32And16) {
 // _____________________________________________________________________________
 TEST(SwarDelimiterPackerTest, AllPredefinedDelimitersMatchStringViews) {
   EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_TAB, 1).toString(), "\t");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_NEWLINE, 1).toString(), "\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_CRLF, 2).toString(), "\r\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_TAB_TAB, 2).toString(), "\t\t");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_TAB_NEWLINE, 2).toString(), "\t\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_TAB_CRLF, 3).toString(), "\t\r\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_NEWLINE, 1).toString(),
+            "\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_CRLF, 2).toString(),
+            "\r\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_TAB_TAB, 2).toString(),
+            "\t\t");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_TAB_NEWLINE, 2).toString(),
+            "\t\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::TSV_TAB_CRLF, 3).toString(),
+            "\t\r\n");
 
   EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_COMMA, 1).toString(), ",");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_NEWLINE, 1).toString(), "\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_CRLF, 2).toString(), "\r\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE, 1).toString(), "\"");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE_COMMA_QUOTE, 3).toString(), "\",\"");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_COMMA_QUOTE, 2).toString(), ",\"");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE_COMMA, 2).toString(), "\",");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE_NEWLINE, 2).toString(), "\"\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE_CRLF, 3).toString(), "\"\r\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_NEWLINE_QUOTE, 2).toString(), "\n\"");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_CRLF_QUOTE, 3).toString(), "\r\n\"");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_NEWLINE, 1).toString(),
+            "\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_CRLF, 2).toString(),
+            "\r\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE, 1).toString(),
+            "\"");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE_COMMA_QUOTE, 3).toString(),
+      "\",\"");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_COMMA_QUOTE, 2).toString(),
+            ",\"");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE_COMMA, 2).toString(),
+            "\",");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE_NEWLINE, 2).toString(),
+      "\"\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_QUOTE_CRLF, 3).toString(),
+            "\"\r\n");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::CSV_NEWLINE_QUOTE, 2).toString(),
+      "\n\"");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::CSV_CRLF_QUOTE, 3).toString(),
+            "\r\n\"");
 
   EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::SPACE, 1).toString(), " ");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::DOT_NEWLINE, 3).toString(), " .\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::DOT_CRLF, 4).toString(), " .\r\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::SHORT_DOT_NEWLINE, 2).toString(), ".\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::SHORT_DOT_CRLF, 3).toString(), ".\r\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::DOT_NEWLINE, 3).toString(),
+            " .\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::DOT_CRLF, 4).toString(),
+            " .\r\n");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::SHORT_DOT_NEWLINE, 2).toString(),
+      ".\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::SHORT_DOT_CRLF, 3).toString(),
+            ".\r\n");
   EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::IRI_OPEN, 1).toString(), "<");
   EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE, 1).toString(), ">");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_SPACE, 2).toString(), "> ");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_SPACE_OPEN, 3).toString(), "> <");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_SPACE_QUOTE, 3).toString(), "> \"");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_DOT_NEWLINE, 4).toString(), "> .\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_DOT_CRLF, 5).toString(), "> .\r\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE, 1).toString(), "\"");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE_SPACE, 2).toString(), "\" ");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE_SPACE_OPEN, 3).toString(), "\" <");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE_DOT_NEWLINE, 4).toString(), "\" .\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE_DOT_CRLF, 5).toString(), "\" .\r\n");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::SEMICOLON_SPACE, 2).toString(), "; ");
-  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::COMMA_SPACE, 2).toString(), ", ");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_SPACE, 2).toString(),
+            "> ");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_SPACE_OPEN, 3).toString(),
+      "> <");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_SPACE_QUOTE, 3).toString(),
+      "> \"");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_DOT_NEWLINE, 4).toString(),
+      "> .\n");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::IRI_CLOSE_DOT_CRLF, 5).toString(),
+      "> .\r\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE, 1).toString(),
+            "\"");
+  EXPECT_EQ(
+      PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE_SPACE, 2).toString(),
+      "\" ");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE_SPACE_OPEN, 3)
+                .toString(),
+            "\" <");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE_DOT_NEWLINE, 4)
+                .toString(),
+            "\" .\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::LITERAL_QUOTE_DOT_CRLF, 5)
+                .toString(),
+            "\" .\r\n");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::SEMICOLON_SPACE, 2).toString(),
+            "; ");
+  EXPECT_EQ(PackedDelimiter(SwarDelimiterPacker::COMMA_SPACE, 2).toString(),
+            ", ");
 
   EXPECT_EQ(SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.toString(), "> <");
   EXPECT_EQ(SwarDelimiterPacker::TRIPLE_P_TO_O_IRI.toString(), "> <");
@@ -268,13 +313,16 @@ TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
   *wPtr++ = '<';
   std::memcpy(wPtr, sub.data(), sub.size());
   wPtr += sub.size();
-  wPtr = SwarDelimiterPacker::writeDelim64<3>(wPtr, SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.pattern());
+  wPtr = SwarDelimiterPacker::writeDelim64<3>(
+      wPtr, SwarDelimiterPacker::TRIPLE_S_TO_P_IRI.pattern());
   std::memcpy(wPtr, pred.data(), pred.size());
   wPtr += pred.size();
-  wPtr = SwarDelimiterPacker::writeDelim64<3>(wPtr, SwarDelimiterPacker::TRIPLE_P_TO_O_IRI.pattern());
+  wPtr = SwarDelimiterPacker::writeDelim64<3>(
+      wPtr, SwarDelimiterPacker::TRIPLE_P_TO_O_IRI.pattern());
   std::memcpy(wPtr, obj.data(), obj.size());
   wPtr += obj.size();
-  wPtr = SwarDelimiterPacker::writeDelim64<4>(wPtr, SwarDelimiterPacker::TRIPLE_O_IRI_END.pattern());
+  wPtr = SwarDelimiterPacker::writeDelim64<4>(
+      wPtr, SwarDelimiterPacker::TRIPLE_O_IRI_END.pattern());
 
   size_t scalarLen = sPtr - scalarBuf.data();
   size_t swarLen = wPtr - swarBuf.data();
@@ -283,7 +331,8 @@ TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
   EXPECT_EQ(std::string_view(scalarBuf.data(), scalarLen),
             std::string_view(swarBuf.data(), swarLen));
   EXPECT_EQ(std::string_view(swarBuf.data(), swarLen),
-            "<http://example.org/entity/Q42> <http://example.org/prop/P31> <http://example.org/entity/Q5> .\n");
+            "<http://example.org/entity/Q42> <http://example.org/prop/P31> "
+            "<http://example.org/entity/Q5> .\n");
 
   // Test CSV quoted row: "col1","col2","col3"\n
   std::string_view c1 = "Alice";
@@ -316,13 +365,16 @@ TEST(SwarDelimiterPackerTest, EndToEndRowSerializationComparison) {
   *wPtr++ = '"';
   std::memcpy(wPtr, c1.data(), c1.size());
   wPtr += c1.size();
-  wPtr = SwarDelimiterPacker::writeDelim64<3>(wPtr, SwarDelimiterPacker::CSV_QUOTE_COMMA_QUOTE);
+  wPtr = SwarDelimiterPacker::writeDelim64<3>(
+      wPtr, SwarDelimiterPacker::CSV_QUOTE_COMMA_QUOTE);
   std::memcpy(wPtr, c2.data(), c2.size());
   wPtr += c2.size();
-  wPtr = SwarDelimiterPacker::writeDelim64<3>(wPtr, SwarDelimiterPacker::CSV_QUOTE_COMMA_QUOTE);
+  wPtr = SwarDelimiterPacker::writeDelim64<3>(
+      wPtr, SwarDelimiterPacker::CSV_QUOTE_COMMA_QUOTE);
   std::memcpy(wPtr, c3.data(), c3.size());
   wPtr += c3.size();
-  wPtr = SwarDelimiterPacker::writeDelim64<2>(wPtr, SwarDelimiterPacker::CSV_QUOTE_NEWLINE);
+  wPtr = SwarDelimiterPacker::writeDelim64<2>(
+      wPtr, SwarDelimiterPacker::CSV_QUOTE_NEWLINE);
 
   scalarLen = sPtr - scalarBuf.data();
   swarLen = wPtr - swarBuf.data();

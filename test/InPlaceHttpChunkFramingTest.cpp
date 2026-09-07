@@ -45,7 +45,8 @@ TEST(InPlaceHttpChunkFramingTest, ConceptComplianceAndBasicFraming) {
   std::string_view framed(framedSpan.data(), framedSpan.size());
   EXPECT_EQ(framed, "22\r\nHello, QLever Chunked HTTP Stream!\r\n");
 
-  // Zero-copy verification: framed span must point directly into pre-reserved header
+  // Zero-copy verification: framed span must point directly into pre-reserved
+  // header
   EXPECT_EQ(framedSpan.data(), chunk.payloadData() - 4);  // "22\r\n" = 4 bytes
   EXPECT_EQ(chunk.lastFinalizedSpan().data(), framedSpan.data());
   EXPECT_EQ(chunk.lastFinalizedSpan().size(), framedSpan.size());
@@ -66,8 +67,8 @@ TEST(InPlaceHttpChunkFramingTest, TerminatingChunk) {
 
 TEST(InPlaceHttpChunkFramingTest, HexLengthFormattingExhaustive) {
   const std::vector<size_t> testSizes = {
-      0, 1, 2, 9, 10, 15, 16, 31, 32, 255, 256, 1023, 1024,
-      4095, 4096, 65535, 65536, 1048576, 2000000};
+      0,   1,    2,    9,    10,   15,    16,    31,      32,     255,
+      256, 1023, 1024, 4095, 4096, 65535, 65536, 1048576, 2000000};
 
   for (size_t size : testSizes) {
     InPlaceHttpChunk chunk(size);
@@ -87,9 +88,8 @@ TEST(InPlaceHttpChunkFramingTest, HexLengthFormattingExhaustive) {
     std::string_view hexHeader = framed.substr(0, crlfPos);
 
     size_t parsedSize = 0;
-    auto [ptr, ec] = std::from_chars(hexHeader.data(),
-                                     hexHeader.data() + hexHeader.size(),
-                                     parsedSize, 16);
+    auto [ptr, ec] = std::from_chars(
+        hexHeader.data(), hexHeader.data() + hexHeader.size(), parsedSize, 16);
     ASSERT_EQ(ec, std::errc{});
     EXPECT_EQ(ptr, hexHeader.data() + hexHeader.size());
     EXPECT_EQ(parsedSize, size);
@@ -112,7 +112,8 @@ TEST(InPlaceHttpChunkFramingTest, NonOwningExternalBuffer) {
       InPlaceHttpChunk::TOTAL_OVERHEAD_BYTES + payloadCapacity;
 
   std::vector<char> externalStorage(totalBufferBytes);
-  InPlaceHttpChunk chunk(ql::span<char>(externalStorage.data(), externalStorage.size()));
+  InPlaceHttpChunk chunk(
+      ql::span<char>(externalStorage.data(), externalStorage.size()));
 
   EXPECT_FALSE(chunk.isOwner());
   EXPECT_EQ(chunk.maxPayloadCapacity(), payloadCapacity);
@@ -153,7 +154,8 @@ TEST(InPlaceHttpChunkFramingTest, StreamerAutoChunkingAndFlush) {
   EXPECT_EQ(emittedChunks.size(), 1);
 
   streamer.write(part3);
-  // Total 30 + 120 = 150 bytes: 100 bytes emitted as second chunk, 50 bytes buffered
+  // Total 30 + 120 = 150 bytes: 100 bytes emitted as second chunk, 50 bytes
+  // buffered
   EXPECT_EQ(streamer.currentBufferedBytes(), 50);
   EXPECT_EQ(emittedChunks.size(), 2);
 
@@ -186,7 +188,8 @@ TEST(InPlaceHttpChunkFramingTest, StreamerAutoChunkingAndFlush) {
   for (size_t i = 0; i < 3; ++i) {
     size_t pos = emittedChunks[i].find("\r\n");
     size_t endPos = emittedChunks[i].rfind("\r\n");
-    reconstructedPayload += emittedChunks[i].substr(pos + 2, endPos - (pos + 2));
+    reconstructedPayload +=
+        emittedChunks[i].substr(pos + 2, endPos - (pos + 2));
   }
   EXPECT_EQ(reconstructedPayload, part1 + part2 + part3);
 }
@@ -222,7 +225,8 @@ TEST(InPlaceHttpChunkFramingTest, PipeTransmission) {
 
   auto framedSpan = chunk.finalizeChunk(payload.size());
 
-  ssize_t bytesWritten = ::write(pipeFds[1], framedSpan.data(), framedSpan.size());
+  ssize_t bytesWritten =
+      ::write(pipeFds[1], framedSpan.data(), framedSpan.size());
   EXPECT_EQ(bytesWritten, static_cast<ssize_t>(framedSpan.size()));
   ::close(pipeFds[1]);
 

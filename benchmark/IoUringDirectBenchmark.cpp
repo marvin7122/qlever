@@ -45,7 +45,8 @@ using namespace ad_utility::export_prototypes;
 // 1 GB simulated vocabulary file constants:
 constexpr size_t kTotalFileSizeBytes = 1024ULL * 1024ULL * 1024ULL;  // 1 GB
 constexpr size_t kBlockSizeBytes = 4096;                             // 4 KB
-constexpr size_t kTotalBlocks = kTotalFileSizeBytes / kBlockSizeBytes;  // 262,144 blocks
+constexpr size_t kTotalBlocks =
+    kTotalFileSizeBytes / kBlockSizeBytes;   // 262,144 blocks
 constexpr size_t kDefaultBatchBlocks = 256;  // 1 MB per batch (256 * 4KB)
 
 // _____________________________________________________________________________
@@ -82,7 +83,8 @@ class SimulatedVocabularyFile {
     auto* bytePtr = static_cast<char*>(writeBuf);
     std::mt19937_64 rng(42);
 
-    // Populate with simulated vocabulary entries: prefix IDs, string tokens, offsets
+    // Populate with simulated vocabulary entries: prefix IDs, string tokens,
+    // offsets
     size_t bytesWritten = 0;
     while (bytesWritten < kTotalFileSizeBytes) {
       for (size_t i = 0; i < writeChunkSize; i += sizeof(uint64_t)) {
@@ -131,7 +133,8 @@ struct BenchmarkMetric {
 };
 
 // _____________________________________________________________________________
-// Benchmark test harness evaluating I/O paradigms across the 1GB simulated dataset.
+// Benchmark test harness evaluating I/O paradigms across the 1GB simulated
+// dataset.
 class IoUringDirectBenchmarkRunner {
  private:
   std::string filePath_;
@@ -234,10 +237,10 @@ class IoUringDirectBenchmarkRunner {
         if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
           blockOffset = 0;
         }
-        requests[i] = BlockReadRequest(
-            file.fd(), blockOffset, /*bufIndex=*/0, /*bufOffset=*/0,
-            kBlockSizeBytes, bufferArena.getSlotSpan(i).data(),
-            /*requireDirectIoAlignment=*/false);
+        requests[i] = BlockReadRequest(file.fd(), blockOffset, /*bufIndex=*/0,
+                                       /*bufOffset=*/0, kBlockSizeBytes,
+                                       bufferArena.getSlotSpan(i).data(),
+                                       /*requireDirectIoAlignment=*/false);
       }
 
       auto batchId = reader.submitBatch(requests);
@@ -278,10 +281,10 @@ class IoUringDirectBenchmarkRunner {
         if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
           blockOffset = 0;
         }
-        requests[i] = BlockReadRequest(
-            file.fd(), blockOffset, /*bufIndex=*/0, /*bufOffset=*/0,
-            kBlockSizeBytes, bufferArena.getSlotSpan(i).data(),
-            /*requireDirectIoAlignment=*/true);
+        requests[i] = BlockReadRequest(file.fd(), blockOffset, /*bufIndex=*/0,
+                                       /*bufOffset=*/0, kBlockSizeBytes,
+                                       bufferArena.getSlotSpan(i).data(),
+                                       /*requireDirectIoAlignment=*/true);
       }
 
       auto batchId = reader.submitBatch(requests);
@@ -294,7 +297,8 @@ class IoUringDirectBenchmarkRunner {
                            endTime, totalBytes, numBatches);
   }
 
-  // 5. io_uring with Registered Files (IORING_REGISTER_FILES) + Unpinned Buffers
+  // 5. io_uring with Registered Files (IORING_REGISTER_FILES) + Unpinned
+  // Buffers
   BenchmarkMetric runIoUringRegisteredFiles(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
@@ -340,7 +344,8 @@ class IoUringDirectBenchmarkRunner {
                            startTime, endTime, totalBytes, numBatches);
   }
 
-  // 6. io_uring Fully Registered: IORING_REGISTER_FILES + IORING_REGISTER_BUFFERS + O_DIRECT
+  // 6. io_uring Fully Registered: IORING_REGISTER_FILES +
+  // IORING_REGISTER_BUFFERS + O_DIRECT
   BenchmarkMetric runIoUringFullyRegistered(bool randomAccess = false) {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
@@ -374,7 +379,8 @@ class IoUringDirectBenchmarkRunner {
         }
         // Zero-copy DMA fixed buffer request
         requests[i] = BlockReadRequest(
-            /*fileIndex=*/0, blockOffset, /*bufferIndex=*/static_cast<uint32_t>(i),
+            /*fileIndex=*/0, blockOffset,
+            /*bufferIndex=*/static_cast<uint32_t>(i),
             /*bufferOffset=*/0, kBlockSizeBytes,
             bufferArena.getSlotSpan(i).data(),
             /*requireDirectIoAlignment=*/true);
@@ -386,8 +392,9 @@ class IoUringDirectBenchmarkRunner {
     }
 
     auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("6. io_uring (Fully Registered Files+Buffers+O_DIRECT)",
-                           startTime, endTime, totalBytes, numBatches);
+    return calculateMetric(
+        "6. io_uring (Fully Registered Files+Buffers+O_DIRECT)", startTime,
+        endTime, totalBytes, numBatches);
   }
 
  private:
@@ -409,14 +416,14 @@ class IoUringDirectBenchmarkRunner {
   }
 
   BenchmarkMetric calculateMetric(
-      std::string_view name,
-      std::chrono::steady_clock::time_point startTime,
+      std::string_view name, std::chrono::steady_clock::time_point startTime,
       std::chrono::steady_clock::time_point endTime, size_t totalBytes,
       size_t numBatches) const {
     std::chrono::duration<double> elapsed = endTime - startTime;
     double elapsedSec = elapsed.count();
     double mbRead = static_cast<double>(totalBytes) / (1024.0 * 1024.0);
-    double gbRead = static_cast<double>(totalBytes) / (1024.0 * 1024.0 * 1024.0);
+    double gbRead =
+        static_cast<double>(totalBytes) / (1024.0 * 1024.0 * 1024.0);
     double totalBlocks = static_cast<double>(totalBytes) / kBlockSizeBytes;
 
     BenchmarkMetric m;
@@ -425,7 +432,8 @@ class IoUringDirectBenchmarkRunner {
     m.throughputMBs = mbRead / elapsedSec;
     m.throughputGBs = gbRead / elapsedSec;
     m.iops = totalBlocks / elapsedSec;
-    m.avgBatchLatencyUs = (elapsedSec * 1'000'000.0) / static_cast<double>(numBatches);
+    m.avgBatchLatencyUs =
+        (elapsedSec * 1'000'000.0) / static_cast<double>(numBatches);
     return m;
   }
 };
@@ -441,30 +449,32 @@ void printResultsTable(std::string_view accessMode,
     r.speedupVsBaseline = r.throughputMBs / baselineThroughput;
   }
 
-  std::cout << "\n========================================================================================\n";
-  std::cout << "  BENCHMARK: 1GB Simulated Vocabulary Scan (" << accessMode << ")\n";
-  std::cout << "  Dataset: 1,073,741,824 bytes | Block Size: 4 KB | Total Blocks: 262,144\n";
-  std::cout << "========================================================================================\n";
-  std::cout << std::left << std::setw(50) << "I/O Paradigm"
-            << std::right << std::setw(12) << "Time (s)"
-            << std::setw(14) << "MB/s"
-            << std::setw(12) << "GB/s"
-            << std::setw(14) << "IOPS"
+  std::cout << "\n============================================================="
+               "===========================\n";
+  std::cout << "  BENCHMARK: 1GB Simulated Vocabulary Scan (" << accessMode
+            << ")\n";
+  std::cout << "  Dataset: 1,073,741,824 bytes | Block Size: 4 KB | Total "
+               "Blocks: 262,144\n";
+  std::cout << "==============================================================="
+               "=========================\n";
+  std::cout << std::left << std::setw(50) << "I/O Paradigm" << std::right
+            << std::setw(12) << "Time (s)" << std::setw(14) << "MB/s"
+            << std::setw(12) << "GB/s" << std::setw(14) << "IOPS"
             << std::setw(12) << "Speedup" << "\n";
-  std::cout << "----------------------------------------------------------------------------------------\n";
+  std::cout << "---------------------------------------------------------------"
+               "-------------------------\n";
 
   for (const auto& r : results) {
-    std::cout << std::left << std::setw(50) << r.name
-              << std::right << std::fixed << std::setprecision(3)
-              << std::setw(12) << r.elapsedSeconds
-              << std::setw(14) << r.throughputMBs
-              << std::setw(12) << r.throughputGBs
-              << std::fixed << std::setprecision(0)
-              << std::setw(14) << r.iops
-              << std::fixed << std::setprecision(2)
-              << std::setw(11) << r.speedupVsBaseline << "x\n";
+    std::cout << std::left << std::setw(50) << r.name << std::right
+              << std::fixed << std::setprecision(3) << std::setw(12)
+              << r.elapsedSeconds << std::setw(14) << r.throughputMBs
+              << std::setw(12) << r.throughputGBs << std::fixed
+              << std::setprecision(0) << std::setw(14) << r.iops << std::fixed
+              << std::setprecision(2) << std::setw(11) << r.speedupVsBaseline
+              << "x\n";
   }
-  std::cout << "========================================================================================\n\n";
+  std::cout << "==============================================================="
+               "=========================\n\n";
 }
 
 }  // namespace
@@ -474,7 +484,8 @@ void printResultsTable(std::string_view accessMode,
 class IoUringDirectBenchmark : public BenchmarkInterface {
  public:
   std::string name() const final {
-    return "io_uring Registered Files, Fixed Buffers, and O_DIRECT Vocabulary Scan";
+    return "io_uring Registered Files, Fixed Buffers, and O_DIRECT Vocabulary "
+           "Scan";
   }
 
   BenchmarkResults runAllBenchmarks() final {
@@ -484,18 +495,24 @@ class IoUringDirectBenchmark : public BenchmarkInterface {
     SimulatedVocabularyFile vocabFile;
     IoUringDirectBenchmarkRunner runner(vocabFile.path());
 
-    group.addMeasurement("1. Sync pread (Page Cache)",
-                         [&]() { return runner.runSyncPread().elapsedSeconds; });
-    group.addMeasurement("2. Sync pread (O_DIRECT)",
-                         [&]() { return runner.runSyncDirectPread().elapsedSeconds; });
-    group.addMeasurement("3. io_uring (Unpinned)",
-                         [&]() { return runner.runIoUringUnpinned().elapsedSeconds; });
-    group.addMeasurement("4. io_uring (O_DIRECT)",
-                         [&]() { return runner.runIoUringDirectUnpinned().elapsedSeconds; });
-    group.addMeasurement("5. io_uring (Registered Files)",
-                         [&]() { return runner.runIoUringRegisteredFiles().elapsedSeconds; });
-    group.addMeasurement("6. io_uring (Fully Registered DMA)",
-                         [&]() { return runner.runIoUringFullyRegistered().elapsedSeconds; });
+    group.addMeasurement("1. Sync pread (Page Cache)", [&]() {
+      return runner.runSyncPread().elapsedSeconds;
+    });
+    group.addMeasurement("2. Sync pread (O_DIRECT)", [&]() {
+      return runner.runSyncDirectPread().elapsedSeconds;
+    });
+    group.addMeasurement("3. io_uring (Unpinned)", [&]() {
+      return runner.runIoUringUnpinned().elapsedSeconds;
+    });
+    group.addMeasurement("4. io_uring (O_DIRECT)", [&]() {
+      return runner.runIoUringDirectUnpinned().elapsedSeconds;
+    });
+    group.addMeasurement("5. io_uring (Registered Files)", [&]() {
+      return runner.runIoUringRegisteredFiles().elapsedSeconds;
+    });
+    group.addMeasurement("6. io_uring (Fully Registered DMA)", [&]() {
+      return runner.runIoUringFullyRegistered().elapsedSeconds;
+    });
 
     return results;
   }
@@ -509,9 +526,12 @@ AD_REGISTER_BENCHMARK(IoUringDirectBenchmark);
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 // Standalone executable entry point
 int main(int argc, char** argv) {
-  std::cout << "=================================================================\n";
-  std::cout << " QLever Export Prototype: Registered io_uring & Direct I/O Benchmark\n";
-  std::cout << "=================================================================\n";
+  std::cout
+      << "=================================================================\n";
+  std::cout << " QLever Export Prototype: Registered io_uring & Direct I/O "
+               "Benchmark\n";
+  std::cout
+      << "=================================================================\n";
 
   try {
     ad_benchmark::SimulatedVocabularyFile vocabFile;
@@ -523,20 +543,27 @@ int main(int argc, char** argv) {
     seqResults.push_back(runner.runSyncPread(/*randomAccess=*/false));
     seqResults.push_back(runner.runSyncDirectPread(/*randomAccess=*/false));
     seqResults.push_back(runner.runIoUringUnpinned(/*randomAccess=*/false));
-    seqResults.push_back(runner.runIoUringDirectUnpinned(/*randomAccess=*/false));
-    seqResults.push_back(runner.runIoUringRegisteredFiles(/*randomAccess=*/false));
-    seqResults.push_back(runner.runIoUringFullyRegistered(/*randomAccess=*/false));
+    seqResults.push_back(
+        runner.runIoUringDirectUnpinned(/*randomAccess=*/false));
+    seqResults.push_back(
+        runner.runIoUringRegisteredFiles(/*randomAccess=*/false));
+    seqResults.push_back(
+        runner.runIoUringFullyRegistered(/*randomAccess=*/false));
     ad_benchmark::printResultsTable("Sequential Sweep", seqResults);
 
     // 2. Random Batch Access Benchmark
-    std::cout << "\n>>> Running Random Access 1GB Vocabulary Block Lookup <<<\n";
+    std::cout
+        << "\n>>> Running Random Access 1GB Vocabulary Block Lookup <<<\n";
     std::vector<ad_benchmark::BenchmarkMetric> randResults;
     randResults.push_back(runner.runSyncPread(/*randomAccess=*/true));
     randResults.push_back(runner.runSyncDirectPread(/*randomAccess=*/true));
     randResults.push_back(runner.runIoUringUnpinned(/*randomAccess=*/true));
-    randResults.push_back(runner.runIoUringDirectUnpinned(/*randomAccess=*/true));
-    randResults.push_back(runner.runIoUringRegisteredFiles(/*randomAccess=*/true));
-    randResults.push_back(runner.runIoUringFullyRegistered(/*randomAccess=*/true));
+    randResults.push_back(
+        runner.runIoUringDirectUnpinned(/*randomAccess=*/true));
+    randResults.push_back(
+        runner.runIoUringRegisteredFiles(/*randomAccess=*/true));
+    randResults.push_back(
+        runner.runIoUringFullyRegistered(/*randomAccess=*/true));
     ad_benchmark::printResultsTable("Random Access Lookup", randResults);
 
   } catch (const std::exception& e) {

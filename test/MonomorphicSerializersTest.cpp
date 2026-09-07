@@ -30,8 +30,8 @@ std::string captureOutput(Fn&& fn) {
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicTripleCsvSerialization) {
-  using Serializer =
-      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>;
+  using Serializer = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
+                                              ColumnType::Literal>;
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Csv>(
@@ -40,36 +40,40 @@ TEST(MonomorphicSerializersTest, MonomorphicTripleCsvSerialization) {
   });
 
   EXPECT_EQ(result,
-            "<http://example.org/subj>,<http://example.org/pred>,\"Hello, World!\"\n");
+            "<http://example.org/subj>,<http://example.org/pred>,\"Hello, "
+            "World!\"\n");
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicTripleTurtleSerialization) {
-  using Serializer =
-      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>;
+  using Serializer = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
+                                              ColumnType::Literal>;
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Turtle>(
         fmt, "<http://example.org/s>", "<http://example.org/p>", "\"val\"");
   });
 
-  EXPECT_EQ(result, "<http://example.org/s> <http://example.org/p> \"val\" .\n");
+  EXPECT_EQ(result,
+            "<http://example.org/s> <http://example.org/p> \"val\" .\n");
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicMixedTypesTsvSerialization) {
-  using Serializer = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Literal,
-                                              ColumnType::Int, ColumnType::Double>;
+  using Serializer =
+      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Literal,
+                               ColumnType::Int, ColumnType::Double>;
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Tsv>(
         fmt, "<http://example.org/city>", "\"Freiburg\"", 230000, 153.07);
   });
 
-  EXPECT_EQ(result, "<http://example.org/city>\t\"Freiburg\"\t230000\t153.07\n");
+  EXPECT_EQ(result,
+            "<http://example.org/city>\t\"Freiburg\"\t230000\t153.07\n");
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicSpanAndBatchSerialization) {
-  using Serializer =
-      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Int>;
+  using Serializer = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
+                                              ColumnType::Int>;
 
   std::vector<std::array<CellValue, 3>> rows = {
       {CellValue::makeIri("<http://a>"), CellValue::makeIri("<http://b>"),
@@ -89,19 +93,23 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
                                           ColumnType::Int};
   DynamicRowSerializer dynamicSerializer(schema);
   using Monomorphic =
-      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Literal, ColumnType::Int>;
+      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Literal,
+                               ColumnType::Int>;
 
   std::array<CellValue, 3> row = {CellValue::makeIri("<http://example.org/x>"),
                                   CellValue::makeLiteral("\"test\""),
                                   CellValue::makeInt(42)};
 
   std::string dynamicOut = captureOutput([&](FastExportStreamFormatter& fmt) {
-    dynamicSerializer.serializeRow<ExportFormat::Csv>(fmt, ql::span<const CellValue>(row));
+    dynamicSerializer.serializeRow<ExportFormat::Csv>(
+        fmt, ql::span<const CellValue>(row));
   });
 
-  std::string monomorphicOut = captureOutput([&](FastExportStreamFormatter& fmt) {
-    Monomorphic::serializeRow<ExportFormat::Csv>(fmt, ql::span<const CellValue>(row));
-  });
+  std::string monomorphicOut =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        Monomorphic::serializeRow<ExportFormat::Csv>(
+            fmt, ql::span<const CellValue>(row));
+      });
 
   EXPECT_EQ(dynamicOut, monomorphicOut);
   EXPECT_EQ(dynamicOut, "<http://example.org/x>,\"test\",42\n");
@@ -114,12 +122,14 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
                                   CellValue::makeIri("<http://p>"),
                                   CellValue::makeLiteral("\"o\"")};
 
-  std::string dispatchedOut = captureOutput([&](FastExportStreamFormatter& fmt) {
-    dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
-      using S = MonomorphicRowSerializer<Types...>;
-      S::template serializeRow<ExportFormat::Turtle>(fmt, ql::span<const CellValue>(row));
-    });
-  });
+  std::string dispatchedOut =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
+          using S = MonomorphicRowSerializer<Types...>;
+          S::template serializeRow<ExportFormat::Turtle>(
+              fmt, ql::span<const CellValue>(row));
+        });
+      });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
 }
