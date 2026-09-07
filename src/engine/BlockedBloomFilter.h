@@ -82,7 +82,7 @@ class BlockedBloomFilter {
     }
   }
 
-  [[nodiscard]] bool contains(Id id) const noexcept {
+    [[nodiscard]] bool contains(const Id& id) const noexcept {
     assert(numBlocks_ > 0);
     assert(blocks_.size() == numBlocks_);
     uint64_t hash = hashId(id);
