@@ -101,7 +101,13 @@ class SimulatedVocabularyFile {
       bytesWritten += writeChunkSize;
     }
 
+    // `fdatasync` does not exist on macOS; `fsync` is the portable
+    // equivalent here (durability of the 1 GB scratch file before reading).
+#if defined(__APPLE__)
+    ::fsync(fd);
+#else
     ::fdatasync(fd);
+#endif
     ::close(fd);
     std::free(writeBuf);
     isCreated_ = true;
