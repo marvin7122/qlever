@@ -103,13 +103,7 @@ class BlockedBloomFilter {
   }
 
   // Populate a BlockedBloomFilter from a column/span of Ids.
-  static BlockedBloomFilter createFromColumn(ql::span<const Id> column,
-                                             double falsePositiveRate = 0.01) {
-    BlockedBloomFilter filter{column.size(), falsePositiveRate};
-    for (Id id : column) {
-      filter.insert(id);
-    }
-    return filter;
+  
   }
 
   // Check whether a candidate key passes the filter.
