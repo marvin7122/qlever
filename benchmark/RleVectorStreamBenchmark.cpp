@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
   std::cout << "Uncompressed Vector Generation: " << uncompressedMs << " ms ("
             << (TOTAL_ROWS * sizeof(Id)) / (1024 * 1024) << " MB RAM)\n";
 
-  // Measure RLE stream creation
+    // Measurement RLE stream creation
   auto t2 = std::chrono::high_resolution_clock::now();
   RleVectorStream rleStream;
   for (size_t i = 0; i < NUM_DISTINCT; ++i) {
