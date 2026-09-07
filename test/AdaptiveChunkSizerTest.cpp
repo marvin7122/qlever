@@ -43,7 +43,7 @@ TEST(AdaptiveChunkSizerTest, DefaultConstructionAndInitialState) {
   // Initial target rows: ceil(65536 / 120.0) = 547
   EXPECT_EQ(sizer.targetRowCount(), 547);
 
-  const AdaptiveChunkStats stats = sizer.stats();
+    const auto& stats = sizer.stats();
   EXPECT_EQ(stats.chunksFlushed_, 0);
   EXPECT_EQ(stats.totalBytes_, 0);
   EXPECT_EQ(stats.totalRows_, 0);
