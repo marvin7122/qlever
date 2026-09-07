@@ -121,7 +121,9 @@ class SemiJoinPushdownHelper {
       : filter_{BlockedBloomFilter::createFromColumn(buildSideKeys,
                                                      falsePositiveRate)} {}
 
-  // Test whether a candidate key should be retained.
+  /// Test whether a candidate key should be retained.
+  /// @param candidateKey The key to probe against the build-side filter.
+  /// @return true if the key passes the filter (may be a false positive), false if definitely absent.
   [[nodiscard]] bool probe(Id candidateKey) const noexcept {
     return filter_.contains(candidateKey);
   }
