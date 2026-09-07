@@ -159,8 +159,8 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
       ptr = ad_utility::formatQid(42, ptr);
       *ptr++ = ',';
       *ptr++ = '"';
-      ptr = qlever::export_pipeline::SimdEscapeClassifier::copyAndEscape<
-          qlever::export_pipeline::EscapeFormat::CsvQuote>(rawLabel, ptr);
+      ptr = ad_utility::simd::SimdEscapeClassifier::copyAndEscape<
+          ad_utility::simd::EscapeFormat::CsvQuote>(rawLabel, ptr);
       *ptr++ = '"';
       *ptr++ = '\n';
     }
