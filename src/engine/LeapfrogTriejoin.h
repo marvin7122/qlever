@@ -27,6 +27,7 @@ class LeapfrogIterator {
   explicit LeapfrogIterator(ql::span<const Id> sortedKeys)
       : sortedKeys_(sortedKeys), currentIndex_(0) {
     ADL_CORRECTNESS_CHECK(currentIndex_ <= sortedKeys_.size());
+    AD_CHECK(std::is_sorted(sortedKeys_.begin(), sortedKeys_.end()));
   }
 
   /// Check if the iterator has reached the end of the sorted keys.
