@@ -73,6 +73,7 @@ class RleVectorStream {
   }
 
   [[nodiscard]] ql::span<const Run> runs() const noexcept { return runs_; }
+  [[nodiscard]] ql::span<const Run> runs() && = delete;
 
     // Late-materialize the RLE runs directly into the destination `span<Id>`.
   void materialize(ql::span<Id> dest) const {
