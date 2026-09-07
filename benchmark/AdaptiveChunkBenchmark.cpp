@@ -326,12 +326,6 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
     std::cout << ">> TTFB Latency Improvement: " << std::fixed
               << std::setprecision(1) << ttfbImprovement
               << "x faster time to first byte with Adaptive Chunk Sizing!\n";
-    std::cout << "========================================================================================================\n\n";
-
-    return results;
-  }
-};
-
-AD_BENCHMARK_REGISTER(std::make_unique<AdaptiveChunkBenchmark>());
+    
 
 }  // namespace ad_benchmark
