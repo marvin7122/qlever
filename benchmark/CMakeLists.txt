@@ -44,4 +44,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
 
+    addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
+
 endif()
