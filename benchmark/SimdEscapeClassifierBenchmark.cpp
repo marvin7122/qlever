@@ -13,11 +13,13 @@
 #include <iomanip>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "../benchmark/infrastructure/BenchmarkMeasurementContainer.h"
 #include "engine/export_v2/SimdEscapeClassifier.h"
+#include "util/Exception.h"
 
 namespace {
 
@@ -50,6 +52,26 @@ double measure(const std::vector<std::string>& inputs, size_t length) {
   return nanoseconds / bytes;
 }
 
+// `fmt.format` in the loop below is a runtime value and therefore cannot be
+// used as a template argument for `measure`. Dispatch to the matching
+// instantiation explicitly and return the {scalar, simd} measurements.
+std::pair<double, double> measureBoth(EscapeFormat format,
+                                      const std::vector<std::string>& inputs,
+                                      size_t length) {
+  switch (format) {
+    case EscapeFormat::Csv:
+      return {measure<EscapeFormat::Csv, false>(inputs, length),
+              measure<EscapeFormat::Csv, true>(inputs, length)};
+    case EscapeFormat::Tsv:
+      return {measure<EscapeFormat::Tsv, false>(inputs, length),
+              measure<EscapeFormat::Tsv, true>(inputs, length)};
+    case EscapeFormat::Turtle:
+      return {measure<EscapeFormat::Turtle, false>(inputs, length),
+              measure<EscapeFormat::Turtle, true>(inputs, length)};
+  }
+  AD_FAIL();
+}
+
 class BMSimdEscapeClassifier : public BenchmarkInterface {
  public:
   std::string name() const final { return "SimdEscapeClassifier"; }
@@ -78,8 +100,7 @@ class BMSimdEscapeClassifier : public BenchmarkInterface {
           inputs[index][length / 2] = fmt.escape;
         }
 
-        const double scalar = measure<fmt.format, false>(inputs, length);
-        const double simd = measure<fmt.format, true>(inputs, length);
+        const auto [scalar, simd] = measureBoth(fmt.format, inputs, length);
 
         std::string measurementName =
             fmt.name.data() + std::string(",") + std::to_string(length);
