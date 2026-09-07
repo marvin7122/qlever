@@ -151,10 +151,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     timer.stop();
     asm volatile("" : : "r"(dummySink) : "memory");
 
-    const double totalNs =
-        static_cast<double>(
-            ad_utility::timer::Timer::toMicroseconds(timer.value())) *
-        1000.0;
+    const double totalNs = static_cast<double>(timer.value().count()) * 1000.0;
     return totalNs / static_cast<double>(probeIndices.size());
   }
 
@@ -203,9 +200,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     const uint64_t l1Misses = l1MissCounter.stop();
 
     const double durationMs =
-        static_cast<double>(
-            ad_utility::timer::Timer::toMicroseconds(timer.value())) /
-        1000.0;
+        static_cast<double>(timer.value().count()) / 1000.0;
     const double gb =
         static_cast<double>(BufferSizeBytes) / (1024.0 * 1024.0 * 1024.0);
     const double throughputGBPerSec =
@@ -279,9 +274,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     const uint64_t l1Misses = l1MissCounter.stop();
 
     const double durationMs =
-        static_cast<double>(
-            ad_utility::timer::Timer::toMicroseconds(timer.value())) /
-        1000.0;
+        static_cast<double>(timer.value().count()) / 1000.0;
     const double gb =
         static_cast<double>(BufferSizeBytes) / (1024.0 * 1024.0 * 1024.0);
     const double throughputGBPerSec =
@@ -382,6 +375,6 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
   }
 };
 
-AD_BENCHMARK_REGISTER(std::make_unique<StreamingBufferBenchmark>());
+AD_REGISTER_BENCHMARK(StreamingBufferBenchmark);
 
 }  // namespace ad_benchmark
