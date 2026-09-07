@@ -56,12 +56,7 @@ class ExportPipelineRouter {
  public:
   using ParamValueMap = ad_utility::url_parser::ParamValueMap;
 
-  // ___________________________________________________________________________
-  // Determine the appropriate export engine mode based on request metadata,
-  // query AST eligibility, and server configuration defaults.
-  [[nodiscard]] static ExportEngineMode selectEngine(
-      const ParsedQuery& query, const ParamValueMap& parameters,
-      std::optional<std::string_view> exportHeader = std::nullopt,
+  
       ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) noexcept {
     // 1. Check explicit query parameter overrides
     const auto optFastExport = getParameterValue(parameters, "fast-export");
