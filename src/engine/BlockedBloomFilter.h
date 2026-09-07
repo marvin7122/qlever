@@ -19,7 +19,7 @@
 namespace ql::engine::filter {
 
 // _____________________________________________________________________________
-// Cache-Line Blocked Bloom Filter (Split-Block Bloom Filter):
+// Cache-line blocked Bloom filter (split-block Bloom filter).
 // Sized in discrete 64-byte (512-bit) blocks matching hardware cache lines.
 // Probing tests 8 bits in parallel inside a single L1 cache line, guaranteeing
 // zero Last-Level Cache (LLC) thrashing.
