@@ -12,6 +12,8 @@
 #include <vector>
 #include <algorithm>
 
+#include "global/Id.h"
+#include "ad_utility.h"
 #include "backports/span.h"
 
 
