@@ -18,6 +18,7 @@
 
 #include "parser/GraphPatternOperation.h"
 #include "parser/ParsedQuery.h"
+#include "parser/SparqlTriple.h"
 #include "util/Exception.h"
 #include "util/StringUtils.h"
 #include "util/http/MediaTypes.h"
@@ -221,20 +222,49 @@ class ExportPipelineRouter {
     }
     if (query.hasSelectClause()) {
       const auto& selectClause = query.selectClause();
-      // Aliases cover aggregate and scalar select expressions uniformly for
+      // Aliases cover aggregate select expressions and GROUP BY queries for
       // now; DISTINCT and REDUCED require post-hoc deduplication state.
       if (selectClause.distinct_ || selectClause.reduced_ ||
           !selectClause.getAliases().empty()) {
+        return true;
+      }
+      // Scalar `SELECT` aliases like `SELECT (?o AS ?x)` are rewritten to
+      // `BIND` during parsing (`ParsedQuery::addSolutionModifiers`), so the
+      // check above cannot see them. Projecting a computed binding needs V2
+      // projection support that does not exist yet, hence fail closed.
+      // Plain `SELECT * ... BIND ...` stays eligible.
+      if (!selectClause.isAsterisk() &&
+          graphPatternContainsBind(query._rootGraphPattern)) {
         return true;
       }
     }
     return graphPatternHasUnsupportedConstructs(query._rootGraphPattern);
   }
 
+  // Return true if `pattern` (recursing into plain groups) contains a `BIND`
+  // operation. Used to detect scalar `SELECT` aliases, which the parser
+  // rewrites to `BIND` (see `hasUnsupportedConstructs`).
+  [[nodiscard]] static bool graphPatternContainsBind(
+      const parsedQuery::GraphPattern& pattern) noexcept {
+    namespace pq = parsedQuery;
+    for (const auto& operation : pattern._graphPatterns) {
+      if (std::holds_alternative<pq::Bind>(operation)) {
+        return true;
+      }
+      if (std::holds_alternative<pq::GroupGraphPattern>(operation) &&
+          graphPatternContainsBind(
+              std::get<pq::GroupGraphPattern>(operation)._child)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Recursively check `pattern` (including FILTER and BIND expressions) for
-  // operations beyond plain matching. Only `BasicGraphPattern`, `Bind`,
-  // `Values`, and plain (non-GRAPH) groups are eligible; `FILTER EXISTS`
-  // carries a nested query and fails closed like a subquery.
+  // operations beyond plain matching. Only `BasicGraphPattern` without
+  // property paths, `Bind`, `Values`, and plain (non-GRAPH) groups are
+  // eligible; `FILTER EXISTS` carries a nested query and fails closed like
+  // a subquery.
   [[nodiscard]] static bool graphPatternHasUnsupportedConstructs(
       const parsedQuery::GraphPattern& pattern) noexcept {
     namespace pq = parsedQuery;
@@ -261,8 +291,20 @@ class ExportPipelineRouter {
         }
         continue;
       }
-      if (std::holds_alternative<pq::BasicGraphPattern>(operation) ||
-          std::holds_alternative<pq::Values>(operation)) {
+      if (std::holds_alternative<pq::BasicGraphPattern>(operation)) {
+        // Property paths (e.g. `?s <p>+ ?o`) need the transitive-path
+        // machinery that the V2 engine does not implement yet. Plain IRIs
+        // and predicate variables stay eligible.
+        const auto& basicPattern = std::get<pq::BasicGraphPattern>(operation);
+        for (const auto& triple : basicPattern._triples) {
+          if (std::holds_alternative<PropertyPath>(triple.p_) &&
+              !std::get<PropertyPath>(triple.p_).isIri()) {
+            return true;
+          }
+        }
+        continue;
+      }
+      if (std::holds_alternative<pq::Values>(operation)) {
         continue;
       }
       return true;
