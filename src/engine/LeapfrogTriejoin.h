@@ -73,10 +73,8 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
   // Note: iterators are mutated via seek/next; consider passing by value for explicit ownership.
   size_t p = 0;  // pointer to iterator with smallest key
   Id maxKey = iterators[0].key();
-  for (size_t i = 1; i < k; ++i) {
-    if (iterators[i].key() > maxKey) {
-      maxKey = iterators[i].key();
-    }
+  for (const auto& it : iterators) {
+    maxKey = std::max(maxKey, it.key());
   }
 
   while (true) {
@@ -92,10 +90,8 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
 
     // Find maximum key across all iterators
     Id maxKey = minKey;
-    for (size_t i = 0; i < k; ++i) {
-      if (iterators[i].key() > maxKey) {
-        maxKey = iterators[i].key();
-      }
+    for (const auto& it : iterators) {
+      maxKey = std::max(maxKey, it.key());
     }
 
     if (minKey == maxKey) {
