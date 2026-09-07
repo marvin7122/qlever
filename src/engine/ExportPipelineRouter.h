@@ -45,7 +45,7 @@ enum class ExportEngineMode {
 // _____________________________________________________________________________
 // Deep module routing incoming SPARQL requests between the standard relational
 // execution pipeline (Legacy V1) and the specialized push-based streaming
-// export engine (Fast-Path V2).
+
 //
 // Adheres to the 7 Universal Laws:
 // - Law 1: Deep Module (concise public interface, encapsulated plan analysis)
