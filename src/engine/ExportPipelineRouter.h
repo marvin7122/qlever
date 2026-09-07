@@ -106,11 +106,10 @@ class ExportPipelineRouter {
   }
 
   // ___________________________________________________________________________
-  // Inspect the `ParsedQuery` AST to determine whether it is eligible for
-  // `FastStreamingV2`. Return true for standard scan, join, projection, and
-  // construct queries. Return false for queries containing unsupported
-  // constructs (e.g. distributed federated queries or complex custom service
-  // endpoints).
+    // Inspect the `ParsedQuery` to determine whether it is eligible for
+  // `FastStreamingV2`. Return true for SELECT and CONSTRUCT queries that do
+  // not contain unsupported constructs. Return false for ASK and DESCRIBE
+  // queries or when unsupported constructs are detected.
   [[nodiscard]] static bool isEligibleForFastStreaming(
       const ParsedQuery& query) noexcept {
     // CONSTRUCT and SELECT queries are currently eligible.
