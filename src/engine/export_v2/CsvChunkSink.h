@@ -14,6 +14,7 @@
 #include "engine/QueryExecutionTree.h"
 #include "engine/idTable/IdTable.h"
 #include "index/ExportIds.h"
+#include "index/Index.h"
 #include "index/LocalVocab.h"
 #include "rdfTypes/RdfEscaping.h"
 
@@ -25,7 +26,7 @@ namespace ql::engine::export_v2 {
 // sink with vectorized serializers without touching the call site.
 class CsvChunkSink {
  public:
-  CsvChunkSink(const IndexImpl& index,
+  CsvChunkSink(const Index& index,
                const QueryExecutionTree::ColumnIndicesAndTypes& selectedColumns)
       : index_{index}, selectedColumns_{selectedColumns} {}
 
@@ -53,9 +54,8 @@ class CsvChunkSink {
   }
 
  private:
-  std::reference_wrapper<const IndexImpl> index_;
-  std::reference_wrapper<const QueryExecutionTree::ColumnIndicesAndTypes>
-      selectedColumns_;
+  const Index& index_;
+  const QueryExecutionTree::ColumnIndicesAndTypes& selectedColumns_;
 };
 
 }  // namespace ql::engine::export_v2
