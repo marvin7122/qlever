@@ -25,13 +25,7 @@ TEST(LeapfrogTriejoinTest, ThreeWayIntersection) {
   ASSERT_EQ(matches.size(), 2u);
   EXPECT_EQ(matches[0], Id::makeFromInt(3));
   EXPECT_EQ(matches[1], Id::makeFromInt(7));
-}
 
-TEST(LeapfrogTriejoinTest, DisjointListsEmptyResult) {
-  std::vector<Id> listA = {Id::makeFromInt(1), Id::makeFromInt(2)};
-  std::vector<Id> listB = {Id::makeFromInt(3), Id::makeFromInt(4)};
-
-  std::vector<LeapfrogIterator> iterators;
   iterators.emplace_back(listA);
   iterators.emplace_back(listB);
 
