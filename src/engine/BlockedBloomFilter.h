@@ -60,7 +60,7 @@ class BlockedBloomFilter {
 
   void insert(Id id) noexcept {
     uint64_t hash = hashId(id);
-    size_t blockIdx = (hash >> 32) % numBlocks_;
+    size_t blockIdx = (hash >> 32) % (numBlocks_ ? numBlocks_ : 1);
     uint32_t key = static_cast<uint32_t>(hash);
 
     AD_CONTRACT_CHECK(blockIdx < numBlocks_);
