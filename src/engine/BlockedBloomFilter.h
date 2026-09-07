@@ -61,7 +61,7 @@ class BlockedBloomFilter {
     assert(blocks_.size() == numBlocks_);
   }
 
-  void insert(Id id) noexcept {
+    void insert(const Id& id) noexcept {
     assert(numBlocks_ > 0);
     assert(blocks_.size() == numBlocks_);
     uint64_t hash = hashId(id);
