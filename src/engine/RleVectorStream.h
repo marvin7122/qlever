@@ -53,6 +53,7 @@ class RleVectorStream {
     Builder(Builder&&) = delete;
     Builder& operator=(Builder&&) = delete;
     Builder& add(Id value, size_t length) {
+      AD_CHECK(length > 0);
       stream_->append(value, length);
       return *this;
     }
