@@ -65,7 +65,7 @@ class RleVectorStream {
 
  public:
   Builder beginBuild() { return Builder(this); }
-  void append(Id value, size_t length) {
+  void append(const Id& value, size_t length) {
     if (!runs_.empty() && runs_.back().value_ == value) {
       runs_.back().length_ += length;
     } else {
