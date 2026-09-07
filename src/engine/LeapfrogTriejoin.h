@@ -76,6 +76,7 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
   }
 
   const size_t k = iterators.size();
+  AD_CHECK(k <= 1000);  // Bound join arity to prevent excessive per-iteration work
 
   while (true) {
     // Ensure all iterators remain valid before key access.
