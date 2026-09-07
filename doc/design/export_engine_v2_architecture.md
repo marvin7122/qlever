@@ -1,7 +1,7 @@
 # RFC: QLever Fast-Path Streaming Export Engine (V2)
 
 **Author:** Marvin Stoetzel <stoetzem@email.uni-freiburg.de>
-**Status:** Approved for Implementation  
+**Status:** Approved for Implementation
 **Created:** 2026-09-03  
   
 
