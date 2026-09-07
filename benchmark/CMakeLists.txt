@@ -44,4 +44,7 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
 
+    add_executable(PrefetchingBenchmark PrefetchingBenchmark.cpp)
+    linkBenchmark(PrefetchingBenchmark engine sparqlParser qlever_util)
+
 endif()

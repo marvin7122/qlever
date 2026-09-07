@@ -343,6 +343,63 @@ class PrefetchingBenchmark : public BenchmarkInterface {
       }
     }
 
+    // 1b. Pipelined-no-prefetch isolation: identical measurement shape to the
+    // prefetched arm (raw index extraction pass + callback-driven resolve
+    // loop), but without any prefetch intrinsics. Delta vs baseline =
+    // loop-restructure cost; delta vs prefetched arm = prefetch cost.
+    {
+      std::vector<std::string_view> resolved(NUM_LOOKUP_IDS);
+      HardwarePerformanceMonitor::CounterSample sample;
+
+      auto& m = group.addMeasurement(
+          "Pipelined No-Prefetch (restructure only)", [&]() {
+            perfMonitor.start();
+
+            std::vector<size_t> rawIndices(NUM_LOOKUP_IDS);
+            for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
+              rawIndices[i] = lookupIds_[i].getVocabIndex().get();
+            }
+
+            const auto offsets = vocabWords_.offsetsSpan();
+            const auto data = vocabWords_.dataSpan();
+            // Same per-row callback shape as the resolver's mappingFunc.
+            auto storeResult = [&resolved](size_t i, std::string_view view) {
+              resolved[i] = view;
+            };
+            for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
+              const size_t curIdx = rawIndices[i];
+              AD_CORRECTNESS_CHECK(curIdx + 1 < offsets.size());
+              const auto curOffset = offsets[curIdx];
+              const auto nextOffset = offsets[curIdx + 1];
+              const size_t strLen = nextOffset - curOffset;
+              std::string_view view(data.data() + curOffset, strLen);
+              storeResult(i, view);
+            }
+
+            sample = perfMonitor.stop();
+            return resolved.size();
+          });
+
+      const double mResolutionsPerSec =
+          (static_cast<double>(NUM_LOOKUP_IDS) / 1e6) / sample.durationSeconds;
+      const double nsPerLookup =
+          (sample.durationSeconds * 1e9) / static_cast<double>(NUM_LOOKUP_IDS);
+
+      m.metadata().addKeyValuePair("num-lookups", NUM_LOOKUP_IDS);
+      m.metadata().addKeyValuePair("throughput-M-res-per-sec",
+                                   mResolutionsPerSec);
+      m.metadata().addKeyValuePair("latency-ns-per-lookup", nsPerLookup);
+      m.metadata().addKeyValuePair("duration-ms",
+                                   sample.durationSeconds * 1000.0);
+      if (perfMonitor.isSupported()) {
+        m.metadata().addKeyValuePair("l1d-miss-rate-pct",
+                                     sample.l1dMissRatePercent());
+        m.metadata().addKeyValuePair("llc-miss-rate-pct",
+                                     sample.llcMissRatePercent());
+        m.metadata().addKeyValuePair("ipc", sample.ipc());
+      }
+    }
+
     // 2. Evaluated Prefetched Lookups with varying distances (K = 4, 8, 16, 32)
     const std::vector<size_t> testDistances = {4, 8, 16, 32};
 
