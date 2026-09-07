@@ -166,8 +166,63 @@ class ExportPipelineRouter {
 
   // Unsupported-construct detection is not implemented yet; all SELECT and
   // CONSTRUCT queries are currently treated as eligible for the fast path.
+  // A SERVICE clause requires contacting a remote endpoint and streaming
+  // results from it, which is incompatible with FastStreamingV2's zero-copy
+  // push-based model until proper service forwarding is implemented.
   [[nodiscard]] static bool hasUnsupportedConstructs(
-      const ParsedQuery&) noexcept {
+      const ParsedQuery& query) noexcept {
+    return hasUnsupportedConstructsImpl(query.children());
+  }
+
+  // Traverse the GraphPattern recursively and return true if any
+  // SERVICE clause is found. SERVICE clauses require a remote HTTP call and
+  // are thus not compatible with FastStreamingV2's streaming architecture.
+  [[nodiscard]] static bool hasUnsupportedConstructsImpl(
+      const parsedQuery::GraphPattern& graphPattern) noexcept {
+    for (const auto& operation : graphPattern._graphPatterns) {
+      if (std::holds_alternative<parsedQuery::Service>(operation)) {
+        return true;
+      }
+      // Recurse into nested graph patterns (Subquery, GroupGraphPattern,
+      // Optional, Minus, Union, TransPath).
+      if (std::holds_alternative<parsedQuery::Subquery>(operation)) {
+        if (hasUnsupportedConstructsImpl(
+                operation.get<parsedQuery::Subquery>().get().children())) {
+          return true;
+        }
+      }
+      if (std::holds_alternative<parsedQuery::GroupGraphPattern>(operation)) {
+        if (hasUnsupportedConstructsImpl(
+                operation.get<parsedQuery::GroupGraphPattern>()._child)) {
+          return true;
+        }
+      }
+      if (std::holds_alternative<parsedQuery::Optional>(operation)) {
+        if (hasUnsupportedConstructsImpl(
+                operation.get<parsedQuery::Optional>()._child)) {
+          return true;
+        }
+      }
+      if (std::holds_alternative<parsedQuery::Minus>(operation)) {
+        if (hasUnsupportedConstructsImpl(
+                operation.get<parsedQuery::Minus>()._child)) {
+          return true;
+        }
+      }
+      if (std::holds_alternative<parsedQuery::Union>(operation)) {
+        const auto& uni = operation.get<parsedQuery::Union>();
+        if (hasUnsupportedConstructsImpl(uni._child1) ||
+            hasUnsupportedConstructsImpl(uni._child2)) {
+          return true;
+        }
+      }
+      if (std::holds_alternative<parsedQuery::TransPath>(operation)) {
+        if (hasUnsupportedConstructsImpl(
+                operation.get<parsedQuery::TransPath>()._childGraphPattern)) {
+          return true;
+        }
+      }
+    }
     return false;
   }
 };
