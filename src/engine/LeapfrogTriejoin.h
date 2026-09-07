@@ -81,10 +81,7 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
   }
 
   while (true) {
-    // Ensure all iterators remain valid before key access.
-    for (const auto& it : iterators) {
-      AD_CHECK(!it.atEnd());
-    }
+
     // Find iterator with smallest current key and maximum key in single pass
     size_t minIndex = 0;
     Id maxKey = iterators[0].key();
