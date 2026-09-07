@@ -128,6 +128,18 @@ TEST(ExportPipelineRouterTest, AskQueryNotEligibleForFastStreaming) {
             ExportEngineMode::LegacyV1);
 }
 
+TEST(ExportPipelineRouterTest, QueryParametersTakePrecedenceOverHeaders) {
+  auto query = parse("SELECT * WHERE { ?s ?p ?o }");
+  ParamValueMap params;
+  params["fast-export"] = {"0"};
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "v2"),
+            ExportEngineMode::LegacyV1);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "fast"),
+            ExportEngineMode::LegacyV1);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "streaming"),
+            ExportEngineMode::LegacyV1);
+}
+
 TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
   auto selectQuery = parse("SELECT * WHERE { ?s ?p ?o }");
   auto askQuery = parse("ASK WHERE { ?s ?p ?o }");
