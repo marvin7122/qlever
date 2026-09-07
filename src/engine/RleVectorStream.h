@@ -19,7 +19,7 @@ namespace ql::engine::rle {
 // Architecture invariants:
 // 1. Heuristic 1: Builder manages tracking state; avoid AD_CONTRACT_CHECK on caller-supplied params
 // 2. Heuristic 2: Buffer/view pairs are constructed via the Builder's append method
-// 3. Heuristic 3: build() && returns RleVectorStream with validated invariants
+// 3. Heuristic 3: [[nodiscard]] build() && returns RleVectorStream with validated invariants
 
 // _____________________________________________________________________________
 // Run-Length Encoded (RLE) Vector Stream for Late Materialization:
