@@ -89,8 +89,7 @@ STREAMABLE_GENERATOR_TYPE streamChunks(
 // _____________________________________________________________________________
 ExportQueryExecutionTrees::ComputeResultReturnType SelectCsvStreamer::run(
     const QueryExecutionTree& qet, const ParsedQuery& parsedQuery,
-    CancellationHandle cancellationHandle,
-    [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
+    CancellationHandle cancellationHandle, STREAMABLE_YIELDER_ARG_DECL) {
   auto limit = parsedQuery._limitOffset;
   ExportQueryExecutionTrees::compensateForLimitOffsetClause(limit, qet);
 
