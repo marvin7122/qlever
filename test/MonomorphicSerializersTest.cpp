@@ -12,6 +12,8 @@
 #include "engine/MonomorphicSerializers.h"
 #include "engine/export_prototypes/FastExportStreamFormatter.h"
 
+// Required because test cases below use serialization types (ColumnType,
+// CellValue, etc.) without fully qualifying them.
 using namespace ql::serialization;
 using namespace ql::export_formatting;
 
