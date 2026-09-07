@@ -34,7 +34,7 @@ if (NOT _NO_BENCHMARK)
     endfunction()
 
         # Compile the benchmark and link it without the default main.
-    # Usage: addAndLinkBenchmarkNoMain(baseName, [additionalLibraries...])
+        # Use `addAndLinkBenchmarkNoMain`(`baseName`, [`additionalLibraries`...]).
     #   - baseName: The name of the benchmark file without the .cpp ending.
     function(addAndLinkBenchmarkNoMain baseName)
         add_executable(${baseName}  "${baseName}.cpp")
