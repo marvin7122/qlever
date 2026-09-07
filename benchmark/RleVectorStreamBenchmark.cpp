@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
             << " uncompressed rows (" << NUM_DISTINCT << " runs, run length "
             << RUN_LENGTH << ")...\n";
 
-  // Measure memory and allocation of uncompressed vector
+    // Measurement memory and allocation of uncompressed vector
   auto t0 = std::chrono::high_resolution_clock::now();
   std::vector<Id> uncompressed(TOTAL_ROWS);
   for (size_t i = 0; i < NUM_DISTINCT; ++i) {
