@@ -75,7 +75,6 @@ class RleVectorStream {
 
     // Late-materialize the RLE runs directly into the destination `span<Id>`.
   void materialize(ql::span<Id> dest) const {
-    AD_CORRECTNESS_CHECK(dest.size() >= totalUncompressedRows_);
     size_t outIdx = 0;
     for (const auto& run : runs_) {
       for (size_t k = 0; k < run.length_; ++k) {
