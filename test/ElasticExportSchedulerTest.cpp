@@ -166,9 +166,6 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
         return 100;
       });
 
-  // Submit morsel 1
-  session.submitMorsel([]() { return 200; });
-
   // Wait until morsel 0 is running on a helper
   morsel0Started.wait();
 
@@ -178,6 +175,12 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
 
   // Session must transition to Revoking because helper 0 is actively leased
   EXPECT_EQ(session.state(), SessionState::Revoking);
+
+  // Submit morsel 1 only now: submitted while HelpersEligible, a second
+  // helper could legitimately lease it before the revocation above, which
+  // would make the `executedByHelper_` expectation below racy. Submitted
+  // while Revoking it stays pending for the coordinator.
+  session.submitMorsel([]() { return 200; });
 
   // Allow morsel 0 to complete cooperatively
   unblockMorsel0Promise.set_value();
