@@ -25,7 +25,9 @@ class LeapfrogIterator {
 
  public:
   explicit LeapfrogIterator(ql::span<const Id> sortedKeys)
-      : sortedKeys_(sortedKeys), currentIndex_(0) {}
+      : sortedKeys_(sortedKeys), currentIndex_(0) {
+    ADL_CORRECTNESS_CHECK(currentIndex_ <= sortedKeys_.size());
+  }
 
   [[nodiscard]] bool atEnd() const noexcept {
     return currentIndex_ >= sortedKeys_.size();
