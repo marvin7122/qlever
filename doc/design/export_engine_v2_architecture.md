@@ -3,7 +3,7 @@
 **Author:** Marvin Stoetzel <stoetzem@email.uni-freiburg.de>
 **Status:** Approved for Implementation  
 **Created:** 2026-09-03  
-**Target Repository:** `marvin7122/qlever`  
+  
 
 ---
 
