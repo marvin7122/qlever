@@ -31,7 +31,24 @@ class RleVectorStream {
   std::vector<Run> runs_;
   size_t totalUncompressedRows_ = 0;
 
+  // Builder state management per Heuristic 1 - avoid AD_CONTRACT_CHECK on caller-supplied tracking params
+  class Builder {
+    RleVectorStream* stream_;
+  public:
+    explicit Builder(RleVectorStream* stream) : stream_(stream) {}
+    Builder& add(Id value, uint32_t length) {
+      stream_->append(value, length);
+      return *this;
+    }
+    RleVectorStream build() && {
+      // Validate all invariants before finalization per Heuristic 3
+      stream_->validateInvariants();
+      return std::move(*stream_);
+    }
+  };
+
  public:
+  Builder beginBuild() { return Builder(this); }
   void append(Id value, uint32_t length) {
     if (!runs_.empty() && runs_.back().value_ == value) {
       runs_.back().length_ += length;
