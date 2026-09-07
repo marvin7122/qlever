@@ -63,13 +63,10 @@ class ExportPipelineRouter {
     const auto optExportEngine = getParameterValue(parameters, "export-engine");
 
     if (optFastExport.has_value()) {
-            if (isTruthy(optFastExport.value())) {
-        return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-      } else if (isFalsy(optFastExport.value())) {
-        return ExportEngineMode::LegacyV1;
-      } else {
-        return ExportEngineMode::LegacyV1;
+      if (isTruthy(optFastExport.value())) {
+        return evaluateEligibility(query);
       }
+      return ExportEngineMode::LegacyV1;
     }
 
     if (optExportEngine.has_value()) {
