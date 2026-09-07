@@ -46,7 +46,7 @@ if (NOT _NO_BENCHMARK)
     linkBenchmark(ChunkStreamingBenchmark engine testUtil)
 
     add_executable(IoUringDirectBenchmark IoUringDirectBenchmark.cpp)
-    qlever_target_link_libraries(IoUringDirectBenchmark benchmark engine sparqlParser qlever_util)
+    linkBenchmark(IoUringDirectBenchmark engine sparqlParser qlever_util)
 
     add_executable(StreamingBufferBenchmark StreamingBufferBenchmark.cpp)
     linkBenchmark(StreamingBufferBenchmark engine sparqlParser qlever_util)
@@ -63,13 +63,12 @@ if (NOT _NO_BENCHMARK)
     qlever_target_link_libraries(BranchlessDispatcherBenchmark benchmark engine sparqlParser qlever_util)
 
     add_executable(ScatterGatherBenchmark ScatterGatherBenchmark.cpp)
-    qlever_target_link_libraries(ScatterGatherBenchmark benchmark engine sparqlParser qlever_util)
+    linkBenchmark(ScatterGatherBenchmark engine sparqlParser qlever_util)
 
     add_executable(SimdEscapeBenchmark SimdEscapeBenchmark.cpp)
     linkBenchmark(SimdEscapeBenchmark engine sparqlParser qlever_util)
 
-    add_executable(ZeroCopySenderBenchmark ZeroCopySenderBenchmark.cpp)
-    qlever_target_link_libraries(ZeroCopySenderBenchmark benchmark qlever_util)
+    addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
     addAndLinkBenchmark(EndToEndExportBenchmark engine sparqlParser qlever_util)
 
     add_executable(AdaptiveChunkBenchmark AdaptiveChunkBenchmark.cpp)
@@ -82,7 +81,7 @@ if (NOT _NO_BENCHMARK)
     qlever_target_link_libraries(RlePrefixBenchmark benchmark engine sparqlParser qlever_util)
 
     add_executable(HttpFramingBenchmark HttpFramingBenchmark.cpp)
-    qlever_target_link_libraries(HttpFramingBenchmark benchmark engine sparqlParser qlever_util)
+    linkBenchmark(HttpFramingBenchmark engine sparqlParser qlever_util)
 
     add_executable(SwarDelimiterBenchmark SwarDelimiterBenchmark.cpp)
     linkBenchmark(SwarDelimiterBenchmark engine sparqlParser qlever_util)
