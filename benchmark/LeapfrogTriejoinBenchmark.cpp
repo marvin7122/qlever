@@ -5,12 +5,7 @@
 
 #include <chrono>
 #include <iostream>
-#include <vector>
 
-#include "engine/LeapfrogTriejoin.h"
-#include "global/Id.h"
-
-using namespace ql::engine::wcoj;
 
 int main(int argc, char* argv[]) {
   size_t N = 2'000'000;
