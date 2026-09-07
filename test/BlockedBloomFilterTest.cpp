@@ -7,6 +7,8 @@
 // which can be found in the `LICENSE` file at the root of this project.
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <vector>
 
 #include "engine/BlockedBloomFilter.h"
 #include "global/Id.h"
