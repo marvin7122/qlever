@@ -49,12 +49,7 @@ class LeapfrogIterator {
     currentIndex_++;
   }
 
-  // Fast forward to the first key >= targetKey using binary search
-  void seek(Id targetKey) noexcept {
-    if (atEnd() || key() >= targetKey) {
-      return;
-    }
-    auto it = std::lower_bound(sortedKeys_.begin() + currentIndex_,
+  
                                sortedKeys_.end(), targetKey);
     currentIndex_ = std::distance(sortedKeys_.begin(), it);
   }
