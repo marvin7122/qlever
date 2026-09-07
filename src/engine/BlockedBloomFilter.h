@@ -21,8 +21,8 @@ namespace ql::engine::filter {
 // zero Last-Level Cache (LLC) thrashing.
 class BlockedBloomFilter {
  public:
-  static constexpr size_t BITS_PER_BLOCK = 512;
-  static constexpr size_t BYTES_PER_BLOCK = 64;
+    static constexpr size_t BITS_PER_BLOCK = 256;
+  static constexpr size_t BYTES_PER_BLOCK = 32;
 
   struct alignas(64) Block {
     uint32_t words[16] = {0};
