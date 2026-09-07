@@ -18,7 +18,7 @@
 #include "parser/ParsedQuery.h"
 
 #include "util/StringUtils.h"
-#include "util/http/MediaTypes.h"
+
 #include "util/http/UrlParser.h"
 
 namespace ql::engine {
