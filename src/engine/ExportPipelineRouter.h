@@ -141,6 +141,15 @@ class ExportPipelineRouter {
     return ExportEngineMode::LegacyV1;
   }
 
+  [[nodiscard]] static ExportEngineMode evaluateEligibility(
+      const ParsedQuery& query, ExportEngineMode requestedMode) noexcept {
+    if (isEligibleForFastStreaming(query)) {
+      return requestedMode;
+    }
+    // Transparent fallback to Legacy V1
+    return ExportEngineMode::LegacyV1;
+  }
+
   
     auto lower = ad_utility::getLowercase(std::string(val));
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
