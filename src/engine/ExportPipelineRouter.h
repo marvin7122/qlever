@@ -120,7 +120,7 @@ class ExportPipelineRouter {
       return true;
     }
 
-    // ASK and DESCRIBE currently use standard evaluation
+        // ASK and DESCRIBE currently use standard evaluation.
     return false;
   }
 
