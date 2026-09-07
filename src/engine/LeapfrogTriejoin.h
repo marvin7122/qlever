@@ -49,8 +49,7 @@ class LeapfrogIterator {
 
 // _____________________________________________________________________________
 // Leapfrog Triejoin (Worst-Case Optimal Join - WCOJ):
-// Simultaneously intersects K sorted variable iterators in O(N^1.5) time for
-// triangle queries, completely eliminating O(N^2) intermediate tables.
+// Intersect K sorted variable iterators simultaneously in `O(N^1.5)` time for triangle queries, eliminating `O(N^2)` intermediate tables.
 class LeapfrogJoin {
  public:
   static std::vector<Id> intersect(std::vector<LeapfrogIterator>& iterators) {
