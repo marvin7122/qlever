@@ -20,7 +20,7 @@ if (NOT _NO_BENCHMARK)
     endfunction()
 
         # Link `${basename}` against the benchmark library (without main).
-    # for benchmarks that provide their own main function.
+        # Use this function for benchmarks that provide their own main function.
     function (linkBenchmarkNoMain basename)
         qlever_target_link_libraries(${basename} benchmark ${ARGN})
     endfunction()
