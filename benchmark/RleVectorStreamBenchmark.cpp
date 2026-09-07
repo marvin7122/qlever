@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
   size_t NUM_DISTINCT = 1000;
   size_t RUN_LENGTH = 10000;
 
-  // Parse command-line arguments
+
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--num-distinct" && i + 1 < argc) {
