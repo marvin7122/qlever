@@ -33,6 +33,7 @@
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
+#include "util/FastIntToString.h"
 #include "util/Invariants.h"
 
 namespace ql::serialization {
@@ -180,10 +181,10 @@ namespace detail {
 template <typename Writer>
 inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   std::array<char, 32> buffer;
-  auto [ptr, ec] =
-      std::to_chars(buffer.data(), buffer.data() + buffer.size(), val);
-  if (ec == std::errc{}) {
-    writer.writeRaw(std::string_view(buffer.data(), ptr - buffer.data()));
+  char* end =
+      ad_utility::formatDoubleToBuffer(val, buffer.data(), buffer.size());
+  if (end != nullptr) {
+    writer.writeRaw(std::string_view(buffer.data(), end - buffer.data()));
   } else {
     writer.writeRaw("0.0");
   }

@@ -10,12 +10,15 @@
 #define QLEVER_SRC_UTIL_FASTINTTOSTRING_H
 
 #include <bit>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__SSE2__)
 #include <emmintrin.h>
@@ -323,6 +326,26 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
   s.resize(totalLen);
   formatQid(id, s.data());
   return s;
+}
+
+// _____________________________________________________________________________
+// Format a double into `[out, out + capacity)`. Returns one past the last
+// written character, or `nullptr` on failure. Uses `std::to_chars`
+// (shortest round-trip) except on Apple platforms, where floating-point
+// `std::to_chars` requires macOS 13.3 but QLever supports macOS 11.0:
+// `snprintf` with `%.17g` (exact round-trip) is used there instead.
+inline char* formatDoubleToBuffer(double val, char* out,
+                                  size_t capacity) noexcept {
+#if defined(__APPLE__)
+  int n = std::snprintf(out, capacity, "%.17g", val);
+  if (n <= 0 || static_cast<size_t>(n) >= capacity) {
+    return nullptr;
+  }
+  return out + n;
+#else
+  auto [ptr, ec] = std::to_chars(out, out + capacity, val);
+  return ec == std::errc{} ? ptr : nullptr;
+#endif
 }
 
 }  // namespace ad_utility
