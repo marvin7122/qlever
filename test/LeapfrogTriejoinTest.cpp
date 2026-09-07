@@ -17,12 +17,7 @@ TEST(LeapfrogTriejoinTest, ThreeWayIntersection) {
                            Id::makeFromInt(5), Id::makeFromInt(7),
                            
 
-  std::vector<LeapfrogIterator> iterators;
-  iterators.emplace_back(listA);
-  iterators.emplace_back(listB);
-  iterators.emplace_back(listC);
-
-  auto matches = LeapfrogJoin::intersect(iterators);
+  
 
   // Common elements across all three lists: 3 and 7
   auto l = ad_utility::source_location::current();
