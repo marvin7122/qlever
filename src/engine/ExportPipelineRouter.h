@@ -167,6 +167,7 @@ class ExportPipelineRouter {
     return hasUnsupportedConstructsImpl(query.children());
   }
 
+  // ___________________________________________________________________________
   // Traverse the GraphPattern recursively and return true if any
   // SERVICE clause is found. SERVICE clauses require a remote HTTP call and
   // are thus not compatible with FastStreamingV2's streaming architecture.
