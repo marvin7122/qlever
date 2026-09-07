@@ -34,7 +34,9 @@ class LeapfrogIterator {
   /// @return true if current position is past the last element, false otherwise.
   [[nodiscard]] bool atEnd() const {
     ADL_CORRECTNESS_CHECK(currentIndex_ <= sortedKeys_.size());
-    return currentIndex_ >= sortedKeys_.size();
+    bool result = currentIndex_ >= sortedKeys_.size();
+    ADL_CORRECTNESS_CHECK(result ? currentIndex_ == sortedKeys_.size() : currentIndex_ < sortedKeys_.size());
+    return result;
   }
 
   [[nodiscard]] Id key() const {
