@@ -57,6 +57,17 @@ scatter_gather_body::value_type chunkSkippingGenerator() {
   co_yield makeChunk({"xy"});
 }
 
+scatter_gather_body::value_type immediateThrowGenerator() {
+  throw std::runtime_error("Test Exception");
+  co_return;
+}
+
+scatter_gather_body::value_type throwAfterChunkGenerator() {
+  co_yield makeChunk({"ok"});
+  throw std::runtime_error("Test Exception");
+  co_return;
+}
+
 }  // namespace
 
 // _____________________________________________________________________________
@@ -119,12 +130,9 @@ TEST(ScatterGatherHttpBody, WriterSkipsEmptyChunks) {
 // through the test body.
 // _____________________________________________________________________________
 TEST(ScatterGatherHttpBody, ThrowBeforeFirstChunkMapsToEpipe) {
-  auto generator = []() -> scatter_gather_body::value_type {
-    throw std::runtime_error("Test Exception");
-    co_return;
-  }();
+  auto generator = immediateThrowGenerator();
   boost::beast::http::header<false, boost::beast::http::fields> header;
-  auto writer = makeWriter(header, generator);
+  scatter_gather_body::writer writer{header, generator};
   boost::system::error_code errorCode;
 
   auto result = writer.get(errorCode);
@@ -135,13 +143,9 @@ TEST(ScatterGatherHttpBody, ThrowBeforeFirstChunkMapsToEpipe) {
 
 // _____________________________________________________________________________
 TEST(ScatterGatherHttpBody, ThrowAfterFirstChunkMapsToEpipe) {
-  auto generator = []() -> scatter_gather_body::value_type {
-    co_yield makeChunk({"ok"});
-    throw std::runtime_error("Test Exception");
-    co_return;
-  }();
+  auto generator = throwAfterChunkGenerator();
   boost::beast::http::header<false, boost::beast::http::fields> header;
-  auto writer = makeWriter(header, generator);
+  scatter_gather_body::writer writer{header, generator};
   boost::system::error_code errorCode;
 
   auto first = writer.get(errorCode);
