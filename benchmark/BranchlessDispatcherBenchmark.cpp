@@ -351,7 +351,7 @@ struct BenchmarkResult {
   size_t bytesWritten_ = 0;
 };
 
-template <typename Dispatcher>
+CPP_template(typename Dispatcher)
 BenchmarkResult runBenchmark(const std::string& name,
                              const BenchmarkDataset& ds,
                              std::vector<char>& outputBuffer,
