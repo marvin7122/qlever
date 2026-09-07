@@ -41,9 +41,9 @@ int main(int argc, char** argv) {
 
   ParamValueMap defaultParams;
 
-  // 1. Benchmark: Select Engine Routing
+    // 1. Benchmark: Select Engine Routing
   auto start = std::chrono::high_resolution_clock::now();
-  size_t dummyV2Count = 0;
+  size_t numV2Selections = 0;
 
   for (size_t i = 0; i < numQueries; ++i) {
     auto mode = ExportPipelineRouter::selectEngine(
