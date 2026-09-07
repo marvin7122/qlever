@@ -27,6 +27,7 @@
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/Invariants.h"
+#include "util/StreamingBufferWriter.h"
 
 #ifndef UIO_MAXIOV
 #define UIO_MAXIOV 1024
@@ -197,12 +198,23 @@ class ScatterGatherChunk
   [[nodiscard]] bool empty() const noexcept { return segments_.empty(); }
   [[nodiscard]] size_t numSegments() const noexcept { return segments_.size(); }
 
+  // Flatten all segments into one string. Bulk copies use non-temporal
+  // streaming stores so multi-kilobyte export payloads go straight to DRAM
+  // instead of evicting hot vocabulary tries and index pages from L1/L2/L3.
+  // Output bytes are bit-identical to a plain `append` loop.
   [[nodiscard]] std::string toString() const {
     std::string result;
-    result.reserve(totalBytes_);
-    for (const auto& segment : segments_) {
-      result.append(segment.owner_->data() + segment.offset_, segment.size_);
+    if (totalBytes_ == 0) {
+      return result;
     }
+    result.resize(totalBytes_);
+    char* dest = result.data();
+    for (const auto& segment : segments_) {
+      ad_utility::StreamingBufferWriter::streamCopyNoFence(
+          dest, segment.owner_->data() + segment.offset_, segment.size_);
+      dest += segment.size_;
+    }
+    ad_utility::StreamingBufferWriter::sfence();
     return result;
   }
 

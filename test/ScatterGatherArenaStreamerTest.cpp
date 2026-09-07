@@ -197,6 +197,25 @@ TEST(ScatterGatherArenaStreamerTest, VisitSegmentsMatchesToString) {
   EXPECT_EQ(sizes.size(), 3u);
 }
 
+TEST(ScatterGatherArenaStreamerTest, ToStringStreamsLargeSegmentsBitIdentical) {
+  // Segment sizes cross the 16-byte vector and 64-byte block thresholds of
+  // the non-temporal streaming path at unaligned destination offsets.
+  const std::string copied(100, 'a');
+  const std::string owned1(63, 'b');
+  const std::string owned2(129, 'c');
+  ImmutableByteBuffer arena{owned1 + owned2};
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy(copied);
+  builder.appendOwned(arena.slice(0, owned1.size()));
+  builder.appendOwned(arena.slice(owned1.size(), owned2.size()));
+  builder.appendCopy("tail!");
+  auto chunk = std::move(builder).finalize();
+  const std::string expected = copied + owned1 + owned2 + "tail!";
+  EXPECT_EQ(chunk.size(), expected.size());
+  EXPECT_EQ(chunk.numSegments(), 4u);
+  EXPECT_EQ(chunk.toString(), expected);
+}
+
 TEST(ScatterGatherArenaStreamerTest, LimitsEachWritevBatch) {
   ScatterGatherChunkBuilder builder;
   std::vector<ImmutableByteBuffer> buffers;
