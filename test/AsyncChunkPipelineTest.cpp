@@ -117,8 +117,10 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
   ASSERT_EQ(pipeline.push("before-error"), PushResult::Accepted);
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"producer failed"}));
   static_cast<void>(pipeline.pop());  // consume the element
-  // Use a lambda to discard the nodiscard return value while still checking the exception
-  EXPECT_THROW([&] { static_cast<void>(pipeline.pop()); }(), std::runtime_error);
+  // Use a lambda to discard the nodiscard return value while still checking the
+  // exception
+  EXPECT_THROW([&] { static_cast<void>(pipeline.pop()); }(),
+               std::runtime_error);
 }
 
 TEST(AsyncChunkPipelineTest, BackpressureReusesFreedSlot) {
