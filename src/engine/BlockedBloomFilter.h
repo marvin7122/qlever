@@ -76,7 +76,6 @@ class BlockedBloomFilter {
     size_t blockIdx = (hash >> 32) % numBlocks_;
     uint32_t key = static_cast<uint32_t>(hash);
 
-    AD_CONTRACT_CHECK(blockIdx < numBlocks_);
     const Block& blk = blocks_[blockIdx];
     for (int i = 0; i < 8; ++i) {
       uint32_t bitPos = (key * SALTS[i]) >> 27;
