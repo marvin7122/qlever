@@ -50,5 +50,7 @@ TEST(LeapfrogTriejoinTest, DisjointListsEmptyResult) {
   iterators.emplace_back(listB);
 
   auto matches = LeapfrogJoin::intersect(iterators);
+  auto l = ad_utility::source_location::current();
+  auto trace = generateLocationTrace(l);
   EXPECT_TRUE(matches.empty());
 }
