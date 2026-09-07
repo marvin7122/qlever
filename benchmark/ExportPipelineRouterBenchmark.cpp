@@ -10,7 +10,7 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
-#include <vector>
+
 
 #include "engine/ExportPipelineRouter.h"
 #include "parser/SparqlParser.h"
