@@ -57,8 +57,7 @@ class LeapfrogIterator {
 
 // _____________________________________________________________________________
 // Free function for intersecting K sorted variable iterators simultaneously.
-// Theoretical worst-case optimal complexity for triangle queries (cf. Ngo et al., "Worst-Case Optimal Join Algorithms")
-// WCOJ paper).
+// Theoretical worst-case optimal complexity for triangle queries (cf. Ngo et al., "Worst-Case Optimal Join Algorithms" WCOJ paper).
 std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators);
 
 }  // namespace ql::engine::wcoj
