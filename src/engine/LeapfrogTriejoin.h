@@ -48,59 +48,63 @@ class LeapfrogIterator {
 };
 
 // _____________________________________________________________________________
-// Leapfrog Triejoin (Worst-Case Optimal Join - WCOJ):
-// Intersects K sorted variable iterators simultaneously. Theoretical worst-case
-// optimal complexity for triangle queries (cf. Ngo et al., WCOJ paper).
-class LeapfrogJoin {
- public:
-  static std::vector<Id> intersect(std::vector<LeapfrogIterator> iterators) {
-    std::vector<Id> result;
-    if (iterators.empty()) {
-      return result;
-    }
+// Free function for intersecting K sorted variable iterators simultaneously.
+// Theoretical worst-case optimal complexity for triangle queries (cf. Ngo et al.,
+// WCOJ paper).
+std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators);
 
-    for (const auto& it : iterators) {
-      if (it.atEnd()) {
-        return result;
-      }
-    }
+}  // namespace ql::engine::wcoj
 
-    // Sort iterators by current key
-    size_t k = iterators.size();
-    size_t p = 0;  // pointer to iterator with smallest key
-    Id maxKey = iterators[0].key();
-    for (size_t i = 1; i < k; ++i) {
-      if (iterators[i].key() > maxKey) {
-        maxKey = iterators[i].key();
-      }
-    }
+// _____________________________________________________________________________
+namespace ql::engine::wcoj {
 
-    while (true) {
-      Id currentKey = iterators[p].key();
-
-      if (currentKey == maxKey) {
-        // All iterators match on this key!
-        result.push_back(currentKey);
-        iterators[p].next();
-        if (iterators[p].atEnd()) {
-          break;
-        }
-        maxKey = iterators[p].key();
-      } else {
-        // Leapfrog forward to maxKey
-        iterators[p].seek(maxKey);
-        if (iterators[p].atEnd()) {
-          break;
-        }
-        maxKey = iterators[p].key();
-      }
-
-      // Move to next iterator in round-robin fashion
-      p = (p + 1) % k;
-    }
-
+std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
+  std::vector<Id> result;
+  if (iterators.empty()) {
     return result;
   }
-};
+
+  for (const auto& it : iterators) {
+    if (it.atEnd()) {
+      return result;
+    }
+  }
+
+  // Sort iterators by current key
+  size_t k = iterators.size();
+  size_t p = 0;  // pointer to iterator with smallest key
+  Id maxKey = iterators[0].key();
+  for (size_t i = 1; i < k; ++i) {
+    if (iterators[i].key() > maxKey) {
+      maxKey = iterators[i].key();
+    }
+  }
+
+  while (true) {
+    Id currentKey = iterators[p].key();
+
+    if (currentKey == maxKey) {
+      // All iterators match on this key!
+      result.push_back(currentKey);
+      iterators[p].next();
+      if (iterators[p].atEnd()) {
+        break;
+      }
+      maxKey = iterators[p].key();
+    } else {
+      // Leapfrog forward to maxKey
+      iterators[p].seek(maxKey);
+      if (iterators[p].atEnd()) {
+        break;
+      }
+      maxKey = iterators[p].key();
+    }
+
+    // Move to next iterator in round-robin fashion
+    p = (p + 1) % k;
+  }
+
+  return result;
+}
 
 }  // namespace ql::engine::wcoj
