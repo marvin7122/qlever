@@ -56,13 +56,7 @@ int main(int argc, char** argv) {
   auto t2 = std::chrono::high_resolution_clock::now();
   RleVectorStream rleStream;
   for (size_t i = 0; i < NUM_DISTINCT; ++i) {
-    rleStream.append(Id::makeFromInt(static_cast<int>(i)), RUN_LENGTH);
-  }
-  auto t3 = std::chrono::high_resolution_clock::now();
-  double rleMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
-  std::cout << "RLE Stream Generation: " << rleMs << " ms ("
-            << (rleStream.numRuns() * sizeof(RleVectorStream::Run)) / 1024
-            << " KB RAM)\n";
+    
 
   // Measure Late Materialization
   auto t4 = std::chrono::high_resolution_clock::now();
