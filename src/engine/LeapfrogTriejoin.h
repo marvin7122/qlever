@@ -53,7 +53,7 @@ class LeapfrogIterator {
 // optimal complexity for triangle queries (cf. Ngo et al., WCOJ paper).
 class LeapfrogJoin {
  public:
-  static std::vector<Id> intersect(std::vector<LeapfrogIterator>& iterators) {
+  static std::vector<Id> intersect(std::vector<LeapfrogIterator> iterators) {
     std::vector<Id> result;
     if (iterators.empty()) {
       return result;
