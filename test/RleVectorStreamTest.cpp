@@ -39,3 +39,43 @@ TEST(RleVectorStreamTest, AppendAndMaterialize) {
     EXPECT_EQ(dest[i], Id::makeFromInt(3));
   }
 }
+
+// Boundary tests required by rule:tests - test empty input and edge cases
+TEST(RleVectorStreamTest, EmptyStream) {
+  RleVectorStream stream;
+  EXPECT_EQ(stream.numRuns(), 0u);
+  EXPECT_EQ(stream.totalRows(), 0u);
+  
+  std::vector<Id> dest(0);
+  stream.materialize(dest);
+  EXPECT_TRUE(dest.empty());
+}
+
+TEST(RleVectorStreamTest, SingleElement) {
+  RleVectorStream stream;
+  stream.append(Id::makeFromInt(42), 1);
+  EXPECT_EQ(stream.numRuns(), 1u);
+  EXPECT_EQ(stream.totalRows(), 1u);
+  
+  std::vector<Id> dest(1);
+  stream.materialize(dest);
+  EXPECT_EQ(dest[0], Id::makeFromInt(42));
+}
+
+TEST(RleVectorStreamTest, MergeIdenticalAdjacentRuns) {
+  RleVectorStream stream;
+  stream.append(Id::makeFromInt(1), 100);
+  stream.append(Id::makeFromInt(1), 100);  // merges
+  EXPECT_EQ(stream.numRuns(), 1u);
+  EXPECT_EQ(stream.totalRows(), 200u);
+}
+
+TEST(RleVectorStreamTest, BuilderFinalization) {
+  RleVectorStream stream = std::move(
+    RleVectorStream::Builder(&stream).add(Id::makeFromInt(1), 100)
+                                  .add(Id::makeFromInt(2), 200)
+                                  .build()
+  );
+  EXPECT_EQ(stream.numRuns(), 2u);
+  EXPECT_EQ(stream.totalRows(), 300u);
+}
