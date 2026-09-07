@@ -64,12 +64,12 @@ To maintain strict backward compatibility with 100% of existing queries and test
 
 ## 4. Feature Decomposition & Branch Breakdown
 
-1. **Phase 1: Ingress Routing & Feature Gate** (`src/engine/ExportPipelineRouter.h`)
-2. **Phase 2: Push-Based Vector Stream Execution** (`src/engine/export_v2/VectorStreamSource.h`)
-3. **Phase 3: Monomorphic Template Schema Specialization** (`src/engine/export_v2/Monomorphic.h`)
-4. **Phase 4: Zero-Copy Arena Scatter-Gather** (`src/engine/export_v2/ScatterGatherStreamer.h`)
-5. **Phase 5: Double-Buffered Asynchronous Backpressure Ring** (`src/engine/export_v2/Pipeline.h`)
-6. **Phase 6: End-to-End Server Integration & Differential Benchmarks** (`benchmark/EndToEndExportBenchmark.cpp`)
+1. **Phase 1: Ingress Routing & Feature Gate** (`src/engine/ExportPipelineRouter.h`) — TODO: track in #<issue>
+2. **Phase 2: Push-Based Vector Stream Execution** (`src/engine/export_v2/VectorStreamSource.h`) — TODO: track in #<issue>
+3. **Phase 3: Monomorphic Template Schema Specialization** (`src/engine/export_v2/Monomorphic.h`) — TODO: track in #<issue>
+4. **Phase 4: Zero-Copy Arena Scatter-Gather** (`src/engine/export_v2/ScatterGatherStreamer.h`) — TODO: track in #<issue>
+5. **Phase 5: Double-Buffered Asynchronous Backpressure Ring** (`src/engine/export_v2/Pipeline.h`) — TODO: track in #<issue>
+6. **Phase 6: End-to-End Server Integration & Differential Benchmarks** (`benchmark/EndToEndExportBenchmark.cpp`) — TODO: track in #<issue>
 
 ---
 
