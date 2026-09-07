@@ -8,6 +8,7 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <vector>
 
 #include "engine/ExportPipelineRouter.h"
 #include "parser/SparqlParser.h"
