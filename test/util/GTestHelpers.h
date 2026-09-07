@@ -22,6 +22,7 @@
 #include <memory_resource>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include "backports/algorithm.h"

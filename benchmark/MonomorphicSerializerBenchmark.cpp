@@ -33,6 +33,7 @@
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/Invariants.h"
+#include "util/OverloadCallOperator.h"
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________
@@ -419,13 +420,22 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
-                using Serializer = MonomorphicRowSerializer<Types...>;
-                for (const auto& row : data_.tripleRows_) {
-                  Serializer::template serializeRow<ExportFormat::Csv>(
-                      formatter, ql::span<const CellValue>(row));
-                }
-              });
+              dispatchMonomorphicSerializer(
+                  schema,
+                  ad_utility::OverloadCallOperator{
+                      [&](DynamicRowSerializer& s) {
+                        for (const auto& row : data_.tripleRows_) {
+                          s.template serializeRow<ExportFormat::Csv>(
+                              formatter, ql::span<const CellValue>(row));
+                        }
+                      },
+                      [&]<ColumnType... Types>() {
+                        using Serializer = MonomorphicRowSerializer<Types...>;
+                        for (const auto& row : data_.tripleRows_) {
+                          Serializer::template serializeRow<ExportFormat::Csv>(
+                              formatter, ql::span<const CellValue>(row));
+                        }
+                      }});
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();

@@ -14,6 +14,7 @@
 
 #include "engine/FastExportStreamFormatter.h"
 #include "engine/MonomorphicSerializers.h"
+#include "util/OverloadCallOperator.h"
 
 using namespace ql::serialization;
 using namespace ql::export_formatting;
@@ -124,11 +125,17 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
 
   std::string dispatchedOut =
       captureOutput([&](FastExportStreamFormatter& fmt) {
-        dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
-          using S = MonomorphicRowSerializer<Types...>;
-          S::template serializeRow<ExportFormat::Turtle>(
-              fmt, ql::span<const CellValue>(row));
-        });
+        dispatchMonomorphicSerializer(
+            schema, ad_utility::OverloadCallOperator{
+                        [&](DynamicRowSerializer& s) {
+                          s.template serializeRow<ExportFormat::Turtle>(
+                              fmt, ql::span<const CellValue>(row));
+                        },
+                        [&]<ColumnType... Types>() {
+                          using S = MonomorphicRowSerializer<Types...>;
+                          S::template serializeRow<ExportFormat::Turtle>(
+                              fmt, ql::span<const CellValue>(row));
+                        }});
       });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
