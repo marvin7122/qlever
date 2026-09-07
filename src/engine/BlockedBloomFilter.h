@@ -132,9 +132,7 @@ class SemiJoinPushdownHelper {
     return filter_.pruneNonMatchingIndices(candidateKeys);
   }
 
-  [[nodiscard]] const BlockedBloomFilter& filter() const noexcept {
-    return filter_;
-  }
+
 };
 
 }  // namespace ql::engine::filter
