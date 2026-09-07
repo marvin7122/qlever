@@ -198,7 +198,7 @@ class ExportPipelineRouter {
   }
 
  private:
-  // Heterogeneous, zero-allocation parameter lookup on ParamValueMap.
+    // Look up `key` in `ParamValueMap` and return its value.
   [[nodiscard]] static std::optional<std::string_view> getParameterValue(
       const ParamValueMap& parameters, std::string_view key) noexcept {
     auto it = parameters.find(key);
