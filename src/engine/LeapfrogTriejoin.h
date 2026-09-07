@@ -80,6 +80,10 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
   const size_t k = iterators.size();
 
   while (true) {
+    // Ensure all iterators remain valid before key access.
+    for (const auto& it : iterators) {
+      AD_CHECK(!it.atEnd());
+    }
     // Find iterator with smallest current key
     size_t minIndex = 0;
     for (size_t i = 1; i < k; ++i) {
