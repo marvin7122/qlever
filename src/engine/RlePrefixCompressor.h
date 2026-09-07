@@ -70,7 +70,8 @@ inline char* spliceSlice(const char* src, size_t len, char* out) noexcept {
 // Internal thread-local prefix slice storage.
 // Holds the pre-formatted bytes for the currently cached ValueId.
 template <size_t MaxBufferSize = 2048>
-class RlePrefixSlice : public ad_utility::WithInvariants<RlePrefixSlice<MaxBufferSize>> {
+class RlePrefixSlice
+    : public ad_utility::WithInvariants<RlePrefixSlice<MaxBufferSize>> {
  private:
   std::array<char, MaxBufferSize> buffer_{};
   size_t length_ = 0;
@@ -88,7 +89,9 @@ class RlePrefixSlice : public ad_utility::WithInvariants<RlePrefixSlice<MaxBuffe
   }
 
   [[nodiscard]] constexpr bool isValid() const noexcept { return valid_; }
-  [[nodiscard]] constexpr ValueId cachedId() const noexcept { return cachedId_; }
+  [[nodiscard]] constexpr ValueId cachedId() const noexcept {
+    return cachedId_;
+  }
   [[nodiscard]] constexpr size_t length() const noexcept { return length_; }
   [[nodiscard]] const char* data() const noexcept { return buffer_.data(); }
 
@@ -137,20 +140,22 @@ struct RleFormatterConfig {
 // _____________________________________________________________________________
 // Deep Module: RlePrefixFormatter
 //
-// In sorted query result tables (e.g. SPO or PSO permutation scans), the subject
-// or predicate is identical across thousands of consecutive triples.
-// Standard serializers repeatedly resolve and format the exact same IRI string on
-// every row.
+// In sorted query result tables (e.g. SPO or PSO permutation scans), the
+// subject or predicate is identical across thousands of consecutive triples.
+// Standard serializers repeatedly resolve and format the exact same IRI string
+// on every row.
 //
 // DuckDB uses Run-Length Encoded (RLE) constant folding to format repeated
 // column prefixes once.
 //
 // RlePrefixFormatter:
 // 1. Detects consecutive runs of identical ValueIds in sorted columns.
-// 2. Formats the constant IRI once into a thread-local prefix slice, and splices
+// 2. Formats the constant IRI once into a thread-local prefix slice, and
+// splices
 //    it into subsequent output rows with a single 64-bit/128-bit word copy.
 // 3. Seamlessly switches back to dynamic formatting when the run ends.
-class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter> {
+class RlePrefixFormatter
+    : public ad_utility::WithInvariants<RlePrefixFormatter> {
  private:
   RlePrefixSlice<2048> slice_{};
   RleFormatterConfig config_{};
@@ -169,7 +174,9 @@ class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter>
 
   // ___________________________________________________________________________
   [[nodiscard]] const RleStats& stats() const noexcept { return stats_; }
-  [[nodiscard]] const RleFormatterConfig& config() const noexcept { return config_; }
+  [[nodiscard]] const RleFormatterConfig& config() const noexcept {
+    return config_;
+  }
 
   void resetStats() noexcept { stats_.reset(); }
 
@@ -225,8 +232,9 @@ class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter>
 
   // ___________________________________________________________________________
   // Format a column prefix with lazy ID-to-string lookup.
-  // If `id` matches the active run, `lookupFunc` is NOT called (100% lookup savings).
-  // When run ends, `lookupFunc(id)` is invoked exactly once for the new run.
+  // If `id` matches the active run, `lookupFunc` is NOT called (100% lookup
+  // savings). When run ends, `lookupFunc(id)` is invoked exactly once for the
+  // new run.
   template <typename LookupFunc>
   inline char* formatPrefixWithLookup(ValueId id, LookupFunc&& lookupFunc,
                                       char* out) {
@@ -304,11 +312,12 @@ class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter>
 // _____________________________________________________________________________
 // Deep Module: RleTripleFormatter
 //
-// Specializes RLE constant folding for sorted RDF triple streams (SPO / PSO scans).
-// Folds repeated Subject and Predicate column runs into cached prefix slices,
-// formatting the full triple `<s> <p> <o> .\n` (or TSV/CSV format) with single-pass
-// word copies for the repeated columns.
-class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter> {
+// Specializes RLE constant folding for sorted RDF triple streams (SPO / PSO
+// scans). Folds repeated Subject and Predicate column runs into cached prefix
+// slices, formatting the full triple `<s> <p> <o> .\n` (or TSV/CSV format) with
+// single-pass word copies for the repeated columns.
+class RleTripleFormatter
+    : public ad_utility::WithInvariants<RleTripleFormatter> {
  private:
   RlePrefixFormatter subjectFormatter_;
   RlePrefixFormatter predicateFormatter_;
@@ -318,8 +327,9 @@ class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter>
 
  public:
   explicit RleTripleFormatter(
-      RleFormatterConfig subjectConfig =
-          RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
+      RleFormatterConfig subjectConfig = RleFormatterConfig{.prefix_ = "<",
+                                                            .suffix_ = ">",
+                                                            .delimiter_ = " "},
       RleFormatterConfig predicateConfig =
           RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
       std::string_view objectPrefix = "<", std::string_view objectSuffix = ">",
@@ -425,8 +435,7 @@ class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter>
         subjectFormatter_.formatPrefixWithLookup(subjId, lookupFunc, out);
 
     // 2. Spliced Predicate prefix with lazy lookup
-    curr =
-        predicateFormatter_.formatPrefixWithLookup(predId, lookupFunc, curr);
+    curr = predicateFormatter_.formatPrefixWithLookup(predId, lookupFunc, curr);
 
     // 3. Object term lookup & write
     std::string_view objTerm = lookupFunc(objId);

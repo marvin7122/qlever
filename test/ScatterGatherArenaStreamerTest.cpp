@@ -35,7 +35,8 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
       [&](ScatterGatherChunk chunk) { chunks.push_back(std::move(chunk)); },
       config);
 
-  std::string arenaLiteral = "This is a large literal string residing inside the memory arena.";
+  std::string arenaLiteral =
+      "This is a large literal string residing inside the memory arena.";
   ASSERT_GE(arenaLiteral.size(), 32);
 
   streamer.writeIri(ql::span<const char>("<http://example.org/sub>"));
@@ -139,11 +140,10 @@ TEST(ScatterGatherArenaStreamerTest, WriteTripleFormats) {
   // 1. Turtle format
   {
     ScatterGatherChunkStreamer streamer(config);
-    streamer.writeTriple(
-        ExportFormat::Turtle,
-        ql::span<const char>(subj.data(), subj.size()),
-        ql::span<const char>(pred.data(), pred.size()),
-        ql::span<const char>(obj.data(), obj.size()));
+    streamer.writeTriple(ExportFormat::Turtle,
+                         ql::span<const char>(subj.data(), subj.size()),
+                         ql::span<const char>(pred.data(), pred.size()),
+                         ql::span<const char>(obj.data(), obj.size()));
     auto chunkOpt = streamer.flush();
     ASSERT_TRUE(chunkOpt.has_value());
     EXPECT_EQ(chunkOpt->toString(),
@@ -154,11 +154,10 @@ TEST(ScatterGatherArenaStreamerTest, WriteTripleFormats) {
   // 2. CSV format
   {
     ScatterGatherChunkStreamer streamer(config);
-    streamer.writeTriple(
-        ExportFormat::Csv,
-        ql::span<const char>(subj.data(), subj.size()),
-        ql::span<const char>(pred.data(), pred.size()),
-        ql::span<const char>(obj.data(), obj.size()));
+    streamer.writeTriple(ExportFormat::Csv,
+                         ql::span<const char>(subj.data(), subj.size()),
+                         ql::span<const char>(pred.data(), pred.size()),
+                         ql::span<const char>(obj.data(), obj.size()));
     auto chunkOpt = streamer.flush();
     ASSERT_TRUE(chunkOpt.has_value());
     EXPECT_EQ(chunkOpt->toString(),
@@ -169,11 +168,10 @@ TEST(ScatterGatherArenaStreamerTest, WriteTripleFormats) {
   // 3. TSV format
   {
     ScatterGatherChunkStreamer streamer(config);
-    streamer.writeTriple(
-        ExportFormat::Tsv,
-        ql::span<const char>(subj.data(), subj.size()),
-        ql::span<const char>(pred.data(), pred.size()),
-        ql::span<const char>(obj.data(), obj.size()));
+    streamer.writeTriple(ExportFormat::Tsv,
+                         ql::span<const char>(subj.data(), subj.size()),
+                         ql::span<const char>(pred.data(), pred.size()),
+                         ql::span<const char>(obj.data(), obj.size()));
     auto chunkOpt = streamer.flush();
     ASSERT_TRUE(chunkOpt.has_value());
     EXPECT_EQ(chunkOpt->toString(),
@@ -209,11 +207,10 @@ TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
   std::string s = "<http://s>";
   std::string p = "<http://p>";
   std::string o = "A large payload to stream through pipe.";
-  streamer.writeTriple(
-      ExportFormat::Turtle,
-      ql::span<const char>(s.data(), s.size()),
-      ql::span<const char>(p.data(), p.size()),
-      ql::span<const char>(o.data(), o.size()));
+  streamer.writeTriple(ExportFormat::Turtle,
+                       ql::span<const char>(s.data(), s.size()),
+                       ql::span<const char>(p.data(), p.size()),
+                       ql::span<const char>(o.data(), o.size()));
 
   auto chunkOpt = streamer.flush();
   ASSERT_TRUE(chunkOpt.has_value());

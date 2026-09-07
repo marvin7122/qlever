@@ -71,21 +71,21 @@ TEST(VocabBatchLookupData, AsResultExposesViewsAndKeepsDataAlive) {
 
   VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
 
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "bar");
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0], "foo");
+  EXPECT_EQ(result[1], "bar");
 
   // Drop our reference; the aliasing shared_ptr must keep the data alive.
   data.reset();
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "bar");
+  EXPECT_EQ(result[0], "foo");
+  EXPECT_EQ(result[1], "bar");
 }
 
 // An empty lookup result is valid: no views, empty span.
 TEST(VocabBatchLookupData, AsResultEmpty) {
   auto data = std::make_shared<VocabBatchLookupData>();
   VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
-  EXPECT_TRUE(result->empty());
+  EXPECT_TRUE(result.empty());
 }
 
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
@@ -115,15 +115,15 @@ TEST(PmrVocabBatchLookupData, PmrAsResultPointerStableAcrossAppends) {
   EXPECT_EQ(firstView, "foo");
 
   VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "barbaz");
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0], "foo");
+  EXPECT_EQ(result[1], "barbaz");
 
   // The aliasing shared_ptr keeps the resource (and thus its allocations)
   // alive.
   data.reset();
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "barbaz");
+  EXPECT_EQ(result[0], "foo");
+  EXPECT_EQ(result[1], "barbaz");
 }
 
 // An empty pmr lookup result is valid: no views, empty span (matches the
@@ -132,7 +132,7 @@ TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
   auto data = std::make_shared<PmrVocabBatchLookupData>();
   data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>();
   VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
-  EXPECT_TRUE(result->empty());
+  EXPECT_TRUE(result.empty());
 }
 
 namespace {
@@ -197,9 +197,9 @@ TEST(VocabularyTypes, sequentialLookupBatchWithMissingWords) {
 
   // The opted-in vocabulary reports the placeholder for the missing word.
   auto result = sequentialLookupBatch(VocabWithHolesPlaceholder{}, indices);
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "word");
-  EXPECT_EQ((*result)[1], placeholderForMissingVocabIndex(5));
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0], "word");
+  EXPECT_EQ(result[1], placeholderForMissingVocabIndex(5));
 
   // The vocabulary that has not opted in throws.
   AD_EXPECT_THROW_WITH_MESSAGE(

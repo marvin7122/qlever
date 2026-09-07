@@ -37,20 +37,15 @@ struct AllocationTracker {
     enabled_.store(true, std::memory_order_seq_cst);
   }
 
-  static void stop() {
-    enabled_.store(false, std::memory_order_seq_cst);
-  }
+  static void stop() { enabled_.store(false, std::memory_order_seq_cst); }
 
-  static size_t getCount() {
-    return count_.load(std::memory_order_seq_cst);
-  }
+  static size_t getCount() { return count_.load(std::memory_order_seq_cst); }
 
-  static size_t getBytes() {
-    return bytes_.load(std::memory_order_seq_cst);
-  }
+  static size_t getBytes() { return bytes_.load(std::memory_order_seq_cst); }
 };
 
-// Global new/delete instrumentation for allocation counting during benchmark runs.
+// Global new/delete instrumentation for allocation counting during benchmark
+// runs.
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -63,13 +58,9 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
-void operator delete(void* ptr) noexcept {
-  std::free(ptr);
-}
+void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept {
-  std::free(ptr);
-}
+void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
 
 namespace ad_benchmark {
 namespace {
@@ -94,15 +85,15 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
     // Subject: Entity IRI or Blank Node
     EvaluatedTerm subj;
     if (i % 10 == 0) {
-      subj = std::make_shared<EvaluatedTermData>(
-          "_:b" + std::to_string(i), nullptr);
+      subj = std::make_shared<EvaluatedTermData>("_:b" + std::to_string(i),
+                                                 nullptr);
     } else {
       subj = std::make_shared<EvaluatedTermData>(
           "<http://example.org/entity/Q" + std::to_string(i) + ">", nullptr);
     }
 
     // Predicate
-    EvaluatedTerm pred = (i % 3 == 0) ? predLabel
+    EvaluatedTerm pred = (i % 3 == 0)   ? predLabel
                          : (i % 3 == 1) ? predType
                                         : predProp;
 
@@ -130,18 +121,19 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
         break;
       case 3:
         // Encoded integer literal
-        obj = std::make_shared<EvaluatedTermData>(
-            std::to_string(i * 42), XSD_INT_TYPE);
+        obj = std::make_shared<EvaluatedTermData>(std::to_string(i * 42),
+                                                  XSD_INT_TYPE);
         break;
       case 4:
       default:
         // Encoded decimal literal
-        obj = std::make_shared<EvaluatedTermData>(
-            std::to_string(i) + ".75", XSD_DECIMAL_TYPE);
+        obj = std::make_shared<EvaluatedTermData>(std::to_string(i) + ".75",
+                                                  XSD_DECIMAL_TYPE);
         break;
     }
 
-    triples.push_back(EvaluatedTriple{std::move(subj), std::move(pred), std::move(obj)});
+    triples.push_back(
+        EvaluatedTriple{std::move(subj), std::move(pred), std::move(obj)});
   }
 
   return triples;
@@ -154,7 +146,8 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
 
  public:
   SerializerMicroBenchmark() {
-    std::cout << "Generating " << NUM_TRIPLES << " synthetic triples for export microbenchmark..." << std::endl;
+    std::cout << "Generating " << NUM_TRIPLES
+              << " synthetic triples for export microbenchmark..." << std::endl;
     triples_ = generateSyntheticTriples(NUM_TRIPLES);
     std::cout << "Synthetic dataset generation complete." << std::endl;
   }
@@ -172,7 +165,8 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
         {"TSV", ad_utility::MediaType::tsv}};
 
     for (const auto& [formatName, mediaType] : formats) {
-      auto& group = results.addGroup(formatName + " Serialization Comparison (1M Triples)");
+      auto& group = results.addGroup(formatName +
+                                     " Serialization Comparison (1M Triples)");
       const ExportFormat exportFmt = toExportFormat(mediaType);
 
       // 1. Baseline: string-constructing serialization
@@ -181,8 +175,7 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
         size_t totalBytesWritten = 0;
 
         auto& m = group.addMeasurement(
-            "Baseline string-constructing (" + formatName + ")",
-            [&]() {
+            "Baseline string-constructing (" + formatName + ")", [&]() {
               AllocationTracker::start();
               size_t bytes = 0;
               for (const auto& triple : triples_) {
@@ -197,8 +190,9 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
 
         m.metadata().addKeyValuePair("total-triples", NUM_TRIPLES);
         m.metadata().addKeyValuePair("heap-allocations", baselineAllocations);
-        m.metadata().addKeyValuePair("total-bytes-mb",
-                                     static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0));
+        m.metadata().addKeyValuePair(
+            "total-bytes-mb",
+            static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0));
       }
 
       // 2. FastExportStreamFormatter: zero-allocation serialization
@@ -220,7 +214,8 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
                 ++chunkCount;
               };
 
-              FastExportStreamFormatter formatter(sink, FastExportStreamFormatter::DEFAULT_CHUNK_SIZE);
+              FastExportStreamFormatter formatter(
+                  sink, FastExportStreamFormatter::DEFAULT_CHUNK_SIZE);
               for (const auto& triple : triples_) {
                 formatter.writeTriple(exportFmt, triple);
               }
@@ -236,8 +231,9 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
         m.metadata().addKeyValuePair("total-triples", NUM_TRIPLES);
         m.metadata().addKeyValuePair("heap-allocations", fastAllocations);
         m.metadata().addKeyValuePair("chunks-emitted", chunksEmitted);
-        m.metadata().addKeyValuePair("total-bytes-mb",
-                                     static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0));
+        m.metadata().addKeyValuePair(
+            "total-bytes-mb",
+            static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0));
       }
     }
 

@@ -17,11 +17,10 @@
 #include <array>
 #include <limits>
 #include <memory>
-#include <string>
-#include <vector>
-
 #include <range/v3/view/iota.hpp>
 #include <range/v3/view/reverse.hpp>
+#include <string>
+#include <vector>
 
 #include "backports/span.h"
 #include "backports/string.h"
@@ -94,8 +93,8 @@ class FsstDecoder {
   // ___________________________________________________________________________
   // Return an upper bound on the decompressed size of `str`.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
-    AD_CONTRACT_CHECK(str.size() <=
-                      std::numeric_limits<size_t>::max() / MAX_EXPANSION_FACTOR);
+    AD_CONTRACT_CHECK(str.size() <= std::numeric_limits<size_t>::max() /
+                                        MAX_EXPANSION_FACTOR);
     return MAX_EXPANSION_FACTOR * str.size();
   }
 
@@ -165,8 +164,7 @@ class FsstRepeatedDecoder {
   // Return an upper bound on the size after all `N` decoding stages.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
     size_t bound = str.size();
-    for ([[maybe_unused]] size_t stage :
-         ::ranges::views::iota(size_t{0}, N)) {
+    for ([[maybe_unused]] size_t stage : ::ranges::views::iota(size_t{0}, N)) {
       AD_CONTRACT_CHECK(bound <= std::numeric_limits<size_t>::max() /
                                      FsstDecoder::MAX_EXPANSION_FACTOR);
       bound *= FsstDecoder::MAX_EXPANSION_FACTOR;
@@ -195,8 +193,7 @@ class FsstRepeatedDecoder {
       std::string_view input = str;
       size_t bytesWritten = 0;
       for (const auto& decoder : decoders_ | ::ranges::views::reverse) {
-        bytesWritten =
-            decoder.decompressInto(input, buffers[targetBufferIdx]);
+        bytesWritten = decoder.decompressInto(input, buffers[targetBufferIdx]);
         input = std::string_view{buffers[targetBufferIdx].data(), bytesWritten};
         targetBufferIdx ^= 1;
       }
