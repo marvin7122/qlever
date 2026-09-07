@@ -147,12 +147,7 @@ class ExportPipelineRouter {
     return ExportEngineMode::LegacyV1;
   }
 
-  [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
-  }
-
-  [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
+  
     auto lower = ad_utility::getLowercase(std::string(val));
     return lower == "0" || lower == "false" || lower == "no" || lower == "off";
   }
