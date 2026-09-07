@@ -126,76 +126,10 @@ class ExportPipelineRouter {
 
   // ___________________________________________________________________________
   // Return a detailed diagnostic string explaining the routing decision.
-  [[nodiscard]] static std::string describeDecision(
+[[nodiscard]] static std::string describeDecision(
       const ParsedQuery& query, const ParamValueMap& parameters,
       std::optional<std::string_view> exportHeader = std::nullopt,
-      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) {
-    ExportEngineMode selected =
-        selectEngine(query, parameters, exportHeader, serverDefault);
-    bool eligible = isEligibleForFastStreaming(query);
-
-    std::string reason;
-    if (selected == ExportEngineMode::FastStreamingV2) {
-      reason =
-          "Fast-Path V2 selected (eligible export query with explicit or "
-          "default opt-in)";
-    } else {
-      const auto optFastExport = getParameterValue(parameters, "fast-export");
-      const auto optExportEngine =
-          getParameterValue(parameters, "export-engine");
-
-      bool explicitlyRequestedV2 = false;
-      bool explicitlyRequestedV1 = false;
-
-      if (optFastExport.has_value()) {
-        if (isTruthy(optFastExport.value())) {
-          explicitlyRequestedV2 = true;
-        } else if (isFalsy(optFastExport.value())) {
-          explicitlyRequestedV1 = true;
-        }
-      }
-
-      if (optExportEngine.has_value()) {
-        const auto val =
-            ad_utility::getLowercase(std::string(optExportEngine.value()));
-        if (val == "v2" || val == "fast") {
-          explicitlyRequestedV2 = true;
-        } else if (val == "v1" || val == "legacy") {
-          explicitlyRequestedV1 = true;
-        }
-      }
-
-      if (exportHeader.has_value()) {
-        const auto val =
-            ad_utility::getLowercase(std::string(exportHeader.value()));
-        if (val == "v2" || val == "fast" || val == "streaming") {
-          explicitlyRequestedV2 = true;
-        } else if (val == "v1" || val == "legacy") {
-          explicitlyRequestedV1 = true;
-        }
-      }
-
-      if (explicitlyRequestedV2 && !eligible) {
-        reason =
-            "Fallback to Legacy V1 (fast-path requested but query is "
-            "ineligible for V2 streaming)";
-      } else if (explicitlyRequestedV1) {
-        reason =
-            "Legacy V1 selected (explicitly requested via query parameter or "
-            "header override)";
-      } else if (serverDefault == ExportEngineMode::FastStreamingV2 &&
-                 !eligible) {
-        reason =
-            "Fallback to Legacy V1 (server default is V2 but query is "
-            "ineligible for V2 streaming)";
-      } else {
-        reason = "Legacy V1 selected (default standard relational pipeline)";
-      }
-    }
-
-    return absl::StrCat("ExportEngine: ", toString(selected),
-                        " [Reason: ", reason, "]");
-  }
+      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1);
 
  private:
     // Look up `key` in `ParamValueMap` and return its value.
