@@ -88,15 +88,16 @@ class ExportQueryExecutionTrees {
       STREAMABLE_GENERATOR_TYPE streamGenerator);
 #endif
 
- private:
   // Make sure that the offset is not applied again when exporting the
   // result (it is already applied by the root operation in the query
   // execution tree). Note that we don't need this for the limit because
   // applying a fixed limit is idempotent. This only works because the query
-  // planner does the exact same `handlesLimitOffset()` check.
+  // planner does the exact same `handlesLimitOffset()` check. Shared with
+  // the V2 streaming export path, which applies the identical semantics.
   static void compensateForLimitOffsetClause(
       LimitOffsetClause& limitOffsetClause, const QueryExecutionTree& qet);
 
+ private:
   // Generate the bindings of the result of a SELECT or CONSTRUCT query in the
   // `application/qlever-results+json` format.
   //

@@ -601,3 +601,4 @@ addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
+addLinkAndDiscoverTest(VectorStreamSourceTest engine)
