@@ -95,6 +95,11 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
   explicit CellValue(std::string_view sv, ColumnType type = ColumnType::String) noexcept
       : type_(type), stringVal_(sv) {}
 
+  /**
+   * Construct a CellValue from a null-terminated C string.
+   * @param s The string value.
+   * @param type The column type (defaults to String).
+   */
   explicit CellValue(const char* s, ColumnType type = ColumnType::String)
       : type_(type), stringVal_(s) {}
 
