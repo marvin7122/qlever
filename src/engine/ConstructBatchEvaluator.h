@@ -36,7 +36,7 @@ struct BatchEvaluationResult {
   // in that column. We use a hash map (instead of a dense vector) because the
   // set of evaluated columns may be sparse: some variables in the WHERE-clause
   // (in the `IdTable`) may not appear in the CONSTRUCT template and are thus
-  // not evaluated.
+  // not evaluated. We use a hash map for flexibility when column sets vary.
     // TODO<marvin7122> Replace `variablesByColumn_` HashMap with `std::vector<ColumnIndex, EvaluatedVariableValues>` for better cache locality, as we always iterate over the same set of columns.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> variablesByColumn_;
   size_t numRows_ = 0;
