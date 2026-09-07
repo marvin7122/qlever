@@ -15,13 +15,28 @@
 
 using namespace ql::engine::rle;
 
-int main() {
-  constexpr size_t NUM_DISTINCT = 1000;
-  constexpr size_t RUN_LENGTH = 10000;
-  constexpr size_t TOTAL_ROWS = NUM_DISTINCT * RUN_LENGTH;  // 10,000,000 rows
+int main(int argc, char** argv) {
+  size_t NUM_DISTINCT = 1000;
+  size_t RUN_LENGTH = 10000;
+
+  // Parse command-line arguments
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--num-distinct" && i + 1 < argc) {
+      NUM_DISTINCT = std::stoull(argv[++i]);
+    } else if (arg == "--run-length" && i + 1 < argc) {
+      RUN_LENGTH = std::stoull(argv[++i]);
+    } else if (arg == "--help" || arg == "-h") {
+      std::cout << "Usage: " << argv[0] << " [--num-distinct N] [--run-length N]\n";
+      return 0;
+    }
+  }
+
+  constexpr size_t TOTAL_ROWS = NUM_DISTINCT * RUN_LENGTH;
 
   std::cout << "Benchmarking RleVectorStream with " << TOTAL_ROWS
-            << " uncompressed rows (" << NUM_DISTINCT << " runs)...\n";
+            << " uncompressed rows (" << NUM_DISTINCT << " runs, run length "
+            << RUN_LENGTH << ")...\n";
 
   // Measure memory and allocation of uncompressed vector
   auto t0 = std::chrono::high_resolution_clock::now();
