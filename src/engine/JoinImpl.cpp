@@ -489,7 +489,7 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
         auto filter = ql::engine::filter::BlockedBloomFilter::createFromColumn(
             smallerTable.getColumn(smallerTableJoinColumn));
 
-        // Create cross product by going through the larger table.
+        // Create a cross product by going through the larger table.
         for (size_t i = 0; i < largerTable.size(); i++) {
           const auto key = largerTable(i, largerTableJoinColumn);
           // Probe cache-line bloom filter first to prune non-matching keys
