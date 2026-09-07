@@ -11,6 +11,7 @@
 
 #include "backports/span.h"
 #include "global/Id.h"
+#include "util/Assertions.h"
 
 namespace ql::engine::wcoj {
 
@@ -30,9 +31,15 @@ class LeapfrogIterator {
     return currentIndex_ >= sortedKeys_.size();
   }
 
-  [[nodiscard]] Id key() const noexcept { return sortedKeys_[currentIndex_]; }
+  [[nodiscard]] Id key() const {
+    ADL_CORRECTNESS_CHECK(!atEnd());
+    return sortedKeys_[currentIndex_];
+  }
 
-  void next() noexcept { currentIndex_++; }
+  void next() {
+    ADL_CORRECTNESS_CHECK(!atEnd());
+    currentIndex_++;
+  }
 
   // Fast forward to the first key >= targetKey using binary search
   void seek(Id targetKey) noexcept {
@@ -68,12 +75,7 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
     }
   }
 
-  // Note: iterators are mutated via seek/next; consider passing by value for explicit ownership.
-  size_t p = 0;  // pointer to iterator with smallest key
-  Id maxKey = iterators[0].key();
-  for (const auto& it : iterators) {
-    maxKey = std::max(maxKey, it.key());
-  }
+  const size_t k = iterators.size();
 
   while (true) {
     // Find iterator with smallest current key
@@ -100,8 +102,8 @@ std::vector<Id> leapfrogIntersect(std::vector<LeapfrogIterator> iterators) {
         break;
       }
     } else {
-      // Leapfrog forward to minKey
-      iterators[minIndex].seek(minKey);
+      // Leapfrog forward to maxKey
+      iterators[minIndex].seek(maxKey);
       if (iterators[minIndex].atEnd()) {
         break;
       }
