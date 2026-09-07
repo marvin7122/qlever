@@ -34,7 +34,7 @@ enum class ExportEngineMode {
 [[nodiscard]] constexpr std::string_view toString(
     ExportEngineMode mode) noexcept {
   switch (mode) {
-    case ExportEngineMode::LegacyV1:
+    case ExportEngineMode::FastStreamingV2:
       return "LegacyV1";
     case ExportEngineMode::FastStreamingV2:
       return "FastStreamingV2";
