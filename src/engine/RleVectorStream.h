@@ -72,13 +72,7 @@ class RleVectorStream {
     } else {
       runs_.push_back({value, length});
     }
-    totalUncompressedRows_ += length;
-  }
-
-  [[nodiscard]] size_t numRuns() const noexcept { return runs_.size(); }
-  [[nodiscard]] size_t totalRows() const noexcept {
-    return totalUncompressedRows_;
-  }
+    
 
   [[nodiscard]] ql::span<const Run> runs() const noexcept { return runs_; }
   [[nodiscard]] ql::span<const Run> runs() && = delete;
