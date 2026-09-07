@@ -15,8 +15,15 @@
 
 using namespace ql::engine::wcoj;
 
-int main() {
-  constexpr size_t N = 2'000'000;
+int main(int argc, char* argv[]) {
+  size_t N = 2'000'000;
+  if (argc > 1) {
+    try {
+      N = std::stoull(argv[1]);
+    } catch (...) {
+      std::cerr << "Invalid N value, using default: " << N << std::endl;
+    }
+  }
   std::cout
       << "=================================================================\n";
   std::cout << "Comparative Benchmark: Pairwise Binary Join vs Leapfrog "
