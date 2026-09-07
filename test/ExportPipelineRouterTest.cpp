@@ -142,7 +142,7 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
     EXPECT_THAT(desc, testing::HasSubstr("Fast-Path V2 selected"));
   }
 
-  // 2. Ineligible query fallback
+  // 2. Ineligible query fallback (fast-export truthy)
   {
     ParamValueMap params;
     params["fast-export"] = {"1"};
@@ -151,7 +151,16 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
     EXPECT_THAT(desc, testing::HasSubstr("ineligible for V2 streaming"));
   }
 
-  // 3. Explicit V1 override
+  // 3. Ineligible query with server default FastStreamingV2 (no explicit params)
+  {
+    ParamValueMap params;
+    std::string desc = ExportPipelineRouter::describeDecision(
+        askQuery, params, std::nullopt, ExportEngineMode::FastStreamingV2);
+    EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
+    EXPECT_THAT(desc, testing::HasSubstr("server default is V2 but query is ineligible for V2 streaming"));
+  }
+
+  // 4. Explicit V1 override
   {
     ParamValueMap params;
     params["fast-export"] = {"0"};
@@ -161,7 +170,7 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
     EXPECT_THAT(desc, testing::HasSubstr("explicitly requested"));
   }
 
-  // 4. Default standard relational pipeline
+  // 5. Default standard relational pipeline
   {
     ParamValueMap params;
     std::string desc =
