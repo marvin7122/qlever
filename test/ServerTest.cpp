@@ -717,7 +717,7 @@ TEST(ServerTest, exportEngineV1V2Parity) {
     EXPECT_THAT(response, StatusIs(http::status::ok));
     return responseBodyToString(std::move(response.body()));
   };
-  auto plainSelect = [](std::string_view target) {
+  auto plainSelect = [&](std::string_view target) {
     return makeCsvQuery(target, "SELECT * WHERE { ?s ?p ?o }");
   };
   const std::string baseline = runToString(plainSelect("/"));
@@ -732,7 +732,7 @@ TEST(ServerTest, exportEngineV1V2Parity) {
   EXPECT_THAT(runToString(std::move(headerRequest)), testing::StrEq(baseline));
   // A guarded query (OPTIONAL is beyond the V2 envelope) requested with V2
   // must fall back to V1 and return identical bytes.
-  auto optionalSelect = [](std::string_view target) {
+  auto optionalSelect = [&](std::string_view target) {
     return makeCsvQuery(target,
                         "SELECT * WHERE { ?s ?p ?o OPTIONAL { ?s ?p ?o } }");
   };
