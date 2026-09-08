@@ -45,7 +45,10 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs.
+// runs. Disabled under ThreadSanitizer, whose runtime provides its own
+// (strongly linked) global operator new/delete replacements that would
+// otherwise cause multiple-definition link errors.
+#ifndef __SANITIZE_THREAD__
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -61,6 +64,7 @@ void* operator new(std::size_t size) {
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+#endif  // __SANITIZE_THREAD__
 
 namespace ad_benchmark {
 namespace {
