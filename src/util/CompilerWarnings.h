@@ -87,6 +87,21 @@
 #define GCC_REENABLE_WARNINGS
 #endif
 
+// Defined as 1 when building with AddressSanitizer or ThreadSanitizer, whose
+// runtimes already provide the replaceable global allocation functions. Code
+// that defines its own global `operator new`/`operator delete` (e.g. for
+// allocation tracking in benchmarks) must skip those definitions then, as
+// they cause multiple-definition link errors. Clang signals sanitizers via
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; neither mechanism works
+// on the other compiler, so both are checked.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define QLEVER_UNDER_SANITIZER 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define QLEVER_UNDER_SANITIZER 1
+#endif
+
 #ifdef __clang__
 #define DISABLE_CLANG_SELF_ASSIGN_WARNING \
   _Pragma("clang diagnostic push")        \

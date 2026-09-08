@@ -64,11 +64,12 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. Not defined under AddressSanitizer or ThreadSanitizer: their runtimes
-// already provide these replaceable allocation functions, so defining them
-// here causes multiple-definition link errors. Under sanitizers the
-// `heap-allocations` metadata below reads 0.
-#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+// runs. Skipped when QLEVER_UNDER_SANITIZER is defined (see
+// `util/CompilerWarnings.h`): the sanitizer runtimes already provide these
+// replaceable allocation functions, so defining them here causes
+// multiple-definition link errors. Under sanitizers the `heap-allocations`
+// metadata below reads 0.
+#ifndef QLEVER_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
