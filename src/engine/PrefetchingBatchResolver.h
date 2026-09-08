@@ -155,7 +155,6 @@ class PrefetchingBatchResolver {
                            static_cast<int>(distance));
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
-          const auto wordVocabIndex = pfId.getVocabIndex();
           // Prefetch the underlying index entry if possible
           const auto* vocabPtr =
               reinterpret_cast<const void*>(&index.getImpl());
@@ -166,7 +165,11 @@ class PrefetchingBatchResolver {
       const size_t pos = positions[i];
       const Id id = ids[pos];
       const auto vocabIndex = id.getVocabIndex();
-      std::string_view word = index.indexToString(vocabIndex);
+      // `indexToString` may return an owning `std::string` (compressed
+      // vocabulary segments), so hold the result by value; viewing the
+      // temporary directly would dangle.
+      const auto wordStorage = index.indexToString(vocabIndex);
+      std::string_view word{wordStorage};
 
       results[pos] = ql::exportIds::literalOrIriToStringAndType<
           removeQuotesAndAngleBrackets, returnOnlyLiterals>(
