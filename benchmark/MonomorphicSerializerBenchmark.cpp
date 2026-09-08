@@ -77,9 +77,19 @@ void* operator new(std::size_t size) {
 }
 
 DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
-void operator delete(void* ptr) noexcept { std::free(ptr); }
+// `noinline` keeps the middle end from connecting the `std::free` calls below
+// with the `std::malloc` in `operator new` above at the call sites. That
+// connection makes `-Wmismatched-new-delete` fire (as an error under
+// `-Werror`), and the diagnostic pragma above is not honored for this warning
+// by GCC 11.
+__attribute__((noinline)) void operator delete(void* ptr) noexcept {
+  std::free(ptr);
+}
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+__attribute__((noinline)) void operator delete(void* ptr,
+                                               std::size_t) noexcept {
+  std::free(ptr);
+}
 GCC_REENABLE_WARNINGS
 
 namespace ad_benchmark {
