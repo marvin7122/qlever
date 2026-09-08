@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -143,8 +144,9 @@ struct BranchingSwitchDispatcher {
       case Datatype::Double: {
         std::memcpy(out, "\"", 1);
         out += 1;
-        auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-        out = p;
+        // NOTE: floating-point std::to_chars is unavailable on the macOS
+        // deployment targets built by CI; snprintf %.17g round-trips exactly.
+        out += std::snprintf(out, 32, "%.17g", id.getDouble());
         std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
         out += 44;
         return out;
@@ -257,8 +259,9 @@ struct BranchingIfElseDispatcher {
     } else if (dt == Datatype::Double) {
       std::memcpy(out, "\"", 1);
       out += 1;
-      auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-      out = p;
+      // NOTE: floating-point std::to_chars is unavailable on the macOS
+      // deployment targets built by CI; snprintf %.17g round-trips exactly.
+      out += std::snprintf(out, 32, "%.17g", id.getDouble());
       std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
       out += 44;
       return out;

@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 
@@ -78,14 +79,22 @@ inline char* formatInteger(ValueId id, std::string_view, char* out,
   return out;
 }
 
-// Fast branchless formatter for double values.
+// Fast branchless formatter for double values. Uses `snprintf` with `%.17g`
+// (exact round-trip) instead of floating-point `std::to_chars`, which is
+// unavailable on the macOS deployment targets built by CI.
 inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view prefix,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 32, id.getDouble());
-  out = ptr;
+  const int len = std::snprintf(out, 32, "%.17g", id.getDouble());
+  // `snprintf` always fits: 32 bytes hold any `%.17g` double. Fall back to
+  // `"0.0"` on unexpected encoding errors.
+  if (len > 0 && len < 32) {
+    out += len;
+  } else {
+    out = std::copy_n("0.0", 3, out);
+  }
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;

@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -176,14 +177,15 @@ concept FormatterWriter =
 
 namespace detail {
 
-// Double / Float serialization without dynamic allocation
+// Double / Float serialization without dynamic allocation. Uses `snprintf`
+// with `%.17g` (exact round-trip) instead of floating-point `std::to_chars`,
+// which is unavailable on the macOS deployment targets built by CI.
 template <typename Writer>
 inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   std::array<char, 32> buffer;
-  auto [ptr, ec] =
-      std::to_chars(buffer.data(), buffer.data() + buffer.size(), val);
-  if (ec == std::errc{}) {
-    writer.writeRaw(std::string_view(buffer.data(), ptr - buffer.data()));
+  const int len = std::snprintf(buffer.data(), buffer.size(), "%.17g", val);
+  if (len > 0 && static_cast<size_t>(len) < buffer.size()) {
+    writer.writeRaw(std::string_view(buffer.data(), static_cast<size_t>(len)));
   } else {
     writer.writeRaw("0.0");
   }
