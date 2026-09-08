@@ -347,7 +347,14 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
 }
 
 // _____________________________________________________________________________
-// Return the largest number of characters that a `ql::pmr::string` is
+// A PMR string type with the allocator spelled out explicitly: the
+// `std::pmr::string` convenience alias is not declared by the standard
+// headers on all supported toolchains.
+using PmrString = std::basic_string<char, std::char_traits<char>,
+                                    std::pmr::polymorphic_allocator<char>>;
+
+// _____________________________________________________________________________
+// Return the largest number of characters that a `PmrString` is
 // guaranteed by this helper to store inside its own object storage (SSO).
 // NOTE: Used by test/GTestHelpersTest.cpp, test/index/vocabulary/
 // CompressedVocabularyTest.cpp (via requirePmrStringInlineStorage) and
@@ -379,10 +386,10 @@ inline size_t pmrStringSsoCapacity() {
    public:
     size_t numAllocations() const { return numAllocations_; }
   };
-  const std::string sample(sizeof(ql::pmr::string), 's');
+  const std::string sample(sizeof(PmrString), 's');
   for (size_t size = sample.size(); size > 0; --size) {
     CountingMemoryResource resource;
-    ql::pmr::string pmrSample{sample.data(), size, &resource};
+    PmrString pmrSample{sample.data(), size, &resource};
     if (resource.numAllocations() == 0) {
       return size;
     }

@@ -53,9 +53,9 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
   // inside the object, and one character more is not.
   size_t capacity = pmrStringSsoCapacity();
   requirePmrStringInlineStorage(capacity);
-  std::pmr::string atCapacity(capacity, 'x');
+  PmrString atCapacity(capacity, 'x');
   EXPECT_TRUE(pointsIntoObject(atCapacity.data(), atCapacity));
-  std::pmr::string aboveCapacity(capacity + 1, 'y');
+  PmrString aboveCapacity(capacity + 1, 'y');
   EXPECT_FALSE(pointsIntoObject(aboveCapacity.data(), aboveCapacity));
 }
 
@@ -68,13 +68,13 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
     if (size > 0) {
       requirePmrStringInlineStorage(size);
     }
-    std::pmr::string shortString(size, 'x');
+    PmrString shortString(size, 'x');
     EXPECT_TRUE(pointsIntoObject(shortString.data(), shortString));
     EXPECT_EQ(shortString.size(), size);
   }
   // Sanity check of the observation itself: a string above the SSO threshold
   // must NOT be stored inside the object.
-  std::pmr::string longString(64, 'y');
+  PmrString longString(64, 'y');
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
 }
 
