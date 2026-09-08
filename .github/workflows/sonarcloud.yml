@@ -4,10 +4,6 @@ on:
   push:
     branches: [master]
   pull_request:
-<<<<<<< HEAD
-    branches: [ '**' ]
-=======
->>>>>>> master
 
 # The default GITHUB_TOKEN only needs to read the repository here.
 permissions:
