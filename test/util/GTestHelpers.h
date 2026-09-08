@@ -318,13 +318,15 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 }
 
 // _____________________________________________________________________________
-//  for the currently running gtest, with every "<TestSuiteName>_<TestName>" for the currently running gtest, with
+//  for the currently running gtest, with every "<TestSuiteName>_<TestName>" for
+//  the currently running gtest, with
 // any '/' replaced by '_' (parameterized tests embed '/' in their names).
 // If `assertInGtestEnvironment` is true (the default), crashes if called
 // outside a running gtest (i.e. when `current_test_info()` returns nullptr).
 // Pass false when the caller is also used by non-test code (e.g. benchmarks),
 // in which case an empty string is returned instead.
-//  for the currently running gtest, Sanitizes the given raw gtest name by replacing every '/' with '_'. (parameterized
+//  for the currently running gtest, Sanitizes the given raw gtest name by
+//  replacing every '/' with '_'. (parameterized
 // tests embed '/' in their names). Shared implementation of
 // `sanitizeGtestName` and `gtestCurrentTestSuiteName`.
 inline std::string sanitizeGtestName(const std::string& name) {
@@ -340,7 +342,7 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   return testInfo == nullptr
              ? ""
              : sanitizeGtestName(absl::StrCat(testInfo->test_suite_name(), "_",
-                                               testInfo->name()));
+                                              testInfo->name()));
 }
 
 // _____________________________________________________________________________
@@ -408,8 +410,8 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
       capacity >= maxSize,
       absl::StrCat("Platform premise violated: std::pmr::string does not "
                    "store ",
-                   maxSize, " characters on this platform (capacity: ",
-                   capacity, ")"));
+                   maxSize,
+                   " characters on this platform (capacity: ", capacity, ")"));
 }
 
 // _____________________________________________________________________________
