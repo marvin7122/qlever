@@ -45,8 +45,8 @@ double measure(const std::vector<std::string>& inputs, size_t length) {
       static_cast<double>(repetitions * inputs.size() * length);
   const double nanoseconds =
       std::chrono::duration<double, std::nano>(elapsed).count();
-  static volatile size_t observedChecksum;
-  observedChecksum = checksum;
+  static volatile size_t observedChecksum = checksum;
+  (void)observedChecksum; // suppress unused variable warning
   return nanoseconds / bytes;
 }
 
