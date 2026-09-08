@@ -343,28 +343,6 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
 }
 
 // _____________________________________________________________________________
-// STRICTLY TEST-LOCAL BEST-EFFORT TRIPWIRE — NOT A CORRECTNESS MECHANISM.
-// Overwrite the current stack frame with sentinel bytes, so that stale stack
-// contents (e.g. from a destroyed local object that a dangling view still
-// points into) become implausible to survive. Call it multiple times to also
-// clobber deeper frames. Returns the last byte written, read back through the
-// `volatile` buffer, so callers can assert that the stack was actually
-// overwritten with the sentinel.
-template <size_t NumBytes = 4096>
-[[gnu::noinline]] char clobberStack(char sentinel = '#') {
-  // `volatile` prevents the compiler from optimizing the stack writes away.
-  static_assert(NumBytes > 0, "clobberStack requires a non-empty buffer");
-  volatile char buffer[NumBytes];
-  for (size_t i = 0; i < NumBytes; ++i) {
-    buffer[i] = sentinel;
-  }
-  // Compiler barrier: prevents the optimizer from eliding the stack writes or
-  // reordering them past the return. Not a hardware memory fence.
-  asm volatile("" : : "r"(buffer) : "memory");
-  return buffer[NumBytes - 1];
-}
-
-// _____________________________________________________________________________
 // Return the name of the currently running test suite, with any '/' replaced
 // by '_' (parameterized test suites embed '/' in their names).
 // Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
