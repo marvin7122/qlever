@@ -156,7 +156,6 @@ class IoUringDirectBenchmarkRunner {
     DirectIoFile file(filePath_, /*useDirectIo=*/false);
     AD_CONTRACT_CHECK(file.isOpen());
 
-    const size_t batchBytes = batchBlocks_ * kBlockSizeBytes;
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
 
     std::vector<uint64_t> offsets = generateOffsets(randomAccess);
@@ -460,7 +459,8 @@ void printResultsTable(std::string_view accessMode,
   std::cout << "  BENCHMARK: 1GB Simulated Vocabulary Scan (" << accessMode
             << ")\n";
   std::cout << "  Dataset: 1,073,741,824 bytes | Block Size: 4 KB | Total "
-               "Blocks: 262,144\n";
+               "Blocks: "
+            << kTotalBlocks << "\n";
   std::cout << "==============================================================="
                "=========================\n";
   std::cout << std::left << std::setw(50) << "I/O Paradigm" << std::right

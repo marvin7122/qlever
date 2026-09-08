@@ -338,7 +338,7 @@ void printResultsTable(std::vector<BenchmarkMetric>& results) {
                "io_uring vs Synchronous Send)\n";
   std::cout
       << "  Payload: 104,857,600 bytes | Chunk Size: 64 KB | Total Operations: "
-      << (kTotalSendSizeBytes / kChunkSizeBytes) << "\n";
+      << kTotalChunks << "\n";
   std::cout << "==============================================================="
                "=========================================\n";
   std::cout << std::left << std::setw(48) << "Socket Transmission Paradigm"
