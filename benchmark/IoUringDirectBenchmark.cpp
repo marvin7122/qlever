@@ -49,7 +49,7 @@ constexpr size_t kBlockSizeBytes = 4096;                             // 4 KB
 // building against the benchmark infrastructure.
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 constexpr size_t kTotalBlocks =
-    kTotalFileSizeBytes / kBlockSizeBytes;   // 262,144 blocks
+    kTotalFileSizeBytes / kBlockSizeBytes;  // 262,144 blocks
 #endif
 constexpr size_t kDefaultBatchBlocks = 256;  // 1 MB per batch (256 * 4KB)
 
