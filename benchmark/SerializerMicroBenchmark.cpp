@@ -49,6 +49,10 @@ struct AllocationTracker {
 // (strongly linked) global operator new/delete replacements that would
 // otherwise cause multiple-definition link errors.
 #ifndef __SANITIZE_THREAD__
+// The malloc/free pairing below is intentional (allocation counting), but GCC
+// cannot prove the pairing and warns with -Wmismatched-new-delete.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -64,6 +68,7 @@ void* operator new(std::size_t size) {
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+#pragma GCC diagnostic pop
 #endif  // __SANITIZE_THREAD__
 
 namespace ad_benchmark {
