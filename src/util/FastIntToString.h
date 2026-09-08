@@ -86,9 +86,12 @@ inline void format8Digits(uint32_t v, char* dst) noexcept {
   uint16_t p3 = static_cast<uint16_t>(r % 100);
 
   __m128i pairs = _mm_setr_epi16(p0, p1, p2, p3, 0, 0, 0, 0);
-  // tens = (pairs * 52429) >> 19  (approx division by 10)
-  __m128i tens =
-      _mm_srli_epi16(_mm_mulhi_epu16(pairs, _mm_set1_epi16(52429)), 3);
+  // tens = (pairs * 52429) >> 19  (approx division by 10). The constant is
+  // 0xCCCD as a bit pattern; `_mm_mulhi_epu16` treats lanes as unsigned, so
+  // the signed interpretation is irrelevant and the explicit cast only
+  // carries the bits (it also silences -Wconstant-conversion).
+  __m128i tens = _mm_srli_epi16(
+      _mm_mulhi_epu16(pairs, _mm_set1_epi16(static_cast<short>(52429))), 3);
   __m128i tens10 = _mm_mullo_epi16(tens, _mm_set1_epi16(10));
   __m128i ones = _mm_sub_epi16(pairs, tens10);
   // Little-endian layout: tens in low byte, ones in high byte
