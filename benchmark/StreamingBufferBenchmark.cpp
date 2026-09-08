@@ -151,8 +151,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     timer.stop();
     asm volatile("" : : "r"(dummySink) : "memory");
 
-    const double totalNs =
-        static_cast<double>(timer.value().count()) * 1000.0;
+    const double totalNs = static_cast<double>(timer.value().count()) * 1000.0;
     return totalNs / static_cast<double>(probeIndices.size());
   }
 
