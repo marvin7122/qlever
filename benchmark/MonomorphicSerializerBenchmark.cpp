@@ -245,7 +245,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   std::string_view predLabel = data.stringPool_[0];
   std::string_view predType = data.stringPool_[1];
   std::string_view predPop = data.stringPool_[2];
-  std::string_view predArea = data.stringPool_[3];
 
   for (size_t i = 0; i < numRows; ++i) {
     // Subjects
