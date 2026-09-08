@@ -51,6 +51,11 @@ struct AllocationTracker {
 #ifndef __SANITIZE_THREAD__
 // The malloc/free pairing below is intentional (allocation counting), but GCC
 // cannot prove the pairing and warns with -Wmismatched-new-delete.
+// `noinline` on the deallocation functions keeps the `free` call in a single
+// non-inlined body: otherwise GCC inlines `operator delete` into call sites
+// (e.g. `make_shared`, vector teardown) and reports the warning once per
+// inlined copy, where a definition-site pragma cannot reach it. The pragma
+// below additionally covers the definition site itself.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 void* operator new(std::size_t size) {
@@ -65,9 +70,14 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
-void operator delete(void* ptr) noexcept { std::free(ptr); }
+__attribute__((noinline)) void operator delete(void* ptr) noexcept {
+  std::free(ptr);
+}
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+__attribute__((noinline)) void operator delete(void* ptr,
+                                               std::size_t) noexcept {
+  std::free(ptr);
+}
 #pragma GCC diagnostic pop
 #endif  // __SANITIZE_THREAD__
 
