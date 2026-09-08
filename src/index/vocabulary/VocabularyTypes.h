@@ -263,8 +263,7 @@ class PmrVocabBatchLookupData : public VocabBatchStorage {
   };
 
   PmrVocabBatchLookupData(
-      Passkey,
-      std::unique_ptr<ql::pmr::memory_resource> upstream,
+      Passkey, std::unique_ptr<ql::pmr::memory_resource> upstream,
       std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
       std::vector<std::string_view> views)
       : VocabBatchStorage(std::move(views)),
@@ -291,8 +290,7 @@ class StringVectorVocabBatchLookupData : public VocabBatchStorage {
   static std::vector<std::string_view> viewsInto(
       const std::vector<std::string>& words) {
     return ::ranges::to_vector(
-        words |
-        ql::views::transform(ad_utility::staticCast<std::string_view>));
+        words | ql::views::transform(ad_utility::staticCast<std::string_view>));
   }
 
  public:
@@ -324,8 +322,7 @@ class MultiOwnerVocabBatchLookupData : public VocabBatchStorage {
     explicit Passkey() = default;
   };
 
-  MultiOwnerVocabBatchLookupData(Passkey,
-                                 std::vector<VocabBatchOwner> owners,
+  MultiOwnerVocabBatchLookupData(Passkey, std::vector<VocabBatchOwner> owners,
                                  std::vector<std::string_view> views)
       : VocabBatchStorage(std::move(views)), owners_{std::move(owners)} {}
 
