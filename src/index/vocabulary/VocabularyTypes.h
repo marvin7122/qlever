@@ -426,6 +426,22 @@ class ArenaVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// Whether `vocab.lookupBatch(indices, builder)` is a valid expression, where
+// `vocab` is a `const Vocab&`, `indices` a `ql::span<const size_t>`, and
+// `builder` an `ArenaVocabBatchBuilder&`. Used to dispatch to the
+// builder-based batch lookup when the vocabulary supports it (currently only
+// the compressed vocabularies). Implemented with `std::void_t` instead of a
+// C++20 requires-expression, so that it also parses with the C++17 backports
+// (GCC 8 has no concepts support at all).
+template <typename Vocab, typename = void>
+struct VocabSupportsBuilderLookupBatch : std::false_type {};
+template <typename Vocab>
+struct VocabSupportsBuilderLookupBatch<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+
+// _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(

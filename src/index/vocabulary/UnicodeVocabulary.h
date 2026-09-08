@@ -41,9 +41,8 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    if constexpr (requires {
-                    _underlyingVocabulary.lookupBatch(indices, builder);
-                  }) {
+    if constexpr (VocabSupportsBuilderLookupBatch<
+                      UnderlyingVocabulary>::value) {
       return _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
       return _underlyingVocabulary.lookupBatch(indices);
