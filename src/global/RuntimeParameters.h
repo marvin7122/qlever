@@ -244,6 +244,10 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // Number of rows ahead that vocabulary ID resolution during export
+  // prefetches into the CPU cache. Zero (default) disables prefetching.
+  SizeT vocabLookupPrefetchDistance_{0, "vocab-lookup-prefetch-distance"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

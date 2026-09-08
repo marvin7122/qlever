@@ -13,6 +13,7 @@
 #include <gmock/gmock.h>
 
 #include "engine/IndexScan.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "index/LocalVocabEntry.h"
 #include "parser/LiteralOrIri.h"
@@ -309,6 +310,63 @@ TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto result = ql::exportIds::idsToStringAndType(
       qec->getIndex(), ql::span<const Id>{}, localVocab);
   EXPECT_TRUE(result.empty());
+}
+
+// _____________________________________________________________________________
+// The pipelined prefetch loop must return the same strings as the default
+// sequential loop, including empty input and distances larger than the batch.
+TEST(ExportIds, idsToStringAndTypePrefetchMatchesSequential) {
+  std::string kg =
+      "<s> <p> <o> . "
+      "<s> <q> \"hello\" . "
+      "<s> <p> 42 . "
+      "<s> <p> 3.14 .";
+  auto qec = ad_utility::testing::getQec(kg);
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  auto getId = ad_utility::testing::makeGetId(index);
+
+  std::vector<Id> ids{
+      getId("<s>"),
+      getId("<p>"),
+      getId("<o>"),
+      getId("<q>"),
+      getId("\"hello\""),
+      Id::makeFromInt(42),
+      Id::makeFromDouble(3.14),
+      Id::makeUndefined(),
+  };
+
+  // `idsToStringAndType` requires the input to be sorted by `ValueId`.
+  ql::ranges::sort(ids);
+
+  // Restore the default (prefetching disabled) even if an assertion fails.
+  struct FlagGuard {
+    ~FlagGuard() {
+      setRuntimeParameter<&RuntimeParameters::vocabLookupPrefetchDistance_>(
+          size_t{0});
+    }
+  } guard;
+
+  const auto baseline = ql::exportIds::idsToStringAndType(
+      index, ql::span<const Id>{ids}, localVocab);
+  for (size_t distance : {size_t{1}, size_t{8}, size_t{1000}}) {
+    setRuntimeParameter<&RuntimeParameters::vocabLookupPrefetchDistance_>(
+        distance);
+    const auto prefetched = ql::exportIds::idsToStringAndType(
+        index, ql::span<const Id>{ids}, localVocab);
+    ASSERT_EQ(prefetched.size(), baseline.size()) << "distance " << distance;
+    for (size_t i = 0; i < baseline.size(); ++i) {
+      EXPECT_EQ(prefetched[i], baseline[i])
+          << "Mismatch at index " << i << " distance " << distance;
+    }
+  }
+
+  setRuntimeParameter<&RuntimeParameters::vocabLookupPrefetchDistance_>(
+      size_t{8});
+  const auto emptyResult = ql::exportIds::idsToStringAndType(
+      index, ql::span<const Id>{}, localVocab);
+  EXPECT_TRUE(emptyResult.empty());
 }
 
 using ResolveResult =

@@ -23,6 +23,7 @@
 #include "backports/span.h"
 #include "global/Constants.h"
 #include "global/Id.h"
+#include "global/RuntimeParameters.h"
 #include "index/Index.h"
 #include "index/IndexImpl.h"
 #include "index/LocalVocab.h"
@@ -292,6 +293,29 @@ void resolveVocabIndexIds(
 
   // `vocabStrings` is in the same order as `positions`, so zip scatters each
   // looked-up string back to the position it came from.
+  const size_t prefetchDistance =
+      getRuntimeParameter<&RuntimeParameters::vocabLookupPrefetchDistance_>();
+  if (prefetchDistance > 0) {
+    // Software-pipelined resolution: prefetch the scatter/gather slots of
+    // the row `prefetchDistance` ahead while converting the current row.
+    // This covers the ID, position, and result slots at this layer; the
+    // vocabulary pages themselves are read inside `lookupBatch`.
+    const size_t n = positions.size();
+    size_t i = 0;
+    for (auto&& [sv, pos] : ::ranges::views::zip(*vocabStrings, positions)) {
+      if (i + prefetchDistance < n) {
+        const size_t pfPos = positions[i + prefetchDistance];
+        __builtin_prefetch(&positions[i + prefetchDistance], 0, 3);
+        __builtin_prefetch(&ids[pfPos], 0, 3);
+        __builtin_prefetch(&results[pfPos], 1, 3);
+      }
+      results[pos] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
+                                                 returnOnlyLiterals>(
+          LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
+      ++i;
+    }
+    return;
+  }
   for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, positions)) {
     results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
                                              returnOnlyLiterals>(
