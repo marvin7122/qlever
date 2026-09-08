@@ -47,4 +47,8 @@ if (NOT _NO_BENCHMARK)
     add_executable(PrefetchingBenchmark PrefetchingBenchmark.cpp)
     linkBenchmark(PrefetchingBenchmark engine sparqlParser qlever_util)
 
+    # Standalone main, so no benchmark-infra link (avoids duplicate main).
+    add_executable(WikidataVocabPrefetchBenchmark
+        WikidataVocabPrefetchBenchmark.cpp)
+
 endif()
