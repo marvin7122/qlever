@@ -206,7 +206,7 @@ namespace detail {
 // vectors. For each 4-element vector, _mm256_cmpeq_epi64 checks against 0
 // (undefined ValueId), and _mm256_movemask_pd extracts the 4-bit comparison
 // mask.
-QLEVER_AVX2_TARGET [[nodiscard]] inline uint64_t scanBatch64Avx2(
+[[nodiscard]] QLEVER_AVX2_TARGET inline uint64_t scanBatch64Avx2(
     const uint64_t* data) noexcept {
   const __m256i zero = _mm256_setzero_si256();
   const auto* ptr = reinterpret_cast<const __m256i*>(data);
@@ -224,7 +224,7 @@ QLEVER_AVX2_TARGET [[nodiscard]] inline uint64_t scanBatch64Avx2(
 }
 
 // AVX2 fast test for all-unbound (all 64 values == 0) via bitwise OR reduction.
-QLEVER_AVX2_TARGET [[nodiscard]] inline bool isAllUnbound64Avx2(
+[[nodiscard]] QLEVER_AVX2_TARGET inline bool isAllUnbound64Avx2(
     const uint64_t* data) noexcept {
   const auto* ptr = reinterpret_cast<const __m256i*>(data);
   __m256i or0 =
