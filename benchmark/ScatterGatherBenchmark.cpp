@@ -265,7 +265,9 @@ class ScatterGatherBenchmarkRunner {
         [&](ScatterGatherChunk chunk) {
           totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
-          chunk.writeToFd(nullFd);
+          // Writes go to `/dev/null`, so the byte count cannot fail here;
+          // the value is deliberately discarded.
+          (void)chunk.writeToFd(nullFd);
         },
         config);
 
@@ -308,7 +310,9 @@ class ScatterGatherBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
+// Pretty-printed summary table formatter (only used by the standalone main
+// below; the benchmark-infrastructure path reports via BenchmarkResults).
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printBenchmarkTable(
     size_t literalSize,
     const std::vector<ScatterGatherBenchmarkMetric>& metrics) {
@@ -354,6 +358,7 @@ void printBenchmarkTable(
   std::cout << "==============================================================="
                "========================================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 

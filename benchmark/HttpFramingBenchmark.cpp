@@ -383,7 +383,9 @@ class HttpFramingBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
+// Pretty-printed summary table formatter (only used by the standalone main
+// below; the benchmark-infrastructure path reports via BenchmarkResults).
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printBenchmarkTable(
     size_t chunkSize, const std::vector<HttpFramingBenchmarkMetric>& metrics) {
   if (metrics.empty()) return;
@@ -424,6 +426,7 @@ void printBenchmarkTable(
   std::cout << "==============================================================="
                "=========================================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 
