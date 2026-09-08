@@ -20,7 +20,7 @@
 #include "util/Log.h"
 
 // _____________________________________________________________________________
-// Return the largest number of characters that a `ql::pmr::string` is
+// Return the largest number of characters that a `ql::pmr::basic_string<char>` is
 // guaranteed by this helper to store inside its own object storage (SSO).
 // NOTE: Used by test/GTestHelpersTest.cpp, test/index/vocabulary/
 // CompressedVocabularyTest.cpp (via requirePmrStringInlineStorage) and
@@ -52,10 +52,10 @@ inline size_t pmrStringSsoCapacity() {
    public:
     size_t numAllocations() const { return numAllocations_; }
   };
-  const std::string sample(sizeof(ql::pmr::string), 's');
+  const std::string sample(sizeof(ql::pmr::basic_string<char>), 's');
   for (size_t size = sample.size(); size > 0; --size) {
     CountingMemoryResource resource;
-    ql::pmr::string pmrSample{sample.data(), size, &resource};
+    ql::pmr::basic_string<char> pmrSample{sample.data(), size, &resource};
     if (resource.numAllocations() == 0) {
       return size;
     }
@@ -64,7 +64,7 @@ inline size_t pmrStringSsoCapacity() {
 }
 
 // _____________________________________________________________________________
-// Check the explicit platform premise that `ql::pmr::string` stores strings of
+// Check the explicit platform premise that `ql::pmr::basic_string<char>` stores strings of
 // up to `maxSize` characters inside its own object storage (Small String
 // Optimization), i.e. that constructing such a string performs no allocation
 // through its allocator. Tests whose logic depends on short strings keeping
