@@ -203,10 +203,36 @@ CPP_template(typename UnderlyingVocabulary,
   void lookupBatch(ql::span<const size_t> indices,
                    ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());
+    std::string scratch;
+    if constexpr (underlyingHasHoles) {
+      // Like `operator[]` above: translate each index to a position exactly
+      // once; holes yield a placeholder without touching the decoder (the
+      // decoder must be selected by position, and there is no compressed
+      // word for a hole).
+      for (size_t idx : indices) {
+        auto position = underlyingVocabulary_.positionOfIndex(idx);
+        if (!position.has_value()) {
+          builder.appendWord(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+          continue;
+        }
+        const size_t decoderIdx =
+            getDecoderIdxFromPosition(position.value());
+        AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
+        const std::string_view compressedWord = toStringView(
+            underlyingVocabulary_.wordAtPosition(position.value()));
+        builder.appendDecompressedWord(
+            compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
+            [&](ql::span<char> outSpan) {
+              return compressionWrapper_.decompressInto(
+                  compressedWord, decoderIdx, outSpan, scratch);
+            });
+      }
+      return;
+    }
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
 
-    std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
       const size_t decoderIdx = getDecoderIdx(idx);
