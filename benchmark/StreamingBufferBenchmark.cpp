@@ -302,6 +302,9 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     BenchmarkResults results{};
 
     const std::vector<size_t> chunkSizes = {
+        1024,              // 1 KB
+        4 * 1024,          // 4 KB
+        16 * 1024,         // 16 KB
         64 * 1024,         // 64 KB
         1024 * 1024,       // 1 MB
         16 * 1024 * 1024,  // 16 MB
