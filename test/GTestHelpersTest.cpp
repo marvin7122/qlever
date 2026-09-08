@@ -16,6 +16,7 @@
 #include <memory_resource>
 
 #include "util/GTestHelpers.h"
+#include "util/PmrStringSsoTestHelpers.h"
 
 TEST(GTestHelpersTest, CurrentTestSuiteAndTestName) {
   EXPECT_EQ(gtestCurrentTestSuiteName(), "GTestHelpersTest");
