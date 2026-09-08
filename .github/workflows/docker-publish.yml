@@ -5,7 +5,10 @@ on:
     branches: [ master ]
     tags: [ 'v*.*.*' ]
   pull_request:
+<<<<<<< HEAD
     branches: [ '**' ]
+=======
+>>>>>>> master
 
 env:
   IMAGE: adfreiburg/qlever

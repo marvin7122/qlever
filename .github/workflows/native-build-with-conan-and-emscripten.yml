@@ -9,7 +9,10 @@ on:
     branches: [ master ]
     tags: [ "v*" ]
   pull_request:
+<<<<<<< HEAD
     branches: [ '**' ]
+=======
+>>>>>>> master
   merge_group:
 
 concurrency:

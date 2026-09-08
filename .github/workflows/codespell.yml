@@ -6,7 +6,10 @@ on:
   push:
     branches: [ master ]
   pull_request:
+<<<<<<< HEAD
     branches: [ '**' ]
+=======
+>>>>>>> master
 
 permissions:
   contents: read
