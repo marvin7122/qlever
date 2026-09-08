@@ -375,6 +375,6 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
   }
 };
 
-AD_BENCHMARK_REGISTER(std::make_unique<StreamingBufferBenchmark>());
+AD_REGISTER_BENCHMARK(StreamingBufferBenchmark);
 
 }  // namespace ad_benchmark
