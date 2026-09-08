@@ -6,6 +6,8 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/CompressedVocabulary.h"
@@ -27,6 +29,18 @@ struct DummyDecoder {
       c -= 2;
     }
     return result;
+  }
+  // The transformation preserves the length.
+  [[nodiscard]] size_t maxDecompressedSize(
+      std::string_view compressed) const {
+    return compressed.size();
+  }
+  [[nodiscard]] size_t decompressInto(std::string_view compressed,
+                                      ql::span<char> out) const {
+    AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(compressed));
+    std::string decompressed = decompress(compressed);
+    std::memcpy(out.data(), decompressed.data(), decompressed.size());
+    return decompressed.size();
   }
   // This class has no state, but it still needs to be serialized.
   template <typename T>
