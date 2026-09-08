@@ -28,6 +28,11 @@
 
 using namespace ql::engine::rle;
 
+// The standalone benchmark (helpers and driver) is compiled out when QLever's
+// benchmark infrastructure is available: CMake links `benchmarkWithMain`,
+// which already provides `main`, and the otherwise unused helpers would fail
+// `-Werror` builds.
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 namespace {
 
 // _____________________________________________________________________________
@@ -278,10 +283,6 @@ void printResults(const std::vector<BenchmarkResult>& results) {
 
 }  // namespace
 
-// The standalone driver is compiled out when QLever's benchmark
-// infrastructure is available: CMake links `benchmarkWithMain`, which already
-// provides `main`.
-#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 int main(int argc, char** argv) {
   size_t numTriples = 2'000'000;
   if (argc > 1) {
