@@ -45,8 +45,12 @@ using namespace ad_utility::export_prototypes;
 // 1 GB simulated vocabulary file constants:
 constexpr size_t kTotalFileSizeBytes = 1024ULL * 1024ULL * 1024ULL;  // 1 GB
 constexpr size_t kBlockSizeBytes = 4096;                             // 4 KB
+// Only used by the standalone printResultsTable below, hence excluded when
+// building against the benchmark infrastructure.
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 constexpr size_t kTotalBlocks =
     kTotalFileSizeBytes / kBlockSizeBytes;   // 262,144 blocks
+#endif
 constexpr size_t kDefaultBatchBlocks = 256;  // 1 MB per batch (256 * 4KB)
 
 // _____________________________________________________________________________
