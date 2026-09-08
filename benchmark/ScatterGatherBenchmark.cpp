@@ -258,6 +258,7 @@ class ScatterGatherBenchmarkRunner {
 
     size_t totalBytes = 0;
     size_t totalZeroCopyBytes = 0;
+    size_t fdBytesWritten = 0;
 
     auto startTime = std::chrono::steady_clock::now();
 
@@ -265,7 +266,7 @@ class ScatterGatherBenchmarkRunner {
         [&](ScatterGatherChunk chunk) {
           totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
-          chunk.writeToFd(nullFd);
+          fdBytesWritten += static_cast<size_t>(chunk.writeToFd(nullFd));
         },
         config);
 
@@ -278,6 +279,8 @@ class ScatterGatherBenchmarkRunner {
                            ql::span<const char>(s.data(), s.size()),
                            ql::span<const char>(p.data(), p.size()), lit);
     }
+
+    AD_CONTRACT_CHECK(fdBytesWritten == totalBytes);
 
     auto summary = std::move(streamer).finalize();
     auto endTime = std::chrono::steady_clock::now();
@@ -308,7 +311,9 @@ class ScatterGatherBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
+// Pretty-printed summary table formatter (only used by the standalone main
+// below, hence excluded when building against the benchmark infrastructure).
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printBenchmarkTable(
     size_t literalSize,
     const std::vector<ScatterGatherBenchmarkMetric>& metrics) {
@@ -354,6 +359,7 @@ void printBenchmarkTable(
   std::cout << "==============================================================="
                "========================================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 
