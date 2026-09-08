@@ -57,9 +57,13 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
   // not.
   size_t capacity = pmrStringSsoCapacity();
   requirePmrStringInlineStorage(capacity);
-  std::pmr::string atCapacity(capacity, 'x');
+  // NOTE: The capacity is probed for `ql::pmr::string` (which is
+  // `boost::container::pmr::string` with a larger SSO buffer when
+  // `QLEVER_CPP_17` is active, e.g. on GCC 11), so the check must use the same
+  // type: a `std::pmr::string` of that size may already be heap-allocated.
+  ql::pmr::string atCapacity(capacity, 'x');
   EXPECT_TRUE(pointsIntoObject(atCapacity.data(), atCapacity));
-  std::pmr::string aboveCapacity(capacity + 1, 'y');
+  ql::pmr::string aboveCapacity(capacity + 1, 'y');
   EXPECT_FALSE(pointsIntoObject(aboveCapacity.data(), aboveCapacity));
 }
 
