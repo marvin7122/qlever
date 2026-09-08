@@ -63,13 +63,15 @@ class ValidityBitmask64 {
     return ValidityBitmask64{0ULL};
   }
 
-  // Row-level query and manipulation
-  [[nodiscard]] constexpr bool isRowValid(size_t index) const noexcept {
+  // Row-level query and manipulation. Not `constexpr`: the
+  // `AD_EXPENSIVE_CHECK` below is not a constant expression when expensive
+  // checks are enabled.
+  [[nodiscard]] bool isRowValid(size_t index) const noexcept {
     AD_EXPENSIVE_CHECK(index < 64);
     return (mask_ & (1ULL << index)) != 0;
   }
 
-  [[nodiscard]] constexpr bool isRowUnbound(size_t index) const noexcept {
+  [[nodiscard]] bool isRowUnbound(size_t index) const noexcept {
     AD_EXPENSIVE_CHECK(index < 64);
     return (mask_ & (1ULL << index)) == 0;
   }
