@@ -18,7 +18,7 @@ namespace {
 TEST(AsyncChunkPipelineDisabledTest, CompileTimeSwitchOverridesRuntimeOptIn) {
   static_assert(!qlever::export_v2::kExportV2CompiledIn);
   qlever::export_v2::AsyncChunkPipeline<std::string> pipeline{
-      {.capacity_ = 2, .runtimeEnabled_ = true}};
+      {.runtimeEnabled_ = true}};
 
   EXPECT_FALSE(pipeline.isEnabled());
   EXPECT_EQ(pipeline.push("ignored"), qlever::export_v2::PushResult::Closed);

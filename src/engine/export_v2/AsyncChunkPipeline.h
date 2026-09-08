@@ -10,12 +10,10 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_ASYNCCHUNKPIPELINE_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_ASYNCCHUNKPIPELINE_H
 
-#include <condition_variable>
+#include <array>
 #include <cstddef>
 #include <exception>
-#include <mutex>
 #include <optional>
-#include <queue>
 #include <string>
 #include <utility>
 
@@ -30,12 +28,25 @@ inline constexpr bool kExportV2CompiledIn = true;
 inline constexpr bool kExportV2CompiledIn = false;
 #endif
 
+// A double-buffered asynchronous chunk ring, adapted from the 2-slot design
+// of PR #82. Two fixed slots alternate between the producer filling the next
+// chunk and the consumer draining the transmitted one; each completed `pop`
+// frees its slot for reuse, so the ring rotates without allocation.
+//
+// The ring performs no synchronization of its own: all methods must be called
+// from the single query worker thread (or its async event loop), which makes
+// the handoff lock-free by construction. There is no blocking either: when
+// both slots hold undrained chunks, `push` reports `PushResult::Full` and the
+// async driver suspends chunk generation until the socket drains; when the
+// ring is empty, `pop` returns `std::nullopt` and the driver suspends
+// transmission until the next chunk is produced.
+inline constexpr size_t kNumRingSlots = 2;
+
 struct AsyncChunkPipelineConfig {
-  size_t capacity_ = 2;
   bool runtimeEnabled_ = false;
 };
 
-enum class PushResult { Accepted, Closed };
+enum class PushResult { Accepted, Full, Closed };
 
 struct AsyncChunkPipelineStats {
   size_t chunksProduced_ = 0;
@@ -43,25 +54,20 @@ struct AsyncChunkPipelineStats {
   size_t chunksDiscarded_ = 0;
   size_t bytesProduced_ = 0;
   size_t bytesConsumed_ = 0;
-  size_t producerWaits_ = 0;
-  size_t consumerWaits_ = 0;
 };
 
-// A bounded handoff queue adapted from PR #82. It retains that implementation's
-// backpressure and exception propagation, but does not create worker threads.
-// The future HTTP integration can drive it from the query executor and socket
-// completion handlers without violating the single-core scheduling contract.
 template <typename ChunkType = std::string>
 class AsyncChunkPipeline
     : public ad_utility::WithInvariants<AsyncChunkPipeline<ChunkType>> {
  private:
   enum class State { Disabled, Running, Finished, Cancelled, Failed };
 
-  const size_t capacity_;
-  mutable std::mutex mutex_;
-  std::condition_variable notEmpty_;
-  std::condition_variable notFull_;
-  std::queue<ChunkType> chunks_;
+  // An engaged slot holds an undrained chunk, a disengaged slot is free for
+  // the producer. The next chunk is produced into
+  // `slots_[(consume_ + filled_) % kNumRingSlots]`.
+  std::array<std::optional<ChunkType>, kNumRingSlots> slots_;
+  size_t consume_ = 0;
+  size_t filled_ = 0;
   State state_;
   std::exception_ptr exception_;
   AsyncChunkPipelineStats stats_;
@@ -76,11 +82,9 @@ class AsyncChunkPipeline
 
  public:
   explicit AsyncChunkPipeline(AsyncChunkPipelineConfig config = {})
-      : capacity_{config.capacity_},
-        state_{kExportV2CompiledIn && config.runtimeEnabled_
+      : state_{kExportV2CompiledIn && config.runtimeEnabled_
                    ? State::Running
                    : State::Disabled} {
-    AD_CONTRACT_CHECK(capacity_ > 0);
     checkInvariants();
   }
 
@@ -92,60 +96,60 @@ class AsyncChunkPipeline
   ~AsyncChunkPipeline() { cancel(); }
 
   void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(capacity_ > 0);
-    std::lock_guard lock{mutex_};
-    AD_CORRECTNESS_CHECK(chunks_.size() <= capacity_);
+    AD_CORRECTNESS_CHECK(consume_ < kNumRingSlots);
+    AD_CORRECTNESS_CHECK(filled_ <= kNumRingSlots);
+    size_t engaged = 0;
+    for (const auto& slot : slots_) {
+      engaged += slot.has_value() ? 1 : 0;
+    }
+    AD_CORRECTNESS_CHECK(engaged == filled_);
+    if (filled_ > 0) {
+      AD_CORRECTNESS_CHECK(slots_[consume_].has_value());
+    }
+    if (filled_ < kNumRingSlots) {
+      AD_CORRECTNESS_CHECK(
+          !slots_[(consume_ + filled_) % kNumRingSlots].has_value());
+    }
     AD_CORRECTNESS_CHECK(stats_.chunksConsumed_ + stats_.chunksDiscarded_ <=
                          stats_.chunksProduced_);
     AD_CORRECTNESS_CHECK((state_ == State::Failed) == (exception_ != nullptr));
   }
 
-  [[nodiscard]] bool isEnabled() const {
-    std::lock_guard lock{mutex_};
-    return state_ != State::Disabled;
-  }
+  [[nodiscard]] bool isEnabled() const { return state_ != State::Disabled; }
 
+  // Store `chunk` in the next free ring slot. Returns `Full` when both slots
+  // hold undrained chunks; the async driver then suspends generation until
+  // the consumer drains a slot. Never blocks.
   [[nodiscard]] PushResult push(ChunkType chunk) {
     auto guard = this->makeInvariantGuard();
-    std::unique_lock lock{mutex_};
     if (state_ != State::Running) {
       return PushResult::Closed;
     }
-    if (chunks_.size() == capacity_) {
-      ++stats_.producerWaits_;
-      notFull_.wait(lock, [this] {
-        return chunks_.size() < capacity_ || state_ != State::Running;
-      });
+    if (filled_ == kNumRingSlots) {
+      return PushResult::Full;
     }
-    if (state_ != State::Running) {
-      return PushResult::Closed;
-    }
-
+    auto& slot = slots_[(consume_ + filled_) % kNumRingSlots];
+    AD_CORRECTNESS_CHECK(!slot.has_value());
     stats_.bytesProduced_ += chunkSize(chunk);
     ++stats_.chunksProduced_;
-    chunks_.push(std::move(chunk));
-    notEmpty_.notify_one();
+    slot.emplace(std::move(chunk));
+    ++filled_;
     return PushResult::Accepted;
   }
 
-  // Returns no value after normal completion, cancellation, or when either
-  // kill switch disabled the pipeline. Producer failures are rethrown after
-  // already queued chunks have been consumed.
+  // Return the oldest undrained chunk and free its slot for reuse. Returns no
+  // value after normal completion, cancellation, or when either kill switch
+  // disabled the pipeline. Producer failures are rethrown after already
+  // queued chunks have been consumed. Never blocks.
   [[nodiscard]] std::optional<ChunkType> pop() {
     auto guard = this->makeInvariantGuard();
-    std::unique_lock lock{mutex_};
-    if (chunks_.empty() && state_ == State::Running) {
-      ++stats_.consumerWaits_;
-      notEmpty_.wait(lock, [this] {
-        return !chunks_.empty() || state_ != State::Running;
-      });
-    }
-    if (!chunks_.empty()) {
-      auto chunk = std::move(chunks_.front());
-      chunks_.pop();
+    if (filled_ > 0) {
+      auto chunk = std::move(*slots_[consume_]);
+      slots_[consume_].reset();
+      consume_ = (consume_ + 1) % kNumRingSlots;
+      --filled_;
       stats_.bytesConsumed_ += chunkSize(chunk);
       ++stats_.chunksConsumed_;
-      notFull_.notify_one();
       return chunk;
     }
     if (state_ == State::Failed) {
@@ -156,51 +160,36 @@ class AsyncChunkPipeline
 
   void finish() {
     auto guard = this->makeInvariantGuard();
-    {
-      std::lock_guard lock{mutex_};
-      if (state_ == State::Running) {
-        state_ = State::Finished;
-      }
+    if (state_ == State::Running) {
+      state_ = State::Finished;
     }
-    notEmpty_.notify_all();
-    notFull_.notify_all();
   }
 
   void fail(std::exception_ptr exception) {
     auto guard = this->makeInvariantGuard();
     AD_CONTRACT_CHECK(exception != nullptr);
-    {
-      std::lock_guard lock{mutex_};
-      if (state_ != State::Running) {
-        return;
-      }
-      exception_ = std::move(exception);
-      state_ = State::Failed;
+    if (state_ != State::Running) {
+      return;
     }
-    notEmpty_.notify_all();
-    notFull_.notify_all();
+    exception_ = std::move(exception);
+    state_ = State::Failed;
   }
 
   void cancel() {
     auto guard = this->makeInvariantGuard();
-    {
-      std::lock_guard lock{mutex_};
-      if (state_ == State::Running) {
-        state_ = State::Cancelled;
-        stats_.chunksDiscarded_ += chunks_.size();
-        while (!chunks_.empty()) {
-          chunks_.pop();
+    if (state_ == State::Running) {
+      state_ = State::Cancelled;
+      for (auto& slot : slots_) {
+        if (slot.has_value()) {
+          slot.reset();
+          ++stats_.chunksDiscarded_;
         }
       }
+      filled_ = 0;
     }
-    notEmpty_.notify_all();
-    notFull_.notify_all();
   }
 
-  [[nodiscard]] AsyncChunkPipelineStats stats() const {
-    std::lock_guard lock{mutex_};
-    return stats_;
-  }
+  [[nodiscard]] AsyncChunkPipelineStats stats() const { return stats_; }
 };
 
 }  // namespace qlever::export_v2
