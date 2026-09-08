@@ -51,7 +51,6 @@ using namespace ad_utility;
 // Benchmark payload constants (100 MB transmission)
 constexpr size_t kTotalSendSizeBytes = 100ULL * 1024ULL * 1024ULL;  // 100 MB
 constexpr size_t kChunkSizeBytes = 64 * 1024;                       // 64 KB
-constexpr size_t kTotalChunks = kTotalSendSizeBytes / kChunkSizeBytes;
 
 // _____________________________________________________________________________
 // Helper to measure thread/process CPU time using POSIX clock_gettime.
@@ -315,7 +314,10 @@ class ZeroCopySenderBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Formatter for benchmark results table
+// Formatter for benchmark results table. Only used by the standalone `main`
+// below, so it is compiled out when the benchmark runs inside QLever's
+// benchmark infrastructure (which prints results itself).
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printResultsTable(std::vector<BenchmarkMetric>& results) {
   if (results.empty()) return;
 
@@ -359,6 +361,7 @@ void printResultsTable(std::vector<BenchmarkMetric>& results) {
   std::cout << "==============================================================="
                "=========================================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 
