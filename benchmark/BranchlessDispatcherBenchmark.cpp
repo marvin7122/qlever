@@ -193,8 +193,8 @@ struct BranchingSwitchDispatcher {
       case Datatype::BlankNodeIndex: {
         std::memcpy(out, "_:bn", 4);
         out += 4;
-        out = ad_utility::formatUIntBranchless(id.getBlankNodeIndex().get(),
-                                                  out);
+        out =
+            ad_utility::formatUIntBranchless(id.getBlankNodeIndex().get(), out);
         return out;
       }
       default:
@@ -248,8 +248,7 @@ struct BranchingIfElseDispatcher {
     } else if (dt == Datatype::BlankNodeIndex) {
       std::memcpy(out, "_:bn", 4);
       out += 4;
-      out = ad_utility::formatUIntBranchless(id.getBlankNodeIndex().get(),
-                                                  out);
+      out = ad_utility::formatUIntBranchless(id.getBlankNodeIndex().get(), out);
       return out;
     } else if (dt == Datatype::Double) {
       std::memcpy(out, "\"", 1);

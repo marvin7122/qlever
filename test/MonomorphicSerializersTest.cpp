@@ -12,8 +12,8 @@
 #include <string>
 #include <vector>
 
-#include "engine/MonomorphicSerializers.h"
 #include "engine/FastExportStreamFormatter.h"
+#include "engine/MonomorphicSerializers.h"
 
 using namespace ql::serialization;
 using namespace ql::export_formatting;
@@ -127,10 +127,11 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
   // DynamicRowSerializer.
   using S = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
                                      ColumnType::Literal>;
-  std::string dispatchedOut = captureOutput([&](FastExportStreamFormatter& fmt) {
-    S::template serializeRow<ExportFormat::Turtle>(
-        fmt, ql::span<const CellValue>(row));
-  });
+  std::string dispatchedOut =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        S::template serializeRow<ExportFormat::Turtle>(
+            fmt, ql::span<const CellValue>(row));
+      });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
 }

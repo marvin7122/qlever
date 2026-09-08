@@ -216,8 +216,7 @@ CPP_template(typename UnderlyingVocabulary,
               ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
           continue;
         }
-        const size_t decoderIdx =
-            getDecoderIdxFromPosition(position.value());
+        const size_t decoderIdx = getDecoderIdxFromPosition(position.value());
         AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
         const std::string_view compressedWord = toStringView(
             underlyingVocabulary_.wordAtPosition(position.value()));

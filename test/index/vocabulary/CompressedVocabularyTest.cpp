@@ -31,8 +31,7 @@ struct DummyDecoder {
     return result;
   }
   // The transformation preserves the length.
-  [[nodiscard]] size_t maxDecompressedSize(
-      std::string_view compressed) const {
+  [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed) const {
     return compressed.size();
   }
   [[nodiscard]] size_t decompressInto(std::string_view compressed,

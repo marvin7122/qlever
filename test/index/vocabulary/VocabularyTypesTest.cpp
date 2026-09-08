@@ -6,8 +6,9 @@
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <absl/functional/function_ref.h>
-#include <cstring>
 #include <gtest/gtest.h>
+
+#include <cstring>
 #include <vector>
 
 #include "../../util/GTestHelpers.h"

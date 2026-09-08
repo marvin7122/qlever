@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
@@ -63,14 +64,20 @@ class ValidityBitmask64 {
     return ValidityBitmask64{0ULL};
   }
 
-  // Row-level query and manipulation
+  // Row-level query and manipulation. The bounds checks are skipped during
+  // constant evaluation because `AD_EXPENSIVE_CHECK` calls a non-constexpr
+  // function when expensive checks are enabled.
   [[nodiscard]] constexpr bool isRowValid(size_t index) const noexcept {
-    AD_EXPENSIVE_CHECK(index < 64);
+    if (!std::is_constant_evaluated()) {
+      AD_EXPENSIVE_CHECK(index < 64);
+    }
     return (mask_ & (1ULL << index)) != 0;
   }
 
   [[nodiscard]] constexpr bool isRowUnbound(size_t index) const noexcept {
-    AD_EXPENSIVE_CHECK(index < 64);
+    if (!std::is_constant_evaluated()) {
+      AD_EXPENSIVE_CHECK(index < 64);
+    }
     return (mask_ & (1ULL << index)) == 0;
   }
 

@@ -28,8 +28,8 @@
 #endif
 
 #include "../benchmark/infrastructure/Benchmark.h"
-#include "engine/MonomorphicSerializers.h"
 #include "engine/FastExportStreamFormatter.h"
+#include "engine/MonomorphicSerializers.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/Invariants.h"
