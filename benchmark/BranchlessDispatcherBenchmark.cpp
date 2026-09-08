@@ -26,6 +26,7 @@
 #include "engine/BranchlessTypeDispatcher.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
+#include "util/FastIntToString.h"
 
 using namespace ql::engine;
 
@@ -134,8 +135,7 @@ struct BranchingSwitchDispatcher {
       case Datatype::Int: {
         std::memcpy(out, "\"", 1);
         out += 1;
-        auto [p, ec] = std::to_chars(out, out + 24, id.getInt());
-        out = p;
+        out = ad_utility::formatIntBranchless(id.getInt(), out);
         std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>", 45);
         out += 45;
         return out;
@@ -143,8 +143,7 @@ struct BranchingSwitchDispatcher {
       case Datatype::Double: {
         std::memcpy(out, "\"", 1);
         out += 1;
-        auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-        out = p;
+        out = ad_utility::writeDoublePortable(id.getDouble(), out);
         std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
         out += 44;
         return out;
@@ -194,9 +193,8 @@ struct BranchingSwitchDispatcher {
       case Datatype::BlankNodeIndex: {
         std::memcpy(out, "_:bn", 4);
         out += 4;
-        auto [p, ec] =
-            std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
-        out = p;
+        out = ad_utility::formatUIntBranchless(id.getBlankNodeIndex().get(),
+                                                  out);
         return out;
       }
       default:
@@ -243,22 +241,20 @@ struct BranchingIfElseDispatcher {
     } else if (dt == Datatype::Int) {
       std::memcpy(out, "\"", 1);
       out += 1;
-      auto [p, ec] = std::to_chars(out, out + 24, id.getInt());
-      out = p;
+      out = ad_utility::formatIntBranchless(id.getInt(), out);
       std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>", 45);
       out += 45;
       return out;
     } else if (dt == Datatype::BlankNodeIndex) {
       std::memcpy(out, "_:bn", 4);
       out += 4;
-      auto [p, ec] = std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
-      out = p;
+      out = ad_utility::formatUIntBranchless(id.getBlankNodeIndex().get(),
+                                                  out);
       return out;
     } else if (dt == Datatype::Double) {
       std::memcpy(out, "\"", 1);
       out += 1;
-      auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-      out = p;
+      out = ad_utility::writeDoublePortable(id.getDouble(), out);
       std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
       out += 44;
       return out;

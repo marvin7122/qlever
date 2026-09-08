@@ -22,6 +22,7 @@
 #include "global/Id.h"
 #include "global/ValueId.h"
 #include "util/Exception.h"
+#include "util/FastIntToString.h"
 #include "util/Invariants.h"
 
 namespace ql::engine {
@@ -71,8 +72,7 @@ inline char* formatInteger(ValueId id, std::string_view, char* out,
                            std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 24, id.getInt());
-  out = ptr;
+  out = ad_utility::formatIntBranchless(id.getInt(), out);
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;
@@ -84,8 +84,7 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 32, id.getDouble());
-  out = ptr;
+  out = ad_utility::writeDoublePortable(id.getDouble(), out);
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;
@@ -114,8 +113,7 @@ inline char* formatBlankNode(ValueId id, std::string_view, char* out,
                              std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
-  out = ptr;
+  out = ad_utility::formatUIntBranchless(id.getBlankNodeIndex().get(), out);
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;

@@ -12,6 +12,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -323,6 +324,19 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
   s.resize(totalLen);
   formatQid(id, s.data());
   return s;
+}
+
+// _____________________________________________________________________________
+// Portable double formatting without std::to_chars (whose floating-point
+// overloads are missing from older AppleClang runtimes). Writes at most 31
+// bytes in "%.17g" form, which round-trips every double. Returns a pointer
+// to one-past-the-end. Precondition: `out` must point to a buffer of at
+// least 32 bytes.
+inline char* writeDoublePortable(double val, char* out) noexcept {
+  AD_CONTRACT_CHECK(out != nullptr);
+  const int len = std::snprintf(out, 32, "%.17g", val);
+  AD_CORRECTNESS_CHECK(len > 0 && len < 32);
+  return out + len;
 }
 
 }  // namespace ad_utility
