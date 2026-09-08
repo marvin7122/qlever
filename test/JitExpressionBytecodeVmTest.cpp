@@ -1058,10 +1058,12 @@ TEST(JitExpressionBytecodeVmTest, NativeYearFilterEndToEnd) {
           makeYearExpression(
               std::make_unique<VariableExpression>(Variable{"?d"})),
           std::make_unique<IdExpression>(I(1800))});
-  // The native compiler accepts the date program (previously nullopt). In the
-  // reduced feature set for C++17 the native backend is unavailable, the
-  // `Filter` below then exercises the bytecode backend instead.
-#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
+  // The native compiler accepts the date program (previously nullopt). Where
+  // the native backend is unavailable (reduced C++17 feature set, or a
+  // non-x86-64 architecture that cannot execute its machine code), the
+  // `Filter` below instead exercises the bytecode backend.
+#if !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17) && \
+    (defined(__x86_64__) || defined(_M_X64))
   auto optNative = JitExpressionCompiler::compile(*yearGe, varColMap);
   ASSERT_TRUE(optNative.has_value());
 #endif

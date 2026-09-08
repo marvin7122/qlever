@@ -21,6 +21,12 @@ namespace ql::engine::jit {
 std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
     const sparqlExpression::SparqlExpression& expr,
     const VariableToColumnMap& varColMap) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  // The backend emits x86-64 machine code, which cannot execute on other
+  // architectures (e.g. ARM64, where it segfaults); callers fall back to the
+  // bytecode VM or the legacy evaluation.
+  return std::nullopt;
+#endif
   // First lower the AST into our verified linearized bytecode representation
   auto optProgram = JitExpressionBytecodeVm::compile(expr, varColMap);
   if (!optProgram.has_value()) {
