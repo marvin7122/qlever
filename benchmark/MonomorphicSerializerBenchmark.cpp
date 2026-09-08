@@ -31,6 +31,7 @@
 #include "engine/FastExportStreamFormatter.h"
 #include "engine/MonomorphicSerializers.h"
 #include "global/Constants.h"
+#include "util/CompilerWarnings.h"
 #include "util/Exception.h"
 #include "util/Invariants.h"
 #include "util/OverloadCallOperator.h"
@@ -75,9 +76,11 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+GCC_REENABLE_WARNINGS
 
 namespace ad_benchmark {
 namespace {
@@ -236,7 +239,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   std::string_view predLabel = data.stringPool_[0];
   std::string_view predType = data.stringPool_[1];
   std::string_view predPop = data.stringPool_[2];
-  std::string_view predArea = data.stringPool_[3];
 
   for (size_t i = 0; i < numRows; ++i) {
     // Subjects

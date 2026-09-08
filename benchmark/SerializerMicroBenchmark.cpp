@@ -21,6 +21,7 @@
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
+#include "util/CompilerWarnings.h"
 #include "util/Exception.h"
 #include "util/http/MediaTypes.h"
 
@@ -58,9 +59,11 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+GCC_REENABLE_WARNINGS
 
 namespace ad_benchmark {
 namespace {
