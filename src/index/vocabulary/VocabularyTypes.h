@@ -426,6 +426,18 @@ class ArenaVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// C++17-compatible detection of the two-argument `lookupBatch(indices,
+// builder)` overload. Used in place of a C++20 requires-expression, which is
+// not available when compiling as C++17 (e.g. the GCC 8 CI job).
+template <typename Vocab, typename = void>
+struct HasLookupBatchWithBuilder : std::false_type {};
+template <typename Vocab>
+struct HasLookupBatchWithBuilder<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+
+// _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
