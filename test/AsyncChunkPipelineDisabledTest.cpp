@@ -13,6 +13,8 @@
 
 #include "engine/export_v2/AsyncChunkPipeline.h"
 
+#if !QLEVER_ENABLE_EXPORT_V2
+
 namespace {
 
 TEST(AsyncChunkPipelineDisabledTest, CompileTimeSwitchOverridesRuntimeOptIn) {
@@ -26,3 +28,5 @@ TEST(AsyncChunkPipelineDisabledTest, CompileTimeSwitchOverridesRuntimeOptIn) {
 }
 
 }  // namespace
+
+#endif
