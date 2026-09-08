@@ -8,8 +8,9 @@
 
 #pragma once
 
+#include <absl/numeric/bits.h>
+
 #include <algorithm>
-#include <bit>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -1149,7 +1150,7 @@ class JitExpressionBytecodeVm {
       }
 
       while (filterMask != 0) {
-        uint32_t idx = std::countr_zero(filterMask);
+        uint32_t idx = static_cast<uint32_t>(absl::countr_zero(filterMask));
         resultTable.push_back(inputTable[rowOffset + idx]);
         filterMask &= filterMask - 1;
       }

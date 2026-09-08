@@ -8,10 +8,15 @@
 
 #pragma once
 
+// The native backend requires AsmJit (C++20) and is unavailable in the reduced
+// feature set for C++17, where `compile` always falls back (`std::nullopt`).
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
 #include <asmjit/core.h>
 #include <asmjit/x86.h>
+#endif
 
-#include <bit>
+#include <absl/numeric/bits.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -40,6 +45,7 @@ namespace ql::engine::jit {
 using NativeFilterMorselFn = size_t (*)(const uint64_t* const*, size_t,
                                         uint64_t*);
 
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
 // _____________________________________________________________________________
 class JitCompiledExpression {
  private:
@@ -127,13 +133,25 @@ class JitCompiledExpression {
 
       // Fast compaction: copy matching rows into result table
       while (matchMask != 0) {
-        uint32_t idx = std::countr_zero(matchMask);
+        uint32_t idx = static_cast<uint32_t>(absl::countr_zero(matchMask));
         resultTable.push_back(inputTable[rowOffset + idx]);
         matchMask &= matchMask - 1;
       }
     }
   }
 };
+#else
+// Stub for the reduced feature set for C++17 (see above): the native backend
+// is never used, `compile` always returns `std::nullopt`, and this is only
+// ever instantiated in unreachable code. It keeps the call sites (see
+// `Filter`) compiling without AsmJit.
+class JitCompiledExpression {
+ public:
+  template <int WIDTH, typename Table>
+  void executeFilter(const Table&, IdTableStatic<WIDTH>&,
+                     ad_utility::SharedCancellationHandle = nullptr) const {}
+};
+#endif
 
 // _____________________________________________________________________________
 // Master compiler from SPARQL Expression AST to native x86-64 machine code.

@@ -8,6 +8,7 @@
 
 #include "engine/sparqlExpressions/JitExpressionCompiler.h"
 
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
 #include <asmjit/core.h>
 #include <asmjit/x86.h>
 
@@ -446,5 +447,19 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
 
   return JitCompiledExpression(rt, nativeFn, referencedCols);
 }
+
+#else
+
+namespace ql::engine::jit {
+
+// Stub for the reduced feature set for C++17 (see `JitExpressionCompiler.h`):
+// the native backend is unavailable without AsmJit, callers fall back to the
+// bytecode VM or the legacy evaluation.
+std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
+    const sparqlExpression::SparqlExpression&, const VariableToColumnMap&) {
+  return std::nullopt;
+}
+
+#endif
 
 }  // namespace ql::engine::jit
