@@ -10,6 +10,7 @@
 #ifndef QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 #define QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
