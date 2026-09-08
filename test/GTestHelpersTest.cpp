@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory_resource>
 
+#include "util/DanglingViewTestHelpers.h"
 #include "util/GTestHelpers.h"
 #include "util/PmrStringSsoTestHelpers.h"
 
