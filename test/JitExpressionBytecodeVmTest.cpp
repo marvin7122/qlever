@@ -653,6 +653,92 @@ TEST(JitExpressionBytecodeVmTest, BindOperationIntegration) {
   EXPECT_EQ(table(5, 1), Id::makeUndefined());
 }
 
+TEST(JitExpressionBytecodeVmTest, BindRenamePreservesNonIntegerCells) {
+  // Regression test: `BIND(?x AS ?z)` is a pure copy without arithmetic. The
+  // integer kernels drop non-`Int` cells to `UNDEF` (and re-encode `Bool` as
+  // `Int`), while the legacy evaluation copies the cell verbatim, so the JIT
+  // column execution must not run here (see `canExecuteAsIntColumn`).
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  auto V = ad_utility::testing::VocabId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  qec->getQueryTreeCache().clearAll();
+
+  IdTable inputTable = makeIdTableFromVector(
+      {{V(1)}, {Id::makeFromBool(true)}, {Id::makeUndefined()}, {I(7)}});
+  ValuesForTesting values{qec, std::move(inputTable), {Variable{"?x"}}, false,
+                          {},  LocalVocab{},          std::nullopt,     true};
+  QueryExecutionTree subTree{
+      qec, std::make_shared<ValuesForTesting>(std::move(values))};
+
+  auto expr = std::make_unique<VariableExpression>(Variable{"?x"});
+  parsedQuery::Bind bind{{std::move(expr), "?x"}, Variable{"?z"}};
+  Bind bindOp{qec, std::make_shared<QueryExecutionTree>(std::move(subTree)),
+              std::move(bind)};
+
+  auto result = bindOp.getResult(false, ComputationMode::FULLY_MATERIALIZED);
+  ASSERT_TRUE(result->isFullyMaterialized());
+  const auto& table = result->idTableView();
+  ASSERT_EQ(table.size(), 4u);
+  ASSERT_EQ(table.numColumns(), 2u);
+  EXPECT_EQ(table(0, 1), V(1));
+  EXPECT_EQ(table(1, 1), Id::makeFromBool(true));
+  EXPECT_EQ(table(2, 1), Id::makeUndefined());
+  EXPECT_EQ(table(3, 1), I(7));
+}
+
+TEST(JitExpressionBytecodeVmTest, CanExecuteAsIntColumn) {
+  // Unit test for the integer column execution gate (see
+  // `canExecuteAsIntColumn`): computing programs tolerate every cell except
+  // `Double`/`Date` (both sides yield `UNDEF`), while pure copies additionally
+  // require `Int`/`Undefined` cells only.
+  auto I = ad_utility::testing::IntId;
+  auto V = ad_utility::testing::VocabId;
+
+  JitBytecodeProgram pureCopy;
+  pureCopy.addInstruction(OpCode::LOAD_COL_INT, 0);
+  pureCopy.addInstruction(OpCode::RET);
+  pureCopy.addReferencedColumn(0);
+  pureCopy.setCellRule(CellRule::IntegerArithmetic);
+
+  JitBytecodeProgram computing;
+  computing.addInstruction(OpCode::LOAD_COL_INT, 0);
+  computing.addInstruction(OpCode::LOAD_CONST_INT, 1);
+  computing.addInstruction(OpCode::ADD_INT);
+  computing.addInstruction(OpCode::RET);
+  computing.addReferencedColumn(0);
+  computing.setCellRule(CellRule::IntegerArithmetic);
+
+  auto kindsOf = [](const JitBytecodeProgram& program, const IdTable& table) {
+    return JitExpressionBytecodeVm::scanColumnKinds(program, table, 0,
+                                                    table.size());
+  };
+  IdTable ints = makeIdTableFromVector({{I(1)}, {I(2)}});
+  IdTable vocabs = makeIdTableFromVector({{V(1)}, {V(2)}});
+  IdTable bools = makeIdTableFromVector(
+      {{Id::makeFromBool(true)}, {Id::makeFromBool(false)}});
+  IdTable doubles = makeIdTableFromVector(
+      {{Id::makeFromDouble(1.5)}, {Id::makeFromDouble(2.5)}});
+
+  EXPECT_TRUE(JitExpressionBytecodeVm::canExecuteAsIntColumn(
+      pureCopy, kindsOf(pureCopy, ints)));
+  EXPECT_FALSE(JitExpressionBytecodeVm::canExecuteAsIntColumn(
+      pureCopy, kindsOf(pureCopy, vocabs)));
+  EXPECT_FALSE(JitExpressionBytecodeVm::canExecuteAsIntColumn(
+      pureCopy, kindsOf(pureCopy, bools)));
+  EXPECT_FALSE(JitExpressionBytecodeVm::canExecuteAsIntColumn(
+      pureCopy, kindsOf(pureCopy, doubles)));
+
+  EXPECT_TRUE(JitExpressionBytecodeVm::canExecuteAsIntColumn(
+      computing, kindsOf(computing, ints)));
+  EXPECT_TRUE(JitExpressionBytecodeVm::canExecuteAsIntColumn(
+      computing, kindsOf(computing, vocabs)));
+  EXPECT_TRUE(JitExpressionBytecodeVm::canExecuteAsIntColumn(
+      computing, kindsOf(computing, bools)));
+  EXPECT_FALSE(JitExpressionBytecodeVm::canExecuteAsIntColumn(
+      computing, kindsOf(computing, doubles)));
+}
+
 TEST(JitExpressionBytecodeVmTest, AndOrLoweringWithKleeneSemantics) {
   using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;

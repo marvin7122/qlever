@@ -1762,17 +1762,16 @@ tryEvaluateAggregateChildExpressionJit(
   }
   auto program = ql::engine::jit::JitExpressionBytecodeVm::compile(
       *child, evaluationContext._variableToColumnMap);
-  if (!program.has_value() ||
-      !ql::engine::jit::JitExpressionBytecodeVm::hasExactIntegerSemantics(
-          program.value())) {
+  if (!program.has_value()) {
     return std::nullopt;
   }
   // The integer kernels diverge from the legacy evaluation on `Double`
-  // (`Date`) cells, which compute doubles (dates) instead of `UNDEF`.
+  // (`Date`) cells, which compute doubles (dates) instead of `UNDEF`, and on
+  // pure copies over non-integer cells (see `canExecuteAsIntColumn`).
   const size_t begin = evaluationContext._beginIndex;
   const size_t end = evaluationContext._endIndex;
-  if (!ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
-          program->cellRule(), program.value(),
+  if (!ql::engine::jit::JitExpressionBytecodeVm::canExecuteAsIntColumn(
+          program.value(),
           ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
               program.value(), evaluationContext._inputTable, begin,
               end > begin ? end - begin : 0,

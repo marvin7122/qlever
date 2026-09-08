@@ -1168,6 +1168,28 @@ class JitExpressionBytecodeVm {
         [](const Instruction& inst) { return inst.op == OpCode::DIV_INT; });
   }
 
+  // True if the program performs integer arithmetic (contains at least one
+  // of `ADD_INT`, `SUB_INT`, `MUL_INT`, `MOD_INT`), as opposed to a pure copy
+  // of loads (`LOAD_COL_INT`/`LOAD_CONST_INT` + `RET`, e.g. the program for
+  // `BIND(?a AS ?b)`). The distinction matters for `canExecuteAsIntColumn`
+  // (see there). `DIV_INT` is not listed because it never satisfies
+  // `hasExactIntegerSemantics` (see above).
+  static bool performsIntegerArithmetic(const JitBytecodeProgram& program) {
+    return std::any_of(program.instructions().begin(),
+                       program.instructions().end(),
+                       [](const Instruction& inst) {
+                         switch (inst.op) {
+                           case OpCode::ADD_INT:
+                           case OpCode::SUB_INT:
+                           case OpCode::MUL_INT:
+                           case OpCode::MOD_INT:
+                             return true;
+                           default:
+                             return false;
+                         }
+                       });
+  }
+
   // True if the program evaluates to plain integers with legacy-identical
   // semantics: integer arithmetic over integer inputs only. Excluded are
   // `DIV_INT` (see `containsDivision`) as well as all comparison and ID
@@ -1358,6 +1380,28 @@ class JitExpressionBytecodeVm {
         return satisfiesYearExtractionRule(program, kinds);
     }
     AD_FAIL();
+  }
+
+  // True if `program` can be executed via `executeIntColumnInto` over cells of
+  // the scanned `kinds` with results identical to the legacy evaluation. This
+  // requires exact integer semantics (see `hasExactIntegerSemantics`) and a
+  // satisfied `CellRule` (see `satisfiesCellRule`). A pure copy without
+  // arithmetic additionally requires `Int`/`Undefined` cells only: the kernels
+  // drop every other cell to `UNDEF` (and re-encode `Bool` as `Int`), while
+  // the legacy evaluation copies the cell verbatim (e.g. `BIND(?a AS ?b)` over
+  // vocabulary IDs must preserve them).
+  static bool canExecuteAsIntColumn(const JitBytecodeProgram& program,
+                                    const ColumnKinds& kinds) {
+    if (!hasExactIntegerSemantics(program) ||
+        !satisfiesCellRule(program.cellRule(), program, kinds)) {
+      return false;
+    }
+    if (performsIntegerArithmetic(program)) {
+      return true;
+    }
+    // `hasDouble` and `hasDate` are already excluded by the `CellRule` check
+    // above; `Undefined` cells are exact under the kernels (see `ColumnKinds`).
+    return !kinds.hasBool && !kinds.hasLocalVocab && !kinds.hasOther;
   }
 
   // The `YearExtraction` rule (see `CellRule`): like `OrderedComparison`

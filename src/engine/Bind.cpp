@@ -184,16 +184,15 @@ IdTable Bind::computeExpressionBind(
   // Attempt JIT compiled evaluation for integer-valued expressions (integer
   // arithmetic over integer inputs, e.g. `BIND(?price * ?qty AS ?total)`).
   // This covers the `ORDER BY` sort keys and `GROUP BY` aliases that the
-  // planner lowers to `Bind`. Programs with division, comparisons, or ID
-  // operations have no legacy-identical integer semantics and fall back to
-  // the generic evaluation below.
+  // planner lowers to `Bind`. Programs without legacy-identical integer
+  // column semantics (division, comparisons, ID operations, and pure copies
+  // over non-integer cells, see `canExecuteAsIntColumn`) fall back to the
+  // generic evaluation below.
   auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
       *expression, _subtree->getVariableColumns());
   if (optProgram.has_value() &&
-      ql::engine::jit::JitExpressionBytecodeVm::hasExactIntegerSemantics(
-          optProgram.value()) &&
-      ql::engine::jit::JitExpressionBytecodeVm::satisfiesCellRule(
-          optProgram->cellRule(), optProgram.value(),
+      ql::engine::jit::JitExpressionBytecodeVm::canExecuteAsIntColumn(
+          optProgram.value(),
           ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
               optProgram.value(), idTable, 0, idTable.size(),
               cancellationHandle_))) {
