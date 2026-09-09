@@ -45,10 +45,14 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. Disabled under ThreadSanitizer, whose runtime provides its own
-// (strongly linked) global operator new/delete replacements that would
-// otherwise cause multiple-definition link errors.
-#ifndef __SANITIZE_THREAD__
+// runs. Disabled under AddressSanitizer and ThreadSanitizer, whose runtimes
+// provide their own (strongly linked) global operator new/delete replacements
+// that would otherwise cause multiple-definition link errors. NOTE: Clang
+// does not predefine `__SANITIZE_THREAD__` or `__SANITIZE_ADDRESS__` (only
+// GCC does), so Clang builds are detected via `__has_feature`.
+#if !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_ADDRESS__) && \
+    (!defined(__has_feature) ||                                        \
+     (!__has_feature(thread_sanitizer) && !__has_feature(address_sanitizer)))
 // The malloc/free pairing below is intentional (allocation counting), but GCC
 // cannot prove the pairing and warns with -Wmismatched-new-delete.
 // `noinline` on the deallocation functions keeps the `free` call in a single
@@ -79,7 +83,7 @@ __attribute__((noinline)) void operator delete(void* ptr,
   std::free(ptr);
 }
 #pragma GCC diagnostic pop
-#endif  // __SANITIZE_THREAD__
+#endif  // no sanitizer with its own global new/delete
 
 namespace ad_benchmark {
 namespace {
