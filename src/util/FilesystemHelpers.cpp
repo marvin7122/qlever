@@ -33,16 +33,23 @@ std::vector<fs::path> filesWithBaseNameAndSuffix(const fs::path& onDiskBase,
   fs::path directory = parent.empty() ? fs::current_path() : parent;
   std::string prefix =
       absl::StrCat(ql::pathFilename(onDiskBase).string(), suffix);
-  std::vector<fs::path> result;
-  for (const auto& entry : ql::directoryRange(directory)) {
-    if (entry.is_regular_file()) {
-      auto path = parent / entry.path().filename();
-      if (ql::starts_with(path.filename().string(), prefix)) {
-        result.push_back(std::move(path));
-      }
-    }
-  }
-  return result;
+  namespace v = ql::views;
+  // With an InputRangeTypeErased (instead of `to_vector`), `ql::directoryRange`
+  // backed by the boost filesystem library doesn't work.
+  return ::ranges::to_vector(ql::directoryRange(directory)) |
+         v::filter(ql::isRegularFile) |
+         // Return the paths in the same form as `onDiskBase` (directory part of
+         // `onDiskBase` plus the file name; an empty `parent` yields the bare
+         // file name), so that they textually start with `onDiskBase`. Callers
+         // like `Qlever::moveRebuiltIndexIntoPlace` rely on this to replace the
+         // base-name prefix of each file.
+         v::transform([&parent](const auto& entry) {
+           return parent / entry.path().filename();
+         }) |
+         v::filter([&prefix](const auto& path) {
+           return ql::starts_with(path.filename().string(), prefix);
+         }) |
+         ::ranges::to_vector;
 }
 
 // _____________________________________________________________________________
@@ -81,7 +88,7 @@ size_t deleteFilesInDirectory(
   // leaving leftover files behind.
   std::vector<fs::path> toDelete;
   for (const auto& entry : ql::directoryRange(directory)) {
-    if (entry.is_regular_file() && shouldDelete(entry.path())) {
+    if (ql::isRegularFile(entry) && shouldDelete(entry.path())) {
       toDelete.push_back(entry.path());
     }
   }
@@ -96,7 +103,7 @@ std::vector<fs::path> directoriesWithPrefix(const fs::path& directory,
                                             std::string_view prefix) {
   std::vector<fs::path> result;
   for (const auto& entry : ql::directoryRange(directory)) {
-    if (entry.is_directory() &&
+    if (ql::isDirectory(entry) &&
         ql::starts_with(entry.path().filename().string(), prefix)) {
       result.push_back(entry.path());
     }
