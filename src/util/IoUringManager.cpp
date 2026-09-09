@@ -82,10 +82,10 @@ IoUringPolicy::~IoUringPolicy() {
                    "so the kernel stops writing into the target buffers.\n";
   }
   // Reap the outstanding completions before tearing down the ring, so the
-  // kernel is no longer writing into any target buffer once we return. We
-  // deliberately do not call `drainOneCqe` here: it throws on I/O errors, and a
-  // destructor must not throw. We also stop if `io_uring_wait_cqe` fails, to
-  // avoid spinning forever (it would not decrement the in-flight count).
+  // kernel is no longer writing into any target buffer once we return. Do not
+  // call `drainAtLeast` here: it throws on I/O errors, and a destructor must
+  // not throw. Stop if `io_uring_wait_cqe` fails, to avoid spinning forever
+  // (it would not decrement the in-flight count).
   while (numInFlightReadRequests_ > 0) {
     io_uring_cqe* cqe = nullptr;
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {

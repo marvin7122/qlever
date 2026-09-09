@@ -90,17 +90,82 @@ TEST(VocabBatchLookupData, AsResultEmpty) {
   EXPECT_TRUE(result->empty());
 }
 
-TEST(VocabBatchLookupData, MakeOwnedVocabBatchCopiesViews) {
-  const std::string a = "alpha";
-  const std::string empty;
-  const std::string b = "beta";
-  const std::array<std::string_view, 3> views{a, empty, b};
-  auto ownedVocabBatch = makeOwnedVocabBatch(views);
-  ASSERT_EQ(ownedVocabBatch->size(), 3u);
-  EXPECT_EQ((*ownedVocabBatch)[0], "alpha");
-  EXPECT_EQ((*ownedVocabBatch)[1], "");
-  EXPECT_EQ((*ownedVocabBatch)[2], "beta");
-  EXPECT_NE((*ownedVocabBatch)[0].data(), a.data());
+TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
+  auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
+
+  ASSERT_EQ(result->size(), 2u);
+  EXPECT_EQ((*result)[0], "alpha");
+  EXPECT_EQ((*result)[1], "beta");
+}
+
+TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
+  auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
+  auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
+  const char* alphaData = (*first)[0].data();
+  const char* gammaData = (*second)[0].data();
+
+  std::vector<std::string_view> viewsInInputOrder(3);
+  std::vector<VocabBatchOwner> owners;
+  const std::array<size_t, 2> firstPositions{2, 0};
+  const std::array<size_t, 1> secondPositions{1};
+  scatterVocabBatchLookupResult(std::move(first), firstPositions,
+                                viewsInInputOrder, owners);
+  scatterVocabBatchLookupResult(std::move(second), secondPositions,
+                                viewsInInputOrder, owners);
+
+  auto result =
+      keepAliveVocabBatch(std::move(owners), std::move(viewsInInputOrder));
+  EXPECT_THAT(*result, ::testing::ElementsAre("beta", "gamma", "alpha"));
+  EXPECT_EQ((*result)[2].data(), alphaData);
+  EXPECT_EQ((*result)[1].data(), gammaData);
+}
+
+TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
+  auto firstOwner = std::make_shared<StringVectorVocabBatchLookupData>();
+  firstOwner->buffer() = {"alpha", "beta"};
+  firstOwner->views() = {firstOwner->buffer()[0], firstOwner->buffer()[1]};
+  auto first = StringVectorVocabBatchLookupData::asResult(firstOwner);
+
+  auto secondOwner = std::make_shared<StringVectorVocabBatchLookupData>();
+  secondOwner->buffer() = {"gamma"};
+  secondOwner->views() = {secondOwner->buffer()[0]};
+  auto second = StringVectorVocabBatchLookupData::asResult(secondOwner);
+
+  const char* alphaData = (*first)[0].data();
+  const char* gammaData = (*second)[0].data();
+  std::vector<std::string_view> mixed{(*first)[0], (*second)[0], (*first)[1]};
+  std::vector<VocabBatchOwner> owners{std::move(first), std::move(second)};
+  firstOwner.reset();
+  secondOwner.reset();
+
+  auto result = keepAliveVocabBatch(std::move(owners), std::move(mixed));
+  ASSERT_EQ(result->size(), 3u);
+  EXPECT_EQ((*result)[0], "alpha");
+  EXPECT_EQ((*result)[1], "gamma");
+  EXPECT_EQ((*result)[2], "beta");
+  EXPECT_EQ((*result)[0].data(), alphaData);
+  EXPECT_EQ((*result)[1].data(), gammaData);
+}
+
+TEST(VocabBatchLookupData, KeepAliveRequiresAnOwner) {
+  std::vector<std::string_view> views{"orphan"};
+  AD_EXPECT_THROW_WITH_MESSAGE(keepAliveVocabBatch({}, std::move(views)),
+                               ::testing::HasSubstr("owners"));
+}
+
+// A view into an in-memory vocabulary's word storage stays valid after the
+// vocabulary itself is closed, because the result shares ownership of the
+// bytes.
+TEST(VocabBatchLookupData, KeepAliveOutlivesSharedWordStorage) {
+  auto stored = std::make_shared<std::string>("ram-word");
+  const char* storedData = stored->data();
+  std::vector<std::string_view> views{*stored};
+  std::vector<VocabBatchOwner> owners{stored};
+  auto result = keepAliveVocabBatch(std::move(owners), std::move(views));
+  stored.reset();
+  ASSERT_EQ(result->size(), 1u);
+  EXPECT_EQ((*result)[0], "ram-word");
+  EXPECT_EQ((*result)[0].data(), storedData);
 }
 
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
@@ -148,4 +213,76 @@ TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
   data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>();
   VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
   EXPECT_TRUE(result->empty());
+}
+
+namespace {
+// A minimal vocabulary with "holes": its `operator[]` returns `std::nullopt`
+// for odd indices. It does not opt in to the placeholder mechanism (see
+// `replaceOptionalByPlaceholderOnExport` in `VocabularyTypes.h`).
+struct VocabWithHolesThrowing {
+  std::optional<std::string_view> operator[](uint64_t index) const {
+    if (index % 2 == 1) {
+      return std::nullopt;
+    }
+    return "word";
+  }
+};
+
+// The same vocabulary, but opting in to the placeholder mechanism.
+struct VocabWithHolesPlaceholder : VocabWithHolesThrowing {
+  static constexpr bool replaceOptionalByPlaceholderOnExport = true;
+};
+
+// A vocabulary without holes, for which the placeholder mechanism is
+// irrelevant, because its `operator[]` doesn't return a `std::optional`.
+struct VocabWithoutHoles {
+  std::string_view operator[]([[maybe_unused]] uint64_t index) const {
+    return "word";
+  }
+};
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(VocabularyTypes, replaceOptionalByPlaceholderOnExportIsOptIn) {
+  using namespace ad_utility::vocabulary;
+  // Only a vocabulary that explicitly declares the member opts in.
+  static_assert(!replaceOptionalByPlaceholderOnExport<VocabWithHolesThrowing>);
+  static_assert(
+      replaceOptionalByPlaceholderOnExport<VocabWithHolesPlaceholder>);
+  static_assert(!replaceOptionalByPlaceholderOnExport<VocabWithoutHoles>);
+}
+
+// _____________________________________________________________________________
+TEST(VocabularyTypes, wordAsStringOrPlaceholder) {
+  using namespace ad_utility::vocabulary;
+  // Words that are contained are returned as they are, no matter whether the
+  // `operator[]` returns a `std::optional`.
+  EXPECT_EQ(wordAsStringOrPlaceholder(VocabWithHolesThrowing{}, 4), "word");
+  EXPECT_EQ(wordAsStringOrPlaceholder(VocabWithHolesPlaceholder{}, 4), "word");
+  EXPECT_EQ(wordAsStringOrPlaceholder(VocabWithoutHoles{}, 5), "word");
+
+  // A missing word is reported as a placeholder only by the vocabulary that has
+  // opted in, the other one throws.
+  EXPECT_EQ(wordAsStringOrPlaceholder(VocabWithHolesPlaceholder{}, 5),
+            placeholderForMissingVocabIndex(5));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      wordAsStringOrPlaceholder(VocabWithHolesThrowing{}, 5),
+      ::testing::HasSubstr("replaceOptionalByPlaceholderOnExport"));
+}
+
+// _____________________________________________________________________________
+TEST(VocabularyTypes, sequentialLookupBatchWithMissingWords) {
+  using namespace ad_utility::vocabulary;
+  std::vector<size_t> indices{4, 5};
+
+  // The opted-in vocabulary reports the placeholder for the missing word.
+  auto result = sequentialLookupBatch(VocabWithHolesPlaceholder{}, indices);
+  ASSERT_EQ(result->size(), 2u);
+  EXPECT_EQ((*result)[0], "word");
+  EXPECT_EQ((*result)[1], placeholderForMissingVocabIndex(5));
+
+  // The vocabulary that has not opted in throws.
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      sequentialLookupBatch(VocabWithHolesThrowing{}, indices),
+      ::testing::HasSubstr("replaceOptionalByPlaceholderOnExport"));
 }

@@ -1,26 +1,31 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
 
+#include <absl/strings/str_cat.h>
+
 #include <atomic>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "backports/memory_resource.h"
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
 #include "util/Iterators.h"
 #include "util/TransparentFunctors.h"
+#include "util/TypeTraits.h"
 #include "util/Views.h"
 
 // The result type for a batch of vocabulary lookups.
@@ -131,31 +136,66 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {};
 
-// Copy `words` into one contiguous `VocabBatchLookupData` buffer when the
-// views originate from multiple batch-result owners.
-inline VocabBatchLookupResult makeOwnedVocabBatch(
-    ql::span<const std::string_view> words) {
-  AD_CONTRACT_CHECK(!words.empty());
-  auto data = std::make_shared<VocabBatchLookupData>();
-  size_t total = 0;
-  for (std::string_view word : words) {
-    total += word.size();
+// Construct a result from owning strings and expose views into their storage.
+inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
+    std::vector<std::string> words) {
+  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+  data->buffer() = std::move(words);
+  data->views() = ::ranges::to_vector(
+      data->buffer() |
+      ql::views::transform(ad_utility::staticCast<std::string_view>));
+  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+}
+
+// Construct a PMR-backed result and expose views into its monotonic allocator.
+inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
+    std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
+    std::vector<std::string_view> views) {
+  auto data = std::make_shared<PmrVocabBatchLookupData>();
+  data->buffer() = std::move(buffer);
+  data->views() = std::move(views);
+  return PmrVocabBatchLookupData::asResult(std::move(data));
+}
+
+// Hold whatever keeps the words of a mixed batch alive: child
+// `VocabBatchLookupResult`s and/or shared ownership of an in-memory
+// vocabulary's word storage. `views()` point into those owners. Because every
+// view is backed by an owner held here, the result is self-contained: no view
+// can dangle, and no caller has to guarantee that some other object outlives
+// it.
+using VocabBatchOwner = std::shared_ptr<const void>;
+struct MultiOwnerVocabBatchLookupData
+    : VocabLookupDataCommonBase<std::vector<VocabBatchOwner>> {};
+
+// Scatter one child batch into its positions in the combined result and retain
+// the child as an owner of the referenced word storage.
+inline void scatterVocabBatchLookupResult(
+    VocabBatchLookupResult result, ql::span<const size_t> resultPositions,
+    ql::span<std::string_view> viewsInInputOrder,
+    std::vector<VocabBatchOwner>& owners) {
+  AD_CONTRACT_CHECK(result != nullptr);
+  AD_CONTRACT_CHECK(result->size() == resultPositions.size());
+  for (auto [resultPosition, word] :
+       ::ranges::views::zip(resultPositions, *result)) {
+    AD_CORRECTNESS_CHECK(resultPosition < viewsInInputOrder.size());
+    viewsInInputOrder[resultPosition] = word;
   }
-  data->buffer().resize(total);
-  data->views().resize(words.size());
-  size_t offset = 0;
-  char* buffer = data->buffer().data();
-  for (size_t i = 0; i < words.size(); ++i) {
-    const std::string_view word = words[i];
-    if (word.empty()) {
-      data->views()[i] = {};
-    } else {
-      std::memcpy(buffer + offset, word.data(), word.size());
-      data->views()[i] = std::string_view{buffer + offset, word.size()};
-    }
-    offset += word.size();
-  }
-  return VocabBatchLookupData::asResult(std::move(data));
+  owners.push_back(std::move(result));
+}
+
+// Return a result that keeps `owners` alive and exposes `viewsInInputOrder`
+// without copying word bytes. Every view must point into storage owned by one
+// of the `owners`; the caller establishes that by construction, so there is
+// nothing to verify here.
+inline VocabBatchLookupResult keepAliveVocabBatch(
+    std::vector<VocabBatchOwner> owners,
+    std::vector<std::string_view> viewsInInputOrder) {
+  AD_CONTRACT_CHECK(!owners.empty());
+  AD_CONTRACT_CHECK(!viewsInInputOrder.empty());
+  auto data = std::make_shared<MultiOwnerVocabBatchLookupData>();
+  data->buffer() = std::move(owners);
+  data->views() = std::move(viewsInInputOrder);
+  return MultiOwnerVocabBatchLookupData::asResult(std::move(data));
 }
 
 // Generic sequential fallback implementations of the batch-lookup interface,
@@ -164,9 +204,91 @@ inline VocabBatchLookupResult makeOwnedVocabBatch(
 // single-word `operator[]` lookups one after another.
 namespace ad_utility::vocabulary {
 
+// Return the placeholder that is reported for a vocabulary index that is not
+// contained in a vocabulary with "holes" (see `VocabularyInMemoryBinSearch`).
+// This happens when such a vocabulary was created by excluding some of the
+// entries of a larger vocabulary, but an `Id` that refers to an excluded entry
+// is still looked up.
+inline std::string placeholderForMissingVocabIndex(uint64_t index) {
+  return absl::StrCat("<qlever-excluded-vocab-entry-", index, ">");
+}
+
+namespace detail {
+// The implementation of `replaceOptionalByPlaceholderOnExport` below. The
+// primary template covers all vocabularies that don't declare the
+// corresponding member, the partial specialization those that do.
+template <typename Vocab, typename = void>
+struct ReplaceOptionalByPlaceholderOnExportImpl : std::false_type {};
+
+template <typename Vocab>
+struct ReplaceOptionalByPlaceholderOnExportImpl<
+    Vocab, std::void_t<decltype(Vocab::replaceOptionalByPlaceholderOnExport)>>
+    : std::bool_constant<Vocab::replaceOptionalByPlaceholderOnExport> {};
+}  // namespace detail
+
+// Whether the `Vocab` has opted in to reporting a word that it doesn't contain
+// (that is, its `operator[]` returns `std::nullopt`) as
+// `placeholderForMissingVocabIndex` when the words are exported, instead of
+// throwing. A vocabulary opts in by declaring
+// `static constexpr bool replaceOptionalByPlaceholderOnExport = true;`. The
+// default is `false`, because silently reporting a word that is not the one
+// that was asked for is only correct for vocabularies that are deliberately
+// created with holes (see `VocabularyInMemoryBinSearch`).
+template <typename Vocab>
+constexpr bool replaceOptionalByPlaceholderOnExport =
+    detail::ReplaceOptionalByPlaceholderOnExportImpl<Vocab>::value;
+
+// Return `vocab[index]` as a `std::string`. If the `operator[]` of `vocab`
+// returns a `std::optional` (which is the case for vocabularies with holes, see
+// `VocabularyInMemoryBinSearch`) that is `std::nullopt`, then return
+// `placeholderForMissingVocabIndex(index)` if the `vocab` has opted in to this
+// behavior via `replaceOptionalByPlaceholderOnExport` (see above), and throw
+// otherwise.
+template <typename Vocab>
+std::string wordAsStringOrPlaceholder(const Vocab& vocab, uint64_t index) {
+  decltype(auto) word = vocab[index];
+  if constexpr (ad_utility::similarToInstantiation<decltype(word),
+                                                   std::optional>) {
+    if (!word.has_value()) {
+      if constexpr (replaceOptionalByPlaceholderOnExport<Vocab>) {
+        return placeholderForMissingVocabIndex(index);
+      } else {
+        AD_THROW(absl::StrCat(
+            "The index ", index,
+            " is not contained in the vocabulary. If the vocabulary is "
+            "deliberately built with such holes, then it has to declare "
+            "`static constexpr bool replaceOptionalByPlaceholderOnExport = "
+            "true;` to report a placeholder for the missing word instead."));
+      }
+    }
+    return std::string{word.value()};
+  } else {
+    return std::string{std::move(word)};
+  }
+}
+
+// The implementation of `getPositionOfWord` (see `VocabularyConstraints.h`)
+// for a vocabulary with "holes" (see `VocabularyInMemoryBinSearch`): binary
+// search for the `word` and return the range of vocabulary indices at which it
+// is stored, or the empty range at the index at which it would be stored if it
+// is not contained. Note that the "one past the end" index has to be passed in
+// as `endIndex` and must not be `vocab.size()`: because of the holes, the
+// largest vocabulary index that is contained is in general much larger than
+// the number of words, so using `vocab.size()` would report a word that sorts
+// after all contained words as if it sorted somewhere in the middle.
+template <typename Vocab, typename InternalStringType, typename Comparator>
+std::pair<uint64_t, uint64_t> getPositionOfWordInVocabWithHoles(
+    const Vocab& vocab, const InternalStringType& word, Comparator comparator,
+    uint64_t endIndex) {
+  return vocab.lower_bound(word, std::move(comparator))
+      .positionOfWord(word)
+      .value_or(std::pair<uint64_t, uint64_t>{endIndex, endIndex});
+}
+
 // Sequential fallback for `lookupBatch`: look up each index individually via
 // `vocab[idx]`, returning one `string_view` per index. Works for any vocabulary
-// whose `operator[]` yields something convertible to `std::string`.
+// whose `operator[]` yields something convertible to `std::string`, or a
+// `std::optional` thereof (see `wordAsStringOrPlaceholder`).
 template <typename Vocab>
 VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
                                              ql::span<const size_t> indices) {
@@ -178,16 +300,11 @@ VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
   // contained strings.
 
   std::vector<std::string> words = ::ranges::to<std::vector<std::string>>(
-      indices | ql::views::transform(
-                    [&vocab](size_t idx) { return std::string{vocab[idx]}; }));
+      indices | ql::views::transform([&vocab](size_t idx) {
+        return wordAsStringOrPlaceholder(vocab, idx);
+      }));
 
-  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-  data->buffer() = std::move(words);
-  data->views() = ::ranges::to_vector(
-      data->buffer() |
-      ql::views::transform(ad_utility::staticCast<std::string_view>));
-
-  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+  return makeStringVectorVocabBatchLookupResult(std::move(words));
 }
 
 // Streamed version of `lookupBatch`: lazily apply `vocab.lookupBatch` for the

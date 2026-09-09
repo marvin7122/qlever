@@ -19,8 +19,8 @@
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   auto fromInternal = internalVocab_[i];
-  if (fromInternal) {
-    return std::string{*fromInternal};
+  if (fromInternal.has_value()) {
+    return std::string{fromInternal.value()};
   }
   return externalVocab_[i];
 }
@@ -33,35 +33,38 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   std::vector<std::string_view> assembled(indices.size());
   std::vector<size_t> diskIndices;
   std::vector<size_t> diskSlots;
+  bool usesInternalVocabulary = false;
   diskIndices.reserve(indices.size());
   diskSlots.reserve(indices.size());
 
   for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
     auto fromInternal = internalVocab_[idx];
-    if (fromInternal) {
-      assembled[static_cast<size_t>(i)] = *fromInternal;
+    if (fromInternal.has_value()) {
+      usesInternalVocabulary = true;
+      assembled[static_cast<size_t>(i)] = fromInternal.value();
     } else {
       diskSlots.push_back(static_cast<size_t>(i));
       diskIndices.push_back(idx);
     }
   }
 
-  // If every requested index misses internalVocab_, return
-  // externalVocab_.lookupBatch directly to preserve its result buffer and
-  // avoid assembling and copying the results.
+  // Hand the disk batch through so we do not copy the already-owned compressed
+  // bytes.
   if (diskIndices.size() == indices.size()) {
     return externalVocab_.lookupBatch(diskIndices);
   }
 
-  VocabBatchLookupResult disk;
+  std::vector<VocabBatchOwner> owners;
   if (!diskIndices.empty()) {
-    disk = externalVocab_.lookupBatch(diskIndices);
-    AD_CORRECTNESS_CHECK(disk->size() == diskIndices.size());
-    for (auto [slot, word] : ::ranges::views::zip(diskSlots, *disk)) {
-      assembled[slot] = word;
-    }
+    auto disk = externalVocab_.lookupBatch(diskIndices);
+    owners.reserve(1 + static_cast<size_t>(usesInternalVocabulary));
+    scatterVocabBatchLookupResult(std::move(disk), diskSlots, assembled,
+                                  owners);
   }
-  return makeOwnedVocabBatch(assembled);
+  if (usesInternalVocabulary) {
+    owners.push_back(internalVocab_.wordStorage());
+  }
+  return keepAliveVocabBatch(std::move(owners), std::move(assembled));
 }
 
 // _____________________________________________________________________________
