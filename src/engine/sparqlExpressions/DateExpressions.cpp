@@ -2,6 +2,7 @@
 //                  Chair of Algorithms and Data Structures.
 //  Author: Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>
 
+#include "engine/sparqlExpressions/IntegerDateOperations.h"
 #include "engine/sparqlExpressions/NaryExpressionImpl.h"
 
 namespace sparqlExpression {
@@ -9,6 +10,7 @@ namespace detail {
 
 using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
 using Literal = ad_utility::triple_component::Literal;
+using ql::engine::scalar::IntegerDateOperations;
 
 // Date functions.
 // The input is `std::nullopt` if the argument to the expression is not a date.
@@ -18,39 +20,67 @@ struct ExtractYear {
   Id operator()(std::optional<DateYearOrDuration> d) const {
     if (!d.has_value()) {
       return Id::makeUndefined();
-    } else {
-      return Id::makeFromInt(d->getYear());
     }
+    return Id::makeFromInt(
+        IntegerDateOperations::extractYear(Id::makeFromDate(d.value())));
+  }
+
+  Id operator()(Id id) const {
+    if (id.getDatatype() != Datatype::Date) {
+      return Id::makeUndefined();
+    }
+    return Id::makeFromInt(IntegerDateOperations::extractYear(id));
   }
 };
 
 //______________________________________________________________________________
 struct ExtractMonth {
   Id operator()(std::optional<DateYearOrDuration> d) const {
-    // TODO<C++23> Use the monadic operations for std::optional
     if (!d.has_value()) {
       return Id::makeUndefined();
     }
-    auto optionalMonth = d.value().getMonth();
-    if (!optionalMonth.has_value()) {
+    auto month =
+        IntegerDateOperations::extractMonth(Id::makeFromDate(d.value()));
+    if (month == 0) {
       return Id::makeUndefined();
     }
-    return Id::makeFromInt(optionalMonth.value());
+    return Id::makeFromInt(month);
+  }
+
+  Id operator()(Id id) const {
+    if (id.getDatatype() != Datatype::Date) {
+      return Id::makeUndefined();
+    }
+    auto month = IntegerDateOperations::extractMonth(id);
+    if (month == 0) {
+      return Id::makeUndefined();
+    }
+    return Id::makeFromInt(month);
   }
 };
 
 //______________________________________________________________________________
 struct ExtractDay {
   Id operator()(std::optional<DateYearOrDuration> d) const {
-    // TODO<C++23> Use the monadic operations for `std::optional`.
     if (!d.has_value()) {
       return Id::makeUndefined();
     }
-    auto optionalDay = d.value().getDay();
-    if (!optionalDay.has_value()) {
+    auto day = IntegerDateOperations::extractDay(Id::makeFromDate(d.value()));
+    if (day == 0) {
       return Id::makeUndefined();
     }
-    return Id::makeFromInt(optionalDay.value());
+    return Id::makeFromInt(day);
+  }
+
+  Id operator()(Id id) const {
+    if (id.getDatatype() != Datatype::Date) {
+      return Id::makeUndefined();
+    }
+    auto day = IntegerDateOperations::extractDay(id);
+    if (day == 0) {
+      return Id::makeUndefined();
+    }
+    return Id::makeFromInt(day);
   }
 };
 
