@@ -96,10 +96,12 @@ class WithInvariants {
 // declarations and bodies. In C++20, we emulate them at the top of function
 // bodies:
 // - `QL_PRE(cond)`: Checks the precondition immediately upon entry.
-// - `QL_CONTRACT_ASSERT(cond)`: Checks internal contract assertions at specific checkpoints.
+// - `QL_CONTRACT_ASSERT(cond)`: Checks internal contract assertions at specific
+// checkpoints.
 // - `QL_POST(predicate)`: Registers an RAII scope-exit check that verifies the
-//   predicate automatically upon normal function exit, while safely bypassing the check
-//   if the scope is exiting due to stack unwinding from an in-flight exception.
+//   predicate automatically upon normal function exit, while safely bypassing
+//   the check if the scope is exiting due to stack unwinding from an in-flight
+//   exception.
 
 namespace detail {
 
@@ -145,11 +147,11 @@ template <typename Predicate>
 // Internal contract assertion: evaluated immediately at the checkpoint.
 #define QL_CONTRACT_ASSERT(condition) AD_CONTRACT_CHECK(condition)
 
-// Postcondition check: registered at function entry and evaluated upon normal scope exit.
-#define QL_POST(...)                                                           \
-  auto QLEVER_CONCAT(ql_postcondition_guard_, __LINE__) =                      \
-      ::ad_utility::detail::makePostconditionGuard([&]() -> bool {             \
-        return static_cast<bool>(__VA_ARGS__);                                 \
-      })
+// Postcondition check: registered at function entry and evaluated upon normal
+// scope exit.
+#define QL_POST(...)                                      \
+  auto QLEVER_CONCAT(ql_postcondition_guard_, __LINE__) = \
+      ::ad_utility::detail::makePostconditionGuard(       \
+          [&]() -> bool { return static_cast<bool>(__VA_ARGS__); })
 
 #endif  // QLEVER_SRC_UTIL_INVARIANTS_H
