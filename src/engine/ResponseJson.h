@@ -1,6 +1,5 @@
 // Copyright 2026 The QLever Authors, in particular:
 //
-// 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2026 Tomas Damek <tomas.damek@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
@@ -17,14 +16,12 @@
 #include "engine/NamedResultCache.h"
 #include "engine/QueryExecutionContext.h"
 #include "index/Index.h"
-#include "index/IndexSwap.h"
 #include "util/ParseException.h"
 #include "util/Timer.h"
 #include "util/json.h"
 
 // Compose the JSON response bodies for `Server`'s HTTP endpoints: index and
-// cache statistics, the result of an index rebuild, and error responses for
-// failed queries and updates.
+// cache statistics, and error responses for failed queries and updates.
 namespace responseJson {
 using nlohmann::json;
 
@@ -41,13 +38,6 @@ json composeIndexStats(const Index& index);
 // entries.
 json composeCacheStats(const QueryResultCache& cache,
                        const NamedResultCache& namedResultCache);
-
-// Compose the response for the `?cmd=rebuild-index` endpoint after a
-// successful rebuild with the given `IndexSwapConfig`: a human-readable
-// message plus the directory to which the old index was retired (the resolved
-// value of the `rebuild-previous-index-dir` command parameter, which the
-// client does not know when the default was used).
-json composeRebuildSuccess(const qlever::IndexSwapConfig& config);
 
 // Compose the JSON error response sent to the client when processing a
 // query or an update fails: the (truncated) operation string, the error
