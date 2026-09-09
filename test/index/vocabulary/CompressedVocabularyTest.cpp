@@ -8,18 +8,22 @@
 
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "backports/span.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/PrefixCompressor.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
+#include "util/Exception.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 
 namespace {
 
 using namespace vocabulary_test;
 using namespace ad_utility::vocabulary;
-// A stateless "compressor" that applies a trivial transformation to a string
+// A stateless "compressor" that applies a trivial transformation to a string.
+// The transformation preserves the length, so the decompressed size always
+// equals the compressed size.
 struct DummyDecoder {
   static std::string decompress(std::string_view compressed) {
     std::string result{compressed};
@@ -27,6 +31,17 @@ struct DummyDecoder {
       c -= 2;
     }
     return result;
+  }
+  static size_t maxDecompressedSize(std::string_view compressed) {
+    return compressed.size();
+  }
+  static size_t decompressInto(std::string_view compressed,
+                               ql::span<char> out) {
+    AD_CORRECTNESS_CHECK(out.size() >= compressed.size());
+    for (size_t i = 0; i < compressed.size(); ++i) {
+      out[i] = static_cast<char>(compressed[i] - 2);
+    }
+    return compressed.size();
   }
   // This class has no state, but it still needs to be serialized.
   template <typename T>

@@ -1,8 +1,9 @@
-// Copyright 2026 The QLever Authors, in particular:
-// 2026 Marvin Stoetzel <marvin.stoetzel@email.uni-freiburg.de>, UFR
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
-
+//
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
@@ -33,10 +34,15 @@ using EvaluatedVariableValues = std::vector<std::optional<EvaluatedTerm>>;
 struct BatchEvaluationResult {
   // `variablesByColumn_` maps a column index of the `Result` that is being
   // evaluated to the `EvaluatedVariableValues` for the variable that is stored
-  // in that column. We use a hash map (instead of a dense vector) because the
-  // set of evaluated columns may be sparse: some variables in the WHERE-clause
-  // (in the `IdTable`) may not appear in the CONSTRUCT template and are thus
-  // not evaluated.
+  // in that column. We deliberately keep a hash map instead of a dense vector
+  // indexed by column: the set of evaluated columns may be sparse (some
+  // variables in the WHERE-clause `IdTable` do not appear in the CONSTRUCT
+  // template), so a dense vector would waste memory proportional to the
+  // largest column index rather than the number of evaluated variables. The
+  // map is built once per batch before any lookup, so lookups are stable
+  // within a batch; if profiling ever shows the indirection matters, the
+  // drop-in replacement is a dense vector plus an offset for the smallest
+  // evaluated column index.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> variablesByColumn_;
   size_t numRows_ = 0;
 
