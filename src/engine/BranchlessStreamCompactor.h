@@ -32,7 +32,7 @@ class BranchlessStreamCompactor {
     size_t outIdx = 0;
     const size_t n = input.size();
 
-    // Process 4 elements per iteration (256-bit unrolled vector loop)
+    // Process 4 elements per iteration (scalar unroll, not hardware SIMD)
     size_t i = 0;
     for (; i + 4 <= n; i += 4) {
       bool m0 = pred(input[i]);
