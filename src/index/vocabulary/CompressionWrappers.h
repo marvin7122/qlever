@@ -11,6 +11,9 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSIONWRAPPERS_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSIONWRAPPERS_H
 
+#include <string>
+#include <string_view>
+
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
 #include "backports/span.h"
@@ -18,8 +21,6 @@
 #include "index/vocabulary/PrefixHeuristic.h"
 #include "util/CompilerWarnings.h"
 #include "util/FsstCompressor.h"
-#include <string>
-#include <string_view>
 
 namespace ad_utility::vocabulary {
 
@@ -114,7 +115,8 @@ struct DecoderMultiplexer {
   [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed,
                                            size_t decoderIndex) const {
     AD_CORRECTNESS_CHECK(decoderIndex < decoders_.size());
-    const size_t bound = decoders_[decoderIndex].maxDecompressedSize(compressed);
+    const size_t bound =
+        decoders_[decoderIndex].maxDecompressedSize(compressed);
     return bound;
   }
 

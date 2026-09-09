@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <future>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -373,4 +374,100 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
 
   stopQueryChanger.store(true);
   queryChanger.join();
+}
+
+// -----------------------------------------------------------------------------
+// Test 10: Unordered Emission Consumes Every Morsel Exactly Once
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  session.setOrdered(false);
+
+  constexpr size_t numMorsels = 20;
+  for (size_t i = 0; i < numMorsels; ++i) {
+    session.submitMorsel([i]() {
+      // Later morsels finish first: invert completion order so slot order
+      // and completion order disagree.
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(2 * (numMorsels - i)));
+      return "result_" + std::to_string(i);
+    });
+  }
+
+  std::set<std::string> seen;
+  while (session.hasMoreResults()) {
+    seen.insert(session.consumeNextResult());
+  }
+  EXPECT_EQ(seen.size(), numMorsels);
+  for (size_t i = 0; i < numMorsels; ++i) {
+    EXPECT_TRUE(seen.contains("result_" + std::to_string(i)));
+  }
+  EXPECT_EQ(session.consumedSlots(), numMorsels);
+  EXPECT_FALSE(session.hasMoreResults());
+
+  scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 11: TrySubmitMorsel Reports Instead Of Firing
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, TrySubmitMorselReportsInsteadOfFiring) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  EXPECT_TRUE(session.trySubmitMorsel([]() { return std::string{"a"}; }));
+  EXPECT_EQ(session.totalSlots(), 1u);
+
+  session.sharedState()->cancel();
+  EXPECT_FALSE(session.trySubmitMorsel([]() { return std::string{"b"}; }));
+  EXPECT_EQ(session.totalSlots(), 1u);
+
+  scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 12: Abandoned Remainder Runs Exactly Once
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, AbandonedRemainderRunsExactlyOnce) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  session.setOrdered(false);
+  auto state = session.sharedState();
+
+  // Self-abandoning morsel: returns a partial result and resubmits its
+  // tail via trySubmitMorsel, mirroring CheckpointMorselRunner on an
+  // epoch change. May run on a helper or the coordinator thread.
+  session.submitMorsel([state]() {
+    EXPECT_TRUE(state->trySubmitMorsel([]() { return std::string{"tail"}; }));
+    return std::string{"partial"};
+  });
+  session.submitMorsel([]() { return std::string{"other"}; });
+
+  // A new foreground query revokes helper eligibility mid-flight.
+  scheduler.onForegroundQueryStarted();
+
+  std::set<std::string> seen;
+  while (session.hasMoreResults()) {
+    seen.insert(session.consumeNextResult());
+  }
+  EXPECT_EQ(seen.size(), 3u);
+  EXPECT_TRUE(seen.contains("partial"));
+  EXPECT_TRUE(seen.contains("tail"));
+  EXPECT_TRUE(seen.contains("other"));
+  EXPECT_EQ(session.consumedSlots(), 3u);
+  EXPECT_FALSE(session.hasMoreResults());
+
+  scheduler.onForegroundQueryEnded();
+  scheduler.onForegroundQueryEnded();
 }

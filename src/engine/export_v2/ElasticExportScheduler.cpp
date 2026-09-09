@@ -74,6 +74,13 @@ ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
   }
 }
 
+ElasticExportScheduler::ElasticExportScheduler(WorkPoster poster,
+                                               size_t queueCapacity)
+    : poster_{std::move(poster)},
+      maxQueueCapacity_{queueCapacity > 0 ? queueCapacity : 1024} {
+  AD_CONTRACT_CHECK(static_cast<bool>(poster_));
+}
+
 ElasticExportScheduler::~ElasticExportScheduler() { shutdown(); }
 
 void ElasticExportScheduler::shutdown() {
@@ -178,6 +185,15 @@ void ElasticExportScheduler::attachToQueryRegistry(
 }
 
 bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
+  if (poster_) {
+    if (stopping_.load(std::memory_order_relaxed)) {
+      return false;
+    }
+    poster_([this, morsel = std::move(morsel)]() mutable {
+      runPostedMorsel(std::move(morsel));
+    });
+    return true;
+  }
   std::unique_lock<std::mutex> lock(queueMutex_);
   while (queue_.size() >= maxQueueCapacity_ &&
          !stopping_.load(std::memory_order_relaxed)) {
@@ -189,6 +205,27 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
   queue_.push_back(std::move(morsel));
   workAvailableCv_.notify_one();
   return true;
+}
+
+void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
+  if (stopping_.load(std::memory_order_relaxed) ||
+      !isHelperAdmissionEligibleUnsafe()) {
+    return;
+  }
+  auto targetJobState = std::move(morsel.jobState_);
+  const size_t targetMorselIndex = morsel.morselIndex_;
+  const uint64_t submissionEpoch = morsel.submissionEpoch_;
+  const uint64_t jobId = morsel.jobId_;
+  const uint64_t leaseEpoch = demandEpoch_.load(std::memory_order_relaxed);
+  const uint64_t leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
+  totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
+  ExportWorkLease lease(this, leaseEpoch, jobId, leaseId);
+  if (targetJobState && !targetJobState->isCancelled() &&
+      submissionEpoch == leaseEpoch) {
+    targetJobState->onHelperLeaseAcquired(leaseEpoch);
+    targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
+    targetJobState->onHelperLeaseReleased(leaseEpoch);
+  }
 }
 
 void ElasticExportScheduler::registerSession(
