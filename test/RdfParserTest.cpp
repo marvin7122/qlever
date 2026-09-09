@@ -113,7 +113,7 @@ std::ostream& operator<<(std::ostream& os, const TurtleTriple& tr) {
 }
 TEST(RdfParserTest, prefixedName) {
   auto runCommonTests = [](auto& parser) {
-    parser.prefixMap()["wd"] = iri("<www.wikidata.org/>");
+    parser.prefixMap_["wd"] = iri("<www.wikidata.org/>");
     parser.setInputStream("wd:Q430 someotherContent");
     ASSERT_TRUE(parser.prefixedName());
     ASSERT_EQ(parser.lastParseResult_, iri("<www.wikidata.org/Q430>"));
@@ -181,12 +181,12 @@ TEST(RdfParserTest, prefixedName) {
 TEST(RdfParserTest, prefixID) {
   auto runCommonTests = [](const auto& checker) {
     auto p = checker("@prefix bla:<www.bla.org/> .");
-    ASSERT_EQ(p.prefixMap()["bla"], iri("<www.bla.org/>"));
+    ASSERT_EQ(p.prefixMap_["bla"], iri("<www.bla.org/>"));
 
     // different spaces that don't change meaning
     std::string s;
     p = checker("@prefix bla: <www.bla.org/>.");
-    ASSERT_EQ(p.prefixMap()["bla"], iri("<www.bla.org/>"));
+    ASSERT_EQ(p.prefixMap_["bla"], iri("<www.bla.org/>"));
 
     // invalid LL1
     ASSERT_THROW(checker("@prefix bla<www.bla.org/>."),
@@ -285,7 +285,7 @@ TEST(RdfParserTest, rdfLiteral) {
   testLiteral(R"("-INF"^^)"s + "<" + XSD_DOUBLE_TYPE + ">", isNegativeInfinity);
 
   auto runCommonTests = [](auto p) {
-    p.prefixMap()["doof"] = iri("<www.doof.org/>");
+    p.prefixMap_["doof"] = iri("<www.doof.org/>");
 
     string s("\"valuePrefixed\"^^doof:sometype");
     p.setInputStream(s);
@@ -392,7 +392,7 @@ TEST(RdfParserTest, blankNodePropertyList) {
            {"_:g_5_1", iri("<http://example.org/p3>"),
             iri("<http://example.org/ob3>")},
            {iri("<s>"), iri("<p1>"), "_:g_5_1"}};
-    p.prefixMap()["p"] = iri("<http://example.org/>");
+    p.prefixMap_["p"] = iri("<http://example.org/>");
     p.triples_.clear();
     p.setInputStream(blankNodeL);
     ASSERT_TRUE(p.object());
@@ -431,7 +431,7 @@ TEST(RdfParserTest, base) {
   auto testForGivenParser = [](auto parser) {
     parser.setInputStream("@base <http://www.example.org/path/> .");
     ASSERT_TRUE(parser.base());
-    ASSERT_EQ(TripleComponent::Iri::fromUri(parser.baseIri().value())
+    ASSERT_EQ(TripleComponent::Iri::fromUri(parser.baseIri_.value())
                   .toStringRepresentation(),
               "<http://www.example.org/path/>");
     parser.setInputStream("@base \"no iriref\" .");
@@ -445,7 +445,7 @@ TEST(RdfParserTest, sparqlBase) {
   auto testForGivenParser = [](auto parser) {
     parser.setInputStream("BASE <http://www.example.org/path/> .");
     ASSERT_TRUE(parser.sparqlBase());
-    ASSERT_EQ(TripleComponent::Iri::fromUri(parser.baseIri().value())
+    ASSERT_EQ(TripleComponent::Iri::fromUri(parser.baseIri_.value())
                   .toStringRepresentation(),
               "<http://www.example.org/path/>");
     parser.setInputStream("BASE \"no iriref\" .");
@@ -462,7 +462,7 @@ TEST(RdfParserTest, object) {
     auto pred = iri("<pred>");
     p.activeSubject_ = sub;
     p.activePredicate_ = pred;
-    p.prefixMap()["b"] = iri("<bla/>");
+    p.prefixMap_["b"] = iri("<bla/>");
     string input = " b:input";
     p.setInputStream(input);
     ASSERT_TRUE(p.object());
@@ -587,7 +587,7 @@ TEST(RdfParserTest, numericLiteralErrorBehavior) {
           "<a> <b> \"kartoffelsalat\"^^xsd:double",
           "<a> <b> \"123kartoffel\"^^xsd:decimal"};
       Parser parser{encodedIriManager()};
-      parser.prefixMap()["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
+      parser.prefixMap_["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
       for (const auto& input : inputs) {
         assertParsingFails(parser, input);
       }
@@ -605,7 +605,7 @@ TEST(RdfParserTest, numericLiteralErrorBehavior) {
           9999999999999999999999.0, 99999999999999999999E4,
           99999999999999999999E4};
       Parser parser{encodedIriManager()};
-      parser.prefixMap()["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
+      parser.prefixMap_["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
       testTripleObjects(parser, inputs, expectedObjects);
     }
     {
@@ -618,7 +618,7 @@ TEST(RdfParserTest, numericLiteralErrorBehavior) {
           "<a> <b> \"kartoffelsalat\"^^xsd:integer",
           "<a> <b> \"123kartoffel\"^^xsd:integer"};
       Parser parser{encodedIriManager()};
-      parser.prefixMap()["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
+      parser.prefixMap_["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
       parser.integerOverflowBehavior() =
           TurtleParserIntegerOverflowBehavior::OverflowingToDouble;
       for (const auto& input : nonWorkingInputs) {
@@ -638,7 +638,7 @@ TEST(RdfParserTest, numericLiteralErrorBehavior) {
           "<a> <b> \"kartoffelsalat\"^^xsd:integer",
           "<a> <b> \"123kartoffel\"^^xsd:integer"};
       Parser parser{encodedIriManager()};
-      parser.prefixMap()["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
+      parser.prefixMap_["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
       parser.integerOverflowBehavior() =
           TurtleParserIntegerOverflowBehavior::AllToDouble;
       for (const auto& input : nonWorkingInputs) {
@@ -686,7 +686,7 @@ TEST(RdfParserTest, numericLiteralErrorBehavior) {
           {iri("<a>"), iri("<b>"), 99999999999999999999999.0},
           {iri("<e>"), iri("<f>"), 234}};
       Parser parser{encodedIriManager()};
-      parser.prefixMap()["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
+      parser.prefixMap_["xsd"] = iri("<http://www.w3.org/2001/XMLSchema#>");
       parser.invalidLiteralsAreSkipped() = true;
       parser.integerOverflowBehavior() =
           TurtleParserIntegerOverflowBehavior::OverflowingToDouble;
@@ -845,7 +845,7 @@ TEST(RdfParserTest, collection) {
     auto first = iri("<http://www.w3.org/1999/02/22-rdf-syntax-ns#first>");
     auto rest = iri("<http://www.w3.org/1999/02/22-rdf-syntax-ns#rest>");
     auto nil = iri("<http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>");
-    p.prefixMap()["p"] = iri("<http://example.org/>");
+    p.prefixMap_["p"] = iri("<http://example.org/>");
 
     string collection = "(p:a p:b)";
     std::vector<TurtleTriple> exp = {
@@ -913,14 +913,16 @@ TEST(RdfParserTest, iriref) {
 }
 
 // Parse the file at `filename` using a parser of type `Parser` and return the
-// sorted result. The default size for the parse buffer in the following tests
-// is 1 kB (which is much less than the default value
+// sorted result. Iff `useBatchInterface` then the `getBatch()` function is used
+// for parsing, else `getLine()` is used. The default size for the parse buffer
+// in the following tests is 1 kB (which is much less than the default value
 // `DEFAULT_PARSER_BUFFER_SIZE` defined in `src/global/Constants.h`).
 // `Filetype::Turtle` is hardcoded because all `Parser` instantiations used
 // below are Turtle-based.
 template <typename Parser>
 std::vector<TurtleTriple> parseFromFile(
-    const std::string& filename, ad_utility::MemorySize bufferSize = 1_kB) {
+    const std::string& filename, bool useBatchInterface,
+    ad_utility::MemorySize bufferSize = 1_kB) {
   auto parser = [&]() {
     if constexpr (ad_utility::isSimilar<Parser, RdfMultifileParser>) {
       return Parser{
@@ -936,31 +938,42 @@ std::vector<TurtleTriple> parseFromFile(
   }();
 
   std::vector<TurtleTriple> result;
-  while (auto batch = parser.getBatch()) {
-    result.insert(result.end(), batch.value().begin(), batch.value().end());
-    parser.printAndResetQueueStatistics();
+  if (useBatchInterface) {
+    while (auto batch = parser.getBatch()) {
+      result.insert(result.end(), batch.value().begin(), batch.value().end());
+      parser.printAndResetQueueStatistics();
+    }
+  } else {
+    TurtleTriple next;
+    while (parser.getLine(next)) {
+      result.push_back(next);
+    }
   }
   return result;
 }
 
-// Run a function that takes a type identity of the parser as the first argument
-// and possible additional args, and run this function for all the different
-// parsers that can read from a file (stream and parallel parser, with all the
-// combinations of the different tokenizers).
+// Run a function that takes a bool as the first argument (typically the
+// `useBatchInterface` argument) and possible additional args, and run this
+// function for all the different parsers that can read from a file (stream and
+// parallel parser, with all the combinations of the different tokenizers).
 template <typename Function, typename... Args>
 auto forAllParallelParsers(const Function& function, const Args&... args) {
-  function(ti<RdfParallelParser<TurtleParser<Tokenizer>>>, args...);
-  function(ti<RdfParallelParser<TurtleParser<TokenizerCtre>>>, args...);
+  function(ti<RdfParallelParser<TurtleParser<Tokenizer>>>, true, args...);
+  function(ti<RdfParallelParser<TurtleParser<Tokenizer>>>, false, args...);
+  function(ti<RdfParallelParser<TurtleParser<TokenizerCtre>>>, true, args...);
+  function(ti<RdfParallelParser<TurtleParser<TokenizerCtre>>>, false, args...);
 }
 template <typename Function, typename... Args>
 auto forAllMultifileParsers(const Function& function, const Args&... args) {
-  function(ti<RdfMultifileParser>, args...);
+  function(ti<RdfMultifileParser>, true, args...);
 }
 
 template <typename Function, typename... Args>
 auto forAllParsers(const Function& function, const Args&... args) {
-  function(ti<RdfStreamParser<TurtleParser<Tokenizer>>>, args...);
-  function(ti<RdfStreamParser<TurtleParser<TokenizerCtre>>>, args...);
+  function(ti<RdfStreamParser<TurtleParser<Tokenizer>>>, true, args...);
+  function(ti<RdfStreamParser<TurtleParser<Tokenizer>>>, false, args...);
+  function(ti<RdfStreamParser<TurtleParser<TokenizerCtre>>>, true, args...);
+  function(ti<RdfStreamParser<TurtleParser<TokenizerCtre>>>, false, args...);
   forAllParallelParsers(function, args...);
   forAllMultifileParsers(function, args...);
 }
@@ -979,9 +992,9 @@ TEST(RdfParserTest, TurtleStreamAndParallelParser) {
     }
   }
 
-  auto testWithParser = [&](auto t) {
+  auto testWithParser = [&](auto t, bool useBatchInterface) {
     using Parser = typename decltype(t)::type;
-    auto result = parseFromFile<Parser>(filename);
+    auto result = parseFromFile<Parser>(filename, useBatchInterface);
     EXPECT_THAT(result, ::testing::UnorderedElementsAreArray(expectedTriples));
   };
 
@@ -993,13 +1006,14 @@ TEST(RdfParserTest, TurtleStreamAndParallelParser) {
 // _______________________________________________________________________
 TEST(RdfParserTest, emptyInput) {
   std::string filename{"turtleParserEmptyInput.dat"};
-  auto testWithParser = [&](auto t, std::string_view input = "") {
+  auto testWithParser = [&](auto t, bool useBatchInterface,
+                            std::string_view input = "") {
     using Parser = typename decltype(t)::type;
     {
       auto of = ad_utility::makeOfstream(filename);
       of << input;
     }
-    auto result = parseFromFile<Parser>(filename);
+    auto result = parseFromFile<Parser>(filename, useBatchInterface);
     EXPECT_THAT(result, ::testing::ElementsAre());
     ad_utility::deleteFile(filename);
   };
@@ -1013,14 +1027,15 @@ TEST(RdfParserTest, emptyInput) {
 // ________________________________________________________________________
 TEST(RdfParserTest, multilineComments) {
   std::string filename{"turtleParserMultilineComments.dat"};
-  auto testWithParser = [&](auto t, std::string_view input,
+  auto testWithParser = [&](auto t, bool useBatchInterface,
+                            std::string_view input,
                             const auto& expectedTriples) {
     using Parser = typename decltype(t)::type;
     {
       auto of = ad_utility::makeOfstream(filename);
       of << input;
     }
-    auto result = parseFromFile<Parser>(filename);
+    auto result = parseFromFile<Parser>(filename, useBatchInterface);
     EXPECT_THAT(result, ::testing::UnorderedElementsAreArray(expectedTriples));
     ad_utility::deleteFile(filename);
   };
@@ -1065,14 +1080,16 @@ TEST(RdfParserTest, multilineComments) {
 // actual parsing happens on background threads.
 TEST(RdfParserTest, exceptionPropagation) {
   std::string filename{"turtleParserExceptionPropagation.dat"};
-  auto testWithParser = [&](auto t, std::string_view input) {
+  auto testWithParser = [&](auto t, bool useBatchInterface,
+                            std::string_view input) {
     using Parser = typename decltype(t)::type;
     {
       auto of = ad_utility::makeOfstream(filename);
       of << input;
     }
-    AD_EXPECT_THROW_WITH_MESSAGE((parseFromFile<Parser>(filename)),
-                                 ::testing::ContainsRegex("Parse error"));
+    AD_EXPECT_THROW_WITH_MESSAGE(
+        (parseFromFile<Parser>(filename, useBatchInterface)),
+        ::testing::ContainsRegex("Parse error"));
     ad_utility::deleteFile(filename);
   };
   forAllParsers(testWithParser, "<missing> <object> .");
@@ -1082,7 +1099,8 @@ TEST(RdfParserTest, exceptionPropagation) {
 // propagated.
 TEST(RdfParserTest, exceptionPropagationFileBufferReading) {
   std::string filename{"turtleParserExceptionPropagationFileBufferReading.dat"};
-  auto testWithParser = [&](auto t, ad_utility::MemorySize bufferSize,
+  auto testWithParser = [&](auto t, bool useBatchInterface,
+                            ad_utility::MemorySize bufferSize,
                             std::string_view input) {
     using Parser = typename decltype(t)::type;
     {
@@ -1090,7 +1108,7 @@ TEST(RdfParserTest, exceptionPropagationFileBufferReading) {
       of << input;
     }
     AD_EXPECT_THROW_WITH_MESSAGE(
-        (parseFromFile<Parser>(filename, bufferSize)),
+        (parseFromFile<Parser>(filename, useBatchInterface, bufferSize)),
         ::testing::AllOf(
             ::testing::HasSubstr("No statement boundary"),
             ::testing::HasSubstr("use `--parser-buffer-size`"),
@@ -1110,7 +1128,8 @@ TEST(RdfParserTest, exceptionPropagationFileBufferReading) {
 // an exception
 TEST(RdfParserTest, exceptionOnScatteredPrefixOrBaseInParallelParser) {
   std::string filename{"exceptionOnScatteredPrefixOrBaseInParallelParser.dat"};
-  auto testWithParser = [&](auto t, ad_utility::MemorySize bufferSize,
+  auto testWithParser = [&](auto t, bool useBatchInterface,
+                            ad_utility::MemorySize bufferSize,
                             std::string_view input) {
     using Parser = typename decltype(t)::type;
     {
@@ -1118,7 +1137,7 @@ TEST(RdfParserTest, exceptionOnScatteredPrefixOrBaseInParallelParser) {
       of << input;
     }
     AD_EXPECT_THROW_WITH_MESSAGE(
-        (parseFromFile<Parser>(filename, bufferSize)),
+        (parseFromFile<Parser>(filename, useBatchInterface, bufferSize)),
         ::testing::HasSubstr("'--parallel-parsing false'"));
     ad_utility::deleteFile(filename);
   };
@@ -1187,14 +1206,16 @@ TEST(RdfParserTest,
      noExceptionOnScatteredPrefixOrBaseRedeclarationInParallelParser) {
   std::string filename{
       "noExceptionOnScatteredPrefixOrBaseRedeclarationInParallelParser.dat"};
-  auto testWithParser = [&](auto t, ad_utility::MemorySize bufferSize,
+  auto testWithParser = [&](auto t, bool useBatchInterface,
+                            ad_utility::MemorySize bufferSize,
                             std::string_view input) {
     using Parser = typename decltype(t)::type;
     {
       auto of = ad_utility::makeOfstream(filename);
       of << input;
     }
-    EXPECT_NO_THROW(parseFromFile<Parser>(filename, bufferSize));
+    EXPECT_NO_THROW(
+        parseFromFile<Parser>(filename, useBatchInterface, bufferSize));
     ad_utility::deleteFile(filename);
   };
   std::string_view inputWithScatteredPrefix =
@@ -1223,7 +1244,8 @@ TEST(RdfParserTest,
 // literal parsing error.
 TEST(RdfParserTest, betterErrorMessageOnMultilineLiteralError) {
   std::string filename{"betterErrorMessageOnMultilineLiteralError.dat"};
-  auto testWithParser = [&filename](auto t, ad_utility::MemorySize bufferSize,
+  auto testWithParser = [&filename](auto t, bool useBatchInterface,
+                                    ad_utility::MemorySize bufferSize,
                                     std::string_view input) {
     using Parser = typename decltype(t)::type;
     {
@@ -1231,7 +1253,7 @@ TEST(RdfParserTest, betterErrorMessageOnMultilineLiteralError) {
       of << input;
     }
     AD_EXPECT_THROW_WITH_MESSAGE(
-        (parseFromFile<Parser>(filename, bufferSize)),
+        (parseFromFile<Parser>(filename, useBatchInterface, bufferSize)),
         ::testing::AllOf(::testing::HasSubstr("`--parallel-parsing false`"),
                          ::testing::HasSubstr("multiline string literal")));
     ad_utility::deleteFile(filename);
@@ -1255,7 +1277,8 @@ TEST(RdfParserTest, stopParsingOnOutsideFailure) {
   GTEST_SKIP_("because _QLEVER_NO_TIMING_TESTS defined");
 #endif
   std::string filename{"turtleParserStopParsingOnOutsideFailure.dat"};
-  auto testWithParser = [&](auto t, std::string_view input) {
+  auto testWithParser = [&](auto t, [[maybe_unused]] bool useBatchInterface,
+                            std::string_view input) {
     using Parser = typename decltype(t)::type;
     {
       auto of = ad_utility::makeOfstream(filename);
@@ -1336,10 +1359,11 @@ TEST(RdfParserTest, nQuadParser) {
 }
 
 // _____________________________________________________________________________
-TEST(RdfParserTest, noGetBatchInStringParser) {
+TEST(RdfParserTest, noGetlineInStringParser) {
   auto runTestsForParser = [](auto parser) {
     parser.setInputStream("<x> <p> <o> .");
-    EXPECT_ANY_THROW(parser.getBatch());
+    TurtleTriple t;
+    EXPECT_ANY_THROW(parser.getLine(t));
   };
   runTestsForParser(NQuadRe2Parser{encodedIriManager()});
   runTestsForParser(NQuadCtreParser{encodedIriManager()});
@@ -1348,11 +1372,14 @@ TEST(RdfParserTest, noGetBatchInStringParser) {
 }
 
 // _____________________________________________________________________________
-TEST(RdfParserTest, dummyParsePositionOfMultifileParsers) {
-  auto runTestsForParser = [](auto t) {
+TEST(RdfParserTest, noGetlineInMultifileParsers) {
+  auto runTestsForParser = [](auto t, [[maybe_unused]] bool interface) {
     using Parser = typename decltype(t)::type;
     Parser parser{encodedIriManager()};
+    TurtleTriple triple;
+    // Also test the dummy parse position member.
     EXPECT_EQ(parser.getParsePosition(), 0u);
+    EXPECT_ANY_THROW(parser.getLine(triple));
   };
   forAllMultifileParsers(runTestsForParser);
 }
@@ -1395,7 +1422,7 @@ TEST(RdfParserTest, multifileParser) {
     }
     EXPECT_THAT(result, ::testing::UnorderedElementsAreArray(expected));
   };
-  forAllMultifileParsers(impl, true);
+  forAllMultifileParsers(impl);
 }
 
 // _____________________________________________________________________________
@@ -1474,13 +1501,14 @@ TEST(RdfParserTest, payloadSmallerThanInitialChunkSize) {
   // `AsyncStatementBoundaryBlockSource::findRegexNearEnd` function is greater
   // than the total size of the payload.
   std::string filename{"payloadSmallerThanInitialChunkSize.dat"};
-  auto testWithParser = [&](auto t, std::string_view input) {
+  auto testWithParser = [&](auto t, bool useBatchInterface,
+                            std::string_view input) {
     using Parser = typename decltype(t)::type;
     {
       auto of = ad_utility::makeOfstream(filename);
       of << input;
     }
-    auto result = parseFromFile<Parser>(filename);
+    auto result = parseFromFile<Parser>(filename, useBatchInterface);
     EXPECT_THAT(result, ::testing::ElementsAre(TurtleTriple{
                             iri("<http://vocab.getty.edu/aat/300312355>"),
                             iri("<http://www.w3.org/2000/01/rdf-schema#label>"),
@@ -1500,7 +1528,8 @@ TEST(RdfParserTest, payloadSmallerThanInitialChunkSize) {
 // the same internal ID even when it appears in different batches.
 TEST(RdfParserTest, blankNodeLabelsConsistentInParallelParsing) {
   std::string filename{"blankNodeLabelsConsistentInParallelParsing.dat"};
-  auto testWithParser = [&](auto t, ad_utility::MemorySize bufferSize) {
+  auto testWithParser = [&](auto t, bool useBatchInterface,
+                            ad_utility::MemorySize bufferSize) {
     using Parser = typename decltype(t)::type;
     // Create input where the same blank node label appears multiple times,
     // with enough content to ensure batching happens with small buffer size.
@@ -1514,7 +1543,8 @@ _:blank ex:b ex:c .
       auto of = ad_utility::makeOfstream(filename);
       of << input;
     }
-    auto result = parseFromFile<Parser>(filename, bufferSize);
+    auto result =
+        parseFromFile<Parser>(filename, useBatchInterface, bufferSize);
 
     // Find the blank node ID used for _:blank by looking at the first triple
     // where it appears as the object.
@@ -1732,12 +1762,12 @@ TEST(RdfParserTest, parseTriplesObject) {
 }
 
 // _____________________________________________________________________________
-// Exercise the error path in `RdfStreamParser<T>::getBatch` that triggers
+// Exercise the error path in `RdfStreamParser<T>::getLineImpl` that triggers
 // when the internal `byteVec_` grows past `RDF_PARSER_MAX_TOTAL_BUFFER_SIZE`
 // while the last `statement()` attempt threw a `ParseException`. The pending
 // exception is expected to be rethrown and the error log has to mention the
 // offending input.
-TEST(RdfParserTest, getBatchRethrowsOnTooLargeBufferWithPendingException) {
+TEST(RdfParserTest, getLineRethrowsOnTooLargeBufferWithPendingException) {
   using Parser = RdfStreamParser<TurtleParser<Tokenizer>>;
   auto& limit = RDF_PARSER_MAX_TOTAL_BUFFER_SIZE();
   auto oldLimit = limit;
@@ -1760,7 +1790,8 @@ TEST(RdfParserTest, getBatchRethrowsOnTooLargeBufferWithPendingException) {
                     filename, qlever::Filetype::Turtle, std::nullopt},
                 ad_utility::MemorySize::bytes(50), encodedIriManager()};
 
-  EXPECT_THROW(parser.getBatch(), TurtleParser<Tokenizer>::ParseException);
+  TurtleTriple triple;
+  EXPECT_THROW(parser.getLine(triple), TurtleParser<Tokenizer>::ParseException);
 
   const std::string log = logStream.str();
   EXPECT_THAT(log, ::testing::HasSubstr("Could not parse"));
@@ -1775,7 +1806,7 @@ TEST(RdfParserTest, getBatchRethrowsOnTooLargeBufferWithPendingException) {
 // last `statement()` attempt returned `false` without throwing (a triple with
 // no terminating dot satisfies this). The parser must then synthesize its own
 // `ParseException` via `raise(...)`.
-TEST(RdfParserTest, getBatchRaisesOnTooLargeBufferWithoutPendingException) {
+TEST(RdfParserTest, getLineRaisesOnTooLargeBufferWithoutPendingException) {
   using Parser = RdfStreamParser<TurtleParser<Tokenizer>>;
   auto& limit = RDF_PARSER_MAX_TOTAL_BUFFER_SIZE();
   auto oldLimit = limit;
@@ -1798,8 +1829,9 @@ TEST(RdfParserTest, getBatchRaisesOnTooLargeBufferWithoutPendingException) {
                     filename, qlever::Filetype::Turtle, std::nullopt},
                 ad_utility::MemorySize::bytes(50), encodedIriManager()};
 
+  TurtleTriple triple;
   AD_EXPECT_THROW_WITH_MESSAGE(
-      parser.getBatch(),
+      parser.getLine(triple),
       ::testing::HasSubstr(
           "Too many bytes parsed without finishing a turtle statement"));
 
@@ -1816,9 +1848,9 @@ TEST(RdfParserTest, getBatchRaisesOnTooLargeBufferWithoutPendingException) {
 // exhausted but `tok_` still has unparsed bytes (and the last `statement()`
 // attempt did not throw). The parser must surface the previously emitted
 // triples and then mark itself exhausted while logging the remainder.
-TEST(RdfParserTest, getBatchLogsRemainingUnparsedBytesWhenInputExhausted) {
+TEST(RdfParserTest, getLineLogsRemainingUnparsedBytesWhenInputExhausted) {
   using Parser = RdfStreamParser<TurtleParser<Tokenizer>>;
-  std::string filename{absl::StrCat(gtestCurrentTestName(), ".dat")};
+  std::string filename{"rdfParserGetLineLogsRemainingUnparsedBytes.dat"};
   std::string trailingGarbage =
       "@@@invalid trailing bytes that cannot be parsed@@@";
   {
@@ -1831,16 +1863,14 @@ TEST(RdfParserTest, getBatchLogsRemainingUnparsedBytesWhenInputExhausted) {
   Parser parser{qlever::InputFileSpecification{
                     filename, qlever::Filetype::Turtle, std::nullopt},
                 2_kB, encodedIriManager()};
-  auto batch = parser.getBatch();
-  ASSERT_TRUE(batch.has_value());
-  ASSERT_EQ(batch.value().size(), 1u);
-  const auto& triple = batch.value().at(0);
+  TurtleTriple triple;
+  ASSERT_TRUE(parser.getLine(triple));
   EXPECT_EQ(triple.subject_, iri("<a>"));
   EXPECT_EQ(triple.predicate_, iri("<b>"));
   EXPECT_EQ(triple.object_, iri("<c>"));
   // The parser logs the unparsed trailing bytes, marks itself exhausted, and
-  // returns `nullopt` from subsequent `getBatch` calls instead of throwing.
-  EXPECT_FALSE(parser.getBatch().has_value());
+  // returns `false` from subsequent `getLine` calls instead of throwing.
+  EXPECT_FALSE(parser.getLine(triple));
 
   std::string log = logStream.str();
   EXPECT_THAT(log, ::testing::HasSubstr(
