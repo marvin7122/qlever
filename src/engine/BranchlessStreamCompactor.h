@@ -17,11 +17,11 @@
 namespace ql::engine::vector {
 
 // _____________________________________________________________________________
-// SIMD Stream Compactor:
-// Branchless hardware vector stream compaction for 64-bit ValueId arrays.
+// Branchless Stream Compactor:
+// Branchless scalar stream compaction for 64-bit ValueId arrays.
 // Filters rows and writes matches contiguously to the destination buffer
 // without branch mispredictions.
-class SimdStreamCompactor {
+class BranchlessStreamCompactor {
  public:
   // Compact elements matching a predicate into output span, returning count.
   template <typename Predicate>

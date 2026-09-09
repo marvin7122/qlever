@@ -10,12 +10,12 @@
 
 #include <vector>
 
-#include "engine/SimdStreamCompactor.h"
+#include "engine/BranchlessStreamCompactor.h"
 #include "global/Id.h"
 
 using namespace ql::engine::vector;
 
-TEST(SimdStreamCompactorTest, CompactEvenNumbers) {
+TEST(BranchlessStreamCompactorTest, CompactEvenNumbers) {
   std::vector<Id> input;
   input.reserve(100);
   for (int i = 0; i < 100; ++i) {
@@ -23,7 +23,7 @@ TEST(SimdStreamCompactorTest, CompactEvenNumbers) {
   }
 
   std::vector<Id> output(100);
-  size_t count = SimdStreamCompactor::compact(input, output, [](Id id) {
+  size_t count = BranchlessStreamCompactor::compact(input, output, [](Id id) {
     return id.getInt() % 2 == 0;
   });
 

@@ -11,7 +11,7 @@
 #include <vector>
 #include <algorithm>
 
-#include "engine/SimdStreamCompactor.h"
+#include "engine/BranchlessStreamCompactor.h"
 #include "global/Id.h"
 
 using namespace ql::engine::vector;
@@ -57,9 +57,9 @@ int main() {
       auto t1 = std::chrono::high_resolution_clock::now();
       scalarTimes.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
 
-      // SIMD Stream Compactor
+      // Branchless Stream Compactor
       auto t2 = std::chrono::high_resolution_clock::now();
-      size_t vectorCount = SimdStreamCompactor::compact(input, output, [](Id id) {
+      size_t vectorCount = BranchlessStreamCompactor::compact(input, output, [](Id id) {
         return id.getInt() % 2 == 0;
       });
       escape(vectorCount);
@@ -75,7 +75,7 @@ int main() {
 
     std::cout << "Scalar Filter Latency (Median):  " << medScalar << " ms ("
               << (NUM_ROWS / (medScalar / 1000.0)) / 1e6 << " M rows/sec)\n";
-    std::cout << "SIMD Compactor Latency (Median): " << medVector << " ms ("
+    std::cout << "Branchless Compactor Latency (Median): " << medVector << " ms ("
               << (NUM_ROWS / (medVector / 1000.0)) / 1e6 << " M rows/sec)\n";
     std::cout << "Speedup (Median):                " << (medScalar / medVector) << "x\n\n";
   }
@@ -117,13 +117,13 @@ int main() {
       scalarTimes.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
 
       auto t2 = std::chrono::high_resolution_clock::now();
-      size_t countVec = SimdStreamCompactor::compact(col0, out0, [](Id id) {
+      size_t countVec = BranchlessStreamCompactor::compact(col0, out0, [](Id id) {
         return id.getInt() % 2 == 0;
       });
-      SimdStreamCompactor::compact(col1, out1, [](Id id) {
+      BranchlessStreamCompactor::compact(col1, out1, [](Id id) {
         return id.getInt() % 2 == 0;
       });
-      SimdStreamCompactor::compact(col2, out2, [](Id id) {
+      BranchlessStreamCompactor::compact(col2, out2, [](Id id) {
         return id.getInt() % 2 == 0;
       });
       escape(countVec);
@@ -139,7 +139,7 @@ int main() {
 
     std::cout << "Scalar 3-Col Latency (Median):   " << medScalar << " ms ("
               << (NUM_ROWS / (medScalar / 1000.0)) / 1e6 << " M rows/sec)\n";
-    std::cout << "SIMD 3-Col Latency (Median):     " << medVector << " ms ("
+    std::cout << "Branchless 3-Col Latency (Median):     " << medVector << " ms ("
               << (NUM_ROWS / (medVector / 1000.0)) / 1e6 << " M rows/sec)\n";
     std::cout << "Speedup (Median):                " << (medScalar / medVector) << "x\n";
     std::cout << "=================================================================\n";
