@@ -4,6 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
 
 concurrency:
@@ -16,6 +17,7 @@ permissions:
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     # The CMake configure and build commands are platform-agnostic and should work equally
     # well on Windows or Mac.  You can convert this to a matrix build if you need
     # cross-platform coverage.
