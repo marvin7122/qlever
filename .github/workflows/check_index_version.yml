@@ -4,6 +4,7 @@ on:
   push:
     branches: [ master ]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
 
 concurrency:
@@ -16,6 +17,7 @@ permissions:
 
 jobs:
   check-index-version:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     strategy:
       fail-fast: false
       matrix:
