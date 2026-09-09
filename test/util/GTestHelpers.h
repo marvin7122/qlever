@@ -339,7 +339,7 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   return testInfo == nullptr
              ? ""
              : sanitizeGtestName(absl::StrCat(testInfo->test_suite_name(), "_",
-                                               testInfo->name()));
+                                              testInfo->name()));
 }
 
 // _____________________________________________________________________________
