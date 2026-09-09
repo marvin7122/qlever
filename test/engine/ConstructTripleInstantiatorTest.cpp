@@ -76,7 +76,7 @@ TEST(InstantiateTerm, PrecomputedConstantIsReturnedAsIs) {
                           "<http://example.org/subject>", nullptr)));
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->data_, term.get());
-  EXPECT_EQ(result->keepAlive_, nullptr);
+  EXPECT_EQ(result->keepAlive_, term);
 }
 
 // _____________________________________________________________________________
