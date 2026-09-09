@@ -6,6 +6,7 @@ on:
   push:
     branches: [ master ]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     branches: [ master ]
 
 permissions:
@@ -13,6 +14,7 @@ permissions:
 
 jobs:
   codespell:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     name: Check for spelling errors
     runs-on: ubuntu-latest
 
