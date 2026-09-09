@@ -128,31 +128,18 @@ void IoUringPolicy::addBatch(int fd,
     const size_t freeSlots = ringSize_ - numInFlightReadRequests_;
     if (freeSlots == 0) {
       const unsigned want = static_cast<unsigned>(
-          std::min<size_t>(REAP_WAVE, numInFlightReadRequests_));
+          std::min<size_t>(kReapWave, numInFlightReadRequests_));
       drainAtLeast(want);
       continue;
     }
-    // Submit as many SQEs as the ring has room for. `io_uring_submit` is
-    // non-blocking and costs one `io_uring_enter` regardless of how many SQEs
-    // it flushes, so capping the wave only adds syscalls without bounding any
-    // resource: the ring itself is the bound.
-    const size_t wave = std::min(numReadRequestsToPerform - next, freeSlots);
+    const size_t wave = std::min({numReadRequestsToPerform - next, freeSlots,
+                                  static_cast<size_t>(kSubmitWave)});
     for (size_t k = 0; k < wave; ++k) {
       prepareOne(next + k);
     }
     next += wave;
-    // `io_uring_submit` may return fewer SQEs than prepared. Those leftovers
-    // stay in the SQ; submit them before preparing the next wave. A zero
-    // return is treated as failure: draining would deadlock if nothing has
-    // reached the kernel yet.
-    size_t stillToSubmit = wave;
-    while (stillToSubmit > 0) {
-      const int submitted = io_uring_submit(&ring_);
-      if (submitted <= 0) {
-        AD_THROW("io_uring_submit failed in IoUringPolicy");
-      }
-      AD_CORRECTNESS_CHECK(static_cast<size_t>(submitted) <= stillToSubmit);
-      stillToSubmit -= static_cast<size_t>(submitted);
+    if (io_uring_submit(&ring_) < 0) {
+      AD_THROW("io_uring_submit failed in IoUringPolicy");
     }
   }
 }
@@ -162,7 +149,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
   while (numInFlightReadRequestsPerBatch_.find(handle) !=
          numInFlightReadRequestsPerBatch_.end()) {
     const unsigned want = static_cast<unsigned>(
-        std::min<size_t>(REAP_WAVE, numInFlightReadRequests_));
+        std::min<size_t>(kReapWave, numInFlightReadRequests_));
     AD_CORRECTNESS_CHECK(want > 0);
     drainAtLeast(want);
   }
