@@ -25,8 +25,8 @@
 // NOTE: Used by test/GTestHelpersTest.cpp, test/index/vocabulary/
 // CompressedVocabularyTest.cpp (via requirePmrStringInlineStorage) and
 // SplitVocabularyTest.cpp (gtestCurrentTestSuiteName); see also `clobberStack`
-// in `util/DanglingViewTestHelpers.h`. The SSO capacity of `std::basic_string` is
-// implementation-defined (e.g. 15 characters for libstdc++ and 22 for
+// in `util/DanglingViewTestHelpers.h`. The SSO capacity of `std::basic_string`
+// is implementation-defined (e.g. 15 characters for libstdc++ and 22 for
 // libc++), so it is determined here by probing rather than hardcoded.
 inline size_t pmrStringSsoCapacity() {
   // A counting memory resource lets us detect an allocation directly instead of
@@ -84,8 +84,8 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
       capacity >= maxSize,
       absl::StrCat("Platform premise violated: std::pmr::string does not "
                    "store ",
-                   maxSize, " characters on this platform (capacity: ",
-                   capacity, ")"));
+                   maxSize,
+                   " characters on this platform (capacity: ", capacity, ")"));
 }
 
 #endif  // QLEVER_TEST_UTIL_PMRSTRINGSSOTESTHELPERS_H
