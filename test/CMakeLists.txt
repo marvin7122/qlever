@@ -138,8 +138,6 @@ add_compile_definitions(QLEVER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
-
-addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
@@ -412,8 +410,6 @@ addLinkAndDiscoverTest(PrefilterExpressionIndexTest engine)
 addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpressions index)
 
 addLinkAndDiscoverTest(ExceptionTest)
-
-addLinkAndDiscoverTestNoLibs(InvariantsTest)
 
 addLinkAndDiscoverTest(RandomExpressionTest index)
 

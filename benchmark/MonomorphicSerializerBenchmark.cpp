@@ -29,7 +29,7 @@
 
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "engine/MonomorphicSerializers.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/Invariants.h"
@@ -233,7 +233,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   std::string_view predLabel = data.stringPool_[0];
   std::string_view predType = data.stringPool_[1];
   std::string_view predPop = data.stringPool_[2];
-  std::string_view predArea = data.stringPool_[3];
 
   for (size_t i = 0; i < numRows; ++i) {
     // Subjects
@@ -407,15 +406,24 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              dispatchMonomorphicSerializer(
-                  schema,
-                  [&]<ColumnType... Types>() {
-                    using Serializer = MonomorphicRowSerializer<Types...>;
-                    for (const auto& row : data_.tripleRows_) {
-                      Serializer::template serializeRow<ExportFormat::Csv>(
-                          formatter, ql::span<const CellValue>(row));
-                    }
-                  });
+
+              auto visitor = [&]<ColumnType... Types>(auto&&... args) {
+                if constexpr (sizeof...(Types) > 0) {
+                  using Serializer = MonomorphicRowSerializer<Types...>;
+                  for (const auto& row : data_.tripleRows_) {
+                    Serializer::template serializeRow<ExportFormat::Csv>(
+                        formatter, ql::span<const CellValue>(row));
+                  }
+                } else if constexpr (sizeof...(args) > 0) {
+                  auto&& [dynSerializer] = std::forward_as_tuple(args...);
+                  for (const auto& row : data_.tripleRows_) {
+                    dynSerializer.template serializeRow<ExportFormat::Csv>(
+                        formatter, ql::span<const CellValue>(row));
+                  }
+                }
+              };
+
+              dispatchMonomorphicSerializer(schema, visitor);
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();

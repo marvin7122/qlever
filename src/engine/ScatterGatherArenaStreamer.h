@@ -30,7 +30,7 @@
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/Invariants.h"
@@ -531,8 +531,8 @@ class ScatterGatherChunkStreamer
               : static_cast<const void*>(currentHeaderBuffer_.data() +
                                          slice.headerOffset);
       iovecs.push_back(
-          struct iovec{.iov_base = const_cast<void*>(ptr),
-                       .iov_len = slice.len});
+          iovec{.iov_base = const_cast<void*>(ptr),
+                .iov_len = slice.len});
     }
 
     ScatterGatherChunk chunk(

@@ -30,7 +30,7 @@ namespace detail {
 // _____________________________________________________________________________
 // 2-digit lookup table for radix-100 decomposition.
 // Contains 100 pairs of ASCII digits ("00", "01", ..., "99").
-alignas(64) inline constexpr char DIGIT_PAIRS[200] =
+alignas(64) inline constexpr char DIGIT_PAIRS[201] =
     "00010203040506070809"
     "10111213141516171819"
     "20212223242526272829"
