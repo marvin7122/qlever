@@ -51,6 +51,30 @@ struct EvaluatedTermData {
 // when the same `Id` appears in multiple rows or is reused from the `IdCache`.
 using EvaluatedTerm = std::shared_ptr<const EvaluatedTermData>;
 
+// A term used while instantiating a CONSTRUCT triple. `data_` is never null
+// for an engaged `std::optional<EvaluatedTermRef>`. `keepAlive_` always owns
+// the term `data_` points to, so an `EvaluatedTriple` is self-contained and
+// may outlive the pipeline that instantiated it (e.g. collected into a
+// vector and formatted later): for a constant it shares ownership of the
+// precomputed term, for a variable it copies the cache/batch `shared_ptr`
+// so an LRU eviction cannot destroy the bytes, and for a blank node it owns
+// the newly allocated term.
+struct EvaluatedTermRef {
+  const EvaluatedTermData* data_ = nullptr;
+  EvaluatedTerm keepAlive_{};
+
+  EvaluatedTermRef() = default;
+  EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
+      : data_{data}, keepAlive_{std::move(keepAlive)} {}
+  // Implicit conversion from an owning term: borrows `term` and keeps it
+  // alive, so callers can write `EvaluatedTriple{term, ...}` directly.
+  EvaluatedTermRef(const EvaluatedTerm& term)
+      : data_{term.get()}, keepAlive_{term} {}
+
+  const EvaluatedTermData& operator*() const { return *data_; }
+  const EvaluatedTermData* operator->() const { return data_; }
+};
+
 // A constant (`Iri` or `Literal`) whose string value is fully known at
 // preprocessing time. The `EvaluatedTerm` is built once at preprocessing and
 // shared across all rows, avoiding per-row heap allocation.
@@ -96,9 +120,9 @@ using PreprocessedTriple = std::array<PreprocessedTerm, NUM_TRIPLE_POSITIONS>;
 // Result of instantiating a single template triple for a specific result table
 // row.
 struct EvaluatedTriple {
-  EvaluatedTerm subject_;
-  EvaluatedTerm predicate_;
-  EvaluatedTerm object_;
+  EvaluatedTermRef subject_;
+  EvaluatedTermRef predicate_;
+  EvaluatedTermRef object_;
 };
 
 // Result of preprocessing all CONSTRUCT template triples.

@@ -26,11 +26,12 @@ using StringTriple = QueryExecutionTree::StringTriple;
 class ConstructDeduplicator;
 
 // Instantiates a single preprocessed term for a specific row.
-// For constants: returns the precomputed string.
-// For variables: looks up the batch-evaluated value.
-// For blank nodes: computes the value on the fly using precomputed
-//   prefix/suffix and the blank node row id (rowOffset + actualRowIdx).
-std::optional<EvaluatedTerm> instantiateTerm(
+// For constants: shares ownership of the precomputed term (one shared_ptr
+//   copy, no allocation). For variables: one shared_ptr copy from the
+//   batch/cache so the term outlives `batchResult`. For blank nodes:
+//   allocates a new term. Every returned ref owns its term, so triples may
+//   outlive the pipeline.
+std::optional<EvaluatedTermRef> instantiateTerm(
     const PreprocessedTerm& term, const BatchEvaluationResult& batchResult,
     size_t rowIdxInBatch, size_t rowIdxTotal);
 
