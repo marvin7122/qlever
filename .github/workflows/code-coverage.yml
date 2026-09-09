@@ -15,6 +15,7 @@ on:
   push:
     branches: [ master ]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     branches: [ master ]
   merge_group:
 
@@ -28,6 +29,7 @@ permissions:
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     env:
           compiler: clang
           # The compiler and the LLVM coverage tools have to use the same major

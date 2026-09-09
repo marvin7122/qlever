@@ -5,6 +5,7 @@ on:
     branches: [ master ]
     tags: [ 'v*.*.*' ]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     branches: [ master ]
 
 env:
@@ -33,6 +34,7 @@ permissions:
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     strategy:
       matrix:
         include:
