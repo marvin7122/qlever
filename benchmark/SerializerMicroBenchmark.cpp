@@ -45,17 +45,11 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. Disabled under AddressSanitizer and ThreadSanitizer, whose runtimes
-// provide their own (strongly linked) global operator new/delete replacements
-// that would otherwise cause multiple-definition link errors. NOTE: Clang
-// does not predefine `__SANITIZE_THREAD__` or `__SANITIZE_ADDRESS__` (only
-// GCC does), so Clang builds are detected via `__has_feature`. The
-// `__has_feature` queries are additionally gated on `__clang__` because some
-// third-party headers define a fallback `__has_feature` macro that is not
-// callable here and would break preprocessing with other compilers.
-#if !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_ADDRESS__) && \
-    (!defined(__clang__) ||                                            \
-     (!__has_feature(thread_sanitizer) && !__has_feature(address_sanitizer)))
+// runs. Disabled when `QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE` is defined,
+// which the top-level CMakeLists.txt does for sanitizer builds: the sanitizer
+// runtimes provide their own (strongly linked) global operator new/delete
+// replacements that would otherwise cause multiple-definition link errors.
+#ifndef QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 // The malloc/free pairing below is intentional (allocation counting), but GCC
 // cannot prove the pairing and warns with -Wmismatched-new-delete.
 // `noinline` on the deallocation functions keeps the `free` call in a single
@@ -86,7 +80,7 @@ __attribute__((noinline)) void operator delete(void* ptr,
   std::free(ptr);
 }
 #pragma GCC diagnostic pop
-#endif  // no sanitizer with its own global new/delete
+#endif  // QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 
 namespace ad_benchmark {
 namespace {
