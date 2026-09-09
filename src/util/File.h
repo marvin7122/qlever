@@ -1,6 +1,8 @@
-// Copyright 2011, University of Freiburg, Chair of Algorithms and Data
+// Copyright 2011 - 2026, University of Freiburg, Chair of Algorithms and Data
 // Structures.
-// Author: Björn Buchhold <buchholb>
+// Authors:
+//   Björn Buchhold <buchholb>
+//   Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #ifndef QLEVER_SRC_UTIL_FILE_H
 #define QLEVER_SRC_UTIL_FILE_H
@@ -22,6 +24,7 @@
 #include "backports/filesystem.h"
 #include "util/Exception.h"
 #include "util/Forward.h"
+#include "util/IoWaitAccounting.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -187,7 +190,12 @@ class File {
     while (bytesRead < nofBytesToRead) {
       size_t toRead = nofBytesToRead - bytesRead;
 
-      const ssize_t ret = pread(fd, to + bytesRead, toRead, offset + bytesRead);
+      // Timed because a cold `pread` blocks off-CPU, which `cpu_s` cannot
+      // see. No-op unless `measure-io-wait` is set.
+      const ssize_t ret =
+          ad_utility::ioWait::timed(ad_utility::ioWait::preadCounters, [&]() {
+            return pread(fd, to + bytesRead, toRead, offset + bytesRead);
+          });
 
       if (ret < 0) {
         return ret;
