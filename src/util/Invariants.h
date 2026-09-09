@@ -109,16 +109,21 @@ template <typename Predicate>
 class PostconditionGuard {
  private:
   Predicate predicate_;
+  // Stringified predicate expression, captured by the `QL_POST` macro so
+  // that the failure message names the violated postcondition (like
+  // `QL_PRE` does) instead of the lambda invocation.
+  const char* expression_;
   int uncaughtExceptionsAtConstruction_;
 
  public:
-  explicit PostconditionGuard(Predicate&& predicate)
+  explicit PostconditionGuard(Predicate&& predicate, const char* expression)
       : predicate_{std::forward<Predicate>(predicate)},
+        expression_{expression},
         uncaughtExceptionsAtConstruction_{std::uncaught_exceptions()} {}
 
   ~PostconditionGuard() noexcept(false) {
     if (std::uncaught_exceptions() <= uncaughtExceptionsAtConstruction_) {
-      AD_CONTRACT_CHECK(predicate_());
+      AD_CONTRACT_CHECK(predicate_(), expression_);
     }
   }
 
@@ -129,9 +134,10 @@ class PostconditionGuard {
 };
 
 template <typename Predicate>
-[[nodiscard]] auto makePostconditionGuard(Predicate&& predicate) {
+[[nodiscard]] auto makePostconditionGuard(Predicate&& predicate,
+                                          const char* expression) {
   return PostconditionGuard<std::decay_t<Predicate>>{
-      std::forward<Predicate>(predicate)};
+      std::forward<Predicate>(predicate), expression};
 }
 
 }  // namespace detail
@@ -148,10 +154,12 @@ template <typename Predicate>
 #define QL_CONTRACT_ASSERT(condition) AD_CONTRACT_CHECK(condition)
 
 // Postcondition check: registered at function entry and evaluated upon normal
-// scope exit.
-#define QL_POST(...)                                      \
-  auto QLEVER_CONCAT(ql_postcondition_guard_, __LINE__) = \
-      ::ad_utility::detail::makePostconditionGuard(       \
-          [&]() -> bool { return static_cast<bool>(__VA_ARGS__); })
+// scope exit. The stringified predicate is captured alongside the lambda so
+// that the failure message names the violated postcondition.
+#define QL_POST(...)                                                \
+  auto QLEVER_CONCAT(ql_postcondition_guard_, __LINE__) =           \
+      ::ad_utility::detail::makePostconditionGuard(                 \
+          [&]() -> bool { return static_cast<bool>(__VA_ARGS__); }, \
+          #__VA_ARGS__)
 
 #endif  // QLEVER_SRC_UTIL_INVARIANTS_H
