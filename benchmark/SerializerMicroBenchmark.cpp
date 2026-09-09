@@ -49,9 +49,12 @@ struct AllocationTracker {
 // provide their own (strongly linked) global operator new/delete replacements
 // that would otherwise cause multiple-definition link errors. NOTE: Clang
 // does not predefine `__SANITIZE_THREAD__` or `__SANITIZE_ADDRESS__` (only
-// GCC does), so Clang builds are detected via `__has_feature`.
+// GCC does), so Clang builds are detected via `__has_feature`. The
+// `__has_feature` queries are additionally gated on `__clang__` because some
+// third-party headers define a fallback `__has_feature` macro that is not
+// callable here and would break preprocessing with other compilers.
 #if !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_ADDRESS__) && \
-    (!defined(__has_feature) ||                                        \
+    (!defined(__clang__) ||                                            \
      (!__has_feature(thread_sanitizer) && !__has_feature(address_sanitizer)))
 // The malloc/free pairing below is intentional (allocation counting), but GCC
 // cannot prove the pairing and warns with -Wmismatched-new-delete.
