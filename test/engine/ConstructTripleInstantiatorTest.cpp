@@ -158,6 +158,10 @@ TEST(InstantiateTerm, PrecomputedBlankNodeUsesRowIdxTotal) {
   auto result = instantiateTerm(preprocessed, batchResult, 0, 42);
 
   EXPECT_THAT(result, Optional(matchesEvaluatedTerm("_:g42_label", nullptr)));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->keepAlive_, nullptr);
+  ASSERT_NE(result->owned_, nullptr);
+  EXPECT_EQ(result->data_, result->owned_.get());
 }
 
 // _____________________________________________________________________________

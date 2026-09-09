@@ -62,6 +62,15 @@ using EvaluatedTerm = std::shared_ptr<const EvaluatedTermData>;
 struct EvaluatedTermRef {
   const EvaluatedTermData* data_ = nullptr;
   EvaluatedTerm keepAlive_{};
+  // Set only for a freshly allocated blank-node term. unique_ptr avoids an
+  // atomic refcount; the object is never shared with the IdCache.
+  std::unique_ptr<EvaluatedTermData> owned_{};
+
+  EvaluatedTermRef() = default;
+  EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
+      : data_{data}, keepAlive_{std::move(keepAlive)} {}
+  explicit EvaluatedTermRef(std::unique_ptr<EvaluatedTermData> owned)
+      : data_{owned.get()}, owned_{std::move(owned)} {}
 
   EvaluatedTermRef() = default;
   EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
