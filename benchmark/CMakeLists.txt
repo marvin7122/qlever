@@ -40,4 +40,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(SerializerMicroBenchmark engine sparqlParser qlever_util)
 
+    addAndLinkBenchmark(ChunkStreamingBenchmark engine testUtil)
+
 endif()
