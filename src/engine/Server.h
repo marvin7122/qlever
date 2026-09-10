@@ -171,18 +171,21 @@ class Server {
   // turn requires a type with linkage.
   class MockSend {
    public:
-    Awaitable<void> operator()(auto response) {
-#if defined(QLEVER_ENABLE_EXPORT_V2)
-      using Body = typename std::decay_t<decltype(response)>::body_type;
-      if constexpr (std::is_same_v<
-                        Body, ql::engine::export_v2::scatter_gather_body>) {
-        scatterGatherResponse_ = std::move(response);
-        co_return;
-      }
-#endif
+    Awaitable<void> operator()(ResponseT response) {
       response_ = std::move(response);
       co_return;
     }
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+    // Overload resolution dispatches on the body type: scatter-gather
+    // (export-send=iovec) responses land in their own slot because
+    // `ResponseT` cannot hold them.
+    Awaitable<void> operator()(
+        boost::beast::http::response<ql::engine::export_v2::scatter_gather_body>
+            response) {
+      scatterGatherResponse_ = std::move(response);
+      co_return;
+    }
+#endif
 
     ResponseT response_;
 #if defined(QLEVER_ENABLE_EXPORT_V2)
