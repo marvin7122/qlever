@@ -2,17 +2,22 @@
 //  Chair of Algorithms and Data Structures.
 //  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
 
+#include <array>
+
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "backports/span.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/PrefixCompressor.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
+#include "util/DanglingViewTestHelpers.h"
+#include "util/PmrStringSsoTestHelpers.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 
 namespace {
@@ -240,6 +245,115 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyVocabulary) {
   auto range = vocab.scanAll();
   EXPECT_EQ(ql::ranges::begin(range), ql::ranges::end(range));
 }
+
+// _____________________________________________________________________________
+// `lookupBatch` must agree with the per-word `operator[]` for arbitrary index
+// combinations: same words, same order as requested (duplicates included), with
+// the returned batch owning the lifetime of all decompressed string views. An
+// empty index list is a contract violation and must throw.
+TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto vocab = this->createCompressedVocabulary()(words);
+  const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
+  const auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
+                               ::testing::HasSubstr("!indices.empty()"));
+}
+// _____________________________________________________________________________
+// A vocabulary containing the empty string word ("") must decompress correctly
+// through `lookupBatch` without allocations or crashes across all compressors
+// (exercising the `boundOnDecompressedWordSize == 0` fast path).
+TYPED_TEST(CompressedVocabularyF, LookupBatchEmptyWordInVocabulary) {
+  const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
+  auto vocab = this->createCompressedVocabulary()(words);
+  const std::array<size_t, 6> indices{1, 0, 3, 2, 4, 1};
+  const auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  EXPECT_TRUE(result[0].empty());
+  EXPECT_EQ(result[1], "alpha");
+  EXPECT_TRUE(result[2].empty());
+  EXPECT_EQ(result[3], "beta");
+  EXPECT_EQ(result[4], "gamma");
+  EXPECT_TRUE(result[5].empty());
+}
+// _____________________________________________________________________________
+// Regression test for a dangling-view bug this lookup path once had: an
+// intermediate local `std::pmr::string` uses the small-string optimization
+// regardless of its allocator, so for short words a saved `string_view`
+// pointed into the destroyed local object instead of the arena.
+//
+// Detection strength:
+//  - Under AddressSanitizer builds (CMAKE_BUILD_TYPE=Asan) this test is a
+//    DETERMINISTIC detector: ASan poisons returned stack frames, so any read
+//    through the dangling view is reported as stack-use-after-return.
+//  - In normal builds it is a practical tripwire, not a proof: reading a
+//    dangling view is UB, so we clobber the stack with sentinel bytes and
+//    verify content byte-for-byte, which makes corruption overwhelmingly
+//    likely but not formally guaranteed.
+TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
+  // Verify that this platform uses inline storage for `std::pmr::string`;
+  // short words therefore use the Small String Optimization (SSO) and would
+  // otherwise end up inside a destroyed stack object rather than the arena.
+  requirePmrStringInlineStorage(15);
+
+  // All words deliberately short (<= 15 chars): every one takes the SSO
+  // path in a `pmr::string`-based implementation, and none would end up in
+  // the monotonic buffer that owns the result's storage.
+  std::vector<std::string> words;
+  words.reserve(64);
+  for (int i = 0; i < 64; ++i) {
+    words.push_back(absl::StrCat("s", i));
+  }
+  // Enforce the test premise: all words must fit within standard library SSO
+  // capacity (<= 15 bytes on 64-bit platforms).
+  ASSERT_TRUE(ql::ranges::all_of(
+      words, [](const auto& word) { return word.size() <= 15; }));
+  auto vocab = this->createCompressedVocabulary()(words);
+
+  const auto indices =
+      ::ranges::to<std::vector>(ql::views::iota(size_t{0}, words.size()));
+  const auto result = vocab.lookupBatch(indices);
+  ASSERT_EQ(result.size(), indices.size());
+
+  // Clobber the stack region a dangling SSO view would point into. Two deep
+  // frames of sentinel bytes leave no plausible intact copy behind.
+  auto churn = []() { clobberStack(); };
+  churn();
+  churn();
+
+  for (size_t i = 0; i < indices.size(); ++i) {
+    ASSERT_EQ(result[i], words[i]);
+  }
+}
+// _____________________________________________________________________________
+// A vocabulary containing the empty string word ("") must be scanned correctly
+// across all compressors (exercising the `maxDecompressedSize == 0` fast path
+// in `scanAll`'s buffered decode), and zero-length views must provide non-null
+// data pointers.
+TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
+  auto createVocab = TestFixture::createCompressedVocabulary();
+  const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
+  auto vocab = createVocab(words);
+  std::vector<std::string> scannedWords;
+  for (const IndexAndWord& entry : vocab.scanAll()) {
+    if (entry.word_.empty()) {
+      EXPECT_NE(entry.word_.data(), nullptr);
+    }
+    scannedWords.emplace_back(entry.word_);
+  }
+  using ::testing::ElementsAreArray;
+  EXPECT_THAT(scannedWords, ElementsAreArray(words));
+}
+
+// _____________________________________________________________________________
+// Direct test of the documented lifetime semantics of `scanAll`: each yielded
+// `string_view` points into the range object that is REUSED for
+// the next element, so a previously yielded view must no longer hold the old
+// word once the next element has been pulled. Because the buffer outlives the
+// whole range (it lives in the range adaptor's closure), reading the stale
+// view afterwards is well-defined memory access -- which makes the assertion
 
 namespace {
 

@@ -35,6 +35,9 @@ else()
 endif()
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Cluster GCC+range-v3: local types in transform_view / jthread are "used but
+# never defined" without -fpermissive (same unblock as other export-v2 branches).
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     # will not take effect without FORCE
     set(CMAKE_INSTALL_PREFIX ${CMAKE_BINARY_DIR} CACHE PATH "Install top-level directory" FORCE)
@@ -116,6 +119,11 @@ message(STATUS "QLEVER_NO_UNDEFINED_SYMBOLS is ${QLEVER_NO_UNDEFINED_SYMBOLS}")
 # has to load all the shared libraries again.
 option(QLEVER_ONE_TEST_CASE_PER_FILE "Register one `ctest` test per test binary instead of one per gtest case" OFF)
 
+option(QLEVER_ENABLE_EXPORT_V2 "Compile the experimental export V2 path" OFF)
+if (QLEVER_ENABLE_EXPORT_V2)
+    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2=1)
+endif ()
+
 # Disable nlohmann implicit conversions (e.g. json → std::string) globally so
 # all TUs, including those compiled via PCH, see the same flag value.
 add_compile_definitions(JSON_USE_IMPLICIT_CONVERSIONS=0)
@@ -146,6 +154,11 @@ endif()
 option(EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17 "Use the C++17 backports inside `SparqlExpressionGenerators.h`. They are currently less efficient than the C++20 implementations. This option is implicitly activated by the `REDUCED_FEATURE_SET_FOR_CPP17` option, but can be activated separately to run the unit tests for the backports of the `ExpressionGenerators`" OFF)
 if (EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
     add_compile_definitions(QLEVER_EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
+endif()
+
+option(QLEVER_ENABLE_EXPORT_V2 "Enable Fast-Path Streaming Export Engine V2" ON)
+if (QLEVER_ENABLE_EXPORT_V2)
+    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2)
 endif()
 
 # Select the memory-allocator backend that `qlever::Allocator` resolves to
@@ -252,6 +265,9 @@ else ()
     add_compile_definitions(RANGE_V3_COMBINE_WITH_STD)
     set(QLEVER_CPP_17_BACKPORTS_ENABLED OFF)
 endif ()
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+    add_compile_options(-fpermissive)
+endif()
 
 ###############################################################################
 ##### Essential settings #####
