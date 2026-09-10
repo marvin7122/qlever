@@ -10,6 +10,7 @@
 #ifndef QLEVER_TEST_UTIL_DANGLINGVIEWTESTHELPERS_H
 #define QLEVER_TEST_UTIL_DANGLINGVIEWTESTHELPERS_H
 
+#include <atomic>
 #include <cstddef>
 
 // _____________________________________________________________________________
@@ -29,8 +30,11 @@ template <size_t NumBytes = 4096>
     buffer[i] = sentinel;
   }
   // Compiler barrier: prevents the optimizer from eliding the stack writes or
-  // reordering them past the return. Not a hardware memory fence.
-  asm volatile("" : : "r"(buffer) : "memory");
+  // reordering them past the return. A signal fence compiles to no
+  // instructions (unlike a thread fence it is not a hardware memory fence),
+  // and unlike inline assembly it also compiles under Emscripten, which
+  // builds this helper as part of `GTestHelpersTest`.
+  std::atomic_signal_fence(std::memory_order_seq_cst);
   return buffer[NumBytes - 1];
 }
 
