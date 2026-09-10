@@ -189,7 +189,8 @@ class Server {
     // Scatter-gather (export-send=iovec) responses use a different body
     // type that `ResponseT` cannot hold; capture them separately so the
     // iovec path stays testable through this seam.
-    std::optional<http::response<ql::engine::export_v2::scatter_gather_body>>
+    std::optional<boost::beast::http::response<
+        ql::engine::export_v2::scatter_gather_body>>
         scatterGatherResponse_;
 #endif
   };
