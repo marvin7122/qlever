@@ -270,7 +270,7 @@ void ElasticExportScheduler::postAccounted(OwnedMorsel morsel) {
   const uint64_t jobId = morsel.jobId_;
   ++outstandingPerSession_[jobId];
   ++totalOutstanding_;
-  poster_([this, morsel = std::move(morsel)]() mutable {
+  poster_([this, jobId, morsel = std::move(morsel)]() mutable {
     try {
       runPostedMorsel(std::move(morsel));
     } catch (...) {
