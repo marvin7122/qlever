@@ -28,6 +28,9 @@
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
 #include "engine/export_v2/ElasticExportScheduler.h"
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+#include "engine/export_v2/ScatterGatherHttpBody.h"
+#endif
 #include "index/IdTableUtils.h"
 #include "index/Index.h"
 #include "libqlever/Qlever.h"
@@ -169,11 +172,26 @@ class Server {
   class MockSend {
    public:
     Awaitable<void> operator()(auto response) {
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+      using Body = typename std::decay_t<decltype(response)>::body_type;
+      if constexpr (std::is_same_v<
+                        Body, ql::engine::export_v2::scatter_gather_body>) {
+        scatterGatherResponse_ = std::move(response);
+        co_return;
+      }
+#endif
       response_ = std::move(response);
       co_return;
     }
 
     ResponseT response_;
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+    // Scatter-gather (export-send=iovec) responses use a different body
+    // type that `ResponseT` cannot hold; capture them separately so the
+    // iovec path stays testable through this seam.
+    std::optional<http::response<ql::engine::export_v2::scatter_gather_body>>
+        scatterGatherResponse_;
+#endif
   };
 
   CPP_template(typename CancelTimeout)(
