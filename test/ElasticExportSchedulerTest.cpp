@@ -5,6 +5,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <boost/asio/post.hpp>
+#include <boost/asio/static_thread_pool.hpp>
+#include <functional>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -747,4 +750,110 @@ TEST(ElasticExportSchedulerTest, OwnedMorselDerivesJobIdFromState) {
 
 TEST(ElasticExportSchedulerTest, OwnedMorselNullStateThrows) {
   EXPECT_THROW(OwnedMorsel(nullptr, 0, 0), ad_utility::Exception);
+}
+
+// -----------------------------------------------------------------------------
+// Server wiring validation: the production wiring shape bounds the pool
+// -----------------------------------------------------------------------------
+// Mirrors Server::Server (poster onto queryThreadPool_, cap at the pool
+// size, registry attach) against a real static_thread_pool and asserts the
+// three wiring invariants: outstanding work never exceeds the pool, a second
+// registered query stops helper admission, and ending it resumes within the
+// cap.
+
+namespace {
+// Poll `condition` until true or `timeout` passes; fails the test on expiry.
+bool pollUntil(const std::function<bool()>& condition,
+               std::chrono::milliseconds timeout = 10s) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (!condition()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::yield();
+  }
+  return true;
+}
+}  // namespace
+
+TEST(ElasticExportSchedulerTest, ProductionWiringBoundsPoolAndYieldsToLoad) {
+  constexpr size_t poolSize = 4;
+  boost::asio::static_thread_pool pool(poolSize);
+  std::atomic<size_t> postedCount{0};
+  auto scheduler = ElasticExportScheduler::create(
+      [&pool, &postedCount](absl::AnyInvocable<void()> work) {
+        postedCount.fetch_add(1, std::memory_order_relaxed);
+        auto held =
+            std::make_shared<absl::AnyInvocable<void()>>(std::move(work));
+        boost::asio::post(pool, [held]() { (*held)(); });
+      },
+      64);
+  scheduler->setMaxConcurrentMorsels(poolSize);
+  ad_utility::websocket::QueryRegistry registry;
+  scheduler->attachToQueryRegistry(registry);
+
+  // The export query itself: one registered query keeps helpers eligible.
+  auto exportQuery = registry.uniqueId("SELECT ?x WHERE { ?x ?p ?o }");
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
+
+  auto sessionA = scheduler->createSession<std::string>();
+  auto sessionB = scheduler->createSession<std::string>();
+  sessionA.setOrdered(false);
+  sessionB.setOrdered(false);
+  EXPECT_EQ(sessionA.state(), SessionState::HelpersEligible);
+
+  // Gate all helper tasks so the pool saturates deterministically.
+  std::atomic<size_t> arrived{0};
+  std::atomic<size_t> inFlight{0};
+  std::atomic<size_t> maxInFlight{0};
+  std::atomic<bool> release{false};
+  auto blockingTask = [&]() -> std::string {
+    const size_t current = inFlight.fetch_add(1) + 1;
+    size_t seen = maxInFlight.load();
+    while (current > seen &&
+           !maxInFlight.compare_exchange_weak(seen, current)) {
+    }
+    arrived.fetch_add(1);
+    while (!release.load()) {
+      std::this_thread::yield();
+    }
+    inFlight.fetch_sub(1);
+    return "blocked";
+  };
+  for (size_t i = 0; i < poolSize; ++i) {
+    sessionA.submitMorsel(blockingTask);
+    sessionB.submitMorsel(blockingTask);
+  }
+  // Two sessions share four slots: four posted synchronously, four pending.
+  EXPECT_EQ(postedCount.load(), poolSize);
+  ASSERT_TRUE(pollUntil([&] { return arrived.load() == poolSize; }));
+  EXPECT_LE(maxInFlight.load(), poolSize);
+
+  // Foreground load arrives: admission stops, new morsels run inline on the
+  // coordinator instead of taking pool threads from the interactive query.
+  {
+    auto foregroundQuery = registry.uniqueId("SELECT ?y WHERE { ?y ?p ?o }");
+    EXPECT_EQ(scheduler->activeForegroundQueries(), 2u);
+    for (size_t i = 0; i < poolSize; ++i) {
+      sessionA.submitMorsel([i]() { return "inline_" + std::to_string(i); });
+    }
+    EXPECT_EQ(postedCount.load(), poolSize);
+    for (size_t i = 0; i < poolSize; ++i) {
+      EXPECT_EQ(sessionA.consumeNextResult(), "inline_" + std::to_string(i));
+    }
+  }
+  // Load gone while the pool is still saturated: the cap still holds, so
+  // nothing new is posted.
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
+  EXPECT_EQ(postedCount.load(), poolSize);
+
+  release.store(true);
+  pool.join();
+  for (size_t i = 0; i < poolSize; ++i) {
+    EXPECT_EQ(sessionA.consumeNextResult(), "blocked");
+    EXPECT_EQ(sessionB.consumeNextResult(), "blocked");
+  }
+  EXPECT_FALSE(sessionA.hasMoreResults());
+  EXPECT_FALSE(sessionB.hasMoreResults());
+  EXPECT_LE(maxInFlight.load(), poolSize);
 }
