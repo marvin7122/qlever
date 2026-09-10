@@ -23,15 +23,16 @@
 namespace qlever::export_pipeline {
 
 // _____________________________________________________________________________
-// Standard known IRI prefix IDs for high-throughput single-instruction emission.
+// Standard known IRI prefix IDs for high-throughput single-instruction
+// emission.
 enum class WellKnownPrefixId : uint8_t {
-  WikidataEntity = 0,    // http://www.wikidata.org/entity/
-  WikidataDirectProp,    // http://www.wikidata.org/prop/direct/
-  RdfSyntax,             // http://www.w3.org/1999/02/22-rdf-syntax-ns#
-  RdfsSchema,            // http://www.w3.org/2000/01/rdf-schema#
-  OwlOntology,           // http://www.w3.org/2002/07/owl#
-  SchemaOrg,             // http://schema.org/
-  XmlSchema,             // http://www.w3.org/2001/XMLSchema#
+  WikidataEntity = 0,  // http://www.wikidata.org/entity/
+  WikidataDirectProp,  // http://www.wikidata.org/prop/direct/
+  RdfSyntax,           // http://www.w3.org/1999/02/22-rdf-syntax-ns#
+  RdfsSchema,          // http://www.w3.org/2000/01/rdf-schema#
+  OwlOntology,         // http://www.w3.org/2002/07/owl#
+  SchemaOrg,           // http://schema.org/
+  XmlSchema,           // http://www.w3.org/2001/XMLSchema#
   Count
 };
 
@@ -46,23 +47,30 @@ class VectorizedPrefixTable {
   };
 
  private:
-  std::array<PrefixEntry, static_cast<size_t>(WellKnownPrefixId::Count)> entries_{};
+  std::array<PrefixEntry, static_cast<size_t>(WellKnownPrefixId::Count)>
+      entries_{};
 
  public:
   VectorizedPrefixTable() noexcept {
-    initEntry(WellKnownPrefixId::WikidataEntity, "http://www.wikidata.org/entity/");
-    initEntry(WellKnownPrefixId::WikidataDirectProp, "http://www.wikidata.org/prop/direct/");
-    initEntry(WellKnownPrefixId::RdfSyntax, "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-    initEntry(WellKnownPrefixId::RdfsSchema, "http://www.w3.org/2000/01/rdf-schema#");
+    initEntry(WellKnownPrefixId::WikidataEntity,
+              "http://www.wikidata.org/entity/");
+    initEntry(WellKnownPrefixId::WikidataDirectProp,
+              "http://www.wikidata.org/prop/direct/");
+    initEntry(WellKnownPrefixId::RdfSyntax,
+              "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+    initEntry(WellKnownPrefixId::RdfsSchema,
+              "http://www.w3.org/2000/01/rdf-schema#");
     initEntry(WellKnownPrefixId::OwlOntology, "http://www.w3.org/2002/07/owl#");
     initEntry(WellKnownPrefixId::SchemaOrg, "http://schema.org/");
-    initEntry(WellKnownPrefixId::XmlSchema, "http://www.w3.org/2001/XMLSchema#");
+    initEntry(WellKnownPrefixId::XmlSchema,
+              "http://www.w3.org/2001/XMLSchema#");
   }
 
   // ___________________________________________________________________________
   // Write a well-known prefix into `out` using 128-bit vector stores.
   // Returns the number of bytes written.
-  [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id, char* out) const noexcept {
+  [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id,
+                                              char* out) const noexcept {
     const auto& entry = entries_[static_cast<size_t>(id)];
     const __m128i* src = reinterpret_cast<const __m128i*>(entry.data);
     __m128i* dst = reinterpret_cast<__m128i*>(out);
