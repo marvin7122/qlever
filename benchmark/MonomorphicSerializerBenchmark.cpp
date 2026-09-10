@@ -74,13 +74,9 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
-void operator delete(void* ptr) noexcept {
-  std::free(ptr);
-}
+void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept {
-  std::free(ptr);
-}
+void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
 
 namespace ad_benchmark {
 namespace {
@@ -90,7 +86,8 @@ using namespace ql::export_formatting;
 
 // _____________________________________________________________________________
 // Hardware Performance Counter Monitor (Linux perf_event_open)
-// Measures Hardware CPU Cycles, Instructions, Branch Instructions, and Branch Misses.
+// Measures Hardware CPU Cycles, Instructions, Branch Instructions, and Branch
+// Misses.
 class PerfCounterMonitor {
  public:
   struct Metrics {
@@ -128,9 +125,12 @@ class PerfCounterMonitor {
   PerfCounterMonitor() noexcept {
 #ifdef __linux__
     fdCycles_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES);
-    fdInstructions_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
-    fdBranches_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
-    fdBranchMisses_ = openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES);
+    fdInstructions_ =
+        openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
+    fdBranches_ =
+        openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
+    fdBranchMisses_ =
+        openPerfEvent(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES);
     isAvailable_ = (fdCycles_ >= 0 && fdInstructions_ >= 0 && fdBranches_ >= 0);
 #endif
   }
@@ -177,11 +177,12 @@ class PerfCounterMonitor {
             read(fdBranchMisses_, &m.branchMisses, sizeof(m.branchMisses));
       }
       if (m.cycles > 0) {
-        m.ipc = static_cast<double>(m.instructions) / static_cast<double>(m.cycles);
+        m.ipc =
+            static_cast<double>(m.instructions) / static_cast<double>(m.cycles);
       }
       if (m.branches > 0) {
-        m.branchMissRate =
-            static_cast<double>(m.branchMisses) / static_cast<double>(m.branches) * 100.0;
+        m.branchMissRate = static_cast<double>(m.branchMisses) /
+                           static_cast<double>(m.branches) * 100.0;
       }
     }
 #endif
@@ -226,7 +227,8 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
 
   // Common IRIs
   data.stringPool_.push_back("<http://www.w3.org/2000/01/rdf-schema#label>");
-  data.stringPool_.push_back("<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>");
+  data.stringPool_.push_back(
+      "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>");
   data.stringPool_.push_back("<http://example.org/prop/population>");
   data.stringPool_.push_back("<http://example.org/prop/areaSqKm>");
 
@@ -237,11 +239,13 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
 
   for (size_t i = 0; i < numRows; ++i) {
     // Subjects
-    data.stringPool_.push_back("<http://example.org/entity/Q" + std::to_string(i) + ">");
+    data.stringPool_.push_back("<http://example.org/entity/Q" +
+                               std::to_string(i) + ">");
     std::string_view subj = data.stringPool_.back();
 
     // Literals
-    data.stringPool_.push_back("\"Metropolitan City Name " + std::to_string(i) + "\"@en");
+    data.stringPool_.push_back("\"Metropolitan City Name " + std::to_string(i) +
+                               "\"@en");
     std::string_view literal = data.stringPool_.back();
 
     // Objects
@@ -252,12 +256,14 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
     double areaVal = 12.5 + static_cast<double>(i % 500) * 0.75;
 
     // 1. Triple Schema: <IRI, IRI, LITERAL>
-    data.tripleRows_.push_back({CellValue::makeIri(subj), CellValue::makeIri(predLabel),
+    data.tripleRows_.push_back({CellValue::makeIri(subj),
+                                CellValue::makeIri(predLabel),
                                 CellValue::makeLiteral(literal)});
     data.tripleTuples_.push_back({subj, predLabel, literal});
 
     // 2. Metric Schema: <IRI, IRI, INT>
-    data.metricRows_.push_back({CellValue::makeIri(subj), CellValue::makeIri(predPop),
+    data.metricRows_.push_back({CellValue::makeIri(subj),
+                                CellValue::makeIri(predPop),
                                 CellValue::makeInt(popVal)});
     data.metricTuples_.push_back({subj, predPop, popVal});
 
@@ -268,7 +274,8 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
     data.relationalTuples_.push_back({subj, literal, popVal, areaVal});
 
     // 4. Graph Edge Schema: <IRI, IRI, IRI>
-    data.graphEdgeRows_.push_back({CellValue::makeIri(subj), CellValue::makeIri(predType),
+    data.graphEdgeRows_.push_back({CellValue::makeIri(subj),
+                                   CellValue::makeIri(predType),
                                    CellValue::makeIri(classCity)});
   }
 
@@ -276,7 +283,8 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
 }
 
 // _____________________________________________________________________________
-// Benchmark class comparing Dynamic Per-Cell Dispatch vs Monomorphic Template Serializers
+// Benchmark class comparing Dynamic Per-Cell Dispatch vs Monomorphic Template
+// Serializers
 class MonomorphicSerializerBenchmark : public BenchmarkInterface {
  private:
   DatasetStorage data_;
@@ -284,14 +292,16 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
  public:
   MonomorphicSerializerBenchmark() {
-    std::cout << "Initializing MonomorphicSerializerBenchmark (1,000,000 Rows)..."
-              << std::endl;
+    std::cout
+        << "Initializing MonomorphicSerializerBenchmark (1,000,000 Rows)..."
+        << std::endl;
     data_ = generateBenchmarkDataset(NUM_BENCHMARK_ROWS);
     std::cout << "Synthetic dataset generation complete." << std::endl;
   }
 
   std::string name() const final {
-    return "Monomorphic Template Serialization vs Dynamic Dispatch (1,000,000 Rows)";
+    return "Monomorphic Template Serialization vs Dynamic Dispatch (1,000,000 "
+           "Rows)";
   }
 
   BenchmarkResults runAllBenchmarks() final {
@@ -305,7 +315,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
     // SECTION 1: Standard RDF Triples Schema <IRI, IRI, LITERAL>
     // =========================================================================
     {
-      auto& group = results.addGroup("Schema: <IRI, IRI, LITERAL> (1M Triples)");
+      auto& group =
+          results.addGroup("Schema: <IRI, IRI, LITERAL> (1M Triples)");
       const std::vector<ColumnType> schema = {ColumnType::Iri, ColumnType::Iri,
                                               ColumnType::Literal};
 
@@ -315,8 +326,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
         PerfCounterMonitor::Metrics perf;
         size_t totalBytes = 0;
 
-        auto& m = group.addMeasurement(
-            "1. Dynamic Per-Cell Dispatch (CSV)", [&]() {
+        auto& m =
+            group.addMeasurement("1. Dynamic Per-Cell Dispatch (CSV)", [&]() {
               AllocationTracker::start();
               perfMonitor_.start();
 
@@ -382,7 +393,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
               FastExportStreamFormatter formatter(nullSink);
               for (const auto& [s, p, o] : data_.tripleTuples_) {
-                MonomorphicTriples::serializeRow<ExportFormat::Csv>(formatter, s, p, o);
+                MonomorphicTriples::serializeRow<ExportFormat::Csv>(formatter,
+                                                                    s, p, o);
               }
               auto summary = std::move(formatter).finalize();
 
@@ -401,21 +413,19 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
         PerfCounterMonitor::Metrics perf;
         size_t totalBytes = 0;
 
-        auto& m = group.addMeasurement(
-            "4. Fast-Path Template Dispatch (CSV)", [&]() {
+        auto& m =
+            group.addMeasurement("4. Fast-Path Template Dispatch (CSV)", [&]() {
               AllocationTracker::start();
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              dispatchMonomorphicSerializer(
-                  schema,
-                  [&]<ColumnType... Types>() {
-                    using Serializer = MonomorphicRowSerializer<Types...>;
-                    for (const auto& row : data_.tripleRows_) {
-                      Serializer::template serializeRow<ExportFormat::Csv>(
-                          formatter, ql::span<const CellValue>(row));
-                    }
-                  });
+              dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
+                using Serializer = MonomorphicRowSerializer<Types...>;
+                for (const auto& row : data_.tripleRows_) {
+                  Serializer::template serializeRow<ExportFormat::Csv>(
+                      formatter, ql::span<const CellValue>(row));
+                }
+              });
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();
@@ -443,8 +453,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
         PerfCounterMonitor::Metrics perf;
         size_t totalBytes = 0;
 
-        auto& m = group.addMeasurement(
-            "1. Dynamic Per-Cell Dispatch (TSV)", [&]() {
+        auto& m =
+            group.addMeasurement("1. Dynamic Per-Cell Dispatch (TSV)", [&]() {
               AllocationTracker::start();
               perfMonitor_.start();
 
@@ -468,7 +478,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
       // 2. Monomorphic Template Serializer
       {
         using MonomorphicMetrics =
-            MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Int>;
+            MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
+                                     ColumnType::Int>;
         PerfCounterMonitor::Metrics perf;
         size_t totalBytes = 0;
 
@@ -497,7 +508,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
       // 3. Monomorphic Direct Tuple Serializer
       {
         using MonomorphicMetrics =
-            MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Int>;
+            MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
+                                     ColumnType::Int>;
         PerfCounterMonitor::Metrics perf;
         size_t totalBytes = 0;
 
@@ -508,7 +520,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
               FastExportStreamFormatter formatter(nullSink);
               for (const auto& [s, p, i] : data_.metricTuples_) {
-                MonomorphicMetrics::serializeRow<ExportFormat::Tsv>(formatter, s, p, i);
+                MonomorphicMetrics::serializeRow<ExportFormat::Tsv>(formatter,
+                                                                    s, p, i);
               }
               auto summary = std::move(formatter).finalize();
 
@@ -529,8 +542,9 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
     {
       auto& group = results.addGroup(
           "Schema: <IRI, LITERAL, INT, DOUBLE> 4-Column Relational (1M Rows)");
-      const std::vector<ColumnType> schema = {ColumnType::Iri, ColumnType::Literal,
-                                              ColumnType::Int, ColumnType::Double};
+      const std::vector<ColumnType> schema = {
+          ColumnType::Iri, ColumnType::Literal, ColumnType::Int,
+          ColumnType::Double};
 
       // 1. Dynamic Per-Cell Dispatch
       {
@@ -538,8 +552,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
         PerfCounterMonitor::Metrics perf;
         size_t totalBytes = 0;
 
-        auto& m = group.addMeasurement(
-            "1. Dynamic Per-Cell Dispatch (CSV)", [&]() {
+        auto& m =
+            group.addMeasurement("1. Dynamic Per-Cell Dispatch (CSV)", [&]() {
               AllocationTracker::start();
               perfMonitor_.start();
 
@@ -605,8 +619,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
 
               FastExportStreamFormatter formatter(nullSink);
               for (const auto& [c0, c1, c2, c3] : data_.relationalTuples_) {
-                MonomorphicRelational::serializeRow<ExportFormat::Csv>(formatter, c0, c1,
-                                                                      c2, c3);
+                MonomorphicRelational::serializeRow<ExportFormat::Csv>(
+                    formatter, c0, c1, c2, c3);
               }
               auto summary = std::move(formatter).finalize();
 
@@ -629,8 +643,8 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
                             const PerfCounterMonitor::Metrics& perf,
                             size_t heapAllocations) {
     m.metadata().addKeyValuePair("total-rows", rowCount);
-    m.metadata().addKeyValuePair("total-bytes-mb",
-                                 static_cast<double>(totalBytes) / (1024.0 * 1024.0));
+    m.metadata().addKeyValuePair(
+        "total-bytes-mb", static_cast<double>(totalBytes) / (1024.0 * 1024.0));
     m.metadata().addKeyValuePair("heap-allocations", heapAllocations);
 
     if (perf.available) {
