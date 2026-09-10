@@ -52,7 +52,12 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   // Model a fixed three-stage repeated-FSST decode pipeline.
   static constexpr size_t numberOfStages = 3;
   // Keep views into the compressed strings retained by `decoderStorage_`.
+  // The initial views point into `wordsStorage_`; later stages point into the
+  // buffers retained by `decoderStorage_`.
   std::vector<std::string_view> compressed_;
+  // Retain ownership of the original words for the lifetime of the initial
+  // views in `compressed_` (the first `compressAll` call reads them).
+  std::vector<std::string> wordsStorage_;
   std::array<FsstDecoder, numberOfStages> decoders_;
   // Retain ownership of the compressed strings for the lifetime of the views in
   // `compressed_`.
@@ -68,18 +73,17 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   FsstScratchBufferBenchmark() {
     constexpr std::string_view alphabet{
         "abcdefghijklmnopqrstuvwxyz0123456789_:/.-#"};
-    std::vector<std::string> words;
-    words.reserve(5'000);
+    wordsStorage_.reserve(5'000);
     for (size_t i = 0; i < 5'000; ++i) {
       std::string suffix;
       suffix.reserve(45);
       for (size_t character = 0; character < 45; ++character) {
         suffix += alphabet[(i * 17 + character * 31) % alphabet.size()];
       }
-      words.push_back("http://www.wikidata.org/entity/Q" + suffix);
+      wordsStorage_.push_back("http://www.wikidata.org/entity/Q" + suffix);
     }
 
-    compressed_.assign(words.begin(), words.end());
+    compressed_.assign(wordsStorage_.begin(), wordsStorage_.end());
     decoderStorage_.reserve(numberOfStages);
     for (size_t stage = 0; stage < numberOfStages; ++stage) {
       auto [storage, compressed, decoder] =
