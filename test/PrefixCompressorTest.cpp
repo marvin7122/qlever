@@ -83,7 +83,8 @@ TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
   AD_EXPECT_THROW_WITH_MESSAGE(static_cast<void>(p.maxDecompressedSize("")),
                                ::testing::HasSubstr("!compressedWord.empty()"));
 
-  // Ensure that decompressing into an undersized output buffer fails the contract check.
+  // Ensure that decompressing into an undersized output buffer fails the
+  // contract check.
   const std::string compressed = p.compress("alphabet");
   std::string smallBuf(1, '\0');
   AD_EXPECT_THROW_WITH_MESSAGE(
@@ -102,7 +103,8 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
 
   EXPECT_EQ(p.prefixIndex(compressedAlpha), 0u);
   EXPECT_FALSE(p.prefixIndex(compressedBeta).has_value());
-  EXPECT_FALSE(p.prefixIndex(std::string(1, static_cast<char>(NO_PREFIX_CHAR))).has_value());
+  EXPECT_FALSE(p.prefixIndex(std::string(1, static_cast<char>(NO_PREFIX_CHAR)))
+                   .has_value());
   EXPECT_FALSE(p.prefixIndex(std::string(1, '\0')).has_value());
   EXPECT_EQ(p.maxDecompressedSize(compressedAlpha), 5u);
   EXPECT_EQ(p.maxDecompressedSize(compressedBeta), 4u);
@@ -112,7 +114,6 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
                              ql::span<char>{output.data(), output.size()}),
             5u);
   EXPECT_EQ(output, "alpha");
-
 }
 
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
