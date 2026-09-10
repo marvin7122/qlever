@@ -152,6 +152,8 @@ void ElasticExportScheduler::onForegroundQueryStarted() {
           sessions_.end());
     }
 
+    liveSessionCount_.store(aliveSessions.size(), std::memory_order_relaxed);
+
     for (auto& session : aliveSessions) {
       session->onDemandChanged(current, newEpoch);
     }
@@ -192,6 +194,8 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
           sessions_.end());
     }
 
+    liveSessionCount_.store(aliveSessions.size(), std::memory_order_relaxed);
+
     for (auto& session : aliveSessions) {
       session->onDemandChanged(current, newEpoch);
     }
@@ -226,9 +230,19 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
     if (stopping_.load(std::memory_order_relaxed)) {
       return false;
     }
-    poster_([this, morsel = std::move(morsel)]() mutable {
-      runPostedMorsel(std::move(morsel));
-    });
+    std::unique_lock<std::mutex> lock(queueMutex_);
+    const size_t live = liveSessionCount_.load(std::memory_order_relaxed);
+    const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
+    const size_t share = fairShareUnsafe(live);
+    const size_t committed = outstandingPerSession_[morsel.jobId_];
+    // Even split with a progress floor of one: below-share sessions post
+    // immediately while total capacity allows, the rest wait first-in
+    // first-out in pendingAdmission_.
+    if (committed < share && totalOutstanding_ < max) {
+      postAccounted(std::move(morsel));
+      return true;
+    }
+    pendingAdmission_.push_back(std::move(morsel));
     return true;
   }
   std::unique_lock<std::mutex> lock(queueMutex_);
@@ -250,6 +264,73 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
   queue_.push_back(std::move(morsel));
   workAvailableCv_.notify_one();
   return true;
+}
+
+void ElasticExportScheduler::postAccounted(OwnedMorsel morsel) {
+  const uint64_t jobId = morsel.jobId_;
+  ++outstandingPerSession_[jobId];
+  ++totalOutstanding_;
+  poster_([this, morsel = std::move(morsel)]() mutable {
+    try {
+      runPostedMorsel(std::move(morsel));
+    } catch (...) {
+      // Account completion before propagating: shares must not clog on
+      // throwing tasks. Propagation semantics stay unchanged.
+      std::lock_guard<std::mutex> lock(queueMutex_);
+      decrementOutstandingUnsafe(jobId);
+      drainPendingAdmissionUnsafe();
+      throw;
+    }
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    decrementOutstandingUnsafe(jobId);
+    drainPendingAdmissionUnsafe();
+  });
+}
+
+void ElasticExportScheduler::decrementOutstandingUnsafe(uint64_t jobId) {
+  auto it = outstandingPerSession_.find(jobId);
+  AD_CORRECTNESS_CHECK(it != outstandingPerSession_.end(),
+                       "Completion without outstanding morsel");
+  AD_CORRECTNESS_CHECK(it->second > 0, "Outstanding count underflow");
+  AD_CORRECTNESS_CHECK(totalOutstanding_ > 0, "Total outstanding underflow");
+  if (--(it->second) == 0) {
+    outstandingPerSession_.erase(it);
+  }
+  --totalOutstanding_;
+}
+
+void ElasticExportScheduler::drainPendingAdmissionUnsafe() {
+  const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
+  const size_t live = liveSessionCount_.load(std::memory_order_relaxed);
+  const size_t share = fairShareUnsafe(live);
+  // Purge cancelled sessions first so their morsels never occupy shares.
+  pendingAdmission_.erase(
+      std::remove_if(
+          pendingAdmission_.begin(), pendingAdmission_.end(),
+          [](const OwnedMorsel& m) { return m.jobState_->isCancelled(); }),
+      pendingAdmission_.end());
+  // Oldest session first: lowest jobId among servable entries wins, which
+  // implements the remainder-oldest rule while preserving first-in
+  // first-out order within each session.
+  while (totalOutstanding_ < max && !pendingAdmission_.empty()) {
+    auto best = pendingAdmission_.end();
+    for (auto it = pendingAdmission_.begin(); it != pendingAdmission_.end();
+         ++it) {
+      const size_t committed = outstandingPerSession_[it->jobId_];
+      if (committed >= share) {
+        continue;
+      }
+      if (best == pendingAdmission_.end() || it->jobId_ < best->jobId_) {
+        best = it;
+      }
+    }
+    if (best == pendingAdmission_.end()) {
+      return;
+    }
+    OwnedMorsel morsel = std::move(*best);
+    pendingAdmission_.erase(best);
+    postAccounted(std::move(morsel));
+  }
 }
 
 void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
@@ -281,6 +362,7 @@ void ElasticExportScheduler::registerSession(
                      [](const auto& weak) { return weak.expired(); }),
       sessions_.end());
   sessions_.push_back(std::move(sessionState));
+  liveSessionCount_.store(sessions_.size(), std::memory_order_relaxed);
 }
 
 void ElasticExportScheduler::onLeaseReleased(
