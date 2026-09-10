@@ -58,3 +58,12 @@ TEST(StringTest, ResizeAndOverwriteZeroCapacity) {
   EXPECT_TRUE(s.empty());
   EXPECT_EQ(s.size(), 0u);
 }
+
+// _____________________________________________________________________________
+// Negative test: an operation returning more than the granted size violates
+// the contract on both the fallback and the C++23 branch.
+TEST(StringTest, ResizeAndOverwriteOversizedResultThrows) {
+  std::string s;
+  ASSERT_THROW(ql::resize_and_overwrite(s, 4, [](char*, size_t) { return 5u; }),
+               ad_utility::Exception);
+}
