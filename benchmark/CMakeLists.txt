@@ -44,4 +44,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
 
+    addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
+
 endif()
