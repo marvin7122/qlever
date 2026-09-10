@@ -17,21 +17,19 @@
 #include <array>
 #include <limits>
 #include <memory>
-#include <string>
-#include <vector>
-
 #include <range/v3/view/iota.hpp>
 #include <range/v3/view/reverse.hpp>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "backports/span.h"
 #include "backports/string.h"
 #include "util/Concepts.h"
 #include "util/Exception.h"
 #include "util/Log.h"
-#include <string_view>
-
 #include "util/TypeTraits.h"
-#include <utility>
 
 namespace detail {
 // _____________________________________________________________________________
@@ -128,9 +126,8 @@ class FsstDecoder {
   [[nodiscard]] std::string decompress(std::string_view str) const {
     const size_t bound = maxDecompressedSize(str);
     std::string result = detail::decompressToOwnedString(
-        bound, [this, str](ql::span<char> out) {
-          return decompressInto(str, out);
-        });
+        bound,
+        [this, str](ql::span<char> out) { return decompressInto(str, out); });
     AD_CORRECTNESS_CHECK(result.size() <= bound);
     return result;
   }
@@ -147,10 +144,11 @@ class FsstDecoder {
 };
 
 // _____________________________________________________________________________
-// A sequence of `N` `FsstDecoder` objects that are chained in inverted order (the
-// last one first) when decompressing a string. The inverted order is chosen,
-// because it is the correct way to decompress a string that was compressed by
-// the N corresponding encoders in the "normal" order (first encoder first).
+// A sequence of `N` `FsstDecoder` objects that are chained in inverted order
+// (the last one first) when decompressing a string. The inverted order is
+// chosen, because it is the correct way to decompress a string that was
+// compressed by the N corresponding encoders in the "normal" order (first
+// encoder first).
 template <size_t N = 2>
 class FsstRepeatedDecoder {
   static_assert(N >= 1, "FsstRepeatedDecoder needs at least one stage");
@@ -176,8 +174,7 @@ class FsstRepeatedDecoder {
   // Return an upper bound on the size after all `N` decoding stages.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
     size_t bound = str.size();
-    for ([[maybe_unused]] size_t stage :
-         ::ranges::views::iota(size_t{0}, N)) {
+    for ([[maybe_unused]] size_t stage : ::ranges::views::iota(size_t{0}, N)) {
       AD_CONTRACT_CHECK(bound <= std::numeric_limits<size_t>::max() /
                                      FsstDecoder::maxExpansionFactor);
       bound *= FsstDecoder::maxExpansionFactor;
@@ -207,8 +204,7 @@ class FsstRepeatedDecoder {
       std::string_view input = str;
       size_t bytesWritten = 0;
       for (const auto& decoder : decoders_ | ::ranges::views::reverse) {
-        bytesWritten =
-            decoder.decompressInto(input, buffers[targetBufferIdx]);
+        bytesWritten = decoder.decompressInto(input, buffers[targetBufferIdx]);
         input = std::string_view{buffers[targetBufferIdx].data(), bytesWritten};
         targetBufferIdx ^= 1;
       }
@@ -302,9 +298,9 @@ class FsstEncoder {
   // using the same codebook shall also contribute to that codebook. Build a
   // codebook from the `strings`, and then use that codebook to compress each of
   // the `strings`. The result consists of a large `std::string` that contains
-  // all the compressed strings concatenated, a `vector<string_view>` that points
-  // to the compressed strings, and a decoder that can be used to decompress the
-  // strings again.
+  // all the compressed strings concatenated, a `vector<string_view>` that
+  // points to the compressed strings, and a decoder that can be used to
+  // decompress the strings again.
   using BulkResult = std::tuple<std::shared_ptr<std::string>,
                                 std::vector<std::string_view>, FsstDecoder>;
   template <typename T>
