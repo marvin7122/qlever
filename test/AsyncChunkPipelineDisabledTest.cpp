@@ -11,9 +11,12 @@
 
 #include <string>
 
-#include "engine/export_v2/AsyncChunkPipeline.h"
+// This test verifies the compiled-out configuration, but the top-level build
+// defines `QLEVER_ENABLE_EXPORT_V2=1` globally (default ON). Undefine it for
+// this translation unit so the header below genuinely sees the switch off.
+#undef QLEVER_ENABLE_EXPORT_V2
 
-#if !QLEVER_ENABLE_EXPORT_V2
+#include "engine/export_v2/AsyncChunkPipeline.h"
 
 namespace {
 
@@ -28,5 +31,3 @@ TEST(AsyncChunkPipelineDisabledTest, CompileTimeSwitchOverridesRuntimeOptIn) {
 }
 
 }  // namespace
-
-#endif

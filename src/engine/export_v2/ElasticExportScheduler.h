@@ -1,5 +1,5 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
+// Copyright 2026, University of Freiburg
+// Chair of Algorithms and Data Structures
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
 #pragma once
@@ -14,13 +14,11 @@
 #include <cstdint>
 #include <ctime>
 #include <deque>
-#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -257,7 +255,9 @@ class ElasticExportScheduler {
   /// Enqueue an owned morsel to the helper pool (called internally by
   /// sessions). Returns false without blocking when helpers are currently
   /// ineligible or the scheduler is stopping; the coordinator then executes
-  /// the morsel on the primary path instead.
+  /// the morsel on the primary path instead. The poster transport never
+  /// blocks: it hands the morsel to the pool, which drops it at execution
+  /// time if eligibility has lapsed.
   bool enqueueMorsel(OwnedMorsel morsel);
 
   /// Register an active session state for demand change notifications.
@@ -318,7 +318,6 @@ class ExportJobState final
     bool consumed_{false};
     absl::AnyInvocable<ResultType()> task_;
     std::optional<ResultType> result_;
-    std::exception_ptr exception_{nullptr};
     MorselProfile profile_;
   };
 
@@ -338,7 +337,7 @@ class ExportJobState final
   }
 
   [[nodiscard]] SessionState state() const noexcept {
-    return state_.load(std::memory_order_acquire);
+    return state_.load(std::memory_order_relaxed);
   }
 
   [[nodiscard]] size_t activeHelpers() const noexcept {
@@ -356,8 +355,8 @@ class ExportJobState final
       size_t maxQueries = scheduler_->maxForegroundQueriesForHelperAdmission();
       if (activeForegroundQueries <= maxQueries) {
         // Foreground load is low; helpers are eligible
-        currentEpoch_.store(newEpoch, std::memory_order_release);
-        state_.store(SessionState::HelpersEligible, std::memory_order_release);
+        currentEpoch_.store(newEpoch, std::memory_order_relaxed);
+        state_.store(SessionState::HelpersEligible, std::memory_order_relaxed);
         // Collect pending slots to submit to helper pool
         for (size_t i = nextSlotToConsume_; i < slots_.size(); ++i) {
           if (slots_[i].status_ == MorselStatus::Pending) {
@@ -366,11 +365,11 @@ class ExportJobState final
         }
       } else {
         // Foreground load exceeded threshold; revoke helpers
-        currentEpoch_.store(newEpoch, std::memory_order_release);
+        currentEpoch_.store(newEpoch, std::memory_order_relaxed);
         if (activeHelpers_.load(std::memory_order_relaxed) > 0) {
-          state_.store(SessionState::Revoking, std::memory_order_release);
+          state_.store(SessionState::Revoking, std::memory_order_relaxed);
         } else {
-          state_.store(SessionState::PrimaryOnly, std::memory_order_release);
+          state_.store(SessionState::PrimaryOnly, std::memory_order_relaxed);
         }
       }
       cv_.notify_all();
@@ -394,8 +393,8 @@ class ExportJobState final
     AD_CORRECTNESS_CHECK(prev > 0, "Underflow in activeHelpers_");
     if (prev == 1) {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (state_.load(std::memory_order_acquire) == SessionState::Revoking) {
-        state_.store(SessionState::PrimaryOnly, std::memory_order_release);
+      if (state_.load(std::memory_order_relaxed) == SessionState::Revoking) {
+        state_.store(SessionState::PrimaryOnly, std::memory_order_relaxed);
       }
       cv_.notify_all();
     }
@@ -404,8 +403,8 @@ class ExportJobState final
   void executeHelperTask(size_t morselIndex, uint64_t leaseEpoch) override {
     if (cancelled_.load(std::memory_order_relaxed) ||
         currentEpoch_.load(std::memory_order_relaxed) != leaseEpoch ||
-        state_.load(std::memory_order_acquire) == SessionState::Revoking ||
-        state_.load(std::memory_order_acquire) == SessionState::Closed) {
+        state_.load(std::memory_order_relaxed) == SessionState::Revoking ||
+        state_.load(std::memory_order_relaxed) == SessionState::Closed) {
       return;
     }
 
@@ -432,23 +431,13 @@ class ExportJobState final
     }
 
     auto startCpu = getCpuDuration();
-    std::optional<ResultType> result;
-    std::exception_ptr exceptionPtr = nullptr;
-    try {
-      result = task();
-    } catch (...) {
-      exceptionPtr = std::current_exception();
-    }
+    ResultType result = task();
     auto endCpu = getCpuDuration();
     auto endWall = std::chrono::steady_clock::now();
 
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (exceptionPtr) {
-        slots_[morselIndex].exception_ = std::move(exceptionPtr);
-      } else {
-        slots_[morselIndex].result_ = std::move(result);
-      }
+      slots_[morselIndex].result_ = std::move(result);
       slots_[morselIndex].status_ = MorselStatus::Completed;
       slots_[morselIndex].profile_.completedAt_ = endWall;
       slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
@@ -564,9 +553,6 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Completed) {
-        if (slots_[index].exception_) {
-          std::rethrow_exception(slots_[index].exception_);
-        }
         AD_CORRECTNESS_CHECK(slots_[index].result_.has_value());
         slots_[index].consumed_ = true;
         return std::move(*slots_[index].result_);
@@ -584,22 +570,12 @@ class ExportJobState final
 
         lock.unlock();
         auto startCpu = getCpuDuration();
-        std::optional<ResultType> result;
-        std::exception_ptr exceptionPtr = nullptr;
-        try {
-          result = primaryTask();
-        } catch (...) {
-          exceptionPtr = std::current_exception();
-        }
+        ResultType result = primaryTask();
         auto endCpu = getCpuDuration();
         auto endWall = std::chrono::steady_clock::now();
         lock.lock();
 
-        if (exceptionPtr) {
-          slots_[index].exception_ = std::move(exceptionPtr);
-        } else {
-          slots_[index].result_ = std::move(result);
-        }
+        slots_[index].result_ = std::move(result);
         slots_[index].status_ = MorselStatus::Completed;
         slots_[index].profile_.completedAt_ = endWall;
         slots_[index].profile_.wallDuration_ = endWall - startWall;
@@ -607,9 +583,6 @@ class ExportJobState final
         slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
         slots_[index].consumed_ = true;
         cv_.notify_all();
-        if (slots_[index].exception_) {
-          std::rethrow_exception(slots_[index].exception_);
-        }
         return std::move(*slots_[index].result_);
       }
 

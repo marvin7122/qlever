@@ -1,5 +1,5 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
+// Copyright 2026, University of Freiburg
+// Chair of Algorithms and Data Structures
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
 #include "engine/export_v2/ElasticExportScheduler.h"
@@ -285,7 +285,7 @@ void ElasticExportScheduler::workerLoop() {
                (!queue_.empty() && isHelperAdmissionEligibleUnsafe());
       });
 
-      if (stopping_.load(std::memory_order_relaxed)) {
+      if (stopping_.load(std::memory_order_relaxed) && queue_.empty()) {
         break;
       }
 
