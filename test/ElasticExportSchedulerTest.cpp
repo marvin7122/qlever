@@ -556,3 +556,128 @@ TEST(ElasticExportSchedulerTest, AbandonedRemainderRunsExactlyOnce) {
   scheduler->onForegroundQueryEnded();
   scheduler->onForegroundQueryEnded();
 }
+
+// -----------------------------------------------------------------------------
+// Even-split admission tests (poster transport with a deferred test poster)
+// -----------------------------------------------------------------------------
+
+namespace {
+// Collects posted closures without running them; the test drives execution,
+// which makes share and ordering assertions deterministic.
+struct DeferredPoster {
+  std::vector<absl::AnyInvocable<void()>> posted_;
+  size_t totalPosted_{0};
+
+  void post(absl::AnyInvocable<void()> work) {
+    posted_.push_back(std::move(work));
+    ++totalPosted_;
+  }
+
+  void runToIdle() {
+    while (!posted_.empty()) {
+      auto batch = std::move(posted_);
+      posted_.clear();
+      for (auto& work : batch) {
+        std::move(work)();
+      }
+    }
+  }
+};
+}  // namespace
+
+TEST(ElasticExportSchedulerTest, EvenSplitAcrossSessions) {
+  DeferredPoster deferred;
+  size_t postedCount = 0;
+  ElasticExportScheduler scheduler(
+      [&deferred, &postedCount](absl::AnyInvocable<void()> work) {
+        ++postedCount;
+        deferred.post(std::move(work));
+      },
+      64);
+  scheduler.setMaxConcurrentMorsels(4);
+  scheduler.onForegroundQueryStarted();
+
+  auto sessionA = scheduler.createSession<std::string>();
+  auto sessionB = scheduler.createSession<std::string>();
+  for (size_t i = 0; i < 4; ++i) {
+    sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
+    sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
+  }
+  // Two live sessions share four slots evenly: four posted, four pending.
+  EXPECT_EQ(postedCount, 4u);
+
+  deferred.runToIdle();
+  EXPECT_EQ(postedCount, 8u);
+  for (size_t i = 0; i < 4; ++i) {
+    EXPECT_EQ(sessionA.consumeNextResult(), "a_" + std::to_string(i));
+    EXPECT_EQ(sessionB.consumeNextResult(), "b_" + std::to_string(i));
+  }
+  EXPECT_FALSE(sessionA.hasMoreResults());
+  EXPECT_FALSE(sessionB.hasMoreResults());
+}
+
+TEST(ElasticExportSchedulerTest, FloorGuaranteeUnderOversubscription) {
+  DeferredPoster deferred;
+  ElasticExportScheduler scheduler(
+      [&deferred](absl::AnyInvocable<void()> work) {
+        deferred.post(std::move(work));
+      },
+      64);
+  scheduler.setMaxConcurrentMorsels(2);
+  scheduler.onForegroundQueryStarted();
+
+  auto sessionA = scheduler.createSession<std::string>();
+  auto sessionB = scheduler.createSession<std::string>();
+  auto sessionC = scheduler.createSession<std::string>();
+  for (size_t i = 0; i < 2; ++i) {
+    sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
+    sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
+    sessionC.submitMorsel([i]() { return "c_" + std::to_string(i); });
+  }
+  // Three sessions over two slots: the floor admits one morsel for the first
+  // two sessions, the third waits even though its own count is zero.
+  EXPECT_EQ(deferred.totalPosted_, 2u);
+
+  deferred.runToIdle();
+  for (size_t i = 0; i < 2; ++i) {
+    EXPECT_EQ(sessionA.consumeNextResult(), "a_" + std::to_string(i));
+    EXPECT_EQ(sessionB.consumeNextResult(), "b_" + std::to_string(i));
+    EXPECT_EQ(sessionC.consumeNextResult(), "c_" + std::to_string(i));
+  }
+  EXPECT_EQ(deferred.totalPosted_, 6u);
+}
+
+TEST(ElasticExportSchedulerTest, CancelledSessionYieldsItsShare) {
+  DeferredPoster deferred;
+  ElasticExportScheduler scheduler(
+      [&deferred](absl::AnyInvocable<void()> work) {
+        deferred.post(std::move(work));
+      },
+      64);
+  scheduler.setMaxConcurrentMorsels(2);
+  scheduler.onForegroundQueryStarted();
+
+  auto sessionA = scheduler.createSession<std::string>();
+  auto sessionB = scheduler.createSession<std::string>();
+  for (size_t i = 0; i < 3; ++i) {
+    sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
+    sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
+  }
+  // Share one each with interleaved submission: A and B post one morsel
+  // each, the rest waits.
+  EXPECT_EQ(deferred.totalPosted_, 2u);
+
+  sessionA.cancel();
+  deferred.runToIdle();
+  // B drains fully; A's cancelled pending morsels are purged, never posted.
+  EXPECT_EQ(deferred.totalPosted_, 4u);
+  for (size_t i = 0; i < 3; ++i) {
+    EXPECT_EQ(sessionB.consumeNextResult(), "b_" + std::to_string(i));
+  }
+  EXPECT_FALSE(sessionB.hasMoreResults());
+}
+
+TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
+  ElasticExportScheduler scheduler([](absl::AnyInvocable<void()>) {}, 64);
+  EXPECT_THROW(scheduler.setMaxConcurrentMorsels(0), ad_utility::Exception);
+}

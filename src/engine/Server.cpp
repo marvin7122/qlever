@@ -86,6 +86,7 @@ Server::Server(
                 std::make_shared<absl::AnyInvocable<void()>>(std::move(work));
             boost::asio::post(queryThreadPool_, [held]() { (*held)(); });
           });
+  exportScheduler_->setMaxConcurrentMorsels(numThreads_);
   exportScheduler_->attachToQueryRegistry(queryRegistry_);
   AD_LOG_INFO << "ExportEngineV2 serialize posts onto queryThreadPool_ ("
               << numThreads_
