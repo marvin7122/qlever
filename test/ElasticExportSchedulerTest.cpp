@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -719,4 +720,37 @@ TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
   auto scheduler =
       ElasticExportScheduler::create([](absl::AnyInvocable<void()>) {}, 64);
   EXPECT_THROW(scheduler->setMaxConcurrentMorsels(0), ad_utility::Exception);
+}
+
+// -----------------------------------------------------------------------------
+// ExportJobState module: identity is derived, never passed
+// -----------------------------------------------------------------------------
+
+namespace {
+// Minimal ExportJobStateBase with a fixed id for module-level tests.
+struct FixedIdJobState : ExportJobStateBase {
+  explicit FixedIdJobState(uint64_t jobId) : jobId_{jobId} {}
+  [[nodiscard]] uint64_t jobId() const noexcept override { return jobId_; }
+  void onDemandChanged(size_t, uint64_t) override {}
+  void onHelperLeaseAcquired(uint64_t) override {}
+  void onHelperLeaseReleased(uint64_t) override {}
+  void executeHelperTask(size_t, uint64_t) override {}
+  [[nodiscard]] bool isCancelled() const noexcept override { return false; }
+
+ private:
+  uint64_t jobId_;
+};
+}  // namespace
+
+TEST(ElasticExportSchedulerTest, OwnedMorselDerivesJobIdFromState) {
+  auto state = std::make_shared<FixedIdJobState>(42);
+  OwnedMorsel morsel(state, 7, 3);
+  EXPECT_EQ(morsel.jobId_, 42u);
+  EXPECT_EQ(morsel.submissionEpoch_, 7u);
+  EXPECT_EQ(morsel.morselIndex_, 3u);
+  EXPECT_EQ(morsel.jobState_, state);
+}
+
+TEST(ElasticExportSchedulerTest, OwnedMorselNullStateThrows) {
+  EXPECT_THROW(OwnedMorsel(nullptr, 0, 0), ad_utility::Exception);
 }
