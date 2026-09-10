@@ -34,13 +34,11 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
                                                size_t count, Operation&& op) {
 #if defined(__cpp_lib_string_resize_and_overwrite) && \
     __cpp_lib_string_resize_and_overwrite >= 202110L
-  str.resize_and_overwrite(count,
-                           [&op, count](CharT* data, size_t n) {
-                             const size_t newSize =
-                                 std::forward<Operation>(op)(data, n);
-                             AD_CONTRACT_CHECK(newSize <= count);
-                             return newSize;
-                           });
+  str.resize_and_overwrite(count, [&op, count](CharT* data, size_t n) {
+    const size_t newSize = std::forward<Operation>(op)(data, n);
+    AD_CONTRACT_CHECK(newSize <= count);
+    return newSize;
+  });
 #else
   str.resize(count);
   const size_t newSize = std::forward<Operation>(op)(str.data(), count);
