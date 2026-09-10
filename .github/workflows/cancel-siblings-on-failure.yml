@@ -1,0 +1,58 @@
+name: Cancel sibling runs on failure
+
+# Cross-workflow counterpart to fail-fast: when any watched CI workflow
+# fails for a pull request head, cancel the other still-running workflow
+# runs for the same head SHA so broken code stops consuming runners.
+# Restarting (rerun --failed) stays a manual step after the fix lands.
+on:
+  workflow_run:
+    workflows:
+      - "Native build"
+      - "Native build with conan"
+      - "Native build with conan on MacOS"
+      - "Native build with AppleClang on MacOS"
+      - "CPP17 libQLever"
+      - "measure-code-coverage"
+      - "sparql-conformance"
+      - "sparql-conformance-new"
+      - "Format check"
+      - "Codespell"
+    types:
+      - completed
+
+# Cancelling sibling runs needs write access to Actions.
+permissions:
+  actions: write
+
+jobs:
+  cancel-siblings:
+    # Only failed runs trigger cancellations. Successful and cancelled
+    # runs (including this workflow's own completions) no-op, so the
+    # workflow can never trigger a cascade off itself.
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SELF_ID: ${{ github.event.workflow_run.id }}
+          PULL_REQUESTS: ${{ toJson(github.event.workflow_run.pull_requests) }}
+        run: |
+          set -u
+          if [ "$(printf '%s' "$PULL_REQUESTS" | jq 'length')" -eq 0 ]; then
+            echo "Not a pull request head; nothing to cancel."
+            exit 0
+          fi
+          for status in queued in_progress; do
+            gh api "repos/${{ github.repository }}/actions/runs" \
+              -f head_sha="$HEAD_SHA" -f status="$status" --paginate \
+              --jq '.workflow_runs[].id' | while read -r run_id; do
+              if [ "$run_id" = "$SELF_ID" ]; then
+                continue
+              fi
+              echo "Cancelling sibling run $run_id ($status)."
+              gh api -X POST \
+                "repos/${{ github.repository }}/actions/runs/$run_id/cancel" \
+                || echo "Cancel of $run_id refused; leaving it alone."
+            done
+          done
