@@ -16,11 +16,13 @@
 #include <ctime>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "util/Exception.h"
@@ -171,8 +173,14 @@ template <typename ResultType>
 class ExportWorkSession;
 
 // -----------------------------------------------------------------------------
-// ElasticExportScheduler: Isolated Thread Pool & Concurrency Coordinator
+// ElasticExportScheduler: Shared-Pool Morsel Coordinator with Even-Split
+// Admission
 // -----------------------------------------------------------------------------
+// Execution happens on Server::queryThreadPool_ through the poster transport
+// (or dedicated threads in tests). Admission is enforced here: each live
+// session holds an even share of in-flight morsels, newcomers queue
+// first-in first-out past capacity, and every session keeps at least one
+// morsel in flight. No caller tracks shares; submit and consume stay unchanged.
 
 class ElasticExportScheduler
     : public std::enable_shared_from_this<ElasticExportScheduler> {
@@ -239,6 +247,15 @@ class ElasticExportScheduler
     return maxQueueCapacity_;
   }
 
+  /// Cap on concurrently outstanding morsels across all sessions. Defaults to
+  /// unlimited so existing callers behave as before; production wiring sets
+  /// it to the pool thread count.
+  void setMaxConcurrentMorsels(size_t count) {
+    AD_CONTRACT_CHECK(count >= 1,
+                      "Need at least one in-flight morsel for progress");
+    maxConcurrentMorsels_.store(count, std::memory_order_relaxed);
+  }
+
   /// Set the maximum number of active queries allowed for helper admission.
   /// Defaults to 1 (i.e. only the export query itself is running).
   void setMaxForegroundQueriesForHelperAdmission(size_t count) noexcept {
@@ -287,10 +304,29 @@ class ElasticExportScheduler
   void workerLoop();
   void runPostedMorsel(OwnedMorsel morsel);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
+  // Post while accounting outstanding work; the wrapped closure decrements
+  // and drains on completion, including the throwing path. queueMutex_ held.
+  void postAccounted(OwnedMorsel morsel);
+  // Move pending morsels onto the pool while capacity and shares allow,
+  // oldest session first. queueMutex_ held.
+  void drainPendingAdmissionUnsafe();
+  // Decrement accounting for one finished morsel. queueMutex_ held.
+  void decrementOutstandingUnsafe(uint64_t jobId);
+  // Even per-session share from the live count: at least one, so every
+  // session keeps its progress floor. Pure computation, no locking.
+  [[nodiscard]] size_t fairShareUnsafe(size_t liveSessions) const noexcept {
+    const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
+    const size_t live = std::max(liveSessions, size_t{1});
+    return std::max(size_t{1}, max / live);
+  }
 
   WorkPoster poster_;
   const size_t maxQueueCapacity_;
   std::atomic<size_t> maxForegroundQueriesForHelperAdmission_{1};
+  std::atomic<size_t> maxConcurrentMorsels_{std::numeric_limits<size_t>::max()};
+  // Live session count, maintained at register and prune points so admission
+  // never takes sessionsMutex_ while holding queueMutex_.
+  std::atomic<size_t> liveSessionCount_{0};
   std::atomic<uint64_t> demandEpoch_{1};
   std::atomic<size_t> activeForegroundQueries_{0};
   std::atomic<uint64_t> nextJobId_{1};
@@ -302,6 +338,12 @@ class ElasticExportScheduler
   std::condition_variable workAvailableCv_;
   std::condition_variable queueNotFullCv_;
   std::deque<OwnedMorsel> queue_;
+  // Posted-but-unfinished morsels per session plus the first-in first-out
+  // overflow they wait in. Guarded by queueMutex_; the asio pool depth
+  // itself is invisible, so this map is the share accounting.
+  std::unordered_map<uint64_t, size_t> outstandingPerSession_;
+  std::deque<OwnedMorsel> pendingAdmission_;
+  size_t totalOutstanding_{0};
 
   mutable std::mutex sessionsMutex_;
   std::vector<std::weak_ptr<ExportJobStateBase>> sessions_;
