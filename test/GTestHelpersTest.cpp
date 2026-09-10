@@ -11,7 +11,6 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
-#include <memory_resource>
 #include <string>
 
 #include "util/DanglingViewTestHelpers.h"
@@ -59,9 +58,9 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
   // not.
   size_t capacity = pmrStringSsoCapacity();
   requirePmrStringInlineStorage(capacity);
-  std::pmr::string atCapacity(capacity, 'x');
+  PmrSsoProbeString atCapacity(capacity, 'x');
   EXPECT_TRUE(pointsIntoObject(atCapacity.data(), atCapacity));
-  std::pmr::string aboveCapacity(capacity + 1, 'y');
+  PmrSsoProbeString aboveCapacity(capacity + 1, 'y');
   EXPECT_FALSE(pointsIntoObject(aboveCapacity.data(), aboveCapacity));
 }
 
@@ -74,13 +73,13 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
     if (size > 0) {
       requirePmrStringInlineStorage(size);
     }
-    std::pmr::string shortString(size, 'x');
+    PmrSsoProbeString shortString(size, 'x');
     EXPECT_TRUE(pointsIntoObject(shortString.data(), shortString));
     EXPECT_EQ(shortString.size(), size);
   }
   // Verify that a string above the SSO threshold is not stored inside the
   // object.
-  std::pmr::string longString(64, 'y');
+  PmrSsoProbeString longString(64, 'y');
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
 }
 

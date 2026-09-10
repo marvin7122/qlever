@@ -19,8 +19,17 @@
 #include "backports/memory_resource.h"
 #include "util/Log.h"
 
+// There is no `ql::pmr::string`: under the C++17 backports `ql::pmr` aliases
+// `boost::container::pmr`, which provides no `string` member. Spelling the
+// type via `ql::pmr::polymorphic_allocator` (which exists in both modes) keeps
+// this helper compilable with and without the backports. The SSO behavior is
+// the STL's in both modes, only the allocator type differs.
+using PmrSsoProbeString =
+    std::basic_string<char, std::char_traits<char>,
+                      ql::pmr::polymorphic_allocator<char>>;
+
 // _____________________________________________________________________________
-// Return the largest number of characters that a `ql::pmr::string` is
+// Return the largest number of characters that a `PmrSsoProbeString` is
 // guaranteed by this helper to store inside its own object storage (SSO).
 // NOTE: Used by test/GTestHelpersTest.cpp, test/index/vocabulary/
 // CompressedVocabularyTest.cpp (via requirePmrStringInlineStorage) and
@@ -32,9 +41,9 @@ inline size_t pmrStringSsoCapacity() {
   // A counting memory resource lets us detect an allocation directly instead of
   // guessing from pointer addresses: a string uses SSO exactly when
   // constructing it performs no allocation through its allocator.
-  struct CountingMemoryResource : public std::pmr::memory_resource {
+  struct CountingMemoryResource : public ql::pmr::memory_resource {
    private:
-    std::pmr::memory_resource* upstream_ = std::pmr::get_default_resource();
+    ql::pmr::memory_resource* upstream_ = ql::pmr::get_default_resource();
     size_t numAllocations_ = 0;
 
     void* do_allocate(size_t bytes, size_t alignment) override {
@@ -45,17 +54,17 @@ inline size_t pmrStringSsoCapacity() {
       upstream_->deallocate(ptr, bytes, alignment);
     }
     bool do_is_equal(
-        const std::pmr::memory_resource& other) const noexcept override {
+        const ql::pmr::memory_resource& other) const noexcept override {
       return this == &other;
     }
 
    public:
     size_t numAllocations() const { return numAllocations_; }
   };
-  const std::string sample(sizeof(ql::pmr::string), 's');
+  const std::string sample(sizeof(PmrSsoProbeString), 's');
   for (size_t size = sample.size(); size > 0; --size) {
     CountingMemoryResource resource;
-    ql::pmr::string pmrSample{sample.data(), size, &resource};
+    PmrSsoProbeString pmrSample{sample.data(), size, &resource};
     if (resource.numAllocations() == 0) {
       return size;
     }
@@ -64,8 +73,8 @@ inline size_t pmrStringSsoCapacity() {
 }
 
 // _____________________________________________________________________________
-// Check the explicit platform premise that `ql::pmr::string` stores strings of
-// up to `maxSize` characters inside its own object storage (Small String
+// Check the explicit platform premise that `PmrSsoProbeString` stores strings
+// of up to `maxSize` characters inside its own object storage (Small String
 // Optimization), i.e. that constructing such a string performs no allocation
 // through its allocator. Tests whose logic depends on short strings keeping
 // their content inline (e.g. dangling-view regression tests) should state
@@ -82,7 +91,7 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
   const size_t capacity = pmrStringSsoCapacity();
   AD_CORRECTNESS_CHECK(
       capacity >= maxSize,
-      absl::StrCat("Platform premise violated: std::pmr::string does not "
+      absl::StrCat("Platform premise violated: PmrSsoProbeString does not "
                    "store ",
                    maxSize,
                    " characters on this platform (capacity: ", capacity, ")"));
