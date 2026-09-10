@@ -42,3 +42,4 @@ jobs:
           incremental: 'true'
           upload_artifacts: 'true'
           stream_progress: 'true'
+          ocr_version: '1.11.7'
