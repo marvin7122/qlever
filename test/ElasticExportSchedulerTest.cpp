@@ -1,5 +1,5 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
+// Copyright 2026, University of Freiburg
+// Chair of Algorithms and Data Structures
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
 #include <gmock/gmock.h>
@@ -9,6 +9,7 @@
 #include <chrono>
 #include <future>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -168,11 +169,7 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
         return 100;
       });
 
-  // Wait until morsel 0 is running on a helper. Morsel 1 is submitted only
-  // after revocation below: submitting it earlier would let the second
-  // helper pick it up before the revocation arrives, which makes
-  // `executedByHelper_` for morsel 1 nondeterministic (cooperative
-  // revocation only stops not-yet-started helper work).
+  // Wait until morsel 0 is running on a helper
   morsel0Started.wait();
 
   // A new foreground query starts! (count = 2)
@@ -182,8 +179,10 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   // Session must transition to Revoking because helper 0 is actively leased
   EXPECT_EQ(session.state(), SessionState::Revoking);
 
-  // Submit morsel 1 while helpers are revoked, so it stays pending and runs
-  // on the coordinator thread.
+  // Submit morsel 1 only now: submitted while HelpersEligible, a second
+  // helper could legitimately lease it before the revocation above, which
+  // would make the `executedByHelper_` expectation below racy. Submitted
+  // while Revoking it stays pending for the coordinator.
   session.submitMorsel([]() { return 200; });
 
   // Allow morsel 0 to complete cooperatively
@@ -405,7 +404,6 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
 // -----------------------------------------------------------------------------
 // Test 10: Worker Exception Propagates to Coordinator Without Leaks
 // -----------------------------------------------------------------------------
-
 TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   auto scheduler = ElasticExportScheduler::create(2, 64);
   auto session = scheduler->createSession<int>();
@@ -463,4 +461,98 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
   // Must return promptly without deadlock or infinite spin loop
   scheduler->shutdown();
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
+// -----------------------------------------------------------------------------
+// Test 12: Unordered Emission Consumes Every Morsel Exactly Once
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler->onForegroundQueryStarted();
+
+  auto session = scheduler->createSession<std::string>();
+  session.setOrdered(false);
+
+  constexpr size_t numMorsels = 20;
+  for (size_t i = 0; i < numMorsels; ++i) {
+    session.submitMorsel([i]() {
+      // Later morsels finish first: invert completion order so slot order
+      // and completion order disagree.
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(2 * (numMorsels - i)));
+      return "result_" + std::to_string(i);
+    });
+  }
+
+  std::set<std::string> seen;
+  while (session.hasMoreResults()) {
+    seen.insert(session.consumeNextResult());
+  }
+  EXPECT_EQ(seen.size(), numMorsels);
+  for (size_t i = 0; i < numMorsels; ++i) {
+    EXPECT_TRUE(seen.contains("result_" + std::to_string(i)));
+  }
+  EXPECT_EQ(session.consumedSlots(), numMorsels);
+  EXPECT_FALSE(session.hasMoreResults());
+
+  scheduler->onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 13: TrySubmitMorsel Reports Instead Of Firing
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, TrySubmitMorselReportsInsteadOfFiring) {
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->onForegroundQueryStarted();
+
+  auto session = scheduler->createSession<std::string>();
+  EXPECT_TRUE(session.trySubmitMorsel([]() { return std::string{"a"}; }));
+  EXPECT_EQ(session.totalSlots(), 1u);
+
+  session.sharedState()->cancel();
+  EXPECT_FALSE(session.trySubmitMorsel([]() { return std::string{"b"}; }));
+  EXPECT_EQ(session.totalSlots(), 1u);
+
+  scheduler->onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 14: Abandoned Remainder Runs Exactly Once
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, AbandonedRemainderRunsExactlyOnce) {
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler->onForegroundQueryStarted();
+
+  auto session = scheduler->createSession<std::string>();
+  session.setOrdered(false);
+  auto state = session.sharedState();
+
+  // Self-abandoning morsel: returns a partial result and resubmits its
+  // tail via trySubmitMorsel, mirroring CheckpointMorselRunner on an
+  // epoch change. May run on a helper or the coordinator thread.
+  session.submitMorsel([state]() {
+    EXPECT_TRUE(state->trySubmitMorsel([]() { return std::string{"tail"}; }));
+    return std::string{"partial"};
+  });
+  session.submitMorsel([]() { return std::string{"other"}; });
+
+  // A new foreground query revokes helper eligibility mid-flight.
+  scheduler->onForegroundQueryStarted();
+
+  std::set<std::string> seen;
+  while (session.hasMoreResults()) {
+    seen.insert(session.consumeNextResult());
+  }
+  EXPECT_EQ(seen.size(), 3u);
+  EXPECT_TRUE(seen.contains("partial"));
+  EXPECT_TRUE(seen.contains("tail"));
+  EXPECT_TRUE(seen.contains("other"));
+  EXPECT_EQ(session.consumedSlots(), 3u);
+  EXPECT_FALSE(session.hasMoreResults());
+
+  scheduler->onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
 }
