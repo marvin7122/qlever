@@ -5,9 +5,11 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>

@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <deque>
 #include <exception>
 #include <functional>
@@ -199,6 +200,10 @@ class ElasticExportScheduler {
   void onForegroundQueryEnded();
 
   /// Attach non-intrusively to QueryRegistry lifecycle callbacks.
+  /// Lifetime requirement: the scheduler must outlive the registry, because
+  /// the registered callbacks capture a raw `this` and QueryRegistry offers
+  /// no removal API. Production wiring must establish this ownership order
+  /// (e.g. scheduler owned by Server with a shorter-lived registry view).
   void attachToQueryRegistry(ad_utility::websocket::QueryRegistry& registry);
 
   /// Number of active registered foreground SPARQL queries.
@@ -235,6 +240,10 @@ class ElasticExportScheduler {
   void setMaxForegroundQueriesForHelperAdmission(size_t count) noexcept {
     maxForegroundQueriesForHelperAdmission_.store(count,
                                                   std::memory_order_relaxed);
+    // Eligibility may have flipped in either direction; wake blocked
+    // enqueuers so they re-check it instead of waiting on a stale state.
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    queueNotFullCv_.notify_all();
   }
 
   [[nodiscard]] size_t maxForegroundQueriesForHelperAdmission() const noexcept {
@@ -246,7 +255,9 @@ class ElasticExportScheduler {
   void shutdown();
 
   /// Enqueue an owned morsel to the helper pool (called internally by
-  /// sessions).
+  /// sessions). Returns false without blocking when helpers are currently
+  /// ineligible or the scheduler is stopping; the coordinator then executes
+  /// the morsel on the primary path instead.
   bool enqueueMorsel(OwnedMorsel morsel);
 
   /// Register an active session state for demand change notifications.
