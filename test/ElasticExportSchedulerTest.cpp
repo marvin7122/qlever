@@ -2,6 +2,7 @@
 // Chair of Algorithms and Data Structures.
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
+#include <absl/any_invocable.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -766,18 +767,15 @@ namespace {
 bool pollUntil(const std::function<bool()>& condition,
                std::chrono::milliseconds timeout = 10s) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
-bool pollUntil(const std::function<bool()>& condition,
-               std::chrono::milliseconds timeout = 10s) {
-  const auto start = std::chrono::steady_clock::now();
-  while (std::chrono::steady_clock::now() - start < timeout) {
+  while (true) {
     if (condition()) {
       return true;
     }
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
     std::this_thread::yield();
   }
-  return false;
-}
-  return true;
 }
 }  // namespace
 
