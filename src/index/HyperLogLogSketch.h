@@ -8,8 +8,9 @@
 
 #pragma once
 
+#include <absl/numeric/bits.h>
+
 #include <algorithm>
-#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -48,7 +49,8 @@ class HyperLogLogSketch {
     uint64_t hash = hashValue(id);
     size_t regIdx = static_cast<size_t>(hash >> (64 - Precision));
     uint64_t remaining = (hash << Precision) | 1ULL;
-    uint8_t leadingZeros = static_cast<uint8_t>(std::countl_zero(remaining)) + 1;
+    uint8_t leadingZeros =
+        static_cast<uint8_t>(absl::countl_zero(remaining)) + 1;
 
     if (leadingZeros > registers_[regIdx]) {
       registers_[regIdx] = leadingZeros;
@@ -75,14 +77,18 @@ class HyperLogLogSketch {
     }
 
     // Alpha correction factor for m = 1024
-    constexpr double alpha = 0.7213 / (1.0 + 1.079 / static_cast<double>(NUM_REGISTERS));
-    double rawEstimate = alpha * static_cast<double>(NUM_REGISTERS * NUM_REGISTERS) / sum;
+    constexpr double alpha =
+        0.7213 / (1.0 + 1.079 / static_cast<double>(NUM_REGISTERS));
+    double rawEstimate =
+        alpha * static_cast<double>(NUM_REGISTERS * NUM_REGISTERS) / sum;
 
-    if (rawEstimate <= 2.5 * static_cast<double>(NUM_REGISTERS) && zeroRegisters > 0) {
+    if (rawEstimate <= 2.5 * static_cast<double>(NUM_REGISTERS) &&
+        zeroRegisters > 0) {
       // Linear counting for small cardinalities
-      return static_cast<uint64_t>(static_cast<double>(NUM_REGISTERS) *
-                                   std::log(static_cast<double>(NUM_REGISTERS) /
-                                            static_cast<double>(zeroRegisters)));
+      return static_cast<uint64_t>(
+          static_cast<double>(NUM_REGISTERS) *
+          std::log(static_cast<double>(NUM_REGISTERS) /
+                   static_cast<double>(zeroRegisters)));
     }
 
     return static_cast<uint64_t>(rawEstimate);
