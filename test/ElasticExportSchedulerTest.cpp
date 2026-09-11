@@ -766,12 +766,17 @@ namespace {
 bool pollUntil(const std::function<bool()>& condition,
                std::chrono::milliseconds timeout = 10s) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (!condition()) {
-    if (std::chrono::steady_clock::now() > deadline) {
-      return false;
+bool pollUntil(const std::function<bool()>& condition,
+               std::chrono::milliseconds timeout = 10s) {
+  const auto start = std::chrono::steady_clock::now();
+  while (std::chrono::steady_clock::now() - start < timeout) {
+    if (condition()) {
+      return true;
     }
     std::this_thread::yield();
   }
+  return false;
+}
   return true;
 }
 }  // namespace
