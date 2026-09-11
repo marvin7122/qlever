@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <time.h>
 #include <deque>
 #include <exception>
 #include <functional>
