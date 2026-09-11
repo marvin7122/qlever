@@ -292,7 +292,7 @@ TEST(ElasticExportSchedulerTest, MoveSemanticsAndRAII) {
   auto movedSession = std::move(session);
   EXPECT_EQ(movedSession.consumeNextResult(), "moved");
 
-  ExportWorkLease lease1(&scheduler, 1, 10, 100);
+  ExportWorkLease lease1(scheduler.get(), 1, 10, 100);
   EXPECT_TRUE(lease1.isValid());
   EXPECT_EQ(lease1.epoch(), 1u);
   EXPECT_EQ(lease1.jobId(), 10u);
