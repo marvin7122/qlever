@@ -39,6 +39,19 @@ class UnicodeVocabulary {
     return _underlyingVocabulary.lookupBatch(indices);
   }
 
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder& builder) const {
+    // NOTE: the detection uses the C++17-compatible trait instead of
+    // `if constexpr (requires { ... })`, which the CPP17 libQLever CI
+    // workflow cannot compile (see `hasLookupBatchWithBuilder`).
+    if constexpr (ad_utility::vocabulary::hasLookupBatchWithBuilder<
+                      UnderlyingVocabulary>) {
+      return _underlyingVocabulary.lookupBatch(indices, builder);
+    } else {
+      return _underlyingVocabulary.lookupBatch(indices);
+    }
+  }
+
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {
     return _underlyingVocabulary.lookupBatchesStreamed(std::move(input));

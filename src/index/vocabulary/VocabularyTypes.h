@@ -766,6 +766,30 @@ template <typename Vocab>
 constexpr bool replaceOptionalByPlaceholderOnExport =
     detail::ReplaceOptionalByPlaceholderOnExportImpl<Vocab>::value;
 
+namespace detail {
+// C++17-compatible detection of the two-argument `lookupBatch` overload that
+// writes the batch into a caller-provided `ArenaVocabBatchBuilder`. Written
+// with `void_t` instead of `if constexpr (requires { ... })`, which is
+// C++20-only and therefore not available in the CPP17 libQLever CI workflow
+// (see `.github/workflows/cpp-17-libqlever.yml`).
+template <typename Vocab, typename = void>
+struct HasLookupBatchWithBuilderImpl : std::false_type {};
+
+template <typename Vocab>
+struct HasLookupBatchWithBuilderImpl<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+}  // namespace detail
+
+// Whether `Vocab` provides the two-argument `lookupBatch(indices, builder)`
+// overload (see above). Dispatching wrappers (e.g. `UnicodeVocabulary`,
+// `PolymorphicVocabulary`) use this to call the builder overload when it
+// exists and fall back to the single-argument overload otherwise.
+template <typename Vocab>
+constexpr bool hasLookupBatchWithBuilder =
+    detail::HasLookupBatchWithBuilderImpl<Vocab>::value;
+
 // Return `vocab[index]` as a `std::string`. If the `operator[]` of `vocab`
 // returns a `std::optional` (which is the case for vocabularies with holes, see
 // `VocabularyInMemoryBinSearch`) that is `std::nullopt`, then return
