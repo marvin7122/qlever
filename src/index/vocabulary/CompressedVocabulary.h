@@ -209,7 +209,22 @@ CPP_template(typename UnderlyingVocabulary,
     std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
-      const size_t decoderIdx = getDecoderIdx(idx);
+      // A hole has no compressed word: report the placeholder directly, like
+      // `operator[]` does, instead of decoding the underlying placeholder
+      // text as if it were compressed data. The index is translated to a
+      // position exactly once and then reused for the decoder selection.
+      size_t decoderIdx = 0;
+      if constexpr (underlyingHasHoles) {
+        auto position = underlyingVocabulary_.positionOfIndex(idx);
+        if (!position.has_value()) {
+          builder.appendWord(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+          continue;
+        }
+        decoderIdx = getDecoderIdxFromPosition(position.value());
+      } else {
+        decoderIdx = getDecoderIdx(idx);
+      }
       AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
@@ -220,22 +235,19 @@ CPP_template(typename UnderlyingVocabulary,
     }
   }
 
+  // Fetch the compressed words in one batch through the underlying
+  // vocabulary (an on-disk underlying vocabulary serves this from its
+  // io_uring ring pool), then decompress each word into the arena with the
+  // decoder for its block. Holes report a placeholder per index inside the
+  // builder overload, so no sequential fallback is needed.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    // Check the contract before constructing the builder, whose own
+    // `expectedSize > 0` check would otherwise fire first with a confusing
+    // message for an empty index list.
     AD_CONTRACT_CHECK(!indices.empty());
-    if constexpr (underlyingHasHoles) {
-      // Indices that are holes report a placeholder; keep the per-index path
-      // that implements that mapping.
-      return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
-    } else {
-      // Fetch the compressed words in one batch through the underlying
-      // vocabulary (an on-disk underlying vocabulary serves this from its
-      // io_uring ring pool), then decompress each word into the arena with
-      // the decoder for its block. The underlying lookup preserves order, so
-      // result `i` belongs to `indices[i]`, exactly like the sequential path.
-      ArenaVocabBatchBuilder builder(indices.size());
-      lookupBatch(indices, builder);
-      return std::move(builder).finalize();
-    }
+    ArenaVocabBatchBuilder builder(indices.size());
+    lookupBatch(indices, builder);
+    return std::move(builder).finalize();
   }
 
   //____________________________________________________________________________
