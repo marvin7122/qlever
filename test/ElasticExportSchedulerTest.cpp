@@ -853,7 +853,10 @@ TEST(ElasticExportSchedulerTest, ProductionWiringBoundsPoolAndYieldsToLoad) {
   EXPECT_EQ(postedCount.load(), poolSize);
 
   release.store(true);
-  pool.join();
+  // Wait for quiescence, not thread exit: pool threads never leave `join()`
+  // without `stop()`, while `wait()` returns once outstanding work drains
+  // (completion drains repost pending morsels, then the pool goes idle).
+  pool.wait();
   for (size_t i = 0; i < poolSize; ++i) {
     EXPECT_EQ(sessionA.consumeNextResult(), "blocked");
     EXPECT_EQ(sessionB.consumeNextResult(), "blocked");
