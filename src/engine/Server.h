@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "backports/filesystem.h"
+#include "engine/ExportPipelineRouter.h"
 #include "engine/HttpApiHelpers.h"
 #include "engine/KeepPreviousIndexDirs.h"
 #include "engine/MaterializedViews.h"
@@ -458,7 +459,8 @@ class Server {
       Awaitable<void> sendStreamableResponse(
           const RequestT& request, SendT& send, ad_utility::MediaType mediaType,
           const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
-          SharedCancellationHandle cancellationHandle) const;
+          SharedCancellationHandle cancellationHandle,
+          ql::engine::ExportEngineMode engineMode) const;
 
   FRIEND_TEST(MaterializedViewsTest, serverIntegration);
 
