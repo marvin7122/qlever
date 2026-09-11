@@ -174,10 +174,17 @@ class ExportWorkSession;
 // ElasticExportScheduler: Isolated Thread Pool & Concurrency Coordinator
 // -----------------------------------------------------------------------------
 
-class ElasticExportScheduler {
+class ElasticExportScheduler
+    : public std::enable_shared_from_this<ElasticExportScheduler> {
  public:
-  explicit ElasticExportScheduler(size_t numThreads = 0,
-                                  size_t queueCapacity = 1024);
+  // Sole way to obtain a scheduler. Shared ownership is a structural
+  // guarantee, not a convention: `attachToQueryRegistry` hands the
+  // `QueryRegistry` callbacks a `weak_ptr`, so a callback that outlives the
+  // scheduler observes expiry instead of dereferencing a dangling `this`.
+  // A non-shared scheduler cannot be constructed, hence that weak reference
+  // is never empty.
+  [[nodiscard]] static std::shared_ptr<ElasticExportScheduler> create(
+      size_t numThreads = 0, size_t queueCapacity = 1024);
   ~ElasticExportScheduler();
 
   ElasticExportScheduler(const ElasticExportScheduler&) = delete;
@@ -191,7 +198,10 @@ class ElasticExportScheduler {
   /// Hook for observing completion/termination of a foreground SPARQL query.
   void onForegroundQueryEnded();
 
-  /// Attach non-intrusively to QueryRegistry lifecycle callbacks.
+  /// Attach non-intrusively to QueryRegistry lifecycle callbacks. The
+  /// registered callbacks observe the scheduler through a `weak_ptr` and
+  /// no-op after its destruction, so no destruction order between scheduler
+  /// and registry can dangle them.
   void attachToQueryRegistry(ad_utility::websocket::QueryRegistry& registry);
 
   /// Number of active registered foreground SPARQL queries.
@@ -254,6 +264,7 @@ class ElasticExportScheduler {
   ExportWorkSession<ResultType> createSession();
 
  private:
+  explicit ElasticExportScheduler(size_t numThreads, size_t queueCapacity);
   void workerLoop();
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
 

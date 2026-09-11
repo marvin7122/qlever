@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -24,14 +25,14 @@ using namespace std::chrono_literals;
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, BasicExecutionAndInOrderConsumption) {
-  ElasticExportScheduler scheduler(2, 64);
-  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
 
   // Set active foreground queries to 1 (only this export query running)
-  scheduler.onForegroundQueryStarted();
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
+  scheduler->onForegroundQueryStarted();
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
 
-  auto session = scheduler.createSession<std::string>();
+  auto session = scheduler->createSession<std::string>();
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
 
   constexpr size_t numMorsels = 10;
@@ -60,8 +61,8 @@ TEST(ElasticExportSchedulerTest, BasicExecutionAndInOrderConsumption) {
     EXPECT_EQ(profiles[i].finalStatus_, MorselStatus::Completed);
   }
 
-  scheduler.onForegroundQueryEnded();
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 0u);
+  scheduler->onForegroundQueryEnded();
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 0u);
 }
 
 // -----------------------------------------------------------------------------
@@ -69,15 +70,15 @@ TEST(ElasticExportSchedulerTest, BasicExecutionAndInOrderConsumption) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, SingleCoreFallbackUnderHighForegroundLoad) {
-  ElasticExportScheduler scheduler(2, 64);
-  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
 
   // Simulate 2 active queries (e.g. export query + another concurrent query)
-  scheduler.onForegroundQueryStarted();
-  scheduler.onForegroundQueryStarted();
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
+  scheduler->onForegroundQueryStarted();
+  scheduler->onForegroundQueryStarted();
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 2u);
 
-  auto session = scheduler.createSession<int>();
+  auto session = scheduler->createSession<int>();
   // Because activeForegroundQueries > 1, state must be PrimaryOnly
   EXPECT_EQ(session.state(), SessionState::PrimaryOnly);
 
@@ -97,8 +98,8 @@ TEST(ElasticExportSchedulerTest, SingleCoreFallbackUnderHighForegroundLoad) {
     EXPECT_EQ(p.finalStatus_, MorselStatus::Completed);
   }
 
-  scheduler.onForegroundQueryEnded();
-  scheduler.onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
 }
 
 // -----------------------------------------------------------------------------
@@ -106,15 +107,15 @@ TEST(ElasticExportSchedulerTest, SingleCoreFallbackUnderHighForegroundLoad) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
-  ElasticExportScheduler scheduler(4, 64);
-  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  auto scheduler = ElasticExportScheduler::create(4, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
 
   // Initially 2 queries active (helpers disabled)
-  scheduler.onForegroundQueryStarted();
-  scheduler.onForegroundQueryStarted();
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
+  scheduler->onForegroundQueryStarted();
+  scheduler->onForegroundQueryStarted();
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 2u);
 
-  auto session = scheduler.createSession<std::string>();
+  auto session = scheduler->createSession<std::string>();
   EXPECT_EQ(session.state(), SessionState::PrimaryOnly);
 
   for (size_t i = 0; i < 6; ++i) {
@@ -125,8 +126,8 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
   }
 
   // The concurrent query finishes; active queries drop to 1
-  scheduler.onForegroundQueryEnded();
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
+  scheduler->onForegroundQueryEnded();
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
 
   // Consume all results
@@ -136,7 +137,7 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
     EXPECT_EQ(results[i], "dynamic_" + std::to_string(i));
   }
 
-  scheduler.onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
 }
 
 // -----------------------------------------------------------------------------
@@ -144,11 +145,11 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
-  ElasticExportScheduler scheduler(2, 64);
-  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
 
-  scheduler.onForegroundQueryStarted();  // Query count = 1 (eligible)
-  auto session = scheduler.createSession<int>();
+  scheduler->onForegroundQueryStarted();  // Query count = 1 (eligible)
+  auto session = scheduler->createSession<int>();
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
 
   std::promise<void> morsel0StartedPromise;
@@ -175,8 +176,8 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   morsel0Started.wait();
 
   // A new foreground query starts! (count = 2)
-  scheduler.onForegroundQueryStarted();
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
+  scheduler->onForegroundQueryStarted();
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 2u);
 
   // Session must transition to Revoking because helper 0 is actively leased
   EXPECT_EQ(session.state(), SessionState::Revoking);
@@ -201,8 +202,8 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   EXPECT_TRUE(profiles[0].executedByHelper_);
   EXPECT_FALSE(profiles[1].executedByHelper_);
 
-  scheduler.onForegroundQueryEnded();
-  scheduler.onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
 }
 
 // -----------------------------------------------------------------------------
@@ -210,11 +211,11 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, DeterministicSlotOrderingWithVaryingDelays) {
-  ElasticExportScheduler scheduler(4, 128);
-  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
-  scheduler.onForegroundQueryStarted();
+  auto scheduler = ElasticExportScheduler::create(4, 128);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler->onForegroundQueryStarted();
 
-  auto session = scheduler.createSession<size_t>();
+  auto session = scheduler->createSession<size_t>();
 
   constexpr size_t count = 20;
   for (size_t i = 0; i < count; ++i) {
@@ -232,7 +233,7 @@ TEST(ElasticExportSchedulerTest, DeterministicSlotOrderingWithVaryingDelays) {
     EXPECT_EQ(result, i);
   }
 
-  scheduler.onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
 }
 
 // -----------------------------------------------------------------------------
@@ -240,11 +241,11 @@ TEST(ElasticExportSchedulerTest, DeterministicSlotOrderingWithVaryingDelays) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
-  ElasticExportScheduler scheduler(2, 64);
-  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
-  scheduler.onForegroundQueryStarted();
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler->onForegroundQueryStarted();
 
-  auto session = scheduler.createSession<int>();
+  auto session = scheduler->createSession<int>();
 
   std::promise<void> startedPromise;
   auto startedFuture = startedPromise.get_future();
@@ -274,7 +275,7 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
   // Attempting to consume from cancelled session should throw
   EXPECT_THROW(session.consumeNextResult(), ad_utility::Exception);
 
-  scheduler.onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
 }
 
 // -----------------------------------------------------------------------------
@@ -282,10 +283,10 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, MoveSemanticsAndRAII) {
-  ElasticExportScheduler scheduler(2, 64);
-  scheduler.onForegroundQueryStarted();
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->onForegroundQueryStarted();
 
-  auto session = scheduler.createSession<std::string>();
+  auto session = scheduler->createSession<std::string>();
   session.submitMorsel([]() { return "moved"; });
 
   auto movedSession = std::move(session);
@@ -302,7 +303,7 @@ TEST(ElasticExportSchedulerTest, MoveSemanticsAndRAII) {
   lease2.release();
   EXPECT_FALSE(lease2.isValid());
 
-  scheduler.onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
 }
 
 // -----------------------------------------------------------------------------
@@ -310,27 +311,46 @@ TEST(ElasticExportSchedulerTest, MoveSemanticsAndRAII) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, QueryRegistryLifecycleHookIntegration) {
-  ElasticExportScheduler scheduler(2, 64);
-  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
 
   ad_utility::websocket::QueryRegistry registry;
-  scheduler.attachToQueryRegistry(registry);
+  scheduler->attachToQueryRegistry(registry);
 
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 0u);
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 0u);
 
   {
     auto q1 = registry.uniqueId("SELECT ?x WHERE { ?x ?p ?o }");
-    EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
+    EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
 
     {
       auto q2 = registry.uniqueId("SELECT ?y WHERE { ?y ?p ?o }");
-      EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
+      EXPECT_EQ(scheduler->activeForegroundQueries(), 2u);
     }
     // q2 destroyed -> end callback fired
-    EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
+    EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
   }
   // q1 destroyed -> end callback fired
-  EXPECT_EQ(scheduler.activeForegroundQueries(), 0u);
+  EXPECT_EQ(scheduler->activeForegroundQueries(), 0u);
+}
+
+// -----------------------------------------------------------------------------
+// Test 8b: Registry Callbacks Expire Safely With The Scheduler
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, RegistryCallbacksExpireSafelyWithScheduler) {
+  ad_utility::websocket::QueryRegistry registry;
+  std::optional<ad_utility::websocket::OwningQueryId> query;
+  {
+    auto scheduler = ElasticExportScheduler::create(2, 64);
+    scheduler->attachToQueryRegistry(registry);
+    query.emplace(registry.uniqueId("SELECT ?x WHERE { ?x ?p ?o }"));
+    EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
+  }
+  // The scheduler is gone while the query is still registered. Destroying
+  // the query fires the end callback into an expired `weak_ptr`, which must
+  // be a no-op rather than a use-after-free.
+  query.reset();
 }
 
 // -----------------------------------------------------------------------------
@@ -338,16 +358,16 @@ TEST(ElasticExportSchedulerTest, QueryRegistryLifecycleHookIntegration) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
-  ElasticExportScheduler scheduler(4, 256);
-  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  auto scheduler = ElasticExportScheduler::create(4, 256);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
 
   std::atomic<bool> stopQueryChanger{false};
   // Background thread fluctuating foreground demand
   std::thread queryChanger([&]() {
     while (!stopQueryChanger.load()) {
-      scheduler.onForegroundQueryStarted();
+      scheduler->onForegroundQueryStarted();
       std::this_thread::sleep_for(1ms);
-      scheduler.onForegroundQueryEnded();
+      scheduler->onForegroundQueryEnded();
       std::this_thread::sleep_for(1ms);
     }
   });
@@ -359,7 +379,7 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
 
   for (size_t t = 0; t < numWorkerThreads; ++t) {
     sessionRunners.emplace_back([&scheduler, t]() {
-      auto session = scheduler.createSession<std::string>();
+      auto session = scheduler->createSession<std::string>();
       for (size_t i = 0; i < morselsPerSession; ++i) {
         session.submitMorsel([t, i]() {
           return "t" + std::to_string(t) + "_m" + std::to_string(i);
@@ -387,8 +407,8 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
-  ElasticExportScheduler scheduler(2, 64);
-  auto session = scheduler.createSession<int>();
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  auto session = scheduler->createSession<int>();
 
   // Slot 0 succeeds
   session.submitMorsel([]() -> int { return 42; });
@@ -418,7 +438,7 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   EXPECT_EQ(session.consumeNextResult(), 100);
 
   // Verify lease accounting did not leak
-  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+  EXPECT_EQ(scheduler->activeHelperCount(), 0u);
 }
 
 // -----------------------------------------------------------------------------
@@ -426,21 +446,21 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
-  ElasticExportScheduler scheduler(4, 64);
+  auto scheduler = ElasticExportScheduler::create(4, 64);
 
   // Simulate high foreground load (helpers ineligible)
-  scheduler.onForegroundQueryStarted();
-  scheduler.onForegroundQueryStarted();
-  scheduler.onForegroundQueryStarted();
+  scheduler->onForegroundQueryStarted();
+  scheduler->onForegroundQueryStarted();
+  scheduler->onForegroundQueryStarted();
 
   // Create session and enqueue morsels
-  auto session = scheduler.createSession<int>();
+  auto session = scheduler->createSession<int>();
   for (int i = 0; i < 20; ++i) {
     session.submitMorsel([i]() -> int { return i * 2; });
   }
 
   // Shutdown scheduler while queue may contain pending items under high load
   // Must return promptly without deadlock or infinite spin loop
-  scheduler.shutdown();
-  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+  scheduler->shutdown();
+  EXPECT_EQ(scheduler->activeHelperCount(), 0u);
 }

@@ -66,6 +66,14 @@ void ExportWorkLease::release() noexcept {
 // ElasticExportScheduler Implementation
 // -----------------------------------------------------------------------------
 
+std::shared_ptr<ElasticExportScheduler> ElasticExportScheduler::create(
+    size_t numThreads, size_t queueCapacity) {
+  // `new`, not `make_shared`: the constructor is private, so only this
+  // member function can invoke it.
+  return std::shared_ptr<ElasticExportScheduler>(
+      new ElasticExportScheduler(numThreads, queueCapacity));
+}
+
 ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
                                                size_t queueCapacity)
     : maxQueueCapacity_{queueCapacity > 0 ? queueCapacity : 1024} {
@@ -173,13 +181,24 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
 
 void ElasticExportScheduler::attachToQueryRegistry(
     ad_utility::websocket::QueryRegistry& registry) {
+  // Never empty: instances only exist as `shared_ptr` (see `create`), so
+  // `weak_from_this` always succeeds here.
+  std::weak_ptr<ElasticExportScheduler> weak = weak_from_this();
+  // Callbacks observe the scheduler instead of borrowing `this`: a start/end
+  // event that fires after scheduler destruction — e.g. an `OwningQueryId`
+  // unregister path running after teardown, or the registry's `shared_ptr`-
+  // held end callbacks surviving registry destruction — is a no-op.
   registry.addOnStart(
-      [this](const ad_utility::websocket::QueryRegistry::StartInfo&) {
-        onForegroundQueryStarted();
+      [weak](const ad_utility::websocket::QueryRegistry::StartInfo&) {
+        if (auto self = weak.lock()) {
+          self->onForegroundQueryStarted();
+        }
       });
   registry.addOnEnd(
-      [this](const ad_utility::websocket::QueryRegistry::EndInfo&) {
-        onForegroundQueryEnded();
+      [weak](const ad_utility::websocket::QueryRegistry::EndInfo&) {
+        if (auto self = weak.lock()) {
+          self->onForegroundQueryEnded();
+        }
       });
 }
 
