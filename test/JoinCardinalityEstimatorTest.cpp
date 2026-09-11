@@ -242,11 +242,12 @@ TEST(JoinCardinalityEstimatorTest, CompletelyDisjointSets) {
   // Model B detects zero overlap and returns 1 row floor for non-empty tables
   EXPECT_EQ(estModelB, 1u);
 
-  // Distinct overlap query should return exactly 0 for Model B
+  // Distinct overlap query should return exactly the true join size (0) for
+  // Model B
   uint64_t distinctOverlap =
       JoinCardinalityEstimator<10>::estimateDistinctJoinKeys(
           sketchA, sketchB, EstimationModel::HLL_INCLUSION_EXCLUSION);
-  EXPECT_EQ(distinctOverlap, 0u);
+  EXPECT_EQ(distinctOverlap, TRUE_JOIN_SIZE);
 }
 
 // _____________________________________________________________________________
@@ -330,6 +331,12 @@ TEST(JoinCardinalityEstimatorTest, SkewedMultiWayJoinPipeline) {
 
   // Model B correctly predicts 1 row floor for disjoint join
   EXPECT_EQ(estModelB_C2, 1u);
+
+  // Distinct overlap query should return exactly the true join size (0)
+  uint64_t distinctOverlapC2 =
+      JoinCardinalityEstimator<10>::estimateDistinctJoinKeys(
+          sketchA, sketchC2, EstimationModel::HLL_INCLUSION_EXCLUSION);
+  EXPECT_EQ(distinctOverlapC2, TRUE_JOIN_SIZE_C2);
 }
 
 // _____________________________________________________________________________
