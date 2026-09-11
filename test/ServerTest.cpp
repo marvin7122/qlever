@@ -706,27 +706,39 @@ TEST(ServerTest, handleHttpRequest) {
 TEST(ServerTest, exportEngineV1V2Parity) {
   auto qec = getQec(TestIndexConfig{"<a> <b> <c> . <d> <e> <f> ."});
   auto server = makeServerForTesting(qec->getIndex().getOnDiskBase());
-  auto makeCsvQuery = [](std::string_view target) {
+  auto makeCsvQuery = [](std::string_view target, std::string_view sparql) {
     return makeRequest(http::verb::post, target,
                        {{http::field::content_type, "application/sparql-query"},
                         {http::field::accept, "text/csv"}},
-                       "SELECT * WHERE { ?s ?p ?o }");
+                       std::string{sparql});
   };
   auto runToString = [&server](auto request) {
     auto response = server.process(request);
     EXPECT_THAT(response, StatusIs(http::status::ok));
     return responseBodyToString(std::move(response.body()));
   };
-  const std::string baseline = runToString(makeCsvQuery("/"));
-  EXPECT_THAT(runToString(makeCsvQuery("/?export-engine=v1")),
+  auto plainSelect = [&](std::string_view target) {
+    return makeCsvQuery(target, "SELECT * WHERE { ?s ?p ?o }");
+  };
+  const std::string baseline = runToString(plainSelect("/"));
+  EXPECT_THAT(runToString(plainSelect("/?export-engine=v1")),
               testing::StrEq(baseline));
-  EXPECT_THAT(runToString(makeCsvQuery("/?export-engine=v2")),
+  EXPECT_THAT(runToString(plainSelect("/?export-engine=v2")),
               testing::StrEq(baseline));
-  EXPECT_THAT(runToString(makeCsvQuery("/?fast-export=true")),
+  EXPECT_THAT(runToString(plainSelect("/?fast-export=true")),
               testing::StrEq(baseline));
-  auto headerRequest = makeCsvQuery("/");
+  auto headerRequest = plainSelect("/");
   headerRequest.set("X-QLever-Export-Engine", "v2");
   EXPECT_THAT(runToString(std::move(headerRequest)), testing::StrEq(baseline));
+  // A guarded query (OPTIONAL is beyond the V2 envelope) requested with V2
+  // must fall back to V1 and return identical bytes.
+  auto optionalSelect = [&](std::string_view target) {
+    return makeCsvQuery(target,
+                        "SELECT * WHERE { ?s ?p ?o OPTIONAL { ?s ?p ?o } }");
+  };
+  const std::string optionalBaseline = runToString(optionalSelect("/"));
+  EXPECT_THAT(runToString(optionalSelect("/?export-engine=v2")),
+              testing::StrEq(optionalBaseline));
 }
 
 // _____________________________________________________________________________

@@ -171,4 +171,52 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
   }
 }
 
+TEST(ExportPipelineRouterTest, EligibleShapesSelectV2) {
+  auto expectV2 = [](std::string_view sparql) {
+    auto query = parse(sparql);
+    EXPECT_FALSE(ExportPipelineRouter::hasUnsupportedConstructs(query))
+        << sparql;
+    ParamValueMap params;
+    params["export-engine"] = {"v2"};
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+              ExportEngineMode::FastStreamingV2)
+        << sparql;
+  };
+  expectV2("SELECT * WHERE { ?s ?p ?o }");
+  expectV2("SELECT ?s WHERE { ?s ?p ?o FILTER(?s != ?o) }");
+  expectV2("SELECT * WHERE { ?s ?p ?o BIND(?o AS ?x) }");
+  expectV2("SELECT * WHERE { VALUES ?s { <http://example.org/a> } ?s ?p ?o }");
+  expectV2("SELECT * WHERE { { ?s ?p ?o } ?s ?p ?o }");
+}
+
+TEST(ExportPipelineRouterTest, UnsupportedConstructsFailClosedToV1) {
+  auto expectV1 = [](std::string_view sparql) {
+    auto query = parse(sparql);
+    EXPECT_TRUE(ExportPipelineRouter::hasUnsupportedConstructs(query))
+        << sparql;
+    ParamValueMap params;
+    params["export-engine"] = {"v2"};
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+              ExportEngineMode::LegacyV1)
+        << sparql;
+  };
+  // Operations beyond plain matching.
+  expectV1(
+      "SELECT * WHERE { SERVICE <http://example.org/sparql> { ?s ?p ?o } }");
+  expectV1("SELECT * WHERE { ?s ?p ?o MINUS { ?a ?b ?c } }");
+  expectV1("SELECT * WHERE { { SELECT ?s WHERE { ?s ?p ?o } } }");
+  expectV1("SELECT * WHERE { ?s <http://example.org/p>+ ?o }");
+  expectV1("SELECT * WHERE { ?s ?p ?o FILTER EXISTS { ?s ?p ?o } }");
+  expectV1("SELECT * WHERE { ?s ?p ?o OPTIONAL { ?s ?p ?o } }");
+  expectV1("SELECT * WHERE { { ?s ?p ?o } UNION { ?a ?b ?c } }");
+  expectV1("SELECT * WHERE { GRAPH <http://example.org/g> { ?s ?p ?o } }");
+  // Solution modifiers and select expressions.
+  expectV1("SELECT ?s WHERE { ?s ?p ?o } GROUP BY ?s");
+  expectV1("SELECT ?s WHERE { ?s ?p ?o } GROUP BY ?s HAVING(COUNT(?o) > 1)");
+  expectV1("SELECT * WHERE { ?s ?p ?o } ORDER BY ?s");
+  expectV1("SELECT DISTINCT * WHERE { ?s ?p ?o }");
+  expectV1("SELECT (?o AS ?x) WHERE { ?s ?p ?o }");
+  expectV1("SELECT * FROM <http://example.org/g> WHERE { ?s ?p ?o }");
+}
+
 }  // namespace
