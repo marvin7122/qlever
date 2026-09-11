@@ -2,7 +2,7 @@
 // Chair of Algorithms and Data Structures.
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
-#include <absl/any_invocable.h>
+#include <absl/functional/any_invocable.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
