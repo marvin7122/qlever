@@ -216,6 +216,8 @@ CPP_template(typename UnderlyingVocabulary,
          ::ranges::views::zip(indices, compressedWords)) {
       size_t decoderIdx;
       if constexpr (underlyingHasHoles) {
+        // Translate the index to a position exactly once and reuse it for
+        // the decoder selection below (like `operator[]` does).
         const auto position = underlyingVocabulary_.positionOfIndex(idx);
         if (!position.has_value()) {
           builder.appendWord(
