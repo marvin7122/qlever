@@ -25,6 +25,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "engine/export_v2/ExportJobState.h"
 #include "util/Exception.h"
 #include "util/http/websocket/QueryId.h"
 
@@ -134,40 +135,10 @@ class ExportWorkLease {
 };
 
 // -----------------------------------------------------------------------------
-// Internal Base Job State & Owned Morsel for Type-Erased Thread Pool Dispatch
-// -----------------------------------------------------------------------------
-
-class ExportJobStateBase {
- public:
-  virtual ~ExportJobStateBase() = default;
-  [[nodiscard]] virtual uint64_t jobId() const noexcept = 0;
-  virtual void onDemandChanged(size_t activeForegroundQueries,
-                               uint64_t newEpoch) = 0;
-  virtual void onHelperLeaseAcquired(uint64_t leaseEpoch) = 0;
-  virtual void onHelperLeaseReleased(uint64_t leaseEpoch) = 0;
-  virtual void executeHelperTask(size_t morselIndex, uint64_t leaseEpoch) = 0;
-  [[nodiscard]] virtual bool isCancelled() const noexcept = 0;
-};
-
-struct OwnedMorsel {
-  std::shared_ptr<ExportJobStateBase> jobState_;
-  uint64_t jobId_{0};
-  uint64_t submissionEpoch_{0};
-  size_t morselIndex_{0};
-
-  OwnedMorsel(std::shared_ptr<ExportJobStateBase> jobState, uint64_t jobId,
-              uint64_t submissionEpoch, size_t morselIndex)
-      : jobState_{std::move(jobState)},
-        jobId_{jobId},
-        submissionEpoch_{submissionEpoch},
-        morselIndex_{morselIndex} {
-    AD_CONTRACT_CHECK(jobState_ != nullptr);
-  }
-};
-
-// -----------------------------------------------------------------------------
 // Forward declarations for Session and Scheduler
 // -----------------------------------------------------------------------------
+// `ExportJobStateBase` and `OwnedMorsel` live in ExportJobState.h so the
+// scheduler header only coordinates admission, not job identity.
 
 template <typename ResultType>
 class ExportWorkSession;
@@ -448,7 +419,7 @@ class ExportJobState final
     if (!pendingIndicesToEnqueue.empty()) {
       auto self = this->shared_from_this();
       for (size_t index : pendingIndicesToEnqueue) {
-        scheduler_->enqueueMorsel(OwnedMorsel(self, jobId_, newEpoch, index));
+        scheduler_->enqueueMorsel(OwnedMorsel(self, newEpoch, index));
       }
     }
   }
@@ -736,7 +707,7 @@ class ExportJobState final
     }
     if (shouldEnqueue) {
       scheduler_->enqueueMorsel(
-          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, *index));
+          OwnedMorsel(this->shared_from_this(), epochToSubmit, *index));
     }
     return true;
   }
