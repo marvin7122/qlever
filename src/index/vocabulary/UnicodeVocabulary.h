@@ -46,7 +46,8 @@ class UnicodeVocabulary {
     if constexpr (requires {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
-      return _underlyingVocabulary.lookupBatch(indices, builder);
+      _underlyingVocabulary.lookupBatch(indices, builder);
+      return std::move(builder).finalize();
     } else {
       return _underlyingVocabulary.lookupBatch(indices);
     }
