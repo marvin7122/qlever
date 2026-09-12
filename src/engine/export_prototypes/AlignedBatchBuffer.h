@@ -8,11 +8,11 @@
 
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
-#include <vector>
+#include <type_traits>
 
 #include "backports/span.h"
 #include "global/Id.h"
@@ -25,8 +25,24 @@ namespace qlever::export_pipeline {
 // Enforces strict 64-byte alignment on ID vectors so sequential batch lookups
 // cleanly trigger CPU hardware L2 stream prefetchers and avoid split-cache-line
 // penalties.
+//
+// Not thread-safe: all methods must be called from a single thread unless
+// externally synchronized. Call `reserve` before `push_back`; the template
+// parameters are checked by `static_assert` (`Alignment` is a power of two
+// with `alignof(T) <= sizeof(T) <= Alignment`, `T` is trivially copyable).
 template <typename T, size_t Alignment = 64>
 class AlignedBatchBuffer {
+  static_assert((Alignment & (Alignment - 1)) == 0,
+                "Alignment must be a power of two");
+  static_assert(Alignment >= alignof(T),
+                "Alignment must be at least alignof(T)");
+  static_assert(sizeof(T) <= Alignment, "T size must not exceed alignment");
+  // `reserve` relocates elements with `std::memcpy` and `push_back` writes
+  // into raw `::operator new[]` storage, both of which are only valid for
+  // trivially copyable types.
+  static_assert(std::is_trivially_copyable_v<T>,
+                "AlignedBatchBuffer requires trivially copyable types");
+
  public:
   static constexpr size_t kAlignment = Alignment;
 

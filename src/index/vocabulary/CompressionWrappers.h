@@ -88,7 +88,8 @@ CPP_concept RequiresScratchDecompressInto =
 // Hold a `vector<DecoderT>` and forward `decompress`,
 // `maxDecompressedSize`, and `decompressInto` to `decoders_[index]`. Use this
 // as a building block for types that fulfill the `CompressionWrapper` concept
-// above.
+// above. An out-of-range `decoderIndex` throws `std::out_of_range` from all
+// three dispatching methods.
 template <typename DecoderT>
 struct DecoderMultiplexer {
   using Decoder = DecoderT;
