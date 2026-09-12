@@ -45,7 +45,20 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs.
+// runs. Disabled when `QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE` is defined,
+// which the top-level CMakeLists.txt does for sanitizer builds: the sanitizer
+// runtimes provide their own (strongly linked) global operator new/delete
+// replacements that would otherwise cause multiple-definition link errors.
+#ifndef QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
+// The malloc/free pairing below is intentional (allocation counting), but GCC
+// cannot prove the pairing and warns with -Wmismatched-new-delete.
+// `noinline` on the deallocation functions keeps the `free` call in a single
+// non-inlined body: otherwise GCC inlines `operator delete` into call sites
+// (e.g. `make_shared`, vector teardown) and reports the warning once per
+// inlined copy, where a definition-site pragma cannot reach it. The pragma
+// below additionally covers the definition site itself.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -58,9 +71,16 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
-void operator delete(void* ptr) noexcept { std::free(ptr); }
+__attribute__((noinline)) void operator delete(void* ptr) noexcept {
+  std::free(ptr);
+}
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+__attribute__((noinline)) void operator delete(void* ptr,
+                                               std::size_t) noexcept {
+  std::free(ptr);
+}
+#pragma GCC diagnostic pop
+#endif  // QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 
 namespace ad_benchmark {
 namespace {

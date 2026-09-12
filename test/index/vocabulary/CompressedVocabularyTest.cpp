@@ -14,7 +14,9 @@
 
 #include <array>
 
+#include "../../util/DanglingViewTestHelpers.h"
 #include "../../util/GTestHelpers.h"
+#include "../../util/PmrStringSsoTestHelpers.h"
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -51,7 +53,7 @@ struct DummyDecoder {
   }
 
   static std::string decompress(std::string_view compressed) {
-    std::string result{compressed.size(), '\0'};
+    std::string result(compressed.size(), '\0');
     decompressInto(compressed, ql::span<char>{result.data(), result.size()});
     return result;
   }
@@ -613,8 +615,6 @@ TEST(CompressedVocabularyWithHoles, nonAscendingIndicesThrow) {
     EXPECT_EQ(vocab[indices.at(i)], words.at(i)) << "at position " << i;
   }
 }
-
-}  // namespace
 
 // _____________________________________________________________________________
 // A vocabulary containing the empty string word ("") must be scanned correctly
