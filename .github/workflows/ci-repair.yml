@@ -4,8 +4,16 @@ on:
   workflow_run:
     workflows:
       - Native build
+      - Native build with AppleClang on MacOS
+      - Native build with conan
+      - Native build with conan on MacOS
+      - Native build to WebAssembly using Conan and Emscripten
       - Docker build and publish
       - CPP17 libQLever
+      - measure-code-coverage
+      - sparql-conformance
+      - sparql-conformance-new
+      - Check index version
       - Format check
     types: [completed]
 
@@ -24,7 +32,7 @@ jobs:
       github.event.workflow_run.conclusion == 'failure' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, linux, x64, ci-repair-local]
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       PATH: /home/userNoPriv/.local/bin:/home/userNoPriv/.local/share/npm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       PYTHONPATH: /home/userNoPriv/code/ci-repair-harness
