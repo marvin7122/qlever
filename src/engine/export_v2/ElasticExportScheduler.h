@@ -248,8 +248,9 @@ class ElasticExportScheduler
   }
 
   /// Cap on concurrently outstanding morsels across all sessions. Defaults to
-  /// unlimited so existing callers behave as before; production wiring sets
-  /// it to the pool thread count.
+  /// unlimited (SIZE_MAX, so the admission limit is effectively disabled and
+  /// existing callers behave as before); production wiring sets it to the
+  /// pool thread count to enable even-split admission.
   void setMaxConcurrentMorsels(size_t count) {
     AD_CONTRACT_CHECK(count >= 1,
                       "Need at least one in-flight morsel for progress");
@@ -304,16 +305,30 @@ class ElasticExportScheduler
   void workerLoop();
   void runPostedMorsel(OwnedMorsel morsel);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
-  // Post while accounting outstanding work; the wrapped closure decrements
-  // and drains on completion, including the throwing path. queueMutex_ held.
+  // Account one morsel as outstanding and hand its completion-accounting
+  // closure to `poster_`. Never holds `queueMutex_` while invoking `poster_`:
+  // a synchronous poster runs the closure inline, and completion takes the
+  // non-recursive `queueMutex_` again, so holding it here would deadlock.
   void postAccounted(OwnedMorsel morsel);
-  // Move pending morsels onto the pool while capacity and shares allow,
-  // oldest session first. queueMutex_ held.
-  void drainPendingAdmissionUnsafe();
+  // Build the closure for a posted morsel; completion decrements the share
+  // accounting and admits waiting morsels, including on the throwing path.
+  absl::AnyInvocable<void()> makePostedWork(OwnedMorsel morsel);
+  // Completion path shared by the success and throwing continuations:
+  // decrement under the lock, then post newly admittable morsels without it.
+  void onPostedMorselFinished(uint64_t jobId);
+  // Read the outstanding count without inserting a zero entry for sessions
+  // that only hold pending morsels. queueMutex_ held.
+  [[nodiscard]] size_t committedOutstandingUnsafe(uint64_t jobId) const;
+  // Select admittable pending morsels (oldest session first) while capacity
+  // and shares allow, account them as outstanding, and return them; the
+  // caller posts them WITHOUT holding queueMutex_. queueMutex_ held.
+  [[nodiscard]] std::vector<OwnedMorsel> drainPendingAdmissionUnsafe();
   // Decrement accounting for one finished morsel. queueMutex_ held.
   void decrementOutstandingUnsafe(uint64_t jobId);
   // Even per-session share from the live count: at least one, so every
-  // session keeps its progress floor. Pure computation, no locking.
+  // session keeps its progress floor. Pure computation, no locking. The max
+  // is a best-effort snapshot: a concurrent `setMaxConcurrentMorsels` may
+  // shift shares transiently, and every drain re-reads the current value.
   [[nodiscard]] size_t fairShareUnsafe(size_t liveSessions) const noexcept {
     const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
     const size_t live = std::max(liveSessions, size_t{1});
