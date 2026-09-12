@@ -191,7 +191,7 @@ TEST(StringSortComparatorTest, IsLessInTotalWithExternalFlag) {
 }
 
 // ______________________________________________________________________________________________
-TEST(StringSortComparatorTest, ad_utility::vocabulary::SimpleStringComparator) {
+TEST(StringSortComparatorTest, SimpleStringComparator) {
   ad_utility::vocabulary::SimpleStringComparator comp("en", "US", true);
 
   // strange casings must not affect order
@@ -226,7 +226,7 @@ TEST(StringSortComparatorTest, ad_utility::vocabulary::SimpleStringComparator) {
 
 // ______________________________________________________________________________
 TEST(StringSortComparatorNoICU,
-     ad_utility::vocabulary::SimpleStringComparator) {
+     SimpleStringComparator) {
   ad_utility::vocabulary::SimpleStringComparatorNoICU comp("en", "US", true);
 
   // Bytewise ordering: uppercase letters come before lowercase ones.
@@ -247,7 +247,7 @@ TEST(StringSortComparatorNoICU,
 
 // ______________________________________________________________________________
 TEST(StringSortComparatorNoICU,
-     ad_utility::vocabulary::TripleComponentComparator) {
+     TripleComponentComparator) {
   ad_utility::vocabulary::TripleComponentComparatorNoICU comp("en", "US",
                                                               false);
   using L = ad_utility::vocabulary::TripleComponentComparatorNoICU::Level;
