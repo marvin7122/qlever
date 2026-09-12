@@ -40,7 +40,22 @@ struct JoinEstimate {
 template <size_t Precision = 10>
 class JoinCardinalityEstimator {
  public:
+  // Noise floor for the inclusion-exclusion overlap: a 2.5-sigma multiple of
+  // the HLL standard error (1.04 / sqrt(m) with m = NUM_REGISTERS), scaled by
+  // the smaller cardinality. Measured overlaps at or below this floor are
+  // indistinguishable from estimation noise (e.g. disjoint key sets).
+  [[nodiscard]] static double overlapNoiseFloor(uint64_t cardA,
+                                                uint64_t cardB) noexcept {
+    constexpr double kSigma = 2.5;
+    constexpr double hllErrorConstant = 1.04;
+    return kSigma * hllErrorConstant /
+           std::sqrt(static_cast<double>(NUM_REGISTERS)) *
+           static_cast<double>(std::min(cardA, cardB));
+  }
+
   // Estimate join cardinality using explicit rows and average multiplicities.
+  // A non-positive multiplicity (NaN compares as non-positive) selects
+  // automatic estimation from the row count and the sketch cardinality.
   [[nodiscard]] static size_t estimateJoinSize(
       const HyperLogLogSketch<Precision>& sketchA, size_t rowsA, double multA,
       const HyperLogLogSketch<Precision>& sketchB, size_t rowsB, double multB,
@@ -73,14 +88,16 @@ class JoinCardinalityEstimator {
       return {0, 0, model};
     }
 
-    double effMultA =
-        (multA > 0.0)
-            ? multA
-            : (static_cast<double>(rowsA) / static_cast<double>(cardA));
-    double effMultB =
-        (multB > 0.0)
-            ? multB
-            : (static_cast<double>(rowsB) / static_cast<double>(cardB));
+    // The fallback multiplicity (rows per distinct key) is at least 1.0: a
+    // smaller quotient only occurs when HLL overestimates the cardinality.
+    double effMultA = (multA > 0.0)
+                          ? multA
+                          : std::max(1.0, static_cast<double>(rowsA) /
+                                              static_cast<double>(cardA));
+    double effMultB = (multB > 0.0)
+                          ? multB
+                          : std::max(1.0, static_cast<double>(rowsB) /
+                                              static_cast<double>(cardB));
 
     if (model == EstimationModel::CONTAINMENT_MIN) {
       // Model A: Assumes the smaller set of keys is a complete subset of the
@@ -104,9 +121,9 @@ class JoinCardinalityEstimator {
                          static_cast<int64_t>(cardB) -
                          static_cast<int64_t>(cardUnion);
 
-    // Filter out statistical noise variance for disjoint sets (noise floor <=
-    // 8% min cardinality, 2.5 sigma)
-    double noiseThreshold = 0.08 * static_cast<double>(std::min(cardA, cardB));
+    // Filter out statistical noise variance for disjoint sets (overlap at or
+    // below the precision-scaled noise floor).
+    double noiseThreshold = overlapNoiseFloor(cardA, cardB);
     if (static_cast<double>(rawOverlap) <= noiseThreshold) {
       // Disjoint sets: 1 row minimum floor for non-empty tables to avoid
       // zero-cost anomalies
@@ -162,7 +179,7 @@ class JoinCardinalityEstimator {
     int64_t rawOverlap = static_cast<int64_t>(cardA) +
                          static_cast<int64_t>(cardB) -
                          static_cast<int64_t>(cardUnion);
-    double noiseThreshold = 0.08 * static_cast<double>(std::min(cardA, cardB));
+    double noiseThreshold = overlapNoiseFloor(cardA, cardB);
     if (static_cast<double>(rawOverlap) <= noiseThreshold) {
       return 0;
     }
