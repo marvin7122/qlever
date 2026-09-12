@@ -25,8 +25,9 @@
 
 namespace splitVocabTestHelpers {
 
-using SGV = SplitGeoVocabulary<ad_utility::vocabulary::CompressedVocabulary<
-    ad_utility::vocabulary::VocabularyInternalExternal>>;
+using SGV = ad_utility::vocabulary::SplitGeoVocabulary<
+    ad_utility::vocabulary::CompressedVocabulary<
+        ad_utility::vocabulary::VocabularyInternalExternal>>;
 
 [[maybe_unused]] auto testSplitTwoFunction = [](std::string_view s) -> uint8_t {
   return ql::starts_with(s, "\"a");

@@ -147,34 +147,33 @@ class MergeVocabularyTest : public ::testing::Test {
     ad_utility::serialization::FileWriteSerializer partial0(_path0);
     ad_utility::serialization::FileWriteSerializer partial1(_path1);
 
-    auto writePartialVocabulary = [](auto& partialVocab,
-                                     const auto& tripleComponents,
-                                     Mapping* mapping) {
-      // write first partial vocabulary
-      partialVocab << tripleComponents.size();
-      size_t localIdx = 0;
-      for (auto w : tripleComponents) {
-        auto globalId = w.index_;
-        w.index_ = localIdx;
-        partialVocab << w;
-        if (mapping) {
-          if (w.isBlankNode({})) {
-            mapping->emplace_back(
-                V(localIdx),
-                Id::makeFromBlankNodeIndex(BlankNodeIndex::make(globalId)));
-          } else {
-            using GeoVocab =
-                SplitGeoVocabulary<ad_utility::vocabulary::CompressedVocabulary<
-                    ad_utility::vocabulary::VocabularyInternalExternal>>;
-            if (GeoVocab::getMarkerForWord(w.iriOrLiteral()) == 1) {
-              globalId = GeoVocab::addMarker(globalId, 1);
+    auto writePartialVocabulary =
+        [](auto& partialVocab, const auto& tripleComponents, Mapping* mapping) {
+          // write first partial vocabulary
+          partialVocab << tripleComponents.size();
+          size_t localIdx = 0;
+          for (auto w : tripleComponents) {
+            auto globalId = w.index_;
+            w.index_ = localIdx;
+            partialVocab << w;
+            if (mapping) {
+              if (w.isBlankNode({})) {
+                mapping->emplace_back(
+                    V(localIdx),
+                    Id::makeFromBlankNodeIndex(BlankNodeIndex::make(globalId)));
+              } else {
+                using GeoVocab = ad_utility::vocabulary::SplitGeoVocabulary<
+                    ad_utility::vocabulary::CompressedVocabulary<
+                        ad_utility::vocabulary::VocabularyInternalExternal>>;
+                if (GeoVocab::getMarkerForWord(w.iriOrLiteral()) == 1) {
+                  globalId = GeoVocab::addMarker(globalId, 1);
+                }
+                mapping->emplace_back(V(localIdx), V(globalId));
+              }
             }
-            mapping->emplace_back(V(localIdx), V(globalId));
+            localIdx++;
           }
-        }
-        localIdx++;
-      }
-    };
+        };
     writePartialVocabulary(partial0, words0, &_expMapping0);
 
     writePartialVocabulary(partial1, words1, &_expMapping1);
