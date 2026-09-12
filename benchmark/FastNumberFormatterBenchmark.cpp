@@ -11,11 +11,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
-#include <memory>
 #include <random>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "../benchmark/infrastructure/Benchmark.h"
@@ -27,6 +24,11 @@ namespace {
 using namespace ad_utility;
 
 constexpr size_t NUM_INTEGERS = 1'000'000;
+// Stack buffers for the formatting benchmarks. 32 bytes hold any `int64_t`
+// (at most 20 chars + sign, plus slack); 64 bytes hold the 32-byte Wikidata
+// entity prefix plus any `uint64_t` (at most 20 digits, plus slack).
+constexpr size_t INT_BUFFER_SIZE = 32;
+constexpr size_t QID_BUFFER_SIZE = 64;
 
 // Benchmark suite comparing std::to_string, std::to_chars, and
 // formatIntBranchless
@@ -95,13 +97,14 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 2. std::to_chars (stack buffer, standard library fast path)
       {
         size_t totalBytes = 0;
-        char buffer[32];
+        char buffer[INT_BUFFER_SIZE];
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("std::to_chars", [&]() {
           size_t bytes = 0;
           for (int64_t val : sequentialInts) {
             auto [ptr, ec] =
                 std::to_chars(buffer, buffer + sizeof(buffer), val);
+            AD_CORRECTNESS_CHECK(ec == std::errc{});
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
@@ -123,7 +126,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 3. formatIntBranchless (Fast SIMD / lookup table zero-allocation)
       {
         size_t totalBytes = 0;
-        char buffer[32];
+        char buffer[INT_BUFFER_SIZE];
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("formatIntBranchless (SIMD/LUT)", [&]() {
           size_t bytes = 0;
@@ -182,13 +185,14 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 2. std::to_chars
       {
         size_t totalBytes = 0;
-        char buffer[32];
+        char buffer[INT_BUFFER_SIZE];
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("std::to_chars (random 64-bit)", [&]() {
           size_t bytes = 0;
           for (int64_t val : randomInts) {
             auto [ptr, ec] =
                 std::to_chars(buffer, buffer + sizeof(buffer), val);
+            AD_CORRECTNESS_CHECK(ec == std::errc{});
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
@@ -210,7 +214,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 3. formatIntBranchless
       {
         size_t totalBytes = 0;
-        char buffer[32];
+        char buffer[INT_BUFFER_SIZE];
         auto start = std::chrono::high_resolution_clock::now();
         auto& m =
             group.addMeasurement("formatIntBranchless (random 64-bit)", [&]() {
@@ -250,8 +254,8 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
             "std::string concat (prefix + to_string)", [&]() {
               size_t bytes = 0;
               for (uint64_t id : qids) {
-                std::string s =
-                    "http://www.wikidata.org/entity/Q" + std::to_string(id);
+                std::string s = std::string{WIKIDATA_ENTITY_PREFIX} +
+                                std::to_string(id);
                 bytes += s.size();
               }
               totalBytes = bytes;
@@ -273,14 +277,17 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 2. std::to_chars with manual prefix copy
       {
         size_t totalBytes = 0;
-        char buffer[64];
+        char buffer[QID_BUFFER_SIZE];
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("memcpy prefix + std::to_chars", [&]() {
           size_t bytes = 0;
           for (uint64_t id : qids) {
-            std::memcpy(buffer, "http://www.wikidata.org/entity/Q", 31);
-            auto [ptr, ec] =
-                std::to_chars(buffer + 31, buffer + sizeof(buffer), id);
+            std::memcpy(buffer, WIKIDATA_ENTITY_PREFIX.data(),
+                        WIKIDATA_ENTITY_PREFIX.size());
+            auto [ptr, ec] = std::to_chars(
+                buffer + WIKIDATA_ENTITY_PREFIX.size(),
+                buffer + sizeof(buffer), id);
+            AD_CORRECTNESS_CHECK(ec == std::errc{});
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
@@ -302,7 +309,7 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 3. formatQid (single-pass SIMD/branchless formatting)
       {
         size_t totalBytes = 0;
-        char buffer[64];
+        char buffer[QID_BUFFER_SIZE];
         auto start = std::chrono::high_resolution_clock::now();
         auto& m =
             group.addMeasurement("formatQid (Single-pass SIMD/LUT)", [&]() {

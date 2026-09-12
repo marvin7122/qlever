@@ -13,7 +13,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <string>
 #include <string_view>
 
@@ -68,13 +67,16 @@ inline constexpr uint64_t POWERS_OF_10_64[20] = {
 };
 
 // _____________________________________________________________________________
-// Fast 8-digit radix-10000 / radix-100 decomposition with SSE2 or SWAR.
+// Fast 8-digit formatting with SSE2 or a scalar lookup-table fallback. The
+// radix decomposition into four 2-digit values is scalar; SSE2 only converts
+// those four values to ASCII in parallel.
 inline void format8Digits(uint32_t v, char* dst) noexcept {
   AD_CONTRACT_CHECK(dst != nullptr);
   AD_CONTRACT_CHECK(v < 100000000U);
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__SSE2__)
-  // SSE2 parallel vector radix conversion: decompose into 4 2-digit lanes
+  // Scalar radix decomposition into 4 2-digit lanes, then parallel
+  // digit-pair-to-ASCII conversion with SSE2.
   uint32_t q = v / 10000;
   uint32_t r = v % 10000;
   uint16_t p0 = static_cast<uint16_t>(q / 100);
@@ -83,7 +85,11 @@ inline void format8Digits(uint32_t v, char* dst) noexcept {
   uint16_t p3 = static_cast<uint16_t>(r % 100);
 
   __m128i pairs = _mm_setr_epi16(p0, p1, p2, p3, 0, 0, 0, 0);
-  // tens = (pairs * 52429) >> 19  (approx division by 10)
+  // Fixed-point approximation of division by 10 for 16-bit lanes:
+  // _mm_mulhi_epu16(x, 52429) computes floor(x * 52429 / 65536), and the
+  // additional right shift by 3 (division by 8) yields
+  // floor(x * 52429 / 524288) ~= floor(x / 10), since 52429 / 65536 ~= 0.8
+  // and 0.8 / 8 = 0.1.
   __m128i tens =
       _mm_srli_epi16(_mm_mulhi_epu16(pairs, _mm_set1_epi16(52429)), 3);
   __m128i tens10 = _mm_mullo_epi16(tens, _mm_set1_epi16(10));
@@ -93,7 +99,7 @@ inline void format8Digits(uint32_t v, char* dst) noexcept {
   __m128i ascii = _mm_add_epi8(combined, _mm_set1_epi8('0'));
   _mm_storel_epi64(reinterpret_cast<__m128i*>(dst), ascii);
 #else
-  // SWAR / lookup table fallback
+  // Scalar lookup-table fallback (no SIMD, no SWAR bit tricks)
   uint32_t q = v / 10000;
   uint32_t r = v % 10000;
   uint32_t d0 = (q / 100) * 2;
@@ -130,8 +136,10 @@ inline void format2Digits(uint32_t v, char* dst) noexcept {
 
 // _____________________________________________________________________________
 // Maximum character buffer length required for any 64-bit integer formatted
-// to ASCII (including potential negative sign and null terminator).
-inline constexpr size_t MAX_INT64_ASCII_LENGTH = 22;
+// to ASCII, including a potential negative sign and a null terminator. The
+// longest `int64_t` spelling is "-9223372036854775808" (20 chars + `\0`),
+// the longest `uint64_t` spelling is "18446744073709551615" (20 chars + `\0`).
+inline constexpr size_t MAX_INT64_ASCII_LENGTH = 21;
 inline constexpr size_t MAX_UINT64_ASCII_LENGTH = 21;
 
 // Standard Wikidata prefix constants
@@ -141,8 +149,9 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
     "http://www.wikidata.org/prop/direct/P";
 
 // _____________________________________________________________________________
-// Branchless determination of the exact number of decimal digits in `val`.
-// Uses fast log2 approximation via `countl_zero` and a single conditional move.
+// Determination of the exact number of decimal digits in `val`. Estimates
+// the digit count from the bit width via `countl_zero` and corrects the
+// estimate with a single power-of-ten comparison.
 [[nodiscard]] inline constexpr uint32_t numDigits(uint64_t val) noexcept {
   if (val == 0) {
     return 1;
@@ -153,8 +162,8 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 }
 
 // _____________________________________________________________________________
-// Branchless determination of the exact number of decimal digits for 32-bit
-// uint.
+// Determination of the exact number of decimal digits for 32-bit uint
+// (delegates to the 64-bit overload).
 [[nodiscard]] inline constexpr uint32_t numDigits(uint32_t val) noexcept {
   return numDigits(static_cast<uint64_t>(val));
 }
@@ -222,9 +231,12 @@ inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
 
 // _____________________________________________________________________________
 // Branchless, zero-allocation conversion of int64_t to ASCII.
-// Writes sign (if negative) and digits directly to `out`.
-// Returns a pointer to one-past-the-end.
-// Precondition: `out` must point to a buffer of at least 21 bytes.
+// Writes sign (if negative) and digits directly to `out` without a null
+// terminator. Returns a pointer to one-past-the-end.
+// Precondition: `out` must point to a buffer with at least `numDigits` of
+// the magnitude plus one byte for the sign if `val` is negative (at most 20
+// bytes total, see `MAX_INT64_ASCII_LENGTH` for the size including a null
+// terminator).
 inline char* formatIntBranchless(int64_t val, char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
   uint64_t uval;
@@ -274,7 +286,11 @@ inline char* formatPid(uint64_t id, char* out) noexcept {
 }
 
 // _____________________________________________________________________________
-// Single-pass RDF IRI formatting with custom prefix and integer ID.
+// Single-pass RDF IRI formatting with custom prefix and integer ID. Writes
+// the prefix and the digits directly to `out` without a null terminator and
+// returns a pointer to one-past-the-end.
+// Precondition: `out` must point to a buffer with at least
+// `prefix.size() + numDigits(id)` bytes.
 inline char* formatPrefixedId(std::string_view prefix, uint64_t id,
                               char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
@@ -286,6 +302,11 @@ inline char* formatPrefixedId(std::string_view prefix, uint64_t id,
 
 // _____________________________________________________________________________
 // Single-pass RDF IRI formatting with custom prefix and signed integer ID.
+// Writes the prefix, an optional sign, and the digits directly to `out`
+// without a null terminator and returns a pointer to one-past-the-end.
+// Precondition: `out` must point to a buffer with at least `prefix.size()`
+// plus `numDigits` of the magnitude plus one byte for the sign if `id` is
+// negative.
 inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
                                char* out) noexcept {
   AD_CONTRACT_CHECK(out != nullptr);
@@ -296,7 +317,11 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
 }
 
 // _____________________________________________________________________________
-// Convenient string-returning wrappers with exact string pre-sizing
+// Convenient string-returning wrappers with exact string pre-sizing. All
+// three allocate exactly the required number of bytes and return the
+// decimal spelling with no leading zeros (except "0" itself).
+
+// Format an unsigned 64-bit integer, return its decimal spelling.
 [[nodiscard]] inline std::string formatUIntToString(uint64_t val) {
   const uint32_t len = numDigits(val);
   std::string s;
@@ -305,6 +330,8 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
   return s;
 }
 
+// Format a signed 64-bit integer, including a leading '-' if negative.
+// Return its decimal spelling.
 [[nodiscard]] inline std::string formatIntToString(int64_t val) {
   const bool negative = val < 0;
   const uint64_t uval =
@@ -317,6 +344,8 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
   return s;
 }
 
+// Format a Wikidata entity IRI (`WIKIDATA_ENTITY_PREFIX` + decimal id).
+// Return the full IRI string.
 [[nodiscard]] inline std::string formatQidToString(uint64_t id) {
   const size_t totalLen = WIKIDATA_ENTITY_PREFIX.size() + numDigits(id);
   std::string s;
