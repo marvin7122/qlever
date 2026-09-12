@@ -16,6 +16,7 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/ReadOnlyMmap.h"
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 
@@ -35,6 +36,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // that records the number of offsets. The number of words is therefore the
   // number of stored offsets minus one.
   ad_utility::File offsetsFile_;
+
+  // Read-only mapping of the offsets region of `offsetsFile_` (the trailer
+  // stays unmapped). Established by `open`; when the mapping fails, it stays
+  // unmapped and all reads fall back to positioned I/O. The mapping is owned
+  // here so every lookup path below shares one lifetime with the files.
+  ad_utility::ReadOnlyMmap offsetsMapping_;
 
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
@@ -102,6 +109,13 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
+
+  // Whether the `.offsets` file is currently served from the memory mapping.
+  // A read-only diagnostic: all lookup paths check the mapping themselves
+  // and need no caller-side branching.
+  [[nodiscard]] bool offsetsAreMemoryMapped() const {
+    return offsetsMapping_.isMapped();
+  }
 
   // Default constructor for an empty vocabulary.
   VocabularyOnDisk() = default;
@@ -173,10 +187,23 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   struct OffsetPair {
     uint64_t offset_;
     uint64_t nextOffset_;
+
+    [[nodiscard]] uint64_t offset() const noexcept { return offset_; }
+    [[nodiscard]] uint64_t nextOffset() const noexcept { return nextOffset_; }
+    [[nodiscard]] size_t wordSize() const {
+      AD_CORRECTNESS_CHECK(nextOffset_ >= offset_);
+      return nextOffset_ - offset_;
+    }
   };
 
-  // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
-  // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
+  // The `OffsetPair` for word `index`: a pointer dereference into
+  // `offsetsMapping_` when the mapping is active, a single positioned read
+  // otherwise.
+  OffsetPair offsetPairAt(size_t index) const;
+
+  // Phase 1 of `lookupBatch`: the `OffsetPair` (16 bytes) for each requested
+  // index, served from the memory mapping when active, otherwise read in a
+  // single batched read via `manager`.
   std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
                                           ql::span<const size_t> indices) const;
 
