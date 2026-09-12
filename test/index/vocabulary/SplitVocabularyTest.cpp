@@ -531,11 +531,11 @@ using namespace splitVocabTestHelpers;
 //   index 1: "abc" (marker 0) / "axyz" (marker 1)
 class SplitVocabularyWithDataTest : public ::testing::Test {
  protected:
-  static std::string getFilename() {
-    return absl::StrCat(gtestCurrentTestSuiteName(), ".dat");
+  std::string getFilename() const {
+    return absl::StrCat(gtestCurrentTestName(), ".dat");
   }
 
-  static void SetUpTestSuite() {
+  void SetUp() override {
     const auto filename = getFilename();
     ad_utility::deleteFile(filename, false);
     ad_utility::deleteFile(absl::StrCat(filename, ".a"), false);
@@ -548,19 +548,15 @@ class SplitVocabularyWithDataTest : public ::testing::Test {
     sv_.readFromFile(filename);
   }
 
-  static void TearDownTestSuite() {
+  void TearDown() override {
     const auto filename = getFilename();
     sv_.close();
     ad_utility::deleteFile(filename);
     ad_utility::deleteFile(absl::StrCat(filename, ".a"));
   }
 
-  // Shared across the suite because the vocabulary files are created once in
-  // SetUpTestSuite and closed in TearDownTestSuite.
-  static TwoSplitVocabulary sv_;
+  TwoSplitVocabulary sv_;
 };
-
-TwoSplitVocabulary SplitVocabularyWithDataTest::sv_;
 
 // _____________________________________________________________________________
 // Test `lookupBatch` partitioning and result merging directly.
