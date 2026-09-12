@@ -11,13 +11,10 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
-
-#include "engine/export_v2/ElasticExportScheduler.h"
-#include "engine/export_v2/ExportJobState.h"
-#include "util/http/websocket/QueryId.h"
 #include <vector>
 
 #include "engine/export_v2/ElasticExportScheduler.h"
+#include "engine/export_v2/ExportJobState.h"
 #include "util/GTestHelpers.h"
 #include "util/http/websocket/QueryId.h"
 
