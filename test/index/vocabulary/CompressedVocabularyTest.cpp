@@ -22,9 +22,12 @@
 #include "backports/span.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/PrefixCompressor.h"
+#include "index/vocabulary/StringSortComparator.h"
+#include "index/vocabulary/UnicodeVocabulary.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
+#include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 
@@ -179,6 +182,25 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
+}
+
+// _____________________________________________________________________________
+// Regression test: the delegating `lookupBatch(indices, builder)` overloads
+// must populate the builder and return the `finalize()`d result. The
+// underlying builder overload returns void, so returning its result directly
+// is ill-formed (this failed to compile before the fix).
+TYPED_TEST(CompressedVocabularyF, LookupBatchWithBuilderThroughDelegation) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto compressed = this->createCompressedVocabulary()(words);
+  const std::array<size_t, 5> indices{4, 1, 0, 3, 1};
+  ad_utility::vocabulary::SimpleStringComparator comparator{"en", "us", false};
+  ad_utility::vocabulary::UnicodeVocabulary<decltype(compressed),
+                                            decltype(comparator)>
+      vocab{comparator, std::move(compressed)};
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(indices.size());
+  const auto result = vocab.lookupBatch(indices, builder);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
 
 // _____________________________________________________________________________
