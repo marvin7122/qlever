@@ -155,7 +155,11 @@ template <typename Predicate>
 
 // Postcondition check: registered at function entry and evaluated upon normal
 // scope exit. The stringified predicate is captured alongside the lambda so
-// that the failure message names the violated postcondition.
+// that the failure message names the violated postcondition. The predicate
+// captures its surroundings by reference so that it observes the state at
+// scope exit rather than at guard construction. Declare the guard after the
+// state it inspects: destruction runs in reverse declaration order, so a
+// guard declared before its observed state would read destroyed objects.
 #define QL_POST(...)                                                \
   auto QLEVER_CONCAT(ql_postcondition_guard_, __LINE__) =           \
       ::ad_utility::detail::makePostconditionGuard(                 \
