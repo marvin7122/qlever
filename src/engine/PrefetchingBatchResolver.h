@@ -142,7 +142,6 @@ class PrefetchingBatchResolver {
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t pfPos = positions[k];
       prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-      prefetchVocabEntry(&positions[k], static_cast<int>(distance));
     }
 
     // Main pipelined loop: prefetch row (i + distance) ahead while serializing
