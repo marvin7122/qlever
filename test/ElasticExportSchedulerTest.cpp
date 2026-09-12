@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "engine/export_v2/ElasticExportScheduler.h"
+#include "util/GTestHelpers.h"
 #include "util/http/websocket/QueryId.h"
 
 using namespace ad_utility::export_v2;
@@ -420,8 +421,11 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   // Slot 0 should return 42
   EXPECT_EQ(session.consumeNextResult(), 42);
 
-  // Slot 1 should throw std::runtime_error
-  EXPECT_THROW(session.consumeNextResult(), std::runtime_error);
+  // Slot 1 must throw std::runtime_error with the worker's message.
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      session.consumeNextResult(),
+      ::testing::HasSubstr("Simulated morsel processing failure"),
+      std::runtime_error);
 
   // Slot 2 should still return 100
   EXPECT_EQ(session.consumeNextResult(), 100);
@@ -596,7 +600,8 @@ TEST(ElasticExportSchedulerTest, EvenSplitAcrossSessions) {
     sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
     sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
   }
-  // Two live sessions share four slots evenly: four posted, four pending.
+  // Two live sessions share four slots evenly: share = max/live = 4/2 = 2
+  // per session, so two from A plus two from B post and four stay pending.
   EXPECT_EQ(postedCount, 4u);
 
   deferred.runToIdle();
@@ -662,12 +667,53 @@ TEST(ElasticExportSchedulerTest, CancelledSessionYieldsItsShare) {
 
   sessionA.cancel();
   deferred.runToIdle();
-  // B drains fully; A's cancelled pending morsels are purged, never posted.
+  // B drains fully; A's cancelled pending morsels are purged, never posted:
+  // only B's two admitted morsels post on top of the initial two.
   EXPECT_EQ(deferred.totalPosted_, 4u);
   for (size_t i = 0; i < 3; ++i) {
     EXPECT_EQ(sessionB.consumeNextResult(), "b_" + std::to_string(i));
   }
   EXPECT_FALSE(sessionB.hasMoreResults());
+  // None of A's slots completed after the cancel, so nothing leaked to A.
+  // (A's slots stay unconsumed by design, so `hasMoreResults` is not
+  // asserted here.)
+  EXPECT_EQ(sessionA.consumedSlots(), 0u);
+}
+
+TEST(ElasticExportSchedulerTest, SynchronousPosterDoesNotDeadlock) {
+  // A poster that runs work inline must not deadlock: posting happens
+  // without holding the queue mutex, so completion accounting can take the
+  // non-recursive mutex again on the same thread.
+  auto scheduler = ElasticExportScheduler::create(
+      [](absl::AnyInvocable<void()> work) { std::move(work)(); }, 64);
+  scheduler->setMaxConcurrentMorsels(2);
+
+  // A posting-under-lock regression deadlocks instead of failing, so run
+  // the scenario off-thread with a bounded wait. On timeout the worker is
+  // already detached and keeps the scheduler alive; it dies with the test
+  // process.
+  std::promise<std::vector<int>> done;
+  auto finished = done.get_future();
+  std::thread worker([scheduler, promise = std::move(done)]() mutable {
+    try {
+      auto session = scheduler->createSession<int>();
+      for (int i = 0; i < 4; ++i) {
+        session.submitMorsel([i]() { return i * 10; });
+      }
+      std::vector<int> results;
+      for (int i = 0; i < 4; ++i) {
+        results.push_back(session.consumeNextResult());
+      }
+      promise.set_value(std::move(results));
+    } catch (...) {
+      promise.set_exception(std::current_exception());
+    }
+  });
+  worker.detach();
+  ASSERT_EQ(finished.wait_for(10s), std::future_status::ready)
+      << "Inline poster deadlocked: posting must not hold the queue mutex";
+  EXPECT_EQ(finished.get(), (std::vector<int>{0, 10, 20, 30}));
+  EXPECT_EQ(scheduler->activeHelperCount(), 0u);
 }
 
 TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
