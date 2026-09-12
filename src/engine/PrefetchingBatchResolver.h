@@ -221,7 +221,7 @@ class PrefetchingBatchResolver {
 
       // 3. Resolve current item i
       const size_t curIdx = indices[i];
-      AD_CORRECTNESS_CHECK(curIdx + 1 < offsets.size());
+      AD_CORRECTNESS_CHECK(idx < offsets.size());
       const auto curOffset = offsets[curIdx];
       const auto nextOffset = offsets[curIdx + 1];
       const size_t strLen = nextOffset - curOffset;
