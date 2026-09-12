@@ -234,6 +234,10 @@ class ElasticExportScheduler
   void setMaxForegroundQueriesForHelperAdmission(size_t count) noexcept {
     maxForegroundQueriesForHelperAdmission_.store(count,
                                                   std::memory_order_relaxed);
+    // Eligibility may have flipped in either direction; wake blocked
+    // enqueuers so they re-check it instead of waiting on a stale state.
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    queueNotFullCv_.notify_all();
   }
 
   [[nodiscard]] size_t maxForegroundQueriesForHelperAdmission() const noexcept {
@@ -245,7 +249,9 @@ class ElasticExportScheduler
   void shutdown();
 
   /// Enqueue an owned morsel to the helper pool (called internally by
-  /// sessions).
+  /// sessions). Returns false without blocking when helpers are currently
+  /// ineligible or the scheduler is stopping; the coordinator then executes
+  /// the morsel on the primary path instead.
   bool enqueueMorsel(OwnedMorsel morsel);
 
   /// Register an active session state for demand change notifications.

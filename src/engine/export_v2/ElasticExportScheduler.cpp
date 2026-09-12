@@ -119,6 +119,9 @@ void ElasticExportScheduler::onForegroundQueryStarted() {
     {
       std::lock_guard<std::mutex> lock(queueMutex_);
       workAvailableCv_.notify_all();
+      // Wake blocked enqueuers too: this transition may have changed helper
+      // eligibility, and enqueueMorsel re-checks it after every wakeup.
+      queueNotFullCv_.notify_all();
     }
 
     std::vector<std::shared_ptr<ExportJobStateBase>> aliveSessions;
@@ -156,6 +159,9 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
     {
       std::lock_guard<std::mutex> lock(queueMutex_);
       workAvailableCv_.notify_all();
+      // Wake blocked enqueuers too: this transition may have restored helper
+      // eligibility, and enqueueMorsel re-checks it after every wakeup.
+      queueNotFullCv_.notify_all();
     }
 
     std::vector<std::shared_ptr<ExportJobStateBase>> aliveSessions;
@@ -204,11 +210,19 @@ void ElasticExportScheduler::attachToQueryRegistry(
 
 bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
   std::unique_lock<std::mutex> lock(queueMutex_);
+  // Rejected while helpers are ineligible: workers stop draining the queue
+  // in that state, so blocking here could wait forever. The coordinator
+  // executes rejected morsels on the primary path instead.
+  if (!isHelperAdmissionEligibleUnsafe()) {
+    return false;
+  }
   while (queue_.size() >= maxQueueCapacity_ &&
-         !stopping_.load(std::memory_order_relaxed)) {
+         !stopping_.load(std::memory_order_relaxed) &&
+         isHelperAdmissionEligibleUnsafe()) {
     queueNotFullCv_.wait(lock);
   }
-  if (stopping_.load(std::memory_order_relaxed)) {
+  if (stopping_.load(std::memory_order_relaxed) ||
+      !isHelperAdmissionEligibleUnsafe()) {
     return false;
   }
   queue_.push_back(std::move(morsel));
