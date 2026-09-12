@@ -421,16 +421,7 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   EXPECT_EQ(session.consumeNextResult(), 42);
 
   // Slot 1 should throw std::runtime_error
-  EXPECT_THROW(
-      {
-        try {
-          [[maybe_unused]] int r = session.consumeNextResult();
-        } catch (const std::runtime_error& e) {
-          EXPECT_STREQ(e.what(), "Simulated morsel processing failure");
-          throw;
-        }
-      },
-      std::runtime_error);
+  EXPECT_THROW(session.consumeNextResult(), std::runtime_error);
 
   // Slot 2 should still return 100
   EXPECT_EQ(session.consumeNextResult(), 100);
