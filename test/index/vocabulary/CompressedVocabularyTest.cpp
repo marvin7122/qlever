@@ -87,8 +87,7 @@ struct DummyCompressionWrapper
 };
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::CompressedVocabulary,
-     CompressionIsActuallyApplied) {
+TEST(CompressedVocabulary, CompressionIsActuallyApplied) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
 
