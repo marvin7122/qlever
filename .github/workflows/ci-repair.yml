@@ -32,6 +32,9 @@ jobs:
       - name: Run harness
         env:
           GH_TOKEN: ${{ github.token }}
+          OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
+          OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
         run: |
           python3 /home/userNoPriv/code/ci-repair-harness/cli.py \
             handle-run --run-id "${{ github.event.workflow_run.id }}"
