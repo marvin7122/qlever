@@ -437,7 +437,15 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   // Slot 2 should still return 100
   EXPECT_EQ(session.consumeNextResult(), 100);
 
-  // Verify lease accounting did not leak
+  // Verify lease accounting did not leak. The worker releases its lease
+  // after signalling slot completion, so the counter reaches zero
+  // asynchronously with respect to `consumeNextResult`. Poll with a
+  // deadline: a genuine leak never reaches zero and still fails the test.
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (scheduler->activeHelperCount() != 0u &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
 }
 
@@ -463,4 +471,93 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
   // Must return promptly without deadlock or infinite spin loop
   scheduler->shutdown();
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
+}
+
+// -----------------------------------------------------------------------------
+// Test 12: EnqueueMorsel admits or rejects synchronously with eligibility
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest,
+     EnqueueMorselRejectsImmediatelyWhenIneligible) {
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+
+  auto session = scheduler->createSession<int>();
+  auto state = session.stateHandle();
+  auto makeMorsel = [&]() {
+    return OwnedMorsel(state, state->jobId(), scheduler->demandEpoch(), 0);
+  };
+
+  // Eligible while no foreground query is running: admitted synchronously.
+  EXPECT_TRUE(scheduler->enqueueMorsel(makeMorsel()));
+
+  // Two active queries exceed the admission threshold: rejected without
+  // blocking, so the coordinator runs such morsels on the primary path.
+  scheduler->onForegroundQueryStarted();
+  scheduler->onForegroundQueryStarted();
+  EXPECT_FALSE(scheduler->enqueueMorsel(makeMorsel()));
+
+  scheduler->onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 13: Blocked enqueuer wakes when the admission threshold flips
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
+  auto scheduler = ElasticExportScheduler::create(2, 1);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+
+  auto session = scheduler->createSession<int>();
+  std::promise<void> unblockPromise;
+  auto unblockFuture = unblockPromise.get_future().share();
+  auto blockingTask = [unblockFuture]() -> int {
+    unblockFuture.wait();
+    return 1;
+  };
+  session.submitMorsel(blockingTask);
+  session.submitMorsel(blockingTask);
+
+  // Wait until both workers picked up the blocking morsels (the queue is
+  // empty again and both leases are held).
+  auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (scheduler->activeHelperCount() != 2u &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  ASSERT_EQ(scheduler->activeHelperCount(), 2u);
+
+  // Fill the single queue slot; the next enqueue must block.
+  session.submitMorsel([]() -> int { return 2; });
+
+  auto state = session.stateHandle();
+  std::atomic<bool> enqueueReturned{false};
+  std::atomic<bool> enqueueResult{true};
+  std::thread blockedEnqueuer([&]() {
+    bool admitted = scheduler->enqueueMorsel(
+        OwnedMorsel(state, state->jobId(), scheduler->demandEpoch(), 99));
+    enqueueResult.store(admitted);
+    enqueueReturned.store(true);
+  });
+
+  // Flip to ineligible while the enqueuer is blocked: the threshold setter
+  // must wake it so it re-checks eligibility instead of waiting on a stale
+  // full queue.
+  scheduler->onForegroundQueryStarted();
+  scheduler->setMaxForegroundQueriesForHelperAdmission(0);
+  blockedEnqueuer.join();
+  ASSERT_TRUE(enqueueReturned.load());
+  EXPECT_FALSE(enqueueResult.load());
+
+  // Cleanup: release the workers and drain the three submitted morsels. The
+  // rejected morsel was never queued, so exactly three results arrive.
+  unblockPromise.set_value();
+  auto results = session.drainRemainingResults();
+  ASSERT_EQ(results.size(), 3u);
+  EXPECT_EQ(results[0], 1);
+  EXPECT_EQ(results[1], 1);
+  EXPECT_EQ(results[2], 2);
+
+  scheduler->onForegroundQueryEnded();
 }
