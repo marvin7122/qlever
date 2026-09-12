@@ -31,10 +31,21 @@ class HyperLogLogSketch {
   static constexpr size_t NUM_REGISTERS = 1 << Precision;
   static constexpr uint64_t REGISTER_MASK = NUM_REGISTERS - 1;
 
+  static_assert(Precision >= 4 && Precision <= 16,
+                "Precision must be in [4, 16] per the HyperLogLog++ "
+                "recommendation; register values rely on this bound");
+
+  // NOTE: This class is NOT thread-safe. Concurrent insert() or merge()
+  // calls on the same instance require external synchronization. Sharing
+  // const references across threads (e.g. in the query planner) is safe.
+
  private:
   std::vector<uint8_t> registers_;
 
-  // Fast 64-bit splitmix hash function
+  // Fast 64-bit splitmix hash function.
+  // Note: hashes the full bit representation of the Id, including the
+  // datatype bits. The same logical value with different datatypes (e.g. Int
+  // 42 vs. Double 42.0) therefore counts as distinct keys.
   [[nodiscard]] static constexpr uint64_t hashValue(Id id) noexcept {
     uint64_t z = id.getBits() + 0x9e3779b97f4a7c15ULL;
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -70,7 +81,9 @@ class HyperLogLogSketch {
     size_t zeroRegisters = 0;
 
     for (size_t i = 0; i < NUM_REGISTERS; ++i) {
-      sum += 1.0 / static_cast<double>(1ULL << registers_[i]);
+      // ldexp instead of 1.0 / (1ULL << r): shifting by 64 or more is
+      // undefined behavior, which a saturated register could trigger.
+      sum += std::ldexp(1.0, -static_cast<int>(registers_[i]));
       if (registers_[i] == 0) {
         zeroRegisters++;
       }
