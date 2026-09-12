@@ -148,8 +148,9 @@ class GeoVocabularyUnderlyingVocabTypedTest : public ::testing::Test {
     // `VocabLookupInput` takes ownership of the batches, so keep a copy of the
     // indices to compare against.
     const auto expectedBatches = batches;
-    auto streamedResults = geoVocab.lookupBatchesStreamed(
-        ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
+    auto streamedResults =
+        geoVocab.ad_utility::vocabulary::lookupBatchesStreamed(
+            ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
     vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
         geoVocab, streamedResults, expectedBatches);
   }
