@@ -44,6 +44,15 @@ jobs:
             });
             core.setOutput('base_ref', pr.base.ref);
             core.setOutput('head_sha', pr.head.sha);
+      - name: Mint GitHub App token
+        id: app-token
+        if: ${{ vars.OCR_FANOUT_APP_ID != '' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+          owner: marvin7122
+          repositories: qlever
       - name: Isolate npm prefix for this run
         run: |
           prefix="${RUNNER_TEMP}/ocr-npm-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -54,6 +63,7 @@ jobs:
       - name: Review pull request with fan-out project rules
         uses: marvin7122/open-code-review@48cc191fc147f0b4642e9658717805f6a3dfefa5
         with:
+          github_token: ${{ steps.app-token.outputs.token || github.token }}
           llm_url: ${{ vars.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ vars.OCR_LLM_MODEL }}
@@ -69,6 +79,39 @@ jobs:
           incremental: 'true'
           upload_artifacts: 'true'
           stream_progress: 'true'
+      - name: Stamp summary with Actions run URL
+        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          OCR_POSTER_LABEL: OCR fan-out
+        with:
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          script: |
+            const runId = context.runId;
+            const attempt = context.runAttempt || 1;
+            const marker = `<!-- ocr-summary-run:${runId}-${attempt} -->`;
+            const linkMarker = '<!-- ocr-run-link -->';
+            const label = process.env.OCR_POSTER_LABEL || 'OpenCodeReview';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
+            const number = context.payload.pull_request?.number || context.issue.number;
+            if (!number) return;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              per_page: 100,
+            });
+            const stamp = `${linkMarker}\n**${label}** · [Actions run ${runId}](${runUrl})\n`;
+            for (const c of comments) {
+              const body = c.body || '';
+              if (!body.includes(marker) || body.includes(linkMarker)) continue;
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: c.id,
+                body: `${stamp}\n${body}`,
+              });
+            }
       - name: Remove isolated npm prefix
         if: always()
         run: rm -rf "${OCR_NPM_PREFIX:?}"
