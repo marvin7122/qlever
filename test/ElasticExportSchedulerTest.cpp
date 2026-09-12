@@ -590,17 +590,17 @@ struct DeferredPoster {
 TEST(ElasticExportSchedulerTest, EvenSplitAcrossSessions) {
   DeferredPoster deferred;
   size_t postedCount = 0;
-  ElasticExportScheduler scheduler(
+  auto scheduler = ElasticExportScheduler::create(
       [&deferred, &postedCount](absl::AnyInvocable<void()> work) {
         ++postedCount;
         deferred.post(std::move(work));
       },
       64);
-  scheduler.setMaxConcurrentMorsels(4);
-  scheduler.onForegroundQueryStarted();
+  scheduler->setMaxConcurrentMorsels(4);
+  scheduler->onForegroundQueryStarted();
 
-  auto sessionA = scheduler.createSession<std::string>();
-  auto sessionB = scheduler.createSession<std::string>();
+  auto sessionA = scheduler->createSession<std::string>();
+  auto sessionB = scheduler->createSession<std::string>();
   for (size_t i = 0; i < 4; ++i) {
     sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
     sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
@@ -620,17 +620,17 @@ TEST(ElasticExportSchedulerTest, EvenSplitAcrossSessions) {
 
 TEST(ElasticExportSchedulerTest, FloorGuaranteeUnderOversubscription) {
   DeferredPoster deferred;
-  ElasticExportScheduler scheduler(
+  auto scheduler = ElasticExportScheduler::create(
       [&deferred](absl::AnyInvocable<void()> work) {
         deferred.post(std::move(work));
       },
       64);
-  scheduler.setMaxConcurrentMorsels(2);
-  scheduler.onForegroundQueryStarted();
+  scheduler->setMaxConcurrentMorsels(2);
+  scheduler->onForegroundQueryStarted();
 
-  auto sessionA = scheduler.createSession<std::string>();
-  auto sessionB = scheduler.createSession<std::string>();
-  auto sessionC = scheduler.createSession<std::string>();
+  auto sessionA = scheduler->createSession<std::string>();
+  auto sessionB = scheduler->createSession<std::string>();
+  auto sessionC = scheduler->createSession<std::string>();
   for (size_t i = 0; i < 2; ++i) {
     sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
     sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
@@ -651,16 +651,16 @@ TEST(ElasticExportSchedulerTest, FloorGuaranteeUnderOversubscription) {
 
 TEST(ElasticExportSchedulerTest, CancelledSessionYieldsItsShare) {
   DeferredPoster deferred;
-  ElasticExportScheduler scheduler(
+  auto scheduler = ElasticExportScheduler::create(
       [&deferred](absl::AnyInvocable<void()> work) {
         deferred.post(std::move(work));
       },
       64);
-  scheduler.setMaxConcurrentMorsels(2);
-  scheduler.onForegroundQueryStarted();
+  scheduler->setMaxConcurrentMorsels(2);
+  scheduler->onForegroundQueryStarted();
 
-  auto sessionA = scheduler.createSession<std::string>();
-  auto sessionB = scheduler.createSession<std::string>();
+  auto sessionA = scheduler->createSession<std::string>();
+  auto sessionB = scheduler->createSession<std::string>();
   for (size_t i = 0; i < 3; ++i) {
     sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
     sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
@@ -680,6 +680,6 @@ TEST(ElasticExportSchedulerTest, CancelledSessionYieldsItsShare) {
 }
 
 TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
-  ElasticExportScheduler scheduler([](absl::AnyInvocable<void()>) {}, 64);
-  EXPECT_THROW(scheduler.setMaxConcurrentMorsels(0), ad_utility::Exception);
+  auto scheduler = ElasticExportScheduler::create([](absl::AnyInvocable<void()>) {}, 64);
+  EXPECT_THROW(scheduler->setMaxConcurrentMorsels(0), ad_utility::Exception);
 }
