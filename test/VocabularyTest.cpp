@@ -256,7 +256,7 @@ TEST(VocabularyTest, LookupBatchesStreamed) {
   std::vector<std::vector<size_t>> batches{{2, 0}, {3}};
   // `VocabLookupInput` takes ownership, so keep a copy to compare against.
   const auto expectedBatches = batches;
-  auto streamed = v->lookupBatchesStreamed(
+  auto streamed = v->ad_utility::vocabulary::lookupBatchesStreamed(
       ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
   vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
       *v, streamed, expectedBatches);
@@ -266,7 +266,7 @@ TEST(VocabularyTest, LookupBatchesStreamed) {
 TEST(VocabularyTest, LookupBatchesStreamedEmptyBatchThrows) {
   auto v = createExampleVocabulary();
   std::vector<std::vector<size_t>> batches{{2, 0}, {}, {3}};
-  auto streamed = v->lookupBatchesStreamed(
+  auto streamed = v->ad_utility::vocabulary::lookupBatchesStreamed(
       ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
   EXPECT_ANY_THROW({
     for ([[maybe_unused]] auto& r : streamed) {
@@ -278,7 +278,7 @@ TEST(VocabularyTest, LookupBatchesStreamedEmptyBatchThrows) {
 TEST(VocabularyTest, LookupBatchesStreamedEmptyStreamYieldsNothing) {
   auto v = createExampleVocabulary();
   std::vector<std::vector<size_t>> noBatches;
-  auto streamed = v->lookupBatchesStreamed(
+  auto streamed = v->ad_utility::vocabulary::lookupBatchesStreamed(
       ad_utility::vocabulary::VocabLookupInput{std::move(noBatches)});
   EXPECT_EQ(ql::ranges::distance(streamed), 0);
 }
