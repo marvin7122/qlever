@@ -58,3 +58,94 @@ TEST(HyperLogLogSketchTest, SketchMergeCorrectness) {
 
   EXPECT_LE(relativeError, 0.05);
 }
+
+TEST(HyperLogLogSketchTest, EmptySketchReturnsZero) {
+  HyperLogLogSketch<10> hll;
+  EXPECT_EQ(hll.estimateCardinality(), 0);
+}
+
+TEST(HyperLogLogSketchTest, SingleElementSketch) {
+  HyperLogLogSketch<10> hll;
+  hll.insert(Id::fromBits(42));
+  // Linear counting on a single register hit yields exactly 1.
+  EXPECT_EQ(hll.estimateCardinality(), 1);
+}
+
+TEST(HyperLogLogSketchTest, MergeWithEmptySketchKeepsEstimate) {
+  HyperLogLogSketch<10> hll1;
+  HyperLogLogSketch<10> hll2;
+  for (uint64_t i = 0; i < 1000; ++i) {
+    hll1.insert(Id::fromBits(i * 17 + 1));
+  }
+  uint64_t before = hll1.estimateCardinality();
+  hll1.merge(hll2);
+  EXPECT_EQ(hll1.estimateCardinality(), before);
+}
+
+TEST(HyperLogLogSketchTest, MergeWithIdenticalSketchIsIdempotent) {
+  HyperLogLogSketch<10> hll1;
+  HyperLogLogSketch<10> hll2;
+  for (uint64_t i = 0; i < 5000; ++i) {
+    hll1.insert(Id::fromBits(i));
+    hll2.insert(Id::fromBits(i));
+  }
+  uint64_t before = hll1.estimateCardinality();
+  hll1.merge(hll2);
+  EXPECT_EQ(hll1.estimateCardinality(), before);
+}
+
+TEST(HyperLogLogSketchTest, LargeCardinalityEstimation) {
+  HyperLogLogSketch<10> hll;
+
+  // 200'000 distinct keys: well beyond the linear-counting range
+  // (2.5 * NUM_REGISTERS), so the raw HLL estimate is exercised.
+  constexpr uint64_t EXACT_COUNT = 200'000;
+  for (uint64_t i = 0; i < EXACT_COUNT; ++i) {
+    hll.insert(Id::fromBits(i * 31 + 7));
+  }
+
+  uint64_t estimate = hll.estimateCardinality();
+  double relativeError = std::abs(static_cast<double>(estimate) -
+                                  static_cast<double>(EXACT_COUNT)) /
+                         static_cast<double>(EXACT_COUNT);
+
+  EXPECT_LE(relativeError, 0.15);
+}
+
+TEST(HyperLogLogSketchTest, HigherPrecisionSketch) {
+  HyperLogLogSketch<12> hll;
+
+  constexpr uint64_t EXACT_COUNT = 20'000;
+  for (uint64_t i = 0; i < EXACT_COUNT; ++i) {
+    hll.insert(Id::fromBits(i * 17 + 1));
+  }
+
+  uint64_t estimate = hll.estimateCardinality();
+  double relativeError = std::abs(static_cast<double>(estimate) -
+                                  static_cast<double>(EXACT_COUNT)) /
+                         static_cast<double>(EXACT_COUNT);
+
+  EXPECT_LE(relativeError, 0.15);
+}
+
+TEST(HyperLogLogSketchTest, DistinguishesDatatypeBits) {
+  HyperLogLogSketch<10> hll;
+
+  // The hash covers the full Id bit pattern including the datatype tag
+  // (upper 4 bits), so the same value bits under three different tags count
+  // as distinct keys.
+  constexpr uint64_t COUNT = 1000;
+  for (uint64_t i = 0; i < COUNT; ++i) {
+    hll.insert(Id::fromBits(i));
+    hll.insert(Id::fromBits((1ULL << 60) | i));
+    hll.insert(Id::fromBits((2ULL << 60) | i));
+  }
+
+  uint64_t estimate = hll.estimateCardinality();
+  constexpr uint64_t EXACT_COUNT = 3 * COUNT;
+  double relativeError = std::abs(static_cast<double>(estimate) -
+                                  static_cast<double>(EXACT_COUNT)) /
+                         static_cast<double>(EXACT_COUNT);
+
+  EXPECT_LE(relativeError, 0.15);
+}
