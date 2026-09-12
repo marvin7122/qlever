@@ -28,6 +28,18 @@ struct DummyDecoder {
     }
     return result;
   }
+  // The dummy transformation preserves the length.
+  [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed) const {
+    return compressed.size();
+  }
+  [[nodiscard]] size_t decompressInto(std::string_view compressed,
+                                      ql::span<char> out) const {
+    AD_CORRECTNESS_CHECK(out.size() >= compressed.size());
+    for (size_t i = 0; i < compressed.size(); ++i) {
+      out[i] = static_cast<char>(compressed[i] - 2);
+    }
+    return compressed.size();
+  }
   // This class has no state, but it still needs to be serialized.
   template <typename T>
   friend std::true_type allowTrivialSerialization(DummyDecoder, T);

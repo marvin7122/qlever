@@ -1,12 +1,6 @@
-// Copyright 2022 - 2026 The QLever Authors, in particular:
-//
-// 2022 - 2025 Johannes Kalmbach <kalmbach@informatik.uni-freiburg.de>, UFR
-// 2025 - 2026 Christoph Ullinger <ullingec@informatik.uni-freiburg.de>, UFR
-//
-// UFR = University of Freiburg, Chair of Algorithms and Data Structures
-
-// You may not use this file except in compliance with the Apache 2.0 License,
-// which can be found in the `LICENSE` file at the root of the QLever project.
+//  Copyright 2022, University of Freiburg,
+//  Chair of Algorithms and Data Structures.
+//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
 
 #ifndef QLEVER_BITUTILS_H
 #define QLEVER_BITUTILS_H
@@ -22,7 +16,6 @@
 #include "util/TypeTraits.h"
 
 namespace ad_utility {
-
 // The return value has 1s for the lowest `numBits` bits, and 0 in all the
 // higher bits.
 constexpr inline uint64_t bitMaskForLowerBits(uint64_t numBits) {

@@ -61,78 +61,53 @@ TEST(VocabularyTypes, verifyWordWriterBaseDestructorBehavesAsExpected) {
 }
 
 // `asResult` exposes the span over the filled views, and the returned aliasing
-// shared_ptr keeps the backing buffer/views alive after the original owning
+// shared_ptr keeps the backing strings alive after the original owning
 // shared_ptr is dropped (the whole point of the aliasing shared_ptr).
-TEST(VocabBatchLookupData, AsResultExposesViewsAndKeepsDataAlive) {
-  auto data = std::make_shared<VocabBatchLookupData>();
-  data->buffer() = {'f', 'o', 'o', 'b', 'a', 'r'};
-  data->views().emplace_back(data->buffer().data(), 3);      // "foo"
-  data->views().emplace_back(data->buffer().data() + 3, 3);  // "bar"
+TEST(StringVectorVocabBatchLookupData, AsResultExposesViewsAndKeepsDataAlive) {
+  auto data = std::make_shared<StringVectorVocabBatchLookupData>(
+      std::vector<std::string>{"foo", "bar"});
 
-  VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
+  VocabBatchLookupResult result =
+      StringVectorVocabBatchLookupData::asResult(data);
 
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "bar");
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0], "foo");
+  EXPECT_EQ(result[1], "bar");
 
   // Drop our reference; the aliasing shared_ptr must keep the data alive.
   data.reset();
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "bar");
+  EXPECT_EQ(result[0], "foo");
+  EXPECT_EQ(result[1], "bar");
 }
 
 // An empty lookup result is valid: no views, empty span.
-TEST(VocabBatchLookupData, AsResultEmpty) {
-  auto data = std::make_shared<VocabBatchLookupData>();
-  VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
-  EXPECT_TRUE(result->empty());
+TEST(StringVectorVocabBatchLookupData, AsResultEmpty) {
+  auto data = std::make_shared<StringVectorVocabBatchLookupData>(
+      std::vector<std::string>{});
+  VocabBatchLookupResult result =
+      StringVectorVocabBatchLookupData::asResult(data);
+  EXPECT_TRUE(result.empty());
 }
 
-// Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
-// used when words are produced incrementally with sizes not known up front
-// (e.g. decompressing one word at a time in `CompressedVocabulary`). Each word
-// gets a pointer-stable allocation, so appending a later (differently sized)
-// word never invalidates an earlier `string_view`, unlike the single growing
-// buffer of `VocabBatchLookupData`, which would reallocate and leave the
-// already-recorded views dangling.
+// Tests for the PMR arena backing (`ArenaVocabBatchBuilder`): used when words
+// are produced incrementally with sizes not known up front (e.g.
+// decompressing one word at a time in `CompressedVocabulary`).
 TEST(PmrVocabBatchLookupData, PmrAsResultPointerStableAcrossAppends) {
-  auto data = std::make_shared<PmrVocabBatchLookupData>();
-  data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-  auto* resource = data->buffer().get();
-
-  // Allocate each word separately from the monotonic resource and record a view
-  // into it. Because the allocations are pointer-stable, the first view stays
-  // valid after the second word is appended.
-  auto appendWord = [&](std::string_view word) {
-    char* p = static_cast<char*>(resource->allocate(word.size()));
-    std::memcpy(p, word.data(), word.size());
-    data->views().emplace_back(p, word.size());
-  };
-  appendWord("foo");
-  std::string_view firstView = data->views().front();
-  appendWord("barbaz");
-  // Appending the second word did not invalidate the first view.
-  EXPECT_EQ(firstView, "foo");
-
-  VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "barbaz");
-
-  // The aliasing shared_ptr keeps the resource (and thus its allocations)
-  // alive.
-  data.reset();
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "barbaz");
+  ArenaVocabBatchBuilder builder{2};
+  builder.appendWord("foo");
+  builder.appendWord("barbaz");
+  VocabBatchLookupResult result = std::move(builder).finalize();
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0], "foo");
+  EXPECT_EQ(result[1], "barbaz");
 }
 
-// An empty pmr lookup result is valid: no views, empty span (matches the
-// `VocabBatchLookupData` `AsResultEmpty` case).
-TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
-  auto data = std::make_shared<PmrVocabBatchLookupData>();
-  data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-  VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
-  EXPECT_TRUE(result->empty());
+// An empty lookup result is valid: no views, empty span (matches the
+// `StringVectorVocabBatchLookupData` `AsResultEmpty` case).
+TEST(VocabBatchLookupResult, DefaultIsEmpty) {
+  VocabBatchLookupResult result;
+  EXPECT_TRUE(result.empty());
+  EXPECT_EQ(result.size(), 0u);
 }
 
 namespace {
@@ -197,9 +172,9 @@ TEST(VocabularyTypes, sequentialLookupBatchWithMissingWords) {
 
   // The opted-in vocabulary reports the placeholder for the missing word.
   auto result = sequentialLookupBatch(VocabWithHolesPlaceholder{}, indices);
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "word");
-  EXPECT_EQ((*result)[1], placeholderForMissingVocabIndex(5));
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0], "word");
+  EXPECT_EQ(result[1], placeholderForMissingVocabIndex(5));
 
   // The vocabulary that has not opted in throws.
   AD_EXPECT_THROW_WITH_MESSAGE(

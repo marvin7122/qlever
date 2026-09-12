@@ -62,6 +62,15 @@
   _Pragma("GCC diagnostic push")      \
       _Pragma("GCC diagnostic ignored \"-Warray-bounds\"")
 
+// Disable the `mismatched-new-delete` warning, which is a false positive when
+// global `operator new`/`operator delete` are intentionally paired with
+// `malloc`/`free` (e.g. for allocation tracking in benchmarks). GCC cannot
+// see through the pairing and believes `free` is called on `new`-allocated
+// memory.
+#define DISABLE_MISMATCHED_NEW_DELETE_WARNINGS \
+  _Pragma("GCC diagnostic push")               \
+      _Pragma("GCC diagnostic ignored \"-Wmismatched-new-delete\"")
+
 // Re-enable the warnings disabled by the last `DISABLE_...` call.
 #define GCC_REENABLE_WARNINGS _Pragma("GCC diagnostic pop")
 
@@ -74,7 +83,23 @@
 #define DISABLE_AGGRESSIVE_LOOP_OPT_WARNINGS
 #define DISABLE_DANGLING_REFERENCE_WARNINGS
 #define DISABLE_ARRAY_BOUNDS_WARNINGS
+#define DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 #define GCC_REENABLE_WARNINGS
+#endif
+
+// Defined as 1 when building with AddressSanitizer or ThreadSanitizer, whose
+// runtimes already provide the replaceable global allocation functions. Code
+// that defines its own global `operator new`/`operator delete` (e.g. for
+// allocation tracking in benchmarks) must skip those definitions then, as
+// they cause multiple-definition link errors. Clang signals sanitizers via
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; neither mechanism works
+// on the other compiler, so both are checked.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define QLEVER_UNDER_SANITIZER 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define QLEVER_UNDER_SANITIZER 1
 #endif
 
 #ifdef __clang__
