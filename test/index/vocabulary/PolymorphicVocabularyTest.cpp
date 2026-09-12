@@ -250,7 +250,7 @@ TEST(PolymorphicVocabulary, lookupBatchesStreamedMatchesIndividualLookups) {
     // `VocabLookupInput` takes ownership of the batches, so keep a copy to
     // compare against.
     const auto expectedBatches = batches;
-    auto streamed = vocab.ad_utility::vocabulary::lookupBatchesStreamed(
+    auto streamed = vocab.lookupBatchesStreamed(
         ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
 
     vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
