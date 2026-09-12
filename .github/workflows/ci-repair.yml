@@ -1,0 +1,40 @@
+name: CI repair
+
+on:
+  workflow_run:
+    workflows:
+      - Native build
+      - Docker build and publish
+      - CPP17 libQLever
+      - Format check
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: ci-repair-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  classify-or-repair:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, linux, x64, ci-repair-local]
+    timeout-minutes: 20
+    env:
+      PATH: /home/userNoPriv/.local/bin:/home/userNoPriv/.local/share/npm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHONPATH: /home/userNoPriv/code/ci-repair-harness
+    steps:
+      - name: Run harness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
+          OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
+        run: |
+          python3 /home/userNoPriv/code/ci-repair-harness/cli.py \
+            handle-run --run-id "${{ github.event.workflow_run.id }}"
