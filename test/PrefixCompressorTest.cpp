@@ -18,7 +18,7 @@
 #include "util/GTestHelpers.h"
 #include "util/Views.h"
 
-TEST(ad_utility::vocabulary::PrefixCompressor, CompressionPreservesWords) {
+TEST(PrefixCompressor, CompressionPreservesWords) {
   ad_utility::vocabulary::PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alp", "alpha", "al"});
 
@@ -32,7 +32,7 @@ TEST(ad_utility::vocabulary::PrefixCompressor, CompressionPreservesWords) {
   }
 }
 
-TEST(ad_utility::vocabulary::PrefixCompressor, OverlappingPrefixes) {
+TEST(PrefixCompressor, OverlappingPrefixes) {
   ad_utility::vocabulary::PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alp", "alpha", "al"});
 
@@ -50,7 +50,7 @@ TEST(ad_utility::vocabulary::PrefixCompressor, OverlappingPrefixes) {
   ASSERT_EQ(p.compress("a").size(), 2u);
 }
 
-TEST(ad_utility::vocabulary::PrefixCompressor, TooManyPrefixesThrow) {
+TEST(PrefixCompressor, TooManyPrefixesThrow) {
   ad_utility::vocabulary::PrefixCompressor p;
   std::vector<std::string> tooManyPrefixes;
   for (size_t i = 0; i < NUM_COMPRESSION_PREFIXES + 1; ++i) {
@@ -60,8 +60,7 @@ TEST(ad_utility::vocabulary::PrefixCompressor, TooManyPrefixesThrow) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::PrefixCompressor,
-     DecompressIntoMatchesDecompress) {
+TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
   ad_utility::vocabulary::PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alp", "alpha", "al"});
   auto checkWord = [&](std::string_view word) {
@@ -95,7 +94,7 @@ TEST(ad_utility::vocabulary::PrefixCompressor,
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::PrefixCompressor, PrefixIndexBoundaryMarkers) {
+TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
   ad_utility::vocabulary::PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alpha"});
 
@@ -150,7 +149,7 @@ TEST(PrefixCompressor, PrefixIndexBoundaries) {
   EXPECT_FALSE(PrefixCompressor::prefixIndex(byteWord(0)).has_value());
 }
 
-TEST(ad_utility::vocabulary::PrefixCompressor, MaximumNumberOfPrefixes) {
+TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
   ad_utility::vocabulary::PrefixCompressor p;
   std::vector<std::string> maximalNumberOfPrefixes;
   for (size_t i = 0; i < NUM_COMPRESSION_PREFIXES; ++i) {
@@ -168,7 +167,7 @@ TEST(ad_utility::vocabulary::PrefixCompressor, MaximumNumberOfPrefixes) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::PrefixCompressor, prefixCompression) {
+TEST(PrefixCompressor, prefixCompression) {
   using namespace ::testing;
 
   EXPECT_THAT(calculatePrefixes({}, 1), UnorderedElementsAre());

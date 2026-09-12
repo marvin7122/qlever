@@ -33,20 +33,19 @@ auto createVocabulary(const std::vector<std::string>& words) {
   return v;
 }
 
-TEST(ad_utility::vocabulary::VocabularyInMemory, UpperLowerBound) {
+TEST(VocabularyInMemory, UpperLowerBound) {
   testUpperAndLowerBoundWithStdLess(createVocabulary);
 }
 
-TEST(ad_utility::vocabulary::VocabularyInMemory,
-     UpperLowerBoundAlternativeComparator) {
+TEST(VocabularyInMemory, UpperLowerBoundAlternativeComparator) {
   testUpperAndLowerBoundWithNumericComparator(createVocabulary);
 }
 
-TEST(ad_utility::vocabulary::VocabularyInMemory, AccessOperator) {
+TEST(VocabularyInMemory, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary);
 }
 
-TEST(ad_utility::vocabulary::VocabularyInMemory, ReadAndWriteFromFile) {
+TEST(VocabularyInMemory, ReadAndWriteFromFile) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
   const auto vocab = createVocabulary(words);
@@ -59,7 +58,7 @@ TEST(ad_utility::vocabulary::VocabularyInMemory, ReadAndWriteFromFile) {
   ad_utility::deleteFile(vocabularyFilename);
 }
 
-TEST(ad_utility::vocabulary::VocabularyInMemory, WriteAndReadWithSerializer) {
+TEST(VocabularyInMemory, WriteAndReadWithSerializer) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
   const auto vocab = createVocabulary(words);
@@ -77,12 +76,12 @@ TEST(ad_utility::vocabulary::VocabularyInMemory, WriteAndReadWithSerializer) {
   assertThatRangesAreEqual(vocab, readVocab);
 }
 
-TEST(ad_utility::vocabulary::VocabularyInMemory, EmptyVocabulary) {
+TEST(VocabularyInMemory, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary);
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyInMemory, ScanAll) {
+TEST(VocabularyInMemory, ScanAll) {
   // `scanAll` uses the generic `operator[]` fallback here and must yield all
   // words in order.
   const std::vector<std::string> words{"alpha", "delta", "beta", "42", "0"};
@@ -92,13 +91,13 @@ TEST(ad_utility::vocabulary::VocabularyInMemory, ScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyInMemory, ScanAllEmptyVocabulary) {
+TEST(VocabularyInMemory, ScanAllEmptyVocabulary) {
   const auto vocab = createVocabulary({});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyInMemory, ZeroCopyDeserialization) {
+TEST(VocabularyInMemory, ZeroCopyDeserialization) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
   const auto vocab = createVocabulary(words);
@@ -114,7 +113,7 @@ TEST(ad_utility::vocabulary::VocabularyInMemory, ZeroCopyDeserialization) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyInMemory, WordWriterDestructorBehavior) {
+TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
   const std::string filename = "VocabInMemoryWordWriterDestructorBehavior.tmp";
   Vocab v;
   {

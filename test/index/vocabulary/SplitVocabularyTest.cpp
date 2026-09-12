@@ -74,7 +74,7 @@ const VocabularyType geoSplitVocabType{
     VocabularyType::Enum::OnDiskCompressedGeoSplit};
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, SplitGeoVocab) {
+TEST(Vocabulary, SplitGeoVocab) {
   // Check: Is a geo literal?
   ASSERT_EQ(SGV::getMarkerForWord(
                 "\"POLYGON((1 2, 3 4))\""
@@ -115,7 +115,7 @@ TEST(ad_utility::vocabulary::Vocabulary, SplitGeoVocab) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
+TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   // Tests the SplitVocabulary class with a custom split function that separates
   // all words in two underlying vocabularies
   TwoSplitVocabulary sv;
@@ -231,7 +231,7 @@ TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyCustomWithThreeVocabs) {
+TEST(Vocabulary, SplitVocabularyCustomWithThreeVocabs) {
   // Tests the SplitVocabulary class with a custom split function that separates
   // all words in three underlying vocabularies (of different types)
   ThreeSplitVocabulary sv;
@@ -292,7 +292,7 @@ TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyCustomWithThreeVocabs) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyItemAt) {
+TEST(Vocabulary, SplitVocabularyItemAt) {
   HashSet<std::string> s;
   s.insert("a");
   s.insert("ab");
@@ -331,8 +331,7 @@ TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyItemAt) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary,
-     SplitVocabularyWordWriterAndGetPosition) {
+TEST(Vocabulary, SplitVocabularyWordWriterAndGetPosition) {
   // The word writer in the Vocabulary class runs the SplitGeoVocabulary word
   // writer. Its task is to split words to two different vocabularies for geo
   // and non-geo words. This split is tested here.
@@ -441,7 +440,7 @@ TEST(ad_utility::vocabulary::Vocabulary,
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyScanAll) {
+TEST(Vocabulary, SplitVocabularyScanAll) {
   // A `SplitVocabulary` distributes its words over multiple underlying
   // vocabularies (here: words starting with `"a` go into the second vocab).
   // `scanAll` must still enumerate all of them.
@@ -476,8 +475,7 @@ TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary,
-     SplitVocabularyLookupBatchMatchesItemAt) {
+TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   // Mixed markers, reordered indices, and a duplicate must match `operator[]`.
   TwoSplitVocabulary sv;
   const auto filename = gtestCurrentTestName();
@@ -516,8 +514,7 @@ TEST(ad_utility::vocabulary::Vocabulary,
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary,
-     SplitVocabularyLookupBatchRejectsOutOfRangeMarker) {
+TEST(Vocabulary, SplitVocabularyLookupBatchRejectsOutOfRangeMarker) {
   // Three vocabs use a 2-bit marker field, so raw value 3 is representable
   // but illegal. `getMarker` / `lookupBatch` must reject it.
   ThreeSplitVocabulary sv;
@@ -634,7 +631,7 @@ TEST(VocabularyTypes, MarkerBatchLookupsDoubleReleaseThrows) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyWordWriterDestructor) {
+TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   // Create a `SplitVocabulary::WordWriter` and destruct it without a call to
   // `finish()`.
   TwoSplitVocabulary sv1;

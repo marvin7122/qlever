@@ -23,7 +23,7 @@ auto createVocabulary(const std::vector<std::string>& words) {
 }
 
 using Level = ad_utility::vocabulary::SimpleStringComparator::Level;
-TEST(ad_utility::vocabulary::UnicodeVocabulary, LowercaseAscii) {
+TEST(UnicodeVocabulary, LowercaseAscii) {
   const std::vector<std::string> words{"alpha", "beta",    "camma",
                                        "delta", "epsilon", "frikadelle"};
   std::vector<Level> levels{Level::PRIMARY,   Level::SECONDARY,
@@ -45,7 +45,7 @@ TEST(ad_utility::vocabulary::UnicodeVocabulary, LowercaseAscii) {
   }
 }
 
-TEST(ad_utility::vocabulary::UnicodeVocabulary, UpperAndLowercase) {
+TEST(UnicodeVocabulary, UpperAndLowercase) {
   const std::vector<std::string> words{"alpha", "ALPHA", "beta", "BETA"};
 
   // On the `PRIMARY` and `SECONDARY` Level, uppercase letters are equal to
@@ -77,17 +77,17 @@ TEST(ad_utility::vocabulary::UnicodeVocabulary, UpperAndLowercase) {
   }
 }
 
-TEST(ad_utility::vocabulary::UnicodeVocabulary, AccessOperator) {
+TEST(UnicodeVocabulary, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary);
 }
 
-TEST(ad_utility::vocabulary::UnicodeVocabulary, EmptyVocabulary) {
+TEST(UnicodeVocabulary, EmptyVocabulary) {
   testEmptyVocabularyWithComparator(createVocabulary, Level::PRIMARY);
   testEmptyVocabularyWithComparator(createVocabulary, Level::TOTAL);
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::UnicodeVocabulary, ScanAll) {
+TEST(UnicodeVocabulary, ScanAll) {
   // `scanAll` must yield all words in order (it simply delegates to the
   // underlying vocabulary).
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
@@ -97,7 +97,7 @@ TEST(ad_utility::vocabulary::UnicodeVocabulary, ScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::UnicodeVocabulary, ScanAllEmptyVocabulary) {
+TEST(UnicodeVocabulary, ScanAllEmptyVocabulary) {
   auto vocab = createVocabulary({});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
 }

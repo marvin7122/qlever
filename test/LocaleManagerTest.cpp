@@ -71,7 +71,7 @@ TEST(LocaleManagerTest, Normalization) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::LocaleManager, PrefixSortKey) {
+TEST(LocaleManager, PrefixSortKey) {
   ad_utility::vocabulary::SimpleStringComparator comp("en", "US", true);
   ad_utility::vocabulary::LocaleManager locIgnorePunct =
       comp.getLocaleManager();
@@ -176,7 +176,7 @@ TEST(LocaleManagerTest, RaiseThrowsOnIcuError) {
 // ICU, so that the ICU-free code path is covered.
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::LocaleManager, NoICUPrefixSortKey) {
+TEST(LocaleManager, NoICUPrefixSortKey) {
   using L = ad_utility::vocabulary::LocaleManagerNoICU::Level;
   ad_utility::vocabulary::LocaleManagerNoICU loc;
   // The bytewise prefix sort key is the first `min(prefixLength, size)` bytes.
@@ -196,7 +196,7 @@ TEST(ad_utility::vocabulary::LocaleManager, NoICUPrefixSortKey) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::LocaleManager, NoICU) {
+TEST(LocaleManager, NoICU) {
   using L = ad_utility::vocabulary::LocaleManagerNoICU::Level;
   ad_utility::vocabulary::LocaleManagerNoICU loc;
 
