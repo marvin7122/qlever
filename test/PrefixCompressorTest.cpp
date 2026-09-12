@@ -19,7 +19,7 @@
 #include "util/Views.h"
 
 TEST(PrefixCompressor, CompressionPreservesWords) {
-  PrefixCompressor p;
+  ad_utility::vocabulary::PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alph", "alpha", "al"});
 
   std::vector<std::string> words{
@@ -33,7 +33,7 @@ TEST(PrefixCompressor, CompressionPreservesWords) {
 }
 
 TEST(PrefixCompressor, OverlappingPrefixes) {
-  PrefixCompressor p;
+  ad_utility::vocabulary::PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alph", "alpha", "al"});
 
   // 1 byte for prefix "alpha" + 3 bytes for "bet".
@@ -51,7 +51,7 @@ TEST(PrefixCompressor, OverlappingPrefixes) {
 }
 
 TEST(PrefixCompressor, TooManyPrefixesThrow) {
-  PrefixCompressor p;
+  ad_utility::vocabulary::PrefixCompressor p;
   std::vector<std::string> tooManyPrefixes;
   for (size_t i = 0; i < NUM_COMPRESSION_PREFIXES + 1; ++i) {
     tooManyPrefixes.push_back(std::to_string(i));
@@ -61,7 +61,7 @@ TEST(PrefixCompressor, TooManyPrefixesThrow) {
 
 // _____________________________________________________________________________
 TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
-  PrefixCompressor p;
+  ad_utility::vocabulary::PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alph", "alpha", "al"});
   auto checkWord = [&](std::string_view word) {
     const std::string compressed = p.compress(word);
@@ -95,7 +95,7 @@ TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
 
 // _____________________________________________________________________________
 TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
-  PrefixCompressor p;
+  ad_utility::vocabulary::PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alpha"});
 
   const std::string compressedAlpha = p.compress("alpha");
@@ -117,7 +117,7 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
 }
 
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
-  PrefixCompressor p;
+  ad_utility::vocabulary::PrefixCompressor p;
   std::vector<std::string> maximalNumberOfPrefixes;
   for (size_t i = 0; i < NUM_COMPRESSION_PREFIXES; ++i) {
     maximalNumberOfPrefixes.push_back("aaaaa" + std::to_string(i));

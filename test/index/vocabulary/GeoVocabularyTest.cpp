@@ -18,13 +18,15 @@ namespace {
 
 using namespace geoInfoTestHelpers;
 using namespace ad_utility;
-using AnyGeoVocab = GeoVocabulary<VocabularyInMemory>;
+using AnyGeoVocab = ad_utility::vocabulary::GeoVocabulary<
+    ad_utility::vocabulary::VocabularyInMemory>;
 
 // Define a typed test suite to test the `GeoVocabulary` on different types of
 // underlying vocabularies.
 using GeoVocabularyUnderlyingVocabTypes =
-    ::testing::Types<VocabularyInMemory,
-                     CompressedVocabulary<VocabularyInternalExternal>>;
+    ::testing::Types<ad_utility::vocabulary::VocabularyInMemory,
+                     ad_utility::vocabulary::CompressedVocabulary<
+                         ad_utility::vocabulary::VocabularyInternalExternal>>;
 template <typename T>
 class GeoVocabularyUnderlyingVocabTypedTest : public ::testing::Test {
  public:
@@ -34,7 +36,7 @@ class GeoVocabularyUnderlyingVocabTypedTest : public ::testing::Test {
   // `GeoVocabulary` should behave exactly the same no matter which underlying
   // vocabulary implementation is used.
   void testGeoVocabulary() {
-    using GV = GeoVocabulary<T>;
+    using GV = ad_utility::vocabulary::GeoVocabulary<T>;
     GV geoVocab;
     const std::string fn = "geovocab-test1.dat";
     auto ww = geoVocab.makeDiskWriterPtr(fn);
@@ -101,8 +103,8 @@ class GeoVocabularyUnderlyingVocabTypedTest : public ::testing::Test {
   };
 
   // Build a `GeoVocabulary` on disk , fill it with a small set of WKT literals.
-  GeoVocabulary<T> setupGeoVocab() {
-    GeoVocabulary<T> geoVocab;
+  ad_utility::vocabulary::GeoVocabulary<T> setupGeoVocab() {
+    ad_utility::vocabulary::GeoVocabulary<T> geoVocab;
     const std::string filename = absl::StrCat(gtestCurrentTestName(), ".dat");
     auto ww = geoVocab.makeDiskWriterPtr(filename);
     ww->readableName() = "test";
@@ -146,8 +148,8 @@ class GeoVocabularyUnderlyingVocabTypedTest : public ::testing::Test {
     // `VocabLookupInput` takes ownership of the batches, so keep a copy of the
     // indices to compare against.
     const auto expectedBatches = batches;
-    auto streamedResults =
-        geoVocab.lookupBatchesStreamed(VocabLookupInput{std::move(batches)});
+    auto streamedResults = geoVocab.lookupBatchesStreamed(
+        ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
     vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
         geoVocab, streamedResults, expectedBatches);
   }
@@ -178,7 +180,7 @@ TEST(GeoVocabularyTest, VocabularyGetGeoInfoFromUnderlyingGeoVocab) {
   const VocabularyType nonGeoVocabType{VocabularyType::Enum::OnDiskCompressed};
 
   // Generate test vocabulary
-  RdfsVocabulary vocabulary;
+  ad_utility::vocabulary::RdfsVocabulary vocabulary;
   vocabulary.resetToType(geoSplitVocabType);
   ASSERT_TRUE(vocabulary.isGeoInfoAvailable());
   auto wordCallback = vocabulary.makeWordWriterPtr("geoVocabTest.dat");
@@ -205,7 +207,7 @@ TEST(GeoVocabularyTest, VocabularyGetGeoInfoFromUnderlyingGeoVocab) {
 
   // Cannot get `GeometryInfo` from `PolymorphicVocabulary` with no underlying
   // `GeoVocabulary`
-  RdfsVocabulary nonGeoVocab;
+  ad_utility::vocabulary::RdfsVocabulary nonGeoVocab;
   nonGeoVocab.resetToType(nonGeoVocabType);
   ASSERT_FALSE(nonGeoVocab.isGeoInfoAvailable());
   auto ngWordCallback = vocabulary.makeWordWriterPtr("nonGeoVocabTest.dat");
@@ -221,7 +223,7 @@ TEST(GeoVocabularyTest, InvalidGeometryInfoVersion) {
       VocabularyType::Enum::OnDiskCompressedGeoSplit};
 
   // Generate test vocabulary
-  RdfsVocabulary vocabulary;
+  ad_utility::vocabulary::RdfsVocabulary vocabulary;
   vocabulary.resetToType(geoSplitVocabType);
   auto wordCallback = vocabulary.makeWordWriterPtr("geoVocabTest2.dat");
   (*wordCallback)("\"test\"@en", true);

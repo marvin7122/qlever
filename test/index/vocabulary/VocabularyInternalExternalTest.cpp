@@ -37,10 +37,11 @@ class VocabularyCreator {
 
   // Create and return a `VocabularyInternalExternal` from the given words.
   auto createVocabularyImpl(const std::vector<std::string>& words) {
-    VocabularyInternalExternal vocabulary;
+    ad_utility::vocabulary::VocabularyInternalExternal vocabulary;
     {
       auto writerPtr =
-          VocabularyInternalExternal::makeDiskWriterPtr(vocabFilename_);
+          ad_utility::vocabulary::VocabularyInternalExternal::makeDiskWriterPtr(
+              vocabFilename_);
       auto& writer = *writerPtr;
       for (const auto& [i, word] : ::ranges::views::enumerate(words)) {
         EXPECT_EQ(writer(word, i % 2 == 0), static_cast<uint64_t>(i));
@@ -62,7 +63,7 @@ class VocabularyCreator {
   // destroyed and re-initialized from disk before it is returned.
   auto createVocabularyFromDiskImpl(const std::vector<std::string>& words) {
     { createVocabularyImpl(words); }
-    VocabularyInternalExternal vocabulary;
+    ad_utility::vocabulary::VocabularyInternalExternal vocabulary;
     vocabulary.open(vocabFilename_);
     return vocabulary;
   }

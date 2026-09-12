@@ -28,6 +28,8 @@
 #include "util/TypeTraits.h"
 #include "util/json.h"
 
+namespace ad_utility::vocabulary {
+
 // A vocabulary that can at runtime choose between different vocabulary
 // implementations. The only restriction is, that a vocabulary can only be read
 // from disk with the same implementation that it was written to.
@@ -250,5 +252,7 @@ class PolymorphicVocabulary {
         self.vocab_);
   }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_POLYMORPHICVOCABULARY_H
