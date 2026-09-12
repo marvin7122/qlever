@@ -680,6 +680,7 @@ TEST(ElasticExportSchedulerTest, CancelledSessionYieldsItsShare) {
 }
 
 TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
-  auto scheduler = ElasticExportScheduler::create([](absl::AnyInvocable<void()>) {}, 64);
+  auto scheduler =
+      ElasticExportScheduler::create([](absl::AnyInvocable<void()>) {}, 64);
   EXPECT_THROW(scheduler->setMaxConcurrentMorsels(0), ad_utility::Exception);
 }
