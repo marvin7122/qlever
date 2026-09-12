@@ -46,14 +46,16 @@ jobs:
             core.setOutput('head_sha', pr.head.sha);
       - name: Isolate npm prefix for this run
         run: |
-          # Concurrent OCR jobs on the same self-hosted host share HOME, so a
-          # shared global npm prefix lets one job's `npm install -g` delete the
-          # `ocr` binary out from under another job's `ocr config` step
-          # (node MODULE_NOT_FOUND). A per-job prefix removes the shared
-          # mutation; the shared npm cache stays as-is (content-addressed).
-          prefix="${RUNNER_TEMP}/ocr-npm"
+          # Concurrent OCR jobs on the same self-hosted host share HOME *and*
+          # RUNNER_TEMP (_work/_temp is per runner, not per job), so the npm
+          # prefix must additionally be unique per run: one job's
+          # `npm install -g` would otherwise delete the `ocr` binary out from
+          # under another job's `ocr config` step (node MODULE_NOT_FOUND).
+          # The shared npm cache stays as-is (content-addressed).
+          prefix="${RUNNER_TEMP}/ocr-npm-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "${prefix}"
           echo "NPM_CONFIG_PREFIX=${prefix}" >> "$GITHUB_ENV"
+          echo "OCR_NPM_PREFIX=${prefix}" >> "$GITHUB_ENV"
           echo "${prefix}/bin" >> "$GITHUB_PATH"
       - name: Review pull request
         uses: alibaba/open-code-review@810aeb5dc2e2b9485f5a1981485e65b25250f609 # v1.11.7
@@ -71,3 +73,6 @@ jobs:
           upload_artifacts: 'true'
           stream_progress: 'true'
           ocr_version: '1.11.7'
+      - name: Remove isolated npm prefix
+        if: always()
+        run: rm -rf "${OCR_NPM_PREFIX:?}"
