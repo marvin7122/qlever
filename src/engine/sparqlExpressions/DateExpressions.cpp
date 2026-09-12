@@ -2,6 +2,8 @@
 //                  Chair of Algorithms and Data Structures.
 //  Author: Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>
 
+#include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
+#include "engine/sparqlExpressions/LiteralExpression.h"
 #include "engine/sparqlExpressions/NaryExpressionImpl.h"
 
 namespace sparqlExpression {
@@ -147,6 +149,32 @@ CPP_class_template(typename NaryOperation)(
  public:
   using NaryExpression<NaryOperation>::NaryExpression;
   bool isYearExpression() const override { return true; }
+
+  // Lower `YEAR(?var)` to `LOAD_COL_DATE` + `YEAR_DATE` when the child is a
+  // plain variable, and mark the program with `CellRule::YearExtraction`
+  // (which constrains `Date` cells to these positions). Any other child
+  // shape falls back to the legacy evaluation. The kernels share
+  // `decodeYearFromDateBits`, which calls the same `DateValueGetter` +
+  // `ExtractYear` functions as the legacy evaluation and is therefore
+  // bit-identical, including for directly stored large years.
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    const auto& children = this->children();
+    if (children.size() != 1 || !children[0]) {
+      return false;
+    }
+    const auto* var =
+        dynamic_cast<const VariableExpression*>(children[0].get());
+    if (var == nullptr || !varColMap.contains(var->value())) {
+      return false;
+    }
+    const auto colIdx = varColMap.at(var->value()).columnIndex_;
+    program.addInstruction(ql::engine::jit::OpCode::LOAD_COL_DATE, colIdx);
+    program.addInstruction(ql::engine::jit::OpCode::YEAR_DATE);
+    program.addReferencedColumn(colIdx);
+    program.setCellRule(ql::engine::jit::CellRule::YearExtraction);
+    return true;
+  }
 };
 
 using YearExpression =

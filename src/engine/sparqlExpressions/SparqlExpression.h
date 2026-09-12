@@ -13,6 +13,10 @@
 #include "engine/sparqlExpressions/SparqlExpressionTypes.h"
 #include "rdfTypes/Variable.h"
 
+namespace ql::engine::jit {
+class JitBytecodeProgram;
+}
+
 namespace sparqlExpression {
 
 // Virtual base class for an arbitrary Sparql Expression which holds the
@@ -75,6 +79,14 @@ class SparqlExpression {
   // determine that its result will never contain undefined values / expression
   // errors.
   virtual bool isResultAlwaysDefined(
+      [[maybe_unused]] const VariableToColumnMap& varColMap) const {
+    return false;
+  }
+
+  // Lower this expression into a JIT bytecode program if supported.
+  // Returns true on success, false if the expression is unsupported by JIT VM.
+  virtual bool compileToJit(
+      [[maybe_unused]] ql::engine::jit::JitBytecodeProgram& program,
       [[maybe_unused]] const VariableToColumnMap& varColMap) const {
     return false;
   }

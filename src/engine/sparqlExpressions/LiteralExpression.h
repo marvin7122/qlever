@@ -7,6 +7,7 @@
 #ifndef QLEVER_SRC_ENGINE_SPARQLEXPRESSIONS_LITERALEXPRESSION_H
 #define QLEVER_SRC_ENGINE_SPARQLEXPRESSIONS_LITERALEXPRESSION_H
 
+#include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "index/TripleComponentConversions.h"
 #include "util/TypeTraits.h"
@@ -94,6 +95,27 @@ class LiteralExpression : public SparqlExpression {
     } else {
       return {};
     }
+  }
+
+  // ___________________________________________________________________________
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    if constexpr (std::is_same_v<T, ::Variable>) {
+      if (!varColMap.contains(_value)) {
+        return false;
+      }
+      auto colIdx = varColMap.at(_value).columnIndex_;
+      program.addInstruction(ql::engine::jit::OpCode::LOAD_COL_INT, colIdx);
+      program.addReferencedColumn(colIdx);
+      return true;
+    } else if constexpr (std::is_same_v<T, ValueId>) {
+      if (_value.getDatatype() == Datatype::Int) {
+        program.addInstruction(ql::engine::jit::OpCode::LOAD_CONST_INT,
+                               _value.getInt());
+        return true;
+      }
+    }
+    return false;
   }
 
   // ___________________________________________________________________________

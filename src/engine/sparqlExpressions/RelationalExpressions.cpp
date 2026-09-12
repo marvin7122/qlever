@@ -255,6 +255,38 @@ ExpressionResult RelationalExpression<Comp>::evaluate(
 
 // _____________________________________________________________________________
 template <Comparison Comp>
+bool RelationalExpression<Comp>::compileToJit(
+    ql::engine::jit::JitBytecodeProgram& program,
+    const VariableToColumnMap& varColMap) const {
+  if (children_.size() != 2 || !children_[0] || !children_[1]) {
+    return false;
+  }
+  if (!children_[0]->compileToJit(program, varColMap)) {
+    return false;
+  }
+  if (!children_[1]->compileToJit(program, varColMap)) {
+    return false;
+  }
+  if constexpr (Comp == Comparison::LT) {
+    program.addInstruction(ql::engine::jit::OpCode::CMP_LT_INT);
+  } else if constexpr (Comp == Comparison::LE) {
+    program.addInstruction(ql::engine::jit::OpCode::CMP_LE_INT);
+  } else if constexpr (Comp == Comparison::GT) {
+    program.addInstruction(ql::engine::jit::OpCode::CMP_GT_INT);
+  } else if constexpr (Comp == Comparison::GE) {
+    program.addInstruction(ql::engine::jit::OpCode::CMP_GE_INT);
+  } else if constexpr (Comp == Comparison::EQ) {
+    program.addInstruction(ql::engine::jit::OpCode::CMP_EQ_INT);
+  } else if constexpr (Comp == Comparison::NE) {
+    program.addInstruction(ql::engine::jit::OpCode::CMP_NE_INT);
+  } else {
+    return false;
+  }
+  return true;
+}
+
+// _____________________________________________________________________________
+template <Comparison Comp>
 std::string RelationalExpression<Comp>::getCacheKey(
     const VariableToColumnMap& varColMap) const {
   static_assert(std::tuple_size_v<decltype(children_)> == 2);
