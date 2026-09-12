@@ -91,7 +91,7 @@ TEST(PrefetchingBatchResolver, CompactVectorPipelinedResolution) {
                                        "\"literal2\"", "\"longer_literal_3\""};
   words.build(rawWords);
 
-  PrefetchingBatchResolver resolver(PrefetchConfig{.prefetchDistance = 4});
+  PrefetchingBatchResolver resolver(PrefetchConfig{4});
 
   std::vector<size_t> queryIndices = {0, 4, 1, 3, 2, 4, 0, 1};
   std::vector<std::string> resolvedWords(queryIndices.size());
