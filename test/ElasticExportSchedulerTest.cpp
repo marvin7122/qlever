@@ -461,6 +461,7 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
   // Must return promptly without deadlock or infinite spin loop
   scheduler->shutdown();
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
+}
 // -----------------------------------------------------------------------------
 // Test 12: Unordered Emission Consumes Every Morsel Exactly Once
 // -----------------------------------------------------------------------------
@@ -678,6 +679,7 @@ TEST(ElasticExportSchedulerTest, CancelledSessionYieldsItsShare) {
 }
 
 TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
-  auto scheduler = ElasticExportScheduler::create([](absl::AnyInvocable<void()>) {}, 64);
+  auto scheduler =
+      ElasticExportScheduler::create([](absl::AnyInvocable<void()>) {}, 64);
   EXPECT_THROW(scheduler->setMaxConcurrentMorsels(0), ad_utility::Exception);
 }

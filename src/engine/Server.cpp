@@ -79,13 +79,12 @@ Server::Server(
   AD_LOG_INFO << "Initializing server ..." << std::endl;
 
 #if defined(QLEVER_ENABLE_EXPORT_V2)
-  exportScheduler_ =
-      ad_utility::export_v2::ElasticExportScheduler::create(
-          [this](absl::AnyInvocable<void()> work) {
-            auto held =
-                std::make_shared<absl::AnyInvocable<void()>>(std::move(work));
-            boost::asio::post(queryThreadPool_, [held]() { (*held)(); });
-          });
+  exportScheduler_ = ad_utility::export_v2::ElasticExportScheduler::create(
+      [this](absl::AnyInvocable<void()> work) {
+        auto held =
+            std::make_shared<absl::AnyInvocable<void()>>(std::move(work));
+        boost::asio::post(queryThreadPool_, [held]() { (*held)(); });
+      });
   exportScheduler_->setMaxConcurrentMorsels(numThreads_);
   exportScheduler_->attachToQueryRegistry(queryRegistry_);
   AD_LOG_INFO << "ExportEngineV2 serialize posts onto queryThreadPool_ ("
