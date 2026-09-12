@@ -4,6 +4,8 @@ name: Cancel sibling runs on failure
 # fails for a pull request head, cancel the other still-running workflow
 # runs for the same head SHA so broken code stops consuming runners.
 # Restarting (rerun --failed) stays a manual step after the fix lands.
+# OpenCodeReview is deliberately not watched (a review failure must not
+# kill builds), but it is still cancelled as a sibling by head SHA.
 on:
   workflow_run:
     workflows:
@@ -17,6 +19,10 @@ on:
       - "sparql-conformance-new"
       - "Format check"
       - "Codespell"
+      - "Docker build and publish"
+      - "Native build to WebAssembly using Conan and Emscripten"
+      - "Check index version"
+      - "sonarcloud-analysis"
     types:
       - completed
 
@@ -44,9 +50,20 @@ jobs:
             exit 0
           fi
           for status in queued in_progress; do
-            gh api "repos/${{ github.repository }}/actions/runs" \
-              -f head_sha="$HEAD_SHA" -f status="$status" --paginate \
-              --jq '.workflow_runs[].id' | while read -r run_id; do
+            # NOTE: `head_sha` and `status` must be URL query parameters here.
+            # Passing them via `gh api -f` makes this endpoint answer
+            # `404 Not Found`, whose error body would otherwise be mistaken
+            # for run IDs below (and nothing would ever be cancelled).
+            if ! SIBLING_IDS=$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=$HEAD_SHA&status=$status&per_page=100" --paginate --jq '.workflow_runs[].id'); then
+              echo "::warning::Could not list $status runs for $HEAD_SHA; skipping them."
+              continue
+            fi
+            printf '%s\n' "$SIBLING_IDS" | while read -r run_id; do
+              # Only real run IDs may reach the cancel endpoint, never an
+              # API error body.
+              case "$run_id" in
+                ''|*[!0-9]*) continue;;
+              esac
               if [ "$run_id" = "$SELF_ID" ]; then
                 continue
               fi
