@@ -131,8 +131,8 @@ class PrefetchingBatchResolver {
     }
 
     AD_CONTRACT_CHECK(results.size() >= ids.size());
-    AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t i) {
-      return ids[i].getDatatype() == Datatype::VocabIndex;
+    AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t pos) {
+      return pos < ids.size() && ids[pos].getDatatype() == Datatype::VocabIndex;
     }));
 
     const size_t n = positions.size();
