@@ -9,7 +9,7 @@
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "util/Serializer/ByteBufferSerializer.h"
-using Vocab = VocabularyInMemory;
+using Vocab = ad_utility::vocabulary::VocabularyInMemory;
 
 namespace {
 
@@ -33,19 +33,20 @@ auto createVocabulary(const std::vector<std::string>& words) {
   return v;
 }
 
-TEST(VocabularyInMemory, UpperLowerBound) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, UpperLowerBound) {
   testUpperAndLowerBoundWithStdLess(createVocabulary);
 }
 
-TEST(VocabularyInMemory, UpperLowerBoundAlternativeComparator) {
+TEST(ad_utility::vocabulary::VocabularyInMemory,
+     UpperLowerBoundAlternativeComparator) {
   testUpperAndLowerBoundWithNumericComparator(createVocabulary);
 }
 
-TEST(VocabularyInMemory, AccessOperator) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary);
 }
 
-TEST(VocabularyInMemory, ReadAndWriteFromFile) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, ReadAndWriteFromFile) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
   const auto vocab = createVocabulary(words);
@@ -58,7 +59,7 @@ TEST(VocabularyInMemory, ReadAndWriteFromFile) {
   ad_utility::deleteFile(vocabularyFilename);
 }
 
-TEST(VocabularyInMemory, WriteAndReadWithSerializer) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, WriteAndReadWithSerializer) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
   const auto vocab = createVocabulary(words);
@@ -76,12 +77,12 @@ TEST(VocabularyInMemory, WriteAndReadWithSerializer) {
   assertThatRangesAreEqual(vocab, readVocab);
 }
 
-TEST(VocabularyInMemory, EmptyVocabulary) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary);
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemory, ScanAll) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, ScanAll) {
   // `scanAll` uses the generic `operator[]` fallback here and must yield all
   // words in order.
   const std::vector<std::string> words{"alpha", "delta", "beta", "42", "0"};
@@ -91,13 +92,13 @@ TEST(VocabularyInMemory, ScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemory, ScanAllEmptyVocabulary) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, ScanAllEmptyVocabulary) {
   const auto vocab = createVocabulary({});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemory, ZeroCopyDeserialization) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, ZeroCopyDeserialization) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
   const auto vocab = createVocabulary(words);
@@ -113,7 +114,7 @@ TEST(VocabularyInMemory, ZeroCopyDeserialization) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
+TEST(ad_utility::vocabulary::VocabularyInMemory, WordWriterDestructorBehavior) {
   const std::string filename = "VocabInMemoryWordWriterDestructorBehavior.tmp";
   Vocab v;
   {
@@ -124,7 +125,7 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
   v.open(filename);
   { auto writerPtr = v.makeDiskWriterPtr(filename); };
   {
-    VocabularyInMemory vocab;
+    ad_utility::vocabulary::VocabularyInMemory vocab;
     {
       auto wwPtr = vocab.makeDiskWriterPtr(filename);
       auto& ww = *wwPtr;
@@ -135,7 +136,7 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
   }
   ad_utility::deleteFile(filename);
   {
-    VocabularyInMemory vocab;
+    ad_utility::vocabulary::VocabularyInMemory vocab;
     auto wwPtr = vocab.makeDiskWriterPtr(filename);
     auto& ww = *wwPtr;
     ww("beta", false);

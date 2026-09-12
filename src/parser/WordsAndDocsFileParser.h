@@ -149,8 +149,9 @@ struct LiteralsTokenizationDelimiter {
  *  code;
  * }
  */
-inline auto tokenizeAndNormalizeText(std::string_view text,
-                                     const LocaleManager& localeManager) {
+inline auto tokenizeAndNormalizeText(
+    std::string_view text,
+    const ad_utility::vocabulary::LocaleManager& localeManager) {
   std::vector<std::string_view> split{
       absl::StrSplit(text, LiteralsTokenizationDelimiter{}, absl::SkipEmpty{})};
   return ql::views::transform(std::move(split),
@@ -177,19 +178,22 @@ inline std::string_view stripQuotesAndDatatype(std::string_view literal) {
  */
 class WordsAndDocsFileParser {
  public:
-  explicit WordsAndDocsFileParser(const std::string& wordsOrDocsFile,
-                                  const LocaleManager& localeManager);
+  explicit WordsAndDocsFileParser(
+      const std::string& wordsOrDocsFile,
+      const ad_utility::vocabulary::LocaleManager& localeManager);
   explicit WordsAndDocsFileParser(const WordsAndDocsFileParser& other) = delete;
   WordsAndDocsFileParser& operator=(const WordsAndDocsFileParser& other) =
       delete;
 
  protected:
   std::ifstream& getInputStream() { return in_; }
-  const LocaleManager& getLocaleManager() const { return localeManager_; }
+  const ad_utility::vocabulary::LocaleManager& getLocaleManager() const {
+    return localeManager_;
+  }
 
  private:
   std::ifstream in_;
-  LocaleManager localeManager_;
+  ad_utility::vocabulary::LocaleManager localeManager_;
 };
 
 /**

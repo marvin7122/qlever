@@ -87,11 +87,14 @@ struct DummyCompressionWrapper
 };
 
 // _____________________________________________________________________________
-TEST(CompressedVocabulary, CompressionIsActuallyApplied) {
+TEST(ad_utility::vocabulary::CompressedVocabulary,
+     CompressionIsActuallyApplied) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};
 
-  CompressedVocabulary<VocabularyInMemory, DummyCompressionWrapper> vocab;
+  ad_utility::vocabulary::CompressedVocabulary<
+      ad_utility::vocabulary::VocabularyInMemory, DummyCompressionWrapper>
+      vocab;
   {
     auto writerPtr = vocab.makeDiskWriterPtr("vocabtmp.txt");
     auto& writer = *writerPtr;
@@ -103,7 +106,7 @@ TEST(CompressedVocabulary, CompressionIsActuallyApplied) {
     // Test the case that the destructor implicitly calls `finish`.
   }
 
-  VocabularyInMemory simple;
+  ad_utility::vocabulary::VocabularyInMemory simple;
   simple.open("vocabtmp.txt.words");
   ad_utility::deleteFile("vocabtmp.txt.words");
 
@@ -134,7 +137,9 @@ struct CompressedVocabularyF : public testing::Test {
     return [](const std::vector<std::string>& words,
               std::string filename = gtestCurrentTestName()) {
       ad_utility::deleteFile(filename, false);
-      CompressedVocabulary<VocabularyOnDisk, Compressor, 4> vocab;
+      ad_utility::vocabulary::CompressedVocabulary<
+          ad_utility::vocabulary::VocabularyOnDisk, Compressor, 4>
+          vocab;
       auto writerPtr = vocab.makeDiskWriterPtr(filename);
       writeWordsAndFinish(*writerPtr, words);
       vocab.open(filename);
@@ -211,7 +216,9 @@ TYPED_TEST(CompressedVocabularyF, WriteAndReadWithSerializer) {
 
   // Create vocabulary with small block size (4 words per block).
   // Use VocabularyInMemory as the underlying vocabulary.
-  CompressedVocabulary<VocabularyInMemory, TypeParam, 4> vocab;
+  ad_utility::vocabulary::CompressedVocabulary<
+      ad_utility::vocabulary::VocabularyInMemory, TypeParam, 4>
+      vocab;
   std::string filename = gtestCurrentTestName();
   auto writerPtr = vocab.makeDiskWriterPtr(filename);
   auto& writer = *writerPtr;
@@ -228,7 +235,9 @@ TYPED_TEST(CompressedVocabularyF, WriteAndReadWithSerializer) {
   ASSERT_FALSE(blob.empty());
 
   // Read using serializer into a different vocabulary.
-  CompressedVocabulary<VocabularyInMemory, TypeParam, 4> readVocab;
+  ad_utility::vocabulary::CompressedVocabulary<
+      ad_utility::vocabulary::VocabularyInMemory, TypeParam, 4>
+      readVocab;
   ad_utility::serialization::ByteBufferReadSerializer readSerializer{blob};
   readSerializer | readVocab;
   assertThatRangesAreEqual(vocab, readVocab);
@@ -247,7 +256,9 @@ TYPED_TEST(CompressedVocabularyF, ZeroCopyDeserialization) {
 
   // Create vocabulary with small block size (4 words per block) on top of an
   // in-memory (and hence zero-copy-capable) underlying vocabulary.
-  CompressedVocabulary<VocabularyInMemory, TypeParam, 4> vocab;
+  ad_utility::vocabulary::CompressedVocabulary<
+      ad_utility::vocabulary::VocabularyInMemory, TypeParam, 4>
+      vocab;
   std::string filename = gtestCurrentTestName();
   auto writerPtr = vocab.makeDiskWriterPtr(filename);
   auto& writer = *writerPtr;
@@ -265,9 +276,9 @@ TYPED_TEST(CompressedVocabularyF, ZeroCopyDeserialization) {
   // decoders normally.
   ad_utility::serialization::AlignedByteBufferReadSerializer readSerializer{
       std::move(writeSerializer).data()};
-  auto view =
-      (CompressedVocabulary<VocabularyInMemory, TypeParam,
-                            4>::fromZeroCopyDeserializer(readSerializer));
+  auto view = (ad_utility::vocabulary::CompressedVocabulary<
+               ad_utility::vocabulary::VocabularyInMemory, TypeParam,
+               4>::fromZeroCopyDeserializer(readSerializer));
   assertThatRangesAreEqual(vocab, view);
 
   ad_utility::deleteFile(filename);
@@ -295,7 +306,7 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
     auto range = vocab.scanAll();
     auto it = ql::ranges::begin(range);
     ASSERT_NE(it, ql::ranges::end(range));
-    IndexAndWord indexAndWord = *it;
+    ad_utility::vocabulary::IndexAndWord indexAndWord = *it;
     EXPECT_EQ(indexAndWord.index_, 0);
     EXPECT_EQ(indexAndWord.word_, words.at(0));
   }
@@ -367,8 +378,9 @@ namespace {
 // number of words per decoder block is deliberately small, so that the tests
 // below span several blocks.
 using CompressedVocabularyWithHoles =
-    CompressedVocabulary<VocabularyInMemoryBinSearch,
-                         FsstSquaredCompressionWrapper, 4>;
+    ad_utility::vocabulary::CompressedVocabulary<
+        ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+        FsstSquaredCompressionWrapper, 4>;
 
 // For an underlying vocabulary with holes, the `WordWriter` has to take an
 // explicit index for each word.
@@ -626,7 +638,7 @@ TYPED_TEST(CompressedVocabularyF, ScanAllEmptyWordInVocabulary) {
   const std::vector<std::string> words{"alpha", "", "beta", "", "gamma"};
   auto vocab = createVocab(words);
   std::vector<std::string> scannedWords;
-  for (const IndexAndWord& entry : vocab.scanAll()) {
+  for (const ad_utility::vocabulary::IndexAndWord& entry : vocab.scanAll()) {
     if (entry.word_.empty()) {
       EXPECT_NE(entry.word_.data(), nullptr);
     }
@@ -657,14 +669,14 @@ TYPED_TEST(CompressedVocabularyF, ScanAllViewInvalidAfterNextPull) {
   auto range = vocab.scanAll();
   auto it = ql::ranges::begin(range);
   ASSERT_NE(it, ql::ranges::end(range));
-  IndexAndWord first = *it;
+  ad_utility::vocabulary::IndexAndWord first = *it;
   ASSERT_EQ(first.index_, 0u);
   ASSERT_EQ(first.word_, words[0]);
   const char* firstData = first.word_.data();
 
   ++it;
   ASSERT_NE(it, ql::ranges::end(range));
-  IndexAndWord second = *it;
+  ad_utility::vocabulary::IndexAndWord second = *it;
   ASSERT_EQ(second.index_, 1u);
   ASSERT_EQ(second.word_, words[1]);
 
@@ -688,7 +700,9 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
 
   const std::string filename = std::string{gtestCurrentTestName()} + "-blocks";
   ad_utility::deleteFile(filename, false);
-  CompressedVocabulary<VocabularyInMemory, TypeParam, 2> vocab;
+  ad_utility::vocabulary::CompressedVocabulary<
+      ad_utility::vocabulary::VocabularyInMemory, TypeParam, 2>
+      vocab;
   {
     auto writerPtr = vocab.makeDiskWriterPtr(filename);
     writeWordsAndFinish(*writerPtr, words);
