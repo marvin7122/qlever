@@ -486,6 +486,13 @@ TEST(ElasticExportSchedulerTest, AbandonedRemainderRunsExactlyOnce) {
 
 TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   ElasticExportScheduler scheduler(2, 64);
+  // Helpers stay ineligible so every morsel runs on the coordinator:
+  // a throw on a helper thread cannot cross threads (it would terminate),
+  // so letting helpers race for the throwing slot would make this test
+  // nondeterministic. Coordinator execution is deterministic.
+  scheduler.onForegroundQueryStarted();
+  scheduler.onForegroundQueryStarted();
+  EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
   auto session = scheduler.createSession<int>();
 
   // Slot 0 succeeds
