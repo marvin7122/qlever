@@ -225,8 +225,7 @@ TEST(StringSortComparatorTest, SimpleStringComparator) {
 // that the ICU-free code paths are covered.
 
 // ______________________________________________________________________________
-TEST(StringSortComparatorNoICU,
-     SimpleStringComparator) {
+TEST(StringSortComparatorNoICU, SimpleStringComparator) {
   ad_utility::vocabulary::SimpleStringComparatorNoICU comp("en", "US", true);
 
   // Bytewise ordering: uppercase letters come before lowercase ones.
@@ -246,8 +245,7 @@ TEST(StringSortComparatorNoICU,
 }
 
 // ______________________________________________________________________________
-TEST(StringSortComparatorNoICU,
-     TripleComponentComparator) {
+TEST(StringSortComparatorNoICU, TripleComponentComparator) {
   ad_utility::vocabulary::TripleComponentComparatorNoICU comp("en", "US",
                                                               false);
   using L = ad_utility::vocabulary::TripleComponentComparatorNoICU::Level;
