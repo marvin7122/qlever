@@ -305,11 +305,15 @@ class ElasticExportScheduler
   void workerLoop();
   void runPostedMorsel(OwnedMorsel morsel);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
-  // Account one morsel as outstanding and hand its completion-accounting
-  // closure to `poster_`. Never holds `queueMutex_` while invoking `poster_`:
-  // a synchronous poster runs the closure inline, and completion takes the
-  // non-recursive `queueMutex_` again, so holding it here would deadlock.
-  void postAccounted(OwnedMorsel morsel);
+  // Reserve one outstanding slot for `jobId`. Every posted morsel is
+  // counted exactly once, at admission time (under the lock), so posting
+  // itself never touches the counters. queueMutex_ held.
+  void accountOutstandingUnsafe(uint64_t jobId);
+  // Hand an already-accounted morsel to `poster_`. Never holds `queueMutex_`
+  // while invoking `poster_`: a synchronous poster runs the closure inline,
+  // and completion takes the non-recursive `queueMutex_` again, so holding
+  // it here would deadlock.
+  void postReady(OwnedMorsel morsel);
   // Build the closure for a posted morsel; completion decrements the share
   // accounting and admits waiting morsels, including on the throwing path.
   absl::AnyInvocable<void()> makePostedWork(OwnedMorsel morsel);
