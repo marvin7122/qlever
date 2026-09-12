@@ -16,11 +16,13 @@
 #include <ctime>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "util/Exception.h"
@@ -171,8 +173,14 @@ template <typename ResultType>
 class ExportWorkSession;
 
 // -----------------------------------------------------------------------------
-// ElasticExportScheduler: Isolated Thread Pool & Concurrency Coordinator
+// ElasticExportScheduler: Shared-Pool Morsel Coordinator with Even-Split
+// Admission
 // -----------------------------------------------------------------------------
+// Execution happens on Server::queryThreadPool_ through the poster transport
+// (or dedicated threads in tests). Admission is enforced here: each live
+// session holds an even share of in-flight morsels, newcomers queue
+// first-in first-out past capacity, and every session keeps at least one
+// morsel in flight. No caller tracks shares; submit and consume stay unchanged.
 
 class ElasticExportScheduler
     : public std::enable_shared_from_this<ElasticExportScheduler> {
@@ -239,6 +247,16 @@ class ElasticExportScheduler
     return maxQueueCapacity_;
   }
 
+  /// Cap on concurrently outstanding morsels across all sessions. Defaults to
+  /// unlimited (SIZE_MAX, so the admission limit is effectively disabled and
+  /// existing callers behave as before); production wiring sets it to the
+  /// pool thread count to enable even-split admission.
+  void setMaxConcurrentMorsels(size_t count) {
+    AD_CONTRACT_CHECK(count >= 1,
+                      "Need at least one in-flight morsel for progress");
+    maxConcurrentMorsels_.store(count, std::memory_order_relaxed);
+  }
+
   /// Set the maximum number of active queries allowed for helper admission.
   /// Defaults to 1 (i.e. only the export query itself is running).
   void setMaxForegroundQueriesForHelperAdmission(size_t count) noexcept {
@@ -287,10 +305,47 @@ class ElasticExportScheduler
   void workerLoop();
   void runPostedMorsel(OwnedMorsel morsel);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
+  // Reserve one outstanding slot for `jobId`. Every posted morsel is
+  // counted exactly once, at admission time (under the lock), so posting
+  // itself never touches the counters. queueMutex_ held.
+  void accountOutstandingUnsafe(uint64_t jobId);
+  // Hand an already-accounted morsel to `poster_`. Never holds `queueMutex_`
+  // while invoking `poster_`: a synchronous poster runs the closure inline,
+  // and completion takes the non-recursive `queueMutex_` again, so holding
+  // it here would deadlock.
+  void postReady(OwnedMorsel morsel);
+  // Build the closure for a posted morsel; completion decrements the share
+  // accounting and admits waiting morsels, including on the throwing path.
+  absl::AnyInvocable<void()> makePostedWork(OwnedMorsel morsel);
+  // Completion path shared by the success and throwing continuations:
+  // decrement under the lock, then post newly admittable morsels without it.
+  void onPostedMorselFinished(uint64_t jobId);
+  // Read the outstanding count without inserting a zero entry for sessions
+  // that only hold pending morsels. queueMutex_ held.
+  [[nodiscard]] size_t committedOutstandingUnsafe(uint64_t jobId) const;
+  // Select admittable pending morsels (oldest session first) while capacity
+  // and shares allow, account them as outstanding, and return them; the
+  // caller posts them WITHOUT holding queueMutex_. queueMutex_ held.
+  [[nodiscard]] std::vector<OwnedMorsel> drainPendingAdmissionUnsafe();
+  // Decrement accounting for one finished morsel. queueMutex_ held.
+  void decrementOutstandingUnsafe(uint64_t jobId);
+  // Even per-session share from the live count: at least one, so every
+  // session keeps its progress floor. Pure computation, no locking. The max
+  // is a best-effort snapshot: a concurrent `setMaxConcurrentMorsels` may
+  // shift shares transiently, and every drain re-reads the current value.
+  [[nodiscard]] size_t fairShareUnsafe(size_t liveSessions) const noexcept {
+    const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
+    const size_t live = std::max(liveSessions, size_t{1});
+    return std::max(size_t{1}, max / live);
+  }
 
   WorkPoster poster_;
   const size_t maxQueueCapacity_;
   std::atomic<size_t> maxForegroundQueriesForHelperAdmission_{1};
+  std::atomic<size_t> maxConcurrentMorsels_{std::numeric_limits<size_t>::max()};
+  // Live session count, maintained at register and prune points so admission
+  // never takes sessionsMutex_ while holding queueMutex_.
+  std::atomic<size_t> liveSessionCount_{0};
   std::atomic<uint64_t> demandEpoch_{1};
   std::atomic<size_t> activeForegroundQueries_{0};
   std::atomic<uint64_t> nextJobId_{1};
@@ -302,6 +357,12 @@ class ElasticExportScheduler
   std::condition_variable workAvailableCv_;
   std::condition_variable queueNotFullCv_;
   std::deque<OwnedMorsel> queue_;
+  // Posted-but-unfinished morsels per session plus the first-in first-out
+  // overflow they wait in. Guarded by queueMutex_; the asio pool depth
+  // itself is invisible, so this map is the share accounting.
+  std::unordered_map<uint64_t, size_t> outstandingPerSession_;
+  std::deque<OwnedMorsel> pendingAdmission_;
+  size_t totalOutstanding_{0};
 
   mutable std::mutex sessionsMutex_;
   std::vector<std::weak_ptr<ExportJobStateBase>> sessions_;
