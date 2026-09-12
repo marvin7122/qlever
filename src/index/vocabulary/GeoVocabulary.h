@@ -15,6 +15,8 @@
 #include "util/File.h"
 #include "util/Serializer/Serializer.h"
 
+namespace ad_utility::vocabulary {
+
 // A `GeoVocabulary` holds Well-Known Text (WKT) literals. In contrast to the
 // regular vocabulary classes it does not only store the strings. Instead it
 // stores both preprocessed and original forms of its input words. Preprocessing
@@ -155,5 +157,7 @@ class GeoVocabulary {
         "Generic serialization is not implemented for GeoVocabulary.");
   }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_GEOVOCABULARY_H

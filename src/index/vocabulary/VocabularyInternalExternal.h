@@ -20,6 +20,8 @@
 #include "util/Exception.h"
 #include "util/Serializer/Serializer.h"
 
+namespace ad_utility::vocabulary {
+
 // A vocabulary that stores all the words on disk. Additionally, some of the
 // words can be stored in RAM. The words that are stored in RAM can be accessed
 // much faster, and additionally serve to make binary searches on the words that
@@ -189,5 +191,7 @@ class VocabularyInternalExternal {
                          boundFromInternalVocab.previousIndex(), upperBound);
   }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINTERNALEXTERNAL_H

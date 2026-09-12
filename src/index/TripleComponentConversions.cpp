@@ -19,7 +19,7 @@
 // ____________________________________________________________________________
 std::optional<Id> toValueIdIfNotString(
     const TripleComponent& tripleComponent,
-    const EncodedIriManager* encodedIriManager) {
+    const ad_utility::vocabulary::EncodedIriManager* encodedIriManager) {
   auto visitor = [encodedIriManager](const auto& value) -> std::optional<Id> {
     using T = std::decay_t<decltype(value)>;
     using Literal = TripleComponent::Literal;
@@ -64,7 +64,7 @@ std::string toRdfLiteral(const TripleComponent& tripleComponent) {
   } else if (tripleComponent.isIri()) {
     return tripleComponent.getIri().toStringRepresentation();
   } else {
-    EncodedIriManager ev;
+    ad_utility::vocabulary::EncodedIriManager ev;
     auto [value, type] = ql::exportIds::idToStringAndTypeForEncodedValue(
                              toValueIdIfNotString(tripleComponent, &ev).value())
                              .value();

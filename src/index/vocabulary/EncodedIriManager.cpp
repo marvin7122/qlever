@@ -11,6 +11,8 @@
 
 #include "util/CtreHelpers.h"
 
+namespace ad_utility::vocabulary {
+
 // The regex that matches the digits at the end of an encodable IRI, and the
 // name of its capture group. NOTE: These must live at namespace scope and must
 // not be local to the function below. They are used as non-type template
@@ -28,3 +30,4 @@ std::optional<std::string_view> detail::matchDigitsPrefix(
   }
   return match.template get<digitsCaptureGroup>().to_view();
 }
+}  // namespace ad_utility::vocabulary

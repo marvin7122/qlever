@@ -42,7 +42,7 @@ std::vector<TurtleTriple> GraphStoreProtocol::parseTriples(
       // smaller. This will be done in a future version where we pass the state
       // of the underlying index more consistently to all parsing and update
       // functions.
-      EncodedIriManager encodedIriManager;
+      ad_utility::vocabulary::EncodedIriManager encodedIriManager;
       auto parser = Re2Parser(&encodedIriManager);
       parser.setInputStream(body);
       return parser.parseAndReturnAllTriples();
@@ -106,7 +106,8 @@ ad_utility::triple_component::Iri GraphStoreProtocol::generateNewGraphIri() {
 
 // ____________________________________________________________________________
 ParsedQuery GraphStoreProtocol::transformGet(
-    const GraphOrDefault& graph, const EncodedIriManager* encodedIriManager) {
+    const GraphOrDefault& graph,
+    const ad_utility::vocabulary::EncodedIriManager* encodedIriManager) {
   // Construct the parsed query from its short equivalent SPARQL Update
   // string. This is easier and also provides e.g. the `_originalString` field.
   auto getQuery = [&graph]() -> std::string {
@@ -123,7 +124,8 @@ ParsedQuery GraphStoreProtocol::transformGet(
 
 // ____________________________________________________________________________
 ParsedQuery GraphStoreProtocol::transformHead(
-    const GraphOrDefault& graph, const EncodedIriManager* encodedIriManager) {
+    const GraphOrDefault& graph,
+    const ad_utility::vocabulary::EncodedIriManager* encodedIriManager) {
   auto pq = transformGet(graph, encodedIriManager);
   // HEAD does the same as GET except that the response has no body.
   // Overwrite the body to be empty.
