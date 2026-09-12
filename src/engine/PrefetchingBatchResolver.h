@@ -150,8 +150,6 @@ class PrefetchingBatchResolver {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        prefetchVocabEntry(&positions[i + distance],
-                           static_cast<int>(distance));
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
           const auto wordVocabIndex = pfId.getVocabIndex();
