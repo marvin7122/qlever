@@ -19,6 +19,7 @@
 #include "backports/functional.h"
 #include "backports/type_traits.h"
 #include "engine/AddCombinedRowToTable.h"
+#include "engine/BlockedBloomFilter.h"
 #include "engine/CallFixedSize.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
@@ -482,10 +483,23 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
         // Put the smaller table into the hash table.
         auto map = idTableToHashMap(smallerTable, smallerTableJoinColumn);
 
+        // Populate BlockedBloomFilter from the smaller table's join column
+        // during join preparation to prune non-matching probe keys before hash
+        // map lookups.
+        auto filter = ql::engine::filter::BlockedBloomFilter::createFromColumn(
+            smallerTable.getColumn(smallerTableJoinColumn));
+
         // Create cross product by going through the larger table.
         for (size_t i = 0; i < largerTable.size(); i++) {
+          const auto key = largerTable(i, largerTableJoinColumn);
+          // Probe cache-line bloom filter first to prune non-matching keys
+          // before hash table lookup.
+          if (!filter.contains(key)) {
+            continue;
+          }
+
           // Skip, if there is no matching entry for the join column.
-          auto entry = map.find(largerTable(i, largerTableJoinColumn));
+          auto entry = map.find(key);
           if (entry == map.end()) {
             continue;
           }
