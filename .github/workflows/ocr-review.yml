@@ -53,8 +53,9 @@ jobs:
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
-          review_concurrency: '1'
-          effort: low
+          review_concurrency: '1' # Explicitly serialize OCR model work.
+          rule: .opencodereview/rule.json
+          effort: high
           sticky_summary: 'true'
           incremental: 'true'
           upload_artifacts: 'true'
