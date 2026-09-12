@@ -39,10 +39,18 @@ jobs:
     steps:
       - name: Run harness
         env:
-          GH_TOKEN: ${{ github.token }}
+          CI_REPAIR_PUSH_TOKEN: ${{ secrets.CI_REPAIR_PUSH_TOKEN }}
           OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
           OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
         run: |
+          # github.token must not open the probe PR: this repo gates CI on the
+          # `ci` label, and GITHUB_TOKEN events do not start other workflows.
+          if [ -n "${CI_REPAIR_PUSH_TOKEN}" ]; then
+            export GH_TOKEN="${CI_REPAIR_PUSH_TOKEN}"
+          else
+            unset GH_TOKEN
+            unset GITHUB_TOKEN
+          fi
           python3 /home/userNoPriv/code/ci-repair-harness/cli.py \
             handle-run --run-id "${{ github.event.workflow_run.id }}"
