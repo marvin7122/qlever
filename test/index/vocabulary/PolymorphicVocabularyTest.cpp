@@ -216,7 +216,7 @@ void setupVocab(ad_utility::vocabulary::PolymorphicVocabulary& vocab,
 
 // Test the general functionality of the `PolymorphicVocabulary` for all the
 // possible `VocabularyType`s.
-TEST(ad_utility::vocabulary::PolymorphicVocabulary, basicTests) {
+TEST(PolymorphicVocabulary, basicTests) {
   ql::ranges::for_each(VocabularyType::all(), &testForVocabType);
 }
 
@@ -224,8 +224,7 @@ TEST(ad_utility::vocabulary::PolymorphicVocabulary, basicTests) {
 // returns for that index, preserving the order of the requested indices
 // (including reordered and duplicated ones). Checked for every
 // `VocabularyType`.
-TEST(ad_utility::vocabulary::PolymorphicVocabulary,
-     lookupBatchMatchesIndividualLookups) {
+TEST(PolymorphicVocabulary, lookupBatchMatchesIndividualLookups) {
   for (auto vocabType : VocabularyType::all()) {
     auto [filename, cleanup] = ad_utility::testing::filenameForTesting();
     ad_utility::vocabulary::PolymorphicVocabulary vocab;
@@ -241,8 +240,7 @@ TEST(ad_utility::vocabulary::PolymorphicVocabulary,
 // `lookupBatchesStreamed` must yield, for each batch and in input order,
 // exactly what the individual `vocab[]` lookups return. Checked for every
 // `VocabularyType`.
-TEST(ad_utility::vocabulary::PolymorphicVocabulary,
-     lookupBatchesStreamedMatchesIndividualLookups) {
+TEST(PolymorphicVocabulary, lookupBatchesStreamedMatchesIndividualLookups) {
   for (auto vocabType : VocabularyType::all()) {
     auto [filename, cleanup] = ad_utility::testing::filenameForTesting();
     ad_utility::vocabulary::PolymorphicVocabulary vocab;
@@ -261,7 +259,7 @@ TEST(ad_utility::vocabulary::PolymorphicVocabulary,
 }
 
 // Test a corner case in a `switch` statement.
-TEST(ad_utility::vocabulary::PolymorphicVocabulary, invalidVocabularyType) {
+TEST(PolymorphicVocabulary, invalidVocabularyType) {
   ad_utility::vocabulary::PolymorphicVocabulary vocab;
   auto invalidType = VocabularyType{static_cast<VocabularyType::Enum>(23401)};
   EXPECT_ANY_THROW(vocab.resetToType(invalidType));

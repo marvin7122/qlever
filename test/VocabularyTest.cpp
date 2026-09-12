@@ -191,7 +191,7 @@ TEST(VocabularyTest, IncompleteLiterals) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, PrefixFilter) {
+TEST(Vocabulary, PrefixFilter) {
   ad_utility::vocabulary::RdfsVocabulary vocabulary;
   vocabulary.setLocale("en", "US", true);
   ad_utility::HashSet<string> words;
@@ -212,7 +212,7 @@ TEST(ad_utility::vocabulary::Vocabulary, PrefixFilter) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, IsGeoInfoAvailable) {
+TEST(Vocabulary, IsGeoInfoAvailable) {
   using ad_utility::VocabularyType;
   using enum VocabularyType::Enum;
 
@@ -321,21 +321,19 @@ void testZeroCopyRoundTripPolymorphic(
 }  // namespace
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary,
-     ZeroCopyRoundTripPolymorphicUncompressed) {
+TEST(Vocabulary, ZeroCopyRoundTripPolymorphicUncompressed) {
   testZeroCopyRoundTripPolymorphic(
       ad_utility::VocabularyType::InMemoryUncompressed);
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary,
-     ZeroCopyRoundTripPolymorphicCompressed) {
+TEST(Vocabulary, ZeroCopyRoundTripPolymorphicCompressed) {
   testZeroCopyRoundTripPolymorphic(
       ad_utility::VocabularyType::InMemoryCompressed);
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, ZeroCopyBlobThrowsWhenNotInMemory) {
+TEST(Vocabulary, ZeroCopyBlobThrowsWhenNotInMemory) {
   ad_utility::vocabulary::RdfsVocabulary vocabulary;
   vocabulary.resetToType(ad_utility::VocabularyType::OnDiskCompressed);
 
@@ -361,7 +359,7 @@ TEST(ad_utility::vocabulary::Vocabulary, ZeroCopyBlobThrowsWhenNotInMemory) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary, ScanAll) {
+TEST(Vocabulary, ScanAll) {
   using ad_utility::VocabularyType;
   using enum VocabularyType::Enum;
   // `scanAll` delegates to the underlying vocabulary and must yield all words
@@ -388,8 +386,7 @@ TEST(ad_utility::vocabulary::Vocabulary, ScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::Vocabulary,
-     ZeroCopyRoundTripDirectVocabularyInMemory) {
+TEST(Vocabulary, ZeroCopyRoundTripDirectVocabularyInMemory) {
   ad_utility::vocabulary::TextVocabulary vocabulary;
   ad_utility::HashSet<string> words{"wordA", "wordB", "wordC"};
   auto filename = gtestCurrentTestName();

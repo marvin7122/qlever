@@ -96,31 +96,28 @@ auto createVocabularyFromDisk(std::string filename) {
 
 }  // namespace
 
-TEST(ad_utility::vocabulary::VocabularyInternalExternal,
-     LowerUpperBoundStdLess) {
+TEST(VocabularyInternalExternal, LowerUpperBoundStdLess) {
   testUpperAndLowerBoundWithStdLess(
       createVocabulary("lowerUpperBoundStdLess1"));
   testUpperAndLowerBoundWithStdLess(
       createVocabularyFromDisk("lowerUpperBoundStdLess2"));
 }
 
-TEST(ad_utility::vocabulary::VocabularyInternalExternal,
-     LowerUpperBoundNumeric) {
+TEST(VocabularyInternalExternal, LowerUpperBoundNumeric) {
   testUpperAndLowerBoundWithNumericComparator(
       createVocabulary("lowerUpperBoundNumeric1"));
   testUpperAndLowerBoundWithNumericComparator(
       createVocabularyFromDisk("lowerUpperBoundNumeric2"));
 }
 
-TEST(ad_utility::vocabulary::VocabularyInternalExternal, AccessOperator) {
+TEST(VocabularyInternalExternal, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary("AccessOperator1"));
   testAccessOperatorForUnorderedVocabulary(
       createVocabularyFromDisk("AccessOperator2"));
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyInternalExternal,
-     LookupBatchMatchesAccessOperator) {
+TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
                                        "epsilon"};
   // The batch result must preserve request order across all-internal,
@@ -153,8 +150,7 @@ TEST(ad_utility::vocabulary::VocabularyInternalExternal,
 // _____________________________________________________________________________
 // Verify that `VocabBatchLookupResult` string_views remain valid after the
 // `VocabularyInternalExternal` is closed.
-TEST(ad_utility::vocabulary::VocabularyInternalExternal,
-     LookupBatchResultOutlivesClose) {
+TEST(VocabularyInternalExternal, LookupBatchResultOutlivesClose) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
   auto vocab = createVocabulary("LookupBatchOutlivesClose")(words);
   const std::array<size_t, 4> indices{0, 1, 2, 3};
@@ -166,12 +162,12 @@ TEST(ad_utility::vocabulary::VocabularyInternalExternal,
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyInternalExternal, EmptyVocabulary) {
+TEST(VocabularyInternalExternal, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary("EmptyVocabulary"));
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyInternalExternal, ScanAll) {
+TEST(VocabularyInternalExternal, ScanAll) {
   // `scanAll` delegates to the external vocabulary and must yield all words in
   // order.
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
@@ -181,8 +177,7 @@ TEST(ad_utility::vocabulary::VocabularyInternalExternal, ScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyInternalExternal,
-     ScanAllEmptyVocabulary) {
+TEST(VocabularyInternalExternal, ScanAllEmptyVocabulary) {
   auto vocab = createVocabulary("ScanAllEmpty")(std::vector<std::string>{});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
 }

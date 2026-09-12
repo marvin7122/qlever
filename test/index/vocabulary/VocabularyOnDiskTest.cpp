@@ -147,27 +147,26 @@ void expectScanAllYields(const std::vector<std::string>& words) {
 
 }  // namespace
 
-TEST(ad_utility::vocabulary::VocabularyOnDisk, LowerUpperBoundStdLess) {
+TEST(VocabularyOnDisk, LowerUpperBoundStdLess) {
   testUpperAndLowerBoundWithStdLess(createVocabulary());
 }
 
-TEST(ad_utility::vocabulary::VocabularyOnDisk, LowerUpperBoundNumeric) {
+TEST(VocabularyOnDisk, LowerUpperBoundNumeric) {
   testUpperAndLowerBoundWithNumericComparator(createVocabulary());
 }
 
-TEST(ad_utility::vocabulary::VocabularyOnDisk, AccessOperator) {
+TEST(VocabularyOnDisk, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary());
 }
 
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     AccessOperatorWithNonContiguousIds) {
+TEST(VocabularyOnDisk, AccessOperatorWithNonContiguousIds) {
   std::vector<std::string> words{"game",  "4",      "nobody", "33",
                                  "alpha", "\n\1\t", "222",    "1111"};
   std::vector<uint64_t> ids{2, 4, 8, 16, 17, 19, 42, 42 * 42 + 7};
   testAccessOperatorForUnorderedVocabulary(createVocabulary());
 }
 
-TEST(ad_utility::vocabulary::VocabularyOnDisk, EmptyVocabulary) {
+TEST(VocabularyOnDisk, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary());
 }
 
@@ -177,8 +176,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk, EmptyVocabulary) {
 // region of unused capacity before the metadata trailer at the very end. This
 // test writes the offsets file in exactly that legacy format and makes sure
 // that the current `VocabularyOnDisk` still reads it back correctly.
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     ReadLegacyMmapVectorOffsetsFormat) {
+TEST(VocabularyOnDisk, ReadLegacyMmapVectorOffsetsFormat) {
   std::string vocabFilename = "vocabularyOnDisk.legacyMmapFormat";
   std::string offsetsFilename = vocabFilename + ".offsets";
   absl::Cleanup cleanup{[&]() {
@@ -231,7 +229,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk,
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyOnDisk, ScanAll) {
+TEST(VocabularyOnDisk, ScanAll) {
   // A basic scan over many small words (fits into a single batch).
   std::vector<std::string> words;
   for (size_t i = 0; i < 3000; ++i) {
@@ -241,7 +239,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk, ScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyOnDisk, ScanAllEmptyVocabulary) {
+TEST(VocabularyOnDisk, ScanAllEmptyVocabulary) {
   VocabularyCreator creator{gtestCurrentTestName()};
   auto vocabulary = creator.createVocabulary({});
   auto range = vocabulary.scanAll();
@@ -249,8 +247,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk, ScanAllEmptyVocabulary) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     ScanAllByteLimitForcesMultipleBatches) {
+TEST(VocabularyOnDisk, ScanAllByteLimitForcesMultipleBatches) {
   // `scanAll` caps a batch's word data at
   // `VOCABULARY_SCAN_MAX_WORD_DATA_PER_BATCH` (10 MB). Four words of 3 MB each
   // (12 MB total) therefore don't fit into a single batch: the byte limit (not
@@ -261,7 +258,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk,
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::VocabularyOnDisk, ScanAllSingleWordExceedsLimit) {
+TEST(VocabularyOnDisk, ScanAllSingleWordExceedsLimit) {
   // A single word larger than `VOCABULARY_SCAN_MAX_WORD_DATA_PER_BATCH` (10 MB)
   // must still be scanned; it is returned in a batch of its own even though it
   // exceeds the limit, and the surrounding small words are unaffected.
@@ -270,8 +267,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk, ScanAllSingleWordExceedsLimit) {
 
 // A `lookupBatch` result must equal the individual `vocab[]` lookups for the
 // same indices, including for reordered and duplicated indices.
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     LookupBatchMatchesIndividualLookups) {
+TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
   auto vocab = createExampleVocabulary();
   std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
   auto result = vocab->lookupBatch(indices);
@@ -280,14 +276,13 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk,
 }
 
 // An empty batch is an invalid request and must throw.
-TEST(ad_utility::vocabulary::VocabularyOnDisk, LookupBatchEmptyThrows) {
+TEST(VocabularyOnDisk, LookupBatchEmptyThrows) {
   auto vocab = createExampleVocabulary();
   EXPECT_ANY_THROW(vocab->lookupBatch(ql::span<const size_t>{}));
 }
 
 // An out-of-range index in a batch must throw.
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     LookupBatchOutOfRangeIndexThrows) {
+TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
   auto vocab = createExampleVocabulary();
   std::array<size_t, 2> indices{0, 99};
   EXPECT_ANY_THROW(vocab->lookupBatch(indices));
@@ -296,8 +291,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk,
 // Each batch yielded by `lookupBatchesStreamed` must equal the individual
 // `vocab[]` lookups for that batch's indices, and the batches must be yielded
 // in input order.
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     LookupBatchesStreamedMatchesIndividualLookups) {
+TEST(VocabularyOnDisk, LookupBatchesStreamedMatchesIndividualLookups) {
   auto vocab = createExampleVocabulary();
 
   std::vector<std::vector<size_t>> batches{{2, 0, 3}, {1}, {4, 0, 1}};
@@ -311,8 +305,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk,
 }
 
 // An empty input stream (no batches) is valid and must produce no results.
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     LookupBatchesStreamedEmptyStreamYieldsNothing) {
+TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyStreamYieldsNothing) {
   auto vocab = createExampleVocabulary();
   std::vector<std::vector<size_t>> noBatches;
   auto streamed = vocab->lookupBatchesStreamed(
@@ -322,8 +315,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk,
 
 // An out-of-range index within a streamed batch must throw when that batch is
 // pulled.
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     LookupBatchesStreamedOutOfRangeIndexThrows) {
+TEST(VocabularyOnDisk, LookupBatchesStreamedOutOfRangeIndexThrows) {
   auto vocab = createExampleVocabulary();
   std::vector<std::vector<size_t>> batches{{0, 99}};
   auto streamed = vocab->lookupBatchesStreamed(
@@ -337,8 +329,7 @@ TEST(ad_utility::vocabulary::VocabularyOnDisk,
 // An empty batch within the stream is an invalid request and must throw when
 // the batch is pulled (an empty input stream with no batches is still valid,
 // see above).
-TEST(ad_utility::vocabulary::VocabularyOnDisk,
-     LookupBatchesStreamedEmptyBatchThrows) {
+TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
   auto vocab = createExampleVocabulary();
   std::vector<std::vector<size_t>> batches{{2, 0}, {}, {1}};
   auto streamed = vocab->lookupBatchesStreamed(

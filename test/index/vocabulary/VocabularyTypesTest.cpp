@@ -239,8 +239,7 @@ TEST_F(VocabBatchLookupDataVocabTest,
 // each word is copied into the arena-backed storage in order, and the
 // finalized batch result exposes all appended words with their contents
 // intact.
-TEST(ad_utility::vocabulary::PmrVocabBatchLookupData,
-     IncrementalAppendsProduceWordsInOrder) {
+TEST(PmrVocabBatchLookupData, IncrementalAppendsProduceWordsInOrder) {
   ad_utility::vocabulary::ArenaVocabBatchBuilder builder(2);
   builder.appendWord("foo");
   builder.appendWord("barbaz");
@@ -274,8 +273,7 @@ TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::PmrVocabBatchLookupData,
-     LimitedAllocatorThrowsWhenArenaExceedsBudget) {
+TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsWhenArenaExceedsBudget) {
   auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
   ad_utility::vocabulary::ArenaVocabBatchBuilder builder(1, alloc);
   EXPECT_THROW(

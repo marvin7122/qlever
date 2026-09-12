@@ -101,7 +101,7 @@ class SecondaryVocabIndexTest : public ::testing::Test {
 };
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::SecondaryVocabulary, wordsAndLookup) {
+TEST(SecondaryVocabulary, wordsAndLookup) {
   ad_utility::vocabulary::SecondaryVocabulary vocab{secondaryVocabWords};
   EXPECT_EQ(vocab.numWords(), secondaryVocabWords.size());
   // Each word is stored at its index and is found again by that index.
@@ -127,8 +127,7 @@ TEST(ad_utility::vocabulary::SecondaryVocabulary, wordsAndLookup) {
 }
 
 // _____________________________________________________________________________
-TEST(ad_utility::vocabulary::SecondaryVocabulary,
-     wordsHaveToBeSortedAndDistinct) {
+TEST(SecondaryVocabulary, wordsHaveToBeSortedAndDistinct) {
   // The words are looked up by binary search, so unsorted or duplicate words
   // are a programming error.
   AD_EXPECT_THROW_WITH_MESSAGE(
