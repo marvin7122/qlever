@@ -49,7 +49,8 @@ class JoinCardinalityEstimator {
     constexpr double kSigma = 2.5;
     constexpr double hllErrorConstant = 1.04;
     return kSigma * hllErrorConstant /
-           std::sqrt(static_cast<double>(NUM_REGISTERS)) *
+           std::sqrt(static_cast<double>(
+               HyperLogLogSketch<Precision>::NUM_REGISTERS)) *
            static_cast<double>(std::min(cardA, cardB));
   }
 
