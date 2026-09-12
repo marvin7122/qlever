@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "path": "**/*.{h,hpp,cpp}",
+      "rule": "## Banned: `#pragma` directives\n\n- QLever headers MUST use classic `#ifndef` / `#define` / `#endif` include guards named `QLEVER_<PATH>_<FILE>_H` (for example `QLEVER_SRC_ENGINE_QUERYEXECUTIONTREE_H`). `#pragma once` is BANNED in every new or touched header, without exception.\n- Flag EVERY `#pragma` directive that the diff adds or leaves in place (including, but not limited to, `#pragma once`) as a required change: the author must remove it or replace it with the portable construct above.\n- This rule fires on sight, independent of the surrounding code quality: any added `#pragma` line is a review finding.",
+      "merge_system_rule": true
+    }
+  ]
+}
