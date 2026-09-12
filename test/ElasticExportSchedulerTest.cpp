@@ -5,6 +5,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <future>
 #include <memory>
 #include <optional>
 #include <set>
