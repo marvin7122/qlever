@@ -216,6 +216,8 @@ CPP_template(typename UnderlyingVocabulary,
          ::ranges::views::zip(indices, compressedWords)) {
       size_t decoderIdx;
       if constexpr (underlyingHasHoles) {
+        // Translate the index to a position exactly once and reuse it for
+        // the decoder selection below (like `operator[]` does).
         const auto position = underlyingVocabulary_.positionOfIndex(idx);
         if (!position.has_value()) {
           builder.appendWord(
@@ -243,6 +245,7 @@ CPP_template(typename UnderlyingVocabulary,
   // budget-backed builder instead: this overload never throws
   // `AllocationExceedsLimitException`, no matter how large the batch is.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    AD_CONTRACT_CHECK(!indices.empty());
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
     return std::move(builder).finalize();
