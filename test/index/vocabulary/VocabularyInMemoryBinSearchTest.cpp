@@ -47,9 +47,11 @@ class VocabularyCreator {
   auto createVocabularyImpl(
       const std::vector<std::string>& words,
       std::optional<std::vector<uint64_t>> ids = std::nullopt) {
-    VocabularyInMemoryBinSearch vocabulary;
+    ad_utility::vocabulary::VocabularyInMemoryBinSearch vocabulary;
     {
-      auto writer = VocabularyInMemoryBinSearch::WordWriter(vocabFilename_);
+      auto writer =
+          ad_utility::vocabulary::VocabularyInMemoryBinSearch::WordWriter(
+              vocabFilename_);
       if (ids.has_value()) {
         AD_CORRECTNESS_CHECK(ids.value().size() == words.size());
       }
@@ -76,7 +78,7 @@ class VocabularyCreator {
       const std::vector<std::string>& words,
       std::optional<std::vector<uint64_t>> ids = std::nullopt) {
     { createVocabularyImpl(words, std::move(ids)); }
-    VocabularyInMemoryBinSearch vocabulary;
+    ad_utility::vocabulary::VocabularyInMemoryBinSearch vocabulary;
     vocabulary.open(vocabFilename_);
     return vocabulary;
   }
@@ -109,34 +111,38 @@ auto createVocabularyFromDisk(std::string filename) {
 
 }  // namespace
 
-TEST(VocabularyInMemoryBinSearch, LowerUpperBoundStdLess) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     LowerUpperBoundStdLess) {
   testUpperAndLowerBoundWithStdLess(
       createVocabulary("lowerUpperBoundStdLess1"));
   testUpperAndLowerBoundWithStdLess(
       createVocabularyFromDisk("lowerUpperBoundStdLess2"));
 }
 
-TEST(VocabularyInMemoryBinSearch, LowerUpperBoundNumeric) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     LowerUpperBoundNumeric) {
   testUpperAndLowerBoundWithNumericComparator(
       createVocabulary("lowerUpperBoundNumeric1"));
   testUpperAndLowerBoundWithNumericComparator(
       createVocabularyFromDisk("lowerUpperBoundNumeric2"));
 }
 
-TEST(VocabularyInMemoryBinSearch, AccessOperator) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary("AccessOperator1"));
   testAccessOperatorForUnorderedVocabulary(
       createVocabularyFromDisk("AccessOperator2"));
 }
 
-TEST(VocabularyInMemoryBinSearch, AccessOperatorWithNonContiguousIds) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     AccessOperatorWithNonContiguousIds) {
   testAccessOperatorForUnorderedVocabulary(
       createVocabulary("AccessOperatorWithNonContiguousIds1"));
   testAccessOperatorForUnorderedVocabulary(
       createVocabularyFromDisk("AccessOperatorWithNonContiguousIds2"));
 }
 
-TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     LookupBatchOutlivesClose) {
   auto vocab = createVocabulary("LookupBatchOutlivesVocabulary")(
       std::vector<std::string>{"alpha", "beta", "gamma"});
   const std::array<size_t, 4> indices{2, 0, 2, 1};
@@ -147,7 +153,8 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
               ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
-TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     LookupBatchRejectsMissingIndex) {
   auto vocab = createVocabulary("LookupBatchRejectsMissingIndex")(
       std::vector<std::string>{"alpha", "beta"});
   const std::array<size_t, 1> missingIndex{2};
@@ -157,7 +164,8 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
                                ::testing::HasSubstr("!indices.empty()"));
 }
 
-TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsEmptyBatch) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     LookupBatchRejectsEmptyBatch) {
   auto vocab = createVocabulary("LookupBatchRejectsEmptyBatch")(
       std::vector<std::string>{"alpha", "beta"});
   const std::array<size_t, 0> indices{};
@@ -165,8 +173,9 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsEmptyBatch) {
   EXPECT_THROW(vocab.lookupBatch(indices), ad_utility::Exception);
 }
 
-TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
-  VocabBatchLookupResult result;
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     LookupBatchOutlivesVocabulary) {
+  ad_utility::vocabulary::VocabBatchLookupResult result;
   {
     auto vocab = createVocabulary("LookupBatchOutlivesVocabularyOnly")(
         std::vector<std::string>{"alpha", "beta", "gamma"});
@@ -178,7 +187,8 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
               ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
-TEST(VocabularyInMemoryBinSearch, ErrorOnNonAscendingIds) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     ErrorOnNonAscendingIds) {
   std::vector<std::string> words{"game", "4", "nobody"};
   std::vector<uint64_t> ids{2, 4, 3};
   VocabularyCreator creator1{"ErrorOnNonAscendingIds1"};
@@ -189,7 +199,7 @@ TEST(VocabularyInMemoryBinSearch, ErrorOnNonAscendingIds) {
                ad_utility::Exception);
 }
 
-TEST(VocabularyInMemoryBinSearch, EmptyVocabulary) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary("EmptyVocabulary"));
 }
 
@@ -210,18 +220,19 @@ const std::vector<uint64_t> missingIndices{1, 2, 5, 6, 7, 8, 10, 12345};
 // via a `WordWriter` that writes to `filename`. The vocabulary keeps all its
 // contents in RAM, so the caller may delete the files as soon as this function
 // has returned.
-VocabularyInMemoryBinSearch createVocabularyWithIndices(
+ad_utility::vocabulary::VocabularyInMemoryBinSearch createVocabularyWithIndices(
     const std::string& filename, const std::vector<std::string>& words,
     const std::vector<uint64_t>& indices) {
   AD_CORRECTNESS_CHECK(words.size() == indices.size());
   {
-    VocabularyInMemoryBinSearch::WordWriter writer{filename};
+    ad_utility::vocabulary::VocabularyInMemoryBinSearch::WordWriter writer{
+        filename};
     for (size_t i = 0; i < words.size(); ++i) {
       EXPECT_EQ(writer(words.at(i), indices.at(i)), indices.at(i));
     }
     writer.finish();
   }
-  VocabularyInMemoryBinSearch vocabulary;
+  ad_utility::vocabulary::VocabularyInMemoryBinSearch vocabulary;
   vocabulary.open(filename);
   return vocabulary;
 }
@@ -256,7 +267,8 @@ std::vector<std::pair<uint64_t, std::string>> expectedIndicesAndWords() {
 }  // namespace
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemoryBinSearch, positionOfIndexAndAccessOperator) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     positionOfIndexAndAccessOperator) {
   std::string filename = gtestCurrentTestName();
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
   auto vocab =
@@ -285,7 +297,8 @@ TEST(VocabularyInMemoryBinSearch, positionOfIndexAndAccessOperator) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemoryBinSearch, endIndexAndGetPositionOfWord) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     endIndexAndGetPositionOfWord) {
   std::string filename = gtestCurrentTestName();
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
   auto vocab =
@@ -303,7 +316,7 @@ TEST(VocabularyInMemoryBinSearch, endIndexAndGetPositionOfWord) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemoryBinSearch, scanAll) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch, scanAll) {
   std::string filename = gtestCurrentTestName();
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
   auto vocab =
@@ -319,7 +332,7 @@ TEST(VocabularyInMemoryBinSearch, scanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemoryBinSearch, lookupBatch) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch, lookupBatch) {
   std::string filename = gtestCurrentTestName();
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
   auto vocab =
@@ -333,8 +346,8 @@ TEST(VocabularyInMemoryBinSearch, lookupBatch) {
   // The same via the streamed interface.
   std::vector<std::vector<size_t>> batches{{4, 0}, {9}, {3, 0, 4}};
   const auto expectedBatches = batches;
-  auto streamed =
-      vocab.lookupBatchesStreamed(VocabLookupInput{std::move(batches)});
+  auto streamed = vocab.lookupBatchesStreamed(
+      ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
   vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
       vocab, streamed, expectedBatches);
 
@@ -349,7 +362,8 @@ TEST(VocabularyInMemoryBinSearch, lookupBatch) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemoryBinSearch, genericSerialization) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     genericSerialization) {
   std::string filename = gtestCurrentTestName();
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
   auto vocab =
@@ -359,7 +373,7 @@ TEST(VocabularyInMemoryBinSearch, genericSerialization) {
   writeSerializer << vocab;
   ASSERT_FALSE(writeSerializer.data().empty());
 
-  VocabularyInMemoryBinSearch readVocab;
+  ad_utility::vocabulary::VocabularyInMemoryBinSearch readVocab;
   ad_utility::serialization::ByteBufferReadSerializer readSerializer{
       std::move(writeSerializer).data()};
   readSerializer >> readVocab;
@@ -372,7 +386,8 @@ TEST(VocabularyInMemoryBinSearch, genericSerialization) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemoryBinSearch, zeroCopyDeserialization) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     zeroCopyDeserialization) {
   std::string filename = gtestCurrentTestName();
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
   auto vocab =
@@ -384,18 +399,20 @@ TEST(VocabularyInMemoryBinSearch, zeroCopyDeserialization) {
   writeSerializer << vocab;
   ad_utility::serialization::AlignedByteBufferReadSerializer readSerializer{
       std::move(writeSerializer).data()};
-  auto view =
-      VocabularyInMemoryBinSearch::fromZeroCopyDeserializer(readSerializer);
+  auto view = ad_utility::vocabulary::VocabularyInMemoryBinSearch::
+      fromZeroCopyDeserializer(readSerializer);
   expectVocabulariesAreEqual(vocab, view);
   EXPECT_EQ(view[3], std::optional{std::string_view{"beta"}});
   EXPECT_EQ(view[5], std::nullopt);
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemoryBinSearch, makeDiskWriterPtrThrows) {
+TEST(ad_utility::vocabulary::VocabularyInMemoryBinSearch,
+     makeDiskWriterPtrThrows) {
   // A vocabulary with holes cannot be built via the `WordWriterBase` interface,
   // which cannot express the explicit indices.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      VocabularyInMemoryBinSearch::makeDiskWriterPtr(gtestCurrentTestName()),
+      ad_utility::vocabulary::VocabularyInMemoryBinSearch::makeDiskWriterPtr(
+          gtestCurrentTestName()),
       ::testing::HasSubstr("cannot be built word by word"));
 }

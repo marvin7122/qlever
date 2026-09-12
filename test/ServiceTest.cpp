@@ -697,7 +697,7 @@ TEST_F(ServiceTest, bindingToTripleComponent) {
   // Blank Nodes.
   EXPECT_EQ(blankNodeMap.size(), 0);
 
-  const EncodedIriManager encodedIriManager;
+  const ad_utility::vocabulary::EncodedIriManager encodedIriManager;
   Id a = toValueIdIfNotString(bTTC({{"type", "bnode"}, {"value", "A"}}),
                               &encodedIriManager)
              .value();
