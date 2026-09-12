@@ -461,11 +461,13 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
   // Must return promptly without deadlock or infinite spin loop
   scheduler->shutdown();
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
-  // -----------------------------------------------------------------------------
-  // Test 12: Unordered Emission Consumes Every Morsel Exactly Once
-  // -----------------------------------------------------------------------------
+}
 
-  TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
+// -----------------------------------------------------------------------------
+// Test 12: Unordered Emission Consumes Every Morsel Exactly Once
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
     auto scheduler = ElasticExportScheduler::create(2, 64);
     scheduler->setMaxForegroundQueriesForHelperAdmission(1);
     scheduler->onForegroundQueryStarted();
