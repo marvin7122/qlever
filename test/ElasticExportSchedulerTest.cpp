@@ -14,13 +14,10 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
-
-#include "engine/export_v2/ElasticExportScheduler.h"
-#include "engine/export_v2/ExportJobState.h"
-#include "util/http/websocket/QueryId.h"
 #include <vector>
 
 #include "engine/export_v2/ElasticExportScheduler.h"
+#include "engine/export_v2/ExportJobState.h"
 #include "util/GTestHelpers.h"
 #include "util/http/websocket/QueryId.h"
 
@@ -783,7 +780,7 @@ TEST(ElasticExportSchedulerTest, ProductionWiringBoundsPoolAndYieldsToLoad) {
   constexpr size_t poolSize = 4;
   boost::asio::static_thread_pool pool(poolSize);
   std::atomic<size_t> postedCount{0};
-  auto scheduler = ElasticExportScheduler::create(
+  ElasticExportScheduler scheduler(
       [&pool, &postedCount](absl::AnyInvocable<void()> work) {
         postedCount.fetch_add(1, std::memory_order_relaxed);
         auto held =
@@ -791,16 +788,16 @@ TEST(ElasticExportSchedulerTest, ProductionWiringBoundsPoolAndYieldsToLoad) {
         boost::asio::post(pool, [held]() { (*held)(); });
       },
       64);
-  scheduler->setMaxConcurrentMorsels(poolSize);
+  scheduler.setMaxConcurrentMorsels(poolSize);
   ad_utility::websocket::QueryRegistry registry;
-  scheduler->attachToQueryRegistry(registry);
+  scheduler.attachToQueryRegistry(registry);
 
   // The export query itself: one registered query keeps helpers eligible.
   auto exportQuery = registry.uniqueId("SELECT ?x WHERE { ?x ?p ?o }");
-  EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
+  EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
 
-  auto sessionA = scheduler->createSession<std::string>();
-  auto sessionB = scheduler->createSession<std::string>();
+  auto sessionA = scheduler.createSession<std::string>();
+  auto sessionB = scheduler.createSession<std::string>();
   sessionA.setOrdered(false);
   sessionB.setOrdered(false);
   EXPECT_EQ(sessionA.state(), SessionState::HelpersEligible);
@@ -834,20 +831,27 @@ TEST(ElasticExportSchedulerTest, ProductionWiringBoundsPoolAndYieldsToLoad) {
 
   // Foreground load arrives: admission stops, new morsels run inline on the
   // coordinator instead of taking pool threads from the interactive query.
+  // The inline morsels go to a fresh session: unordered consume runs the
+  // oldest pending slot inline, so consuming them from sessionA would
+  // execute a gate-blocked morsel on this thread and self-deadlock (the
+  // gate opens only after the consume loop).
   {
     auto foregroundQuery = registry.uniqueId("SELECT ?y WHERE { ?y ?p ?o }");
-    EXPECT_EQ(scheduler->activeForegroundQueries(), 2u);
+    EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
+    auto sessionC = scheduler.createSession<std::string>();
+    sessionC.setOrdered(false);
     for (size_t i = 0; i < poolSize; ++i) {
-      sessionA.submitMorsel([i]() { return "inline_" + std::to_string(i); });
+      sessionC.submitMorsel([i]() { return "inline_" + std::to_string(i); });
     }
     EXPECT_EQ(postedCount.load(), poolSize);
     for (size_t i = 0; i < poolSize; ++i) {
-      EXPECT_EQ(sessionA.consumeNextResult(), "inline_" + std::to_string(i));
+      EXPECT_EQ(sessionC.consumeNextResult(), "inline_" + std::to_string(i));
     }
+    EXPECT_FALSE(sessionC.hasMoreResults());
   }
   // Load gone while the pool is still saturated: the cap still holds, so
   // nothing new is posted.
-  EXPECT_EQ(scheduler->activeForegroundQueries(), 1u);
+  EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
   EXPECT_EQ(postedCount.load(), poolSize);
 
   release.store(true);
@@ -855,6 +859,7 @@ TEST(ElasticExportSchedulerTest, ProductionWiringBoundsPoolAndYieldsToLoad) {
   // without `stop()`, while `wait()` returns once outstanding work drains
   // (completion drains repost pending morsels, then the pool goes idle).
   pool.wait();
+
   for (size_t i = 0; i < poolSize; ++i) {
     EXPECT_EQ(sessionA.consumeNextResult(), "blocked");
     EXPECT_EQ(sessionB.consumeNextResult(), "blocked");
