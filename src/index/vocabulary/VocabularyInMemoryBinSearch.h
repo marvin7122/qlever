@@ -141,6 +141,12 @@ class VocabularyInMemoryBinSearch
 
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    // Indices past `endIndex()` are out of range (missing indices *below*
+    // `endIndex()` are holes and yield a placeholder, see
+    // `wordAsStringOrPlaceholder`).
+    for (size_t idx : indices) {
+      AD_CONTRACT_CHECK(idx < endIndex());
+    }
     return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
   }
 
