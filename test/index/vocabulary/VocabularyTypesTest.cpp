@@ -36,7 +36,7 @@ class Caller {
 // _____________________________________________________________________________
 // A class inheriting from `WordWriterBase` that throws when initializing a
 // member.
-class WordWriterThrowing : public WordWriterBase {
+class WordWriterThrowing : public ad_utility::vocabulary::WordWriterBase {
  private:
   Caller caller_;
 
@@ -50,7 +50,7 @@ class WordWriterThrowing : public WordWriterBase {
 
 // _____________________________________________________________________________
 // A class inheriting from `WordWriterBase` that doesn't call finish.
-class WordWriterNoFinish : public WordWriterBase {
+class WordWriterNoFinish : public ad_utility::vocabulary::WordWriterBase {
  public:
   WordWriterNoFinish() {}
   uint64_t operator()(std::string_view, bool) override { return 0; }
@@ -82,27 +82,29 @@ TEST(VocabularyTypes, verifyWordWriterBaseDestructorBehavesAsExpected) {
 
 TEST(VocabBatchLookupData, ContiguousBuilderExposesViewsAndKeepsDataAlive) {
   const std::array<size_t, 2> sizes{3, 3};
-  ContiguousVocabBatchBuilder builder(sizes);
+  ad_utility::vocabulary::ContiguousVocabBatchBuilder builder(sizes);
   ASSERT_EQ(builder.targets().size(), 2u);
   std::memcpy(builder.targets()[0], "foo", 3);
   std::memcpy(builder.targets()[1], "bar", 3);
 
-  VocabBatchLookupResult result = std::move(builder).finalize();
+  ad_utility::vocabulary::VocabBatchLookupResult result =
+      std::move(builder).finalize();
   EXPECT_THAT(result, ::testing::ElementsAre("foo", "bar"));
 }
 
 // _____________________________________________________________________________
 
 TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
-  AD_EXPECT_THROW_WITH_MESSAGE(ContiguousVocabBatchBuilder({}),
-                               ::testing::HasSubstr("!wordSizes.empty()"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      ad_utility::vocabulary::ContiguousVocabBatchBuilder({}),
+      ::testing::HasSubstr("!wordSizes.empty()"));
 }
 
 // _____________________________________________________________________________
 
 TEST(VocabBatchLookupData, ContiguousBuilderZeroSizedWordsAndMixed) {
   const std::array<size_t, 4> sizes{0, 3, 0, 4};
-  ContiguousVocabBatchBuilder builder(sizes);
+  ad_utility::vocabulary::ContiguousVocabBatchBuilder builder(sizes);
   ASSERT_EQ(builder.targets().size(), 4u);
   for (char* target : builder.targets()) {
     EXPECT_NE(target, nullptr);
@@ -110,7 +112,8 @@ TEST(VocabBatchLookupData, ContiguousBuilderZeroSizedWordsAndMixed) {
   std::memcpy(builder.targets()[1], "cat", 3);
   std::memcpy(builder.targets()[3], "bird", 4);
 
-  VocabBatchLookupResult result = std::move(builder).finalize();
+  ad_utility::vocabulary::VocabBatchLookupResult result =
+      std::move(builder).finalize();
   EXPECT_THAT(result, ::testing::ElementsAre("", "cat", "", "bird"));
   for (size_t i = 0; i < result.size(); ++i) {
     EXPECT_NE(result[i].data(), nullptr);
@@ -130,7 +133,7 @@ TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   auto first = makeStringVectorVocabBatchLookupResult({"apple", "banana"});
   auto second = makeStringVectorVocabBatchLookupResult({"cherry"});
 
-  MultiSourceVocabBatchAssembler assembler(3);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(3);
   const std::array<size_t, 2> firstPos{0, 2};
   const std::array<size_t, 1> secondPos{1};
   assembler.scatterSubBatchResultAtPositions(std::move(first), firstPos);
@@ -148,7 +151,7 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
   const char* alphaData = first[0].data();
   const char* gammaData = second[0].data();
 
-  MultiSourceVocabBatchAssembler assembler(3);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(3);
   const std::array<size_t, 2> firstPos{0, 2};
   const std::array<size_t, 1> secondPos{1};
   assembler.scatterSubBatchResultAtPositions(std::move(first), firstPos);
@@ -162,7 +165,7 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
-  MultiSourceVocabBatchAssembler assembler(1);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(1);
   assembler.assignWordAtPosition(0, "orphan");
   AD_EXPECT_THROW_WITH_MESSAGE(
       (void)std::move(assembler).finalizeVocabBatchLookupResult(),
@@ -176,13 +179,15 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
 class VocabBatchLookupDataVocabTest : public ::testing::Test {
  protected:
   // Build a vocabulary containing exactly `word` at index 0 and open it.
-  VocabularyInMemoryBinSearch buildVocab(std::string_view word) {
+  ad_utility::vocabulary::VocabularyInMemoryBinSearch buildVocab(
+      std::string_view word) {
     const std::string filename = gtestCurrentTestName();
     ad_utility::deleteFile(filename, false);
     ad_utility::deleteFile(filename + ".ids", false);
-    VocabularyInMemoryBinSearch vocabulary;
+    ad_utility::vocabulary::VocabularyInMemoryBinSearch vocabulary;
     {
-      VocabularyInMemoryBinSearch::WordWriter writer{filename};
+      ad_utility::vocabulary::VocabularyInMemoryBinSearch::WordWriter writer{
+          filename};
       writer(word, 0);
       writer.finish();
     }
@@ -200,7 +205,7 @@ TEST_F(VocabBatchLookupDataVocabTest, MultiSourceAssemblerOutlivesClose) {
   const std::array<size_t, 1> positions{0};
   auto batch = vocabulary.lookupBatch(positions);
   const char* wordData = batch[0].data();
-  MultiSourceVocabBatchAssembler assembler(1);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(1);
   assembler.scatterSubBatchResultAtPositions(std::move(batch), positions);
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
 
@@ -220,7 +225,7 @@ TEST_F(VocabBatchLookupDataVocabTest,
   const std::array<size_t, 1> positions{0};
   auto batch = vocabulary->lookupBatch(positions);
   const char* wordData = batch[0].data();
-  MultiSourceVocabBatchAssembler assembler(1);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(1);
   assembler.scatterSubBatchResultAtPositions(std::move(batch), positions);
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
 
@@ -234,19 +239,21 @@ TEST_F(VocabBatchLookupDataVocabTest,
 // each word is copied into the arena-backed storage in order, and the
 // finalized batch result exposes all appended words with their contents
 // intact.
-TEST(PmrVocabBatchLookupData, IncrementalAppendsProduceWordsInOrder) {
-  ArenaVocabBatchBuilder builder(2);
+TEST(ad_utility::vocabulary::PmrVocabBatchLookupData,
+     IncrementalAppendsProduceWordsInOrder) {
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(2);
   builder.appendWord("foo");
   builder.appendWord("barbaz");
 
-  VocabBatchLookupResult result = std::move(builder).finalize();
+  ad_utility::vocabulary::VocabBatchLookupResult result =
+      std::move(builder).finalize();
   EXPECT_THAT(result, ::testing::ElementsAre("foo", "barbaz"));
 }
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
   auto batch = makeStringVectorVocabBatchLookupResult({"only-one"});
-  MultiSourceVocabBatchAssembler assembler(2);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 2> positions{0, 1};
   // Test a mismatch between two result positions and one batch word.
   AD_EXPECT_THROW_WITH_MESSAGE(
@@ -256,9 +263,9 @@ TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
-  VocabBatchLookupResult result;
+  ad_utility::vocabulary::VocabBatchLookupResult result;
   {
-    ArenaVocabBatchBuilder builder(2);
+    ad_utility::vocabulary::ArenaVocabBatchBuilder builder(2);
     builder.appendWord("one");
     builder.appendWord("two");
     result = std::move(builder).finalize();
@@ -267,9 +274,10 @@ TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
 }
 
 // _____________________________________________________________________________
-TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsWhenArenaExceedsBudget) {
+TEST(ad_utility::vocabulary::PmrVocabBatchLookupData,
+     LimitedAllocatorThrowsWhenArenaExceedsBudget) {
   auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
-  ArenaVocabBatchBuilder builder(1, alloc);
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(1, alloc);
   EXPECT_THROW(
       builder.appendWord("this string is definitely more than eight bytes"),
       ad_utility::detail::AllocationExceedsLimitException);
@@ -285,7 +293,7 @@ TEST(VocabBatchLookupData, MakePmrVocabBatchLookupResultCopiesWords) {
 TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
   auto batch1 = makeStringVectorVocabBatchLookupResult({"first"});
   auto batch2 = makeStringVectorVocabBatchLookupResult({"second"});
-  MultiSourceVocabBatchAssembler assembler(2);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 1> pos0{0};
   assembler.scatterSubBatchResultAtPositions(std::move(batch1), pos0);
   AD_EXPECT_THROW_WITH_MESSAGE(
@@ -298,7 +306,7 @@ TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
 // the filled/unfilled invariant is structural, not based on the view contents.
 TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerToleratesEmptyWord) {
   auto batch = makeStringVectorVocabBatchLookupResult({"", "x"});
-  MultiSourceVocabBatchAssembler assembler(2);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 2> positions{1, 0};
   assembler.scatterSubBatchResultAtPositions(std::move(batch), positions);
 
@@ -308,7 +316,7 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerToleratesEmptyWord) {
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
-  MultiSourceVocabBatchAssembler assembler(3);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(3);
 
   assembler.assignWordAtPosition(1, "middle");
 
@@ -324,7 +332,7 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerDoubleAssignmentThrows) {
-  MultiSourceVocabBatchAssembler assembler(2);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   assembler.assignWordAtPosition(0, "first");
 
   AD_EXPECT_THROW_WITH_MESSAGE(
@@ -336,15 +344,15 @@ TEST(VocabBatchLookupData,
 // Formal architectural verification: prove that MultiSourceVocabBatchAssembler
 // strictly satisfies the `ad_utility::InvariantStatefulClass` concept at
 // compile-time.
-static_assert(
-    ad_utility::InvariantStatefulClass<MultiSourceVocabBatchAssembler>,
-    "MultiSourceVocabBatchAssembler must satisfy "
-    "ad_utility::InvariantStatefulClass");
+static_assert(ad_utility::InvariantStatefulClass<
+                  ad_utility::vocabulary::MultiSourceVocabBatchAssembler>,
+              "MultiSourceVocabBatchAssembler must satisfy "
+              "ad_utility::InvariantStatefulClass");
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerIncompleteCoverageThrows) {
-  MultiSourceVocabBatchAssembler assembler(2);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   auto subBatch = makeStringVectorVocabBatchLookupResult({"first"});
   const std::array<size_t, 1> subPositions{0};
   assembler.scatterSubBatchResultAtPositions(std::move(subBatch), subPositions);
@@ -358,7 +366,7 @@ TEST(VocabBatchLookupData,
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
-  MultiSourceVocabBatchAssembler assembler(2);
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.assignWordAtPosition(2, "out-of-bounds"),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
@@ -373,16 +381,17 @@ TEST(VocabBatchLookupData,
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, MarkerBatchLookupsAndMergeInInputOrder) {
-  MarkerBatchLookups<2> lookups;
+  ad_utility::vocabulary::MarkerBatchLookups<2> lookups;
   lookups[0] = makeStringVectorVocabBatchLookupResult({"apple", "cherry"});
   lookups[1] = makeStringVectorVocabBatchLookupResult({"banana"});
 
-  IndicesAndPositionsByMarker<2> partitions;
+  ad_utility::vocabulary::IndicesAndPositionsByMarker<2> partitions;
   partitions[0].addPair(0, 0);  // apple -> pos 0
   partitions[1].addPair(0, 1);  // banana -> pos 1
   partitions[0].addPair(1, 2);  // cherry -> pos 2
 
-  auto result = mergeMarkerBatchesInInputOrder(std::move(lookups), partitions);
+  auto result = ad_utility::vocabulary::mergeMarkerBatchesInInputOrder(
+      std::move(lookups), partitions);
   EXPECT_THAT(result, ::testing::ElementsAre("apple", "banana", "cherry"));
 }
 

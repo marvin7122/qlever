@@ -25,8 +25,8 @@
 
 namespace splitVocabTestHelpers {
 
-using SGV =
-    SplitGeoVocabulary<CompressedVocabulary<VocabularyInternalExternal>>;
+using SGV = SplitGeoVocabulary<ad_utility::vocabulary::CompressedVocabulary<
+    ad_utility::vocabulary::VocabularyInternalExternal>>;
 
 [[maybe_unused]] auto testSplitTwoFunction = [](std::string_view s) -> uint8_t {
   return ql::starts_with(s, "\"a");
@@ -37,10 +37,10 @@ using SGV =
   return {std::string(s), absl::StrCat(s, ".a")};
 };
 
-using TwoSplitVocabulary =
-    SplitVocabulary<decltype(testSplitTwoFunction),
-                    decltype(testSplitFnTwoFunction), VocabularyInMemory,
-                    VocabularyInMemory>;
+using TwoSplitVocabulary = ad_utility::vocabulary::SplitVocabulary<
+    decltype(testSplitTwoFunction), decltype(testSplitFnTwoFunction),
+    ad_utility::vocabulary::VocabularyInMemory,
+    ad_utility::vocabulary::VocabularyInMemory>;
 
 [[maybe_unused]] auto testSplitThreeFunction =
     [](std::string_view s) -> uint8_t {
@@ -59,10 +59,11 @@ using TwoSplitVocabulary =
   return {absl::StrCat(s, ".a"), absl::StrCat(s, ".b"), absl::StrCat(s, ".c")};
 };
 
-using ThreeSplitVocabulary =
-    SplitVocabulary<decltype(testSplitThreeFunction),
-                    decltype(testSplitFnThreeFunction), VocabularyInMemory,
-                    VocabularyInMemory, VocabularyInMemory>;
+using ThreeSplitVocabulary = ad_utility::vocabulary::SplitVocabulary<
+    decltype(testSplitThreeFunction), decltype(testSplitFnThreeFunction),
+    ad_utility::vocabulary::VocabularyInMemory,
+    ad_utility::vocabulary::VocabularyInMemory,
+    ad_utility::vocabulary::VocabularyInMemory>;
 
 }  // namespace splitVocabTestHelpers
 
@@ -73,7 +74,7 @@ const VocabularyType geoSplitVocabType{
     VocabularyType::Enum::OnDiskCompressedGeoSplit};
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitGeoVocab) {
+TEST(ad_utility::vocabulary::Vocabulary, SplitGeoVocab) {
   // Check: Is a geo literal?
   ASSERT_EQ(SGV::getMarkerForWord(
                 "\"POLYGON((1 2, 3 4))\""
@@ -114,7 +115,7 @@ TEST(Vocabulary, SplitGeoVocab) {
 }
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
+TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   // Tests the SplitVocabulary class with a custom split function that separates
   // all words in two underlying vocabularies
   TwoSplitVocabulary sv;
@@ -230,7 +231,7 @@ TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
 }
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitVocabularyCustomWithThreeVocabs) {
+TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyCustomWithThreeVocabs) {
   // Tests the SplitVocabulary class with a custom split function that separates
   // all words in three underlying vocabularies (of different types)
   ThreeSplitVocabulary sv;
@@ -291,7 +292,7 @@ TEST(Vocabulary, SplitVocabularyCustomWithThreeVocabs) {
 }
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitVocabularyItemAt) {
+TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyItemAt) {
   HashSet<std::string> s;
   s.insert("a");
   s.insert("ab");
@@ -304,7 +305,7 @@ TEST(Vocabulary, SplitVocabularyItemAt) {
       "\"LINESTRING(1 2, 3 4)\""
       "^^<http://www.opengis.net/ont/geosparql#wktLiteral>");
 
-  RdfsVocabulary v;
+  ad_utility::vocabulary::RdfsVocabulary v;
   v.resetToType(geoSplitVocabType);
   auto filename = "vocTest6.dat";
   v.createFromSet(s, filename);
@@ -330,11 +331,12 @@ TEST(Vocabulary, SplitVocabularyItemAt) {
 }
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitVocabularyWordWriterAndGetPosition) {
+TEST(ad_utility::vocabulary::Vocabulary,
+     SplitVocabularyWordWriterAndGetPosition) {
   // The word writer in the Vocabulary class runs the SplitGeoVocabulary word
   // writer. Its task is to split words to two different vocabularies for geo
   // and non-geo words. This split is tested here.
-  RdfsVocabulary vocabulary;
+  ad_utility::vocabulary::RdfsVocabulary vocabulary;
   vocabulary.resetToType(geoSplitVocabType);
   auto wordCallback = vocabulary.makeWordWriterPtr("vocTest7.dat");
   ASSERT_TRUE(vocabulary.isGeoInfoAvailable());
@@ -439,7 +441,7 @@ TEST(Vocabulary, SplitVocabularyWordWriterAndGetPosition) {
 }
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitVocabularyScanAll) {
+TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyScanAll) {
   // A `SplitVocabulary` distributes its words over multiple underlying
   // vocabularies (here: words starting with `"a` go into the second vocab).
   // `scanAll` must still enumerate all of them.
@@ -457,7 +459,8 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
   // their marker-encoded global index (main vocabulary first, then the second
   // one). Each yielded index must round-trip through `operator[]`.
   std::vector<std::pair<uint64_t, std::string>> scanned;
-  for (const IndexAndWord& indexAndWord : sv.scanAll()) {
+  for (const ad_utility::vocabulary::IndexAndWord& indexAndWord :
+       sv.scanAll()) {
     EXPECT_EQ(sv[indexAndWord.index_], indexAndWord.word_);
     scanned.emplace_back(indexAndWord.index_, std::string{indexAndWord.word_});
   }
@@ -473,7 +476,8 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
+TEST(ad_utility::vocabulary::Vocabulary,
+     SplitVocabularyLookupBatchMatchesItemAt) {
   // Mixed markers, reordered indices, and a duplicate must match `operator[]`.
   TwoSplitVocabulary sv;
   const auto filename = gtestCurrentTestName();
@@ -512,7 +516,8 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
 }
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitVocabularyLookupBatchRejectsOutOfRangeMarker) {
+TEST(ad_utility::vocabulary::Vocabulary,
+     SplitVocabularyLookupBatchRejectsOutOfRangeMarker) {
   // Three vocabs use a 2-bit marker field, so raw value 3 is representable
   // but illegal. `getMarker` / `lookupBatch` must reject it.
   ThreeSplitVocabulary sv;
@@ -570,11 +575,12 @@ TEST_F(SplitVocabularyWithDataTest,
       static_cast<size_t>(TwoSplitVocabulary::addMarker(1, 1)),
       static_cast<size_t>(TwoSplitVocabulary::addMarker(2, 0)),
   };
-  auto partitions = ::partitionMarkerIndicesAndPositions<2>(
-      indices, [](uint64_t markedIndex) {
-        return std::pair{TwoSplitVocabulary::getMarker(markedIndex),
-                         TwoSplitVocabulary::getVocabIndex(markedIndex)};
-      });
+  auto partitions =
+      ad_utility::vocabulary::partitionMarkerIndicesAndPositions<2>(
+          indices, [](uint64_t markedIndex) {
+            return std::pair{TwoSplitVocabulary::getMarker(markedIndex),
+                             TwoSplitVocabulary::getVocabIndex(markedIndex)};
+          });
   EXPECT_THAT(partitions[0].getUnderlyingIndices(),
               ::testing::ElementsAre(3u, 0u, 2u));
   EXPECT_THAT(partitions[0].getResultPositions(),
@@ -594,12 +600,13 @@ TEST_F(SplitVocabularyWithDataTest,
       static_cast<size_t>(sv_.addMarker(1, 1)),
       static_cast<size_t>(sv_.addMarker(0, 0)),
   };
-  auto partitions = ::partitionMarkerIndicesAndPositions<2>(
-      indices, [](uint64_t markedIndex) {
-        return std::pair{TwoSplitVocabulary::getMarker(markedIndex),
-                         TwoSplitVocabulary::getVocabIndex(markedIndex)};
-      });
-  MarkerBatchLookups<2> markerLookups;
+  auto partitions =
+      ad_utility::vocabulary::partitionMarkerIndicesAndPositions<2>(
+          indices, [](uint64_t markedIndex) {
+            return std::pair{TwoSplitVocabulary::getMarker(markedIndex),
+                             TwoSplitVocabulary::getVocabIndex(markedIndex)};
+          });
+  ad_utility::vocabulary::MarkerBatchLookups<2> markerLookups;
   const std::array<size_t, 2> markerZeroIndices{
       static_cast<size_t>(sv_.addMarker(1, 0)),
       static_cast<size_t>(sv_.addMarker(0, 0)),
@@ -610,15 +617,15 @@ TEST_F(SplitVocabularyWithDataTest,
   };
   markerLookups[0] = sv_.lookupBatch(markerZeroIndices);
   markerLookups[1] = sv_.lookupBatch(markerOneIndices);
-  auto merged =
-      ::mergeMarkerBatchesInInputOrder(std::move(markerLookups), partitions);
+  auto merged = ad_utility::vocabulary::mergeMarkerBatchesInInputOrder(
+      std::move(markerLookups), partitions);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv_, merged,
                                                                 indices);
 }
 
 // _____________________________________________________________________________
 TEST(VocabularyTypes, MarkerBatchLookupsDoubleReleaseThrows) {
-  MarkerBatchLookups<2> lookups;
+  ad_utility::vocabulary::MarkerBatchLookups<2> lookups;
   lookups[0] = makeStringVectorVocabBatchLookupResult({"a"});
   auto first = lookups.release(0);
   EXPECT_EQ(first[0], "a");
@@ -627,7 +634,7 @@ TEST(VocabularyTypes, MarkerBatchLookupsDoubleReleaseThrows) {
 }
 
 // _____________________________________________________________________________
-TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
+TEST(ad_utility::vocabulary::Vocabulary, SplitVocabularyWordWriterDestructor) {
   // Create a `SplitVocabulary::WordWriter` and destruct it without a call to
   // `finish()`.
   TwoSplitVocabulary sv1;

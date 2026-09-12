@@ -671,7 +671,7 @@ template <class T>
 TripleComponent TurtleParser<T>::literalAndDatatypeToTripleComponent(
     std::string_view normalizedLiteralContent,
     const TripleComponent::Iri& typeIri,
-    const EncodedIriManager& encodedIriManager) {
+    const ad_utility::vocabulary::EncodedIriManager& encodedIriManager) {
   RdfStringParser<TurtleParser<T>> parser{&encodedIriManager};
 
   return parser.literalAndDatatypeToTripleComponentImpl(
@@ -1309,7 +1309,8 @@ RdfParallelParser<T>::~RdfParallelParser() {
 // file is to be parsed in parallel.
 template <typename TokenizerT>
 static std::unique_ptr<RdfParserBase> makeSingleRdfParser(
-    const qlever::InputFileSpecification& input, const EncodedIriManager* ev,
+    const qlever::InputFileSpecification& input,
+    const ad_utility::vocabulary::EncodedIriManager* ev,
     ad_utility::MemorySize bufferSize) {
   auto graph = [input]() -> TripleComponent {
     if (input.defaultGraph_.has_value()) {
@@ -1366,7 +1367,7 @@ void RdfMultifileParser::parseFileAndPushBatches(
 // ______________________________________________________________
 RdfMultifileParser::RdfMultifileParser(
     ad_utility::InputRangeTypeErased<qlever::InputFileSpecification> files,
-    const EncodedIriManager* encodedIriManager,
+    const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
     ad_utility::MemorySize bufferSize, bool useRelaxedParsing)
     : RdfParserBase(encodedIriManager), useRelaxedParsing_{useRelaxedParsing} {
   // Feed all the input files to the `parsingQueue_`.

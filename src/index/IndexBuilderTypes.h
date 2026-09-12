@@ -208,11 +208,13 @@ struct alignas(256) ItemMapManager {
   ItemMapAndBuffer map_;
   ad_utility::HashMap<Id, Id> specialIdMapping_;
   uint64_t minId_;
-  const TripleComponentComparator* comparator_;
+  const ad_utility::vocabulary::TripleComponentComparator* comparator_;
 
   // Construct with given minimum ID.
-  explicit ItemMapManager(uint64_t minId, const TripleComponentComparator* cmp,
-                          ItemAlloc alloc)
+  explicit ItemMapManager(
+      uint64_t minId,
+      const ad_utility::vocabulary::TripleComponentComparator* cmp,
+      ItemAlloc alloc)
       : map_(alloc), minId_(minId), comparator_(cmp) {
     // Precompute the mapping from the `specialIds` to their normal IDs in the
     // vocabulary. This makes resolving such IRIs much cheaper.
@@ -304,7 +306,8 @@ struct ProcessedTriple {
 template <typename IndexPtr>
 auto getIdMapLambdas(
     std::array<std::optional<ItemMapManager>, NUM_PARALLEL_ITEM_MAPS>& itemMaps,
-    size_t maxNumberOfTriples, const TripleComponentComparator* comp,
+    size_t maxNumberOfTriples,
+    const ad_utility::vocabulary::TripleComponentComparator* comp,
     IndexPtr* index, ItemAlloc alloc,
     std::atomic<size_t>* numHasWordTriples = nullptr) {
   // Create one `ItemMapManager` per thread, each with its own ID range.
