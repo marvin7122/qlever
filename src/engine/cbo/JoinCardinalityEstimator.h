@@ -118,7 +118,8 @@ class JoinCardinalityEstimator {
     unionSketch.merge(sketchB);
     uint64_t cardUnion = unionSketch.estimateCardinality();
 
-    // Use unsigned arithmetic to avoid implementation-defined behavior on overflow
+    // Use unsigned arithmetic to avoid implementation-defined behavior on
+    // overflow
     uint64_t rawOverlap = 0;
     if (cardA + cardB >= cardUnion) {
       rawOverlap = cardA + cardB - cardUnion;
