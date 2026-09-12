@@ -624,7 +624,8 @@ TEST_F(SplitVocabularyWithDataTest,
 // _____________________________________________________________________________
 TEST(VocabularyTypes, MarkerBatchLookupsDoubleReleaseThrows) {
   ad_utility::vocabulary::MarkerBatchLookups<2> lookups;
-  lookups[0] = makeStringVectorVocabBatchLookupResult({"a"});
+  lookups[0] =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"a"});
   auto first = lookups.release(0);
   EXPECT_EQ(first[0], "a");
   AD_EXPECT_THROW_WITH_MESSAGE(

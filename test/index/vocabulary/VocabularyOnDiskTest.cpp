@@ -298,7 +298,7 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedMatchesIndividualLookups) {
   // `VocabLookupInput` takes ownership of the batches, so keep a copy to
   // compare against.
   const auto expectedBatches = batches;
-  auto streamed = vocab->lookupBatchesStreamed(
+  auto streamed = vocab->ad_utility::vocabulary::lookupBatchesStreamed(
       ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
   vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
       *vocab, streamed, expectedBatches);
@@ -308,7 +308,7 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedMatchesIndividualLookups) {
 TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyStreamYieldsNothing) {
   auto vocab = createExampleVocabulary();
   std::vector<std::vector<size_t>> noBatches;
-  auto streamed = vocab->lookupBatchesStreamed(
+  auto streamed = vocab->ad_utility::vocabulary::lookupBatchesStreamed(
       ad_utility::vocabulary::VocabLookupInput{std::move(noBatches)});
   EXPECT_EQ(ql::ranges::distance(streamed), 0);
 }
@@ -318,7 +318,7 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyStreamYieldsNothing) {
 TEST(VocabularyOnDisk, LookupBatchesStreamedOutOfRangeIndexThrows) {
   auto vocab = createExampleVocabulary();
   std::vector<std::vector<size_t>> batches{{0, 99}};
-  auto streamed = vocab->lookupBatchesStreamed(
+  auto streamed = vocab->ad_utility::vocabulary::lookupBatchesStreamed(
       ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
   EXPECT_ANY_THROW({
     for ([[maybe_unused]] auto& r : streamed) {
@@ -332,7 +332,7 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedOutOfRangeIndexThrows) {
 TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
   auto vocab = createExampleVocabulary();
   std::vector<std::vector<size_t>> batches{{2, 0}, {}, {1}};
-  auto streamed = vocab->lookupBatchesStreamed(
+  auto streamed = vocab->ad_utility::vocabulary::lookupBatchesStreamed(
       ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
   EXPECT_ANY_THROW({
     for ([[maybe_unused]] auto& r : streamed) {
