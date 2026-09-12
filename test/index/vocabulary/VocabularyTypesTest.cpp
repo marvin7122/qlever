@@ -123,15 +123,18 @@ TEST(VocabBatchLookupData, ContiguousBuilderZeroSizedWordsAndMixed) {
 // _____________________________________________________________________________
 
 TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
-  auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
+  auto result = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"alpha", "beta"});
 
   EXPECT_THAT(result, ::testing::ElementsAre("alpha", "beta"));
 }
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
-  auto first = makeStringVectorVocabBatchLookupResult({"apple", "banana"});
-  auto second = makeStringVectorVocabBatchLookupResult({"cherry"});
+  auto first = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"apple", "banana"});
+  auto second = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"cherry"});
 
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(3);
   const std::array<size_t, 2> firstPos{0, 2};
@@ -145,8 +148,10 @@ TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
-  auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
-  auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
+  auto first = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"alpha", "beta"});
+  auto second =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"gamma"});
 
   const char* alphaData = first[0].data();
   const char* gammaData = second[0].data();
@@ -251,7 +256,8 @@ TEST(PmrVocabBatchLookupData, IncrementalAppendsProduceWordsInOrder) {
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
-  auto batch = makeStringVectorVocabBatchLookupResult({"only-one"});
+  auto batch = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"only-one"});
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 2> positions{0, 1};
   // Test a mismatch between two result positions and one batch word.
@@ -283,14 +289,17 @@ TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsWhenArenaExceedsBudget) {
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, MakePmrVocabBatchLookupResultCopiesWords) {
-  auto result = makePmrVocabBatchLookupResult({"first", "second"});
+  auto result = ad_utility::vocabulary::makePmrVocabBatchLookupResult(
+      {"first", "second"});
   EXPECT_THAT(result, ::testing::ElementsAre("first", "second"));
 }
 
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
-  auto batch1 = makeStringVectorVocabBatchLookupResult({"first"});
-  auto batch2 = makeStringVectorVocabBatchLookupResult({"second"});
+  auto batch1 =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"first"});
+  auto batch2 = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"second"});
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 1> pos0{0};
   assembler.scatterSubBatchResultAtPositions(std::move(batch1), pos0);
@@ -303,7 +312,8 @@ TEST(VocabBatchLookupData, ScatterSubBatchDoubleWriteThrows) {
 // Verify that a legitimately empty word does not trip any correctness check:
 // the filled/unfilled invariant is structural, not based on the view contents.
 TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerToleratesEmptyWord) {
-  auto batch = makeStringVectorVocabBatchLookupResult({"", "x"});
+  auto batch =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"", "x"});
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
   const std::array<size_t, 2> positions{1, 0};
   assembler.scatterSubBatchResultAtPositions(std::move(batch), positions);
@@ -318,7 +328,9 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
 
   assembler.assignWordAtPosition(1, "middle");
 
-  auto subBatch = makeStringVectorVocabBatchLookupResult({"first", "last"});
+  auto subBatch =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+          {"first", "last"});
   const std::array<size_t, 2> subPositions{0, 2};
   assembler.scatterSubBatchResultAtPositions(std::move(subBatch), subPositions);
 
@@ -351,7 +363,8 @@ static_assert(ad_utility::InvariantStatefulClass<
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerIncompleteCoverageThrows) {
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
-  auto subBatch = makeStringVectorVocabBatchLookupResult({"first"});
+  auto subBatch =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"first"});
   const std::array<size_t, 1> subPositions{0};
   assembler.scatterSubBatchResultAtPositions(std::move(subBatch), subPositions);
   // Leave slot 1 unassigned.
@@ -369,7 +382,9 @@ TEST(VocabBatchLookupData,
       assembler.assignWordAtPosition(2, "out-of-bounds"),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
 
-  auto subBatch = makeStringVectorVocabBatchLookupResult({"out-of-bounds"});
+  auto subBatch =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+          {"out-of-bounds"});
   const std::array<size_t, 1> invalidPos{5};
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.scatterSubBatchResultAtPositions(std::move(subBatch),
@@ -380,8 +395,10 @@ TEST(VocabBatchLookupData,
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, MarkerBatchLookupsAndMergeInInputOrder) {
   ad_utility::vocabulary::MarkerBatchLookups<2> lookups;
-  lookups[0] = makeStringVectorVocabBatchLookupResult({"apple", "cherry"});
-  lookups[1] = makeStringVectorVocabBatchLookupResult({"banana"});
+  lookups[0] = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"apple", "cherry"});
+  lookups[1] = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"banana"});
 
   ad_utility::vocabulary::IndicesAndPositionsByMarker<2> partitions;
   partitions[0].addPair(0, 0);  // apple -> pos 0
@@ -454,13 +471,15 @@ TEST(VocabularyTypes, sequentialLookupBatchWithMissingWords) {
   std::vector<size_t> indices{4, 5};
 
   // The opted-in vocabulary reports the placeholder for the missing word.
-  auto result = sequentialLookupBatch(VocabWithHolesPlaceholder{}, indices);
+  auto result = ad_utility::vocabulary::sequentialLookupBatch(
+      VocabWithHolesPlaceholder{}, indices);
   ASSERT_EQ(result.size(), 2u);
   EXPECT_EQ(result[0], "word");
   EXPECT_EQ(result[1], placeholderForMissingVocabIndex(5));
 
   // The vocabulary that has not opted in throws.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      sequentialLookupBatch(VocabWithHolesThrowing{}, indices),
+      ad_utility::vocabulary::sequentialLookupBatch(VocabWithHolesThrowing{},
+                                                    indices),
       ::testing::HasSubstr("replaceOptionalByPlaceholderOnExport"));
 }

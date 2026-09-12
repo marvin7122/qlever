@@ -336,7 +336,7 @@ TEST(VocabularyInMemoryBinSearch, lookupBatch) {
   // The same via the streamed interface.
   std::vector<std::vector<size_t>> batches{{4, 0}, {9}, {3, 0, 4}};
   const auto expectedBatches = batches;
-  auto streamed = vocab.lookupBatchesStreamed(
+  auto streamed = vocab.ad_utility::vocabulary::lookupBatchesStreamed(
       ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
   vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
       vocab, streamed, expectedBatches);
