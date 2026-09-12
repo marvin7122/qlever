@@ -258,6 +258,54 @@ if (QLEVER_ENABLE_EXPORT_V2)
     endif ()
 endif ()
 
+addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
+
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
+
+addLinkAndDiscoverTest(VectorStreamSourceTest engine)
+
+addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
+
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+endif ()
+
+# Header-only util under export_v2; do not pull testUtil/index (cluster GCC
+# range-v3 needs -fpermissive for those translation units).
+addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
+
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+endif ()
+
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(AsyncChunkPipelineTest)
+    if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    else ()
+        target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
+endif ()
+
+# Not in `SINGLE_TEST_BINARY`: the test `#undef`s `QLEVER_ENABLE_EXPORT_V2`,
+# but `kExportV2CompiledIn` is an inline variable, so mixing this translation
+# unit (macro off) with the others (macro on) in one binary is an ODR
+# violation and the linker keeps the `true` definition.
+if (NOT SINGLE_TEST_BINARY)
+    addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+endif ()
+
+# Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
+# range-v3 fails in IndexImpl / CompressedExternalIdTable).
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
+    if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
+endif ()
+
 addLinkAndDiscoverTest(IdTableTest qlever_util)
 
 addLinkAndDiscoverTest(TransitivePathTest engine)

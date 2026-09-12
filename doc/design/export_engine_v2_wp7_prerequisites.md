@@ -26,7 +26,9 @@ These facts invalidate a direct implementation of the original `TaskScheduler` s
 
 ## 3. Non-negotiable invariants
 
-1. V2 helper work never enters `queryThreadPool_`.
+1. V2 helper work enters `queryThreadPool_` only through the scheduler poster,
+   subject to even-split admission with first-in first-out queuing past
+   capacity. No path posts directly to the pool.
 2. The primary export coordinator always makes progress without helper threads.
 3. Revocation is cooperative and occurs only between morsels.
 4. Query cancellation and helper revocation remain separate state transitions.
@@ -55,7 +57,20 @@ This design creates a bounded pool used only by V2 export morsels. Workers sleep
 
 New foreground demand invalidates active helper leases. The primary export coordinator continues on its existing execution path.
 
-This option isolates queueing from `queryThreadPool_`. WP7 selects it for the first implementation.
+This option isolates queueing from `queryThreadPool_`. WP7 no longer selects
+it for production: the adopted model shares the query pool through scheduler
+admission (see amendment below). The dedicated-thread constructor remains as a
+test seam only.
+
+### 4.4 Adopted model (amendment): shared pool with even-split admission
+
+V2 morsels post onto `Server::queryThreadPool_` through the scheduler poster.
+The scheduler enforces even per-query shares with first-in first-out queuing
+past capacity and keeps epochs for cancellation only. There are no query
+classes, no preemption, and no drain beyond finishing the current morsel.
+Yield means the next morsel goes to another query, never interrupting a
+running one. Single-query benchmarks run on an otherwise idle server so the
+measured effect stays attributable.
 
 ### 4.3 Create threads per export request
 

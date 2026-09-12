@@ -35,6 +35,9 @@ else()
 endif()
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Cluster GCC+range-v3: local types in transform_view / jthread are "used but
+# never defined" without -fpermissive (same unblock as other export-v2 branches).
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     # will not take effect without FORCE
     set(CMAKE_INSTALL_PREFIX ${CMAKE_BINARY_DIR} CACHE PATH "Install top-level directory" FORCE)
@@ -141,6 +144,19 @@ option(COMPILER_VERSION_CHECK_DEACTIVATED "Disable compiler version check" OFF)
 option(REDUCED_FEATURE_SET_FOR_CPP17 "Exclude some features like `SERVICE`, `LOAD`, and transitive property paths, that haven't been migrated to C++17 yet" OFF)
 if (REDUCED_FEATURE_SET_FOR_CPP17)
     add_compile_definitions(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17 QLEVER_EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
+endif()
+
+# Compile Export Engine V2 sources into the server by default. Request routing
+# still defaults to Legacy V1 unless `fast-export=1` / `export-engine=v2` /
+# `X-QLever-Export-Engine` opts in (see ExportPipelineRouter).
+option(QLEVER_ENABLE_EXPORT_V2 "Enable Fast-Path Streaming Export Engine V2" ON)
+if (REDUCED_FEATURE_SET_FOR_CPP17)
+  # Export engine V2 requires C++20 coroutines (`cppcoro::generator`), which
+  # are unavailable in the reduced feature set.
+  set(QLEVER_ENABLE_EXPORT_V2 OFF)
+endif()
+if (QLEVER_ENABLE_EXPORT_V2)
+    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2=1)
 endif()
 
 option(EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17 "Use the C++17 backports inside `SparqlExpressionGenerators.h`. They are currently less efficient than the C++20 implementations. This option is implicitly activated by the `REDUCED_FEATURE_SET_FOR_CPP17` option, but can be activated separately to run the unit tests for the backports of the `ExpressionGenerators`" OFF)
@@ -256,6 +272,9 @@ if (${USE_CPP_17_BACKPORTS} OR ${RANGE_V3_REQUIRED_BY_COMPILER} OR (CMAKE_CXX_ST
 else ()
     add_compile_definitions(RANGE_V3_COMBINE_WITH_STD)
     set(QLEVER_CPP_17_BACKPORTS_ENABLED OFF)
+endif ()
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+    add_compile_options(-fpermissive)
 endif ()
 
 ###############################################################################

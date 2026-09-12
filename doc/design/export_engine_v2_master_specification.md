@@ -112,7 +112,7 @@ The supervisor's constraint is critical: **a heavy multi-threaded query must nev
 
 1. **Single-core baseline:** The primary export coordinator can complete every export without helpers.
 2. **Measured morsels:** CPU work is partitioned into owned morsels. Their size and duration remain experimental parameters until measured.
-3. **Isolated helper pool:** V2 helpers use `ElasticExportScheduler`. They never enqueue work on `Server::queryThreadPool_`.
+3. **Shared query pool:** V2 helpers use `ElasticExportScheduler`, which posts onto `Server::queryThreadPool_`. Even-split admission with first-in first-out queuing replaces pool isolation.
 4. **Foreground signal:** Runtime-enabled `QueryRegistry` callbacks update the active-query count and demand epoch.
 5. **Cooperative revocation:** A new registered query invalidates helper leases. Running helpers finish one CPU morsel before yielding.
 6. **Recovery:** Helper admission resumes when the V2 export is again the only registered query.
@@ -255,11 +255,11 @@ To enable independent implementation and clean reviewability, the V2 engine is d
 * **Design prerequisite:** `doc/design/export_engine_v2_wp7_prerequisites.md`
 * **Artifact Target:** `src/engine/export_v2/ElasticExportScheduler.h`, its implementation file, and focused scheduler tests.
 * **Task Description:**
-  - Build an isolated V2 helper pool. Do not enqueue V2 helper work on `Server::queryThreadPool_`.
+  - Share `Server::queryThreadPool_` through the scheduler poster with even-split admission and first-in first-out queuing past capacity.
   - Observe foreground demand through runtime-enabled `QueryRegistry` callbacks. QLever has no `Server::handleRequest` function.
   - Enforce single-core execution when concurrent queries exist.
-  - Implement dynamic work-stealing morsel leasing when server is completely idle, using cooperative-only revocation and refcounted keep-alive state per the Amendment's lease-safety requirements.
-  - Implement immediate preemption and worker thread surrender on new query arrival.
+  - Implement cooperative morsel leasing when the server is completely idle, using refcounted keep-alive state per the Amendment's lease-safety requirements.
+  - Yield means the next morsel goes to another query; running morsels always finish.
 * **Definition of Done:** See the amendment and prerequisite design. Required evidence includes isolation tests, TSAN results, and measured p99.9 preemption and first-byte latency.
 
 ---
