@@ -175,6 +175,8 @@ addLinkAndDiscoverTest(StringUtilsTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
+addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
+
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
 addLinkAndDiscoverTest(CacheTest)
