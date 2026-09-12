@@ -101,8 +101,8 @@ class SecondaryVocabIndexTest : public ::testing::Test {
 };
 
 // _____________________________________________________________________________
-TEST(SecondaryVocabulary, wordsAndLookup) {
-  SecondaryVocabulary vocab{secondaryVocabWords};
+TEST(ad_utility::vocabulary::SecondaryVocabulary, wordsAndLookup) {
+  ad_utility::vocabulary::SecondaryVocabulary vocab{secondaryVocabWords};
   EXPECT_EQ(vocab.numWords(), secondaryVocabWords.size());
   // Each word is stored at its index and is found again by that index.
   for (size_t i = 0; i < secondaryVocabWords.size(); ++i) {
@@ -121,19 +121,22 @@ TEST(SecondaryVocabulary, wordsAndLookup) {
 
   // A default-constructed vocabulary is empty, which is how an index without a
   // secondary vocabulary behaves.
-  SecondaryVocabulary empty{};
+  ad_utility::vocabulary::SecondaryVocabulary empty{};
   EXPECT_EQ(empty.numWords(), 0);
   EXPECT_EQ(empty.getId("<b>"), std::nullopt);
 }
 
 // _____________________________________________________________________________
-TEST(SecondaryVocabulary, wordsHaveToBeSortedAndDistinct) {
+TEST(ad_utility::vocabulary::SecondaryVocabulary,
+     wordsHaveToBeSortedAndDistinct) {
   // The words are looked up by binary search, so unsorted or duplicate words
   // are a programming error.
-  AD_EXPECT_THROW_WITH_MESSAGE((SecondaryVocabulary{{"<d>", "<b>"}}),
-                               HasSubstr("have to be sorted"));
-  AD_EXPECT_THROW_WITH_MESSAGE((SecondaryVocabulary{{"<b>", "<b>"}}),
-                               HasSubstr("have to be distinct"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      (ad_utility::vocabulary::SecondaryVocabulary{{"<d>", "<b>"}}),
+      HasSubstr("have to be sorted"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      (ad_utility::vocabulary::SecondaryVocabulary{{"<b>", "<b>"}}),
+      HasSubstr("have to be distinct"));
 }
 
 // _____________________________________________________________________________
@@ -517,7 +520,7 @@ std::string runQuery(QueryExecutionContext* qec, const std::string& query) {
   // The updates below change the result of a query, so a cached result of an
   // earlier run of the same query must not be reused.
   qec->clearCacheUnpinnedOnly();
-  static const EncodedIriManager encodedIriManager;
+  static const ad_utility::vocabulary::EncodedIriManager encodedIriManager;
   auto cancellationHandle =
       std::make_shared<ad_utility::CancellationHandle<>>();
   auto parsedQuery = SparqlParser::parseQuery(&encodedIriManager, query);
@@ -549,7 +552,7 @@ std::vector<std::string> runQueryAndGetRows(QueryExecutionContext* qec,
 
 // Run the SPARQL `update` on `context`.
 void runUpdate(ContextWithSecondaryVocab& context, const std::string& update) {
-  static const EncodedIriManager encodedIriManager;
+  static const ad_utility::vocabulary::EncodedIriManager encodedIriManager;
   auto cancellationHandle =
       std::make_shared<ad_utility::CancellationHandle<>>();
   ad_utility::BlankNodeManager blankNodeManager;

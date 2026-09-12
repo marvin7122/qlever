@@ -9,19 +9,21 @@
 #include "index/vocabulary/UnicodeVocabulary.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 
-using Vocab = UnicodeVocabulary<VocabularyInMemory, SimpleStringComparator>;
+using Vocab = ad_utility::vocabulary::UnicodeVocabulary<
+    ad_utility::vocabulary::VocabularyInMemory,
+    ad_utility::vocabulary::SimpleStringComparator>;
 using namespace vocabulary_test;
 
 auto createVocabulary(const std::vector<std::string>& words) {
-  SimpleStringComparator comparator{"en", "us", false};
+  ad_utility::vocabulary::SimpleStringComparator comparator{"en", "us", false};
   Vocab v{comparator};
-  VocabularyInMemory::Words w;
+  ad_utility::vocabulary::VocabularyInMemory::Words w;
   w.build(words);
   return Vocab(comparator, std::move(w));
 }
 
-using Level = SimpleStringComparator::Level;
-TEST(UnicodeVocabulary, LowercaseAscii) {
+using Level = ad_utility::vocabulary::SimpleStringComparator::Level;
+TEST(ad_utility::vocabulary::UnicodeVocabulary, LowercaseAscii) {
   const std::vector<std::string> words{"alpha", "beta",    "camma",
                                        "delta", "epsilon", "frikadelle"};
   std::vector<Level> levels{Level::PRIMARY,   Level::SECONDARY,
@@ -43,7 +45,7 @@ TEST(UnicodeVocabulary, LowercaseAscii) {
   }
 }
 
-TEST(UnicodeVocabulary, UpperAndLowercase) {
+TEST(ad_utility::vocabulary::UnicodeVocabulary, UpperAndLowercase) {
   const std::vector<std::string> words{"alpha", "ALPHA", "beta", "BETA"};
 
   // On the `PRIMARY` and `SECONDARY` Level, uppercase letters are equal to
@@ -75,17 +77,17 @@ TEST(UnicodeVocabulary, UpperAndLowercase) {
   }
 }
 
-TEST(UnicodeVocabulary, AccessOperator) {
+TEST(ad_utility::vocabulary::UnicodeVocabulary, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary);
 }
 
-TEST(UnicodeVocabulary, EmptyVocabulary) {
+TEST(ad_utility::vocabulary::UnicodeVocabulary, EmptyVocabulary) {
   testEmptyVocabularyWithComparator(createVocabulary, Level::PRIMARY);
   testEmptyVocabularyWithComparator(createVocabulary, Level::TOTAL);
 }
 
 // _____________________________________________________________________________
-TEST(UnicodeVocabulary, ScanAll) {
+TEST(ad_utility::vocabulary::UnicodeVocabulary, ScanAll) {
   // `scanAll` must yield all words in order (it simply delegates to the
   // underlying vocabulary).
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
@@ -95,7 +97,7 @@ TEST(UnicodeVocabulary, ScanAll) {
 }
 
 // _____________________________________________________________________________
-TEST(UnicodeVocabulary, ScanAllEmptyVocabulary) {
+TEST(ad_utility::vocabulary::UnicodeVocabulary, ScanAllEmptyVocabulary) {
   auto vocab = createVocabulary({});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
 }

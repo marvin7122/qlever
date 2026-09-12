@@ -27,7 +27,7 @@ std::vector<size_t> getRandomIndices(size_t min, size_t max, size_t num) {
 // _____________________________________________________________________________
 TEST(EncodedIriManger, SimpleExample) {
   std::vector<std::string> prefixes = {"http://www.wikidata.org/entity/Q"};
-  EncodedIriManager encodedIriManager{prefixes};
+  ad_utility::vocabulary::EncodedIriManager encodedIriManager{prefixes};
   std::string Q42{"<http://www.wikidata.org/entity/Q423>"};
   auto id = encodedIriManager.encode(Q42);
   ASSERT_TRUE(id.has_value());
@@ -36,8 +36,9 @@ TEST(EncodedIriManger, SimpleExample) {
 
 // _____________________________________________________________________________
 TEST(EncodedIriManger, EncodingAndDecoding) {
-  auto indices =
-      getRandomIndices(0, (1ull << EncodedIriManager::NumDigits) - 1, 10'000);
+  auto indices = getRandomIndices(
+      0, (1ull << ad_utility::vocabulary::EncodedIriManager::NumDigits) - 1,
+      10'000);
   std::vector<std::pair<std::string, uint64_t>> stringsAndEncodings;
   std::vector<std::string> prefixes = {"http://www.wikidata.org/entity/Q"};
   EncodedIriManager encodedIriManager{prefixes};

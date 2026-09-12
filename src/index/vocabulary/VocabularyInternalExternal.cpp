@@ -15,6 +15,8 @@
 #include <string_view>
 #include <utility>
 
+namespace ad_utility::vocabulary {
+
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   auto fromInternal = internalVocab_[i];
@@ -169,3 +171,4 @@ void VocabularyInternalExternal::open(const std::string& filename) {
                  "of the external vocabulary): "
               << internalVocab_.size() << std::endl;
 }
+}  // namespace ad_utility::vocabulary

@@ -147,32 +147,34 @@ class MergeVocabularyTest : public ::testing::Test {
     ad_utility::serialization::FileWriteSerializer partial0(_path0);
     ad_utility::serialization::FileWriteSerializer partial1(_path1);
 
-    auto writePartialVocabulary =
-        [](auto& partialVocab, const auto& tripleComponents, Mapping* mapping) {
-          // write first partial vocabulary
-          partialVocab << tripleComponents.size();
-          size_t localIdx = 0;
-          for (auto w : tripleComponents) {
-            auto globalId = w.index_;
-            w.index_ = localIdx;
-            partialVocab << w;
-            if (mapping) {
-              if (w.isBlankNode({})) {
-                mapping->emplace_back(
-                    V(localIdx),
-                    Id::makeFromBlankNodeIndex(BlankNodeIndex::make(globalId)));
-              } else {
-                using GeoVocab = SplitGeoVocabulary<
-                    CompressedVocabulary<VocabularyInternalExternal>>;
-                if (GeoVocab::getMarkerForWord(w.iriOrLiteral()) == 1) {
-                  globalId = GeoVocab::addMarker(globalId, 1);
-                }
-                mapping->emplace_back(V(localIdx), V(globalId));
-              }
+    auto writePartialVocabulary = [](auto& partialVocab,
+                                     const auto& tripleComponents,
+                                     Mapping* mapping) {
+      // write first partial vocabulary
+      partialVocab << tripleComponents.size();
+      size_t localIdx = 0;
+      for (auto w : tripleComponents) {
+        auto globalId = w.index_;
+        w.index_ = localIdx;
+        partialVocab << w;
+        if (mapping) {
+          if (w.isBlankNode({})) {
+            mapping->emplace_back(
+                V(localIdx),
+                Id::makeFromBlankNodeIndex(BlankNodeIndex::make(globalId)));
+          } else {
+            using GeoVocab =
+                SplitGeoVocabulary<ad_utility::vocabulary::CompressedVocabulary<
+                    ad_utility::vocabulary::VocabularyInternalExternal>>;
+            if (GeoVocab::getMarkerForWord(w.iriOrLiteral()) == 1) {
+              globalId = GeoVocab::addMarker(globalId, 1);
             }
-            localIdx++;
+            mapping->emplace_back(V(localIdx), V(globalId));
           }
-        };
+        }
+        localIdx++;
+      }
+    };
     writePartialVocabulary(partial0, words0, &_expMapping0);
 
     writePartialVocabulary(partial1, words1, &_expMapping1);
@@ -226,7 +228,7 @@ TEST_F(MergeVocabularyTest, mergeVocabulary) {
       }
     };
 
-    TripleComponentComparator comparator;
+    ad_utility::vocabulary::TripleComponentComparator comparator;
     res = mergeVocabulary(
         _basePath, 2,
         [&comparator](std::string_view a, bool aIsExternal, std::string_view b,
