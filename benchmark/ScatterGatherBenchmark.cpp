@@ -338,8 +338,8 @@ void printBenchmarkTable(
   std::cout << "---------------------------------------------------------------"
                "----------------------------------------\n";
 
-  for (auto m : metrics) {
-    m.speedupVsBaseline =
+for (const auto& m : metrics) {
+    double speedup =
         baselineThroughput > 0 ? (m.throughputGBs / baselineThroughput) : 1.0;
 
     std::cout << std::left << std::setw(42) << m.mode << std::right
@@ -349,7 +349,7 @@ void printBenchmarkTable(
               << std::setprecision(1) << std::setw(16) << m.throughputMBs
               << std::fixed << std::setprecision(2) << std::setw(18)
               << m.memoryBandwidthSavedGBs << std::fixed << std::setprecision(2)
-              << std::setw(11) << m.speedupVsBaseline << "x\n";
+              << std::setw(11) << speedup << "x\n";
   }
   std::cout << "==============================================================="
                "========================================\n\n";
