@@ -63,7 +63,7 @@ std::optional<JitBytecodeProgram> JitExpressionBytecodeVm::compile(
           return std::nullopt;
       }
       maxDepth = std::max(maxDepth, depth);
-      if (maxDepth > JitExpressionBytecodeVm::MAX_STACK_SLOTS) {
+      if (maxDepth > MAX_STACK_SLOTS) {
         return std::nullopt;
       }
     }

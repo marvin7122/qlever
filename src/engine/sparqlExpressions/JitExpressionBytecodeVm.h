@@ -28,6 +28,14 @@ class SparqlExpression;
 
 namespace ql::engine::jit {
 
+// Slots of the fixed-size interpreter stacks in
+// `JitBytecodeProgram::execute` and `JitExpressionBytecodeVm`'s
+// `executeVectorMorsel`, `executeFilter` and `executeIntColumnInto`.
+// `compile` refuses programs whose maximum stack depth exceeds this, so
+// deeply nested expressions fall back to the legacy evaluation instead of
+// overflowing the stacks.
+inline constexpr size_t MAX_STACK_SLOTS = 16;
+
 // _____________________________________________________________________________
 // Lightweight Bytecode VM for SPARQL Expression Evaluation:
 // Flattens expression trees into a contiguous instruction stream, executing in
@@ -310,13 +318,6 @@ class JitBytecodeProgram {
 
 class JitExpressionBytecodeVm {
  public:
-  // Slots of the fixed-size interpreter stacks in `execute`,
-  // `executeVectorMorsel`, `executeFilter` and `executeIntColumnInto`.
-  // `compile` refuses programs whose maximum stack depth exceeds this, so
-  // deeply nested expressions fall back to the legacy evaluation instead of
-  // overflowing the stacks.
-  static constexpr size_t MAX_STACK_SLOTS = 16;
-
   // Compile a SPARQL expression AST to a JitBytecodeProgram. Returns nullopt
   // if the expression contains unsupported operators, types, or unbound vars,
   // or if its maximum stack depth exceeds `MAX_STACK_SLOTS`.
