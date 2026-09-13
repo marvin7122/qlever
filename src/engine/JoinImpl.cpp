@@ -491,14 +491,14 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
 
         // Create cross product by going through the larger table.
         for (size_t i = 0; i < largerTable.size(); i++) {
-          const auto key = largerTable(i, largerTableJoinColumn);
+          const Id key = largerTable(i, largerTableJoinColumn);
           // Probe cache-line bloom filter first to prune non-matching keys
           // before hash table lookup.
           if (!filter.contains(key)) {
             continue;
           }
 
-          // Skip, if there is no matching entry for the join column.
+          // Skip if there is no matching entry for the join column.
           auto entry = map.find(key);
           if (entry == map.end()) {
             continue;

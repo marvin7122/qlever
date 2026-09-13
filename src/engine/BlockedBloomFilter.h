@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
+#include <utility>
 #include <vector>
 
 #include "backports/span.h"
@@ -35,12 +35,23 @@ class BlockedBloomFilter {
 
  private:
   std::vector<Block> blocks_;
-  size_t numBlocks_ = 0;
 
-  // Salt constants for generating 8 bit positions inside the 512-bit block
+  // Salt constants for deriving 8 (lane, bit) positions inside the 512-bit
+  // block. k = 8 fixed lanes is the split-block scheme (Putze et al.): each
+  // probe touches a single cache line, so the hash count is a deliberate
+  // design constant rather than a tunable parameter.
   static constexpr uint32_t SALTS[8] = {0x47b6137b, 0x44974d91, 0x8824ad5b,
                                         0xa2b7289d, 0x705495c7, 0x2df1424b,
                                         0x9efc4947, 0x5c6bfb31};
+
+  // Derive the (lane, bit) position of the i-th hash of `key` inside one
+  // block. All 16 words of the block are addressable, so no block capacity
+  // is wasted.
+  [[nodiscard]] static constexpr std::pair<uint32_t, uint32_t> laneAndBit(
+      uint32_t key, int i) noexcept {
+    uint32_t h = key * SALTS[i];
+    return {(h >> 27) & 0xF, (h >> 22) & 0x1F};
+  }
 
   [[nodiscard]] static constexpr uint64_t hashId(Id id) noexcept {
     uint64_t z = id.getBits() + 0x9e3779b97f4a7c15ULL;
@@ -57,35 +68,33 @@ class BlockedBloomFilter {
     // The rate is clamped because ln(p) is undefined outside (0, 1).
     static constexpr double kLn2Squared = 0.4804530139182014;  // ln(2)^2
     double p = std::clamp(falsePositiveRate, 1e-9, 1.0 - 1e-9);
-    size_t targetBits =
-        static_cast<size_t>(std::ceil(-static_cast<double>(expectedElements) *
-                                      std::log(p) / kLn2Squared));
-    numBlocks_ =
-        std::max(1UL, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK);
-    blocks_.resize(numBlocks_);
+    size_t targetBits = static_cast<size_t>(std::ceil(
+        -static_cast<double>(expectedElements) * std::log(p) / kLn2Squared));
+    blocks_.resize(
+        std::max(1UL, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK));
   }
 
   void insert(Id id) noexcept {
     uint64_t hash = hashId(id);
-    size_t blockIdx = (hash >> 32) % numBlocks_;
+    size_t blockIdx = (hash >> 32) % blocks_.size();
     uint32_t key = static_cast<uint32_t>(hash);
 
     Block& blk = blocks_[blockIdx];
     for (int i = 0; i < 8; ++i) {
-      uint32_t bitPos = (key * SALTS[i]) >> 27;  // 0..31
-      blk.words[i * 2] |= (1U << bitPos);
+      auto [wordIdx, bitPos] = laneAndBit(key, i);
+      blk.words[wordIdx] |= (1U << bitPos);
     }
   }
 
   [[nodiscard]] bool contains(Id id) const noexcept {
     uint64_t hash = hashId(id);
-    size_t blockIdx = (hash >> 32) % numBlocks_;
+    size_t blockIdx = (hash >> 32) % blocks_.size();
     uint32_t key = static_cast<uint32_t>(hash);
 
     const Block& blk = blocks_[blockIdx];
     for (int i = 0; i < 8; ++i) {
-      uint32_t bitPos = (key * SALTS[i]) >> 27;
-      if ((blk.words[i * 2] & (1U << bitPos)) == 0) {
+      auto [wordIdx, bitPos] = laneAndBit(key, i);
+      if ((blk.words[wordIdx] & (1U << bitPos)) == 0) {
         return false;
       }
     }
@@ -102,9 +111,6 @@ class BlockedBloomFilter {
     return filter;
   }
 
-  // Check whether a candidate key passes the filter.
-  [[nodiscard]] bool passesFilter(Id id) const noexcept { return contains(id); }
-
   // Probe incoming candidate keys to prune non-matching row indices before
   // buffer materialization.
   [[nodiscard]] std::vector<size_t> pruneNonMatchingIndices(
@@ -119,9 +125,9 @@ class BlockedBloomFilter {
     return matchingIndices;
   }
 
-  [[nodiscard]] size_t numBlocks() const noexcept { return numBlocks_; }
+  [[nodiscard]] size_t numBlocks() const noexcept { return blocks_.size(); }
   [[nodiscard]] size_t sizeBytes() const noexcept {
-    return numBlocks_ * BYTES_PER_BLOCK;
+    return blocks_.size() * BYTES_PER_BLOCK;
   }
 };
 

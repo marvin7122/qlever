@@ -8,6 +8,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <vector>
+
 #include "engine/BlockedBloomFilter.h"
 #include "global/Id.h"
 
@@ -57,14 +60,16 @@ TEST(BlockedBloomFilterTest, CreateFromColumnAndPrune) {
   }
 
   auto matchingIndices = filter.pruneNonMatchingIndices(probeSide);
-  // All 1000 matches must be present in matchingIndices
-  size_t trueMatchesFound = 0;
+  // Every even probe index i holds Id(i * 5) = buildSide[i / 2], so all 1000
+  // even indices must survive pruning (a Bloom filter has no false negatives;
+  // odd indices may additionally survive as false positives).
+  std::vector<bool> matched(probeSide.size(), false);
   for (size_t idx : matchingIndices) {
-    if (idx % 2 == 0 && idx < 2000) {
-      trueMatchesFound++;
-    }
+    matched[idx] = true;
   }
-  EXPECT_EQ(trueMatchesFound, 1000);
+  for (size_t j = 0; j < 1000; ++j) {
+    EXPECT_TRUE(matched[2 * j]);
+  }
 }
 
 TEST(BlockedBloomFilterTest, SemiJoinPushdownHelper) {
