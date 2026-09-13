@@ -57,6 +57,18 @@ struct ClassWithoutInvariants {};
 static_assert(ad_utility::InvariantStatefulClass<MockInvariantClass>);
 static_assert(!ad_utility::InvariantStatefulClass<ClassWithoutInvariants>);
 
+// A non-`void` return type still satisfies the concept (which only requires
+// callability); `makeInvariantGuard()` rejects it with a dedicated
+// `static_assert`, so guard creation is never instantiated here.
+struct BoolInvariantClass
+    : public ad_utility::WithInvariants<BoolInvariantClass> {
+  bool checkInvariants() const { return true; }
+};
+static_assert(ad_utility::InvariantStatefulClass<BoolInvariantClass>);
+static_assert(!std::is_same_v<decltype(std::declval<const BoolInvariantClass&>()
+                                           .checkInvariants()),
+                              void>);
+
 // _____________________________________________________________________________
 TEST(InvariantsTest, InvariantGuardChecksOnEntryAndExit) {
   MockInvariantClass instance;
