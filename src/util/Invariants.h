@@ -168,6 +168,9 @@ template <typename Predicate>
 // scope exit rather than at guard construction. Declare the guard after the
 // state it inspects: destruction runs in reverse declaration order, so a
 // guard declared before its observed state would read destroyed objects.
+// The argument is a single predicate expression: combine several conditions
+// with `&&`, since a bare comma invokes the comma operator and only the last
+// operand determines the result.
 #define QL_POST(...)                                                \
   auto QLEVER_CONCAT(ql_postcondition_guard_, __LINE__) =           \
       ::ad_utility::detail::makePostconditionGuard(                 \
