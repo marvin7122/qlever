@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   build:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
+    if: github.event_name != 'pull_request' || (github.event.pull_request && contains(github.event.pull_request.labels.*.name, 'ci'))
     env:
           compiler: clang
           # The compiler and the LLVM coverage tools have to use the same major
