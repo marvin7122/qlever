@@ -153,6 +153,8 @@ TEST(InvariantsTest, ContractsAssertEnforcement) {
 
 TEST(InvariantsTest, ContractsPostConditionNormalExit) {
   auto succeed = [](int val) {
+    // Declared before the guard, so `result` outlives the exit check; only
+    // the assignment happens after guard construction.
     int result = 0;
     QL_POST(result > 0);
     result = val;
@@ -161,6 +163,19 @@ TEST(InvariantsTest, ContractsPostConditionNormalExit) {
 
   EXPECT_EQ(succeed(5), 5);
   AD_EXPECT_THROW_WITH_MESSAGE(succeed(-1), ::testing::HasSubstr("result > 0"));
+}
+
+TEST(InvariantsTest, ContractsPostConditionConjoinedPredicate) {
+  auto succeed = [](int x, int y) {
+    // Multiple conditions combine with `&&`; a bare comma would invoke the
+    // comma operator and check only the last operand.
+    QL_POST(x > 0 && y > 0);
+    return x + y;
+  };
+
+  EXPECT_EQ(succeed(3, 4), 7);
+  AD_EXPECT_THROW_WITH_MESSAGE(succeed(-1, 4),
+                               ::testing::HasSubstr("x > 0 && y > 0"));
 }
 
 TEST(InvariantsTest, ContractsPostConditionSkipsDuringExceptionUnwinding) {
