@@ -8,6 +8,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
@@ -447,6 +448,10 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
   // `scanAll` must still enumerate all of them.
   TwoSplitVocabulary sv;
   const auto filename = gtestCurrentTestName();
+  absl::Cleanup cleanup = [&filename]() {
+    ad_utility::deleteFile(filename);
+    ad_utility::deleteFile(absl::StrCat(filename, ".a"));
+  };
   auto ww = sv.makeDiskWriterPtr(filename);
   (*ww)("\"\"", true);
   (*ww)("\"abc\"", true);
@@ -471,8 +476,6 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
                                      P{sv.addMarker(0, 1), "\"abc\""},
                                      P{sv.addMarker(1, 1), "\"axyz\""}));
   sv.close();
-  ad_utility::deleteFile(filename);
-  ad_utility::deleteFile(absl::StrCat(filename, ".a"));
 }
 
 // _____________________________________________________________________________
@@ -480,6 +483,10 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   // Mixed markers, reordered indices, and a duplicate must match `operator[]`.
   TwoSplitVocabulary sv;
   const auto filename = gtestCurrentTestName();
+  absl::Cleanup cleanup = [&filename]() {
+    ad_utility::deleteFile(filename);
+    ad_utility::deleteFile(absl::StrCat(filename, ".a"));
+  };
   auto ww = sv.makeDiskWriterPtr(filename);
   (*ww)("\"\"", true);
   (*ww)("\"abc\"", true);
@@ -510,8 +517,6 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       sv, sv.lookupBatch(oneMarker), oneMarker);
   sv.close();
-  ad_utility::deleteFile(filename);
-  ad_utility::deleteFile(absl::StrCat(filename, ".a"));
 }
 
 // _____________________________________________________________________________
