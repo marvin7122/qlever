@@ -25,10 +25,8 @@ class BranchlessStreamCompactor {
  public:
   // Compact elements matching a predicate into output span, returning count.
   template <typename Predicate>
-  static size_t compact(
-      ql::span<const Id> input,
-      ql::span<Id> output,
-      Predicate&& pred) noexcept {
+  static size_t compact(ql::span<const Id> input, ql::span<Id> output,
+                        Predicate&& pred) noexcept {
     size_t outIdx = 0;
     const size_t n = input.size();
 

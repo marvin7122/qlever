@@ -6,10 +6,10 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of this project.
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <vector>
-#include <algorithm>
 
 #include "engine/BranchlessStreamCompactor.h"
 #include "global/Id.h"
@@ -31,9 +31,12 @@ int main() {
   // =========================================================================
   {
     constexpr size_t NUM_ROWS = 50'000'000;
-    std::cout << "=================================================================\n";
-    std::cout << "Microbenchmark: Single-Column Filter Compaction (" << NUM_ROWS << " rows x " << NUM_REPS << " reps, 50% selectivity)\n";
-    std::cout << "=================================================================\n";
+    std::cout << "============================================================="
+                 "====\n";
+    std::cout << "Microbenchmark: Single-Column Filter Compaction (" << NUM_ROWS
+              << " rows x " << NUM_REPS << " reps, 50% selectivity)\n";
+    std::cout << "============================================================="
+                 "====\n";
 
     std::vector<Id> input(NUM_ROWS);
     for (size_t i = 0; i < NUM_ROWS; ++i) {
@@ -55,16 +58,17 @@ int main() {
         }
       }
       auto t1 = std::chrono::high_resolution_clock::now();
-      scalarTimes.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+      scalarTimes.push_back(
+          std::chrono::duration<double, std::milli>(t1 - t0).count());
 
       // Branchless Stream Compactor
       auto t2 = std::chrono::high_resolution_clock::now();
-      size_t vectorCount = BranchlessStreamCompactor::compact(input, output, [](Id id) {
-        return id.getInt() % 2 == 0;
-      });
+      size_t vectorCount = BranchlessStreamCompactor::compact(
+          input, output, [](Id id) { return id.getInt() % 2 == 0; });
       escape(vectorCount);
       auto t3 = std::chrono::high_resolution_clock::now();
-      vectorTimes.push_back(std::chrono::duration<double, std::milli>(t3 - t2).count());
+      vectorTimes.push_back(
+          std::chrono::duration<double, std::milli>(t3 - t2).count());
     }
 
     std::sort(scalarTimes.begin(), scalarTimes.end());
@@ -75,19 +79,25 @@ int main() {
 
     std::cout << "Scalar Filter Latency (Median):  " << medScalar << " ms ("
               << (NUM_ROWS / (medScalar / 1000.0)) / 1e6 << " M rows/sec)\n";
-    std::cout << "Branchless Compactor Latency (Median): " << medVector << " ms ("
-              << (NUM_ROWS / (medVector / 1000.0)) / 1e6 << " M rows/sec)\n";
-    std::cout << "Speedup (Median):                " << (medScalar / medVector) << "x\n\n";
+    std::cout << "Branchless Compactor Latency (Median): " << medVector
+              << " ms (" << (NUM_ROWS / (medVector / 1000.0)) / 1e6
+              << " M rows/sec)\n";
+    std::cout << "Speedup (Median):                " << (medScalar / medVector)
+              << "x\n\n";
   }
 
   // =========================================================================
-  // Benchmark 2: Multi-Column Tabular Compaction (20,000,000 rows x 3 columns x 5 reps)
+  // Benchmark 2: Multi-Column Tabular Compaction (20,000,000 rows x 3 columns x
+  // 5 reps)
   // =========================================================================
   {
     constexpr size_t NUM_ROWS = 20'000'000;
-    std::cout << "=================================================================\n";
-    std::cout << "Macrobenchmark: 3-Column Tabular Compaction (" << NUM_ROWS << " rows x 3 cols x " << NUM_REPS << " reps)\n";
-    std::cout << "=================================================================\n";
+    std::cout << "============================================================="
+                 "====\n";
+    std::cout << "Macrobenchmark: 3-Column Tabular Compaction (" << NUM_ROWS
+              << " rows x 3 cols x " << NUM_REPS << " reps)\n";
+    std::cout << "============================================================="
+                 "====\n";
 
     std::vector<Id> col0(NUM_ROWS), col1(NUM_ROWS), col2(NUM_ROWS);
     std::vector<Id> out0(NUM_ROWS), out1(NUM_ROWS), out2(NUM_ROWS);
@@ -114,21 +124,20 @@ int main() {
         }
       }
       auto t1 = std::chrono::high_resolution_clock::now();
-      scalarTimes.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+      scalarTimes.push_back(
+          std::chrono::duration<double, std::milli>(t1 - t0).count());
 
       auto t2 = std::chrono::high_resolution_clock::now();
-      size_t countVec = BranchlessStreamCompactor::compact(col0, out0, [](Id id) {
-        return id.getInt() % 2 == 0;
-      });
-      BranchlessStreamCompactor::compact(col1, out1, [](Id id) {
-        return id.getInt() % 2 == 0;
-      });
-      BranchlessStreamCompactor::compact(col2, out2, [](Id id) {
-        return id.getInt() % 2 == 0;
-      });
+      size_t countVec = BranchlessStreamCompactor::compact(
+          col0, out0, [](Id id) { return id.getInt() % 2 == 0; });
+      BranchlessStreamCompactor::compact(
+          col1, out1, [](Id id) { return id.getInt() % 2 == 0; });
+      BranchlessStreamCompactor::compact(
+          col2, out2, [](Id id) { return id.getInt() % 2 == 0; });
       escape(countVec);
       auto t3 = std::chrono::high_resolution_clock::now();
-      vectorTimes.push_back(std::chrono::duration<double, std::milli>(t3 - t2).count());
+      vectorTimes.push_back(
+          std::chrono::duration<double, std::milli>(t3 - t2).count());
     }
 
     std::sort(scalarTimes.begin(), scalarTimes.end());
@@ -139,10 +148,13 @@ int main() {
 
     std::cout << "Scalar 3-Col Latency (Median):   " << medScalar << " ms ("
               << (NUM_ROWS / (medScalar / 1000.0)) / 1e6 << " M rows/sec)\n";
-    std::cout << "Branchless 3-Col Latency (Median):     " << medVector << " ms ("
-              << (NUM_ROWS / (medVector / 1000.0)) / 1e6 << " M rows/sec)\n";
-    std::cout << "Speedup (Median):                " << (medScalar / medVector) << "x\n";
-    std::cout << "=================================================================\n";
+    std::cout << "Branchless 3-Col Latency (Median):     " << medVector
+              << " ms (" << (NUM_ROWS / (medVector / 1000.0)) / 1e6
+              << " M rows/sec)\n";
+    std::cout << "Speedup (Median):                " << (medScalar / medVector)
+              << "x\n";
+    std::cout << "============================================================="
+                 "====\n";
   }
 
   return 0;

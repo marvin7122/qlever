@@ -23,9 +23,8 @@ TEST(BranchlessStreamCompactorTest, CompactEvenNumbers) {
   }
 
   std::vector<Id> output(100);
-  size_t count = BranchlessStreamCompactor::compact(input, output, [](Id id) {
-    return id.getInt() % 2 == 0;
-  });
+  size_t count = BranchlessStreamCompactor::compact(
+      input, output, [](Id id) { return id.getInt() % 2 == 0; });
 
   EXPECT_EQ(count, 50u);
   for (size_t i = 0; i < count; ++i) {
