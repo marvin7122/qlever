@@ -9,7 +9,6 @@
 #ifndef QLEVER_SRC_UTIL_FASTINTTOSTRING_H
 #define QLEVER_SRC_UTIL_FASTINTTOSTRING_H
 
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -18,6 +17,10 @@
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__SSE2__)
 #include <emmintrin.h>
+#endif
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
 #endif
 
 #include "util/Exception.h"
@@ -29,7 +32,7 @@ namespace detail {
 // _____________________________________________________________________________
 // 2-digit lookup table for radix-100 decomposition.
 // Contains 100 pairs of ASCII digits ("00", "01", ..., "99").
-alignas(64) inline constexpr char DIGIT_PAIRS[200] =
+alignas(64) inline constexpr char DIGIT_PAIRS[] =
     "00010203040506070809"
     "10111213141516171819"
     "20212223242526272829"
@@ -40,6 +43,48 @@ alignas(64) inline constexpr char DIGIT_PAIRS[200] =
     "70717273747576777879"
     "80818283848586878889"
     "90919293949596979899";
+
+// _____________________________________________________________________________
+// C++17-compatible count-leading-zeros for 64-bit values. `std::countl_zero`
+// from <bit> is C++20 and unavailable in the `USE_CPP_17_BACKPORTS` builds,
+// so use compiler intrinsics with a portable fallback. Only defined for
+// nonzero input; `numDigits` handles zero explicitly.
+[[nodiscard]] inline uint32_t countlZero64(uint64_t val) noexcept {
+#if defined(_MSC_VER) && !defined(__clang__)
+  unsigned long index;
+  _BitScanReverse64(&index, val);
+  return 63 - static_cast<uint32_t>(index);
+#elif defined(__GNUC__) || defined(__clang__)
+  return static_cast<uint32_t>(__builtin_clzll(val));
+#else
+  // Portable fallback: narrow down the highest set bit by bisection.
+  uint32_t n = 0;
+  if ((val & 0xFFFFFFFF00000000ULL) == 0) {
+    n += 32;
+    val <<= 32;
+  }
+  if ((val & 0xFFFF000000000000ULL) == 0) {
+    n += 16;
+    val <<= 16;
+  }
+  if ((val & 0xFF00000000000000ULL) == 0) {
+    n += 8;
+    val <<= 8;
+  }
+  if ((val & 0xF000000000000000ULL) == 0) {
+    n += 4;
+    val <<= 4;
+  }
+  if ((val & 0xC000000000000000ULL) == 0) {
+    n += 2;
+    val <<= 2;
+  }
+  if ((val & 0x8000000000000000ULL) == 0) {
+    n += 1;
+  }
+  return n;
+#endif
+}
 
 // _____________________________________________________________________________
 // Powers of 10 lookup table for exact branchless digit length determination.
@@ -89,9 +134,12 @@ inline void format8Digits(uint32_t v, char* dst) noexcept {
   // _mm_mulhi_epu16(x, 52429) computes floor(x * 52429 / 65536), and the
   // additional right shift by 3 (division by 8) yields
   // floor(x * 52429 / 524288) ~= floor(x / 10), since 52429 / 65536 ~= 0.8
-  // and 0.8 / 8 = 0.1.
-  __m128i tens =
-      _mm_srli_epi16(_mm_mulhi_epu16(pairs, _mm_set1_epi16(52429)), 3);
+  // and 0.8 / 8 = 0.1. The lanes are consumed as unsigned, so only the bit
+  // pattern 0xCCCD matters; spell it as the exactly representable -13107
+  // to avoid an implicit narrowing conversion of 52429 to `short`.
+  constexpr short DIV10_MAGIC_LANE = -13107;  // == 52429 (mod 2^16)
+  __m128i tens = _mm_srli_epi16(
+      _mm_mulhi_epu16(pairs, _mm_set1_epi16(DIV10_MAGIC_LANE)), 3);
   __m128i tens10 = _mm_mullo_epi16(tens, _mm_set1_epi16(10));
   __m128i ones = _mm_sub_epi16(pairs, tens10);
   // Little-endian layout: tens in low byte, ones in high byte
@@ -150,22 +198,17 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 
 // _____________________________________________________________________________
 // Determination of the exact number of decimal digits in `val`. Estimates
-// the digit count from the bit width via `countl_zero` and corrects the
-// estimate with a single power-of-ten comparison.
-[[nodiscard]] inline constexpr uint32_t numDigits(uint64_t val) noexcept {
+// the digit count from the bit width via `detail::countlZero64` and corrects
+// the estimate with a single power-of-ten comparison. A single overload on
+// `uint64_t` (narrower types promote) avoids ambiguous overload resolution
+// for `unsigned long long` arguments on LP64 platforms.
+[[nodiscard]] inline uint32_t numDigits(uint64_t val) noexcept {
   if (val == 0) {
     return 1;
   }
-  const uint32_t bitWidth = 64 - std::countl_zero(val);
+  const uint32_t bitWidth = 64 - detail::countlZero64(val);
   const uint32_t p = (bitWidth * 1233) >> 12;
   return p + static_cast<uint32_t>(val >= detail::POWERS_OF_10_64[p]);
-}
-
-// _____________________________________________________________________________
-// Determination of the exact number of decimal digits for 32-bit uint
-// (delegates to the 64-bit overload).
-[[nodiscard]] inline constexpr uint32_t numDigits(uint32_t val) noexcept {
-  return numDigits(static_cast<uint64_t>(val));
 }
 
 // _____________________________________________________________________________
@@ -321,7 +364,10 @@ inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
 // three allocate exactly the required number of bytes and return the
 // decimal spelling with no leading zeros (except "0" itself).
 
-// Format an unsigned 64-bit integer, return its decimal spelling.
+// Converts an unsigned 64-bit integer to its decimal string representation.
+// The digits are formatted branchlessly into a string pre-sized to exactly
+// `numDigits(val)` bytes. Returns a string containing exactly the digits of
+// the number with no leading zeros (except for zero itself).
 [[nodiscard]] inline std::string formatUIntToString(uint64_t val) {
   const uint32_t len = numDigits(val);
   std::string s;
