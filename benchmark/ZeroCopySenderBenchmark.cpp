@@ -438,7 +438,9 @@ AD_REGISTER_BENCHMARK(ZeroCopySenderBenchmark);
 
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 // Standalone executable entry point
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
+  (void)argc;
+  (void)argv;
   std::cout << "==========================================================================\n";
   std::cout << " QLever Export Optimization: Zero-Copy Network Socket Sender Benchmark\n";
   std::cout << "==========================================================================\n";
