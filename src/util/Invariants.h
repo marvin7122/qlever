@@ -87,6 +87,11 @@ class WithInvariants {
         std::is_same_v<
             decltype(std::declval<const Derived&>().checkInvariants()), void>,
         "`checkInvariants() const` must return `void`.");
+    // Verify the CRTP relationship itself: inheriting from
+    // `WithInvariants<WrongType>` would make the cast below undefined
+    // behavior, so reject such misuse at compile time.
+    static_assert(std::is_base_of_v<WithInvariants<Derived>, Derived>,
+                  "`Derived` must inherit from `WithInvariants<Derived>`.");
     return InvariantGuard<Derived>{static_cast<const Derived*>(this)};
   }
 
