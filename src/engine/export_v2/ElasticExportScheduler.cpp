@@ -12,43 +12,48 @@ namespace ad_utility::export_v2 {
 // ExportWorkLease Implementation
 // -----------------------------------------------------------------------------
 
-ExportWorkLease::ExportWorkLease(ElasticExportScheduler* scheduler,
-                                 uint64_t epoch, uint64_t jobId,
-                                 uint64_t leaseId) noexcept
-    : scheduler_{scheduler},
+ExportWorkLease::ExportWorkLease(
+    std::weak_ptr<ElasticExportScheduler> scheduler, uint64_t epoch,
+    uint64_t jobId, uint64_t leaseId) noexcept
+    : scheduler_{std::move(scheduler)},
       epoch_{epoch},
       jobId_{jobId},
       leaseId_{leaseId},
-      active_{true} {}
+      active_{true} {
+  // Register before anyone can release: every live lease has exactly one
+  // outstanding identity, which `onLeaseReleased` validates. An expired
+  // scheduler needs no accounting, so there is nothing to register to.
+  if (auto live = scheduler_.lock()) {
+    live->registerOutstandingLease(leaseId);
+  } else {
+    active_ = false;
+  }
+}
 
 ExportWorkLease::~ExportWorkLease() { release(); }
 
 ExportWorkLease::ExportWorkLease(ExportWorkLease&& other) noexcept
-    : scheduler_{other.scheduler_},
+    : scheduler_{std::move(other.scheduler_)},
       epoch_{other.epoch_},
       jobId_{other.jobId_},
       leaseId_{other.leaseId_},
       active_{other.active_} {
+  // Only `active_` gates the destructor; the remaining members are
+  // unreadable once inactive, so they are left untouched.
   other.active_ = false;
-  other.scheduler_ = nullptr;
-  other.epoch_ = 0;
-  other.jobId_ = 0;
-  other.leaseId_ = 0;
+  other.scheduler_.reset();
 }
 
 ExportWorkLease& ExportWorkLease::operator=(ExportWorkLease&& other) noexcept {
   if (this != &other) {
     release();
-    scheduler_ = other.scheduler_;
+    scheduler_ = std::move(other.scheduler_);
     epoch_ = other.epoch_;
     jobId_ = other.jobId_;
     leaseId_ = other.leaseId_;
     active_ = other.active_;
     other.active_ = false;
-    other.scheduler_ = nullptr;
-    other.epoch_ = 0;
-    other.jobId_ = 0;
-    other.leaseId_ = 0;
+    other.scheduler_.reset();
   }
   return *this;
 }
@@ -56,8 +61,10 @@ ExportWorkLease& ExportWorkLease::operator=(ExportWorkLease&& other) noexcept {
 void ExportWorkLease::release() noexcept {
   if (active_) {
     active_ = false;
-    if (scheduler_ != nullptr) {
-      scheduler_->onLeaseReleased(epoch_, jobId_);
+    // `lock()` is noexcept; an expired scheduler means teardown already
+    // ran, so there is nothing to account to.
+    if (auto scheduler = scheduler_.lock()) {
+      scheduler->onLeaseReleased(leaseId_);
     }
   }
 }
@@ -76,7 +83,8 @@ std::shared_ptr<ElasticExportScheduler> ElasticExportScheduler::create(
 
 ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
                                                size_t queueCapacity)
-    : maxQueueCapacity_{queueCapacity > 0 ? queueCapacity : 1024} {
+    : maxQueueCapacity_{queueCapacity > 0 ? queueCapacity
+                                          : kDefaultQueueCapacity} {
   size_t threadCount = numThreads;
   if (threadCount == 0) {
     threadCount = std::max(1u, std::thread::hardware_concurrency());
@@ -92,6 +100,8 @@ ElasticExportScheduler::~ElasticExportScheduler() { shutdown(); }
 
 void ElasticExportScheduler::shutdown() {
   bool expected = false;
+  // Seq-cst store; all readers use acquire loads, which synchronize with
+  // this store once observed.
   if (stopping_.compare_exchange_strong(expected, true)) {
     {
       std::lock_guard<std::mutex> lock(queueMutex_);
@@ -116,29 +126,7 @@ void ElasticExportScheduler::onForegroundQueryStarted() {
   if (current > maxQueries) {
     uint64_t newEpoch =
         demandEpoch_.fetch_add(1, std::memory_order_relaxed) + 1;
-    {
-      std::lock_guard<std::mutex> lock(queueMutex_);
-      workAvailableCv_.notify_all();
-    }
-
-    std::vector<std::shared_ptr<ExportJobStateBase>> aliveSessions;
-    {
-      std::lock_guard<std::mutex> lock(sessionsMutex_);
-      sessions_.erase(
-          std::remove_if(sessions_.begin(), sessions_.end(),
-                         [&aliveSessions](const auto& weak) {
-                           if (auto shared = weak.lock()) {
-                             aliveSessions.push_back(std::move(shared));
-                             return false;
-                           }
-                           return true;
-                         }),
-          sessions_.end());
-    }
-
-    for (auto& session : aliveSessions) {
-      session->onDemandChanged(current, newEpoch);
-    }
+    propagateDemandChange(current, newEpoch);
   }
 }
 
@@ -153,29 +141,39 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
   if (current <= maxQueries) {
     uint64_t newEpoch =
         demandEpoch_.fetch_add(1, std::memory_order_relaxed) + 1;
-    {
-      std::lock_guard<std::mutex> lock(queueMutex_);
-      workAvailableCv_.notify_all();
-    }
+    propagateDemandChange(current, newEpoch);
+  }
+}
 
-    std::vector<std::shared_ptr<ExportJobStateBase>> aliveSessions;
-    {
-      std::lock_guard<std::mutex> lock(sessionsMutex_);
-      sessions_.erase(
-          std::remove_if(sessions_.begin(), sessions_.end(),
-                         [&aliveSessions](const auto& weak) {
-                           if (auto shared = weak.lock()) {
-                             aliveSessions.push_back(std::move(shared));
-                             return false;
-                           }
-                           return true;
-                         }),
-          sessions_.end());
-    }
+// Shared by both demand-change hooks: wake producers and workers (a
+// threshold crossing can unblock a full queue or strand one, depending on
+// direction), drop expired sessions, and notify the live ones without
+// holding any scheduler lock while calling out.
+void ElasticExportScheduler::propagateDemandChange(
+    size_t activeForegroundQueries, uint64_t newEpoch) {
+  {
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    workAvailableCv_.notify_all();
+    queueNotFullCv_.notify_all();
+  }
 
-    for (auto& session : aliveSessions) {
-      session->onDemandChanged(current, newEpoch);
-    }
+  std::vector<std::shared_ptr<ExportJobStateBase>> aliveSessions;
+  {
+    std::lock_guard<std::mutex> lock(sessionsMutex_);
+    sessions_.erase(
+        std::remove_if(sessions_.begin(), sessions_.end(),
+                       [&aliveSessions](const auto& weak) {
+                         if (auto shared = weak.lock()) {
+                           aliveSessions.push_back(std::move(shared));
+                           return false;
+                         }
+                         return true;
+                       }),
+        sessions_.end());
+  }
+
+  for (auto& session : aliveSessions) {
+    session->onDemandChanged(activeForegroundQueries, newEpoch);
   }
 }
 
@@ -204,11 +202,19 @@ void ElasticExportScheduler::attachToQueryRegistry(
 
 bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
   std::unique_lock<std::mutex> lock(queueMutex_);
-  while (queue_.size() >= maxQueueCapacity_ &&
-         !stopping_.load(std::memory_order_relaxed)) {
-    queueNotFullCv_.wait(lock);
-  }
-  if (stopping_.load(std::memory_order_relaxed)) {
+  // Besides shutdown, also stop waiting when helpers become ineligible:
+  // workers refuse to drain the queue while ineligible, so waiting for
+  // space alone could block forever. Callers treat false as "leave the
+  // morsel Pending for the primary", and every demand change wakes
+  // waiters to re-check. A full queue with eligible helpers still blocks
+  // for backpressure.
+  queueNotFullCv_.wait(lock, [this] {
+    return stopping_.load(std::memory_order_acquire) ||
+           queue_.size() < maxQueueCapacity_ ||
+           !isHelperAdmissionEligibleUnsafe();
+  });
+  if (stopping_.load(std::memory_order_acquire) ||
+      !isHelperAdmissionEligibleUnsafe()) {
     return false;
   }
   queue_.push_back(std::move(morsel));
@@ -226,8 +232,24 @@ void ElasticExportScheduler::registerSession(
   sessions_.push_back(std::move(sessionState));
 }
 
-void ElasticExportScheduler::onLeaseReleased(
-    [[maybe_unused]] uint64_t epoch, [[maybe_unused]] uint64_t jobId) noexcept {
+void ElasticExportScheduler::registerOutstandingLease(uint64_t leaseId) {
+  std::lock_guard<std::mutex> lock(queueMutex_);
+  AD_CORRECTNESS_CHECK(outstandingLeaseIds_.insert(leaseId).second,
+                       "Duplicate export helper lease identity");
+  // Accounting lives with identity: every outstanding lease holds exactly
+  // one helper slot, so the count always equals the set size, including
+  // for directly constructed leases.
+  totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void ElasticExportScheduler::onLeaseReleased(uint64_t leaseId) noexcept {
+  std::lock_guard<std::mutex> lock(queueMutex_);
+  // Only an outstanding lease identity may retire a helper slot; anything
+  // else is a stale or duplicate release and an internal error. The
+  // lease-side `active_` flag already prevents double release through one
+  // handle, this guards the accounting against anything else.
+  AD_CORRECTNESS_CHECK(outstandingLeaseIds_.erase(leaseId) == 1,
+                       "Release of unknown export helper lease");
   totalActiveHelpers_.fetch_sub(1, std::memory_order_relaxed);
 }
 
@@ -249,11 +271,11 @@ void ElasticExportScheduler::workerLoop() {
     {
       std::unique_lock<std::mutex> lock(queueMutex_);
       workAvailableCv_.wait(lock, [this] {
-        return stopping_.load(std::memory_order_relaxed) ||
+        return stopping_.load(std::memory_order_acquire) ||
                (!queue_.empty() && isHelperAdmissionEligibleUnsafe());
       });
 
-      if (stopping_.load(std::memory_order_relaxed)) {
+      if (stopping_.load(std::memory_order_acquire)) {
         break;
       }
 
@@ -270,12 +292,16 @@ void ElasticExportScheduler::workerLoop() {
       submissionEpoch = morsel.submissionEpoch_;
       jobId = morsel.jobId_;
 
-      leaseEpoch = demandEpoch_.load(std::memory_order_relaxed);
+      // Acquire pairs with the release-sequence incrementing the epoch on
+      // demand changes. Identity registration and slot accounting happen
+      // in the lease constructor below, outside `queueMutex_`.
+      leaseEpoch = demandEpoch_.load(std::memory_order_acquire);
       leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
-      totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    ExportWorkLease lease(this, leaseEpoch, jobId, leaseId);
+    // Never empty: the scheduler owns its workers and outlives them
+    // (`shutdown` joins before destruction completes).
+    ExportWorkLease lease(weak_from_this(), leaseEpoch, jobId, leaseId);
 
     if (targetJobState && !targetJobState->isCancelled()) {
       if (submissionEpoch == leaseEpoch) {

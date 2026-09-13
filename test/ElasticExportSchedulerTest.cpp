@@ -292,7 +292,7 @@ TEST(ElasticExportSchedulerTest, MoveSemanticsAndRAII) {
   auto movedSession = std::move(session);
   EXPECT_EQ(movedSession.consumeNextResult(), "moved");
 
-  ExportWorkLease lease1(scheduler.get(), 1, 10, 100);
+  ExportWorkLease lease1(scheduler, 1, 10, 100);
   EXPECT_TRUE(lease1.isValid());
   EXPECT_EQ(lease1.epoch(), 1u);
   EXPECT_EQ(lease1.jobId(), 10u);
@@ -351,6 +351,53 @@ TEST(ElasticExportSchedulerTest, RegistryCallbacksExpireSafelyWithScheduler) {
   // the query fires the end callback into an expired `weak_ptr`, which must
   // be a no-op rather than a use-after-free.
   query.reset();
+}
+
+// -----------------------------------------------------------------------------
+// Test 8c: Enqueue Refuses Work When Helpers Are Ineligible
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, EnqueueRefusesWorkWhenHelpersIneligible) {
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  auto session = scheduler->createSession<std::string>();
+  auto state = session.stateHandle();
+
+  auto makeMorsel = [&](size_t index) {
+    return OwnedMorsel(state, session.jobId(), scheduler->demandEpoch(), index);
+  };
+  // Eligible with room: enqueued. (A worker may pop it concurrently; an
+  // index without a submitted slot is skipped safely.)
+  EXPECT_TRUE(scheduler->enqueueMorsel(makeMorsel(0)));
+
+  // Two foreground queries with max one: helpers ineligible, so enqueue
+  // must refuse promptly instead of blocking forever on a queue that
+  // workers refuse to drain.
+  scheduler->onForegroundQueryStarted();
+  scheduler->onForegroundQueryStarted();
+  EXPECT_FALSE(scheduler->enqueueMorsel(makeMorsel(1)));
+
+  // Eligibility restored: enqueue works again.
+  scheduler->onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
+  EXPECT_TRUE(scheduler->enqueueMorsel(makeMorsel(2)));
+}
+
+// -----------------------------------------------------------------------------
+// Test 8d: Lease Release After Scheduler Destruction Is A No-Op
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, LeaseReleaseAfterSchedulerDestruction) {
+  std::optional<ExportWorkLease> lease;
+  {
+    auto scheduler = ElasticExportScheduler::create(2, 64);
+    lease.emplace(scheduler, 1, 10, 100);
+    EXPECT_TRUE(lease->isValid());
+  }
+  // The scheduler is gone while the lease is still active. Releasing into
+  // the expired `weak_ptr` must be a no-op rather than a use-after-free.
+  lease->release();
+  EXPECT_FALSE(lease->isValid());
 }
 
 // -----------------------------------------------------------------------------
