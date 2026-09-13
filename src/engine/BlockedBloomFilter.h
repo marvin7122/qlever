@@ -9,6 +9,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -51,8 +52,14 @@ class BlockedBloomFilter {
  public:
   explicit BlockedBloomFilter(size_t expectedElements,
                               double falsePositiveRate = 0.01) {
-    // Sizing: ~10 bits per element for ~1% FPR
-    size_t targetBits = static_cast<size_t>(expectedElements * 10);
+    // Standard Bloom filter sizing: m = -n * ln(p) / ln(2)^2 bits, so the
+    // requested rate controls the size (p = 0.01 needs ~9.6 bits/element).
+    // The rate is clamped because ln(p) is undefined outside (0, 1).
+    static constexpr double kLn2Squared = 0.4804530139182014;  // ln(2)^2
+    double p = std::clamp(falsePositiveRate, 1e-9, 1.0 - 1e-9);
+    size_t targetBits =
+        static_cast<size_t>(std::ceil(-static_cast<double>(expectedElements) *
+                                      std::log(p) / kLn2Squared));
     numBlocks_ =
         std::max(1UL, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK);
     blocks_.resize(numBlocks_);

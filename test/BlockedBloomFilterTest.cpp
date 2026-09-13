@@ -89,6 +89,18 @@ TEST(BlockedBloomFilterTest, SemiJoinPushdownHelper) {
               matchingIndices.end());
 }
 
+TEST(BlockedBloomFilterTest, FalsePositiveRateControlsSize) {
+  // The requested rate must change the size: m = -n*ln(p)/ln(2)^2 bits.
+  BlockedBloomFilter strict{10000, 0.001};
+  BlockedBloomFilter def{10000, 0.01};
+  BlockedBloomFilter loose{10000, 0.1};
+  EXPECT_LT(loose.numBlocks(), def.numBlocks());
+  EXPECT_LT(def.numBlocks(), strict.numBlocks());
+  // ceil(95851 / 512) = 188 blocks for n = 10000, p = 0.01.
+  EXPECT_EQ(def.numBlocks(), 188u);
+  EXPECT_EQ(def.sizeBytes(), 188u * 64u);
+}
+
 TEST(BlockedBloomFilterTest, EmptyColumnHandling) {
   std::vector<Id> emptyBuildSide;
   auto filter = BlockedBloomFilter::createFromColumn(emptyBuildSide);
