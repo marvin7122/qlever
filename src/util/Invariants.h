@@ -11,6 +11,7 @@
 #define QLEVER_SRC_UTIL_INVARIANTS_H
 
 #include <exception>
+#include <type_traits>
 
 #include "backports/concepts.h"
 #include "util/Exception.h"
@@ -33,7 +34,7 @@ CPP_concept InvariantStatefulClass =
 // active exception, for any class that satisfies the `InvariantStatefulClass`
 // concept.
 CPP_template(typename T)(
-    requires InvariantStatefulClass<T>) class InvariantGuard {
+    requires InvariantStatefulClass<T>) class [[nodiscard]] InvariantGuard {
  private:
   // Non-owning pointer to the guarded object; the guard must not outlive this
   // object.
@@ -79,6 +80,13 @@ class WithInvariants {
         "Class inheriting from WithInvariants<Derived> must satisfy the "
         "`ad_utility::InvariantStatefulClass` concept (implement `void "
         "checkInvariants() const`).");
+    // The concept only requires callability, so enforce the `void` return
+    // type separately: a discarded status value would silently weaken the
+    // invariant protocol.
+    static_assert(
+        std::is_same_v<
+            decltype(std::declval<const Derived&>().checkInvariants()), void>,
+        "`checkInvariants() const` must return `void`.");
     return InvariantGuard<Derived>{static_cast<const Derived*>(this)};
   }
 
@@ -106,7 +114,7 @@ class WithInvariants {
 namespace detail {
 
 template <typename Predicate>
-class PostconditionGuard {
+class [[nodiscard]] PostconditionGuard {
  private:
   Predicate predicate_;
   // Stringified predicate expression, captured by the `QL_POST` macro so
