@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    if: github.event_name != 'pull_request' || (github.event.pull_request && contains(github.event.pull_request.labels.*.name, 'ci'))
+    if: github.event_name != 'pull_request' || (github.event.pull_request != null && contains(github.event.pull_request.labels.*.name, 'ci'))
     strategy:
       fail-fast: false
     runs-on: ubuntu-24.04
