@@ -126,6 +126,24 @@ TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
 }
 
 // _____________________________________________________________________________
+// Moves transfer ownership and leave the source empty, never a null owner
+// paired with a stale view into the moved-to storage.
+TEST(VocabBatchLookupData, MovedFromResultIsEmpty) {
+  auto result = makeStringVectorVocabBatchLookupResult({"foo", "bar"});
+  ASSERT_EQ(result.size(), 2u);
+
+  auto moved = std::move(result);
+  EXPECT_TRUE(result.empty());
+  EXPECT_EQ(result.size(), 0u);
+  EXPECT_THAT(moved, ::testing::ElementsAre("foo", "bar"));
+
+  auto target = makeStringVectorVocabBatchLookupResult({"x"});
+  target = std::move(moved);
+  EXPECT_TRUE(moved.empty());
+  EXPECT_THAT(target, ::testing::ElementsAre("foo", "bar"));
+}
+
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   auto first = makeStringVectorVocabBatchLookupResult({"apple", "banana"});
   auto second = makeStringVectorVocabBatchLookupResult({"cherry"});
