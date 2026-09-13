@@ -6,96 +6,85 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of this project.
 
-#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <iostream>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
+#include "../benchmark/infrastructure/Benchmark.h"
 #include "engine/BlockedBloomFilter.h"
 #include "global/Id.h"
 
-using namespace ql::engine::filter;
+namespace ad_benchmark {
 
-int main() {
-  constexpr size_t NUM_ELEMENTS = 2'000'000;
-  std::cout
-      << "=================================================================\n";
-  std::cout << "Comparative Benchmark: Baseline (std::unordered_set) vs "
-               "BlockedBloomFilter ("
-            << NUM_ELEMENTS << " elements)\n";
-  std::cout
-      << "=================================================================\n";
-
-  std::vector<Id> data(NUM_ELEMENTS);
-  for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-    data[i] = Id::fromBits(i * 7 + 1);
+// Comparative benchmark: baseline `std::unordered_set` vs `BlockedBloomFilter`
+// for build-side insertion and probe-side membership checks.
+class BlockedBloomFilterBenchmark : public BenchmarkInterface {
+ public:
+  std::string name() const final {
+    return "Baseline std::unordered_set vs BlockedBloomFilter";
   }
 
-  // 1. BASELINE: std::unordered_set
-  auto b0 = std::chrono::high_resolution_clock::now();
-  std::unordered_set<uint64_t> baseSet;
-  baseSet.reserve(NUM_ELEMENTS);
-  for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-    baseSet.insert(data[i].getBits());
-  }
-  auto b1 = std::chrono::high_resolution_clock::now();
-  double baseInsertMs =
-      std::chrono::duration<double, std::milli>(b1 - b0).count();
-
-  size_t baseHits = 0;
-  auto b2 = std::chrono::high_resolution_clock::now();
-  for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-    if (baseSet.find(data[i].getBits()) != baseSet.end()) {
-      baseHits++;
+  BenchmarkResults runAllBenchmarks() final {
+    BenchmarkResults results{};
+    constexpr size_t NUM_ELEMENTS = 2'000'000;
+    std::vector<Id> data(NUM_ELEMENTS);
+    for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
+      data[i] = Id::fromBits(i * 7 + 1);
     }
+
+    auto& baseline = results.addGroup("Baseline std::unordered_set");
+    baseline.metadata().addKeyValuePair("elements", NUM_ELEMENTS);
+    baseline.addMeasurement("Build set", [&data] {
+      std::unordered_set<uint64_t> baseSet;
+      baseSet.reserve(data.size());
+      for (const Id& id : data) {
+        baseSet.insert(id.getBits());
+      }
+    });
+    baseline.addMeasurement("Probe set", [&data] {
+      std::unordered_set<uint64_t> baseSet;
+      baseSet.reserve(data.size());
+      for (const Id& id : data) {
+        baseSet.insert(id.getBits());
+      }
+      size_t hits = 0;
+      for (const Id& id : data) {
+        if (baseSet.find(id.getBits()) != baseSet.end()) {
+          ++hits;
+        }
+      }
+      // Print the result so the computation is not optimized away.
+      std::cout << hits;
+    });
+
+    auto& filter = results.addGroup("BlockedBloomFilter");
+    filter.metadata().addKeyValuePair("elements", NUM_ELEMENTS);
+    filter.addMeasurement("Build filter", [&data] {
+      ql::engine::filter::BlockedBloomFilter blockedFilter{data.size(), 0.01};
+      for (const Id& id : data) {
+        blockedFilter.insert(id);
+      }
+    });
+    filter.addMeasurement("Probe filter", [&data] {
+      ql::engine::filter::BlockedBloomFilter blockedFilter{data.size(), 0.01};
+      for (const Id& id : data) {
+        blockedFilter.insert(id);
+      }
+      size_t hits = 0;
+      for (const Id& id : data) {
+        if (blockedFilter.contains(id)) {
+          ++hits;
+        }
+      }
+      // Print the result so the computation is not optimized away.
+      std::cout << hits;
+    });
+
+    return results;
   }
-  auto b3 = std::chrono::high_resolution_clock::now();
-  double baseProbeMs =
-      std::chrono::duration<double, std::milli>(b3 - b2).count();
-
-  // 2. PROTOTYPE: BlockedBloomFilter (Cache-Line Aligned)
-  auto p0 = std::chrono::high_resolution_clock::now();
-  BlockedBloomFilter blockedFilter{NUM_ELEMENTS, 0.01};
-  for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-    blockedFilter.insert(data[i]);
-  }
-  auto p1 = std::chrono::high_resolution_clock::now();
-  double protoInsertMs =
-      std::chrono::duration<double, std::milli>(p1 - p0).count();
-
-  size_t protoHits = 0;
-  auto p2 = std::chrono::high_resolution_clock::now();
-  for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-    if (blockedFilter.contains(data[i])) {
-      protoHits++;
-    }
-  }
-  auto p3 = std::chrono::high_resolution_clock::now();
-  double protoProbeMs =
-      std::chrono::duration<double, std::milli>(p3 - p2).count();
-
-  std::cout << "\n--- Baseline (std::unordered_set) ---\n";
-  std::cout << "Insert Time: " << baseInsertMs << " ms ("
-            << (NUM_ELEMENTS / (baseInsertMs / 1000.0)) / 1e6 << " M/s)\n";
-  std::cout << "Probe Time:  " << baseProbeMs << " ms ("
-            << (NUM_ELEMENTS / (baseProbeMs / 1000.0)) / 1e6
-            << " M/s, hits: " << baseHits << ")\n";
-
-  std::cout << "\n--- Prototype (BlockedBloomFilter) ---\n";
-  std::cout << "Insert Time: " << protoInsertMs << " ms ("
-            << (NUM_ELEMENTS / (protoInsertMs / 1000.0)) / 1e6 << " M/s)\n";
-  std::cout << "Probe Time:  " << protoProbeMs << " ms ("
-            << (NUM_ELEMENTS / (protoProbeMs / 1000.0)) / 1e6
-            << " M/s, hits: " << protoHits << ")\n";
-
-  std::cout << "\n============================================================="
-               "====\n";
-  std::cout << ">>> Insert Speedup: " << (baseInsertMs / protoInsertMs)
-            << "x faster\n";
-  std::cout << ">>> Probe Speedup:  " << (baseProbeMs / protoProbeMs)
-            << "x faster\n";
-  std::cout
-      << "=================================================================\n";
-
-  return 0;
-}
+};
+AD_REGISTER_BENCHMARK(BlockedBloomFilterBenchmark);
+}  // namespace ad_benchmark
