@@ -4,6 +4,7 @@ on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
+    types: [created, edited]
 
 # PR-Agent only reads PR data through the GitHub API; do not check out PR code.
 # This deliberately supports same-repository PRs only. External-fork PRs do
