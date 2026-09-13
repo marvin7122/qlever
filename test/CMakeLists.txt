@@ -282,6 +282,8 @@ addLinkAndDiscoverTestNoLibs(AllocatorBackendTest)
 
 addLinkAndDiscoverTestNoLibs(AlignedAllocatorTest)
 
+addLinkAndDiscoverTestNoLibs(StreamingBufferWriterTest)
+
 addLinkAndDiscoverTest(MinusTest engine)
 
 # this test runs for quite some time and might have spurious failures!
