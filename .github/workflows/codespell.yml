@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   codespell:
-    if: github.event_name != 'pull_request' || (github.event.pull_request && contains(github.event.pull_request.labels.*.name, 'ci'))
+    if: github.event_name != 'pull_request' || (github.event.pull_request != null && contains(github.event.pull_request.labels.*.name, 'ci'))
     name: Check for spelling errors
     runs-on: ubuntu-latest
 
