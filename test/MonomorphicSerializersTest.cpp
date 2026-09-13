@@ -74,7 +74,7 @@ class RecordingWriter {
   std::string output_;
 };
 
-TEST(MonomorphicSerializersTest, SerializesDirectTypedTupleAsCsv) {
+TEST(MonomorphicSerializersTest, SerializesMonomorphicRowAsCsv) {
   using Serializer =
       MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Literal,
                                ColumnType::Integer, ColumnType::Double>;
