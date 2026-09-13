@@ -57,6 +57,11 @@ struct ClassWithoutInvariants {};
 static_assert(ad_utility::InvariantStatefulClass<MockInvariantClass>);
 static_assert(!ad_utility::InvariantStatefulClass<ClassWithoutInvariants>);
 
+// Pin the intended CRTP relationship: the mock inherits from
+// `WithInvariants` instantiated with its own type.
+static_assert(std::is_base_of_v<ad_utility::WithInvariants<MockInvariantClass>,
+                                MockInvariantClass>);
+
 // A non-`void` return type still satisfies the concept (which only requires
 // callability); `makeInvariantGuard()` rejects it with a dedicated
 // `static_assert`, so guard creation is never instantiated here.
