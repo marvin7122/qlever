@@ -70,8 +70,8 @@ class BlockedBloomFilter {
     double p = std::clamp(falsePositiveRate, 1e-9, 1.0 - 1e-9);
     size_t targetBits = static_cast<size_t>(std::ceil(
         -static_cast<double>(expectedElements) * std::log(p) / kLn2Squared));
-    blocks_.resize(
-        std::max(1UL, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK));
+    blocks_.resize(std::max(
+        size_t{1}, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK));
   }
 
   void insert(Id id) noexcept {
