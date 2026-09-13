@@ -162,7 +162,7 @@
 * **Mechanics:**
   1. The query planner analyzes the output column types (e.g. `Triple<IRI, IRI, LITERAL>`).
   2. Dispatches to the monomorphic template:
-     `MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>::serializeBatch(...)`
+     `MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>::serializeRow<Format>(writer, ...)`
   3. Integers are converted using `formatIntBranchless` (0 division instructions).
   4. Literal strings are checked for quotes/newlines 32 bytes at a time via `SimdEscapeClassifier`.
   5. Delimiters (tabs, quotes, angle brackets, newlines) are packed into 64-bit unsigned integers via `SwarDelimiterPacker` and written in single 64-bit store instructions.
