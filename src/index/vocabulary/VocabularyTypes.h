@@ -237,10 +237,13 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
   // `char` allocations from the arena builders, for which any alignment
   // suffices, and the underlying `AllocatorWithLimit` has no alignment
   // concept (it counts bytes).
-  void* do_allocate(std::size_t bytes, std::size_t) override {
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+    (void)alignment;
     return alloc_.allocate(bytes);
   }
-  void do_deallocate(void* p, std::size_t bytes, std::size_t) override {
+  void do_deallocate(void* p, std::size_t bytes,
+                     std::size_t alignment) override {
+    (void)alignment;
     alloc_.deallocate(static_cast<std::byte*>(p), bytes);
   }
   bool do_is_equal(
