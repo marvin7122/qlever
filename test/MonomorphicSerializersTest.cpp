@@ -13,8 +13,10 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "engine/export_v2/MonomorphicSerializers.h"
+#include "global/Id.h"
 
 namespace {
 
@@ -102,9 +104,22 @@ TEST(MonomorphicSerializersTest, HandlesEmptyAndBoundaryValues) {
 
   Serializer::serializeRow<RowFormat::Tsv>(writer, std::string_view{},
                                            std::numeric_limits<int64_t>::min(),
-                                           false, 0);
+                                           Id::makeFromBool(false), 0);
 
   EXPECT_EQ(writer.output(), "T\t-9223372036854775808\tfalse\t\n");
+}
+
+TEST(MonomorphicSerializersTest, BooleanRendersStoredIdLiteral) {
+  using Serializer = MonomorphicRowSerializer<ColumnType::Boolean>;
+  for (const auto& [id, expected] :
+       {std::pair{Id::makeFromBool(false), "false\n"},
+        std::pair{Id::makeFromBool(true), "true\n"},
+        std::pair{Id::makeBoolFromZeroOrOne(false), "0\n"},
+        std::pair{Id::makeBoolFromZeroOrOne(true), "1\n"}}) {
+    RecordingWriter writer;
+    Serializer::serializeRow<RowFormat::Csv>(writer, id);
+    EXPECT_EQ(writer.output(), expected);
+  }
 }
 
 TEST(MonomorphicSerializersTest, ExposesTheStaticSchema) {

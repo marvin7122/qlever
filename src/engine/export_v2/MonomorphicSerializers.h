@@ -17,6 +17,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "global/Id.h"
+
 namespace ql::engine::export_v2 {
 
 // Define the semantic type of a column in a statically known export schema.
@@ -78,14 +80,22 @@ struct CellWriter {
 
   template <typename Writer, std::integral Value>
   static void write(Writer& writer, Value value) {
-    if constexpr (Type == ColumnType::Integer) {
-      writer.writeInteger(value);
-    } else if constexpr (Type == ColumnType::Boolean) {
-      writer.writeRaw(value ? "true" : "false");
-    } else {
-      static_assert(Type == ColumnType::Integer || Type == ColumnType::Boolean,
-                    "This column type requires a string or floating argument");
-    }
+    static_assert(!std::is_same_v<Value, bool>,
+                  "A Boolean column takes an Id, not a C++ bool; pass "
+                  "Id::makeFromBool(...) instead");
+    static_assert(Type == ColumnType::Integer,
+                  "This column type requires a string or floating argument");
+    writer.writeInteger(value);
+  }
+
+  // A Boolean column takes the `Id`, not a C++ `bool`: the export renders the
+  // stored literal (`true`/`false` or `0`/`1`, depending on how the `Id` was
+  // created, see `Id::getBoolLiteral`), which a bare `bool` cannot reproduce.
+  template <typename Writer>
+  static void write(Writer& writer, Id id) {
+    static_assert(Type == ColumnType::Boolean,
+                  "Only a Boolean column accepts an Id argument");
+    writer.writeRaw(id.getBoolLiteral());
   }
 
   template <typename Writer, std::floating_point Value>
