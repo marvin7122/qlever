@@ -104,6 +104,13 @@ class VocabBatchLookupResult {
     }
   }
 
+  // Copies share the storage (cheap: `shared_ptr` + view) and are required,
+  // e.g., to collect results into a vector (see `VocabularyTestHelpers.h`).
+  // Declared explicitly: the custom move operations below would otherwise
+  // suppress the implicit copies (Rule of Five).
+  VocabBatchLookupResult(const VocabBatchLookupResult&) = default;
+  VocabBatchLookupResult& operator=(const VocabBatchLookupResult&) = default;
+
   // Moves reset the source span, so a moved-from result is empty (rather than
   // a null owner paired with a stale view into the moved-to storage).
   VocabBatchLookupResult(VocabBatchLookupResult&& other) noexcept
