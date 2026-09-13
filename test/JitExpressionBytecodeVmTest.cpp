@@ -1095,3 +1095,35 @@ TEST(JitExpressionBytecodeVmTest, NativeYearFilterEndToEnd) {
   EXPECT_EQ(result->idTableView()(1, 0), D(1800, 1, 1));
   EXPECT_EQ(result->idTableView()(2, 0), D(2000, 6, 30));
 }
+
+TEST(JitExpressionBytecodeVmTest, DeeplyNestedExpressionsFallBackToLegacy) {
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+
+  // Right-nested `1 + (1 + (...))` grows the interpreter stack linearly:
+  // `n` additions need `n + 1` slots. Deeper programs must be refused (the
+  // caller falls back to the legacy evaluation) instead of overflowing the
+  // fixed interpreter stacks.
+  auto makeRightNestedAdd = [&I](size_t numAdds) {
+    SparqlExpression::Ptr expr = std::make_unique<IdExpression>(I(1));
+    for (size_t i = 0; i < numAdds; ++i) {
+      expr = makeAddExpression(std::make_unique<IdExpression>(I(1)),
+                               std::move(expr));
+    }
+    return expr;
+  };
+  VariableToColumnMap varColMap;
+
+  // 15 additions need exactly `MAX_STACK_SLOTS` slots and still compile.
+  EXPECT_TRUE(
+      JitExpressionBytecodeVm::compile(*makeRightNestedAdd(15), varColMap)
+          .has_value());
+  // 16 additions need one slot too many and must fall back.
+  EXPECT_FALSE(
+      JitExpressionBytecodeVm::compile(*makeRightNestedAdd(16), varColMap)
+          .has_value());
+  // Larger depths are refused as well.
+  EXPECT_FALSE(
+      JitExpressionBytecodeVm::compile(*makeRightNestedAdd(64), varColMap)
+          .has_value());
+}

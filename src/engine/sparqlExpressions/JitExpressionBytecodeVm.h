@@ -187,7 +187,7 @@ class JitBytecodeProgram {
   // Execute bytecode program over a single row's column inputs
   [[nodiscard]] int64_t execute(
       ql::span<const int64_t> rowColumns) const noexcept {
-    int64_t stack[16];
+    int64_t stack[MAX_STACK_SLOTS];
     size_t sp = 0;
 
     for (const auto& inst : code_) {
@@ -310,8 +310,16 @@ class JitBytecodeProgram {
 
 class JitExpressionBytecodeVm {
  public:
+  // Slots of the fixed-size interpreter stacks in `execute`,
+  // `executeVectorMorsel`, `executeFilter` and `executeIntColumnInto`.
+  // `compile` refuses programs whose maximum stack depth exceeds this, so
+  // deeply nested expressions fall back to the legacy evaluation instead of
+  // overflowing the stacks.
+  static constexpr size_t MAX_STACK_SLOTS = 16;
+
   // Compile a SPARQL expression AST to a JitBytecodeProgram. Returns nullopt
-  // if the expression contains unsupported operators, types, or unbound vars.
+  // if the expression contains unsupported operators, types, or unbound vars,
+  // or if its maximum stack depth exceeds `MAX_STACK_SLOTS`.
   static std::optional<JitBytecodeProgram> compile(
       const sparqlExpression::SparqlExpression& expr,
       const VariableToColumnMap& varColMap);
@@ -323,8 +331,8 @@ class JitExpressionBytecodeVm {
                                   size_t numRows,
                                   uint64_t* outFilterMask) noexcept {
     constexpr size_t MORSEL_SIZE = 64;
-    alignas(64) int64_t stack[16][MORSEL_SIZE];
-    alignas(64) uint64_t validity[16];
+    alignas(64) int64_t stack[MAX_STACK_SLOTS][MORSEL_SIZE];
+    alignas(64) uint64_t validity[MAX_STACK_SLOTS];
 
     for (size_t rowOffset = 0; rowOffset < numRows; rowOffset += MORSEL_SIZE) {
       size_t batchSize = std::min<size_t>(MORSEL_SIZE, numRows - rowOffset);
@@ -736,8 +744,8 @@ class JitExpressionBytecodeVm {
     }
 
     constexpr size_t MORSEL_SIZE = 64;
-    alignas(64) int64_t stack[16][MORSEL_SIZE];
-    alignas(64) uint64_t validity[16];
+    alignas(64) int64_t stack[MAX_STACK_SLOTS][MORSEL_SIZE];
+    alignas(64) uint64_t validity[MAX_STACK_SLOTS];
 
     for (size_t rowOffset = 0; rowOffset < numRows; rowOffset += MORSEL_SIZE) {
       if (cancellationHandle && (rowOffset % (MORSEL_SIZE * 1024) == 0)) {
@@ -1455,8 +1463,8 @@ class JitExpressionBytecodeVm {
     }
 
     constexpr size_t MORSEL_SIZE = 64;
-    alignas(64) int64_t stack[16][MORSEL_SIZE];
-    alignas(64) uint64_t validity[16];
+    alignas(64) int64_t stack[MAX_STACK_SLOTS][MORSEL_SIZE];
+    alignas(64) uint64_t validity[MAX_STACK_SLOTS];
 
     for (size_t rowOffset = 0; rowOffset < numRows; rowOffset += MORSEL_SIZE) {
       if (cancellationHandle && (rowOffset % (MORSEL_SIZE * 1024) == 0)) {
