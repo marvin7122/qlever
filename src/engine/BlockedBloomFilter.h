@@ -140,6 +140,8 @@ class SemiJoinPushdownHelper {
   BlockedBloomFilter filter_;
 
  public:
+  // The span is only read during construction (copied into the filter), so
+  // it need not stay alive afterwards.
   explicit SemiJoinPushdownHelper(ql::span<const Id> buildSideKeys,
                                   double falsePositiveRate = 0.01)
       : filter_{BlockedBloomFilter::createFromColumn(buildSideKeys,
