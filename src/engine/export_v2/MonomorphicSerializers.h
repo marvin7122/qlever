@@ -84,7 +84,7 @@ struct CellWriter {
                   "A Boolean column takes an Id, not a C++ bool; pass "
                   "Id::makeFromBool(...) instead");
     static_assert(Type == ColumnType::Integer,
-                  "This column type requires a string or floating argument");
+                  "This column type requires an integer argument");
     writer.writeInteger(value);
   }
 
