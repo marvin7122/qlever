@@ -288,8 +288,8 @@ void resolveVocabIndexIds(
       positions | ql::views::transform([&ids](size_t i) {
         return static_cast<size_t>(ids[i].getVocabIndex().get());
       }));
-  ArenaVocabBatchBuilder builder(rawIndices.size(),
-                                 index.getImpl().allocator());
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(
+      rawIndices.size(), index.getImpl().allocator());
   auto vocabStrings =
       index.getImpl().getVocab().lookupBatch(rawIndices, builder);
 
