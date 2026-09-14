@@ -37,12 +37,12 @@ class MockInvariantClass
   }
 
   void doMutatingOperation() {
-    auto guard = makeInvariantGuard();
+    [[maybe_unused]] auto guard = makeInvariantGuard();
     // Enter and leave the operation without changing the object state.
   }
 
   void doBrokenOperation() {
-    auto guard = makeInvariantGuard();
+    [[maybe_unused]] auto guard = makeInvariantGuard();
     failInvariants_ = true;
   }
 };
@@ -63,7 +63,7 @@ TEST(InvariantsTest, InvariantGuardChecksOnEntryAndExit) {
   EXPECT_EQ(instance.checkCount_, 0u);
 
   {
-    ad_utility::InvariantGuard guard{&instance};
+    [[maybe_unused]] ad_utility::InvariantGuard guard{&instance};
 
     EXPECT_EQ(instance.checkCount_, 1u);
   }
@@ -110,7 +110,7 @@ TEST(InvariantsTest, InvariantGuardSkipsExitCheckDuringExceptionUnwinding) {
 
   EXPECT_THROW(
       [&] {
-        ad_utility::InvariantGuard guard{&instance};
+        [[maybe_unused]] ad_utility::InvariantGuard guard{&instance};
         throw std::runtime_error{"failure"};
       }(),
       std::runtime_error);
