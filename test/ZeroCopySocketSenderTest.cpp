@@ -10,6 +10,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -63,12 +66,30 @@ TEST(ZeroCopyBufferPoolTest, BasicAcquireAndRelease) {
 }
 
 // _____________________________________________________________________________
-TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
-  int sv[2];
-  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
-
-  int sendFd = sv[0];
-  int recvFd = sv[1];
+TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
+  // IORING_OP_SEND_ZC requires TCP loopback: AF_UNIX socketpairs reject
+  // zero-copy sends, so connect a TCP loopback pair (same pattern as
+  // `ZeroCopySenderBenchmark::SocketPairConnection`).
+  int listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(listenFd, 0);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  ASSERT_EQ(::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)),
+            0);
+  socklen_t addrLen = sizeof(addr);
+  ASSERT_EQ(::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr),
+                          &addrLen),
+            0);
+  ASSERT_EQ(::listen(listenFd, 1), 0);
+  int sendFd = ::socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(sendFd, 0);
+  ASSERT_EQ(::connect(sendFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)),
+            0);
+  int recvFd = ::accept(listenFd, nullptr, nullptr);
+  ASSERT_GE(recvFd, 0);
+  ::close(listenFd);
 
   ZeroCopySenderConfig config;
   config.ringEntries = 16;
