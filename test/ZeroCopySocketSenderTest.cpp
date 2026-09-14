@@ -6,12 +6,11 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <arpa/inet.h>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
 
 #include <cstring>
 #include <thread>
@@ -79,9 +78,8 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   ASSERT_EQ(::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)),
             0);
   socklen_t addrLen = sizeof(addr);
-  ASSERT_EQ(::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr),
-                          &addrLen),
-            0);
+  ASSERT_EQ(
+      ::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr), &addrLen), 0);
   ASSERT_EQ(::listen(listenFd, 1), 0);
   int sendFd = ::socket(AF_INET, SOCK_STREAM, 0);
   ASSERT_GE(sendFd, 0);
