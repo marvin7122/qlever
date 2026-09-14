@@ -65,40 +65,14 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
 }
 
 // _____________________________________________________________________________
-// Return true iff `pointer` points inside the object storage of `object`.
-template <typename T>
-static bool pointsIntoObject(const void* pointer, const T& object) {
-  const auto* start = reinterpret_cast<const char*>(&object);
-  return pointer >= start && pointer < start + sizeof(object);
-}
-
-// _____________________________________________________________________________
-TEST(GTestHelpersTest, PmrStringSsoCapacity) {
-  // The discovered capacity must be usable: strings up to that size are stored
-  // inside the object, and one character more is not.
-  size_t capacity = pmrStringSsoCapacity();
-  requirePmrStringInlineStorage(capacity);
-  std::pmr::string atCapacity(capacity, 'x');
-  EXPECT_TRUE(pointsIntoObject(atCapacity.data(), atCapacity));
-  std::pmr::string aboveCapacity(capacity + 1, 'y');
-  EXPECT_FALSE(pointsIntoObject(aboveCapacity.data(), aboveCapacity));
-}
-
-// _____________________________________________________________________________
 TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
-<<<<<<< HEAD
   // Verify that empty and small strings use inline storage: the data must lie
   // inside the string object itself, not in allocator-provided memory.
-=======
-  // SSO should hold for empty and small strings: the data must lie inside the
-  // string object itself, not in allocator-provided memory.
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
   for (size_t size : {size_t{0}, size_t{7}, size_t{15}}) {
     // `maxSize == 0` is a rejected precondition, so probe from 1 on.
     if (size > 0) {
       requirePmrStringInlineStorage(size);
     }
-<<<<<<< HEAD
     PmrSsoProbeString shortString(size, 'x');
     EXPECT_TRUE(pointsIntoObject(shortString.data(), shortString));
     EXPECT_EQ(shortString.size(), size);
@@ -106,27 +80,13 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
   // Verify that a string above the SSO threshold is not stored inside the
   // object.
   PmrSsoProbeString longString(64, 'y');
-=======
-    std::pmr::string shortString(size, 'x');
-    EXPECT_TRUE(pointsIntoObject(shortString.data(), shortString));
-    EXPECT_EQ(shortString.size(), size);
-  }
-  // Sanity check of the observation itself: a string above the SSO threshold
-  // must NOT be stored inside the object.
-  std::pmr::string longString(64, 'y');
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
 }
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, ClobberStack) {
-<<<<<<< HEAD
   // Verify that the helper writes the given sentinel to the stack and reads it
   // back through a volatile access.
-=======
-  // The helper returns the last byte it wrote, read back `volatile`, so we
-  // assert that the stack was actually written with the given sentinel.
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
   EXPECT_EQ(clobberStack<512>('X'), 'X');
   EXPECT_EQ(clobberStack<4096>('#'), '#');
 }

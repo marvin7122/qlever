@@ -16,8 +16,6 @@
 #include <utility>
 
 namespace ad_utility::vocabulary {
-#include <vector>
-#include "backports/algorithm.h"
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
@@ -98,12 +96,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   assembler.scatterSubBatchResultAtPositions(
       std::move(disk), partition.diskSlots_.getResultPositions());
 
-<<<<<<< HEAD
   return std::move(assembler).finalizeVocabBatchLookupResult();
-=======
-  // 3. Finalize and return self-contained result.
-  return std::move(assembler).finalize();
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
 }
 
 // _____________________________________________________________________________

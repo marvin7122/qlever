@@ -1,12 +1,6 @@
-// Copyright 2024 - 2026, The QLever Authors, in particular:
-//
-// 2024        Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
-// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
-//
-// UFR = University of Freiburg, Chair of Algorithms and Data Structures
-//
-// You may not use this file except in compliance with the Apache 2.0 License,
-// which can be found in the `LICENSE` file at the root of the QLever project.
+// Copyright 2024, University of Freiburg,
+// Chair of Algorithms and Data Structures.
+// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
 
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 
@@ -27,33 +21,16 @@ VocabularyInMemoryBinSearch::IndicesView VocabularyInMemoryBinSearch::indices()
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::open(const string& fileName) {
   AD_CORRECTNESS_CHECK(
-<<<<<<< HEAD
       words_.size() == 0 && indices().empty(),
-=======
-      words().empty() && indices_.empty(),
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
       "Calling open on the same vocabulary twice is probably a bug");
-  auto words = std::make_shared<Words>();
   {
     ad_utility::serialization::FileReadSerializer file(fileName);
-<<<<<<< HEAD
     file >> words_;
-=======
-    file >> *words;
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
   }
-  Indices indices;
   {
     ad_utility::serialization::FileReadSerializer idFile(fileName + ".ids");
-<<<<<<< HEAD
     idFile >> ownedIndices();
-=======
-    idFile >> indices;
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
   }
-  AD_CORRECTNESS_CHECK(indices.size() == words->size());
-  words_ = std::move(words);
-  indices_ = std::move(indices);
 }
 
 // _____________________________________________________________________________

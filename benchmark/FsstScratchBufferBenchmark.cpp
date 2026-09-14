@@ -18,14 +18,9 @@
 #include <utility>
 #include <vector>
 
-<<<<<<< HEAD
-#include "benchmark/infrastructure/Benchmark.h"
-=======
 #include "../benchmark/infrastructure/Benchmark.h"
->>>>>>> 1796e75cb (Fix CI builds: C++17-compatible traits, benchmark include, router decoupling)
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
-#include <cerrno>
 
 namespace ad_benchmark {
 namespace {

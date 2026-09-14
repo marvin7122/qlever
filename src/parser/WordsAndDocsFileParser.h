@@ -150,7 +150,8 @@ struct LiteralsTokenizationDelimiter {
  * }
  */
 inline std::vector<std::string> tokenizeAndNormalizeText(
-    std::string_view text, const LocaleManager& localeManager) {
+    std::string_view text,
+    const ad_utility::vocabulary::LocaleManager& localeManager) {
   std::vector<std::string_view> split{
       absl::StrSplit(text, LiteralsTokenizationDelimiter{}, absl::SkipEmpty{})};
   // Eager vector: `ql::views::transform` on a temporary vector fails to

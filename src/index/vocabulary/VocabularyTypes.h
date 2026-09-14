@@ -1,32 +1,12 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
 // Copyright 2022 - 2026, The QLever Authors, in particular:
 //
 // 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
-=======
-// Copyright 2022 - 2026, The QLever Authors, in particular:
-//
-<<<<<<< HEAD
-// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
->>>>>>> 5ac86bedf (style: apply QLever Authors copyright header format across changed files)
-=======
-// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
-<<<<<<< HEAD
-=======
-// Copyright 2022, 2026, University of Freiburg,
-//                 Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
-//         Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
->>>>>>> 38b8b9d67 (style: update copyright headers to newest format across touched files)
-=======
->>>>>>> 5ac86bedf (style: apply QLever Authors copyright header format across changed files)
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
@@ -58,7 +38,6 @@
 #include "util/TransparentFunctors.h"
 #include "util/TypeTraits.h"
 #include "util/Views.h"
-#include <initializer_list>
 
 namespace ad_utility::vocabulary {
 
@@ -72,7 +51,6 @@ namespace ad_utility::vocabulary {
 class VocabBatchStorage {
   std::vector<std::string_view> views_;
 
-<<<<<<< HEAD
  protected:
   explicit VocabBatchStorage(std::vector<std::string_view> views)
       : views_{std::move(views)} {}
@@ -82,16 +60,6 @@ class VocabBatchStorage {
   // final storage location, never at a moved-from temporary).
   void setViews(std::vector<std::string_view> views) {
     views_ = std::move(views);
-=======
- public:
-  // Construct a batch lookup result with non-empty word views and an owning
-  // pointer keeping the backing word storage alive.
-  VocabBatchLookupResult(VocabBatchOwner owner,
-                         ql::span<const std::string_view> span)
-      : owner_{std::move(owner)}, span_{span} {
-    AD_CONTRACT_CHECK(!span_.empty());
-    AD_CORRECTNESS_CHECK(owner_ != nullptr);
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
   }
 
  public:
@@ -415,7 +383,7 @@ struct IndexAndWord {
 using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 
 // _____________________________________________________________________________
- with result from owning strings and expose views into their storage.
+// Construct a result from owning strings and expose views into their storage.
 inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
     std::vector<std::string> words) {
   AD_CONTRACT_CHECK(!words.empty());
@@ -786,23 +754,6 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
 }
 
 // _____________________________________________________________________________
-// Copy `words` into one contiguous `VocabBatchLookupData` buffer. Use this
-// when the views come from mixed owners that cannot share one result object.
-inline VocabBatchLookupResult makeOwnedVocabBatch(
-  auto data = std::make_shared<VocabBatchLookupData>();
-  size_t total = 0;
-    total += word.size();
-  data->buffer().resize(total);
-  data->views().resize(words.size());
-  size_t offset = 0;
-  char* buffer = data->buffer().data();
-  for (size_t i = 0; i < words.size(); ++i) {
-    const std::string_view word = words[i];
-    if (!word.empty()) {
-      std::memcpy(buffer + offset, word.data(), word.size());
-    data->views()[i] = std::string_view{buffer + offset, word.size()};
-    offset += word.size();
-  return VocabBatchLookupData::asResult(std::move(data));
 // Generic sequential fallback implementations of the batch-lookup interface,
 // used by all vocabularies that do not provide a specialized (e.g. io_uring)
 // implementation. They simply loop over the indices and issue the ordinary

@@ -14,7 +14,6 @@
 
 #include "backports/concepts.h"
 #include "util/Exception.h"
-#include <exception>
 
 namespace ad_utility {
 
@@ -72,10 +71,6 @@ template <typename Derived>
 class WithInvariants {
  public:
   // ___________________________________________________________________________
-<<<<<<< HEAD
-=======
-  // Instantiate an InvariantGuard verifying the derived instance on entry/exit.
->>>>>>> e568e03ba (Address review findings on batch lookup, invariant checks, headers, and test helpers)
   // Lvalue-qualified so the guard can never be created for a temporary:
   // it stores a raw pointer to `this`, which must outlive the guard's scope.
   [[nodiscard]] auto makeInvariantGuard() const& {

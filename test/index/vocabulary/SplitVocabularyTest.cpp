@@ -1,26 +1,12 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 5ac86bedf (style: apply QLever Authors copyright header format across changed files)
 // Copyright 2025 - 2026, The QLever Authors, in particular:
 //
 // 2025        Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
-<<<<<<< HEAD
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures.
 //
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
-=======
-// Copyright 2025, 2026, University of Freiburg,
-//                 Chair of Algorithms and Data Structures.
-// Author: Christoph Ullinger <ullingec@cs.uni-freiburg.de>
-//         Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
->>>>>>> 38b8b9d67 (style: update copyright headers to newest format across touched files)
-=======
-// UFR = University of Freiburg, Chair of Algorithms and Data Structures
->>>>>>> 5ac86bedf (style: apply QLever Authors copyright header format across changed files)
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
@@ -36,7 +22,6 @@
 #include "backports/span.h"
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
-#include "index/vocabulary/VocabularyTestHelpers.h"
 #include "index/vocabulary/VocabularyType.h"
 
 namespace splitVocabTestHelpers {
@@ -523,7 +508,6 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
                                                                 indices);
   AD_EXPECT_THROW_WITH_MESSAGE(sv.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
-  EXPECT_ANY_THROW(sv.lookupBatch(ql::span<const size_t>{}));
 
   const std::array<size_t, 3> oneMarker{
       static_cast<size_t>(sv.addMarker(0, 1)),
@@ -533,8 +517,6 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       sv, sv.lookupBatch(oneMarker), oneMarker);
   sv.close();
-  ad_utility::deleteFile(filename);
-  ad_utility::deleteFile(absl::StrCat(filename, ".a"));
 }
 
 // _____________________________________________________________________________
@@ -547,8 +529,6 @@ TEST(Vocabulary, SplitVocabularyLookupBatchRejectsOutOfRangeMarker) {
   AD_EXPECT_THROW_WITH_MESSAGE(sv.lookupBatch(illegalMarker),
                                ::testing::HasSubstr("marker < numberOfVocabs"));
 }
-
-using namespace splitVocabTestHelpers;
 
 using namespace splitVocabTestHelpers;
 
@@ -678,3 +658,5 @@ TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   ASSERT_TRUE(wordWriter2->finishWasCalled());
   wordWriter2.reset();
 }
+
+}  // namespace
