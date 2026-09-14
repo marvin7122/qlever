@@ -54,6 +54,9 @@ class RelationalExpression : public SparqlExpression {
       uint64_t inputSizeEstimate,
       const std::optional<Variable>& firstSortedVariable) const override;
 
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override;
+
   [[nodiscard]] bool isDeterministic() const override {
     return areChildrenDeterministic();
   }

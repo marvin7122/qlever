@@ -1,6 +1,7 @@
 //  Copyright 2023, University of Freiburg,
 //                  Chair of Algorithms and Data Structures.
 //  Author: Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>
+#include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/NaryExpressionImpl.h"
 #include "engine/sparqlExpressions/SparqlExpressionValueGetters.h"
 #include "global/RuntimeParameters.h"
@@ -9,7 +10,26 @@ namespace sparqlExpression {
 namespace detail {
 // Multiplication.
 using Multiply = MakeNumericExpression<std::multiplies<>>;
-NARY_EXPRESSION(MultiplyExpression, 2, FV<Multiply, NumericValueGetter>);
+class MultiplyExpression
+    : public NaryExpression<Operation<2, FV<Multiply, NumericValueGetter>>> {
+  using Base = NaryExpression<Operation<2, FV<Multiply, NumericValueGetter>>>;
+  using Base::Base;
+
+ public:
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    auto ch = children();
+    if (ch.size() != 2 || !ch[0] || !ch[1]) {
+      return false;
+    }
+    if (!ch[0]->compileToJit(program, varColMap) ||
+        !ch[1]->compileToJit(program, varColMap)) {
+      return false;
+    }
+    program.addInstruction(ql::engine::jit::OpCode::MUL_INT);
+    return true;
+  }
+};
 
 // Division.
 //
@@ -29,12 +49,48 @@ struct DivideImpl {
 };
 
 using Divide1 = MakeNumericExpression<DivideImpl, true>;
-NARY_EXPRESSION(DivideExpressionByZeroIsUndef, 2,
-                FV<Divide1, NumericValueGetter>);
+class DivideExpressionByZeroIsUndef
+    : public NaryExpression<Operation<2, FV<Divide1, NumericValueGetter>>> {
+  using Base = NaryExpression<Operation<2, FV<Divide1, NumericValueGetter>>>;
+  using Base::Base;
+
+ public:
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    auto ch = children();
+    if (ch.size() != 2 || !ch[0] || !ch[1]) {
+      return false;
+    }
+    if (!ch[0]->compileToJit(program, varColMap) ||
+        !ch[1]->compileToJit(program, varColMap)) {
+      return false;
+    }
+    program.addInstruction(ql::engine::jit::OpCode::DIV_INT);
+    return true;
+  }
+};
 
 using Divide2 = MakeNumericExpression<DivideImpl, false>;
-NARY_EXPRESSION(DivideExpressionByZeroIsNan, 2,
-                FV<Divide2, NumericValueGetter>);
+class DivideExpressionByZeroIsNan
+    : public NaryExpression<Operation<2, FV<Divide2, NumericValueGetter>>> {
+  using Base = NaryExpression<Operation<2, FV<Divide2, NumericValueGetter>>>;
+  using Base::Base;
+
+ public:
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    auto ch = children();
+    if (ch.size() != 2 || !ch[0] || !ch[1]) {
+      return false;
+    }
+    if (!ch[0]->compileToJit(program, varColMap) ||
+        !ch[1]->compileToJit(program, varColMap)) {
+      return false;
+    }
+    program.addInstruction(ql::engine::jit::OpCode::DIV_INT);
+    return true;
+  }
+};
 
 // _____________________________________________________________________________
 // Addition.
@@ -74,7 +130,27 @@ struct AddImpl {
     return Id::makeUndefined();
   }
 };
-NARY_EXPRESSION(AddExpression, 2, FV<AddImpl, NumericOrDateValueGetter>);
+class AddExpression : public NaryExpression<
+                          Operation<2, FV<AddImpl, NumericOrDateValueGetter>>> {
+  using Base =
+      NaryExpression<Operation<2, FV<AddImpl, NumericOrDateValueGetter>>>;
+  using Base::Base;
+
+ public:
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    auto ch = children();
+    if (ch.size() != 2 || !ch[0] || !ch[1]) {
+      return false;
+    }
+    if (!ch[0]->compileToJit(program, varColMap) ||
+        !ch[1]->compileToJit(program, varColMap)) {
+      return false;
+    }
+    program.addInstruction(ql::engine::jit::OpCode::ADD_INT);
+    return true;
+  }
+};
 
 // _____________________________________________________________________________
 // Subtraction.
@@ -114,8 +190,28 @@ struct SubtractImpl {
     return Id::makeUndefined();
   }
 };
-NARY_EXPRESSION(SubtractExpression, 2,
-                FV<SubtractImpl, NumericOrDateValueGetter>);
+class SubtractExpression
+    : public NaryExpression<
+          Operation<2, FV<SubtractImpl, NumericOrDateValueGetter>>> {
+  using Base =
+      NaryExpression<Operation<2, FV<SubtractImpl, NumericOrDateValueGetter>>>;
+  using Base::Base;
+
+ public:
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    auto ch = children();
+    if (ch.size() != 2 || !ch[0] || !ch[1]) {
+      return false;
+    }
+    if (!ch[0]->compileToJit(program, varColMap) ||
+        !ch[1]->compileToJit(program, varColMap)) {
+      return false;
+    }
+    program.addInstruction(ql::engine::jit::OpCode::SUB_INT);
+    return true;
+  }
+};
 
 // _____________________________________________________________________________
 // Power.
@@ -439,6 +535,39 @@ CPP_template(typename BinaryPrefilterExpr, typename NaryOperation)(
       return leftFilter;
     }
     return std::nullopt;
+  }
+
+  // _____________________________________________________________________________
+  // Lower `&&`/`||` to `AND_BOOL`/`OR_BOOL`. The kernels implement Kleene
+  // three-valued logic via their validity masks (see `OpCode`), which
+  // matches `AndLambda`/`OrLambda` on filter outcomes: only `True` keeps a
+  // row, `False` and invalid rows are dropped alike. Non-boolean integer
+  // children compose via the kernels' nonzero test, matching the effective
+  // boolean value; other datatypes cannot reach this lowering because the
+  // program's `CellRule` excludes them.
+  bool compileToJit(ql::engine::jit::JitBytecodeProgram& program,
+                    const VariableToColumnMap& varColMap) const override {
+    const auto& children = this->children();
+    if (children.empty()) {
+      return false;
+    }
+    if (!children[0] || !children[0]->compileToJit(program, varColMap)) {
+      return false;
+    }
+    for (size_t i = 1; i < children.size(); ++i) {
+      if (!children[i] || !children[i]->compileToJit(program, varColMap)) {
+        return false;
+      }
+      if constexpr (std::is_same_v<BinaryPrefilterExpr,
+                                   prefilterExpressions::AndExpression>) {
+        program.addInstruction(ql::engine::jit::OpCode::AND_BOOL);
+      } else {
+        static_assert(std::is_same_v<BinaryPrefilterExpr,
+                                     prefilterExpressions::OrExpression>);
+        program.addInstruction(ql::engine::jit::OpCode::OR_BOOL);
+      }
+    }
+    return true;
   }
 
   // _____________________________________________________________________________

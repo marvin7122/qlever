@@ -36,4 +36,10 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    # The benchmark exercises the native AsmJit backend, which requires C++20
+    # and is unavailable in the reduced feature set for C++17.
+    if (NOT REDUCED_FEATURE_SET_FOR_CPP17)
+      addAndLinkBenchmark(JitExpressionBytecodeVmBenchmark global qlever_util asmjit::asmjit)
+    endif()
+
 endif()
