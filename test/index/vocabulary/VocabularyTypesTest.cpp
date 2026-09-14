@@ -8,6 +8,8 @@
 #include <absl/functional/function_ref.h>
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include "../../util/GTestHelpers.h"
 #include "index/vocabulary/VocabularyTypes.h"
 
@@ -86,6 +88,84 @@ TEST(VocabBatchLookupData, AsResultEmpty) {
   auto data = std::make_shared<VocabBatchLookupData>();
   VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
   EXPECT_TRUE(result->empty());
+}
+
+TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
+  auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
+
+  ASSERT_EQ(result->size(), 2u);
+  EXPECT_EQ((*result)[0], "alpha");
+  EXPECT_EQ((*result)[1], "beta");
+}
+
+TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
+  auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
+  auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
+  const char* alphaData = (*first)[0].data();
+  const char* gammaData = (*second)[0].data();
+
+  std::vector<std::string_view> viewsInInputOrder(3);
+  std::vector<VocabBatchOwner> owners;
+  const std::array<size_t, 2> firstPositions{2, 0};
+  const std::array<size_t, 1> secondPositions{1};
+  scatterVocabBatchLookupResult(std::move(first), firstPositions,
+                                viewsInInputOrder, owners);
+  scatterVocabBatchLookupResult(std::move(second), secondPositions,
+                                viewsInInputOrder, owners);
+
+  auto result =
+      keepAliveVocabBatch(std::move(owners), std::move(viewsInInputOrder));
+  EXPECT_THAT(*result, ::testing::ElementsAre("beta", "gamma", "alpha"));
+  EXPECT_EQ((*result)[2].data(), alphaData);
+  EXPECT_EQ((*result)[1].data(), gammaData);
+}
+
+TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
+  auto firstOwner = std::make_shared<StringVectorVocabBatchLookupData>();
+  firstOwner->buffer() = {"alpha", "beta"};
+  firstOwner->views() = {firstOwner->buffer()[0], firstOwner->buffer()[1]};
+  auto first = StringVectorVocabBatchLookupData::asResult(firstOwner);
+
+  auto secondOwner = std::make_shared<StringVectorVocabBatchLookupData>();
+  secondOwner->buffer() = {"gamma"};
+  secondOwner->views() = {secondOwner->buffer()[0]};
+  auto second = StringVectorVocabBatchLookupData::asResult(secondOwner);
+
+  const char* alphaData = (*first)[0].data();
+  const char* gammaData = (*second)[0].data();
+  std::vector<std::string_view> mixed{(*first)[0], (*second)[0], (*first)[1]};
+  std::vector<VocabBatchOwner> owners{std::move(first), std::move(second)};
+  firstOwner.reset();
+  secondOwner.reset();
+
+  auto result = keepAliveVocabBatch(std::move(owners), std::move(mixed));
+  ASSERT_EQ(result->size(), 3u);
+  EXPECT_EQ((*result)[0], "alpha");
+  EXPECT_EQ((*result)[1], "gamma");
+  EXPECT_EQ((*result)[2], "beta");
+  EXPECT_EQ((*result)[0].data(), alphaData);
+  EXPECT_EQ((*result)[1].data(), gammaData);
+}
+
+TEST(VocabBatchLookupData, KeepAliveRequiresAnOwner) {
+  std::vector<std::string_view> views{"orphan"};
+  AD_EXPECT_THROW_WITH_MESSAGE(keepAliveVocabBatch({}, std::move(views)),
+                               ::testing::HasSubstr("owners"));
+}
+
+// A view into an in-memory vocabulary's word storage stays valid after the
+// vocabulary itself is closed, because the result shares ownership of the
+// bytes.
+TEST(VocabBatchLookupData, KeepAliveOutlivesSharedWordStorage) {
+  auto stored = std::make_shared<std::string>("ram-word");
+  const char* storedData = stored->data();
+  std::vector<std::string_view> views{*stored};
+  std::vector<VocabBatchOwner> owners{stored};
+  auto result = keepAliveVocabBatch(std::move(owners), std::move(views));
+  stored.reset();
+  ASSERT_EQ(result->size(), 1u);
+  EXPECT_EQ((*result)[0], "ram-word");
+  EXPECT_EQ((*result)[0].data(), storedData);
 }
 
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing

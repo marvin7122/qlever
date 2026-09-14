@@ -200,12 +200,23 @@ class IoUringPolicy {
   uint64_t nextRequestIdToAssign_ = 0;
 
   // Maps a read's request id to its metadata. An entry is inserted when the
-  // read is prepared in `addBatch` and erased when its completion is reaped in
-  // `drainOneCqe`.
+  // read is prepared in `addBatch` and erased when its completion is reaped.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
-  // Wait for one CQE and update the in-flight bookkeeping.
-  void drainOneCqe();
+  // Wait until at least `minComplete` CQEs are ready, then reap every ready
+  // CQE. `minComplete` must be in `[1, numInFlightReadRequests_]`.
+  void drainAtLeast(unsigned minComplete);
+
+  // Reap every CQE that is already ready. Does not block.
+  void drainAllReadyCqes();
+
+  // Apply one completion to the in-flight bookkeeping. Always updates the
+  // counts. Stores the first I/O error message in `pendingErrorMessage_`.
+  void processCqe(int numBytesRead, uint64_t requestId);
+
+  // First I/O error seen while reaping a wave. Thrown after the wave is
+  // advanced so no CQE is processed twice.
+  const char* pendingErrorMessage_ = nullptr;
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
@@ -215,13 +226,17 @@ class IoUringPolicy {
   explicit IoUringPolicy(unsigned ringSize);
   ~IoUringPolicy();
 
-  // Enqueue a batch of read requests and submit them to the kernel. Blocks the
-  // calling thread only when the submission queue is full, in order to drain
-  // completion queue entries and free slots in the submission queue. Read `i`
-  // reads `numBytesToRead[i]` bytes from file descriptor `fd`, starting at
-  // offset `offsets[i]` (from the start of the file), into the buffer starting
-  // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
-  // to `wait()` to block until this batch has completed.
+  // Minimum completions to wait for when the ring is full or `wait()` blocks.
+  // Waiting for more than one CQE amortizes `io_uring_enter` on the reap path.
+  static constexpr unsigned REAP_WAVE = 8;
+
+  // Prepare as many SQEs as the ring has free slots and submit them. When the
+  // ring is full, wait for at least `REAP_WAVE` completions, reap every ready
+  // CQE, and submit the next wave. Do not drain one CQE and immediately
+  // submit one SQE: that is one `io_uring_enter` per read. Read `i` reads
+  // `numBytesToRead[i]` bytes from `fd` at `offsets[i]` into `buffers[i]`.
+  // The caller owns `buffers` until `wait(handle)` returns. Track the reads
+  // under `handle` for `wait()`.
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
