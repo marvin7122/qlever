@@ -13,7 +13,6 @@
 #include "parser/SparqlParser.h"
 
 using namespace ql::engine;
-using ExportPipelineRouter::ParamValueMap;
 
 namespace {
 
@@ -29,7 +28,7 @@ TEST(ExportPipelineRouterTest, ToStringFunction) {
 
 TEST(ExportPipelineRouterTest, DefaultModeIsLegacyV1) {
   auto query = parse("SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
 
   auto mode = ExportPipelineRouter::selectEngine(query, params);
   EXPECT_EQ(mode, ExportEngineMode::LegacyV1);
@@ -66,7 +65,7 @@ TEST(ExportPipelineRouterTest, UrlParamFastExportFalsySelectsV1) {
 TEST(ExportPipelineRouterTest, UrlParamExportEngineV2) {
   auto query = parse("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
 
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
   params["export-engine"] = {"v2"};
   EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
             ExportEngineMode::FastStreamingV2);
@@ -86,7 +85,7 @@ TEST(ExportPipelineRouterTest, UrlParamExportEngineV2) {
 
 TEST(ExportPipelineRouterTest, HttpHeaderOverrides) {
   auto query = parse("SELECT ?s WHERE { ?s ?p ?o }");
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
 
   EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "v2"),
             ExportEngineMode::FastStreamingV2);
@@ -106,7 +105,7 @@ TEST(ExportPipelineRouterTest, HttpHeaderOverrides) {
 
 TEST(ExportPipelineRouterTest, ServerDefaultModeConfiguration) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
 
   EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, std::nullopt,
                                                ExportEngineMode::LegacyV1),
@@ -119,7 +118,7 @@ TEST(ExportPipelineRouterTest, ServerDefaultModeConfiguration) {
 
 TEST(ExportPipelineRouterTest, AskQueryNotEligibleForFastStreaming) {
   auto query = parse("ASK WHERE { ?s ?p ?o }");
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
   params["fast-export"] = {"1"};
 
   EXPECT_FALSE(ExportPipelineRouter::isEligibleForFastStreaming(query));
