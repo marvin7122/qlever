@@ -177,7 +177,7 @@ CPP_template(typename UnderlyingVocabulary,
                                    return compressionWrapper_.decompressInto(
                                        word, decoderIdx, span, scratch);
                                  });
-          return IndexAndWord{index, std::string{decompressed}};
+          return IndexAndWord{index, decompressed};
         });
   }
 
