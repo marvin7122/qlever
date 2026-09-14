@@ -700,6 +700,36 @@ TEST(ServerTest, handleHttpRequest) {
 }
 
 // _____________________________________________________________________________
+// WP1 wiring slice: the routing decision is live, but the V2 arm falls back
+// to the V1 implementation, so every selection channel must return
+// byte-identical results.
+TEST(ServerTest, exportEngineV1V2Parity) {
+  auto qec = getQec(TestIndexConfig{"<a> <b> <c> . <d> <e> <f> ."});
+  auto server = makeServerForTesting(qec->getIndex().getOnDiskBase());
+  auto makeCsvQuery = [](std::string_view target) {
+    return makeRequest(http::verb::post, target,
+                       {{http::field::content_type, "application/sparql-query"},
+                        {http::field::accept, "text/csv"}},
+                       "SELECT * WHERE { ?s ?p ?o }");
+  };
+  auto runToString = [&server](auto request) {
+    auto response = server.process(request);
+    EXPECT_THAT(response, StatusIs(http::status::ok));
+    return responseBodyToString(std::move(response.body()));
+  };
+  const std::string baseline = runToString(makeCsvQuery("/"));
+  EXPECT_THAT(runToString(makeCsvQuery("/?export-engine=v1")),
+              testing::StrEq(baseline));
+  EXPECT_THAT(runToString(makeCsvQuery("/?export-engine=v2")),
+              testing::StrEq(baseline));
+  EXPECT_THAT(runToString(makeCsvQuery("/?fast-export=true")),
+              testing::StrEq(baseline));
+  auto headerRequest = makeCsvQuery("/");
+  headerRequest.set("X-QLever-Export-Engine", "v2");
+  EXPECT_THAT(runToString(std::move(headerRequest)), testing::StrEq(baseline));
+}
+
+// _____________________________________________________________________________
 TEST(ServerTest, makeWebSocketSessionSupplier) {
   Server server{4511, 1, "accessToken", getDefaultConfig()};
   boost::asio::any_io_executor ioExecutor;
