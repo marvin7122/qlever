@@ -30,12 +30,10 @@
 #include "util/Exception.h"
 #include "util/Log.h"
 #include "util/TypeTraits.h"
-#include <utility>
 
 namespace detail {
-// Return a decoder, that can be used to decompress strings that have
-// been__________________________________________________________________ A
-// helper function to cast `char*` to `unsigned char*` and `const char*` to
+// _____________________________________________________________________________
+// A helper function to cast `char*` to `unsigned char*` and `const char*` to
 // `const unsigned char*` which is used below because FSST always works on
 // unsigned character types. Note that this is one of the few cases where a
 // `reinterpret_cast` is safe.
@@ -134,6 +132,7 @@ class FsstDecoder {
     return result;
   }
 
+  // Duplicate decompress(std::string_view) definition removed.
 
   // ___________________________________________________________________________
   // Allow this type to be trivially serializable,
@@ -196,7 +195,7 @@ class FsstRepeatedDecoder {
       return decoders_[0].decompressInto(str, out);
     } else {
       if (scratch.size() < out.size()) {
-        scratch.resize(FsstDecoder::maxDecompressedSize(str) / FsstDecoder::MAX_EXPANSION_FACTOR);
+        scratch.resize(out.size());
       }
       std::array<ql::span<char>, 2> buffers{out, ql::span<char>{scratch}};
       // For even `N`, write the first stage to `scratch` and the last to `out`.
