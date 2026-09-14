@@ -256,7 +256,7 @@ class ScatterGatherChunkBuilder
   }
 
   void appendCopy(std::string_view bytes) {
-    auto guard = makeInvariantGuard();
+    [[maybe_unused]] auto guard = makeInvariantGuard();
     if (bytes.empty()) {
       return;
     }
@@ -272,7 +272,7 @@ class ScatterGatherChunkBuilder
   }
 
   void appendOwned(OwnedByteSpan bytes) {
-    auto guard = makeInvariantGuard();
+    [[maybe_unused]] auto guard = makeInvariantGuard();
     if (bytes.empty()) {
       return;
     }
@@ -282,7 +282,7 @@ class ScatterGatherChunkBuilder
   }
 
   [[nodiscard]] ScatterGatherChunk finalize() && {
-    auto guard = makeInvariantGuard();
+    [[maybe_unused]] auto guard = makeInvariantGuard();
     auto copiedOwner =
         std::make_shared<const std::string>(std::move(copiedBytes_));
     std::vector<ScatterGatherChunk::Segment> result;
