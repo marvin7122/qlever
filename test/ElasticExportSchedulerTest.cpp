@@ -484,7 +484,16 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   // Slot 2 should still return 100
   EXPECT_EQ(session.consumeNextResult(), 100);
 
-  // Verify lease accounting did not leak
+  // Verify lease accounting did not leak. Workers destroy their leases as
+  // they finish loop iterations, which can lag behind the coordinator
+  // consuming the final result, so wait briefly for quiescence instead of
+  // asserting an instantaneous zero.
+  const auto quiescenceDeadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (scheduler->activeHelperCount() != 0u &&
+         std::chrono::steady_clock::now() < quiescenceDeadline) {
+    std::this_thread::yield();
+  }
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
 }
 
