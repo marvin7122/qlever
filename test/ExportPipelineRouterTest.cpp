@@ -41,7 +41,7 @@ TEST(ExportPipelineRouterTest, UrlParamFastExportTruthySelectsV2) {
   std::vector<std::string> truthyValues = {"1",   "true", "TRUE",
                                            "yes", "YES",  "on"};
   for (const auto& val : truthyValues) {
-    ParamValueMap params;
+    ExportPipelineRouter::ParamValueMap params;
     params["fast-export"] = {val};
     auto mode = ExportPipelineRouter::selectEngine(query, params);
     EXPECT_EQ(mode, ExportEngineMode::FastStreamingV2)
@@ -55,7 +55,7 @@ TEST(ExportPipelineRouterTest, UrlParamFastExportFalsySelectsV1) {
   std::vector<std::string> falsyValues = {"0",  "false", "FALSE",
                                           "no", "NO",    "off"};
   for (const auto& val : falsyValues) {
-    ParamValueMap params;
+    ExportPipelineRouter::ParamValueMap params;
     params["fast-export"] = {val};
     auto mode = ExportPipelineRouter::selectEngine(
         query, params, std::nullopt, ExportEngineMode::FastStreamingV2);
@@ -133,7 +133,7 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
 
   // 1. Fast path selected
   {
-    ParamValueMap params;
+    ExportPipelineRouter::ParamValueMap params;
     params["fast-export"] = {"1"};
     std::string desc =
         ExportPipelineRouter::describeDecision(selectQuery, params);
@@ -143,7 +143,7 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
 
   // 2. Ineligible query fallback
   {
-    ParamValueMap params;
+    ExportPipelineRouter::ParamValueMap params;
     params["fast-export"] = {"1"};
     std::string desc = ExportPipelineRouter::describeDecision(askQuery, params);
     EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
@@ -152,7 +152,7 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
 
   // 3. Explicit V1 override
   {
-    ParamValueMap params;
+    ExportPipelineRouter::ParamValueMap params;
     params["fast-export"] = {"0"};
     std::string desc = ExportPipelineRouter::describeDecision(
         selectQuery, params, std::nullopt, ExportEngineMode::FastStreamingV2);
@@ -162,7 +162,7 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
 
   // 4. Default standard relational pipeline
   {
-    ParamValueMap params;
+    ExportPipelineRouter::ParamValueMap params;
     std::string desc =
         ExportPipelineRouter::describeDecision(selectQuery, params);
     EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
