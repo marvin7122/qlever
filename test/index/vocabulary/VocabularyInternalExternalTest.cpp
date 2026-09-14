@@ -147,7 +147,7 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
 }
 
 // _____________________________________________________________________________
-// Verify that `VocabBatchLookupResult` string_views remain valid after the
+// Verify that `VocabBatchLookupResult` string views remain valid after the
 // `VocabularyInternalExternal` is closed.
 TEST(VocabularyInternalExternal, LookupBatchResultOutlivesClose) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
