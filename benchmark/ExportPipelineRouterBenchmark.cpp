@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <cctype>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -40,7 +41,6 @@ int main(int argc, char** argv) {
       SparqlParser::parseQuery(nullptr, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
   auto constructQuery = SparqlParser::parseQuery(
       nullptr, "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
-  auto askQuery = SparqlParser::parseQuery(nullptr, "ASK WHERE { ?s ?p ?o }");
 
   ParamValueMap fastParams;
   fastParams["fast-export"] = {"1"};
