@@ -409,6 +409,8 @@ addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpr
 
 addLinkAndDiscoverTest(ExceptionTest)
 
+addLinkAndDiscoverTestNoLibs(InvariantsTest)
+
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
 addLinkAndDiscoverTest(NowDatetimeExpressionTest index)
@@ -600,3 +602,14 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+# The enabled/disabled variants require opposite values of
+# `QLEVER_ENABLE_EXPORT_V2` in the same header, which a single test binary
+# cannot provide (all sources share one set of definitions). Skip both when
+# all tests are linked into `QLeverAllUnitTestsMain`.
+if (NOT SINGLE_TEST_BINARY)
+  addLinkAndDiscoverTest(AsyncChunkPipelineTest)
+  target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+
+  addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+endif ()
