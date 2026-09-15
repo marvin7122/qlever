@@ -28,7 +28,12 @@
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
 #include "engine/export_v2/ElasticExportScheduler.h"
-#if defined(QLEVER_ENABLE_EXPORT_V2)
+// `ScatterGatherHttpBody.h` defines coroutine bodies over
+// `cppcoro::generator`, which does not exist in
+// `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`), mirroring
+// the `Server.cpp` V2 guards.
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
 #include "engine/export_v2/ScatterGatherHttpBody.h"
 #endif
 #include "index/IdTableUtils.h"
@@ -174,7 +179,8 @@ class Server {
       response_ = std::move(response);
       co_return;
     }
-#if defined(QLEVER_ENABLE_EXPORT_V2)
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
     // Overload resolution dispatches on the body type: scatter-gather
     // (export-send=iovec) responses land in their own slot because
     // `ResponseT` cannot hold them.
@@ -187,7 +193,8 @@ class Server {
 #endif
 
     ResponseT response_;
-#if defined(QLEVER_ENABLE_EXPORT_V2)
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
     // Scatter-gather (export-send=iovec) responses use a different body
     // type that `ResponseT` cannot hold; capture them separately so the
     // iovec path stays testable through this seam.
