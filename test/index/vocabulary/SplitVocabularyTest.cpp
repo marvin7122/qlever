@@ -23,6 +23,7 @@
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyType.h"
+#include "index/vocabulary/VocabularyTypes.h"
 
 namespace splitVocabTestHelpers {
 
@@ -657,6 +658,36 @@ TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   wordWriter2->finish();
   ASSERT_TRUE(wordWriter2->finishWasCalled());
   wordWriter2.reset();
+}
+
+// _____________________________________________________________________________
+// Regression test: `lookupBatch(indices, builder)` through a delegating
+// vocabulary whose active underlying vocabulary has no batched leaf (here:
+// `RdfsVocabulary` over on-disk uncompressed) must populate the builder via
+// the sequential fallback. The delegating overloads finalize the builder
+// unconditionally, so returning the single-shot result without populating it
+// tripped the `finalize` precondition (`!views_.empty()`).
+TEST(Vocabulary, LookupBatchWithBuilderFallsBackSequentially) {
+  HashSet<std::string> s;
+  s.insert("a");
+  s.insert("ab");
+  s.insert("ba");
+  s.insert("car");
+
+  ad_utility::vocabulary::RdfsVocabulary vocabulary;
+  vocabulary.resetToType(
+      VocabularyType{VocabularyType::Enum::OnDiskUncompressed});
+  auto filename = "vocTestLookupBatchFallback.dat";
+  vocabulary.createFromSet(s, filename);
+  absl::Cleanup del = [&]() { deleteFile(filename); };
+
+  const std::array<size_t, 3> indices{3, 0, 2};
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(indices.size());
+  const auto result = vocabulary.lookupBatch(indices, builder);
+  ASSERT_EQ(result.size(), indices.size());
+  for (size_t k = 0; k < indices.size(); ++k) {
+    EXPECT_EQ(result[k], vocabulary[VocabIndex::make(indices[k])]);
+  }
 }
 
 }  // namespace

@@ -317,7 +317,18 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     vocabulary_.lookupBatch(indices, builder);
     return std::move(builder).finalize();
   } else {
-    return vocabulary_.lookupBatch(indices);
+    // The underlying vocabulary has no batched leaf: reuse its single-shot
+    // batch path and copy the words into the caller's builder. A selected
+    // 2-arg overload must always fill the builder because (possibly nested)
+    // callers finalize it unconditionally; returning the single-shot result
+    // directly would leave the builder empty and trip the `finalize`
+    // precondition upstream (e.g. via `PolymorphicVocabulary` nesting).
+    auto singleShot = vocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+    for (std::string_view word : singleShot) {
+      builder.appendWord(word);
+    }
+    return std::move(builder).finalize();
   }
 }
 

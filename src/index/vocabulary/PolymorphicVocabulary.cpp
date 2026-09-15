@@ -9,7 +9,10 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 
+#include <string_view>
+
 #include "engine/CallFixedSize.h"
+#include "util/Exception.h"
 
 namespace ad_utility::vocabulary {
 
@@ -68,11 +71,21 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   return std::visit(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
+        AD_CONTRACT_CHECK(!indices.empty());
         if constexpr (requires { vocab.lookupBatch(indices, builder); }) {
           vocab.lookupBatch(indices, builder);
           return std::move(builder).finalize();
         } else {
-          return vocab.lookupBatch(indices);
+          // No batched leaf for the active alternative: reuse the
+          // single-shot batch path and copy the words into the caller's
+          // builder, so the unconditional `finalize()` above (and in
+          // further outer delegations) sees a populated builder.
+          auto singleShot = vocab.lookupBatch(indices);
+          AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+          for (std::string_view word : singleShot) {
+            builder.appendWord(word);
+          }
+          return std::move(builder).finalize();
         }
       },
       vocab_);
