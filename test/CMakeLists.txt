@@ -621,10 +621,16 @@ addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
 # range-v3 needs -fpermissive for those translation units).
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
 addLinkAndDiscoverTest(AsyncChunkPipelineTest)
-target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+if (NOT SINGLE_TEST_BINARY)
+    target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+else ()
+    target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+endif()
 addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
 
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
 # range-v3 fails in IndexImpl / CompressedExternalIdTable).
 addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
-target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+if (NOT SINGLE_TEST_BINARY)
+    target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+endif()
