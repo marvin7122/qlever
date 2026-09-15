@@ -17,6 +17,8 @@
 #include "util/Exception.h"
 #include "util/TypeTraits.h"
 
+namespace ad_utility::vocabulary {
+
 using std::string;
 
 // ____________________________________________________________________________
@@ -308,6 +310,30 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
 
 // _____________________________________________________________________________
 template <typename S, typename C, typename I>
+VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
+    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
+    vocabulary_.lookupBatch(indices, builder);
+    return std::move(builder).finalize();
+  } else {
+    // The underlying vocabulary has no batched leaf: reuse its single-shot
+    // batch path and copy the words into the caller's builder. A selected
+    // 2-arg overload must always fill the builder because (possibly nested)
+    // callers finalize it unconditionally; returning the single-shot result
+    // directly would leave the builder empty and trip the `finalize`
+    // precondition upstream (e.g. via `PolymorphicVocabulary` nesting).
+    auto singleShot = vocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+    for (std::string_view word : singleShot) {
+      builder.appendWord(word);
+    }
+    return std::move(builder).finalize();
+  }
+}
+
+// _____________________________________________________________________________
+template <typename S, typename C, typename I>
 VocabLookupOutput Vocabulary<S, C, I>::lookupBatchesStreamed(
     VocabLookupInput input) const {
   return vocabulary_.lookupBatchesStreamed(std::move(input));
@@ -325,3 +351,4 @@ template void RdfsVocabulary::initializeExternalizePrefixes<nlohmann::json>(
     const nlohmann::json& prefixes);
 template void RdfsVocabulary::initializeExternalizePrefixes<
     std::vector<std::string>>(const std::vector<std::string>& prefixes);
+}  // namespace ad_utility::vocabulary

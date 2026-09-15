@@ -8,6 +8,8 @@
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
 
+namespace ad_utility::vocabulary {
+
 /// Vocabulary with multi-level `UnicodeComparator` that allows comparison
 /// according to different Levels. Groups of words that are adjacent on a
 /// stricter level can be all equal on a weaker level. The
@@ -37,6 +39,18 @@ class UnicodeVocabulary {
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     return _underlyingVocabulary.lookupBatch(indices);
+  }
+
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder& builder) const {
+    if constexpr (requires {
+                    _underlyingVocabulary.lookupBatch(indices, builder);
+                  }) {
+      _underlyingVocabulary.lookupBatch(indices, builder);
+      return std::move(builder).finalize();
+    } else {
+      return _underlyingVocabulary.lookupBatch(indices);
+    }
   }
 
   //____________________________________________________________________________
@@ -143,5 +157,7 @@ class UnicodeVocabulary {
     // Note: _comparator is not serialized as it's stateless or reconstructed.
   }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H

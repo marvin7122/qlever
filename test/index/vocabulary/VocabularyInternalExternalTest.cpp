@@ -1,8 +1,18 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gtest/gtest.h>
+
+#include <array>
+#include <string>
+#include <vector>
 
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
@@ -33,10 +43,11 @@ class VocabularyCreator {
 
   // Create and return a `VocabularyInternalExternal` from the given words.
   auto createVocabularyImpl(const std::vector<std::string>& words) {
-    VocabularyInternalExternal vocabulary;
+    ad_utility::vocabulary::VocabularyInternalExternal vocabulary;
     {
       auto writerPtr =
-          VocabularyInternalExternal::makeDiskWriterPtr(vocabFilename_);
+          ad_utility::vocabulary::VocabularyInternalExternal::makeDiskWriterPtr(
+              vocabFilename_);
       auto& writer = *writerPtr;
       for (const auto& [i, word] : ::ranges::views::enumerate(words)) {
         EXPECT_EQ(writer(word, i % 2 == 0), static_cast<uint64_t>(i));
@@ -58,7 +69,7 @@ class VocabularyCreator {
   // destroyed and re-initialized from disk before it is returned.
   auto createVocabularyFromDiskImpl(const std::vector<std::string>& words) {
     { createVocabularyImpl(words); }
-    VocabularyInternalExternal vocabulary;
+    ad_utility::vocabulary::VocabularyInternalExternal vocabulary;
     vocabulary.open(vocabFilename_);
     return vocabulary;
   }
@@ -111,6 +122,68 @@ TEST(VocabularyInternalExternal, AccessOperator) {
       createVocabularyFromDisk("AccessOperator2"));
 }
 
+// _____________________________________________________________________________
+TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  // The batch result must preserve request order across all-internal,
+  // all-external, and mixed-source requests, including duplicates.
+  auto vocab = createVocabulary("LookupBatch")(words);
+  const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
+  auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
+                               ::testing::HasSubstr("!indices.empty()"));
+
+  // Use the test writer's RAM cache for even IDs and read odd IDs from disk.
+  EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
+  // Even writer indices are RAM-cached; odd indices are disk-only.
+  const std::array<size_t, 3> ramOnly{0, 2, 4};
+  assertLookupResultMatchesVocabularyAtIndices(
+      vocab, vocab.lookupBatch(ramOnly), ramOnly);
+  const std::array<size_t, 3> diskOnly{1, 3, 1};
+  assertLookupResultMatchesVocabularyAtIndices(
+      vocab, vocab.lookupBatch(diskOnly), diskOnly);
+
+  // Keep a mixed result alive while another lookup is performed, exercising
+  // ownership of the backing storage returned by both vocabulary sources.
+  auto retainedMixedResult = vocab.lookupBatch(indices);
+  auto subsequentResult = vocab.lookupBatch(ramOnly);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, retainedMixedResult,
+                                               indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, subsequentResult,
+                                               ramOnly);
+}
+
+// _____________________________________________________________________________
+// Verify that `VocabBatchLookupResult` string_views remain valid after the
+// `VocabularyInternalExternal` is closed.
+TEST(VocabularyInternalExternal, LookupBatchResultOutlivesClose) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
+  auto vocab = createVocabulary("LookupBatchOutlivesClose")(words);
+  const std::array<size_t, 4> indices{0, 1, 2, 3};
+  auto result = vocab.lookupBatch(indices);
+  vocab.close();
+
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("alpha", "beta", "gamma", "delta"));
+}
+
+// _____________________________________________________________________________
+// Batch lookup results from `VocabularyInternalExternal` (both internal RAM
+// words and external disk words) must retain valid storage after `close()`.
+TEST(VocabularyInternalExternal, LookupBatchOutlivesClose) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
+  auto vocab = createVocabulary("LookupBatchOutlivesClose")(words);
+  const std::array<size_t, 4> indices{0, 1, 2, 3};
+  auto result = vocab.lookupBatch(indices);
+  vocab.close();
+
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("alpha", "beta", "gamma", "delta"));
+}
+
+// _____________________________________________________________________________
 TEST(VocabularyInternalExternal, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary("EmptyVocabulary"));
 }
