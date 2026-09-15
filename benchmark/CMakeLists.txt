@@ -41,7 +41,9 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
 
-    add_executable(SimdEscapeClassifierBenchmark
-        SimdEscapeClassifierBenchmark.cpp)
+    # Standalone (own main): do not use addAndLinkBenchmark, which would add a
+    # second main via benchmarkWithMain.
+    add_executable(SimdEscapeClassifierBenchmark SimdEscapeClassifierBenchmark.cpp)
+    qlever_target_link_libraries(SimdEscapeClassifierBenchmark engine sparqlParser qlever_util)
 
 endif()
