@@ -49,6 +49,11 @@ class CompactVectorOfStrings {
 
   using Writer = detail::CompactStringVectorWriter<data_type>;
 
+  // Read-only views of the data and offset storage, regardless of whether
+  // the storage currently owns its elements or is a non-owning view.
+  using DataView = ql::span<const data_type>;
+  using OffsetView = ql::span<const offset_type>;
+
  private:
   // The two kinds of storage for the data and the offsets, respectively: an
   // owned vector (after `build()`, or after reading from a regular,
@@ -56,8 +61,6 @@ class CompactVectorOfStrings {
   // memory (after `fromZeroCopyDeserializer`).
   using DataStorage = std::vector<data_type>;
   using OffsetStorage = std::vector<offset_type>;
-  using DataView = ql::span<const data_type>;
-  using OffsetView = ql::span<const offset_type>;
 
   std::variant<DataStorage, DataView> data_;
   std::variant<OffsetStorage, OffsetView> offsets_;
@@ -129,6 +132,21 @@ class CompactVectorOfStrings {
 
   bool ready() const { return !offsetsSpan().empty(); }
 
+  // Return a read-only view of the data, regardless of whether the storage
+  // currently owns its elements or is a non-owning view.
+  DataView dataSpan() const {
+    return std::visit(
+        [](const auto& x) -> DataView { return {x.data(), x.size()}; }, data_);
+  }
+
+  // Return a read-only view of the offsets, regardless of whether the
+  // storage currently owns its elements or is a non-owning view.
+  OffsetView offsetsSpan() const {
+    return std::visit(
+        [](const auto& x) -> OffsetView { return {x.data(), x.size()}; },
+        offsets_);
+  }
+
   /**
    * @brief operator []
    * @param i
@@ -181,21 +199,6 @@ class CompactVectorOfStrings {
   }
 
  private:
-  // Return a read-only view of the data, regardless of whether the storage
-  // currently owns its elements or is a non-owning view.
-  DataView dataSpan() const {
-    return std::visit(
-        [](const auto& x) -> DataView { return {x.data(), x.size()}; }, data_);
-  }
-
-  // Return a read-only view of the offsets, regardless of whether the
-  // storage currently owns its elements or is a non-owning view.
-  OffsetView offsetsSpan() const {
-    return std::visit(
-        [](const auto& x) -> OffsetView { return {x.data(), x.size()}; },
-        offsets_);
-  }
-
   // Access the owned vector alternatives. Throws (via `std::get`) if this
   // object is currently a non-owning view, which is a programming error (a
   // zero-copy view is read-only, so `build()` must not be called on it).
