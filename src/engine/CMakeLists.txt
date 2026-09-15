@@ -21,7 +21,13 @@ add_library(engine
         PermutationSelector.cpp ConstructTripleGenerator.cpp
         ConstructTemplatePreprocessor.cpp ConstructTripleInstantiator.cpp ConstructBatchEvaluator.cpp
         ConstructDeduplicator.cpp MaterializedViewsQueryAnalysis.cpp UpdateMetadata.cpp ExternalValues.cpp)
-target_sources(engine PRIVATE export_v2/ElasticExportScheduler.cpp export_v2/ExportEngineV2.cpp)
+target_sources(engine PRIVATE export_v2/ElasticExportScheduler.cpp)
+if (NOT REDUCED_FEATURE_SET_FOR_CPP17)
+  # `ExportEngineV2.cpp` uses C++20 coroutines. Reduced/C++17 builds serve
+  # Legacy V1 instead (see the `Server.cpp` guards); the scheduler itself is
+  # C++17-clean and stays compiled.
+  target_sources(engine PRIVATE export_v2/ExportEngineV2.cpp)
+endif ()
 add_subdirectory(spatialJoinAlgorithms)
 
 # `Boost::program_options` is not used inside `engine` itself, but the
