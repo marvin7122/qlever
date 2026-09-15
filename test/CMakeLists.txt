@@ -272,7 +272,10 @@ addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
 
 addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
 
-if (QLEVER_ENABLE_EXPORT_V2)
+# `ExportMorselPlanner.h` names `cppcoro::generator`, which does not exist in
+# `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`). The option
+# stays ON there, so the exclusion must name the reduced set explicitly.
+if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
     addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
 endif ()
 
@@ -280,7 +283,11 @@ endif ()
 # range-v3 needs -fpermissive for those translation units).
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
 
-if (QLEVER_ENABLE_EXPORT_V2)
+# `ScatterGatherHttpBody.h` defines coroutine bodies over
+# `cppcoro::generator`, which does not exist in
+# `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`). The option
+# stays ON there, so the exclusion must name the reduced set explicitly.
+if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
     addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
 endif ()
 
