@@ -157,6 +157,11 @@ if (EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
 endif()
 
 option(QLEVER_ENABLE_EXPORT_V2 "Enable Fast-Path Streaming Export Engine V2" ON)
+if (REDUCED_FEATURE_SET_FOR_CPP17)
+  # Export engine V2 requires C++20 coroutines (`cppcoro::generator`), which
+  # are unavailable in the reduced feature set.
+  set(QLEVER_ENABLE_EXPORT_V2 OFF)
+endif()
 if (QLEVER_ENABLE_EXPORT_V2)
     add_compile_definitions(QLEVER_ENABLE_EXPORT_V2)
 endif()
