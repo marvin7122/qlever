@@ -1,0 +1,194 @@
+// Copyright 2026, The QLever Authors, in particular:
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of this project.
+
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+#include "index/HyperLogLogSketch.h"
+
+namespace ql::engine::cbo {
+
+using ql::index::stats::HyperLogLogSketch;
+
+// _____________________________________________________________________________
+// Cardinality Estimation Strategy Model
+enum class EstimationModel {
+  CONTAINMENT_MIN,         // Model A: Min-containment heuristic
+  HLL_INCLUSION_EXCLUSION  // Model B: HLL Inclusion-Exclusion Overlap
+};
+
+// _____________________________________________________________________________
+// Structured outcome of join size estimation
+struct JoinEstimate {
+  size_t estimatedRows = 0;
+  uint64_t distinctJoinKeys = 0;
+  EstimationModel model = EstimationModel::HLL_INCLUSION_EXCLUSION;
+};
+
+// _____________________________________________________________________________
+// Cost-Based Optimizer Join Cardinality Estimator
+// Supports Model A (Containment Min) and Model B (HLL Inclusion-Exclusion)
+// with SIMD-friendly HLL register union and overlap estimation.
+template <size_t Precision = 10>
+class JoinCardinalityEstimator {
+ public:
+  // Noise floor for the inclusion-exclusion overlap: a 2.5-sigma multiple of
+  // the HLL standard error (1.04 / sqrt(m) with m = NUM_REGISTERS), scaled by
+  // the smaller cardinality. Measured overlaps at or below this floor are
+  // indistinguishable from estimation noise (e.g. disjoint key sets).
+  [[nodiscard]] static double overlapNoiseFloor(uint64_t cardA,
+                                                uint64_t cardB) noexcept {
+    constexpr double kSigma = 2.5;
+    constexpr double hllErrorConstant = 1.04;
+    return kSigma * hllErrorConstant /
+           std::sqrt(static_cast<double>(
+               HyperLogLogSketch<Precision>::NUM_REGISTERS)) *
+           static_cast<double>(std::min(cardA, cardB));
+  }
+
+  // Estimate join cardinality using explicit rows and average multiplicities.
+  // A non-positive multiplicity (NaN compares as non-positive) selects
+  // automatic estimation from the row count and the sketch cardinality.
+  [[nodiscard]] static size_t estimateJoinSize(
+      const HyperLogLogSketch<Precision>& sketchA, size_t rowsA, double multA,
+      const HyperLogLogSketch<Precision>& sketchB, size_t rowsB, double multB,
+      EstimationModel model =
+          EstimationModel::HLL_INCLUSION_EXCLUSION) noexcept {
+    return estimateJoin(sketchA, rowsA, multA, sketchB, rowsB, multB, model)
+        .estimatedRows;
+  }
+
+  // Overload computing multiplicities automatically from row count and sketch
+  // cardinality.
+  [[nodiscard]] static size_t estimateJoinSize(
+      const HyperLogLogSketch<Precision>& sketchA, size_t rowsA,
+      const HyperLogLogSketch<Precision>& sketchB, size_t rowsB,
+      EstimationModel model =
+          EstimationModel::HLL_INCLUSION_EXCLUSION) noexcept {
+    return estimateJoin(sketchA, rowsA, sketchB, rowsB, model).estimatedRows;
+  }
+
+  // Full estimation returning structured estimate (rows, distinct keys, model).
+  [[nodiscard]] static JoinEstimate estimateJoin(
+      const HyperLogLogSketch<Precision>& sketchA, size_t rowsA, double multA,
+      const HyperLogLogSketch<Precision>& sketchB, size_t rowsB, double multB,
+      EstimationModel model =
+          EstimationModel::HLL_INCLUSION_EXCLUSION) noexcept {
+    uint64_t cardA = sketchA.estimateCardinality();
+    uint64_t cardB = sketchB.estimateCardinality();
+
+    if (rowsA == 0 || rowsB == 0 || cardA == 0 || cardB == 0) {
+      return {0, 0, model};
+    }
+
+    // The fallback multiplicity (rows per distinct key) is at least 1.0: a
+    // smaller quotient only occurs when HLL overestimates the cardinality.
+    double effMultA = (multA > 0.0)
+                          ? multA
+                          : std::max(1.0, static_cast<double>(rowsA) /
+                                              static_cast<double>(cardA));
+    double effMultB = (multB > 0.0)
+                          ? multB
+                          : std::max(1.0, static_cast<double>(rowsB) /
+                                              static_cast<double>(cardB));
+
+    if (model == EstimationModel::CONTAINMENT_MIN) {
+      // Model A: Assumes the smaller set of keys is a complete subset of the
+      // larger set.
+      uint64_t distinctKeys = std::min(cardA, cardB);
+      uint64_t maxKeys = std::max(cardA, cardB);
+      double estRows =
+          (static_cast<double>(rowsA) * static_cast<double>(rowsB)) /
+          static_cast<double>(maxKeys);
+      size_t roundedRows =
+          std::max<size_t>(1, static_cast<size_t>(std::round(estRows)));
+      return {roundedRows, distinctKeys, model};
+    }
+
+    // Model B: Vectorized HLL register union and Inclusion-Exclusion overlap.
+    HyperLogLogSketch<Precision> unionSketch = sketchA;
+    unionSketch.merge(sketchB);
+    uint64_t cardUnion = unionSketch.estimateCardinality();
+
+    // Use unsigned arithmetic to avoid implementation-defined behavior on
+    // overflow
+    uint64_t rawOverlap = 0;
+    if (cardA + cardB >= cardUnion) {
+      rawOverlap = cardA + cardB - cardUnion;
+    }
+
+    // Filter out statistical noise variance for disjoint sets (overlap at or
+    // below the precision-scaled noise floor).
+    double noiseThreshold = overlapNoiseFloor(cardA, cardB);
+    if (static_cast<double>(rawOverlap) <= noiseThreshold) {
+      // Disjoint sets: 1 row minimum floor for non-empty tables to avoid
+      // zero-cost anomalies
+      return {1, 0, model};
+    }
+
+    uint64_t distinctOverlap = static_cast<uint64_t>(rawOverlap);
+    double estRows = static_cast<double>(distinctOverlap) * effMultA * effMultB;
+    size_t roundedRows =
+        std::max<size_t>(1, static_cast<size_t>(std::round(estRows)));
+
+    return {roundedRows, distinctOverlap, model};
+  }
+
+  // Overload for structured estimate using automatic multiplicities.
+  [[nodiscard]] static JoinEstimate estimateJoin(
+      const HyperLogLogSketch<Precision>& sketchA, size_t rowsA,
+      const HyperLogLogSketch<Precision>& sketchB, size_t rowsB,
+      EstimationModel model =
+          EstimationModel::HLL_INCLUSION_EXCLUSION) noexcept {
+    uint64_t cardA = sketchA.estimateCardinality();
+    uint64_t cardB = sketchB.estimateCardinality();
+    double multA =
+        (cardA > 0) ? (static_cast<double>(rowsA) / static_cast<double>(cardA))
+                    : 1.0;
+    double multB =
+        (cardB > 0) ? (static_cast<double>(rowsB) / static_cast<double>(cardB))
+                    : 1.0;
+    return estimateJoin(sketchA, rowsA, multA, sketchB, rowsB, multB, model);
+  }
+
+  // Compute distinct join key overlap directly.
+  [[nodiscard]] static uint64_t estimateDistinctJoinKeys(
+      const HyperLogLogSketch<Precision>& sketchA,
+      const HyperLogLogSketch<Precision>& sketchB,
+      EstimationModel model =
+          EstimationModel::HLL_INCLUSION_EXCLUSION) noexcept {
+    uint64_t cardA = sketchA.estimateCardinality();
+    uint64_t cardB = sketchB.estimateCardinality();
+
+    if (cardA == 0 || cardB == 0) {
+      return 0;
+    }
+
+    if (model == EstimationModel::CONTAINMENT_MIN) {
+      return std::min(cardA, cardB);
+    }
+
+    HyperLogLogSketch<Precision> unionSketch = sketchA;
+    unionSketch.merge(sketchB);
+    uint64_t cardUnion = unionSketch.estimateCardinality();
+
+    int64_t rawOverlap = static_cast<int64_t>(cardA) +
+                         static_cast<int64_t>(cardB) -
+                         static_cast<int64_t>(cardUnion);
+    double noiseThreshold = overlapNoiseFloor(cardA, cardB);
+    if (static_cast<double>(rawOverlap) <= noiseThreshold) {
+      return 0;
+    }
+    return static_cast<uint64_t>(rawOverlap);
+  }
+};
+
+}  // namespace ql::engine::cbo
