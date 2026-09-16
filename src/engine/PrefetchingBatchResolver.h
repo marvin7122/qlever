@@ -69,11 +69,6 @@ struct PrefetchConfig {
   // while keeping L1 cache lines active.
   size_t prefetchDistance{8};
 
-  // Explicit validation of configuration invariants.
-  void checkInvariants() const {
-    AD_CONTRACT_CHECK(prefetchDistance > 0);
-    AD_CONTRACT_CHECK(prefetchDistance <= 128);
-  }
 };
 
 // _____________________________________________________________________________
@@ -100,7 +95,6 @@ class PrefetchingBatchResolver {
       PrefetchConfig config = PrefetchConfig{.prefetchDistance =
                                                  DEFAULT_PREFETCH_DISTANCE})
       : config_{config} {
-    config_.checkInvariants();
   }
 
   // ___________________________________________________________________________

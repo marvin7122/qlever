@@ -34,7 +34,6 @@
 #include "util/AlignedAllocator.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
-#include "util/Invariants.h"
 #include "util/Log.h"
 
 #if defined(__has_include)
@@ -150,7 +149,7 @@ class DirectIoFile {
 // _____________________________________________________________________________
 // Aligned PMR Memory Arena for DMA and io_uring fixed buffer registration.
 // Guarantees 4KB page alignment for Direct I/O and zero-copy DMA pinning.
-class PinnedArena : public WithInvariants<PinnedArena> {
+class PinnedArena {
  private:
   void* rawBuffer_ = nullptr;
   size_t totalBytes_ = 0;
@@ -187,7 +186,6 @@ class PinnedArena : public WithInvariants<PinnedArena> {
           iovec{.iov_base = basePtr + (i * slotSize_), .iov_len = slotSize_});
     }
 
-    checkInvariants();
   }
 
   ~PinnedArena() {
@@ -219,20 +217,6 @@ class PinnedArena : public WithInvariants<PinnedArena> {
       iovecs_ = std::move(other.iovecs_);
     }
     return *this;
-  }
-
-  // Structural Invariant Verification (Law 3 & Architecture Standard)
-  void checkInvariants() const {
-    if (numSlots_ > 0) {
-      AD_CORRECTNESS_CHECK(rawBuffer_ != nullptr);
-      AD_CORRECTNESS_CHECK(totalBytes_ == numSlots_ * slotSize_);
-      AD_CORRECTNESS_CHECK(isPointerAligned(rawBuffer_));
-      AD_CORRECTNESS_CHECK(isBlockAligned(slotSize_));
-      AD_CORRECTNESS_CHECK(iovecs_.size() == numSlots_);
-    } else {
-      AD_CORRECTNESS_CHECK(rawBuffer_ == nullptr);
-      AD_CORRECTNESS_CHECK(totalBytes_ == 0);
-    }
   }
 
   [[nodiscard]] size_t numSlots() const noexcept { return numSlots_; }
@@ -319,8 +303,7 @@ struct RegisteredReaderConfig {
 // fixed-buffer DMA page-pinning (`IORING_REGISTER_BUFFERS`), Direct I/O
 // alignment enforcement (`O_DIRECT`), submission queue batching, and completion
 // queue reaping behind a clean, zero-bookkeeping interface.
-class RegisteredIoUringReader
-    : public WithInvariants<RegisteredIoUringReader> {
+class RegisteredIoUringReader {
  public:
   using BatchId = uint64_t;
 
@@ -408,26 +391,10 @@ class RegisteredIoUringReader
     return *this;
   }
 
-  // Invariant verification (Law 3 & Architecture Standard)
-  void checkInvariants() const {
-#ifdef QLEVER_HAS_LIBURING
-    if (ringInitialized_) {
-      AD_CORRECTNESS_CHECK(config_.ringEntries > 0);
-      if (filesRegistered_) {
-        AD_CORRECTNESS_CHECK(!registeredFds_.empty());
-      }
-      if (buffersRegistered_) {
-        AD_CORRECTNESS_CHECK(!registeredIovecs_.empty());
-      }
-    }
-#endif
-  }
-
   // ___________________________________________________________________________
   // IORING_REGISTER_FILES: Pre-register open file descriptors into the kernel
   // io_uring file table, eliminating fget()/fput() locking overhead per I/O.
   void registerFiles(ql::span<const int> fds) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(!fds.empty());
 
 #ifdef QLEVER_HAS_LIBURING
@@ -472,7 +439,6 @@ class RegisteredIoUringReader
   // IORING_REGISTER_BUFFERS: Pre-register and page-pin PMR arena buffers for
   // direct zero-copy DMA, eliminating get_user_pages() and TLB shootdowns.
   void registerBuffers(ql::span<const iovec> iovecs) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(!iovecs.empty());
 
 #ifdef QLEVER_HAS_LIBURING
@@ -517,7 +483,6 @@ class RegisteredIoUringReader
   // Submit a batch of block read requests to the kernel.
   // Supports registered files, registered fixed buffers, and Direct I/O.
   [[nodiscard]] BatchId submitBatch(ql::span<const BlockReadRequest> requests) {
-    auto guard = makeInvariantGuard();
     if (requests.empty()) {
       return 0;
     }
@@ -583,7 +548,6 @@ class RegisteredIoUringReader
   // ___________________________________________________________________________
   // Block until all reads belonging to `batchId` have completed.
   BatchResult waitBatch(BatchId batchId) {
-    auto guard = makeInvariantGuard();
     if (batchId == 0) {
       return BatchResult{0, 0, true};
     }

@@ -32,7 +32,6 @@
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________

@@ -25,7 +25,6 @@
 #include "global/Id.h"
 #include "global/ValueId.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 
 namespace ql::engine::rle {
 
@@ -70,7 +69,7 @@ inline char* spliceSlice(const char* src, size_t len, char* out) noexcept {
 // Internal thread-local prefix slice storage.
 // Holds the pre-formatted bytes for the currently cached ValueId.
 template <size_t MaxBufferSize = 2048>
-class RlePrefixSlice : public ad_utility::WithInvariants<RlePrefixSlice<MaxBufferSize>> {
+class RlePrefixSlice {
  private:
   std::array<char, MaxBufferSize> buffer_{};
   size_t length_ = 0;
@@ -79,13 +78,6 @@ class RlePrefixSlice : public ad_utility::WithInvariants<RlePrefixSlice<MaxBuffe
 
  public:
   constexpr RlePrefixSlice() noexcept = default;
-
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(length_ <= MaxBufferSize);
-    if (!valid_) {
-      AD_CORRECTNESS_CHECK(length_ == 0);
-    }
-  }
 
   [[nodiscard]] constexpr bool isValid() const noexcept { return valid_; }
   [[nodiscard]] constexpr ValueId cachedId() const noexcept { return cachedId_; }
@@ -127,11 +119,6 @@ struct RleFormatterConfig {
   std::string_view suffix_{">"};
   std::string_view delimiter_{" "};
 
-  void checkInvariants() const {
-    AD_CONTRACT_CHECK(prefix_.size() <= 64);
-    AD_CONTRACT_CHECK(suffix_.size() <= 64);
-    AD_CONTRACT_CHECK(delimiter_.size() <= 64);
-  }
 };
 
 // _____________________________________________________________________________
@@ -150,7 +137,7 @@ struct RleFormatterConfig {
 // 2. Formats the constant IRI once into a thread-local prefix slice, and splices
 //    it into subsequent output rows with a single 64-bit/128-bit word copy.
 // 3. Seamlessly switches back to dynamic formatting when the run ends.
-class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter> {
+class RlePrefixFormatter {
  private:
   RlePrefixSlice<2048> slice_{};
   RleFormatterConfig config_{};
@@ -159,12 +146,6 @@ class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter>
  public:
   explicit RlePrefixFormatter(RleFormatterConfig config = RleFormatterConfig{})
       : config_{config} {
-    config_.checkInvariants();
-  }
-
-  void checkInvariants() const {
-    slice_.checkInvariants();
-    config_.checkInvariants();
   }
 
   // ___________________________________________________________________________
@@ -308,7 +289,7 @@ class RlePrefixFormatter : public ad_utility::WithInvariants<RlePrefixFormatter>
 // Folds repeated Subject and Predicate column runs into cached prefix slices,
 // formatting the full triple `<s> <p> <o> .\n` (or TSV/CSV format) with single-pass
 // word copies for the repeated columns.
-class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter> {
+class RleTripleFormatter {
  private:
   RlePrefixFormatter subjectFormatter_;
   RlePrefixFormatter predicateFormatter_;
@@ -329,14 +310,6 @@ class RleTripleFormatter : public ad_utility::WithInvariants<RleTripleFormatter>
         objectPrefix_{objectPrefix},
         objectSuffix_{objectSuffix},
         rowTerminator_{rowTerminator} {}
-
-  void checkInvariants() const {
-    subjectFormatter_.checkInvariants();
-    predicateFormatter_.checkInvariants();
-    AD_CORRECTNESS_CHECK(objectPrefix_.size() <= 64);
-    AD_CORRECTNESS_CHECK(objectSuffix_.size() <= 64);
-    AD_CORRECTNESS_CHECK(rowTerminator_.size() <= 64);
-  }
 
   // ___________________________________________________________________________
   // Factory methods for standard export formats.

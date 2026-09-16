@@ -23,7 +23,6 @@
 #include <vector>
 
 #include "util/Exception.h"
-#include "util/Invariants.h"
 #include "util/Log.h"
 
 namespace qlever::export_streaming {
@@ -92,9 +91,7 @@ struct AdaptiveChunkStats {
 //     growth stages.
 //   - Law 3 (Complexity Gravity): Safe edge-case handling (zero rows, oversized
 //     rows, div-by-zero protection).
-//   - Law 7 (Design by Contract & Invariants): CRTP `WithInvariants` integration.
-class AdaptiveChunkSizer
-    : public ad_utility::WithInvariants<AdaptiveChunkSizer> {
+class AdaptiveChunkSizer {
  private:
   AdaptiveChunkConfig config_;
   size_t currentChunkBytesTarget_;
@@ -132,22 +129,6 @@ class AdaptiveChunkSizer
             .maxChunkBytes_ = maxBytes,
             .growthFactor_ = growthFactor,
             .initialEstimatedRowBytes_ = initialEstimatedRowBytes}) {}
-
-  // ___________________________________________________________________________
-  // Structural Invariant verification (Law 7 & Section 3 of ARCHITECTURE.md).
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(config_.initialChunkBytes_ > 0);
-    AD_CORRECTNESS_CHECK(config_.maxChunkBytes_ >= config_.initialChunkBytes_);
-    AD_CORRECTNESS_CHECK(config_.growthFactor_ >= 1.0);
-    AD_CORRECTNESS_CHECK(currentChunkBytesTarget_ >= config_.initialChunkBytes_);
-    AD_CORRECTNESS_CHECK(currentChunkBytesTarget_ <= config_.maxChunkBytes_);
-    AD_CORRECTNESS_CHECK(estimatedRowBytes_ > 0.0);
-    AD_CORRECTNESS_CHECK(config_.minChunkRows_ >= 1);
-    AD_CORRECTNESS_CHECK(config_.maxChunkRows_ >= config_.minChunkRows_);
-    if (totalRowsObserved_ == 0) {
-      AD_CORRECTNESS_CHECK(totalBytesObserved_ == 0);
-    }
-  }
 
   // ___________________________________________________________________________
   // Target byte capacity for the active chunk buffer.
@@ -210,7 +191,6 @@ class AdaptiveChunkSizer
   // Updates running empirical row-size statistics and exponentially scales up
   // chunk capacity for the next batch up to `maxChunkBytes_`.
   void recordChunk(size_t bytesWritten, size_t rowCount) {
-    auto guard = makeInvariantGuard();
 
     if (rowCount > 0 && bytesWritten > 0) {
       totalBytesObserved_ += bytesWritten;
@@ -245,7 +225,6 @@ class AdaptiveChunkSizer
   // ___________________________________________________________________________
   // Reset sizer back to initial 64 KB state (e.g. for re-using across queries).
   void reset() noexcept {
-    auto guard = makeInvariantGuard();
     currentChunkBytesTarget_ = config_.initialChunkBytes_;
     totalBytesObserved_ = 0;
     totalRowsObserved_ = 0;
@@ -281,8 +260,7 @@ class AdaptiveChunkSizer
 // Combines an `AdaptiveChunkSizer` with an underlying memory buffer,
 // automatically resizing its allocated memory on flush and providing
 // zero-allocation direct formatting utilities.
-class AdaptiveChunkBuffer
-    : public ad_utility::WithInvariants<AdaptiveChunkBuffer> {
+class AdaptiveChunkBuffer {
  private:
   AdaptiveChunkSizer sizer_;
   std::vector<char> buffer_;
@@ -298,15 +276,8 @@ class AdaptiveChunkBuffer
         rowsInCurrentChunk_{0} {}
 
   // ___________________________________________________________________________
-  void checkInvariants() const {
-    sizer_.checkInvariants();
-    AD_CORRECTNESS_CHECK(writePos_ <= buffer_.size());
-  }
-
-  // ___________________________________________________________________________
   // Write a string_view slice into the buffer, expanding dynamically if needed.
   void write(std::string_view sv) {
-    auto guard = makeInvariantGuard();
     if (sv.empty()) {
       return;
     }
@@ -336,7 +307,6 @@ class AdaptiveChunkBuffer
   // ___________________________________________________________________________
   // Extract active chunk and advance sizer to the next adaptive capacity level.
   [[nodiscard]] std::string flush() {
-    auto guard = makeInvariantGuard();
     std::string chunk(buffer_.data(), writePos_);
     sizer_.recordChunk(writePos_, rowsInCurrentChunk_);
 

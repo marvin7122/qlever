@@ -16,7 +16,6 @@
 #include <string>
 #include <vector>
 
-#include "util/Invariants.h"
 #include "util/StreamingBufferWriter.h"
 
 using ad_utility::StreamingBufferWriter;
