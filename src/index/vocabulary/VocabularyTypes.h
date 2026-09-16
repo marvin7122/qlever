@@ -93,14 +93,12 @@ class VocabBatchLookupResult {
  public:
   VocabBatchLookupResult() = default;
 
+  // The span is derived from the owner, so a non-empty span always pairs
+  // with a non-null owner by construction; no check needed.
   explicit VocabBatchLookupResult(VocabBatchOwner storage)
       : storage_{std::move(storage)},
         span_{storage_ ? storage_->viewSpan()
-                       : ql::span<const std::string_view>{}} {
-    if (!span_.empty()) {
-      AD_CONTRACT_CHECK(storage_ != nullptr);
-    }
-  }
+                       : ql::span<const std::string_view>{}} {}
 
   // Moves reset the source span, so a moved-from result is empty (rather than
   // a null owner paired with a stale view into the moved-to storage).
@@ -229,6 +227,9 @@ class ContiguousVocabBatchBuilder {
   // Note that multiple zero-sized words may share the same address (the
   // offset is not advanced for size 0); nothing is ever written through
   // those pointers, only empty views are read from them.
+  // The returned span is valid only while the builder is alive: consume it
+  // (e.g. as an io_uring write target) before `finalize()` moves the buffer
+  // into the result, and do not retain it afterwards.
   [[nodiscard]] ql::span<char*> targets() noexcept { return targets_; }
   [[nodiscard]] ql::span<char* const> targets() const noexcept {
     return targets_;
