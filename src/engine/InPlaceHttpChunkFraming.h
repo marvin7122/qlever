@@ -25,7 +25,6 @@
 #include "backports/span.h"
 #include "util/AlignedAllocator.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 
 namespace ad_utility::http {
 
@@ -102,8 +101,7 @@ struct HttpStreamSummary {
 // - Law 4: Define Errors Away & Fail-Fast Preconditions
 // - Law 5: General-purpose buffer management (owning or non-owning)
 // - Law 6: Intent-Revealing Naming
-// - Law 7: Strategic Invariant Verification (WithInvariants<Derived>)
-class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
+class InPlaceHttpChunk {
  public:
   static constexpr size_t HEADER_RESERVE_BYTES = 16;
   static constexpr size_t TAIL_RESERVE_BYTES = 2;
@@ -137,7 +135,6 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
         framedLength_{0} {
     ownedBuffer_.emplace(totalCapacity_);
     buffer_ = ownedBuffer_->data();
-    checkInvariants();
   }
 
   // ___________________________________________________________________________
@@ -155,7 +152,6 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
         framedLength_{0},
         ownedBuffer_{std::nullopt} {
     AD_CONTRACT_CHECK(destinationBuffer.size() >= TOTAL_OVERHEAD_BYTES);
-    checkInvariants();
   }
 
   // ___________________________________________________________________________
@@ -176,7 +172,6 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
     other.isFinalized_ = false;
     other.framedStart_ = nullptr;
     other.framedLength_ = 0;
-    checkInvariants();
   }
 
   InPlaceHttpChunk& operator=(InPlaceHttpChunk&& other) noexcept {
@@ -197,7 +192,6 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
       other.isFinalized_ = false;
       other.framedStart_ = nullptr;
       other.framedLength_ = 0;
-      checkInvariants();
     }
     return *this;
   }
@@ -206,30 +200,6 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
   InPlaceHttpChunk& operator=(const InPlaceHttpChunk&) = delete;
 
   ~InPlaceHttpChunk() = default;
-
-  // ___________________________________________________________________________
-  // Structural Invariant Verification (Law 3 & Architecture Standard § 3).
-  void checkInvariants() const {
-    if (totalCapacity_ == 0) {
-      AD_CORRECTNESS_CHECK(buffer_ == nullptr);
-      AD_CORRECTNESS_CHECK(maxPayloadCapacity_ == 0);
-    } else {
-      AD_CORRECTNESS_CHECK(buffer_ != nullptr);
-      AD_CORRECTNESS_CHECK(totalCapacity_ >= TOTAL_OVERHEAD_BYTES);
-      AD_CORRECTNESS_CHECK(maxPayloadCapacity_ ==
-                           totalCapacity_ - TOTAL_OVERHEAD_BYTES);
-    }
-    if (ownedBuffer_.has_value()) {
-      AD_CORRECTNESS_CHECK(buffer_ == ownedBuffer_->data());
-      AD_CORRECTNESS_CHECK(totalCapacity_ == ownedBuffer_->size());
-    }
-    if (isFinalized_) {
-      AD_CORRECTNESS_CHECK(framedStart_ >= buffer_);
-      AD_CORRECTNESS_CHECK(framedStart_ + framedLength_ <=
-                           buffer_ + totalCapacity_);
-      AD_CORRECTNESS_CHECK(lastPayloadBytes_ <= maxPayloadCapacity_);
-    }
-  }
 
   // ___________________________________________________________________________
   // Direct pointer to writable payload region (offset by HEADER_RESERVE_BYTES).
@@ -262,7 +232,6 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
   // Returns single contiguous `ql::span<const char>` ready for direct socket
   // transmission with ZERO copies.
   [[nodiscard]] ql::span<const char> finalizeChunk(size_t payloadBytes) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(payloadBytes <= maxPayloadCapacity_);
 
     char* headerEnd = buffer_ + HEADER_RESERVE_BYTES;
@@ -299,7 +268,6 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
   // ___________________________________________________________________________
   // Reset the chunk state for reuse across multiple streaming iterations.
   void reset() noexcept {
-    auto guard = makeInvariantGuard();
     isFinalized_ = false;
     lastPayloadBytes_ = 0;
     framedStart_ = nullptr;
@@ -309,7 +277,6 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
   // ___________________________________________________________________________
   // Retarget the chunk to a new caller-provided buffer span.
   void reset(ql::span<char> newBuffer) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(newBuffer.size() >= TOTAL_OVERHEAD_BYTES);
     ownedBuffer_.reset();
     buffer_ = newBuffer.data();
@@ -348,8 +315,7 @@ class InPlaceHttpChunk : public WithInvariants<InPlaceHttpChunk> {
 // High-level zero-copy streaming engine that accumulates arbitrary writes,
 // automatically frames full chunks in-place, and emits ready-to-transmit
 // contiguous `ql::span<const char>` buffers to a sink callback.
-class InPlaceHttpChunkStreamer
-    : public WithInvariants<InPlaceHttpChunkStreamer> {
+class InPlaceHttpChunkStreamer {
  public:
   using ChunkSink = std::function<void(ql::span<const char>)>;
 
@@ -376,7 +342,6 @@ class InPlaceHttpChunkStreamer
         currentPayloadBytes_(0),
         emitTerminatingChunkOnFinalize_(emitTerminatingChunkOnFinalize) {
     AD_CONTRACT_CHECK(sink_ != nullptr);
-    checkInvariants();
   }
 
   // Move-only semantics
@@ -389,16 +354,8 @@ class InPlaceHttpChunkStreamer
   ~InPlaceHttpChunkStreamer() = default;
 
   // ___________________________________________________________________________
-  // Invariant verification.
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(currentPayloadBytes_ <=
-                         chunkBuffer_.maxPayloadCapacity());
-  }
-
-  // ___________________________________________________________________________
   // Write arbitrary raw bytes into the streaming chunk buffer with auto-framing.
   void write(const void* src, size_t numBytes) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
 
     if (numBytes == 0) {
@@ -443,7 +400,6 @@ class InPlaceHttpChunkStreamer
   // ___________________________________________________________________________
   // Explicitly flush accumulated payload data as an in-place framed chunk.
   void flush() {
-    auto guard = makeInvariantGuard();
     if (currentPayloadBytes_ > 0) {
       flushCurrentChunk();
     }
