@@ -46,6 +46,12 @@ CPP_concept BulkResultForDecoder =
 template <typename T>
 CPP_requires(
     CompressionWrapper_,
+    // Semantic contract beyond the signatures below: `maxDecompressedSize(w,
+    // i) == 0` must imply that decoding `w` yields the empty word. Callers
+    // skip the decoder entirely for a zero bound (`decompressIntoSpan` and
+    // `ArenaVocabBatchBuilder::appendDecompressedWord` report `""` without
+    // invoking `decompressInto`), so a wrapper whose decoder returns 0 bytes
+    // for a non-empty input would silently drop words.
     requires(const T& t, std::string& scratch, ql::span<char> out)(
         // Return the number of decoders that are stored.
         concepts::same_as<decltype(t.numDecoders()), size_t>,

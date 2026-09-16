@@ -467,6 +467,21 @@ TEST(CompressedVocabularyWithHoles, accessOperator) {
 }
 
 // _____________________________________________________________________________
+// `lookupBatch` on a vocabulary with holes must agree with `operator[]`: same
+// words in the requested order, with the placeholder for hole indices. The
+// batch must not feed the plain-text placeholder to the decoder.
+TEST(CompressedVocabularyWithHoles, lookupBatchMatchesAccessOperator) {
+  std::string filename = gtestCurrentTestName();
+  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto vocab =
+      createVocabularyWithHoles(filename, wordsWithHoles(), indicesWithHoles());
+  // Mix contained indices, holes, duplicates, and an index past the end.
+  const std::vector<size_t> indices{0, 1, 2, 4, 5, 7, 1, 31, 32, 35};
+  const auto result = vocab.lookupBatch(ql::span<const size_t>{indices});
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+}
+
+// _____________________________________________________________________________
 TEST(CompressedVocabularyWithHoles, lowerAndUpperBound) {
   std::string filename = gtestCurrentTestName();
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
