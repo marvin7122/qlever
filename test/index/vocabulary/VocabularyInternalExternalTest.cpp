@@ -130,11 +130,13 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
   EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
 
-  // Even writer indices are RAM-cached; odd indices are disk-only.
-  const std::array<size_t, 3> ramOnly{0, 2, 4};
+  // Index 0 is always RAM-cached and odd writer indices are passed with
+  // `isExternal == false`, so indices 0, 1, and 3 are RAM-cached while 2 and
+  // 4 are disk-only. Cover both pure paths, including a duplicate.
+  const std::array<size_t, 3> ramOnly{0, 1, 3};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(ramOnly), ramOnly);
-  const std::array<size_t, 3> diskOnly{1, 3, 1};
+  const std::array<size_t, 3> diskOnly{2, 4, 2};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(diskOnly), diskOnly);
 }

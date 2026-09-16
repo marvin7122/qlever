@@ -191,15 +191,17 @@ void IoUringPolicy::drainAllReadyCqes() {
   raw.reserve(ringSize_);
   while (true) {
     std::array<io_uring_cqe*, 64> cqes{};
-    const unsigned n =
-        io_uring_peek_batch_cqe(&ring_, cqes.data(), cqes.size());
-    if (n == 0) {
+    // `io_uring_peek_batch_cqe` returns the number of ready CQEs, or a
+    // negative error code; a negative value must not become a huge unsigned
+    // loop bound.
+    const int n = io_uring_peek_batch_cqe(&ring_, cqes.data(), cqes.size());
+    if (n <= 0) {
       break;
     }
-    for (unsigned i = 0; i < n; ++i) {
+    for (int i = 0; i < n; ++i) {
       raw.push_back(RawCqe{cqes[i]->res, io_uring_cqe_get_data64(cqes[i])});
     }
-    io_uring_cq_advance(&ring_, n);
+    io_uring_cq_advance(&ring_, static_cast<unsigned>(n));
   }
   if (raw.empty()) {
     return;

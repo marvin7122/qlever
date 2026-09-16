@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstring>
 
 #include "../../util/GTestHelpers.h"
 #include "index/vocabulary/VocabularyTypes.h"
