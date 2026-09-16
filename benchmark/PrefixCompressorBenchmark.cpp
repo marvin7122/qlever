@@ -44,8 +44,7 @@ class PrefixCompressorBenchmark : public BenchmarkInterface {
     compressor_.buildCodebook(std::vector<std::string>{
         "http://www.wikidata.org/entity/",
         "http://www.wikidata.org/prop/direct/",
-        "http://www.wikidata.org/value/",
-        "http://schema.org/",
+        "http://www.wikidata.org/value/", "http://schema.org/",
         "http://www.w3.org/2000/01/rdf-schema#",
         "<http://example.org/property/"});
     constexpr std::string_view alphabet{
@@ -99,8 +98,8 @@ class PrefixCompressorBenchmark : public BenchmarkInterface {
 
     // Micro benchmark: per-word decode latency of the allocating API vs the
     // in-place API with a reused buffer.
-    auto& micro = results.addGroup(
-        "Single-word PrefixCompressor decode (5,000 words)");
+    auto& micro =
+        results.addGroup("Single-word PrefixCompressor decode (5,000 words)");
     micro.addMeasurement("decompress (allocating)", [&] {
       size_t totalBytes = 0;
       for (size_t repetition = 0; repetition < repetitions; ++repetition) {
@@ -124,8 +123,8 @@ class PrefixCompressorBenchmark : public BenchmarkInterface {
 
     // End-to-end benchmark: batch resolution of all words, either into
     // owning strings or into a single preallocated arena.
-    auto& endToEnd = results.addGroup(
-        "Batch PrefixCompressor resolution (5,000 words)");
+    auto& endToEnd =
+        results.addGroup("Batch PrefixCompressor resolution (5,000 words)");
     endToEnd.addMeasurement("batch decode into vector<string>", [&] {
       size_t totalBytes = 0;
       for (size_t repetition = 0; repetition < repetitions; ++repetition) {
@@ -146,9 +145,8 @@ class PrefixCompressorBenchmark : public BenchmarkInterface {
         for (const auto& compressed : compressed_) {
           const size_t size = compressor_.maxDecompressedSize(compressed);
           const size_t written = compressor_.decompressInto(
-              compressed,
-              ql::span<char>{arena.get() + offset,
-                             totalDecompressedSize_ - offset});
+              compressed, ql::span<char>{arena.get() + offset,
+                                         totalDecompressedSize_ - offset});
           AD_CORRECTNESS_CHECK(written == size);
           offset += written;
           totalBytes += written;

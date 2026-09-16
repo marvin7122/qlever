@@ -163,7 +163,7 @@ class PrefixCompressor {
     AD_CONTRACT_CHECK(!compressedWord.empty());
     const auto idx = prefixIndex(compressedWord);
     AD_CONTRACT_CHECK(out.size() >= decompressedSizeWithIndex(
-                                           compressedWord.size() - 1, idx));
+                                        compressedWord.size() - 1, idx));
     return decompressIntoWithIndex(compressedWord, idx, out);
   }
 

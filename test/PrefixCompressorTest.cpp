@@ -23,7 +23,7 @@ TEST(PrefixCompressor, CompressionPreservesWords) {
   p.buildCodebook(std::vector<std::string>{"alp", "alpha", "al"});
 
   std::vector<std::string> words{
-      "a",     "al",      "alp",    "alpha",
+      "a",      "al",       "alp",     "alpha",
       "alpine", "alphabet", "betabet", std::string{0, 0, 'a', 1}};
 
   for (const auto& word : words) {
@@ -118,9 +118,8 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
   // Oversized buffers are accepted; only the exact decompressed size is
   // written and reported.
   std::string oversized(p.maxDecompressedSize(compressedAlpha) + 7, 'x');
-  EXPECT_EQ(p.decompressInto(compressedAlpha,
-                             ql::span<char>{oversized.data(),
-                                            oversized.size()}),
+  EXPECT_EQ(p.decompressInto(compressedAlpha, ql::span<char>{oversized.data(),
+                                                             oversized.size()}),
             5u);
   EXPECT_EQ(std::string_view(oversized.data(), 5), "alpha");
 }
@@ -144,8 +143,8 @@ TEST(PrefixCompressor, PrefixIndexBoundaries) {
   EXPECT_EQ(PrefixCompressor::prefixIndex(byteWord(
                 MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES - 1)),
             NUM_COMPRESSION_PREFIXES - 1u);
-  EXPECT_FALSE(PrefixCompressor::prefixIndex(byteWord(
-                MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES))
+  EXPECT_FALSE(PrefixCompressor::prefixIndex(
+                   byteWord(MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES))
                    .has_value());
   EXPECT_FALSE(PrefixCompressor::prefixIndex(byteWord(0)).has_value());
 }
