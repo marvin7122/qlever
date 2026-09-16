@@ -247,7 +247,8 @@ class VocabBatchLookupEndToEndBenchmark : public BenchmarkInterface {
   BenchmarkResults runAllBenchmarks() final {
     BenchmarkResults results;
     auto& group = results.addGroup(
-        "Resolve 4,096-word batch from 50,000-word VocabularyInMemoryBinSearch");
+        "Resolve 4,096-word batch from 50,000-word "
+        "VocabularyInMemoryBinSearch");
     constexpr size_t maxRepetitions = 1'000;
     const size_t repetitions = parseEnvironmentSize(
         std::getenv("VOCAB_BATCH_E2E_INNER_REPETITIONS"), 10);

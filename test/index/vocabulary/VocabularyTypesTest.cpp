@@ -133,7 +133,8 @@ TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
 // Moves transfer ownership and leave the source empty, never a null owner
 // paired with a stale view into the moved-to storage.
 TEST(VocabBatchLookupData, MovedFromResultIsEmpty) {
-  auto result = makeStringVectorVocabBatchLookupResult({"foo", "bar"});
+  auto result = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"foo", "bar"});
   ASSERT_EQ(result.size(), 2u);
 
   auto moved = std::move(result);
@@ -141,7 +142,8 @@ TEST(VocabBatchLookupData, MovedFromResultIsEmpty) {
   EXPECT_EQ(result.size(), 0u);
   EXPECT_THAT(moved, ::testing::ElementsAre("foo", "bar"));
 
-  auto target = makeStringVectorVocabBatchLookupResult({"x"});
+  auto target =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"x"});
   target = std::move(moved);
   EXPECT_TRUE(moved.empty());
   EXPECT_THAT(target, ::testing::ElementsAre("foo", "bar"));
@@ -151,13 +153,16 @@ TEST(VocabBatchLookupData, MovedFromResultIsEmpty) {
 // Copies share ownership of the frozen storage: both the copy and the
 // original observe the same words, and both stay valid.
 TEST(VocabBatchLookupData, CopiedResultSharesStorage) {
-  auto original = makeStringVectorVocabBatchLookupResult({"foo", "bar"});
+  auto original =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+          {"foo", "bar"});
   auto copy = original;
   EXPECT_THAT(copy, ::testing::ElementsAre("foo", "bar"));
   EXPECT_THAT(original, ::testing::ElementsAre("foo", "bar"));
   EXPECT_EQ(copy[0].data(), original[0].data());
 
-  auto assigned = makeStringVectorVocabBatchLookupResult({"x"});
+  auto assigned =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"x"});
   assigned = original;
   EXPECT_THAT(assigned, ::testing::ElementsAre("foo", "bar"));
   EXPECT_EQ(assigned[1].data(), original[1].data());
@@ -167,8 +172,9 @@ TEST(VocabBatchLookupData, CopiedResultSharesStorage) {
 // An assembler for zero words can never finalize (finalization requires a
 // non-empty view list), so construction fails fast like every other factory.
 TEST(VocabBatchLookupData, MultiSourceAssemblerRejectsEmptyTotal) {
-  AD_EXPECT_THROW_WITH_MESSAGE(MultiSourceVocabBatchAssembler(0),
-                               ::testing::HasSubstr("totalExpectedWords > 0"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      ad_utility::vocabulary::MultiSourceVocabBatchAssembler(0),
+      ::testing::HasSubstr("totalExpectedWords > 0"));
 }
 
 // _____________________________________________________________________________
@@ -334,7 +340,7 @@ TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsWhenArenaExceedsBudget) {
 // with a bound above the remaining budget throws instead of growing the heap.
 TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsOnDecompressedAppend) {
   auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
-  ArenaVocabBatchBuilder builder(1, alloc);
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(1, alloc);
   EXPECT_THROW(builder.appendDecompressedWord(
                    1024, [](ql::span<char> out) { return out.size(); }),
                ad_utility::detail::AllocationExceedsLimitException);
