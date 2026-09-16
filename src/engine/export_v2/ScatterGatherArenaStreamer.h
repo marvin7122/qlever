@@ -26,7 +26,6 @@
 
 #include "backports/span.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 
 #ifndef UIO_MAXIOV
 #define UIO_MAXIOV 1024
@@ -91,8 +90,7 @@ struct ScatterGatherWriteAttempt {
 // An immutable chunk whose segments retain all referenced allocations. Raw
 // iovec pointers exist only during a writer callback and cannot escape through
 // this class's interface.
-class ScatterGatherChunk
-    : public ad_utility::WithInvariants<ScatterGatherChunk> {
+class ScatterGatherChunk {
   friend class ScatterGatherChunkBuilder;
   friend class ScatterGatherChunkTestAccess;
 
@@ -108,7 +106,6 @@ class ScatterGatherChunk
 
   explicit ScatterGatherChunk(std::vector<Segment> segments, size_t totalBytes)
       : segments_{std::move(segments)}, totalBytes_{totalBytes} {
-    checkInvariants();
   }
 
   using Writer =
@@ -179,20 +176,6 @@ class ScatterGatherChunk
  public:
   ScatterGatherChunk() = default;
 
-  void checkInvariants() const {
-    size_t total = 0;
-    for (const auto& segment : segments_) {
-      AD_CORRECTNESS_CHECK(segment.owner_ != nullptr);
-      AD_CORRECTNESS_CHECK(segment.size_ > 0);
-      AD_CORRECTNESS_CHECK(segment.offset_ <= segment.owner_->size());
-      AD_CORRECTNESS_CHECK(segment.size_ <=
-                           segment.owner_->size() - segment.offset_);
-      total += segment.size_;
-    }
-    AD_CORRECTNESS_CHECK(total == totalBytes_);
-    AD_CORRECTNESS_CHECK((totalBytes_ == 0) == segments_.empty());
-  }
-
   [[nodiscard]] size_t size() const noexcept { return totalBytes_; }
   [[nodiscard]] bool empty() const noexcept { return segments_.empty(); }
   [[nodiscard]] size_t numSegments() const noexcept { return segments_.size(); }
@@ -231,8 +214,7 @@ class ScatterGatherChunk
 };
 
 // Consuming builder that pairs each referenced byte range with its owner.
-class ScatterGatherChunkBuilder
-    : public ad_utility::WithInvariants<ScatterGatherChunkBuilder> {
+class ScatterGatherChunkBuilder {
  private:
   struct PendingSegment {
     std::shared_ptr<const std::string> owner_;
@@ -246,31 +228,11 @@ class ScatterGatherChunkBuilder
   size_t totalBytes_ = 0;
 
  public:
-  void checkInvariants() const {
-    size_t total = 0;
-    for (const auto& segment : segments_) {
-      AD_CORRECTNESS_CHECK(segment.size_ > 0);
-      if (segment.copied_) {
-        AD_CORRECTNESS_CHECK(segment.owner_ == nullptr);
-        AD_CORRECTNESS_CHECK(segment.offset_ <= copiedBytes_.size());
-        AD_CORRECTNESS_CHECK(segment.size_ <=
-                             copiedBytes_.size() - segment.offset_);
-      } else {
-        AD_CORRECTNESS_CHECK(segment.owner_ != nullptr);
-        AD_CORRECTNESS_CHECK(segment.offset_ <= segment.owner_->size());
-        AD_CORRECTNESS_CHECK(segment.size_ <=
-                             segment.owner_->size() - segment.offset_);
-      }
-      total += segment.size_;
-    }
-    AD_CORRECTNESS_CHECK(total == totalBytes_);
-  }
 
   [[nodiscard]] size_t size() const noexcept { return totalBytes_; }
   [[nodiscard]] bool empty() const noexcept { return totalBytes_ == 0; }
 
   void appendCopy(std::string_view bytes) {
-    auto guard = makeInvariantGuard();
     if (bytes.empty()) {
       return;
     }
@@ -286,7 +248,6 @@ class ScatterGatherChunkBuilder
   }
 
   void appendOwned(OwnedByteSpan bytes) {
-    auto guard = makeInvariantGuard();
     if (bytes.empty()) {
       return;
     }
@@ -297,7 +258,6 @@ class ScatterGatherChunkBuilder
 
   // Take ownership of `bytes` without copying the payload into copiedBytes_.
   void appendOwned(std::string bytes) {
-    auto guard = makeInvariantGuard();
     if (bytes.empty()) {
       return;
     }
@@ -308,7 +268,6 @@ class ScatterGatherChunkBuilder
   }
 
   [[nodiscard]] ScatterGatherChunk finalize() && {
-    auto guard = makeInvariantGuard();
     auto copiedOwner =
         std::make_shared<const std::string>(std::move(copiedBytes_));
     std::vector<ScatterGatherChunk::Segment> result;
@@ -327,7 +286,6 @@ class ScatterGatherChunkBuilder
   // Consumes the builder. Copy-only payloads (the live SELECT CSV/TSV path)
   // move `copiedBytes_` out; mixed borrowed segments fall back to concat.
   [[nodiscard]] std::string finalizeToString() && {
-    auto guard = makeInvariantGuard();
     const bool hasBorrowed = std::any_of(
         segments_.begin(), segments_.end(),
         [](const PendingSegment& segment) { return !segment.copied_; });

@@ -16,7 +16,6 @@
 #include <cstddef>
 #include <utility>
 
-#include "util/Invariants.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -28,7 +27,7 @@ namespace ad_utility {
 // page alignment: it is rounded down internally and `data()` still points at
 // exactly the requested first byte. Move-only: a moved-from instance is
 // unmapped.
-class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
+class ReadOnlyMmap {
  private:
   // Page-aligned base handed to `mmap`/`munmap`, or `nullptr` when unmapped.
   void* alignedBase_ = nullptr;
@@ -49,10 +48,8 @@ class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
         mappedBytes_{std::exchange(other.mappedBytes_, 0)},
         data_{std::exchange(other.data_, nullptr)},
         numBytes_{std::exchange(other.numBytes_, 0)} {
-    auto guard = makeInvariantGuard();
   }
   ReadOnlyMmap& operator=(ReadOnlyMmap&& other) noexcept {
-    auto guard = makeInvariantGuard();
     if (this != &other) {
       unmap();
       alignedBase_ = std::exchange(other.alignedBase_, nullptr);
@@ -65,17 +62,10 @@ class ReadOnlyMmap : public WithInvariants<ReadOnlyMmap> {
 
   ~ReadOnlyMmap() { unmap(); }
 
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK((alignedBase_ == nullptr) == (numBytes_ == 0));
-    AD_CORRECTNESS_CHECK((data_ == nullptr) == (numBytes_ == 0));
-    AD_CORRECTNESS_CHECK(mappedBytes_ >= numBytes_);
-  }
-
   // Map `numBytes` starting at `fileOffset` of `fd` read-only. A no-op
   // returning `true` when this instance is already mapped. Returns `false`
   // (leaving this instance unmapped) when the mapping cannot be established.
   [[nodiscard]] bool map(int fd, size_t numBytes, off_t fileOffset = 0) {
-    auto guard = makeInvariantGuard();
     if (isMapped()) {
       return true;
     }
