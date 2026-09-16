@@ -174,7 +174,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     uint64_t offset_;
     uint64_t nextOffset_;
 
+    // The start offset of the word in the word-data file.
     [[nodiscard]] uint64_t offset() const noexcept { return offset_; }
+    // The start offset of the word following this one (which marks the end of
+    // this word) in the word-data file.
     [[nodiscard]] uint64_t nextOffset() const noexcept { return nextOffset_; }
     // The word's size in bytes (`nextOffset_ - offset_`); the offsets must
     // be well-formed, which is checked.

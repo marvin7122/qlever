@@ -38,4 +38,8 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
 
+    addAndLinkBenchmark(VocabularyBatchLookupMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(VocabularyBatchLookupEndToEndBenchmark vocabulary)
+
 endif()

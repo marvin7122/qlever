@@ -147,12 +147,17 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
               ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
-TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
-  auto vocab = createVocabulary("LookupBatchRejectsMissingIndex")(
+TEST(VocabularyInMemoryBinSearch,
+     LookupBatchReportsPlaceholderForMissingIndex) {
+  auto vocab = createVocabulary("LookupBatchReportsPlaceholderForMissingIndex")(
       std::vector<std::string>{"alpha", "beta"});
   const std::array<size_t, 1> missingIndex{2};
 
-  EXPECT_THROW(vocab.lookupBatch(missingIndex), ad_utility::Exception);
+  // Vocabularies with holes report missing indices as placeholders instead of
+  // throwing (see `replaceOptionalByPlaceholderOnExport`).
+  EXPECT_THAT(vocab.lookupBatch(missingIndex),
+              ::testing::ElementsAre(
+                  ad_utility::vocabulary::placeholderForMissingVocabIndex(2)));
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
 }
@@ -162,7 +167,8 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsEmptyBatch) {
       std::vector<std::string>{"alpha", "beta"});
   const std::array<size_t, 0> indices{};
 
-  EXPECT_THROW(vocab.lookupBatch(indices), ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(indices),
+                               ::testing::HasSubstr("!indices.empty()"));
 }
 
 TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
