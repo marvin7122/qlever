@@ -196,8 +196,11 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   // `lookupBatch` rejects empty input, so `sizes` is non-empty here, as the
   // builder requires.
   ContiguousVocabBatchBuilder builder(sizes);
-  manager.wait(
-      manager.addBatch(file_.fd(), sizes, fileOffsets, builder.targets()));
+  // Bind the returned array: `addBatch` takes a span, and the pointers must
+  // stay alive until `wait` returns.
+  auto targets = builder.targets();
+  manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets,
+                                ql::span<char*>{targets}));
   return std::move(builder).finalize();
 }
 
