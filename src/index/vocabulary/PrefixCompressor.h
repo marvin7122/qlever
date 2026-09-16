@@ -180,8 +180,8 @@ class PrefixCompressor {
     ql::resize_and_overwrite(
         result, decompressedSizeWithIndex(compressedWord.size() - 1, idx),
         [&](char* buf, size_t count) {
-          return decompressIntoWithIndex(
-              compressedWord, idx, ql::span<char>{buf, count});
+          return decompressIntoWithIndex(compressedWord, idx,
+                                         ql::span<char>{buf, count});
         });
     return result;
   }
