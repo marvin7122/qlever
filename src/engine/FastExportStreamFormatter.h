@@ -26,7 +26,6 @@
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 #include "util/http/MediaTypes.h"
 
 namespace ql::export_formatting {
@@ -115,8 +114,7 @@ template <const std::array<bool, 256>& Table>
 // Invariant Law: Never constructs temporary std::string objects during
 // formatting. All escaping, URI quoting, and datatype suffixes are written
 // directly into the active chunk buffer.
-class FastExportStreamFormatter
-    : public ad_utility::WithInvariants<FastExportStreamFormatter> {
+class FastExportStreamFormatter {
  public:
   using ChunkSink = std::function<void(std::string_view)>;
   static constexpr size_t DEFAULT_CHUNK_SIZE = 1024 * 1024;  // 1 MB
@@ -163,13 +161,6 @@ class FastExportStreamFormatter
         sink_(nullptr),
         isStreaming_(false) {
     AD_CONTRACT_CHECK(bufferPtr_ != nullptr || bufferCapacity_ == 0);
-  }
-
-  // ___________________________________________________________________________
-  // Invariant verification required by WithInvariants<Derived>.
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(writePos_ <= bufferCapacity_);
-    AD_CORRECTNESS_CHECK(bufferPtr_ != nullptr || bufferCapacity_ == 0);
   }
 
   // ___________________________________________________________________________
@@ -405,7 +396,6 @@ class FastExportStreamFormatter
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
                    const qlever::constructExport::EvaluatedTermData& o) {
-    auto guard = makeInvariantGuard();
 
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeTerm(s, format);
@@ -446,7 +436,6 @@ class FastExportStreamFormatter
   // ___________________________________________________________________________
   // Write a tabular row for SELECT query export.
   void writeRow(ExportFormat format, ql::span<const std::string_view> cells) {
-    auto guard = makeInvariantGuard();
     const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
     for (size_t i = 0; i < cells.size(); ++i) {
       if (i > 0) {
