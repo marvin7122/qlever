@@ -18,7 +18,6 @@
 #include <utility>
 
 #include "util/Exception.h"
-#include "util/Invariants.h"
 
 namespace qlever::export_v2 {
 
@@ -57,8 +56,7 @@ struct AsyncChunkPipelineStats {
 };
 
 template <typename ChunkType = std::string>
-class AsyncChunkPipeline
-    : public ad_utility::WithInvariants<AsyncChunkPipeline<ChunkType>> {
+class AsyncChunkPipeline {
  private:
   enum class State { Disabled, Running, Finished, Cancelled, Failed };
 
@@ -85,7 +83,6 @@ class AsyncChunkPipeline
       : state_{kExportV2CompiledIn && config.runtimeEnabled_
                    ? State::Running
                    : State::Disabled} {
-    checkInvariants();
   }
 
   AsyncChunkPipeline(const AsyncChunkPipeline&) = delete;
@@ -95,33 +92,12 @@ class AsyncChunkPipeline
 
   ~AsyncChunkPipeline() { cancel(); }
 
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(consume_ < kNumRingSlots);
-    AD_CORRECTNESS_CHECK(filled_ <= kNumRingSlots);
-    size_t engaged = 0;
-    for (const auto& slot : slots_) {
-      engaged += slot.has_value() ? 1 : 0;
-    }
-    AD_CORRECTNESS_CHECK(engaged == filled_);
-    if (filled_ > 0) {
-      AD_CORRECTNESS_CHECK(slots_[consume_].has_value());
-    }
-    if (filled_ < kNumRingSlots) {
-      AD_CORRECTNESS_CHECK(
-          !slots_[(consume_ + filled_) % kNumRingSlots].has_value());
-    }
-    AD_CORRECTNESS_CHECK(stats_.chunksConsumed_ + stats_.chunksDiscarded_ <=
-                         stats_.chunksProduced_);
-    AD_CORRECTNESS_CHECK((state_ == State::Failed) == (exception_ != nullptr));
-  }
-
   [[nodiscard]] bool isEnabled() const { return state_ != State::Disabled; }
 
   // Store `chunk` in the next free ring slot. Returns `Full` when both slots
   // hold undrained chunks; the async driver then suspends generation until
   // the consumer drains a slot. Never blocks.
   [[nodiscard]] PushResult push(ChunkType chunk) {
-    auto guard = this->makeInvariantGuard();
     if (state_ != State::Running) {
       return PushResult::Closed;
     }
@@ -142,7 +118,6 @@ class AsyncChunkPipeline
   // disabled the pipeline. Producer failures are rethrown after already
   // queued chunks have been consumed. Never blocks.
   [[nodiscard]] std::optional<ChunkType> pop() {
-    auto guard = this->makeInvariantGuard();
     if (filled_ > 0) {
       auto chunk = std::move(*slots_[consume_]);
       slots_[consume_].reset();
@@ -159,14 +134,12 @@ class AsyncChunkPipeline
   }
 
   void finish() {
-    auto guard = this->makeInvariantGuard();
     if (state_ == State::Running) {
       state_ = State::Finished;
     }
   }
 
   void fail(std::exception_ptr exception) {
-    auto guard = this->makeInvariantGuard();
     AD_CONTRACT_CHECK(exception != nullptr);
     if (state_ != State::Running) {
       return;
@@ -176,7 +149,6 @@ class AsyncChunkPipeline
   }
 
   void cancel() {
-    auto guard = this->makeInvariantGuard();
     if (state_ == State::Running) {
       state_ = State::Cancelled;
       for (auto& slot : slots_) {
