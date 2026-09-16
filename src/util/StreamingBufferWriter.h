@@ -40,7 +40,7 @@ namespace ad_utility {
 //
 // Conforms to the Software Architecture Standard (~/ARCHITECTURE.md):
 // - Deep Module: Hides vector intrinsics, alignment math, and memory barriers.
-// - Design by Contract: Enforces preconditions (`AD_CONTRACT_CHECK`) and
+// - Design by Contract: Enforces preconditions (`AD_CONTRACT_CHECK`).
 class StreamingBufferWriter {
  public:
   static constexpr size_t Alignment = 64;
