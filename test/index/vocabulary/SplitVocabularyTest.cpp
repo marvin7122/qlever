@@ -642,6 +642,17 @@ TEST(VocabularyTypes, MarkerBatchLookupsDoubleReleaseThrows) {
 }
 
 // _____________________________________________________________________________
+TEST(VocabularyTypes, MarkerBatchLookupsReleaseUnsetThrows) {
+  // Releasing a marker slot that was never assigned must throw like a double
+  // release: the slot holds no lookup result.
+  ad_utility::vocabulary::MarkerBatchLookups<2> lookups;
+  lookups[0] =
+      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult({"a"});
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      lookups.release(1), ::testing::HasSubstr("results_[marker].has_value()"));
+}
+
+// _____________________________________________________________________________
 TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   // Create a `SplitVocabulary::WordWriter` and destruct it without a call to
   // `finish()`.
