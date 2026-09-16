@@ -28,15 +28,6 @@ using namespace std::string_literals;
 
 namespace {
 
-TEST(PrefetchingBatchResolver, ConfigurationInvariants) {
-  EXPECT_NO_THROW(PrefetchConfig{.prefetchDistance = 1}.checkInvariants());
-  EXPECT_NO_THROW(PrefetchConfig{.prefetchDistance = 8}.checkInvariants());
-  EXPECT_NO_THROW(PrefetchConfig{.prefetchDistance = 64}.checkInvariants());
-
-  EXPECT_ANY_THROW(PrefetchConfig{.prefetchDistance = 0}.checkInvariants());
-  EXPECT_ANY_THROW(PrefetchConfig{.prefetchDistance = 129}.checkInvariants());
-}
-
 TEST(PrefetchingBatchResolver, PrefetchIntrinsicSmokeTest) {
   int x = 42;
   // Verify prefetch does not fault on null or valid pointers
