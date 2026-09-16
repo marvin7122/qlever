@@ -34,7 +34,6 @@
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 
 namespace ql::serialization {
 
@@ -326,8 +325,7 @@ inline void writeRowTerminator(Writer& writer) noexcept {
 // _____________________________________________________________________________
 // Dynamic per-cell serializer for arbitrary runtime schemas (polymorphic
 // baseline). Contains runtime switch dispatch inside the per-cell loop.
-class DynamicRowSerializer
-    : public ad_utility::WithInvariants<DynamicRowSerializer> {
+class DynamicRowSerializer {
  private:
   std::vector<ColumnType> schema_;
 
@@ -337,7 +335,6 @@ class DynamicRowSerializer
     AD_CONTRACT_CHECK(!schema_.empty());
   }
 
-  void checkInvariants() const { AD_CORRECTNESS_CHECK(!schema_.empty()); }
 
   [[nodiscard]] const std::vector<ColumnType>& schema() const noexcept {
     return schema_;

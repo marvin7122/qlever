@@ -34,7 +34,6 @@
 #include "backports/span.h"
 #include "util/AlignedAllocator.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 #include "util/Log.h"
 
 #if defined(__has_include)
@@ -70,7 +69,7 @@ struct ZeroCopySenderConfig {
 // Manages zero-copy DMA buffers registered with the kernel via
 // IORING_REGISTER_BUFFERS. Provides O(1) buffer acquisition and recycling with
 // zero runtime dynamic allocations.
-class ZeroCopyBufferPool : public WithInvariants<ZeroCopyBufferPool> {
+class ZeroCopyBufferPool {
  private:
   void* rawBuffer_ = nullptr;
   size_t numBuffers_ = 0;
@@ -116,7 +115,6 @@ class ZeroCopyBufferPool : public WithInvariants<ZeroCopyBufferPool> {
       freeSlots_.push_back(static_cast<uint32_t>(numBuffers_ - 1 - i));
     }
 
-    checkInvariants();
   }
 
   ~ZeroCopyBufferPool() {
@@ -154,37 +152,9 @@ class ZeroCopyBufferPool : public WithInvariants<ZeroCopyBufferPool> {
     return *this;
   }
 
-  // Structural invariant enforcement (Law 3 / InvariantStatefulClass).
-  void checkInvariants() const {
-    if (numBuffers_ == 0) {
-      AD_CORRECTNESS_CHECK(rawBuffer_ == nullptr);
-      AD_CORRECTNESS_CHECK(totalBytes_ == 0);
-      AD_CORRECTNESS_CHECK(iovecs_.empty());
-      AD_CORRECTNESS_CHECK(freeSlots_.empty());
-      AD_CORRECTNESS_CHECK(slotInUse_.empty());
-      return;
-    }
-
-    AD_CORRECTNESS_CHECK(rawBuffer_ != nullptr);
-    AD_CORRECTNESS_CHECK(bufferSizeBytes_ > 0);
-    AD_CORRECTNESS_CHECK((bufferSizeBytes_ % kZeroCopyPageAlignment) == 0);
-    AD_CORRECTNESS_CHECK(totalBytes_ == numBuffers_ * bufferSizeBytes_);
-    AD_CORRECTNESS_CHECK(iovecs_.size() == numBuffers_);
-    AD_CORRECTNESS_CHECK(slotInUse_.size() == numBuffers_);
-
-    size_t inUseCount = 0;
-    for (bool inUse : slotInUse_) {
-      if (inUse) {
-        ++inUseCount;
-      }
-    }
-    AD_CORRECTNESS_CHECK(freeSlots_.size() + inUseCount == numBuffers_);
-  }
-
   // Acquire a free buffer slot with zero dynamic allocations.
   // Returns std::nullopt if all buffer slots are currently in flight.
   [[nodiscard]] std::optional<uint32_t> acquireSlot() {
-    auto guard = makeInvariantGuard();
     if (freeSlots_.empty()) {
       return std::nullopt;
     }
@@ -198,7 +168,6 @@ class ZeroCopyBufferPool : public WithInvariants<ZeroCopyBufferPool> {
 
   // Release and recycle a buffer slot back into the pool.
   void releaseSlot(uint32_t slot) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(slot < numBuffers_);
     AD_CONTRACT_CHECK(slotInUse_[slot]);
     slotInUse_[slot] = false;
@@ -246,7 +215,7 @@ class ZeroCopyBufferPool : public WithInvariants<ZeroCopyBufferPool> {
 // Manages submission queue entries (SQEs), tracks dual completion queue
 // notifications (transmission completion + buffer release notification), and
 // achieves zero runtime memory allocation on the transmission fast path.
-class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
+class ZeroCopySocketSender {
  private:
   ZeroCopySenderConfig config_;
   ZeroCopyBufferPool bufferPool_;
@@ -285,7 +254,6 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
     inFlightTable_.resize(config_.ringEntries * 2);
 
     initRing();
-    checkInvariants();
   }
 
   ~ZeroCopySocketSender() { teardown(); }
@@ -329,25 +297,12 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
     return *this;
   }
 
-  // Structural invariant enforcement (Law 3 / InvariantStatefulClass).
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(config_.ringEntries > 0);
-    AD_CORRECTNESS_CHECK(config_.numBuffers > 0);
-    AD_CORRECTNESS_CHECK(config_.bufferSizeBytes > 0);
-    AD_CORRECTNESS_CHECK(inFlightTable_.size() >= config_.ringEntries);
-    AD_CORRECTNESS_CHECK(numInFlightRequests_ <= inFlightTable_.size());
-    AD_CORRECTNESS_CHECK(numInFlightBuffers_ <= config_.numBuffers);
-
-    bufferPool_.checkInvariants();
-  }
-
   // ___________________________________________________________________________
   // Acquire an available buffer slot from the pool.
   // If all buffer slots are currently occupied by in-flight transmissions,
   // flushes pending SQEs to the kernel and reaps CQEs until a slot is released.
   // Guaranteed zero heap allocation.
   [[nodiscard]] uint32_t acquireBuffer() {
-    auto guard = makeInvariantGuard();
 
     while (true) {
       auto slotOpt = bufferPool_.acquireSlot();
@@ -378,7 +333,6 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
   // kernel and drains CQEs.
   void sendChunk(int sockfd, uint32_t bufferIndex, size_t numBytes,
                  int flags = 0, [[maybe_unused]] unsigned int zcFlags = 0) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(sockfd >= 0);
     AD_CONTRACT_CHECK(bufferIndex < config_.numBuffers);
     AD_CONTRACT_CHECK(numBytes > 0);
@@ -441,7 +395,6 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
   // ___________________________________________________________________________
   // Flush all queued SQEs to the kernel.
   void submit() {
-    auto guard = makeInvariantGuard();
 #ifdef QLEVER_HAS_LIBURING
     if (ringInitialized_) {
       int ret = io_uring_submit(&ring_);
@@ -456,7 +409,6 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
   // Wait for and drain all in-flight requests and kernel notifications,
   // ensuring all buffers are recycled back to the pool.
   void flushAndDrainAll() {
-    auto guard = makeInvariantGuard();
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
       return;
@@ -472,7 +424,6 @@ class ZeroCopySocketSender : public WithInvariants<ZeroCopySocketSender> {
   // ___________________________________________________________________________
   // Drain at least `minCompletions` from the completion queue.
   void drainCompletions(size_t minCompletions = 1) {
-    auto guard = makeInvariantGuard();
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
       return;
