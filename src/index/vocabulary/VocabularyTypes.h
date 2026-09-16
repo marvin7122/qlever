@@ -117,6 +117,13 @@ class VocabBatchLookupResult {
     return *this;
   }
 
+  // Copies are cheap and safe (`shared_ptr` + span share ownership of the
+  // frozen storage), so they stay available for future SplitVocabulary/merge
+  // code; declared explicitly so the user-declared moves above do not leave
+  // them only implicitly deleted.
+  VocabBatchLookupResult(const VocabBatchLookupResult&) = default;
+  VocabBatchLookupResult& operator=(const VocabBatchLookupResult&) = default;
+
   // Provide the container and range interface.
   [[nodiscard]] size_t size() const noexcept { return span_.size(); }
   [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
@@ -511,6 +518,9 @@ class MultiSourceVocabBatchAssembler
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
       : assembledWordViews_(totalExpectedWords),
         slotFilledTracking_(totalExpectedWords, false) {
+    // Fail fast like every other factory in this file: finalization requires
+    // a non-empty view list, so an empty assembler could never succeed.
+    AD_CONTRACT_CHECK(totalExpectedWords > 0);
     checkInvariants();
   }
 
