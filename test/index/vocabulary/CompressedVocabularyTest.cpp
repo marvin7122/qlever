@@ -379,7 +379,7 @@ namespace {
 using CompressedVocabularyWithHoles =
     ad_utility::vocabulary::CompressedVocabulary<
         ad_utility::vocabulary::VocabularyInMemoryBinSearch,
-        FsstSquaredCompressionWrapper, 4>;
+        ad_utility::vocabulary::FsstSquaredCompressionWrapper, 4>;
 
 // For an underlying vocabulary with holes, the `WordWriter` has to take an
 // explicit index for each word.
