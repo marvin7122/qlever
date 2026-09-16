@@ -43,7 +43,8 @@ void Index::addTextFromOnDiskIndex() { pimpl_->addTextFromOnDiskIndex(); }
 auto Index::getVocab() const -> const Vocab& { return pimpl_->getVocab(); }
 
 // ____________________________________________________________________________
-auto Index::encodedIriManager() const -> const EncodedIriManager& {
+auto Index::encodedIriManager() const
+    -> const ad_utility::vocabulary::EncodedIriManager& {
   return pimpl_->encodedIriManager();
 }
 
@@ -58,12 +59,14 @@ ad_utility::BlankNodeManager* Index::getBlankNodeManager() const {
 }
 
 // ____________________________________________________________________________
-RdfsVocabulary::AccessReturnType Index::indexToString(VocabIndex id) const {
+ad_utility::vocabulary::RdfsVocabulary::AccessReturnType Index::indexToString(
+    VocabIndex id) const {
   return pimpl_->indexToString(id);
 }
 
 // ____________________________________________________________________________
-TextVocabulary::AccessReturnType Index::indexToString(WordVocabIndex id) const {
+ad_utility::vocabulary::TextVocabulary::AccessReturnType Index::indexToString(
+    WordVocabIndex id) const {
   return pimpl_->indexToString(id);
 }
 

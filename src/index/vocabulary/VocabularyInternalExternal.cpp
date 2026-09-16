@@ -15,6 +15,8 @@
 #include <string_view>
 #include <utility>
 
+namespace ad_utility::vocabulary {
+
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   auto fromInternal = internalVocab_[i];
@@ -28,8 +30,8 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 // Partition input indices into internal-vocabulary hits and indices that must
 // be resolved by the external vocabulary, while keeping their positions in the
 // original input. Keeping the two groups separate allows each vocabulary to be
-// looked up in batches independently; the stored result positions are required to
-// restore the original request order when the sub-results are assembled.
+// looked up in batches independently; the stored result positions are required
+// to restore the original request order when the sub-results are assembled.
 //
 // Helpers for `VocabularyInternalExternal::lookupBatch` (see below).
 namespace {
@@ -169,3 +171,4 @@ void VocabularyInternalExternal::open(const std::string& filename) {
                  "of the external vocabulary): "
               << internalVocab_.size() << std::endl;
 }
+}  // namespace ad_utility::vocabulary
