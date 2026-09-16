@@ -409,6 +409,7 @@ addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpr
 
 addLinkAndDiscoverTest(ExceptionTest)
 
+
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
 addLinkAndDiscoverTest(NowDatetimeExpressionTest index)
@@ -600,3 +601,7 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+# Header-only util under export_v2; do not pull testUtil/index (cluster GCC
+# range-v3 needs -fpermissive for those translation units).
+addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
