@@ -29,7 +29,6 @@
 
 #include "util/Exception.h"
 #include "util/Generator.h"
-#include "util/Invariants.h"
 #include "util/Log.h"
 
 namespace qlever::export_pipeline {
@@ -121,7 +120,6 @@ class AsyncChunkPipeline
   // Blocks if buffer is full (backpressure) until a slot is freed.
   // Returns true on success; returns false if pipeline is cancelled.
   bool push(ChunkType chunk) {
-    auto guard = this->makeInvariantGuard();
     std::unique_lock<std::mutex> lock(mutex_);
 
     if (isCancelled_) {
@@ -152,7 +150,6 @@ class AsyncChunkPipeline
   // ___________________________________________________________________________
   // Producer API: Signal that all chunks have been generated.
   void finish() {
-    auto guard = this->makeInvariantGuard();
     std::lock_guard<std::mutex> lock(mutex_);
     isFinished_ = true;
     cvNotEmpty_.notify_all();
@@ -163,7 +160,6 @@ class AsyncChunkPipeline
   // Producer API: Record an exception caught during generation.
   // The captured exception will be rethrown when consumer calls `pop()`.
   void setException(std::exception_ptr exceptionPtr) {
-    auto guard = this->makeInvariantGuard();
     std::lock_guard<std::mutex> lock(mutex_);
     exception_ = std::move(exceptionPtr);
     isFinished_ = true;
@@ -177,7 +173,6 @@ class AsyncChunkPipeline
   // Returns `std::nullopt` when stream is finished and all chunks were
   // consumed. Rethrows captured producer exception if one occurred.
   std::optional<ChunkType> pop() {
-    auto guard = this->makeInvariantGuard();
     std::unique_lock<std::mutex> lock(mutex_);
 
     // If an error was already set and buffer is drained, rethrow immediately.
