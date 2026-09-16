@@ -7,6 +7,7 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
+#include "util/Exception.h"
 
 namespace ad_utility::vocabulary {
 
@@ -41,11 +42,14 @@ class UnicodeVocabulary {
     return _underlyingVocabulary.lookupBatch(indices);
   }
 
+  // Same as `lookupBatch(indices)`, but decode into `builder` when the
+  // underlying vocabulary supports it. Otherwise `builder` is unused and the
+  // underlying result is returned. Note: `builder` is consumed (moved-from)
+  // by this call and must not be reused.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    if constexpr (requires {
-                    _underlyingVocabulary.lookupBatch(indices, builder);
-                  }) {
+    AD_CONTRACT_CHECK(!indices.empty());
+    if constexpr (SupportsBuilderLookupBatch<UnderlyingVocabulary>) {
       _underlyingVocabulary.lookupBatch(indices, builder);
       return std::move(builder).finalize();
     } else {

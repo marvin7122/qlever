@@ -8,6 +8,7 @@
 #include "index/vocabulary/Vocabulary.h"
 
 #include <iostream>
+#include <type_traits>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "index/ConstantsIndexBuilding.h"
@@ -313,7 +314,8 @@ template <typename S, typename C, typename I>
 VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
+  if constexpr (SupportsBuilderLookupBatch<
+                    std::decay_t<decltype(vocabulary_)>>) {
     vocabulary_.lookupBatch(indices, builder);
     return std::move(builder).finalize();
   } else {
