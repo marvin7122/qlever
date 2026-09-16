@@ -126,13 +126,6 @@ class VocabBatchLookupResult {
     return *this;
   }
 
-  // Copies are cheap and safe (`shared_ptr` + span share ownership of the
-  // frozen storage), so they stay available for future SplitVocabulary/merge
-  // code; declared explicitly so the user-declared moves above do not leave
-  // them only implicitly deleted.
-  VocabBatchLookupResult(const VocabBatchLookupResult&) = default;
-  VocabBatchLookupResult& operator=(const VocabBatchLookupResult&) = default;
-
   // Provide the container and range interface.
   [[nodiscard]] size_t size() const noexcept { return span_.size(); }
   [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
