@@ -16,7 +16,6 @@
 #include "engine/RlePrefixCompressor.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
-#include "util/Invariants.h"
 
 using namespace ql::engine::rle;
 

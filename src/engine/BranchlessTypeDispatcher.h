@@ -23,7 +23,6 @@
 #include "global/ValueId.h"
 #include "util/Exception.h"
 #include "util/FastIntToString.h"
-#include "util/Invariants.h"
 
 namespace ql::engine {
 
