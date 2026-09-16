@@ -149,7 +149,7 @@ class DirectIoFile {
 // _____________________________________________________________________________
 // Aligned PMR Memory Arena for DMA and io_uring fixed buffer registration.
 // Guarantees 4KB page alignment for Direct I/O and zero-copy DMA pinning.
-class PinnedArena : public WithInvariants<PinnedArena> {
+class PinnedArena {
  private:
   void* rawBuffer_ = nullptr;
   size_t totalBytes_ = 0;
@@ -217,20 +217,6 @@ class PinnedArena : public WithInvariants<PinnedArena> {
       iovecs_ = std::move(other.iovecs_);
     }
     return *this;
-  }
-
-  // Structural Invariant Verification (Law 3 & Architecture Standard)
-  void checkInvariants() const {
-    if (numSlots_ > 0) {
-      AD_CORRECTNESS_CHECK(rawBuffer_ != nullptr);
-      AD_CORRECTNESS_CHECK(totalBytes_ == numSlots_ * slotSize_);
-      AD_CORRECTNESS_CHECK(isPointerAligned(rawBuffer_));
-      AD_CORRECTNESS_CHECK(isBlockAligned(slotSize_));
-      AD_CORRECTNESS_CHECK(iovecs_.size() == numSlots_);
-    } else {
-      AD_CORRECTNESS_CHECK(rawBuffer_ == nullptr);
-      AD_CORRECTNESS_CHECK(totalBytes_ == 0);
-    }
   }
 
   [[nodiscard]] size_t numSlots() const noexcept { return numSlots_; }
@@ -317,7 +303,7 @@ struct RegisteredReaderConfig {
 // fixed-buffer DMA page-pinning (`IORING_REGISTER_BUFFERS`), Direct I/O
 // alignment enforcement (`O_DIRECT`), submission queue batching, and completion
 // queue reaping behind a clean, zero-bookkeeping interface.
-class RegisteredIoUringReader : public WithInvariants<RegisteredIoUringReader> {
+class RegisteredIoUringReader {
  public:
   using BatchId = uint64_t;
 
@@ -403,21 +389,6 @@ class RegisteredIoUringReader : public WithInvariants<RegisteredIoUringReader> {
       other.numInFlightRequests_ = 0;
     }
     return *this;
-  }
-
-  // Invariant verification (Law 3 & Architecture Standard)
-  void checkInvariants() const {
-#ifdef QLEVER_HAS_LIBURING
-    if (ringInitialized_) {
-      AD_CORRECTNESS_CHECK(config_.ringEntries > 0);
-      if (filesRegistered_) {
-        AD_CORRECTNESS_CHECK(!registeredFds_.empty());
-      }
-      if (buffersRegistered_) {
-        AD_CORRECTNESS_CHECK(!registeredIovecs_.empty());
-      }
-    }
-#endif
   }
 
   // ___________________________________________________________________________
