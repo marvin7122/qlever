@@ -9,7 +9,10 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 
+#include <type_traits>
+
 #include "engine/CallFixedSize.h"
+#include "util/Exception.h"
 
 namespace ad_utility::vocabulary {
 
@@ -66,9 +69,11 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
 // _____________________________________________________________________________
 VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+  AD_CONTRACT_CHECK(!indices.empty());
   return std::visit(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
-        if constexpr (requires { vocab.lookupBatch(indices, builder); }) {
+        if constexpr (SupportsBuilderLookupBatch<
+                          std::decay_t<decltype(vocab)>>) {
           vocab.lookupBatch(indices, builder);
           return std::move(builder).finalize();
         } else {
