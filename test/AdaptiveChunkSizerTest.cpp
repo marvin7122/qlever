@@ -10,7 +10,6 @@
 #include <gtest/gtest.h>
 
 #include "engine/AdaptiveChunkSizer.h"
-#include "util/Invariants.h"
 
 namespace {
 
