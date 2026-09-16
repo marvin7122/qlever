@@ -83,12 +83,15 @@ TEST(VocabularyTypes, verifyWordWriterBaseDestructorBehavesAsExpected) {
 TEST(VocabBatchLookupData, ContiguousBuilderExposesViewsAndKeepsDataAlive) {
   const std::array<size_t, 2> sizes{3, 3};
   ContiguousVocabBatchBuilder builder(sizes);
-  ASSERT_EQ(builder.targets().size(), 2u);
-  std::memcpy(builder.targets()[0], "foo", 3);
-  std::memcpy(builder.targets()[1], "bar", 3);
+  auto targets = builder.targets();
+  ASSERT_EQ(targets.size(), 2u);
+  std::memcpy(targets[0], "foo", 3);
+  std::memcpy(targets[1], "bar", 3);
 
   VocabBatchLookupResult result = std::move(builder).finalize();
   EXPECT_THAT(result, ::testing::ElementsAre("foo", "bar"));
+  EXPECT_EQ(result[0].data(), targets[0]);
+  EXPECT_EQ(result[1].data(), targets[1]);
 }
 
 // _____________________________________________________________________________
@@ -103,12 +106,13 @@ TEST(VocabBatchLookupData, ContiguousBuilderEmpty) {
 TEST(VocabBatchLookupData, ContiguousBuilderZeroSizedWordsAndMixed) {
   const std::array<size_t, 4> sizes{0, 3, 0, 4};
   ContiguousVocabBatchBuilder builder(sizes);
-  ASSERT_EQ(builder.targets().size(), 4u);
-  for (char* target : builder.targets()) {
+  auto targets = builder.targets();
+  ASSERT_EQ(targets.size(), 4u);
+  for (char* target : targets) {
     EXPECT_NE(target, nullptr);
   }
-  std::memcpy(builder.targets()[1], "cat", 3);
-  std::memcpy(builder.targets()[3], "bird", 4);
+  std::memcpy(targets[1], "cat", 3);
+  std::memcpy(targets[3], "bird", 4);
 
   VocabBatchLookupResult result = std::move(builder).finalize();
   EXPECT_THAT(result, ::testing::ElementsAre("", "cat", "", "bird"));
@@ -200,15 +204,6 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
   EXPECT_THAT(result, ::testing::ElementsAre("alpha", "gamma", "beta"));
   EXPECT_EQ(result[0].data(), alphaData);
   EXPECT_EQ(result[1].data(), gammaData);
-}
-
-// _____________________________________________________________________________
-TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
-  MultiSourceVocabBatchAssembler assembler(1);
-  assembler.assignWordAtPosition(0, "orphan");
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      (void)std::move(assembler).finalizeVocabBatchLookupResult(),
-      ::testing::HasSubstr("!storageOwners_.empty()"));
 }
 
 // _____________________________________________________________________________
@@ -351,9 +346,10 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerToleratesEmptyWord) {
 // _____________________________________________________________________________
 TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
   MultiSourceVocabBatchAssembler assembler(3);
-
-  assembler.assignWordAtPosition(1, "middle");
-
+  auto middleBatch = makeStringVectorVocabBatchLookupResult({"middle"});
+  const std::array<size_t, 1> middlePosition{1};
+  assembler.scatterSubBatchResultAtPositions(std::move(middleBatch),
+                                             middlePosition);
   auto subBatch = makeStringVectorVocabBatchLookupResult({"first", "last"});
   const std::array<size_t, 2> subPositions{0, 2};
   assembler.scatterSubBatchResultAtPositions(std::move(subBatch), subPositions);
@@ -367,10 +363,14 @@ TEST(VocabBatchLookupData, MultiSourceVocabBatchAssemblerSuccessfulAssembly) {
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerDoubleAssignmentThrows) {
   MultiSourceVocabBatchAssembler assembler(2);
-  assembler.assignWordAtPosition(0, "first");
+  auto firstBatch = makeStringVectorVocabBatchLookupResult({"first"});
+  const std::array<size_t, 1> position{0};
+  assembler.scatterSubBatchResultAtPositions(std::move(firstBatch), position);
 
+  auto overwriteBatch = makeStringVectorVocabBatchLookupResult({"overwrite"});
   AD_EXPECT_THROW_WITH_MESSAGE(
-      assembler.assignWordAtPosition(0, "overwrite"),
+      assembler.scatterSubBatchResultAtPositions(std::move(overwriteBatch),
+                                                 position),
       ::testing::HasSubstr("!slotFilledTracking_[resultPosition]"));
 }
 
@@ -401,15 +401,19 @@ TEST(VocabBatchLookupData,
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
   MultiSourceVocabBatchAssembler assembler(2);
+  auto outOfBoundsBatch =
+      makeStringVectorVocabBatchLookupResult({"out-of-bounds"});
+  const std::array<size_t, 1> invalidPos{2};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      assembler.assignWordAtPosition(2, "out-of-bounds"),
+      assembler.scatterSubBatchResultAtPositions(std::move(outOfBoundsBatch),
+                                                 invalidPos),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
 
   auto subBatch = makeStringVectorVocabBatchLookupResult({"out-of-bounds"});
-  const std::array<size_t, 1> invalidPos{5};
+  const std::array<size_t, 1> otherInvalidPos{5};
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.scatterSubBatchResultAtPositions(std::move(subBatch),
-                                                 invalidPos),
+                                                 otherInvalidPos),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
 }
 

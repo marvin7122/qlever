@@ -93,8 +93,6 @@ class VocabBatchLookupResult {
  public:
   VocabBatchLookupResult() = default;
 
-  // The span is derived from the owner, so a non-empty span always pairs
-  // with a non-null owner by construction; no check needed.
   explicit VocabBatchLookupResult(VocabBatchOwner storage)
       : storage_{std::move(storage)},
         span_{storage_ ? storage_->viewSpan()
@@ -186,13 +184,13 @@ class ContiguousVocabBatchBuilder {
  private:
   std::vector<char> buffer_;
   std::vector<std::string_view> views_;
-  std::vector<char*> targets_;
+  std::vector<size_t> targetOffsets_;
 
  public:
-  // Copying would duplicate `targets_`/`views_` pointers that refer to this
-  // builder's own `buffer_`, leaving the copy with pointers into foreign
-  // storage. Moving is safe: `std::vector` moves transfer the heap buffer, so
-  // the pointers keep referring to the moved (now owned) storage.
+  // Copying would duplicate `views_` pointers that refer to this builder's own
+  // `buffer_`, leaving the copy with pointers into foreign storage. Moving is
+  // safe: `std::vector` moves transfer the heap buffer, so the pointers keep
+  // referring to the moved (now owned) storage.
   ContiguousVocabBatchBuilder(const ContiguousVocabBatchBuilder&) = delete;
   ContiguousVocabBatchBuilder& operator=(const ContiguousVocabBatchBuilder&) =
       delete;
@@ -209,30 +207,29 @@ class ContiguousVocabBatchBuilder {
     }
     buffer_.resize(totalBytes == 0 ? 1 : totalBytes);
     views_.reserve(wordSizes.size());
-    targets_.reserve(wordSizes.size());
+    targetOffsets_.reserve(wordSizes.size());
 
     size_t offset = 0;
     for (size_t size : wordSizes) {
       char* target = buffer_.data() + offset;
-      targets_.push_back(target);
+      targetOffsets_.push_back(offset);
       views_.emplace_back(target, size);
       offset += size;
     }
   }
 
-  // Return the precomputed destination for each requested word. The pointer at
-  // index i corresponds to the size supplied at index i to the constructor.
-  // The pointers refer to the builder's backing character buffer; for
-  // zero-sized words, each pointer remains valid within the allocated buffer.
-  // Note that multiple zero-sized words may share the same address (the
-  // offset is not advanced for size 0); nothing is ever written through
-  // those pointers, only empty views are read from them.
-  // The returned span is valid only while the builder is alive: consume it
-  // (e.g. as an io_uring write target) before `finalize()` moves the buffer
-  // into the result, and do not retain it afterwards.
-  [[nodiscard]] ql::span<char*> targets() noexcept { return targets_; }
-  [[nodiscard]] ql::span<char* const> targets() const noexcept {
-    return targets_;
+  // Return an owning pointer array with one destination per requested word.
+  // The array can safely outlive this builder's metadata. Its pointers remain
+  // valid after `finalize()` because the result takes ownership of `buffer_`.
+  // They become invalid when that result is destroyed. Multiple zero-sized
+  // words may share an address, but no bytes are written through those entries.
+  [[nodiscard]] std::vector<char*> targets() noexcept {
+    std::vector<char*> result;
+    result.reserve(targetOffsets_.size());
+    for (size_t offset : targetOffsets_) {
+      result.push_back(buffer_.data() + offset);
+    }
+    return result;
   }
 
   [[nodiscard]] VocabBatchLookupResult finalize() && {
@@ -514,6 +511,17 @@ class MultiSourceVocabBatchAssembler
   std::vector<bool> slotFilledTracking_;
   std::vector<VocabBatchOwner> storageOwners_;
 
+  // Place a view from a retained child result into its output position.
+  // Keeping this helper private prevents callers from pairing arbitrary views
+  // with unrelated owners.
+  void assignWordAtPosition(size_t resultPosition, std::string_view word) {
+    auto guard = makeInvariantGuard();
+    AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
+    AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
+    slotFilledTracking_[resultPosition] = true;
+    assembledWordViews_[resultPosition] = word;
+  }
+
  public:
   // ___________________________________________________________________________
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
@@ -534,19 +542,6 @@ class MultiSourceVocabBatchAssembler
   }
 
   // ___________________________________________________________________________
-  // Place a single resolved string_view into its corresponding output position.
-  // The caller must ensure that `word` stays alive until after finalization,
-  // e.g. by also registering the owning storage via `registerStorageOwner`
-  // (or by scattering a child result, which retains its owner automatically).
-  void assignWordAtPosition(size_t resultPosition, std::string_view word) {
-    auto guard = makeInvariantGuard();
-    AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
-    AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
-    slotFilledTracking_[resultPosition] = true;
-    assembledWordViews_[resultPosition] = word;
-  }
-
-  // ___________________________________________________________________________
   // Scatter a child batch lookup result across the specified output positions
   // and retain the child's storage owner so its underlying string storage is
   // kept alive.
@@ -563,15 +558,6 @@ class MultiSourceVocabBatchAssembler
     if (auto owner = subBatchResult.owner(); owner != nullptr) {
       storageOwners_.push_back(std::move(owner));
     }
-  }
-
-  // ___________________________________________________________________________
-  // Register a shared storage owner (e.g. an in-memory vocabulary buffer)
-  // that must outlive the assembled string_views.
-  void registerStorageOwner(VocabBatchOwner storageOwner) {
-    auto guard = makeInvariantGuard();
-    AD_CONTRACT_CHECK(storageOwner != nullptr);
-    storageOwners_.push_back(std::move(storageOwner));
   }
 
   // ___________________________________________________________________________
