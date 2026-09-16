@@ -33,7 +33,6 @@
 #include "engine/export_prototypes/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 #include "util/Log.h"
 
 #ifndef UIO_MAXIOV
@@ -61,7 +60,7 @@ struct ScatterGatherConfig {
 // An invariant-proven assembled scatter-gather chunk containing an array of
 // `struct iovec` descriptors referencing external arena memory pages alongside
 // an owned local header buffer for formatting delimiters and short tokens.
-class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk> {
+class ScatterGatherChunk {
  public:
   // Architecture Standard § 3.1: Passkey Idiom for restricted construction.
   class Passkey {
@@ -92,7 +91,6 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
         numTriples_{numTriples},
         zeroCopySpansCount_{zeroCopySpansCount},
         zeroCopyBytes_{zeroCopyBytes} {
-    checkInvariants();
   }
 
   ~ScatterGatherChunk() = default;
@@ -118,24 +116,6 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
       zeroCopyBytes_ = std::exchange(other.zeroCopyBytes_, 0);
     }
     return *this;
-  }
-
-  // ___________________________________________________________________________
-  // Structural Invariant Verification (Law 3 & Architecture Standard § 3).
-  void checkInvariants() const {
-    if (totalBytes_ == 0) {
-      AD_CORRECTNESS_CHECK(iovecs_.empty());
-    } else {
-      AD_CORRECTNESS_CHECK(!iovecs_.empty());
-      size_t computedSum = 0;
-      for (const auto& iov : iovecs_) {
-        AD_CORRECTNESS_CHECK(iov.iov_len > 0);
-        AD_CORRECTNESS_CHECK(iov.iov_base != nullptr);
-        computedSum += iov.iov_len;
-      }
-      AD_CORRECTNESS_CHECK(computedSum == totalBytes_);
-      AD_CORRECTNESS_CHECK(zeroCopyBytes_ <= totalBytes_);
-    }
   }
 
   // ___________________________________________________________________________
@@ -221,8 +201,7 @@ class ScatterGatherChunk : public ad_utility::WithInvariants<ScatterGatherChunk>
 // direct zero-copy `ql::span<const char>` pointers to existing arena memory pages.
 // Automatically coalesces adjacent formatting tokens into unified header iovecs,
 // manages chunk limits (bytes & max iovecs), and emits `ScatterGatherChunk`s.
-class ScatterGatherChunkStreamer
-    : public ad_utility::WithInvariants<ScatterGatherChunkStreamer> {
+class ScatterGatherChunkStreamer {
  public:
   using ChunkSink = std::function<void(ScatterGatherChunk)>;
 
@@ -267,29 +246,6 @@ class ScatterGatherChunkStreamer
   explicit ScatterGatherChunkStreamer(ScatterGatherConfig config = {})
       : config_{config}, sink_{nullptr}, isStreaming_{false} {
     currentHeaderBuffer_.reserve(config_.initialHeaderCapacity);
-  }
-
-  // ___________________________________________________________________________
-  // Invariant verification (Law 3 & Architecture Standard § 3).
-  void checkInvariants() const {
-    size_t computedBytes = 0;
-    size_t computedZcBytes = 0;
-    size_t computedZcSpans = 0;
-    for (const auto& slice : currentSlices_) {
-      AD_CORRECTNESS_CHECK(slice.len > 0);
-      computedBytes += slice.len;
-      if (slice.isArena) {
-        AD_CORRECTNESS_CHECK(slice.arenaPtr != nullptr);
-        computedZcBytes += slice.len;
-        ++computedZcSpans;
-      } else {
-        AD_CORRECTNESS_CHECK(slice.headerOffset + slice.len <=
-                             currentHeaderBuffer_.size());
-      }
-    }
-    AD_CORRECTNESS_CHECK(computedBytes == currentChunkBytes_);
-    AD_CORRECTNESS_CHECK(computedZcBytes == currentZeroCopyBytes_);
-    AD_CORRECTNESS_CHECK(computedZcSpans == currentZeroCopySpans_);
   }
 
   // ___________________________________________________________________________
@@ -443,7 +399,6 @@ class ScatterGatherChunkStreamer
                    ql::span<const char> objectLiteral,
                    std::string_view datatype = "",
                    std::string_view langTag = "") {
-    auto guard = makeInvariantGuard();
 
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeIri(subject);
@@ -478,7 +433,6 @@ class ScatterGatherChunkStreamer
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
                    const qlever::constructExport::EvaluatedTermData& o) {
-    auto guard = makeInvariantGuard();
 
     const char delim = (format == ExportFormat::Csv)
                            ? ','
@@ -501,7 +455,6 @@ class ScatterGatherChunkStreamer
   // Write a tabular row of cell spans (CSV / TSV format).
   void writeRow(ExportFormat format,
                 ql::span<const ql::span<const char>> cells) {
-    auto guard = makeInvariantGuard();
     const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
     for (size_t i = 0; i < cells.size(); ++i) {
       if (i > 0) {

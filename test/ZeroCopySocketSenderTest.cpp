@@ -14,7 +14,6 @@
 #include <thread>
 #include <vector>
 
-#include "util/Invariants.h"
 #include "util/ZeroCopySocketSender.h"
 
 using namespace ad_utility;

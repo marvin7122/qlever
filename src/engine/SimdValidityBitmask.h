@@ -35,7 +35,6 @@
 #include "global/Id.h"
 #include "global/ValueId.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 
 namespace ad_utility::simd {
 
