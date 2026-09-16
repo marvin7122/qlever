@@ -114,8 +114,7 @@ template <const std::array<bool, 256>& Table>
 // Invariant Law: Never constructs temporary std::string objects during
 // formatting. All escaping, URI quoting, and datatype suffixes are written
 // directly into the active chunk buffer.
-class FastExportStreamFormatter
-    : public ad_utility::WithInvariants<FastExportStreamFormatter> {
+class FastExportStreamFormatter {
  public:
   using ChunkSink = std::function<void(std::string_view)>;
   static constexpr size_t DEFAULT_CHUNK_SIZE = 1024 * 1024;  // 1 MB
@@ -162,13 +161,6 @@ class FastExportStreamFormatter
         sink_(nullptr),
         isStreaming_(false) {
     AD_CONTRACT_CHECK(bufferPtr_ != nullptr || bufferCapacity_ == 0);
-  }
-
-  // ___________________________________________________________________________
-  // Invariant verification required by WithInvariants<Derived>.
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(writePos_ <= bufferCapacity_);
-    AD_CORRECTNESS_CHECK(bufferPtr_ != nullptr || bufferCapacity_ == 0);
   }
 
   // ___________________________________________________________________________
