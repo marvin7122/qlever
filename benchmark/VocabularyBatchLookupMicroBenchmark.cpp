@@ -54,16 +54,16 @@ std::vector<size_t> makeQueryIds(size_t vocabSize, size_t numQueries,
 }
 
 // Write `words` to a `VocabularyOnDisk` at `filename` and open it.
-VocabularyOnDisk buildOnDiskVocabulary(const std::string& filename,
-                                       const std::vector<std::string>& words) {
+ad_utility::vocabulary::VocabularyOnDisk buildOnDiskVocabulary(
+    const std::string& filename, const std::vector<std::string>& words) {
   {
-    VocabularyOnDisk::WordWriter writer(filename);
+    ad_utility::vocabulary::VocabularyOnDisk::WordWriter writer(filename);
     for (const auto& word : words) {
       writer(word, false);
     }
     writer.finish();
   }
-  VocabularyOnDisk vocab;
+  ad_utility::vocabulary::VocabularyOnDisk vocab;
   vocab.open(filename);
   return vocab;
 }
@@ -71,16 +71,18 @@ VocabularyOnDisk buildOnDiskVocabulary(const std::string& filename,
 // Write `words` to a hybrid `VocabularyInternalExternal` at `filename`: every
 // second word is disk-only, the rest is additionally cached in RAM (plus the
 // regular milestones).
-VocabularyInternalExternal buildHybridVocabulary(
+ad_utility::vocabulary::VocabularyInternalExternal buildHybridVocabulary(
     const std::string& filename, const std::vector<std::string>& words) {
   {
-    auto writerPtr = VocabularyInternalExternal::makeDiskWriterPtr(filename);
+    auto writerPtr =
+        ad_utility::vocabulary::VocabularyInternalExternal::makeDiskWriterPtr(
+            filename);
     for (size_t i = 0; i < words.size(); ++i) {
       (*writerPtr)(words[i], i % 2 == 0);
     }
     writerPtr->finish();
   }
-  VocabularyInternalExternal vocab;
+  ad_utility::vocabulary::VocabularyInternalExternal vocab;
   vocab.open(filename);
   return vocab;
 }
