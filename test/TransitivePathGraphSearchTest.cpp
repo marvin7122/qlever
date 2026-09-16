@@ -287,7 +287,9 @@ TEST(GraphSearchTestExtraTests, cancellationCheck) {
              "signal.") == std::string::npos) {
     ASSERT_LT(std::chrono::steady_clock::now(), deadline)
         << "The watchdog never reported a missed check window";
-    std::this_thread::sleep_for(DESIRED_CANCELLATION_CHECK_INTERVAL);
+    // The watchdog needs one interval to observe `WAITING_FOR_CHECK` and a
+    // second interval to advance it to `CHECK_WINDOW_MISSED`.
+    std::this_thread::sleep_for(2 * DESIRED_CANCELLATION_CHECK_INTERVAL);
     ep.checkCancellation("TEST");
   }
 
