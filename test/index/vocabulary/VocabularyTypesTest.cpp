@@ -318,6 +318,17 @@ TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsWhenArenaExceedsBudget) {
 }
 
 // _____________________________________________________________________________
+// The memory budget is also enforced on the decompress path: appending a word
+// with a bound above the remaining budget throws instead of growing the heap.
+TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsOnDecompressedAppend) {
+  auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
+  ArenaVocabBatchBuilder builder(1, alloc);
+  EXPECT_THROW(builder.appendDecompressedWord(
+                   1024, [](ql::span<char> out) { return out.size(); }),
+               ad_utility::detail::AllocationExceedsLimitException);
+}
+
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, MakePmrVocabBatchLookupResultCopiesWords) {
   auto result = makePmrVocabBatchLookupResult({"first", "second"});
   EXPECT_THAT(result, ::testing::ElementsAre("first", "second"));

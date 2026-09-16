@@ -190,6 +190,9 @@ CPP_template(typename UnderlyingVocabulary,
   // buffer resource alive and providing `string_view`s for each requested index
   // in `indices`. `indices` must not be empty.
   //
+  // For an underlying vocabulary with holes, a hole index has no stored word:
+  // like `operator[]`, report the placeholder for it instead of feeding the
+  // plain-text placeholder to the decoder.
   // Note: each word reserves its full `maxDecompressedSize` bound in the
   // arena, so for FSST the slack between the worst-case expansion bound and
   // the actually decoded size is retained until the returned result dies.
@@ -209,7 +212,18 @@ CPP_template(typename UnderlyingVocabulary,
     std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
-      const size_t decoderIdx = getDecoderIdx(idx);
+      size_t decoderIdx;
+      if constexpr (underlyingHasHoles) {
+        const auto position = underlyingVocabulary_.positionOfIndex(idx);
+        if (!position.has_value()) {
+          builder.appendWord(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+          continue;
+        }
+        decoderIdx = getDecoderIdxFromPosition(position.value());
+      } else {
+        decoderIdx = getDecoderIdx(idx);
+      }
       AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
@@ -220,6 +234,12 @@ CPP_template(typename UnderlyingVocabulary,
     }
   }
 
+  // Convenience overload that decodes into a builder on the default (untracked)
+  // PMR resource. Callers that must charge the decoded bytes against a memory
+  // budget (e.g. the Index/query `AllocatorWithLimit` backing `--memory-max`)
+  // have to use the `ArenaVocabBatchBuilder` overload above with a
+  // budget-backed builder instead: this overload never throws
+  // `AllocationExceedsLimitException`, no matter how large the batch is.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
