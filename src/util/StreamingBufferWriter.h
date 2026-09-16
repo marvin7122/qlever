@@ -27,7 +27,6 @@
 
 #include "util/AlignedAllocator.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 
 namespace ad_utility {
 
@@ -56,8 +55,7 @@ namespace ad_utility {
 // Conforms to the Software Architecture Standard (~/ARCHITECTURE.md):
 // - Deep Module: Hides vector intrinsics, alignment math, and memory barriers.
 // - Design by Contract: Enforces preconditions (`AD_CONTRACT_CHECK`) and
-//   continuous structural state verification (`WithInvariants`).
-class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
+class StreamingBufferWriter {
  public:
   static constexpr size_t Alignment = 64;
   static constexpr size_t VectorStoreSize = 16;
@@ -185,7 +183,6 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
         capacity_{destinationBuffer.size()},
         bytesWritten_{0},
         ownedBuffer_{std::nullopt} {
-    checkInvariants();
   }
 
   // ___________________________________________________________________________
@@ -196,7 +193,6 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
         bytesWritten_{0},
         ownedBuffer_{std::nullopt} {
     AD_CONTRACT_CHECK(destination != nullptr || capacity == 0);
-    checkInvariants();
   }
 
   // ___________________________________________________________________________
@@ -205,7 +201,6 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
       : capacity_{initialCapacity}, bytesWritten_{0} {
     ownedBuffer_.emplace(initialCapacity);
     buffer_ = ownedBuffer_->data();
-    checkInvariants();
   }
 
   // ___________________________________________________________________________
@@ -218,7 +213,6 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
     other.buffer_ = nullptr;
     other.capacity_ = 0;
     other.bytesWritten_ = 0;
-    checkInvariants();
   }
 
   StreamingBufferWriter& operator=(StreamingBufferWriter&& other) noexcept {
@@ -231,7 +225,6 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
       other.buffer_ = nullptr;
       other.capacity_ = 0;
       other.bytesWritten_ = 0;
-      checkInvariants();
     }
     return *this;
   }
@@ -243,20 +236,6 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
   ~StreamingBufferWriter() = default;
 
   // ___________________________________________________________________________
-  // Structural invariant check required by
-  // `ad_utility::InvariantStatefulClass`.
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(bytesWritten_ <= capacity_);
-    if (capacity_ > 0) {
-      AD_CORRECTNESS_CHECK(buffer_ != nullptr);
-    }
-    if (ownedBuffer_.has_value()) {
-      AD_CORRECTNESS_CHECK(buffer_ == ownedBuffer_->data());
-      AD_CORRECTNESS_CHECK(capacity_ == ownedBuffer_->size());
-    }
-  }
-
-  // ___________________________________________________________________________
   // Write raw bytes using non-temporal streaming stores. The data lands in
   // CPU write-combining buffers and is NOT visible to other threads or
   // devices until `flush()` is called, so every write sequence must end with
@@ -264,7 +243,6 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
   // immediately. Deliberately fence-free per call: fencing on every write
   // would defeat the streaming purpose.
   void write(const void* src, size_t numBytes) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
     AD_CONTRACT_CHECK(bytesWritten_ + numBytes <= capacity_);
 
@@ -301,14 +279,12 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
   // ___________________________________________________________________________
   // Complete the current streaming chunk and drain CPU write-combining buffers.
   void flush() {
-    auto guard = makeInvariantGuard();
     sfence();
   }
 
   // ___________________________________________________________________________
   // Reset write position to the beginning of the existing buffer.
   void reset() noexcept {
-    auto guard = makeInvariantGuard();
     bytesWritten_ = 0;
   }
 
@@ -316,7 +292,6 @@ class StreamingBufferWriter : public WithInvariants<StreamingBufferWriter> {
   // Retarget the writer to a new caller-provided buffer span. Buffers of
   // arbitrary alignment are accepted (see the class documentation).
   void reset(std::span<char> newBuffer) noexcept {
-    auto guard = makeInvariantGuard();
     buffer_ = newBuffer.data();
     capacity_ = newBuffer.size();
     ownedBuffer_.reset();
