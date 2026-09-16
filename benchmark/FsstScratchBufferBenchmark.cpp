@@ -62,6 +62,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   // Retain ownership of the compressed strings for the lifetime of the views in
   // `compressed_`.
   std::vector<std::shared_ptr<std::string>> decoderStorage_;
+  // Number of corpus words (tunable via `FSST_SCRATCH_NUM_WORDS`).
+  size_t numWords_ = 0;
   // Maximum fully decompressed size across the benchmark inputs; sizes the
   // final output buffer.
   size_t outputCapacity_ = 0;
@@ -69,15 +71,37 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   // scratch allocation.
   size_t intermediateCapacity_ = 0;
 
+  // Parse a non-negative size from the environment, with default and cap.
+  static size_t parseSize(const char* name, size_t defaultValue,
+                          size_t maxValue) {
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+      return defaultValue;
+    }
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long parsed = std::strtoul(value, &end, 10);
+    AD_CONTRACT_CHECK(end != value && *end == '\0' && errno != ERANGE);
+    const auto result = static_cast<size_t>(parsed);
+    AD_CONTRACT_CHECK(result <= maxValue);
+    return result;
+  }
+
  public:
   FsstScratchBufferBenchmark() {
     constexpr std::string_view alphabet{
         "abcdefghijklmnopqrstuvwxyz0123456789_:/.-#"};
-    wordsStorage_.reserve(5'000);
-    for (size_t i = 0; i < 5'000; ++i) {
+    // Corpus size is tunable so the benchmark can scale past noise.
+    // Defaults (40,000 words x 180-char suffix) decode ~8x the original
+    // workload per repetition.
+    const size_t numWords = parseSize("FSST_SCRATCH_NUM_WORDS", 40'000, 200'000);
+    const size_t suffixLen = parseSize("FSST_SCRATCH_SUFFIX_LEN", 180, 1'024);
+    numWords_ = numWords;
+    wordsStorage_.reserve(numWords);
+    for (size_t i = 0; i < numWords; ++i) {
       std::string suffix;
-      suffix.reserve(45);
-      for (size_t character = 0; character < 45; ++character) {
+      suffix.reserve(suffixLen);
+      for (size_t character = 0; character < suffixLen; ++character) {
         suffix += alphabet[(i * 17 + character * 31) % alphabet.size()];
       }
       wordsStorage_.push_back("http://www.wikidata.org/entity/Q" + suffix);
@@ -106,7 +130,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   BenchmarkResults runAllBenchmarks() final {
     BenchmarkResults results;
     auto& group = results.addGroup(
-        "Three-stage FSST scratch-buffer strategies (5,000 words)");
+        "Three-stage FSST scratch-buffer strategies (" +
+        std::to_string(numWords_) + " words)");
     const auto parseEnvironmentSize = [](const char* value,
                                          size_t defaultValue) {
       if (value == nullptr) return defaultValue;
