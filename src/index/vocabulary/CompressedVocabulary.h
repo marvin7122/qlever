@@ -241,6 +241,7 @@ CPP_template(typename UnderlyingVocabulary,
   // budget-backed builder instead: this overload never throws
   // `AllocationExceedsLimitException`, no matter how large the batch is.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    AD_CONTRACT_CHECK(!indices.empty());
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
     return std::move(builder).finalize();
