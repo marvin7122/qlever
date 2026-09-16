@@ -36,7 +36,7 @@ TEST(StringTest, ResizeAndOverwriteSmallerSize) {
   ql::resize_and_overwrite(s, full.size(), [&](char* buf, size_t count) {
     EXPECT_EQ(count, full.size());
     std::memcpy(buf, full.data(), full.size());
-    return 4u;
+    return 4;
   });
   EXPECT_EQ(s, "abcd");
   EXPECT_EQ(s.size(), 4u);
