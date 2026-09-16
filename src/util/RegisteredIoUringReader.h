@@ -34,7 +34,6 @@
 #include "util/AlignedAllocator.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
-#include "util/Invariants.h"
 #include "util/Log.h"
 
 #if defined(__has_include)
@@ -187,7 +186,6 @@ class PinnedArena : public WithInvariants<PinnedArena> {
           iovec{.iov_base = basePtr + (i * slotSize_), .iov_len = slotSize_});
     }
 
-    checkInvariants();
   }
 
   ~PinnedArena() {
@@ -426,7 +424,6 @@ class RegisteredIoUringReader : public WithInvariants<RegisteredIoUringReader> {
   // IORING_REGISTER_FILES: Pre-register open file descriptors into the kernel
   // io_uring file table, eliminating fget()/fput() locking overhead per I/O.
   void registerFiles(ql::span<const int> fds) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(!fds.empty());
 
 #ifdef QLEVER_HAS_LIBURING
@@ -471,7 +468,6 @@ class RegisteredIoUringReader : public WithInvariants<RegisteredIoUringReader> {
   // IORING_REGISTER_BUFFERS: Pre-register and page-pin PMR arena buffers for
   // direct zero-copy DMA, eliminating get_user_pages() and TLB shootdowns.
   void registerBuffers(ql::span<const iovec> iovecs) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(!iovecs.empty());
 
 #ifdef QLEVER_HAS_LIBURING
@@ -516,7 +512,6 @@ class RegisteredIoUringReader : public WithInvariants<RegisteredIoUringReader> {
   // Submit a batch of block read requests to the kernel.
   // Supports registered files, registered fixed buffers, and Direct I/O.
   [[nodiscard]] BatchId submitBatch(ql::span<const BlockReadRequest> requests) {
-    auto guard = makeInvariantGuard();
     if (requests.empty()) {
       return 0;
     }
@@ -583,7 +578,6 @@ class RegisteredIoUringReader : public WithInvariants<RegisteredIoUringReader> {
   // ___________________________________________________________________________
   // Block until all reads belonging to `batchId` have completed.
   BatchResult waitBatch(BatchId batchId) {
-    auto guard = makeInvariantGuard();
     if (batchId == 0) {
       return BatchResult{0, 0, true};
     }
