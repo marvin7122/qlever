@@ -27,6 +27,7 @@
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
 #include "index/vocabulary/SplitVocabulary.h"
+#include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 
 namespace ad_benchmark {
