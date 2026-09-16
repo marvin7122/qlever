@@ -22,6 +22,7 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
+#include "backports/string.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/Log.h"
@@ -172,11 +173,16 @@ class PrefixCompressor {
   [[nodiscard]] std::string decompress(std::string_view compressedWord) const {
     AD_CONTRACT_CHECK(!compressedWord.empty());
     const auto idx = prefixIndex(compressedWord);
-    std::string result(
-        decompressedSizeWithIndex(compressedWord.size() - 1, idx), '\0');
-    const size_t numBytesWritten = decompressIntoWithIndex(
-        compressedWord, idx, ql::span<char>{result.data(), result.size()});
-    result.resize(numBytesWritten);
+    // `decompressIntoWithIndex` always writes exactly
+    // `decompressedSizeWithIndex` bytes, so decode directly into
+    // uninitialized storage instead of zero-filling it first.
+    std::string result;
+    ql::resize_and_overwrite(
+        result, decompressedSizeWithIndex(compressedWord.size() - 1, idx),
+        [&](char* buf, size_t count) {
+          return decompressIntoWithIndex(
+              compressedWord, idx, ql::span<char>{buf, count});
+        });
     return result;
   }
 
