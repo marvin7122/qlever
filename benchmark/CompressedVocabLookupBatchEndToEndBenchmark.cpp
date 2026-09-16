@@ -38,8 +38,8 @@ class CompressedVocabLookupBatchEndToEndBenchmark : public BenchmarkInterface {
   // vocabularies, which use one decoder per 2^20 words).
   static constexpr size_t numWordsPerBlock = 4096;
   using Vocab = CompressedVocabulary<
-      VocabularyOnDisk,
-      ad_utility::vocabulary::FsstSquaredCompressionWrapper, numWordsPerBlock>;
+      VocabularyOnDisk, ad_utility::vocabulary::FsstSquaredCompressionWrapper,
+      numWordsPerBlock>;
 
   // Remove a whole directory tree. Best effort: failures are ignored.
   struct TempDirCleanup {

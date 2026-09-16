@@ -54,8 +54,8 @@ std::vector<size_t> makeQueryIds(size_t vocabSize, size_t numQueries,
 }
 
 // Write `words` to a `VocabularyOnDisk` at `filename` and open it.
-VocabularyOnDisk buildOnDiskVocabulary(
-    const std::string& filename, const std::vector<std::string>& words) {
+VocabularyOnDisk buildOnDiskVocabulary(const std::string& filename,
+                                       const std::vector<std::string>& words) {
   {
     VocabularyOnDisk::WordWriter writer(filename);
     for (const auto& word : words) {
@@ -74,9 +74,7 @@ VocabularyOnDisk buildOnDiskVocabulary(
 VocabularyInternalExternal buildHybridVocabulary(
     const std::string& filename, const std::vector<std::string>& words) {
   {
-    auto writerPtr =
-        VocabularyInternalExternal::makeDiskWriterPtr(
-            filename);
+    auto writerPtr = VocabularyInternalExternal::makeDiskWriterPtr(filename);
     for (size_t i = 0; i < words.size(); ++i) {
       (*writerPtr)(words[i], i % 2 == 0);
     }
