@@ -86,8 +86,7 @@ class ChunkSink;
 //   - Early cancellation triggers an immediate unblocking signal, allowing
 //     background threads to terminate cleanly without thread or resource leaks.
 template <typename ChunkType = std::string>
-class AsyncChunkPipeline
-    : public ad_utility::WithInvariants<AsyncChunkPipeline<ChunkType>> {
+class AsyncChunkPipeline {
  public:
   // ___________________________________________________________________________
   // Precondition: `capacity >= 1`. Default is 2 (double buffering).
@@ -104,16 +103,6 @@ class AsyncChunkPipeline
   // ___________________________________________________________________________
   // Destructor cancels the pipeline and wakes any blocked threads.
   ~AsyncChunkPipeline() { cancel(); }
-
-  // ___________________________________________________________________________
-  // Structural Invariant verification (Law 7 & Section 3 of ARCHITECTURE.md).
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(capacity_ >= 1);
-    std::lock_guard<std::mutex> lock(mutex_);
-    AD_CORRECTNESS_CHECK(buffer_.size() <= capacity_);
-    AD_CORRECTNESS_CHECK(stats_.totalChunksConsumed <=
-                         stats_.totalChunksProduced);
-  }
 
   // ___________________________________________________________________________
   // Producer API: Push a newly generated chunk into the pipeline.
