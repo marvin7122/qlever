@@ -134,19 +134,23 @@ TEST(PrefixCompressor, PrefixIndexBoundaries) {
   const auto byteWord = [](unsigned int byte) {
     return Marker(1, static_cast<char>(byte));
   };
-  EXPECT_FALSE(PrefixCompressor::prefixIndex("").has_value());
   EXPECT_FALSE(
-      PrefixCompressor::prefixIndex(byteWord(MIN_COMPRESSION_PREFIX - 1))
-          .has_value());
-  EXPECT_EQ(PrefixCompressor::prefixIndex(byteWord(MIN_COMPRESSION_PREFIX)),
+      ad_utility::vocabulary::PrefixCompressor::prefixIndex("").has_value());
+  EXPECT_FALSE(ad_utility::vocabulary::PrefixCompressor::prefixIndex(
+                   byteWord(MIN_COMPRESSION_PREFIX - 1))
+                   .has_value());
+  EXPECT_EQ(ad_utility::vocabulary::PrefixCompressor::prefixIndex(
+                byteWord(MIN_COMPRESSION_PREFIX)),
             0u);
-  EXPECT_EQ(PrefixCompressor::prefixIndex(byteWord(
+  EXPECT_EQ(ad_utility::vocabulary::PrefixCompressor::prefixIndex(byteWord(
                 MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES - 1)),
             NUM_COMPRESSION_PREFIXES - 1u);
-  EXPECT_FALSE(PrefixCompressor::prefixIndex(
+  EXPECT_FALSE(ad_utility::vocabulary::PrefixCompressor::prefixIndex(
                    byteWord(MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES))
                    .has_value());
-  EXPECT_FALSE(PrefixCompressor::prefixIndex(byteWord(0)).has_value());
+  EXPECT_FALSE(
+      ad_utility::vocabulary::PrefixCompressor::prefixIndex(byteWord(0))
+          .has_value());
 }
 
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
