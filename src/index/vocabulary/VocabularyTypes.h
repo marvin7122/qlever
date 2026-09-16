@@ -485,6 +485,15 @@ class ArenaVocabBatchBuilder {
   }
 };
 
+// Append every word from `result` to `builder`. The copied bytes no longer
+// depend on the lifetime of `result` after this function returns.
+inline void appendVocabBatchLookupResult(const VocabBatchLookupResult& result,
+                                         ArenaVocabBatchBuilder& builder) {
+  for (std::string_view word : result) {
+    builder.appendWord(word);
+  }
+}
+
 // Whether `Vocab` provides the two-argument `lookupBatch` overload that
 // decodes into an `ArenaVocabBatchBuilder`. Implemented with `void_t` SFINAE
 // (instead of a requires-expression) so that it also works in C++17 builds,

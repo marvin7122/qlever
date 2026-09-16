@@ -185,10 +185,8 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
 }
 
 // _____________________________________________________________________________
-// Regression test: the delegating `lookupBatch(indices, builder)` overloads
-// must populate the builder and return the `finalize()`d result. The
-// underlying builder overload returns void, so returning its result directly
-// is ill-formed (this failed to compile before the fix).
+// Regression test: nested delegating overloads append to the same builder.
+// Only the outer result boundary finalizes it.
 TYPED_TEST(CompressedVocabularyF, LookupBatchWithBuilderThroughDelegation) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
                                        "epsilon"};
@@ -197,9 +195,13 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchWithBuilderThroughDelegation) {
   ad_utility::vocabulary::SimpleStringComparator comparator{"en", "us", false};
   ad_utility::vocabulary::UnicodeVocabulary<decltype(compressed),
                                             decltype(comparator)>
-      vocab{comparator, std::move(compressed)};
+      innerVocab{comparator, std::move(compressed)};
+  ad_utility::vocabulary::UnicodeVocabulary<decltype(innerVocab),
+                                            decltype(comparator)>
+      vocab{comparator, std::move(innerVocab)};
   ad_utility::vocabulary::ArenaVocabBatchBuilder builder(indices.size());
-  const auto result = vocab.lookupBatch(indices, builder);
+  vocab.lookupBatch(indices, builder);
+  const auto result = std::move(builder).finalize();
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
 

@@ -42,18 +42,16 @@ class UnicodeVocabulary {
     return _underlyingVocabulary.lookupBatch(indices);
   }
 
-  // Same as `lookupBatch(indices)`, but decode into `builder` when the
-  // underlying vocabulary supports it. Otherwise `builder` is unused and the
-  // underlying result is returned. Note: `builder` is consumed (moved-from)
-  // by this call and must not be reused.
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
-                                     ArenaVocabBatchBuilder& builder) const {
+  // Append the words for `indices` to `builder`. Delegate when the underlying
+  // vocabulary supports this protocol. Otherwise copy its owning result.
+  void lookupBatch(ql::span<const size_t> indices,
+                   ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());
     if constexpr (SupportsBuilderLookupBatch<UnderlyingVocabulary>) {
       _underlyingVocabulary.lookupBatch(indices, builder);
-      return std::move(builder).finalize();
     } else {
-      return _underlyingVocabulary.lookupBatch(indices);
+      appendVocabBatchLookupResult(_underlyingVocabulary.lookupBatch(indices),
+                                   builder);
     }
   }
 

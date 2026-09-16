@@ -311,15 +311,14 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
 
 // _____________________________________________________________________________
 template <typename S, typename C, typename I>
-VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
-    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+void Vocabulary<S, C, I>::lookupBatch(ql::span<const size_t> indices,
+                                      ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
   if constexpr (SupportsBuilderLookupBatch<
                     std::decay_t<decltype(vocabulary_)>>) {
     vocabulary_.lookupBatch(indices, builder);
-    return std::move(builder).finalize();
   } else {
-    return vocabulary_.lookupBatch(indices);
+    appendVocabBatchLookupResult(vocabulary_.lookupBatch(indices), builder);
   }
 }
 
