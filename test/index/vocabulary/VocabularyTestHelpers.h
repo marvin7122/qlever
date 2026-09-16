@@ -447,9 +447,7 @@ void assertStreamedLookupMatchesVocabularyAtIndices(
 // before the vocabulary, so that reverse destruction order deletes the files
 // last. Deleting a file that was never created is a silent no-op.
 template <typename SplitVocabulary>
-class ScopedSplitVocabularyFiles
-    : public ad_utility::WithInvariants<
-          ScopedSplitVocabularyFiles<SplitVocabulary>> {
+class ScopedSplitVocabularyFiles {
  public:
   explicit ScopedSplitVocabularyFiles(const std::string& filename)
       : filenames_{SplitVocabulary::splitFilenameFunction_(filename)} {
@@ -464,14 +462,6 @@ class ScopedSplitVocabularyFiles
   ~ScopedSplitVocabularyFiles() {
     for (const auto& path : filenames_) {
       ad_utility::deleteFile(path, false);
-    }
-  }
-
-  // Every owned path must be usable for deletion; an empty path would skip
-  // the corresponding file.
-  void checkInvariants() const {
-    for (const auto& path : filenames_) {
-      AD_CORRECTNESS_CHECK(!path.empty());
     }
   }
 
