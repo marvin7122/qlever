@@ -36,26 +36,23 @@ CPP_concept InvariantStatefulClass =
 CPP_template(typename T)(
     requires InvariantStatefulClass<T>) class [[nodiscard]] InvariantGuard {
  private:
-  // Non-owning pointer to the guarded object; the guard must not outlive this
-  // object.
-  const T* self_;
+  // Non-owning reference to the guarded object. The guard must not outlive it.
+  const T& self_;
   // Exception count at construction distinguishes normal scope exit from
   // stack unwinding, allowing the exit invariant check to be skipped when
   // unwinding through this scope.
   int uncaughtExceptionsAtConstruction_;
 
  public:
-  explicit InvariantGuard(const T* self)
+  explicit InvariantGuard(const T& self)
       : self_{self},
         uncaughtExceptionsAtConstruction_{std::uncaught_exceptions()} {
-    AD_CORRECTNESS_CHECK(self_ != nullptr);
-    self_->checkInvariants();
+    self_.checkInvariants();
   }
 
   ~InvariantGuard() noexcept(false) {
-    AD_CORRECTNESS_CHECK(self_ != nullptr);
     if (std::uncaught_exceptions() <= uncaughtExceptionsAtConstruction_) {
-      self_->checkInvariants();
+      self_.checkInvariants();
     }
   }
 
@@ -73,7 +70,7 @@ class WithInvariants {
  public:
   // ___________________________________________________________________________
   // Lvalue-qualified so the guard can never be created for a temporary:
-  // it stores a raw pointer to `this`, which must outlive the guard's scope.
+  // it stores a reference to `this`, which must outlive the guard's scope.
   [[nodiscard]] auto makeInvariantGuard() const& {
     static_assert(
         InvariantStatefulClass<Derived>,
@@ -92,11 +89,11 @@ class WithInvariants {
     // behavior, so reject such misuse at compile time.
     static_assert(std::is_base_of_v<WithInvariants<Derived>, Derived>,
                   "`Derived` must inherit from `WithInvariants<Derived>`.");
-    return InvariantGuard<Derived>{static_cast<const Derived*>(this)};
+    return InvariantGuard<Derived>{static_cast<const Derived&>(*this)};
   }
 
   // Deleted rvalue overload: calling on a temporary would leave the guard
-  // holding a pointer to an object destroyed at the end of the full
+  // holding a reference to an object destroyed at the end of the full
   // expression, so reject this at compile time.
   [[nodiscard]] auto makeInvariantGuard() const&& = delete;
 };

@@ -80,7 +80,7 @@ TEST(InvariantsTest, InvariantGuardChecksOnEntryAndExit) {
   EXPECT_EQ(instance.checkCount_, 0u);
 
   {
-    ad_utility::InvariantGuard guard{&instance};
+    ad_utility::InvariantGuard guard{instance};
 
     EXPECT_EQ(instance.checkCount_, 1u);
   }
@@ -94,7 +94,7 @@ TEST(InvariantsTest, InvariantGuardRejectsViolatedEntryInvariant) {
   instance.failInvariants_ = true;
 
   AD_EXPECT_THROW_WITH_MESSAGE(
-      (void)ad_utility::InvariantGuard<MockInvariantClass>{&instance},
+      (void)ad_utility::InvariantGuard<MockInvariantClass>{instance},
       ::testing::HasSubstr("!failInvariants_"));
 }
 
@@ -114,20 +114,12 @@ TEST(InvariantsTest, ViolatedInvariantOnExitThrows) {
                                ::testing::HasSubstr("!failInvariants_"));
 }
 
-// _____________________________________________________________________________
-TEST(InvariantsTest, GuardRejectsNullInstanceOnConstruction) {
-  MockInvariantClass* nullInstance = nullptr;
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      (void)ad_utility::InvariantGuard<MockInvariantClass>{nullInstance},
-      ::testing::HasSubstr("self_ != nullptr"));
-}
-
 TEST(InvariantsTest, InvariantGuardSkipsExitCheckDuringExceptionUnwinding) {
   MockInvariantClass instance;
 
   EXPECT_THROW(
       [&] {
-        ad_utility::InvariantGuard guard{&instance};
+        ad_utility::InvariantGuard guard{instance};
         throw std::runtime_error{"failure"};
       }(),
       std::runtime_error);
