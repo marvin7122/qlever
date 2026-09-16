@@ -33,7 +33,6 @@
 #include "util/AllocatorWithLimit.h"
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
-#include "util/Invariants.h"
 #include "util/Iterators.h"
 #include "util/TransparentFunctors.h"
 #include "util/TypeTraits.h"
@@ -481,8 +480,7 @@ inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
 // Helper struct that encapsulates assembling string_views from multiple
 // independent vocabulary sources, verifying collision-free total coverage, and
 // aggregating storage ownership into a self-contained `VocabBatchLookupResult`.
-class MultiSourceVocabBatchAssembler
-    : public ad_utility::WithInvariants<MultiSourceVocabBatchAssembler> {
+class MultiSourceVocabBatchAssembler {
  private:
   std::vector<std::string_view> assembledWordViews_;
   std::vector<bool> slotFilledTracking_;
@@ -493,15 +491,6 @@ class MultiSourceVocabBatchAssembler
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
       : assembledWordViews_(totalExpectedWords),
         slotFilledTracking_(totalExpectedWords, false) {
-    checkInvariants();
-  }
-
-  // ___________________________________________________________________________
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(assembledWordViews_.size() ==
-                         slotFilledTracking_.size());
-    // The number of storage owners is independent of the number of assembled
-    // views.
   }
 
   // ___________________________________________________________________________
@@ -510,7 +499,6 @@ class MultiSourceVocabBatchAssembler
   // e.g. by also registering the owning storage via `registerStorageOwner`
   // (or by scattering a child result, which retains its owner automatically).
   void assignWordAtPosition(size_t resultPosition, std::string_view word) {
-    auto guard = makeInvariantGuard();
     AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
     AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
     slotFilledTracking_[resultPosition] = true;
@@ -524,7 +512,6 @@ class MultiSourceVocabBatchAssembler
   void scatterSubBatchResultAtPositions(
       const VocabBatchLookupResult& subBatchResult,
       ql::span<const size_t> resultPositions) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(subBatchResult.size() == resultPositions.size());
 
     for (auto [resultPosition, word] :
@@ -540,7 +527,6 @@ class MultiSourceVocabBatchAssembler
   // Register a shared storage owner (e.g. an in-memory vocabulary buffer)
   // that must outlive the assembled string_views.
   void registerStorageOwner(VocabBatchOwner storageOwner) {
-    auto guard = makeInvariantGuard();
     AD_CONTRACT_CHECK(storageOwner != nullptr);
     storageOwners_.push_back(std::move(storageOwner));
   }
@@ -549,7 +535,6 @@ class MultiSourceVocabBatchAssembler
   // Finalize the assembled batch and return a self-contained
   // `VocabBatchLookupResult` (can be called only once).
   [[nodiscard]] VocabBatchLookupResult finalizeVocabBatchLookupResult() && {
-    checkInvariants();
     AD_CORRECTNESS_CHECK(!assembledWordViews_.empty());
     AD_CORRECTNESS_CHECK(!storageOwners_.empty());
     AD_CORRECTNESS_CHECK(ql::ranges::all_of(
@@ -570,23 +555,17 @@ static_assert(
 // arrays, `underlyingIndices[i]` is the index to look up, and
 // `resultPositions[i]` is where the result goes in the final output. The
 // arrays are always kept in sync (same size).
-class MarkerIndicesAndPositions
-    : public ad_utility::WithInvariants<MarkerIndicesAndPositions> {
+class MarkerIndicesAndPositions {
  private:
   std::vector<size_t> underlyingIndices_;
   std::vector<size_t> resultPositions_;
 
  public:
-  // ___________________________________________________________________________
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(underlyingIndices_.size() == resultPositions_.size());
-  }
 
   // ___________________________________________________________________________
   // Pre-allocate capacity for both paired vectors, preserving their 1:1
   // correspondence.
   void reserve(size_t capacity) {
-    auto guard = makeInvariantGuard();
     underlyingIndices_.reserve(capacity);
     resultPositions_.reserve(capacity);
   }
@@ -594,7 +573,6 @@ class MarkerIndicesAndPositions
   // ___________________________________________________________________________
   // Add a (`underlyingIndex`, `resultPosition`) pair.
   void addPair(size_t underlyingIndex, size_t resultPosition) {
-    auto guard = makeInvariantGuard();
     underlyingIndices_.push_back(underlyingIndex);
     resultPositions_.push_back(resultPosition);
   }
