@@ -26,7 +26,6 @@
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
-#include "util/Invariants.h"
 #include "util/http/MediaTypes.h"
 
 namespace ql::export_formatting {
@@ -405,7 +404,6 @@ class FastExportStreamFormatter
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
                    const qlever::constructExport::EvaluatedTermData& o) {
-    auto guard = makeInvariantGuard();
 
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeTerm(s, format);
@@ -446,7 +444,6 @@ class FastExportStreamFormatter
   // ___________________________________________________________________________
   // Write a tabular row for SELECT query export.
   void writeRow(ExportFormat format, ql::span<const std::string_view> cells) {
-    auto guard = makeInvariantGuard();
     const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
     for (size_t i = 0; i < cells.size(); ++i) {
       if (i > 0) {
