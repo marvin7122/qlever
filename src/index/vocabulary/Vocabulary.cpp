@@ -311,7 +311,11 @@ template <typename S, typename C, typename I>
 VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
+  // NOTE: the detection uses the C++17-compatible trait instead of
+  // `if constexpr (requires { ... })`, which the CPP17 libQLever CI
+  // workflow cannot compile (see `hasLookupBatchWithBuilder`).
+  if constexpr (ad_utility::vocabulary::hasLookupBatchWithBuilder<
+                    decltype(vocabulary_)>) {
     return vocabulary_.lookupBatch(indices, builder);
   } else {
     return vocabulary_.lookupBatch(indices);

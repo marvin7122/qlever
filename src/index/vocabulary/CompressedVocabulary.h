@@ -209,7 +209,22 @@ CPP_template(typename UnderlyingVocabulary,
     std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
-      const size_t decoderIdx = getDecoderIdx(idx);
+      // A hole has no compressed word: report the placeholder directly, like
+      // `operator[]` does, instead of decoding the underlying placeholder
+      // text as if it were compressed data. The index is translated to a
+      // position exactly once and then reused for the decoder selection.
+      size_t decoderIdx = 0;
+      if constexpr (underlyingHasHoles) {
+        auto position = underlyingVocabulary_.positionOfIndex(idx);
+        if (!position.has_value()) {
+          builder.appendWord(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+          continue;
+        }
+        decoderIdx = getDecoderIdxFromPosition(position.value());
+      } else {
+        decoderIdx = getDecoderIdx(idx);
+      }
       AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
@@ -221,6 +236,10 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    // Check the contract before constructing the builder, whose own
+    // `expectedSize > 0` check would otherwise fire first with a confusing
+    // message for an empty index list.
+    AD_CONTRACT_CHECK(!indices.empty());
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
     return std::move(builder).finalize();
