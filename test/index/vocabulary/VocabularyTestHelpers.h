@@ -16,7 +16,6 @@
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
 #include "util/File.h"
-#include "util/Invariants.h"
 
 // human-readable output for the `WordAndIndex` class within GTest.
 inline void PrintTo(const ad_utility::vocabulary::WordAndIndex& wi,
@@ -454,7 +453,6 @@ class ScopedSplitVocabularyFiles
  public:
   explicit ScopedSplitVocabularyFiles(const std::string& filename)
       : filenames_{SplitVocabulary::splitFilenameFunction_(filename)} {
-    checkInvariants();
   }
 
   ScopedSplitVocabularyFiles(const ScopedSplitVocabularyFiles&) = delete;
