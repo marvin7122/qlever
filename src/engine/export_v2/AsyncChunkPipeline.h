@@ -21,7 +21,6 @@
 #include <utility>
 
 #include "util/Exception.h"
-#include "util/Invariants.h"
 
 namespace qlever::export_v2 {
 
@@ -53,8 +52,7 @@ struct AsyncChunkPipelineStats {
 // The future HTTP integration can drive it from the query executor and socket
 // completion handlers without violating the single-core scheduling contract.
 template <typename ChunkType = std::string>
-class AsyncChunkPipeline
-    : public ad_utility::WithInvariants<AsyncChunkPipeline<ChunkType>> {
+class AsyncChunkPipeline {
  private:
   enum class State { Disabled, Running, Finished, Cancelled, Failed };
 
@@ -92,7 +90,6 @@ class AsyncChunkPipeline
                    ? State::Running
                    : State::Disabled} {
     AD_CONTRACT_CHECK(capacity_ > 0);
-    checkInvariants();
   }
 
   AsyncChunkPipeline(const AsyncChunkPipeline&) = delete;
@@ -102,22 +99,12 @@ class AsyncChunkPipeline
 
   ~AsyncChunkPipeline() { cancel(); }
 
-  void checkInvariants() const {
-    AD_CORRECTNESS_CHECK(capacity_ > 0);
-    std::lock_guard lock{mutex_};
-    AD_CORRECTNESS_CHECK(chunks_.size() <= capacity_);
-    AD_CORRECTNESS_CHECK(stats_.chunksConsumed_ + stats_.chunksDiscarded_ <=
-                         stats_.chunksProduced_);
-    AD_CORRECTNESS_CHECK((state_ == State::Failed) == (exception_ != nullptr));
-  }
-
   [[nodiscard]] bool isEnabled() const {
     std::lock_guard lock{mutex_};
     return state_ != State::Disabled;
   }
 
   [[nodiscard]] PushResult push(ChunkType chunk) {
-    auto guard = this->makeInvariantGuard();
     std::unique_lock lock{mutex_};
     if (state_ != State::Running) {
       return PushResult::Closed;
@@ -143,7 +130,6 @@ class AsyncChunkPipeline
   // kill switch disabled the pipeline. Producer failures are rethrown after
   // already queued chunks have been consumed.
   [[nodiscard]] std::optional<ChunkType> pop() {
-    auto guard = this->makeInvariantGuard();
     std::unique_lock lock{mutex_};
     if (chunks_.empty() && state_ == State::Running) {
       ++stats_.consumerWaits_;
@@ -166,7 +152,6 @@ class AsyncChunkPipeline
   }
 
   void finish() {
-    auto guard = this->makeInvariantGuard();
     {
       std::lock_guard lock{mutex_};
       if (state_ == State::Running) {
@@ -178,7 +163,6 @@ class AsyncChunkPipeline
   }
 
   void fail(std::exception_ptr exception) {
-    auto guard = this->makeInvariantGuard();
     AD_CONTRACT_CHECK(exception != nullptr);
     {
       std::lock_guard lock{mutex_};
@@ -193,7 +177,6 @@ class AsyncChunkPipeline
   }
 
   void cancel() {
-    auto guard = this->makeInvariantGuard();
     {
       std::lock_guard lock{mutex_};
       if (state_ == State::Running) {
