@@ -30,7 +30,7 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 // original input. Keeping the two groups separate allows each vocabulary to be
 // looked up in batches independently; the stored result positions are required to
 // restore the original request order when the sub-results are assembled.
-namespace {
+//
 // Helpers for `VocabularyInternalExternal::lookupBatch` (see below).
 namespace {
 
