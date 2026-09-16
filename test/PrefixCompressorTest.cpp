@@ -130,6 +130,7 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
 // NUM_COMPRESSION_PREFIXES) maps to indices [0, NUM_COMPRESSION_PREFIXES),
 // everything else yields `std::nullopt`.
 TEST(PrefixCompressor, PrefixIndexBoundaries) {
+  using ad_utility::vocabulary::PrefixCompressor;
   using Marker = std::string;
   const auto byteWord = [](unsigned int byte) {
     return Marker(1, static_cast<char>(byte));
