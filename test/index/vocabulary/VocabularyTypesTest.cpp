@@ -144,6 +144,30 @@ TEST(VocabBatchLookupData, MovedFromResultIsEmpty) {
 }
 
 // _____________________________________________________________________________
+// Copies share ownership of the frozen storage: both the copy and the
+// original observe the same words, and both stay valid.
+TEST(VocabBatchLookupData, CopiedResultSharesStorage) {
+  auto original = makeStringVectorVocabBatchLookupResult({"foo", "bar"});
+  auto copy = original;
+  EXPECT_THAT(copy, ::testing::ElementsAre("foo", "bar"));
+  EXPECT_THAT(original, ::testing::ElementsAre("foo", "bar"));
+  EXPECT_EQ(copy[0].data(), original[0].data());
+
+  auto assigned = makeStringVectorVocabBatchLookupResult({"x"});
+  assigned = original;
+  EXPECT_THAT(assigned, ::testing::ElementsAre("foo", "bar"));
+  EXPECT_EQ(assigned[1].data(), original[1].data());
+}
+
+// _____________________________________________________________________________
+// An assembler for zero words can never finalize (finalization requires a
+// non-empty view list), so construction fails fast like every other factory.
+TEST(VocabBatchLookupData, MultiSourceAssemblerRejectsEmptyTotal) {
+  AD_EXPECT_THROW_WITH_MESSAGE(MultiSourceVocabBatchAssembler(0),
+                               ::testing::HasSubstr("totalExpectedWords > 0"));
+}
+
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   auto first = makeStringVectorVocabBatchLookupResult({"apple", "banana"});
   auto second = makeStringVectorVocabBatchLookupResult({"cherry"});
