@@ -116,8 +116,12 @@ void IoUringPolicy::addBatch(int fd,
     if (numInFlightReadRequests_ >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
-      ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
-                                [&]() { return io_uring_submit(&ring_); });
+      // The return value is intentionally unchecked, as in the surrounding
+      // code and upstream: `timed` measures the call only when
+      // `measure-io-wait` is set and otherwise calls it directly.
+      (void)ad_utility::ioWait::timed(
+          ad_utility::ioWait::ioUringSubmitCounters,
+          [&]() { return io_uring_submit(&ring_); });
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
       }
@@ -146,8 +150,9 @@ void IoUringPolicy::addBatch(int fd,
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
-  ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
-                            [&]() { return io_uring_submit(&ring_); });
+  // See above: unchecked return value, timed only when enabled.
+  (void)ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
+                                  [&]() { return io_uring_submit(&ring_); });
 }
 
 //______________________________________________________________________________

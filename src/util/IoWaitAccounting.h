@@ -1,6 +1,10 @@
-//  Copyright 2026, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Marvin Stoetzel <stoetzem@email.uni-freiburg.de>
+// Copyright 2026 The QLever Authors, in particular:
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_UTIL_IOWAITACCOUNTING_H
 #define QLEVER_SRC_UTIL_IOWAITACCOUNTING_H
@@ -26,8 +30,9 @@
 namespace ad_utility::ioWait {
 
 // Wall-clock accounting for the calls on which a query thread blocks waiting
-// for storage: the positioned `pread` in `File::read` and the completion wait
-// in `IoUringPolicy::drainAtLeast`.
+// for storage: the positioned `pread` in `File::read`, the submission flush
+// in `IoUringPolicy::addBatch`, and the completion wait in
+// `IoUringPolicy::drainOneCqe`.
 //
 // WHY THIS EXISTS. `cpu_s` (`utime + stime` from `/proc/<pid>/stat`) only
 // ticks while a thread is scheduled on a CPU. A cold `pread` puts the thread
@@ -71,7 +76,7 @@ struct Counters {
   uint64_t calls_ = 0;
 };
 
-// Per-thread totals for the two blocking call sites.
+// Per-thread totals for the three blocking call sites.
 struct ThreadCounters {
   Counters pread_;
   Counters ioUringWait_;
@@ -143,8 +148,10 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
   if (!enabled()) {
     return callable();
   }
-  const uint64_t start = detail::nowNanos();
+  // Resolved before the clock starts so one-time thread registration is not
+  // counted as storage wait.
   Counters& counters = selector(detail::threadCounters());
+  const uint64_t start = detail::nowNanos();
   if constexpr (std::is_void_v<decltype(callable())>) {
     callable();
     counters.nanos_ += detail::nowNanos() - start;
@@ -157,7 +164,7 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
   }
 }
 
-// Selectors for the two instrumented call sites.
+// Selectors for the three instrumented call sites.
 inline Counters& preadCounters(ThreadCounters& counters) {
   return counters.pread_;
 }

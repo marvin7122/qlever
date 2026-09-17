@@ -191,7 +191,8 @@ class File {
       size_t toRead = nofBytesToRead - bytesRead;
 
       // Timed because a cold `pread` blocks off-CPU, which `cpu_s` cannot
-      // see. No-op unless `measure-io-wait` is set.
+      // see. When disabled this costs one relaxed atomic load and a
+      // predicted branch; the `pread` itself is then called directly.
       const ssize_t ret =
           ad_utility::ioWait::timed(ad_utility::ioWait::preadCounters, [&]() {
             return pread(fd, to + bytesRead, toRead, offset + bytesRead);
