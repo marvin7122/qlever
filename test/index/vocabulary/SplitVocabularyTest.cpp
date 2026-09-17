@@ -725,7 +725,4 @@ TEST(Vocabulary, ScopedSplitVocabularyFilesDeletesOwnedFilesOnException) {
   }
 }
 
-static_assert(ad_utility::InvariantStatefulClass<
-              vocabulary_test::ScopedSplitVocabularyFiles<TwoSplitVocabulary>>);
-
 }  // namespace

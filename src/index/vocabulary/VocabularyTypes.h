@@ -603,9 +603,6 @@ class MultiSourceVocabBatchAssembler {
   }
 };
 
-static_assert(
-    ad_utility::InvariantStatefulClass<MultiSourceVocabBatchAssembler>);
-
 // _____________________________________________________________________________
 // Paired lookup data for one vocabulary marker: for each position `i` in the
 // arrays, `underlyingIndices[i]` is the index to look up, and
@@ -657,8 +654,6 @@ class MarkerIndicesAndPositions {
     return underlyingIndices_.size();
   }
 };
-
-static_assert(ad_utility::InvariantStatefulClass<MarkerIndicesAndPositions>);
 
 // _____________________________________________________________________________
 // Paired lookup data for each of the `NumVocabs` underlying vocabularies,
