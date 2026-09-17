@@ -18,6 +18,7 @@
 
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
+#include "util/GTestHelpers.h"
 
 TEST(FsstEncoder, firstTest) {
   std::vector<std::string> s{
