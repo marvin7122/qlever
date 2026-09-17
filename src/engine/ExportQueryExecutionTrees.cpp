@@ -515,28 +515,63 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
 
   constexpr auto& escapeFunction =
       format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  // Resolve IDs to strings in row windows (Stage A batch materialization):
+  // one `idsToStringAndType` call per column and window instead of one
+  // `idToStringAndType` call per cell. Emission stays row-major, so the
+  // output is byte-identical to the per-cell loop.
+  static constexpr size_t windowSize = 4096;
+  const auto& index = qet.getQec()->getIndex();
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
-    for (uint64_t i : range) {
-      for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
+    const auto& idTable = pair.idTable();
+    const auto& localVocab = pair.localVocab();
+    std::vector<uint64_t> rows(range.begin(), range.end());
+    for (size_t windowBegin = 0; windowBegin < rows.size();
+         windowBegin += windowSize) {
+      const size_t windowEnd =
+          std::min(windowBegin + windowSize, rows.size());
+      const size_t numCols = selectedColumnIndices.size();
+      // Gather the IDs column by column.
+      std::vector<std::vector<Id>> columnIds(numCols);
+      for (size_t j = 0; j < numCols; ++j) {
         if (selectedColumnIndices[j].has_value()) {
-          const auto& val = selectedColumnIndices[j].value();
-          Id id = pair.idTable()(i, val.columnIndex_);
-          auto optionalStringAndType =
-              ql::exportIds::idToStringAndType<format == csv>(
-                  qet.getQec()->getIndex(), id, pair.localVocab(),
-                  escapeFunction);
-          if (optionalStringAndType.has_value()) [[likely]] {
-            STREAMABLE_YIELD(optionalStringAndType.value().first);
+          const auto columnIndex =
+              selectedColumnIndices[j].value().columnIndex_;
+          columnIds[j].reserve(windowEnd - windowBegin);
+          for (size_t k = windowBegin; k < windowEnd; ++k) {
+            columnIds[j].push_back(idTable(rows[k], columnIndex));
           }
         }
-        if (j + 1 < selectedColumnIndices.size()) {
-          STREAMABLE_YIELD(separator);
+      }
+      // Resolve one column at a time; results align with the gathered IDs.
+      using ResolvedCell =
+          std::optional<std::pair<std::string, const char*>>;
+      std::vector<std::vector<ResolvedCell>> columnResults(numCols);
+      for (size_t j = 0; j < numCols; ++j) {
+        if (!columnIds[j].empty()) {
+          columnResults[j] = ql::exportIds::idsToStringAndType<format == csv>(
+              index, columnIds[j], localVocab, escapeFunction);
         }
       }
-      STREAMABLE_YIELD('\n');
-      cancellationHandle->throwIfCancelled();
+      // Emit row-major, exactly as the per-cell loop did.
+      for (size_t k = windowBegin; k < windowEnd; ++k) {
+        const size_t rowInWindow = k - windowBegin;
+        for (size_t j = 0; j < numCols; ++j) {
+          if (selectedColumnIndices[j].has_value()) {
+            const auto& optionalStringAndType =
+                columnResults[j][rowInWindow];
+            if (optionalStringAndType.has_value()) [[likely]] {
+              STREAMABLE_YIELD(optionalStringAndType.value().first);
+            }
+          }
+          if (j + 1 < numCols) {
+            STREAMABLE_YIELD(separator);
+          }
+        }
+        STREAMABLE_YIELD('\n');
+        cancellationHandle->throwIfCancelled();
+      }
     }
   }
   AD_LOG_DEBUG << "Done creating readable result.\n";
