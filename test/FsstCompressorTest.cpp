@@ -400,7 +400,7 @@ TEST(FsstEncoder, DecompressIntoMatchesDecompress) {
     if (bound > 0) {
       std::string undersized(bound - 1, '\0');
       AD_EXPECT_THROW_WITH_MESSAGE(
-          decoder.decompressInto(
+          (void)decoder.decompressInto(
               compressed, ql::span<char>{undersized.data(), undersized.size()}),
           ::testing::HasSubstr("out.size() >= bound"));
     }
@@ -457,7 +457,7 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
       if (bound > 0) {
         std::string undersized(bound - 1, '\0');
         AD_EXPECT_THROW_WITH_MESSAGE(
-            repeated.decompressInto(
+            (void)repeated.decompressInto(
                 compressed[i],
                 ql::span<char>{undersized.data(), undersized.size()}, scratch),
             ::testing::HasSubstr("out.size() >= maxDecompressedSize(str)"));
