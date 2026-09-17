@@ -30,6 +30,20 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
 
+  // Fast path: every index misses the RAM cache, so hand the caller's span
+  // straight through to the on-disk batch lookup without copying the indices
+  // or allocating assembly buffers.
+  bool allDisk = true;
+  for (size_t idx : indices) {
+    if (internalVocab_[idx].has_value()) {
+      allDisk = false;
+      break;
+    }
+  }
+  if (allDisk) {
+    return externalVocab_.lookupBatch(indices);
+  }
+
   std::vector<std::string_view> assembled(indices.size());
   std::vector<size_t> diskIndices;
   std::vector<size_t> diskSlots;
@@ -48,12 +62,6 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
       diskSlots.push_back(static_cast<size_t>(i));
       diskIndices.push_back(idx);
     }
-  }
-
-  // Hand the disk batch through so we do not copy the already-owned compressed
-  // bytes.
-  if (diskIndices.size() == indices.size()) {
-    return externalVocab_.lookupBatch(diskIndices);
   }
 
   std::vector<VocabBatchOwner> owners;
