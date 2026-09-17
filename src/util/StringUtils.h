@@ -292,7 +292,6 @@ constexpr std::string_view constexprStrCat() {
 // truncated to that length and get a "..." suffix appended to it. Shorter
 // strings are returned as-is.
 std::string truncateOperationString(std::string_view operation);
-
 }  // namespace ad_utility
 
 // A helper function for the `operator+` overloads below.
