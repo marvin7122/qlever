@@ -97,7 +97,7 @@ Vocab buildVocab(const std::string& basename,
   {
     VocabularyInMemoryBinSearch::WordWriter writer{basename + ".words"};
     for (size_t i = 0; i < compressed.size(); ++i) {
-      writer(compressed[i], i);
+      (void)writer(compressed[i], i);
     }
     writer.finish();
   }
