@@ -17,9 +17,11 @@
 //
 // All arms must produce byte-identical output (checked up front). The input
 // is a Zipf-skewed index multiset with duplicates, mimicking repeated labels
-// in an export response. The vocabulary is synthetic, so only the relative
-// overhead (allocation, dispatch, escaping) transfers; absolute times need
-// the full export A/B on Wikidata truthy with the byte-identity gate.
+// in an export response. The batch arms sort each batch and scatter back to
+// row order inside the timing, as production `idsToStringAndType` requires
+// sorted input. The vocabulary is synthetic, so only the relative overhead
+// (allocation, dispatch, escaping) transfers; absolute times need the full
+// export A/B on Wikidata truthy with the byte-identity gate.
 
 #include <algorithm>
 #include <cmath>
@@ -148,14 +150,45 @@ class VocabBatchExportMock : public BenchmarkInterface {
     consume();
   }
 
+  // Production `idsToStringAndType` requires input sorted by ID, so the
+  // batch arms sort each batch and scatter the results back to row order.
+  // The sort and the scatter are inside the timing, as in production.
+  struct Item {
+    size_t index;
+    size_t position;
+  };
+
+  // Sort a batch copy by index and return the sorted indices together with
+  // the scatter permutation back to row order.
+  void sortBatch(size_t begin, size_t end, std::vector<Item>& items,
+                 std::vector<size_t>& sorted) {
+    items.clear();
+    for (size_t i = begin; i < end; ++i) {
+      items.push_back({multiset_[i], i - begin});
+    }
+    std::sort(items.begin(), items.end(),
+              [](const Item& a, const Item& b) { return a.index < b.index; });
+    sorted.clear();
+    for (const auto& item : items) {
+      sorted.push_back(item.index);
+    }
+  }
+
   // Arm 2: batched lookup, fresh string per cell for escaping.
   void runBatch() {
     chunk_.clear();
+    std::vector<Item> items;
+    std::vector<size_t> sorted;
+    std::vector<std::string_view> rowViews;
     for (size_t begin = 0; begin < multiset_.size(); begin += batchSize) {
       size_t end = std::min(begin + batchSize, multiset_.size());
-      auto result = vocab_.lookupBatch(
-          ql::span<const size_t>{multiset_.data() + begin, end - begin});
-      for (std::string_view view : *result) {
+      sortBatch(begin, end, items, sorted);
+      auto result = vocab_.lookupBatch(sorted);
+      rowViews.assign(end - begin, {});
+      for (size_t i = 0; i < items.size(); ++i) {
+        rowViews[items[i].position] = (*result)[i];
+      }
+      for (std::string_view view : rowViews) {
         chunk_ += RdfEscaping::escapeForCsv(std::string{view});
         chunk_ += '\n';
       }
@@ -167,11 +200,18 @@ class VocabBatchExportMock : public BenchmarkInterface {
   void runReuse() {
     chunk_.clear();
     std::string scratch;
+    std::vector<Item> items;
+    std::vector<size_t> sorted;
+    std::vector<std::string_view> rowViews;
     for (size_t begin = 0; begin < multiset_.size(); begin += batchSize) {
       size_t end = std::min(begin + batchSize, multiset_.size());
-      auto result = vocab_.lookupBatch(
-          ql::span<const size_t>{multiset_.data() + begin, end - begin});
-      for (std::string_view view : *result) {
+      sortBatch(begin, end, items, sorted);
+      auto result = vocab_.lookupBatch(sorted);
+      rowViews.assign(end - begin, {});
+      for (size_t i = 0; i < items.size(); ++i) {
+        rowViews[items[i].position] = (*result)[i];
+      }
+      for (std::string_view view : rowViews) {
         scratch.assign(view);
         chunk_ += RdfEscaping::escapeForCsv(std::move(scratch));
         chunk_ += '\n';
