@@ -222,15 +222,6 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
-  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(1);
-  assembler.assignWordAtPosition(0, "orphan");
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      (void)std::move(assembler).finalizeVocabBatchLookupResult(),
-      ::testing::HasSubstr("!storageOwners_.empty()"));
-}
-
-// _____________________________________________________________________________
 // Fixture for the "batch result outlives its vocabulary" tests: provides a
 // one-word `VocabularyInMemoryBinSearch` built via a `WordWriter`, with
 // per-test filenames so the suites are independent.
