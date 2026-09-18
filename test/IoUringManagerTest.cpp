@@ -722,5 +722,74 @@ TEST(SqPollSetup, largeBatchStreamsThroughSqPollRing) {
   manager.wait(batch.submitTo(manager, fd));
   EXPECT_THAT(batch.result(), ::testing::ElementsAreArray(expected));
 }
+
+// Mirror of the production vocabulary path (`VocabularyOnDisk::lookupBatch`):
+// one manager with the server's ring size and SQPoll defaults, reused across
+// many consecutive two-phase batches from two files (fixed-size offset pairs,
+// then variable-size words in permuted order), like consecutive export chunks
+// of one query. Must stream without tripping the `sqe != nullptr` assertion.
+TEST(SqPollSetup, serverLikeTwoPhaseReuseStreamsThroughSqPollRing) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
+    GTEST_SKIP() << "SQPoll denied by the kernel here";
+  }
+  constexpr size_t kNumWords = 20000;
+  constexpr size_t kIters = 30;
+  // File A: fixed 16-byte records `offsets[i]`; file B: variable-size words.
+  std::string offsetsContent;
+  offsetsContent.reserve(kNumWords * 16);
+  std::string wordsContent;
+  std::vector<uint64_t> wordOffsets;
+  std::vector<size_t> wordSizes;
+  wordOffsets.reserve(kNumWords);
+  wordSizes.reserve(kNumWords);
+  for (size_t i = 0; i < kNumWords; ++i) {
+    std::string rec = "o" + std::to_string(i);
+    rec.resize(16, 'y');
+    offsetsContent += rec;
+    std::string word = "w" + std::to_string(i);
+    word.resize(5 + (i * 37) % 200, 'x');
+    wordOffsets.push_back(wordsContent.size());
+    wordSizes.push_back(word.size());
+    wordsContent += word;
+  }
+  auto [tmpA, fdA] = makeTempFile(offsetsContent);
+  auto [tmpB, fdB] = makeTempFile(wordsContent);
+  // Server defaults: ring 256, poller on CPU 0, 2s idle timeout.
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(256, options);
+  // A fixed permutation (7919 is coprime to 20000) stands in for the
+  // unsorted export order of the production batches.
+  for (size_t iter = 0; iter < kIters; ++iter) {
+    ReadBatchForTesting phase1;
+    for (size_t i = 0; i < kNumWords; ++i) {
+      const size_t idx = (i * 7919) % kNumWords;
+      phase1.add(idx * 16, 16);
+    }
+    manager.wait(phase1.submitTo(manager, fdA));
+    for (size_t i = 0; i < kNumWords; ++i) {
+      const size_t idx = (i * 7919) % kNumWords;
+      std::string want = "o" + std::to_string(idx);
+      want.resize(16, 'y');
+      ASSERT_EQ(phase1.result()[i], want) << "iter " << iter << " read " << i;
+    }
+    ReadBatchForTesting phase2;
+    for (size_t i = 0; i < kNumWords; ++i) {
+      const size_t idx = (i * 7919) % kNumWords;
+      phase2.add(wordOffsets[idx], wordSizes[idx]);
+    }
+    manager.wait(phase2.submitTo(manager, fdB));
+    for (size_t i = 0; i < kNumWords; ++i) {
+      const size_t idx = (i * 7919) % kNumWords;
+      std::string want = "w" + std::to_string(idx);
+      want.resize(5 + (idx * 37) % 200, 'x');
+      ASSERT_EQ(phase2.result()[i], want) << "iter " << iter << " read " << i;
+    }
+  }
+}
 #endif
 }  // namespace
