@@ -60,8 +60,9 @@ std::vector<size_t> makeQueryIds(size_t vocabSize, size_t numQueries,
 ad_utility::vocabulary::VocabularyInternalExternal buildHybridVocabulary(
     const std::string& filename, const std::vector<std::string>& words) {
   {
-    auto writerPtr = ad_utility::vocabulary::VocabularyInternalExternal::
-        makeDiskWriterPtr(filename);
+    auto writerPtr =
+        ad_utility::vocabulary::VocabularyInternalExternal::makeDiskWriterPtr(
+            filename);
     for (size_t i = 0; i < words.size(); ++i) {
       (*writerPtr)(words[i], i % 2 == 0);
     }
