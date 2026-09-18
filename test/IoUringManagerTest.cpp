@@ -684,6 +684,94 @@ TEST(SqPollSetup, sqPollRequestStillServesReads) {
               ::testing::ElementsAre("AAAA", "BBBB"));
 }
 
+// Shared two-phase workload for the SQPoll bisection tests below: `iters`
+// rounds of (`numReads` fixed-size offset reads, then `numReads`
+// variable-size word reads in permuted order) through one reused SQPoll
+// manager, mirroring `VocabularyOnDisk::lookupBatch`. Prints progress markers
+// to stderr so a crashing run shows how far it got.
+struct TwoPhaseFiles {
+  static std::string offsetsContent(size_t numWords) {
+    std::string content;
+    content.reserve(numWords * 16);
+    for (size_t i = 0; i < numWords; ++i) {
+      std::string rec = "o" + std::to_string(i);
+      rec.resize(16, 'y');
+      content += rec;
+    }
+    return content;
+  }
+  static std::string wordsContent(size_t numWords,
+                                  std::vector<uint64_t>& wordOffsets,
+                                  std::vector<size_t>& wordSizes) {
+    std::string content;
+    wordOffsets.reserve(numWords);
+    wordSizes.reserve(numWords);
+    for (size_t i = 0; i < numWords; ++i) {
+      std::string word = "w" + std::to_string(i);
+      word.resize(5 + (i * 37) % 200, 'x');
+      wordOffsets.push_back(content.size());
+      wordSizes.push_back(word.size());
+      content += word;
+    }
+    return content;
+  }
+  explicit TwoPhaseFiles(size_t numWords)
+      : tmpOffsets{offsetsContent(numWords)},
+        fdOffsets{tmpOffsets.fd()},
+        tmpWords{wordsContent(numWords, wordOffsets, wordSizes)},
+        fdWords{tmpWords.fd()} {}
+  std::vector<uint64_t> wordOffsets;
+  std::vector<size_t> wordSizes;
+  TempFile tmpOffsets;
+  int fdOffsets = -1;
+  TempFile tmpWords;
+  int fdWords = -1;
+};
+
+// 7919 is prime, so `(i * 7919) % numReads` permutes the reads for the batch
+// sizes used below (none is a multiple of 7919).
+void runTwoPhaseReuse(unsigned ringSize, size_t numReads, size_t iters,
+                      unsigned idleMs, const TwoPhaseFiles& files) {
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  options.sqThreadIdleMs = idleMs;
+  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(ringSize,
+                                                              options);
+  for (size_t iter = 0; iter < iters; ++iter) {
+    fprintf(stderr, "[sqpoll-reuse] ring=%u reads=%zu idle=%u iter=%zu/%zu\n",
+            ringSize, numReads, idleMs, iter, iters);
+    ReadBatchForTesting phase1;
+    for (size_t i = 0; i < numReads; ++i) {
+      phase1.add(((i * 7919) % numReads) * 16, 16);
+    }
+    manager.wait(phase1.submitTo(manager, files.fdOffsets));
+    for (size_t i = 0; i < numReads; ++i) {
+      std::string want = "o" + std::to_string((i * 7919) % numReads);
+      want.resize(16, 'y');
+      ASSERT_EQ(phase1.result()[i], want) << "iter " << iter << " read " << i;
+    }
+    ReadBatchForTesting phase2;
+    for (size_t i = 0; i < numReads; ++i) {
+      const size_t idx = (i * 7919) % numReads;
+      phase2.add(files.wordOffsets[idx], files.wordSizes[idx]);
+    }
+    manager.wait(phase2.submitTo(manager, files.fdWords));
+    for (size_t i = 0; i < numReads; ++i) {
+      const size_t idx = (i * 7919) % numReads;
+      std::string want = "w" + std::to_string(idx);
+      want.resize(5 + (idx * 37) % 200, 'x');
+      ASSERT_EQ(phase2.result()[i], want) << "iter " << iter << " read " << i;
+    }
+  }
+}
+
+// True when the SQPoll bisection tests below can run here (GTEST_SKIP must
+// stay in the TEST body, so callers branch on this).
+bool sqPollGrantedForTest() {
+  return ioUringAvailableAtRuntime() &&
+         ad_utility::IoUringPolicy::sqPollAvailable();
+}
+
 // A batch much larger than the ring must stream through an SQPoll ring: the
 // submission-queue-full path has to drain completions and keep going instead
 // of tripping the `sqe != nullptr` assertion (production batches hold
@@ -729,67 +817,49 @@ TEST(SqPollSetup, largeBatchStreamsThroughSqPollRing) {
 // then variable-size words in permuted order), like consecutive export chunks
 // of one query. Must stream without tripping the `sqe != nullptr` assertion.
 TEST(SqPollSetup, serverLikeTwoPhaseReuseStreamsThroughSqPollRing) {
-  if (!ioUringAvailableAtRuntime()) {
-    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
-                    "(e.g. blocked by seccomp inside Docker)";
+  if (!sqPollGrantedForTest()) {
+    GTEST_SKIP() << "SQPoll unavailable here";
   }
-  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
-    GTEST_SKIP() << "SQPoll denied by the kernel here";
-  }
-  constexpr size_t kNumWords = 20000;
-  constexpr size_t kIters = 30;
-  // File A: fixed 16-byte records `offsets[i]`; file B: variable-size words.
-  std::string offsetsContent;
-  offsetsContent.reserve(kNumWords * 16);
-  std::string wordsContent;
-  std::vector<uint64_t> wordOffsets;
-  std::vector<size_t> wordSizes;
-  wordOffsets.reserve(kNumWords);
-  wordSizes.reserve(kNumWords);
-  for (size_t i = 0; i < kNumWords; ++i) {
-    std::string rec = "o" + std::to_string(i);
-    rec.resize(16, 'y');
-    offsetsContent += rec;
-    std::string word = "w" + std::to_string(i);
-    word.resize(5 + (i * 37) % 200, 'x');
-    wordOffsets.push_back(wordsContent.size());
-    wordSizes.push_back(word.size());
-    wordsContent += word;
-  }
-  auto [tmpA, fdA] = makeTempFile(offsetsContent);
-  auto [tmpB, fdB] = makeTempFile(wordsContent);
   // Server defaults: ring 256, poller on CPU 0, 2s idle timeout.
-  ad_utility::IoUringSetupOptions options;
-  options.useSqPoll = true;
-  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(256, options);
-  // A fixed permutation (7919 is coprime to 20000) stands in for the
-  // unsorted export order of the production batches.
-  for (size_t iter = 0; iter < kIters; ++iter) {
-    ReadBatchForTesting phase1;
-    for (size_t i = 0; i < kNumWords; ++i) {
-      const size_t idx = (i * 7919) % kNumWords;
-      phase1.add(idx * 16, 16);
-    }
-    manager.wait(phase1.submitTo(manager, fdA));
-    for (size_t i = 0; i < kNumWords; ++i) {
-      const size_t idx = (i * 7919) % kNumWords;
-      std::string want = "o" + std::to_string(idx);
-      want.resize(16, 'y');
-      ASSERT_EQ(phase1.result()[i], want) << "iter " << iter << " read " << i;
-    }
-    ReadBatchForTesting phase2;
-    for (size_t i = 0; i < kNumWords; ++i) {
-      const size_t idx = (i * 7919) % kNumWords;
-      phase2.add(wordOffsets[idx], wordSizes[idx]);
-    }
-    manager.wait(phase2.submitTo(manager, fdB));
-    for (size_t i = 0; i < kNumWords; ++i) {
-      const size_t idx = (i * 7919) % kNumWords;
-      std::string want = "w" + std::to_string(idx);
-      want.resize(5 + (idx * 37) % 200, 'x');
-      ASSERT_EQ(phase2.result()[i], want) << "iter " << iter << " read " << i;
-    }
+  TwoPhaseFiles files(20000);
+  runTwoPhaseReuse(256, 20000, 30, 2000, files);
+}
+
+// Bisection for the `sqe != nullptr` failure above: ring 256 with a single
+// large batch (no reuse).
+TEST(SqPollBisection, ring256Single20kBatch) {
+  if (!sqPollGrantedForTest()) {
+    GTEST_SKIP() << "SQPoll unavailable here";
   }
+  TwoPhaseFiles files(20000);
+  runTwoPhaseReuse(256, 20000, 1, 2000, files);
+}
+
+// Bisection: small ring with repeated smaller batches.
+TEST(SqPollBisection, ring16Reuse3k) {
+  if (!sqPollGrantedForTest()) {
+    GTEST_SKIP() << "SQPoll unavailable here";
+  }
+  TwoPhaseFiles files(3000);
+  runTwoPhaseReuse(16, 3000, 30, 2000, files);
+}
+
+// Bisection: large ring with repeated smaller batches.
+TEST(SqPollBisection, ring256Reuse3k) {
+  if (!sqPollGrantedForTest()) {
+    GTEST_SKIP() << "SQPoll unavailable here";
+  }
+  TwoPhaseFiles files(3000);
+  runTwoPhaseReuse(256, 3000, 30, 2000, files);
+}
+
+// Bisection: large ring, large reused batches, short poller idle timeout.
+TEST(SqPollBisection, ring256Reuse20kIdle10) {
+  if (!sqPollGrantedForTest()) {
+    GTEST_SKIP() << "SQPoll unavailable here";
+  }
+  TwoPhaseFiles files(20000);
+  runTwoPhaseReuse(256, 20000, 30, 10, files);
 }
 #endif
 }  // namespace
