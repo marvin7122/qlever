@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdio>  // TEMPORARY DIAGNOSTIC (revert before merge)
 #include <cstring>
 #include <stdexcept>
 
@@ -190,6 +191,16 @@ void IoUringPolicy::addBatch(int fd,
     // Claim the next free SQE. The check above guarantees a slot is available,
     // so `io_uring_get_sqe` must not return `nullptr` here.
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    // TEMPORARY DIAGNOSTIC (revert before merge): log the submission
+    // invariant when the slot claim fails.
+    if (sqe == nullptr) {
+      fprintf(stderr,
+              "[iouring-diag] sqe==nullptr: ringSize_=%u counter=%zu "
+              "sqe_tail=%u khead=%u ring_entries=%u sqPoll=%d\n",
+              ringSize_, numInFlightReadRequests_, ring_.sq.sqe_tail,
+              *ring_.sq.khead, ring_.sq.ring_entries, sqPollEnabled_ ? 1 : 0);
+      fflush(stderr);
+    }
     AD_CORRECTNESS_CHECK(sqe != nullptr);
 
     // Record the read's parameters in the SQE (this only sets the SQE's fields;

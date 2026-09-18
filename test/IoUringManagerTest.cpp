@@ -39,8 +39,10 @@ using namespace ::testing;
 // destruction. Use `makeTempFile` below to get the file and its fd in one step.
 class TempFile {
  public:
-  explicit TempFile(std::string_view content)
-      : path_{absl::StrCat(gtestCurrentTestName(), ".tmp")} {
+  // `nameSuffix` distinguishes multiple temp files created within one test
+  // (the default keeps the historical single-file path).
+  explicit TempFile(std::string_view content, std::string_view nameSuffix = "")
+      : path_{absl::StrCat(gtestCurrentTestName(), nameSuffix, ".tmp")} {
     // Open for reading and writing (`"w+b"`): the tests read from this file's
     // `fd()` via `pread`/io_uring.
     readFile_ = ad_utility::File{path_, "w+b"};
@@ -716,9 +718,9 @@ struct TwoPhaseFiles {
     return content;
   }
   explicit TwoPhaseFiles(size_t numWords)
-      : tmpOffsets{offsetsContent(numWords)},
+      : tmpOffsets{offsetsContent(numWords), "-offsets"},
         fdOffsets{tmpOffsets.fd()},
-        tmpWords{wordsContent(numWords, wordOffsets, wordSizes)},
+        tmpWords{wordsContent(numWords, wordOffsets, wordSizes), "-words"},
         fdWords{tmpWords.fd()} {}
   std::vector<uint64_t> wordOffsets;
   std::vector<size_t> wordSizes;
