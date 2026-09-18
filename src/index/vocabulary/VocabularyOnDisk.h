@@ -19,6 +19,8 @@
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 
+namespace ad_utility::vocabulary {
+
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
 // are ascending, but not (necessarily) contiguous. If the strings are sorted,
 // then binary search for a string can be performed.
@@ -173,6 +175,13 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   struct OffsetPair {
     uint64_t offset_;
     uint64_t nextOffset_;
+
+    [[nodiscard]] uint64_t offset() const noexcept { return offset_; }
+    [[nodiscard]] uint64_t nextOffset() const noexcept { return nextOffset_; }
+    [[nodiscard]] size_t wordSize() const {
+      AD_CORRECTNESS_CHECK(nextOffset_ >= offset_);
+      return nextOffset_ - offset_;
+    }
   };
 
   // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
@@ -183,9 +192,13 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched
   // read via `manager`, and return it as a `VocabBatchLookupResult`.
+  // `offsetPairs` must be non-empty (guaranteed by `lookupBatch`, which
+  // rejects empty input; the `ContiguousVocabBatchBuilder` requires it).
   VocabBatchLookupResult readStrings(
       ad_utility::BatchManagerBase& manager,
       ql::span<const OffsetPair> offsetPairs) const;
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H
