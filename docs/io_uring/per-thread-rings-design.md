@@ -82,15 +82,37 @@ the thread that drives it. That is the gap this design closes.
 
 ## Acceptance
 
-- Thread-safety unit tests: concurrent `lookupBatch` calls from N
+- [x] Thread-safety unit tests: concurrent `lookupBatch` calls from N
   threads against a fixture vocabulary return byte-identical results to
-  the serial path (including the sync-fallback policy), run under
-  ThreadSanitizer with zero reports, plus a stress test that migrates
-  load across threads to prove no ring is ever driven by two threads.
-- Ural Wikidata-truthy scaling benchmark: export workload over the
+  the serial path (including the sync-fallback policy), plus a stress
+  test that migrates load across threads. Implemented in
+  `test/index/vocabulary/VocabularyOnDiskTest.cpp`
+  (`LookupBatchConcurrentMatchesSerial`,
+  `LookupBatchConcurrentSyncFallbackMatchesSerial`,
+  `LookupBatchOversubscribedThreadsMatchesSerial`).
+  Still open: a ThreadSanitizer run with zero reports.
+- [ ] Ural Wikidata-truthy scaling benchmark: export workload over the
   Wikidata truthy index (`/local/data-ssd/stoetzem/wikidata`) scales
   lookup throughput with thread count up to the pool/thread count,
   with no regression at one thread versus the current master behavior.
+
+## Implementation
+
+`VocabularyOnDisk::lookupBatch` (`src/index/vocabulary/VocabularyOnDisk.cpp`)
+resolves the calling thread's owned ring via `threadLocalManager()` and runs
+both read phases through it, instead of popping from the shared queue. The
+owned ring is created on first use (per-thread probe-once backend selection,
+so a failed `io_uring_queue_init` degrades only that thread) and destroyed at
+thread teardown (draining in-flight batches first). Ownership is bounded by
+`NUM_VOCAB_BATCH_IO_MANAGERS` via a compare-exchange claim on a per-vocabulary
+budget; excess threads fall back to the shared `ioManagers_` pool with the
+previous pop-use-push discipline. Thread-local rings are keyed by the
+vocabulary's budget (`weak_ptr`, pruned when expired), so vocabulary
+destruction, moves, and address reuse can neither leak nor collide entries.
+`open()` gained a defaulted `preferIoUring` parameter (`false` forces the sync
+fallback, used by the tests). Policy documentation in
+`src/util/IoUringManager.h` now states thread-confinement instead of
+"single-threaded use only".
 
 ## Dependency note
 
