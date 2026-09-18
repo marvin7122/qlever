@@ -166,7 +166,7 @@ std::vector<std::vector<size_t>> makeConcurrentTestBatches(size_t vocabSize,
 // Snapshot every batch via serial `lookupBatch` calls: the reference that the
 // concurrent runs below must reproduce byte-identically.
 std::vector<std::vector<std::string>> snapshotBatchesSerial(
-    const ad_utility::vocabulary::VocabularyOnDisk& vocab,
+    const VocabularyOnDisk& vocab,
     const std::vector<std::vector<size_t>>& batches) {
   std::vector<std::vector<std::string>> snapshots;
   snapshots.reserve(batches.size());
@@ -181,7 +181,7 @@ std::vector<std::vector<std::string>> snapshotBatchesSerial(
 // order and snapshots each result. Worker exceptions are collected into
 // `errors` so they surface as test failures instead of `std::terminate`.
 std::vector<std::vector<std::vector<std::string>>> snapshotBatchesConcurrent(
-    const ad_utility::vocabulary::VocabularyOnDisk& vocab,
+    const VocabularyOnDisk& vocab,
     const std::vector<std::vector<std::vector<size_t>>>& perThreadBatches,
     std::vector<std::string>& errors) {
   const size_t numThreads = perThreadBatches.size();
