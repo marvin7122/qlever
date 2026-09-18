@@ -137,9 +137,8 @@ TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
 // Moves transfer ownership and leave the source empty, never a null owner
 // paired with a stale view into the moved-to storage.
 TEST(VocabBatchLookupData, MovedFromResultIsEmpty) {
-  auto result =
-      ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
-          {"foo", "bar"});
+  auto result = ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
+      {"foo", "bar"});
   ASSERT_EQ(result.size(), 2u);
 
   auto moved = std::move(result);
@@ -179,7 +178,7 @@ TEST(VocabBatchLookupData, CopiedResultSharesStorage) {
 TEST(VocabBatchLookupData, MultiSourceAssemblerRejectsEmptyTotal) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       ad_utility::vocabulary::MultiSourceVocabBatchAssembler(0),
-                               ::testing::HasSubstr("totalExpectedWords > 0"));
+      ::testing::HasSubstr("totalExpectedWords > 0"));
 }
 
 // _____________________________________________________________________________
