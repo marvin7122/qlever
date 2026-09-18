@@ -200,8 +200,10 @@ double sec(const timeval& t) {
 }
 
 //____________________________________________________________________________
-// Advise the kernel that the vocabulary words file will be needed soon.
+// Advise the kernel that the vocabulary words file will be needed soon. Only
+// implemented on Linux (`posix_fadvise` is not available on macOS).
 void adviseWillNeed(const std::string& path) {
+#if defined(__linux__)
   int fd = ::open(path.c_str(), O_RDONLY);
   if (fd < 0) {
     return;
@@ -211,6 +213,9 @@ void adviseWillNeed(const std::string& path) {
     posix_fadvise(fd, 0, st.st_size, POSIX_FADV_WILLNEED);
   }
   ::close(fd);
+#else
+  (void)path;
+#endif
 }
 
 //____________________________________________________________________________
