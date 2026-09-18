@@ -774,22 +774,6 @@ bool sqPollGrantedForTest() {
          ad_utility::IoUringPolicy::sqPollAvailable();
 }
 
-// TEMPORARY diagnostic (remove after sizing): report which ring sizes the
-// kernel actually grants SQPoll for.
-TEST(SqPollBisection, sqPollGrantedRingSizes) {
-  if (!sqPollGrantedForTest()) {
-    GTEST_SKIP() << "SQPoll unavailable here";
-  }
-  ad_utility::IoUringSetupOptions options;
-  options.useSqPoll = true;
-  options.sqThreadIdleMs = 10;
-  for (unsigned size : {16u, 32u, 64u, 128u, 256u}) {
-    ad_utility::IoUringPolicy policy(size, options);
-    fprintf(stderr, "[sqpoll-sizes] ring=%u sqPollEnabled=%d\n", size,
-            policy.sqPollEnabled() ? 1 : 0);
-  }
-}
-
 // A batch much larger than the ring must stream through an SQPoll ring: the
 // submission-queue-full path has to drain completions and keep going instead
 // of tripping the `sqe != nullptr` assertion (production batches hold
@@ -833,7 +817,8 @@ TEST(SqPollSetup, largeBatchStreamsThroughSqPollRing) {
 // one manager with the server's ring size and SQPoll defaults, reused across
 // many consecutive two-phase batches from two files (fixed-size offset pairs,
 // then variable-size words in permuted order), like consecutive export chunks
-// of one query. Must stream without tripping the `sqe != nullptr` assertion.
+// of one query. Must stream through the transient SQ-full windows via the
+// drain-and-retry path (failed deterministically before the fix).
 TEST(SqPollSetup, serverLikeTwoPhaseReuseStreamsThroughSqPollRing) {
   if (!sqPollGrantedForTest()) {
     GTEST_SKIP() << "SQPoll unavailable here";
@@ -843,41 +828,15 @@ TEST(SqPollSetup, serverLikeTwoPhaseReuseStreamsThroughSqPollRing) {
   runTwoPhaseReuse(256, 20000, 30, 2000, files);
 }
 
-// Bisection for the `sqe != nullptr` failure above: ring 256 with a single
-// large batch (no reuse).
-TEST(SqPollBisection, ring256Single20kBatch) {
-  if (!sqPollGrantedForTest()) {
-    GTEST_SKIP() << "SQPoll unavailable here";
-  }
-  TwoPhaseFiles files(20000);
-  runTwoPhaseReuse(256, 20000, 1, 2000, files);
-}
-
-// Bisection: small ring with repeated smaller batches.
-TEST(SqPollBisection, ring16Reuse3k) {
-  if (!sqPollGrantedForTest()) {
-    GTEST_SKIP() << "SQPoll unavailable here";
-  }
-  TwoPhaseFiles files(3000);
-  runTwoPhaseReuse(16, 3000, 30, 2000, files);
-}
-
-// Bisection: large ring with repeated smaller batches.
+// Fast focused regression for the transient SQ-full failure above: a large
+// ring with repeated smaller batches trips the drain-and-retry path within
+// milliseconds (failed deterministically before the fix).
 TEST(SqPollBisection, ring256Reuse3k) {
   if (!sqPollGrantedForTest()) {
     GTEST_SKIP() << "SQPoll unavailable here";
   }
   TwoPhaseFiles files(3000);
   runTwoPhaseReuse(256, 3000, 30, 2000, files);
-}
-
-// Bisection: large ring, large reused batches, short poller idle timeout.
-TEST(SqPollBisection, ring256Reuse20kIdle10) {
-  if (!sqPollGrantedForTest()) {
-    GTEST_SKIP() << "SQPoll unavailable here";
-  }
-  TwoPhaseFiles files(20000);
-  runTwoPhaseReuse(256, 20000, 30, 10, files);
 }
 #endif
 }  // namespace
