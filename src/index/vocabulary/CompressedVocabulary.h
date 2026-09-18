@@ -161,9 +161,16 @@ CPP_template(typename UnderlyingVocabulary,
 
   // Batch-read the compressed words from the underlying vocabulary, then
   // decompress each word with the decoder of its block. The result order
-  // matches `indices`.
+  // matches `indices`. If the underlying vocabulary has holes, resolve each
+  // index individually like `operator[]` does: holes have no word and no
+  // decoder, so they must report the placeholder instead of being
+  // decompressed. Batching would buy nothing here anyway because the
+  // underlying vocabulary is in memory.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
+    if constexpr (underlyingHasHoles) {
+      return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    }
     auto compressed = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressed->size() == indices.size());
 
