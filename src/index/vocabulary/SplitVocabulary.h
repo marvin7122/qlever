@@ -108,6 +108,14 @@ class SplitVocabulary {
   static constexpr uint64_t vocabIndexBitMask =
       ad_utility::bitMaskForLowerBits(markerShift);
 
+  // Enforce the layout that `addMarker`/`getMarker`/`getVocabIndex` rely on:
+  // the marker bits sit directly above the vocab-index bits and together they
+  // exactly fill the data bits, so the `ValueId` datatype bits stay zero.
+  static_assert(markerBitMaskSize <= ValueId::numDataBits);
+  static_assert(markerShift + markerBitMaskSize == ValueId::numDataBits);
+  static_assert((markerBitMask >> markerShift) ==
+                ad_utility::bitMaskForLowerBits(markerBitMaskSize));
+
   // Instances of the functions used for implementing the specific split logic
   static constexpr SplitFunction splitFunction_{};
   static constexpr SplitFilenameFunction splitFilenameFunction_{};
@@ -132,13 +140,10 @@ class SplitVocabulary {
          }))...);
   }
 
-  // Bucket type used by the private `lookupBatch` helpers.
-  using ResultsByMarker = std::array<VocabBatchLookupResult, numberOfVocabs>;
-
-  // Paired lookup data for one marker: for each position `i` in the arrays,
-  // `underlyingIndices[i]` is the index to look up, and `resultPositions[i]` is
-  // where the result goes in the final output. The arrays are always kept in
-  // sync (same size).
+  // Paired lookup data for one vocabulary marker: for each position `i` in the
+  // arrays, `underlyingIndices[i]` is the index to look up, and
+  // `resultPositions[i]` is where the result goes in the final output. The
+  // arrays are always kept in sync (same size).
   struct MarkerIndicesAndPositions {
    private:
     std::vector<size_t> underlyingIndices_;
@@ -176,11 +181,12 @@ class SplitVocabulary {
   using IndicesAndPositionsByMarker =
       std::array<MarkerIndicesAndPositions, numberOfVocabs>;
 
-  // Partition marked indices into paired (underlying_index, result_position)
-  // lists per marker. For each input index with a marker: extract the
-  // underlying vocabulary index, pair it with its position in the input, and
-  // group both by marker. Each marker's indices can be pre-reserved via
-  // reserve() to avoid reallocations during partitioning.
+  // Partition marked indices into paired (`underlyingIndex`, `resultPosition`)
+  // lists per marker. For each input index, extract the marker that identifies
+  // the underlying vocabulary, pair its index with its position in the input,
+  // and group both by marker. Pre-reserve each marker's indices via `reserve()`
+  // to avoid reallocations during partitioning.
+  // _____________________________________________________________________________
   static IndicesAndPositionsByMarker partitionMarkerIndicesAndPositions(
       ql::span<const size_t> indices) {
     IndicesAndPositionsByMarker out;
@@ -188,39 +194,61 @@ class SplitVocabulary {
          ::ranges::views::enumerate(indices)) {
       auto marker = getMarker(markedIndex);
       auto underlyingIndex = getVocabIndex(markedIndex);
-      out[marker].addPair(underlyingIndex, static_cast<size_t>(resultPosition));
+      out[marker].addPair(underlyingIndex, resultPosition);
     }
     return out;
   }
 
-  // Batch lookup results for each underlying vocabulary, keyed by vocabulary
-  // index ("marker"). Includes results only from vocabularies that have lookup
-  // indices in this batch (others remain null).
-  struct MarkerBatchLookups {
-    ResultsByMarker lookupResultByMarker_{};
+  // Batch lookup results for each underlying vocabulary, indexed by vocabulary
+  // marker. Stores results only from vocabularies with lookup indices in this
+  // batch (others remain null).
+  // _____________________________________________________________________________
+  class MarkerBatchLookups {
+   private:
+    std::array<VocabBatchLookupResult, numberOfVocabs> results_{};
+
+   public:
+    MarkerBatchLookups() = default;
+
+    // Access the lookup result for the given vocabulary marker.
+    VocabBatchLookupResult& operator[](size_t marker) {
+      return results_[marker];
+    }
+    const VocabBatchLookupResult& operator[](size_t marker) const {
+      return results_[marker];
+    }
+
+    // Move out the lookup result for the given vocabulary marker.
+    VocabBatchLookupResult release(size_t marker) {
+      return std::move(results_[marker]);
+    }
   };
 
-  // Merge per-marker batches into one result in input order.
+  // Merge the per-vocabulary batches into one result in input order.
+  // `numberOfResults` is the total number of requested indices (the sum of
+  // the per-marker position counts; the caller knows it without re-summing).
+  // _____________________________________________________________________________
   static VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
       MarkerBatchLookups markerLookups,
-      const IndicesAndPositionsByMarker& markerIndicesAndPositions) {
-    std::vector<std::string_view> viewsInInputOrder(std::accumulate(
-        markerIndicesAndPositions.begin(), markerIndicesAndPositions.end(),
-        size_t(0),
-        [](size_t sum, const auto& entry) { return sum + entry.size(); }));
-    std::vector<VocabBatchOwner> owners;
-    for (auto [marker, markerIndices] :
+      const IndicesAndPositionsByMarker& markerIndicesAndPositions,
+      size_t numberOfResults) {
+    std::vector<std::string_view> viewsInInputOrder(numberOfResults);
+    std::vector<VocabBatchOwner> resultOwners;
+
+    for (const auto& [vocabMarker, markerIndices] :
          ::ranges::views::enumerate(markerIndicesAndPositions)) {
       if (markerIndices.empty()) {
         continue;
       }
-      AD_CORRECTNESS_CHECK(markerLookups.lookupResultByMarker_[marker] !=
-                           nullptr);
-      scatterVocabBatchLookupResult(
-          std::move(markerLookups.lookupResultByMarker_[marker]),
-          markerIndices.getResultPositions(), viewsInInputOrder, owners);
+
+      AD_CORRECTNESS_CHECK(markerLookups[vocabMarker] != nullptr);
+
+      scatterVocabBatchLookupResult(markerLookups.release(vocabMarker),
+                                    markerIndices.getResultPositions(),
+                                    viewsInInputOrder, resultOwners);
     }
-    return keepAliveVocabBatch(std::move(owners), std::move(viewsInInputOrder));
+    return keepAliveVocabBatch(std::move(resultOwners),
+                               std::move(viewsInInputOrder));
   }
 
   // Grant unit tests access to the private `lookupBatch` helpers.
@@ -230,9 +258,10 @@ class SplitVocabulary {
               SplitVocabularyMergeMarkerBatchesInInputOrder);
 
  public:
-  // Check validity of vocabIndex and marker, then return a new 64 bit index
-  // that contains the marker and vocabIndex. The result is guaranteed to be
-  // zero in all ValueId datatype bits.
+  // Check validity of `vocabIndex` and `marker`, then return a new 64 bit index
+  // that contains the `marker` and the `vocabIndex`. The result is guaranteed
+  // to be zero in all `ValueId` datatype bits (enforced by the static_asserts
+  // on the bit masks above).
   static uint64_t addMarker(uint64_t vocabIndex, uint8_t marker) {
     AD_CORRECTNESS_CHECK(marker < numberOfVocabs &&
                          vocabIndex <= vocabIndexBitMask);
@@ -309,24 +338,23 @@ class SplitVocabulary {
         partitionMarkerIndicesAndPositions(indices);
 
     MarkerBatchLookups markerLookups;
-    for (size_t marker = 0; marker < markerIndicesAndPositions.size();
-         ++marker) {
-      if (markerIndicesAndPositions[marker].empty()) {
+    for (auto&& [marker, markerIndicesAndPositionsForMarker] :
+         ::ranges::views::enumerate(markerIndicesAndPositions)) {
+      if (markerIndicesAndPositionsForMarker.empty()) {
         continue;
       }
-      markerLookups.lookupResultByMarker_[marker] = std::visit(
+      markerLookups[marker] = std::visit(
           [&](const auto& vocab) {
             return vocab.lookupBatch(
-                markerIndicesAndPositions[marker].getUnderlyingIndices());
+                markerIndicesAndPositionsForMarker.getUnderlyingIndices());
           },
           underlying_[marker]);
-      AD_CORRECTNESS_CHECK(
-          markerLookups.lookupResultByMarker_[marker]->size() ==
-          markerIndicesAndPositions[marker].size());
+      AD_CORRECTNESS_CHECK(markerLookups[marker]->size() ==
+                           markerIndicesAndPositionsForMarker.size());
     }
 
-    return mergeMarkerBatchesInInputOrder(std::move(markerLookups),
-                                          markerIndicesAndPositions);
+    return mergeMarkerBatchesInInputOrder(
+        std::move(markerLookups), markerIndicesAndPositions, indices.size());
   }
 
   //____________________________________________________________________________

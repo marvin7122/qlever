@@ -182,11 +182,18 @@ inline void scatterVocabBatchLookupResult(
     std::vector<VocabBatchOwner>& owners) {
   AD_CONTRACT_CHECK(result != nullptr);
   AD_CONTRACT_CHECK(result->size() == resultPositions.size());
+  std::vector<bool> written(viewsInInputOrder.size());
   for (auto [resultPosition, word] :
        ::ranges::views::zip(resultPositions, *result)) {
     AD_CORRECTNESS_CHECK(resultPosition < viewsInInputOrder.size());
+    AD_CORRECTNESS_CHECK(!written[resultPosition]);
+    written[resultPosition] = true;
     viewsInInputOrder[resultPosition] = word;
   }
+  // Note: this function is called once per child batch; each call writes only
+  // its own positions. Completeness across calls (every position written) is
+  // the caller's contract, enforced by `keepAliveVocabBatch`'s non-empty
+  // checks and the per-call double-write guard above.
   owners.push_back(std::move(result));
 }
 

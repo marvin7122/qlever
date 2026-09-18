@@ -2,6 +2,8 @@
 //
 // 2025        Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <gmock/gmock.h>
 
@@ -461,13 +463,14 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
 TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   // Mixed markers, reordered indices, and a duplicate must match `operator[]`.
   TwoSplitVocabulary sv;
-  auto ww = sv.makeDiskWriterPtr("splitVocabLookupBatch.dat");
+  const auto filename = gtestCurrentTestName();
+  auto ww = sv.makeDiskWriterPtr(filename);
   (*ww)("\"\"", true);
   (*ww)("\"abc\"", true);
   (*ww)("\"axyz\"", true);
   (*ww)("\"xyz\"", true);
   ww->finish();
-  sv.readFromFile("splitVocabLookupBatch.dat");
+  sv.readFromFile(filename);
 
   const std::array<size_t, 6> indices{
       static_cast<size_t>(sv.addMarker(1, 0)),
@@ -495,6 +498,8 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
 
 }  // namespace
 
+using namespace splitVocabTestHelpers;
+
 // Share common SplitVocabulary setup across multiple tests.
 // Populates the vocabulary once per test suite with:
 //   index 0: "" (marker 0) / "xyz" (marker 1)
@@ -518,6 +523,7 @@ class SplitVocabularyWithDataTest : public ::testing::Test {
 
 TwoSplitVocabulary SplitVocabularyWithDataTest::sv_;
 
+// _____________________________________________________________________________
 // Test the private lookupBatch helpers directly via FRIEND_TEST.
 TEST_F(SplitVocabularyWithDataTest,
        SplitVocabularyPartitionMarkerIndicesAndPositions) {
@@ -561,10 +567,10 @@ TEST_F(SplitVocabularyWithDataTest,
       static_cast<size_t>(sv_.addMarker(0, 1)),
       static_cast<size_t>(sv_.addMarker(1, 1)),
   };
-  markerLookups.lookupResultByMarker_[0] = sv_.lookupBatch(markerZeroIndices);
-  markerLookups.lookupResultByMarker_[1] = sv_.lookupBatch(markerOneIndices);
+  markerLookups[0] = sv_.lookupBatch(markerZeroIndices);
+  markerLookups[1] = sv_.lookupBatch(markerOneIndices);
   auto merged = TwoSplitVocabulary::mergeMarkerBatchesInInputOrder(
-      std::move(markerLookups), partitions);
+      std::move(markerLookups), partitions, indices.size());
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv_, merged,
                                                                 indices);
 }

@@ -1,6 +1,9 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <gmock/gmock.h>
 
@@ -73,7 +76,7 @@ TEST(PrefixCompressor, decompressIntoMatchesDecompress) {
   const std::string onlyPrefix = p.compress("alpha");
   ASSERT_EQ(onlyPrefix.size(), 1u);
   checkWord("alpha");
-  AD_EXPECT_THROW_WITH_MESSAGE(p.maxDecompressedSize(""),
+  AD_EXPECT_THROW_WITH_MESSAGE(static_cast<void>(p.maxDecompressedSize("")),
                                ::testing::HasSubstr("!compressedWord.empty()"));
 }
 
