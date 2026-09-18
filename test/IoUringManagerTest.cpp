@@ -774,6 +774,22 @@ bool sqPollGrantedForTest() {
          ad_utility::IoUringPolicy::sqPollAvailable();
 }
 
+// TEMPORARY diagnostic (remove after sizing): report which ring sizes the
+// kernel actually grants SQPoll for.
+TEST(SqPollBisection, sqPollGrantedRingSizes) {
+  if (!sqPollGrantedForTest()) {
+    GTEST_SKIP() << "SQPoll unavailable here";
+  }
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  options.sqThreadIdleMs = 10;
+  for (unsigned size : {16u, 32u, 64u, 128u, 256u}) {
+    ad_utility::IoUringPolicy policy(size, options);
+    fprintf(stderr, "[sqpoll-sizes] ring=%u sqPollEnabled=%d\n", size,
+            policy.sqPollEnabled() ? 1 : 0);
+  }
+}
+
 // A batch much larger than the ring must stream through an SQPoll ring: the
 // submission-queue-full path has to drain completions and keep going instead
 // of tripping the `sqe != nullptr` assertion (production batches hold

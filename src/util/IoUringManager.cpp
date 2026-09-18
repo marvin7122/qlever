@@ -13,7 +13,6 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <cstdio>  // TEMPORARY DIAGNOSTIC (revert before merge)
 #include <cstring>
 #include <stdexcept>
 
@@ -188,20 +187,32 @@ void IoUringPolicy::addBatch(int fd,
       }
     }
 
-    // Claim the next free SQE. The check above guarantees a slot is available,
-    // so `io_uring_get_sqe` must not return `nullptr` here.
+    // Claim the next free SQE. The check above guarantees that a slot is
+    // available, but under SQPoll `io_uring_get_sqe` can still transiently
+    // return `nullptr`: the kernel poll thread takes submissions in batches
+    // and only publishes the SQ head once the take is handed off, while
+    // completions for the take's reads can already be reaped. A slot is
+    // therefore guaranteed to *become* available, so submit, reap one more
+    // completion, and retry instead of asserting. The loop performs no new
+    // preparations, so the outstanding take is frozen: every iteration reaps
+    // exactly one completion, and once all in-flight reads have completed the
+    // take has ended and its head is published. If the slot still never
+    // appears, the ring is genuinely stuck.
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-    // TEMPORARY DIAGNOSTIC (revert before merge): log the submission
-    // invariant when the slot claim fails.
-    if (sqe == nullptr) {
-      fprintf(stderr,
-              "[iouring-diag] sqe==nullptr: ringSize_=%u counter=%zu "
-              "sqe_tail=%u khead=%u ring_entries=%u sqPoll=%d\n",
-              ringSize_, numInFlightReadRequests_, ring_.sq.sqe_tail,
-              *ring_.sq.khead, ring_.sq.ring_entries, sqPollEnabled_ ? 1 : 0);
-      fflush(stderr);
+    const size_t inFlightAtEntry = numInFlightReadRequests_;
+    const size_t maxRetries = numInFlightReadRequests_;
+    for (size_t retries = 0; sqe == nullptr && retries < maxRetries;
+         ++retries) {
+      io_uring_submit(&ring_);
+      drainOneCqe();
+      sqe = io_uring_get_sqe(&ring_);
     }
-    AD_CORRECTNESS_CHECK(sqe != nullptr);
+    if (sqe == nullptr) {
+      AD_THROW(absl::StrCat("no free submission-queue entry although only ",
+                            inFlightAtEntry, " reads are in flight (ring size ",
+                            ringSize_, ", SQPoll ",
+                            sqPollEnabled_ ? "enabled" : "disabled", ")"));
+    }
 
     // Record the read's parameters in the SQE (this only sets the SQE's fields;
     // the request is not handed to the kernel until a later `io_uring_submit`).
