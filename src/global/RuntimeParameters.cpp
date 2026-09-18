@@ -68,6 +68,9 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(iouringRingSize_);
+  add(vocabBatchWindow_);
+  add(iouringSqPoll_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
@@ -94,6 +97,27 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  // The ring size must name a usable liburing ring: at least one slot, and
+  // bounded so one lookup cannot pin excessive kernel memory.
+  auto iouringRingSizeConstraint = [](size_t value,
+                                      std::string_view parameterName) {
+    if (value < 1 || value > 4096) {
+      throw std::runtime_error{absl::StrCat("Parameter ", parameterName,
+                                            " must be within 1 and 4096, was ",
+                                            value)};
+    }
+  };
+  iouringRingSize_.setParameterConstraint(iouringRingSizeConstraint);
+  // The batch window is either uncapped (0) or a positive cap up to 1M reads.
+  auto vocabBatchWindowConstraint = [](size_t value,
+                                       std::string_view parameterName) {
+    if (value > 1'000'000) {
+      throw std::runtime_error{
+          absl::StrCat("Parameter ", parameterName,
+                       " must be within 0 and 1000000, was ", value)};
+    }
+  };
+  vocabBatchWindow_.setParameterConstraint(vocabBatchWindowConstraint);
 }
 
 // _____________________________________________________________________________

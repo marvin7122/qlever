@@ -44,6 +44,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
 
+  // The maximum number of reads that one `addBatch` submission carries (0
+  // means no cap). Read once from the `vocab-batch-window` runtime parameter
+  // in `open()`; a positive value splits larger `lookupBatch` calls into
+  // windows of that size.
+  size_t batchWindow_ = 0;
+
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
   static constexpr std::string_view offsetSuffix_ = ".offsets";
@@ -184,6 +190,14 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // string data from `file_` into one contiguous buffer in a single batched
   // read via `manager`, and return it as a `VocabBatchLookupResult`.
   VocabBatchLookupResult readStrings(
+      ad_utility::BatchManagerBase& manager,
+      ql::span<const OffsetPair> offsetPairs) const;
+
+ private:
+  // Phase 2 without the result conversion: return the owning lookup data, so
+  // the windowed `lookupBatch` path can combine several windows into one
+  // result before converting once.
+  std::shared_ptr<VocabBatchLookupData> readStringsData(
       ad_utility::BatchManagerBase& manager,
       ql::span<const OffsetPair> offsetPairs) const;
 };

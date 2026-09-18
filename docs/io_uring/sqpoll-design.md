@@ -94,3 +94,15 @@ options, fallback to a plain ring on `-EPERM`/`-EINVAL`, and
 as opt-in flags, default off, pending the Wikidata-truthy benchmark.
 Production wiring into the vocabulary lookup pool follows after
 per-thread rings land.
+
+## Follow-up implementation (pool wiring)
+
+Wired in `src/index/vocabulary/VocabularyOnDisk.{h,cpp}` behind the new
+`iouring-sqpoll` runtime knob (default off): `open()` reads the knob once
+and builds every pooled manager with `useSqPoll` set accordingly. Each
+pooled manager owns its ring exclusively while checked out (pop, both read
+phases, push back while idle), so one SQPoll thread per pooled ring cannot
+serialize concurrent submitters. `SINGLE_ISSUER` stays off because rings
+migrate across threads over their lifetime until per-thread rings land.
+`DEFER_TASKRUN` stays off pending measurement. The same-binary SQPoll
+on/off benchmark on the Wikidata truthy index toggles only this knob.

@@ -244,6 +244,23 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // The io_uring submission ring size for the batched vocabulary lookup. A
+  // power of two is preferred because liburing rounds up. Must be within
+  // 1 and 4096.
+  SizeT iouringRingSize_{256, "iouring-ring-size"};
+
+  // The maximum number of reads that one `addBatch` submission carries on
+  // the batched vocabulary lookup path. 0 (default) means no cap: the whole
+  // batch is submitted at once. A positive value splits larger batches into
+  // windows of that size. Must not exceed 1M.
+  SizeT vocabBatchWindow_{0, "vocab-batch-window"};
+
+  // Whether the io_uring rings for the batched vocabulary lookup use an
+  // SQPoll kernel poll thread, so submissions pay no `io_uring_enter`
+  // syscall while the poller stays awake. Off by default; when the kernel
+  // denies the setup, the lookup transparently falls back to a plain ring.
+  Bool iouringSqPoll_{false, "iouring-sqpoll"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

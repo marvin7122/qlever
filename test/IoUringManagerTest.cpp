@@ -610,6 +610,17 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
   expectManagerWorks(*manager);
 }
 
+// `makeBatchManager` forwards the ring size and the setup options to the
+// selected policy. Default options keep the plain ring; either way the
+// returned manager must serve reads.
+TEST(MakeBatchManager, forwardsRingSizeAndSetupOptions) {
+  bool preferIoUring = true;
+  ad_utility::IoUringSetupOptions options;
+  auto manager = ad_utility::makeBatchManager(preferIoUring, 64, options);
+  ASSERT_NE(manager, nullptr);
+  expectManagerWorks(*manager);
+}
+
 #ifdef QLEVER_HAS_IO_URING
 // The setup options default to the current behavior: no SQPoll and neither
 // opt-in flag, so existing callers keep a plain ring unless they ask for more.
