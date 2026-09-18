@@ -52,6 +52,13 @@ void MmapVector<T>::readMetaDataFromEnd() {
 // ________________________________________________________________
 template <class T>
 void MmapVector<T>::mapForReading() {
+  // Compat with metadata files that are legitimately empty (trailer only):
+  // mmap() rejects a zero length, so skip the mapping. Callers observe an
+  // empty vector via _size == 0 from the trailer.
+  if (_bytesize == 0) {
+    _ptr = nullptr;
+    return;
+  }
   // open to get valid file descriptor
   int orig_fd = ::open(_filename.c_str(), O_RDONLY);
   // TODO: check if MAP_SHARED is necessary/useful
