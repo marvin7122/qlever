@@ -105,8 +105,7 @@ class ScatterGatherChunk {
   size_t totalBytes_ = 0;
 
   explicit ScatterGatherChunk(std::vector<Segment> segments, size_t totalBytes)
-      : segments_{std::move(segments)}, totalBytes_{totalBytes} {
-  }
+      : segments_{std::move(segments)}, totalBytes_{totalBytes} {}
 
   using Writer =
       std::function<ScatterGatherWriteAttempt(ql::span<const iovec>)>;
@@ -217,7 +216,6 @@ class ScatterGatherChunkBuilder {
   size_t totalBytes_ = 0;
 
  public:
-
   void appendCopy(std::string_view bytes) {
     if (bytes.empty()) {
       return;
