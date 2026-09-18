@@ -166,6 +166,25 @@ struct SyncIoPolicy {
 // for more details.
 #ifdef QLEVER_HAS_IO_URING
 
+// Setup options for `IoUringPolicy`. The defaults preserve the current
+// behavior: a plain ring without kernel-side polling. Set `useSqPoll` to let
+// a kernel poll thread take over submission, so the application thread pays
+// no `io_uring_enter` syscall per submitted batch while the poller stays
+// awake. `sqThreadIdleMs` bounds how long the poller stays awake across
+// submission gaps within one query (it sleeps between queries). The two
+// opt-in flags below are evaluated, not enabled, by this change: both stay
+// `false` unless a benchmark on the Wikidata truthy index shows a win.
+// `singleIssuer` is additionally only sound while exactly one thread ever
+// submits to a ring, which holds because `IoUringPolicy` is single-threaded
+// use only; revisit this once per-thread rings land.
+struct IoUringSetupOptions {
+  bool useSqPoll = false;
+  unsigned sqThreadCpu = 0;
+  unsigned sqThreadIdleMs = 2000;
+  bool deferTaskrun = false;
+  bool singleIssuer = false;
+};
+
 class IoUringPolicy {
  public:
   using BatchHandle = uint64_t;
@@ -173,6 +192,10 @@ class IoUringPolicy {
  private:
   io_uring ring_{};
   unsigned ringSize_;
+  // Whether the ring was actually set up with `IORING_SETUP_SQPOLL`. Stays
+  // `false` when SQPoll was not requested, or when the kernel denied it and
+  // the constructor fell back to a plain ring.
+  bool sqPollEnabled_ = false;
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
@@ -213,7 +236,23 @@ class IoUringPolicy {
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
+  // Same, but with explicit setup flags (SQPoll and the evaluated opt-ins).
+  // When SQPoll is requested but the kernel denies it (`-EPERM` for a missing
+  // `CAP_SYS_NICE`, `-EINVAL` on kernels without SQPoll support), the
+  // constructor falls back to a plain ring and `sqPollEnabled()` reports
+  // `false`. Any other setup failure still throws, and `makeBatchManager`
+  // keeps its existing `SyncIoPolicy` fallback for that case.
+  IoUringPolicy(unsigned ringSize, const IoUringSetupOptions& setupOptions);
   ~IoUringPolicy();
+
+  // Whether this policy's ring runs an SQPoll kernel poll thread.
+  bool sqPollEnabled() const { return sqPollEnabled_; }
+
+  // Feature probe: return `true` iff the running kernel grants an SQPoll
+  // ring. Never throws; returns `false` when the kernel denies setup or
+  // liburing reports any error. Tests use this to skip cleanly where SQPoll
+  // is unavailable.
+  static bool sqPollAvailable();
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain

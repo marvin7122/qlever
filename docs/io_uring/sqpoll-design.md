@@ -81,3 +81,16 @@ this PR.
 IOPoll stays rejected. It requires `O_DIRECT` on pollable files, which
 the compressed vocabulary reads do not satisfy. This PR evaluates SQPoll
 only and changes nothing about completion polling.
+
+## Implementation status
+
+Implemented in `src/util/IoUringManager.{h,cpp}`: `IoUringSetupOptions`
+(defaults preserve the plain ring), `IoUringPolicy(unsigned, const
+IoUringSetupOptions&)` via `io_uring_queue_init_params` with
+`IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF` and `sq_thread_idle` from the
+options, fallback to a plain ring on `-EPERM`/`-EINVAL`, and
+`IoUringPolicy::sqPollAvailable()` as the feature probe.
+`IORING_SETUP_DEFER_TASKRUN` and `IORING_SETUP_SINGLE_ISSUER` are plumbed
+as opt-in flags, default off, pending the Wikidata-truthy benchmark.
+Production wiring into the vocabulary lookup pool follows after
+per-thread rings land.
