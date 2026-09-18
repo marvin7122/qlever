@@ -65,7 +65,9 @@ inline std::atomic<bool>& enabledFlag() {
 }
 inline bool enabled() { return enabledFlag().load(std::memory_order_relaxed); }
 // The environment override wins, so a runtime-parameter update cannot switch
-// the instrumentation off while the process is running.
+// the instrumentation off while the process is running. Totals are shared
+// across concurrent queries, which is fine as long as the flag is constant
+// for the process lifetime, as it is in practice.
 inline void setEnabled(bool value) {
   enabledFlag().store(value || envOverride(), std::memory_order_relaxed);
 }
@@ -205,10 +207,12 @@ inline ThreadCounters total() {
 // application threads, but from several kernel workers performing blocking
 // reads at once. Sampling them separates "the export thread waited less" from
 // "more reads were in flight", which a single `cpu_s` figure cannot.
+// Written by the reporter thread, read by `report()`. Relaxed atomics keep
+// the sampler lock-free; a single writer makes load-modify-store safe.
 struct WorkerSample {
-  uint64_t maxWorkers_ = 0;   // highest `iou-wrk-` count seen
-  uint64_t maxThreads_ = 0;   // highest total task count seen
-  uint64_t workerTicks_ = 0;  // utime + stime of `iou-wrk-` tasks, last sample
+  std::atomic<uint64_t> maxWorkers_{0};   // highest `iou-wrk-` count seen
+  std::atomic<uint64_t> maxThreads_{0};   // highest total task count seen
+  std::atomic<uint64_t> workerTicks_{0};  // highest worker utime+stime seen
 };
 
 namespace detail {
@@ -242,6 +246,7 @@ inline uint64_t ticksFromStat(const std::string& stat) {
   return utime + stime;
 }
 
+// Linux-only: reads `/proc/self/task`, returning early where it is absent.
 // One pass over `/proc/self/task`, recording the io_uring worker population.
 inline void sampleWorkers() {
   DIR* dir = opendir("/proc/self/task");
@@ -271,9 +276,18 @@ inline void sampleWorkers() {
   }
   closedir(dir);
   WorkerSample& sample = workerSample();
-  sample.maxThreads_ = std::max(sample.maxThreads_, threads);
-  sample.maxWorkers_ = std::max(sample.maxWorkers_, workers);
-  sample.workerTicks_ = std::max(sample.workerTicks_, ticks);
+  const uint64_t prevThreads =
+      sample.maxThreads_.load(std::memory_order_relaxed);
+  sample.maxThreads_.store(std::max(prevThreads, threads),
+                           std::memory_order_relaxed);
+  const uint64_t prevWorkers =
+      sample.maxWorkers_.load(std::memory_order_relaxed);
+  sample.maxWorkers_.store(std::max(prevWorkers, workers),
+                           std::memory_order_relaxed);
+  const uint64_t prevTicks =
+      sample.workerTicks_.load(std::memory_order_relaxed);
+  sample.workerTicks_.store(std::max(prevTicks, ticks),
+                            std::memory_order_relaxed);
 }
 }  // namespace detail
 
@@ -292,9 +306,13 @@ inline std::string report() {
       << " iouring_submits=" << counters.ioUringSubmit_.calls_
       << " iouring_submit_s="
       << static_cast<double>(counters.ioUringSubmit_.nanos_) / 1e9
-      << " iowq_workers_max=" << sample.maxWorkers_
-      << " threads_max=" << sample.maxThreads_
-      << " iowq_cpu_s=" << static_cast<double>(sample.workerTicks_) * tick;
+      << " iowq_workers_max="
+      << sample.maxWorkers_.load(std::memory_order_relaxed)
+      << " threads_max=" << sample.maxThreads_.load(std::memory_order_relaxed)
+      << " iowq_cpu_s="
+      << static_cast<double>(
+             sample.workerTicks_.load(std::memory_order_relaxed)) *
+             tick;
   return out.str();
 }
 

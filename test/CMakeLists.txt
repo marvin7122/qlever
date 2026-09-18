@@ -461,6 +461,8 @@ addLinkAndDiscoverTest(GeneratorTest)
 
 addLinkAndDiscoverTest(MemorySizeTest memorySize)
 
+addLinkAndDiscoverTest(IoWaitAccountingTest qlever_util)
+
 addLinkAndDiscoverTest(JsonUtilTest)
 
 addLinkAndDiscoverTest(JoinAlgorithmsTest)
