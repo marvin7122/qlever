@@ -683,5 +683,44 @@ TEST(SqPollSetup, sqPollRequestStillServesReads) {
   EXPECT_THAT((std::vector<std::string>{first, second}),
               ::testing::ElementsAre("AAAA", "BBBB"));
 }
+
+// A batch much larger than the ring must stream through an SQPoll ring: the
+// submission-queue-full path has to drain completions and keep going instead
+// of tripping the `sqe != nullptr` assertion (production batches hold
+// thousands of reads; see the Wikidata-truthy SQPoll A/B).
+TEST(SqPollSetup, largeBatchStreamsThroughSqPollRing) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
+    GTEST_SKIP() << "SQPoll denied by the kernel here";
+  }
+  constexpr size_t kNumReads = 3000;
+  constexpr size_t kReadSize = 8;
+  std::string content;
+  content.reserve(kNumReads * kReadSize);
+  std::vector<std::string> expected;
+  expected.reserve(kNumReads);
+  for (size_t i = 0; i < kNumReads; ++i) {
+    std::string word = "w" + std::to_string(i);
+    word.resize(kReadSize, 'x');
+    content += word;
+    expected.push_back(word);
+  }
+  auto [tmp, fd] = makeTempFile(content);
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  // A short idle timeout keeps a granted poller from lingering after the test.
+  options.sqThreadIdleMs = 10;
+  // A tiny ring forces many drain cycles within the single batch.
+  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(16, options);
+  ReadBatchForTesting batch;
+  for (size_t i = 0; i < kNumReads; ++i) {
+    batch.add(i * kReadSize, kReadSize);
+  }
+  manager.wait(batch.submitTo(manager, fd));
+  EXPECT_THAT(batch.result(), ::testing::ElementsAreArray(expected));
+}
 #endif
 }  // namespace
