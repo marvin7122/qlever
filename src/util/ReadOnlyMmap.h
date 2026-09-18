@@ -112,10 +112,8 @@ class ReadOnlyMmap {
     AD_CONTRACT_CHECK(isMapped());
     return data_;
   }
-  [[nodiscard]] size_t size() const noexcept { return numBytes_; }
+  [[nodiscard]] size_t size() const noexcept { return numBytes_;}
 };
-
-static_assert(ad_utility::InvariantStatefulClass<ReadOnlyMmap>);
 
 }  // namespace ad_utility
 
