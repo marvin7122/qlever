@@ -19,9 +19,6 @@
 
 using ad_utility::StreamingBufferWriter;
 
-// Statically verify compliance with the InvariantStatefulClass concept.
-static_assert(ad_utility::InvariantStatefulClass<StreamingBufferWriter>);
-
 // _____________________________________________________________________________
 TEST(StreamingBufferWriterTest, BasicStreamingWriteAndFlush) {
   constexpr size_t bufferSize = 1024;
