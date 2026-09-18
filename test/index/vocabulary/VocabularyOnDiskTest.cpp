@@ -172,7 +172,7 @@ std::vector<std::vector<std::string>> snapshotBatchesSerial(
   snapshots.reserve(batches.size());
   for (const auto& batch : batches) {
     auto result = vocab.lookupBatch(batch);
-    snapshots.emplace_back(result.begin(), result.end());
+    snapshots.emplace_back(result->begin(), result->end());
   }
   return snapshots;
 }
@@ -196,7 +196,7 @@ std::vector<std::vector<std::vector<std::string>>> snapshotBatchesConcurrent(
         own.reserve(perThreadBatches[t].size());
         for (const auto& batch : perThreadBatches[t]) {
           auto result = vocab.lookupBatch(batch);
-          own.emplace_back(result.begin(), result.end());
+          own.emplace_back(result->begin(), result->end());
         }
       } catch (const std::exception& e) {
         errors[t] = e.what();
