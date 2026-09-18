@@ -180,10 +180,9 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
   const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
   const auto result = vocab.lookupBatch(indices);
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
-  // The redundant `!indices.empty()` check in the convenience overload was
-  // dropped; the arena builder's contract check rejects empty batches.
+  // Empty input is rejected up front like in all other lookupBatch overloads.
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
-                               ::testing::HasSubstr("expectedSize > 0"));
+                               ::testing::HasSubstr("!indices.empty()"));
 }
 
 // _____________________________________________________________________________
