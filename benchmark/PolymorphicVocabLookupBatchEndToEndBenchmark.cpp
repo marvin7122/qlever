@@ -53,17 +53,19 @@ class PolymorphicVocabLookupBatchEndToEndBenchmark : public BenchmarkInterface {
   // pattern of batch ID-to-word resolution during query evaluation.
   std::vector<size_t> batch_;
   TempDirCleanup cleanup_;
-  PolymorphicVocabulary vocab_;
+  ad_utility::vocabulary::PolymorphicVocabulary vocab_;
 
   // Write `numWords` deterministic Wikidata-like IRIs to disk and read them
   // back into a vocabulary with the given basename.
-  PolymorphicVocabulary buildVocabulary(const std::string& basename,
-                                        size_t numWords) {
-    PolymorphicVocabulary vocab;
+  ad_utility::vocabulary::PolymorphicVocabulary buildVocabulary(
+      const std::string& basename, size_t numWords) {
+    ad_utility::vocabulary::PolymorphicVocabulary vocab;
     ad_utility::VocabularyType type{
         ad_utility::VocabularyType::Enum::OnDiskCompressed};
     {
-      auto writerPtr = PolymorphicVocabulary::makeDiskWriterPtr(basename, type);
+      auto writerPtr =
+          ad_utility::vocabulary::PolymorphicVocabulary::makeDiskWriterPtr(
+              basename, type);
       for (size_t i = 0; i < numWords; ++i) {
         // Fixed-width zero padding keeps the words sorted, as the vocabulary
         // writers require sorted input.

@@ -56,16 +56,19 @@ class PolymorphicVocabLookupBatchMicroBenchmark : public BenchmarkInterface {
   // Batch of lookups in pseudo-random order with duplicates (every fifth
   // entry repeats the previous index).
   std::vector<size_t> batch_;
-  PolymorphicVocabulary compressedVocab_;
-  PolymorphicVocabulary uncompressedVocab_;
+  ad_utility::vocabulary::PolymorphicVocabulary compressedVocab_;
+  ad_utility::vocabulary::PolymorphicVocabulary uncompressedVocab_;
   TempFileCleanup compressedCleanup_;
   TempFileCleanup uncompressedCleanup_;
 
-  static void buildVocabulary(PolymorphicVocabulary& vocab,
+  static void buildVocabulary(
+      ad_utility::vocabulary::PolymorphicVocabulary& vocab,
                               ad_utility::VocabularyType::Enum vocabType,
                               const std::string& basename, size_t numWords) {
     ad_utility::VocabularyType type{vocabType};
-    auto writerPtr = PolymorphicVocabulary::makeDiskWriterPtr(basename, type);
+    auto writerPtr =
+        ad_utility::vocabulary::PolymorphicVocabulary::makeDiskWriterPtr(
+            basename, type);
     // Deterministic synthetic words with a long shared prefix (compresses
     // well). Fixed-width zero padding keeps them sorted, as the vocabulary
     // writers require sorted input.
@@ -132,7 +135,8 @@ class PolymorphicVocabLookupBatchMicroBenchmark : public BenchmarkInterface {
     AD_CONTRACT_CHECK(repetitions <= maxRepetitions);
 
     const auto runComparison = [&](auto& group,
-                                   const PolymorphicVocabulary& vocab) {
+                                   const ad_utility::vocabulary::PolymorphicVocabulary&
+                                       vocab) {
       group.addMeasurement("sequential operator[]", [&] {
         size_t totalBytes = 0;
         for (size_t repetition = 0; repetition < repetitions; ++repetition) {
