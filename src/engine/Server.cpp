@@ -32,8 +32,13 @@
 #include "engine/ResponseJson.h"
 #include "engine/SparqlProtocol.h"
 #include "engine/UpdateMetadata.h"
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
+// The V2 streaming engine needs C++20 coroutines. Reduced/C++17 builds
+// serve Legacy V1 (see the `Server::sendStreamableResponse` guards below).
 #include "engine/export_v2/ExportEngineV2.h"
 #include "engine/export_v2/ScatterGatherHttpBody.h"
+#endif
 #include "global/RuntimeParameters.h"
 #include "libqlever/Qlever.h"
 #include "parser/ParsedQuery.h"
@@ -76,7 +81,8 @@ Server::Server(
       metricsReader_(std::move(metricsReader)) {
   AD_LOG_INFO << "Initializing server ..." << std::endl;
 
-#if defined(QLEVER_ENABLE_EXPORT_V2)
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
   exportScheduler_ =
       std::make_unique<ad_utility::export_v2::ElasticExportScheduler>(
           [this](absl::AnyInvocable<void()> work) {
@@ -977,6 +983,8 @@ namespace {
 // Own `range` in the coroutine frame (parameter, not a `[&]` capture). Used to
 // attach `runStreamAsync` *outside* `ExportEngineV2::computeResultChunks`: a
 // producer thread nested in that coroutine failed to compile (91a9a7845).
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
 template <typename Range>
 cppcoro::generator<qlever::export_v2::ScatterGatherChunk> asScatterGatherBody(
     Range range) {
@@ -984,6 +992,7 @@ cppcoro::generator<qlever::export_v2::ScatterGatherChunk> asScatterGatherBody(
     co_yield std::move(chunk);
   }
 }
+#endif
 }  // namespace
 
 // _____________________________________________________________________________
@@ -997,7 +1006,10 @@ CPP_template_def(typename RequestT, typename SendT)(
   using ql::engine::ExportEngineMode;
   using ql::engine::ExportPipelineRouter;
   using ql::engine::ExportSendMode;
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
   using ql::engine::export_v2::ExportEngineV2;
+#endif
 
   std::optional<std::string_view> exportHeader;
   const auto headerValue = request.base()["X-QLever-Export-Engine"];
@@ -1021,7 +1033,8 @@ CPP_template_def(typename RequestT, typename SendT)(
                      ExportEngineMode::LegacyV1)
               << std::endl;
 
-#if defined(QLEVER_ENABLE_EXPORT_V2)
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
   const bool useV2 =
       mode == ExportEngineMode::FastStreamingV2 &&
       ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
@@ -1077,8 +1090,9 @@ CPP_template_def(typename RequestT, typename SendT)(
   // destroys the lambda (and its captures) when the IIFE returns, while the
   // generator still holds the coroutine frame — that segfaults on first
   // resume (observed on SELECT CSV even for the LegacyV1 branch).
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
   cppcoro::generator<std::string> responseGenerator =
-#if defined(QLEVER_ENABLE_EXPORT_V2)
       (mode == ExportEngineMode::FastStreamingV2 &&
        ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
                                  mediaType))
@@ -1089,11 +1103,13 @@ CPP_template_def(typename RequestT, typename SendT)(
                 parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
                 requestTimer, std::move(cancellationHandle));
 #else
-      ExportQueryExecutionTrees::computeResult(
-          parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-          requestTimer, std::move(cancellationHandle));
+  // Reduced/C++17 mode: the verbatim Legacy V1 path.
+  auto responseGenerator = ExportQueryExecutionTrees::computeResult(
+      parsedQuery, plannedQuery.queryExecutionTree(), mediaType, requestTimer,
+      std::move(cancellationHandle));
 #endif
-#if defined(QLEVER_ENABLE_EXPORT_V2)
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
   if (mode == ExportEngineMode::FastStreamingV2 &&
       ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
                                 mediaType)) {

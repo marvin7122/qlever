@@ -317,7 +317,12 @@ addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions ind
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
 
-addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+# `ScatterGatherHttpBody.h` defines coroutine bodies over
+# `cppcoro::generator`, which does not exist in
+# `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`).
+if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
+    addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+endif ()
 
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
@@ -588,6 +593,8 @@ addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(ZeroCopySocketSenderTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
 addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
@@ -620,14 +627,19 @@ addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
 
 addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
 
-addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+# `ExportMorselPlanner.h` names `cppcoro::generator`, which does not exist in
+# `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`).
+if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
+    addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+endif ()
 
 # Header-only util under export_v2; do not pull testUtil/index (cluster GCC
 # range-v3 needs -fpermissive for those translation units).
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
-# The enabled-pipeline tests require `QLEVER_ENABLE_EXPORT_V2` (off in the
-# reduced C++17 feature set, which lacks `cppcoro::generator`): they
-# static-assert the compiled-in switch or expect accepted pushes.
+# The enabled-pipeline tests require `QLEVER_ENABLE_EXPORT_V2`: they
+# static-assert the compiled-in switch or expect accepted pushes. The option
+# stays ON for the reduced C++17 feature set; only the coroutine-based units
+# are excluded there (see above and `src/engine/CMakeLists.txt`).
 if (QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTest(AsyncChunkPipelineTest)
     if (NOT SINGLE_TEST_BINARY)
