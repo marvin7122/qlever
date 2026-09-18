@@ -66,6 +66,27 @@ class BatchManagerBase {
   virtual void wait(BatchHandle handle) = 0;
 };
 
+// Setup options for `IoUringPolicy` (plain data, no liburing dependency, so
+// both policies and the factories below can use it in every build).
+// The defaults preserve the current behavior: a plain ring without
+// kernel-side polling. Set `useSqPoll` to let a kernel poll thread take over
+// submission, so the application thread pays no `io_uring_enter` syscall per
+// submitted batch while the poller stays awake. `sqThreadIdleMs` bounds how
+// long the poller stays awake across submission gaps within one query (it
+// sleeps between queries). The two opt-in flags below are evaluated, not
+// enabled, by this change: both stay `false` unless a benchmark on the
+// Wikidata truthy index shows a win. `singleIssuer` is additionally only
+// sound while exactly one thread ever submits to a ring, which holds because
+// `IoUringPolicy` is single-threaded use only; revisit this once per-thread
+// rings land.
+struct IoUringSetupOptions {
+  bool useSqPoll = false;
+  unsigned sqThreadCpu = 0;
+  unsigned sqThreadIdleMs = 2000;
+  bool deferTaskrun = false;
+  bool singleIssuer = false;
+};
+
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
 // Vocabulary to the `Policy`, which must satisfy the `ReadPolicy` concept
@@ -165,27 +186,6 @@ struct SyncIoPolicy {
   // file), since every read must be fully satisfied.
   static void readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
                                uint64_t fileOffset);
-};
-
-// Setup options for `IoUringPolicy` (plain data, no liburing dependency, so
-// both policies and the type-erased factory below can use it in every build).
-// The defaults preserve the current behavior: a plain ring without
-// kernel-side polling. Set `useSqPoll` to let a kernel poll thread take over
-// submission, so the application thread pays no `io_uring_enter` syscall per
-// submitted batch while the poller stays awake. `sqThreadIdleMs` bounds how
-// long the poller stays awake across submission gaps within one query (it
-// sleeps between queries). The two opt-in flags below are evaluated, not
-// enabled, by this change: both stay `false` unless a benchmark on the
-// Wikidata truthy index shows a win. `singleIssuer` is additionally only
-// sound while exactly one thread ever submits to a ring, which holds because
-// `IoUringPolicy` is single-threaded use only; revisit this once per-thread
-// rings land.
-struct IoUringSetupOptions {
-  bool useSqPoll = false;
-  unsigned sqThreadCpu = 0;
-  unsigned sqThreadIdleMs = 2000;
-  bool deferTaskrun = false;
-  bool singleIssuer = false;
 };
 
 // Persistent io_uring manager that accepts multiple named batches of indices to
