@@ -455,7 +455,6 @@ sj::SweeperCfg SpatialJoinAlgorithms::libspatialjoinSweeperConfig(
   cfg.useOBB = false;
   cfg.useDiagBox = true;
   cfg.useFastSweepSkip = true;
-  cfg.useInnerOuter = false;
   cfg.noGeometryChecks = false;
   cfg.computeDE9IM = false;
   cfg.writeRelCb = {};
