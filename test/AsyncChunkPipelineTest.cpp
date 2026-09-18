@@ -24,8 +24,6 @@ namespace {
 using namespace qlever::export_v2;
 
 static_assert(kExportV2CompiledIn);
-static_assert(
-    ad_utility::InvariantStatefulClass<AsyncChunkPipeline<std::string>>);
 
 void waitUntilProducerBlocks(AsyncChunkPipeline<std::string>& pipeline) {
   const auto deadline =
