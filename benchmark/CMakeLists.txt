@@ -36,4 +36,10 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    # Standalone benchmark with its own `main`, so it cannot use the
+    # `addAndLinkBenchmark` macro: that macro links `benchmarkWithMain`, whose
+    # `BenchmarkMain.cpp` defines its own `main` and would clash.
+    add_executable(vocab-decode-arena-bench VocabDecodeArenaBenchmark.cpp)
+    qlever_target_link_libraries(vocab-decode-arena-bench vocabulary)
+
 endif()

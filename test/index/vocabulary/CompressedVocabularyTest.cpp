@@ -197,6 +197,35 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchEmptyWordInVocabulary) {
 }
 
 // _____________________________________________________________________________
+// The benchmark-support accessors: `lookupCompressedBatch` must return the
+// stored compressed words in request order, `decoderIndex` must map each word
+// to its block (`idx / 4` with the block size 4 used here), and decoding each
+// compressed word through `compressionWrapper()` must yield the original word
+// and agree with `lookupBatch`. An empty index list is a contract violation.
+TYPED_TEST(CompressedVocabularyF, CompressedBatchAndDecoderIndex) {
+  const std::vector<std::string> words{"alpha", "",   "beta", "gamma",
+                                       "delta", "42", "al"};
+  auto vocab = this->createCompressedVocabulary()(words);
+  const std::array<size_t, 6> indices{5, 1, 0, 6, 3, 1};
+  auto compressed = vocab.lookupCompressedBatch(indices);
+  ASSERT_TRUE(compressed != nullptr);
+  ASSERT_EQ(compressed->size(), indices.size());
+  const auto& wrapper = vocab.compressionWrapper();
+  auto decoded = vocab.lookupBatch(indices);
+  for (size_t k = 0; k < indices.size(); ++k) {
+    const size_t idx = indices[k];
+    EXPECT_EQ(vocab.decoderIndex(idx), idx / 4);
+    const std::string_view compressedWord = (*compressed)[k];
+    EXPECT_EQ(wrapper.decompress(compressedWord, vocab.decoderIndex(idx)),
+              words[idx]);
+    EXPECT_EQ((*decoded)[k], words[idx]);
+  }
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      vocab.lookupCompressedBatch(ql::span<const size_t>{}),
+      ::testing::HasSubstr("!indices.empty()"));
+}
+
+// _____________________________________________________________________________
 // The generic framework's empty-vocabulary contract: lookups, iteration, and
 // size must all behave on a vocabulary with zero words.
 TYPED_TEST(CompressedVocabularyF, EmptyVocabulary) {

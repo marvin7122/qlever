@@ -181,6 +181,29 @@ CPP_template(typename UnderlyingVocabulary,
     return makePmrVocabBatchLookupResult(std::move(buffer), std::move(views));
   }
 
+  // Batch-read the compressed words from the underlying vocabulary without
+  // decompressing them. Used by `vocab-decode-arena-bench` to build a
+  // RAM-resident fixture for the decode-only benchmark arm. The result order
+  // matches `indices`.
+  VocabBatchLookupResult lookupCompressedBatch(
+      ql::span<const size_t> indices) const {
+    AD_CONTRACT_CHECK(!indices.empty());
+    return underlyingVocabulary_.lookupBatch(indices);
+  }
+
+  // Return the index of the decoder responsible for the word at `idx` (one
+  // decoder per `NumWordsPerBlock` many words).
+  [[nodiscard]] size_t decoderIndex(size_t idx) const {
+    return getDecoderIdx(idx);
+  }
+
+  // Read access to the compression wrapper, for callers that drive
+  // `decompress`, `maxDecompressedSize`, or `decompressInto` directly (e.g.
+  // `vocab-decode-arena-bench`).
+  [[nodiscard]] const CompressionWrapper& compressionWrapper() const {
+    return compressionWrapper_;
+  }
+
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {
     return ad_utility::vocabulary::lookupBatchesStreamed(*this,
