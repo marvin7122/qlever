@@ -28,6 +28,14 @@
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
 #include "engine/export_v2/ElasticExportScheduler.h"
+// `ScatterGatherHttpBody.h` defines coroutine bodies over
+// `cppcoro::generator`, which does not exist in
+// `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`), mirroring
+// the `Server.cpp` V2 guards.
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
+#include "engine/export_v2/ScatterGatherHttpBody.h"
+#endif
 #include "index/IdTableUtils.h"
 #include "index/Index.h"
 #include "libqlever/Qlever.h"
@@ -167,15 +175,33 @@ class Server {
   // turn requires a type with linkage.
   class MockSend {
    public:
-    Awaitable<void> operator()(auto response) {
-      using Sent = std::decay_t<decltype(response)>;
-      if constexpr (std::is_same_v<Sent, ResponseT>) {
-        response_ = std::move(response);
-      }
+    Awaitable<void> operator()(ResponseT response) {
+      response_ = std::move(response);
       co_return;
     }
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
+    // Overload resolution dispatches on the body type: scatter-gather
+    // (export-send=iovec) responses land in their own slot because
+    // `ResponseT` cannot hold them.
+    Awaitable<void> operator()(
+        boost::beast::http::response<ql::engine::export_v2::scatter_gather_body>
+            response) {
+      scatterGatherResponse_ = std::move(response);
+      co_return;
+    }
+#endif
 
     ResponseT response_;
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
+    // Scatter-gather (export-send=iovec) responses use a different body
+    // type that `ResponseT` cannot hold; capture them separately so the
+    // iovec path stays testable through this seam.
+    std::optional<boost::beast::http::response<
+        ql::engine::export_v2::scatter_gather_body>>
+        scatterGatherResponse_;
+#endif
   };
 
   CPP_template(typename CancelTimeout)(
