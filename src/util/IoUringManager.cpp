@@ -95,6 +95,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
     params.flags |= IORING_SETUP_SINGLE_ISSUER;
   }
   int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+  bool usedFallbackRing = false;
   if (ret == -EPERM || ret == -EINVAL) {
     // The kernel denied the requested setup (missing `CAP_SYS_NICE` for the
     // SQPoll thread, or a kernel without support for one of the flags).
@@ -107,11 +108,14 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
                 << std::endl;
     params = {};
     ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+    usedFallbackRing = true;
   }
   if (ret < 0) {
     AD_THROW("io_uring_queue_init_params failed in IoUringManager");
   }
-  sqPollEnabled_ = setupOptions.useSqPoll;
+  // Report SQPoll only when the kernel granted the requested setup. After the
+  // fallback above no poll thread exists, even though SQPoll was requested.
+  sqPollEnabled_ = setupOptions.useSqPoll && !usedFallbackRing;
 }
 
 //______________________________________________________________________________
