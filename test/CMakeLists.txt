@@ -598,6 +598,8 @@ addLinkAndDiscoverTest(FilesystemHelpersTest qlever_util)
 
 addLinkAndDiscoverTest(LogTest)
 
+addLinkAndDiscoverTest(StreamingBufferWriterTest)
+
 addLinkAndDiscoverTest(QueryEventLogTest qlever_util)
 
 addLinkAndDiscoverTest(MetricsTest metrics)
