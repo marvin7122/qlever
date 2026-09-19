@@ -517,9 +517,16 @@ TEST(IoUringPolicy, thirdVocabularyFileIsRejected) {
     GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
                     "(e.g. blocked by seccomp inside Docker)";
   }
-  const auto firstFd = makeTempFile("AAAA").second;
-  const auto secondFd = makeTempFile("BBBB").second;
-  const auto thirdFd = makeTempFile("CCCC").second;
+  // Bind the pairs (not just `.second`): the `TempFile` must stay alive while
+  // the policy reads from its descriptor, otherwise the descriptor is closed
+  // and its number recycled (e.g. by the ring itself), and registration
+  // rejects the recycled descriptor.
+  const auto firstFile = makeTempFile("AAAA");
+  const auto secondFile = makeTempFile("BBBB");
+  const auto thirdFile = makeTempFile("CCCC");
+  const int firstFd = firstFile.second;
+  const int secondFd = secondFile.second;
+  const int thirdFd = thirdFile.second;
   ad_utility::IoUringPolicy policy{64};
 
   std::string firstBuffer(4, '\0');
