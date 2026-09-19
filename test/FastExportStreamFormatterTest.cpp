@@ -59,17 +59,19 @@ TEST(FastExportStreamFormatterTest, TurtleEmbeddedQuotesEscapedOnce) {
 
 // A fully-qualified encoded literal in CSV output is escaped exactly like
 // `RdfEscaping::escapeForCsv` applied to the whole term in `formatTriple`.
+// A double-typed literal always takes the fully-qualified form (unlike ints,
+// which use the short form in CSV, exactly as in `formatTerm`).
 TEST(FastExportStreamFormatterTest, CsvFullyQualifiedLiteralMatchesBaseline) {
   CollectingFormatter collector;
-  EvaluatedTermData term{"42", XSD_INT_TYPE};
+  EvaluatedTermData term{"NaN", XSD_DOUBLE_TYPE};
   collector.formatter_.writeTerm(term, ExportFormat::Csv);
   std::move(collector.formatter_).finalize();
-  const std::string expected =
-      RdfEscaping::escapeForCsv(absl::StrCat("\"42\"^^<", XSD_INT_TYPE, ">"));
+  const std::string expected = RdfEscaping::escapeForCsv(
+      absl::StrCat("\"NaN\"^^<", XSD_DOUBLE_TYPE, ">"));
   EXPECT_EQ(collector.output_, expected);
   EXPECT_EQ(collector.output_,
-            "\"\"\"42\"\"^^<http://www.w3.org/2001/"
-            "XMLSchema#int>\"");
+            "\"\"\"NaN\"\"^^<http://www.w3.org/2001/"
+            "XMLSchema#double>\"");
 }
 
 // `writeRow` only supports tabular formats: it throws
