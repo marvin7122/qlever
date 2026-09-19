@@ -12,6 +12,8 @@
 
 #include <unistd.h>
 
+#include <cerrno>
+#include <cstring>
 #include <stdexcept>
 
 #include "util/Exception.h"
@@ -56,7 +58,13 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+IoUringPolicy::IoUringPolicy(unsigned ringSize)
+    : IoUringPolicy(ringSize, IoUringSetupOptions{}) {}
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize,
+                             const IoUringSetupOptions& setupOptions)
+    : ringSize_(ringSize) {
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
   // submission queue. liburing rounds the requested size up to a power of two,
@@ -64,10 +72,68 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // a conservative (lower) bound for the "ring full" check below. See
   // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
   // details.
-  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
-  if (ret < 0) {
-    AD_THROW("io_uring_queue_init failed in IoUringManager");
+  const bool wantsSpecialSetup = setupOptions.useSqPoll ||
+                                 setupOptions.deferTaskrun ||
+                                 setupOptions.singleIssuer;
+  if (!wantsSpecialSetup) {
+    int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
+    if (ret < 0) {
+      AD_THROW("io_uring_queue_init failed in IoUringManager");
+    }
+    return;
   }
+  struct io_uring_params params {};
+  if (setupOptions.useSqPoll) {
+    params.flags |= IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF;
+    params.sq_thread_cpu = setupOptions.sqThreadCpu;
+    params.sq_thread_idle = setupOptions.sqThreadIdleMs;
+  }
+  if (setupOptions.deferTaskrun) {
+    params.flags |= IORING_SETUP_DEFER_TASKRUN;
+  }
+  if (setupOptions.singleIssuer) {
+    params.flags |= IORING_SETUP_SINGLE_ISSUER;
+  }
+  int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+  bool usedFallbackRing = false;
+  if (ret == -EPERM || ret == -EINVAL) {
+    // The kernel denied the requested setup (missing `CAP_SYS_NICE` for the
+    // SQPoll thread, or a kernel without support for one of the flags).
+    // Fall back to a plain ring so the lookup path keeps working; the outer
+    // `makeBatchManager` still falls back to `SyncIoPolicy` when even the
+    // plain setup fails.
+    AD_LOG_WARN << "io_uring setup with special flags denied ("
+                << std::strerror(-ret)
+                << "); falling back to a plain ring without SQPoll"
+                << std::endl;
+    params = {};
+    ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+    usedFallbackRing = true;
+  }
+  if (ret < 0) {
+    AD_THROW("io_uring_queue_init_params failed in IoUringManager");
+  }
+  // Report SQPoll only when the kernel granted the requested setup. After the
+  // fallback above no poll thread exists, even though SQPoll was requested.
+  sqPollEnabled_ = setupOptions.useSqPoll && !usedFallbackRing;
+}
+
+//______________________________________________________________________________
+bool IoUringPolicy::sqPollAvailable() {
+  struct io_uring probe {};
+  struct io_uring_params params {};
+  // Request the poll thread, pinned to CPU 0, with a short idle timeout so a
+  // granted poller sleeps again almost immediately after the probe.
+  params.flags = IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF;
+  params.sq_thread_cpu = 0;
+  params.sq_thread_idle = 10;
+  // A tiny ring keeps the probe cheap; 8 is below liburing's minimum and gets
+  // rounded up.
+  if (io_uring_queue_init_params(8, &probe, &params) < 0) {
+    return false;
+  }
+  io_uring_queue_exit(&probe);
+  return true;
 }
 
 //______________________________________________________________________________
