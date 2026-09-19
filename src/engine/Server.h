@@ -18,7 +18,6 @@
 #include <vector>
 
 #include "backports/filesystem.h"
-#include "engine/ExportPipelineRouter.h"
 #include "engine/HttpApiHelpers.h"
 #include "engine/KeepPreviousIndexDirs.h"
 #include "engine/MaterializedViews.h"
@@ -51,7 +50,14 @@ CPP_concept QueryOrUpdate =
 // Forward declaration for testing.
 namespace serverTestHelpers {
 class ServerForTesting;
-}
+}  // namespace serverTestHelpers
+
+namespace ql::engine {
+// Only needed by name in the `sendStreamableResponse` signature below; the
+// full router header stays in `Server.cpp` to keep parser/URL-parsing
+// dependencies out of this widely included header.
+enum class ExportEngineMode;
+}  // namespace ql::engine
 
 //! The HTTP Server used.
 class Server {
