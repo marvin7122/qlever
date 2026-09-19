@@ -76,7 +76,11 @@ TEST(InstantiateTerm, PrecomputedConstantIsReturnedAsIs) {
                           "<http://example.org/subject>", nullptr)));
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->data_, term.get());
-  EXPECT_EQ(result->keepAlive_, term);
+  // Constants are pure borrows of the precomputed template term: no
+  // `shared_ptr` copy, so `keepAlive_` stays empty. The pipeline owns the
+  // template for as long as instantiated triples can be consumed.
+  EXPECT_EQ(result->keepAlive_, nullptr);
+  EXPECT_EQ(result->owned_, nullptr);
 }
 
 // _____________________________________________________________________________
