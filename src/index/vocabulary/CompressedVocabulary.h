@@ -213,7 +213,7 @@ CPP_template(typename UnderlyingVocabulary,
       // `operator[]` does, instead of decoding the underlying placeholder
       // text as if it were compressed data. The index is translated to a
       // position exactly once and then reused for the decoder selection.
-      size_t decoderIdx = 0;
+      size_t decoderIdx;
       if constexpr (underlyingHasHoles) {
         auto position = underlyingVocabulary_.positionOfIndex(idx);
         if (!position.has_value()) {
