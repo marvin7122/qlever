@@ -153,16 +153,14 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
 
   std::promise<void> morsel0StartedPromise;
-  std::shared_future<void> morsel0Started =
-      morsel0StartedPromise.get_future().share();
+  std::future<void> morsel0Started = morsel0StartedPromise.get_future();
   std::promise<void> unblockMorsel0Promise;
-  std::shared_future<void> unblockMorsel0 =
-      unblockMorsel0Promise.get_future().share();
+  std::future<void> unblockMorsel0 = unblockMorsel0Promise.get_future();
 
   // Submit morsel 0 which pauses while holding the helper lease
   session.submitMorsel(
       [morsel0StartedPromise = std::move(morsel0StartedPromise),
-       unblockMorsel0]() mutable {
+       unblockMorsel0 = std::move(unblockMorsel0)]() mutable {
         morsel0StartedPromise.set_value();
         unblockMorsel0.wait();
         return 100;
@@ -250,14 +248,14 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
   std::promise<void> startedPromise;
   auto startedFuture = startedPromise.get_future();
   std::promise<void> unblockPromise;
-  auto unblockFuture = unblockPromise.get_future().share();
+  auto unblockFuture = unblockPromise.get_future();
 
-  session.submitMorsel(
-      [startedPromise = std::move(startedPromise), unblockFuture]() mutable {
-        startedPromise.set_value();
-        unblockFuture.wait();
-        return 42;
-      });
+  session.submitMorsel([startedPromise = std::move(startedPromise),
+                        unblockFuture = std::move(unblockFuture)]() mutable {
+    startedPromise.set_value();
+    unblockFuture.wait();
+    return 42;
+  });
 
   for (size_t i = 1; i < 5; ++i) {
     session.submitMorsel([]() { return 99; });
