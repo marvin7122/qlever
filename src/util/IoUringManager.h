@@ -69,7 +69,11 @@ class BatchManagerBase {
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
 // Vocabulary to the `Policy`, which must satisfy the `ReadPolicy` concept
-// above.
+// above. Each instance is thread-confined: all `addBatch`/`wait` calls on one
+// instance must come from its single owning thread. Concurrent threads achieve
+// thread safety through exclusive ownership (one ring per thread, see
+// `VocabularyOnDisk::threadLocalManager`), not through locking; the per-ring
+// counters and maps therefore stay plain (non-atomic) members.
 template <typename ReadPolicy>
 class BatchManager final : public BatchManagerBase {
   static_assert(
@@ -121,7 +125,11 @@ class BatchManager final : public BatchManagerBase {
 };
 
 // Fallback implementation for the `IoUringPolicy` below. Schedules pread calls
-// in a synchronous (blocking) manner. Single-threaded use only.
+// in a synchronous (blocking) manner. Thread-confinement comes from
+// `BatchManager` (above), whose non-atomic `nextBatchHandle_` requires all
+// calls on one instance to come from a single thread. The policy itself is
+// stateless, so distinct `BatchManager<SyncIoPolicy>` instances may still be
+// driven concurrently from different threads.
 struct SyncIoPolicy {
   using BatchHandle = uint64_t;
 
@@ -162,8 +170,9 @@ struct SyncIoPolicy {
 // Persistent io_uring manager that accepts multiple named batches of indices to
 // be read from the underlying storage medium, submits all SQEs in `addBatch`
 // (blocking if the ring is full), and lets the caller block on a specific batch
-// via `wait()`. Single-threaded use only. See https://github.com/axboe/liburing
-// for more details.
+// via `wait()`. Thread-confined: all calls on one instance must come from its
+// single owning thread; concurrent calls from different threads are data
+// races. See https://github.com/axboe/liburing for more details.
 #ifdef QLEVER_HAS_IO_URING
 
 class IoUringPolicy {

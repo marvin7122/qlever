@@ -5,6 +5,7 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,10 +40,29 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
 
-  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // Pool of persistent `BatchManagerBase`s for `lookupBatch`. This is the
+  // fallback for threads that do not own a ring (see `threadRingBudget_`
+  // below): such a thread pops a manager, runs both read phases of one
+  // `lookupBatch` call through it, and returns it.
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
+
+  // Per-vocabulary state shared with thread-local rings (see
+  // `threadLocalManager`). Shared ownership keeps `VocabularyOnDisk` movable;
+  // thread-local rings hold only weak references, so entries of a destroyed
+  // vocabulary expire and are pruned instead of keeping dead state alive.
+  struct ThreadRingBudget {
+    std::atomic<size_t> numOwnedRings{0};
+    // Initial io_uring preference, set by `open()`. Each thread loads it once
+    // when it creates its owned ring, so a failed `io_uring_queue_init`
+    // degrades only that thread to the synchronous fallback and never affects
+    // other threads. Atomic so the store in `open()` is correctly published
+    // to threads that read it later.
+    std::atomic<bool> preferIoUring{true};
+  };
+  mutable std::shared_ptr<ThreadRingBudget> threadRingBudget_ =
+      std::make_shared<ThreadRingBudget>();
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -75,8 +95,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   };
 
   // Open the vocabulary from file. It must have been previously written to
-  // this file via a `WordWriter`.
-  void open(const std::string& filename);
+  // this file via a `WordWriter`. `preferIoUring` selects the backend of the
+  // pooled managers and is the initial preference each thread copies when it
+  // creates its owned ring (see `threadLocalManager`); `false` forces the
+  // synchronous `pread` fallback everywhere, which is also what the tests use
+  // to cover that backend.
+  void open(const std::string& filename, bool preferIoUring = true);
 
   // Return the word that is stored at the index. Throw an exception if `idx >=
   // size`.
@@ -174,6 +198,15 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     uint64_t offset_;
     uint64_t nextOffset_;
   };
+
+  // The calling thread's exclusively owned ring for this vocabulary, created
+  // on first use via `makeBatchManager` and destroyed at thread teardown
+  // (draining in-flight batches first). At most `NUM_VOCAB_BATCH_IO_MANAGERS`
+  // threads concurrently own a ring; returns `nullptr` for threads that arrive
+  // after the budget is exhausted, and those threads use the shared
+  // `ioManagers_` pool instead. No lock is held on the returned ring's I/O
+  // path: the ring is only ever driven by its owning thread.
+  ad_utility::BatchManagerBase* threadLocalManager() const;
 
   // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
   // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
