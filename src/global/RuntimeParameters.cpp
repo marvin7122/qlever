@@ -112,9 +112,9 @@ RuntimeParameters::RuntimeParameters() {
   auto vocabBatchWindowConstraint = [](size_t value,
                                        std::string_view parameterName) {
     if (value > 1'000'000) {
-      throw std::runtime_error{
-          absl::StrCat("Parameter ", parameterName,
-                       " must be within 0 and 1000000, was ", value)};
+      throw std::runtime_error{absl::StrCat(
+          "Parameter ", parameterName,
+          " must be between 0 and 1000000 inclusive, was ", value)};
     }
   };
   vocabBatchWindow_.setParameterConstraint(vocabBatchWindowConstraint);
