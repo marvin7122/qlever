@@ -694,6 +694,41 @@ TEST(CompressedRelationMetadata, GettersAndSetters) {
   ASSERT_EQ(43, m.numRows_);
 }
 
+// Two `CompressedBlockMetadata` are only equal if all their members are equal,
+// including those of the base class `CompressedBlockMetadataNoBlockIndex`.
+TEST(CompressedBlockMetadata, equalityAlsoConsidersTheBaseClass) {
+  CompressedBlockMetadata block{
+      {{}, 12, {V(16), V(0), V(0), g}, {V(38), V(4), V(12), g}, {}, false}, 0};
+  auto equalBlock = block;
+  EXPECT_EQ(block, equalBlock);
+
+  // Each of the following differs from `block` in exactly one member. All but
+  // the last of those members belong to the base class.
+  auto differentNumRows = block;
+  differentNumRows.numRows_ = 13;
+  auto differentFirstTriple = block;
+  differentFirstTriple.firstTriple_ = {V(17), V(0), V(0), g};
+  auto differentLastTriple = block;
+  differentLastTriple.lastTriple_ = {V(38), V(4), V(13), g};
+  auto differentGraphInfo = block;
+  differentGraphInfo.graphInfo_ = std::vector<Id>{g};
+  auto differentDuplicates = block;
+  differentDuplicates.containsDuplicatesWithDifferentGraphs_ = true;
+  auto differentOffsets = block;
+  differentOffsets.offsetsAndCompressedSize_ =
+      std::vector<CompressedBlockMetadata::OffsetAndCompressedSize>{{17, 42}};
+  auto differentBlockIndex = block;
+  differentBlockIndex.blockIndex_ = 1;
+
+  for (const auto& other :
+       {differentNumRows, differentFirstTriple, differentLastTriple,
+        differentGraphInfo, differentDuplicates, differentOffsets,
+        differentBlockIndex}) {
+    EXPECT_NE(block, other);
+    EXPECT_NE(other, block);
+  }
+}
+
 TEST(CompressedRelationReader, getBlocksForJoinWithColumn) {
   using SpecBlocksBounds = CompressedRelationReader::ScanSpecAndBlocksAndBounds;
   CompressedBlockMetadata block1{
@@ -1473,4 +1508,41 @@ TEST(CompressedBlockMetadata, invariantChecks) {
   // Now everything is consistent and the check should work.
   blocks.front().lastTriple_ = {V(1), V(2), V(3), V(16)};
   EXPECT_TRUE(CompressedBlockMetadata::checkInvariantsForSortedBlocks(blocks));
+}
+
+namespace {
+// Write a small permutation to `filename` with the given `showProgressBar` and
+// return the log output that was produced while doing so.
+std::string writePermutationAndCaptureLog(const std::string& filename,
+                                          bool showProgressBar) {
+  auto [logCleanup, logStream] = setGlobalLoggingStreamToStringStream();
+  auto generator = []() -> cppcoro::generator<IdTableStatic<0>> {
+    IdTableStatic<0> buffer{4, ad_utility::testing::makeAllocator()};
+    for (int64_t i = 0; i < 10; ++i) {
+      buffer.push_back(std::vector{V(0), V(i), V(i + 1), V(0)});
+    }
+    co_yield buffer;
+  };
+  CompressedRelationWriter::WriterAndCallback writerAndCallback{
+      std::make_unique<CompressedRelationWriter>(
+          4, ad_utility::File{filename, "w"}, 16_B),
+      [](ql::span<const CompressedRelationMetadata>) {}};
+  CompressedRelationWriter::createPermutation(
+      std::move(writerAndCallback),
+      ad_utility::InputRangeTypeErased{generator()},
+      qlever::KeyOrder{0, 1, 2, 3}, {}, showProgressBar);
+  return logStream.str();
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(CompressedRelationWriter, showProgressBarCanBeDisabled) {
+  ENFORCE_LOG_LEVEL_OR_SKIP(INFO);
+  auto [filename, cleanup] = testFilenameWithCleanup();
+  // With `showProgressBar` set to `true`, the progress bar is written.
+  EXPECT_THAT(writePermutationAndCaptureLog(filename, true),
+              ::testing::HasSubstr("Triples sorted"));
+  // With `showProgressBar` set to `false`, the writer stays silent.
+  EXPECT_THAT(writePermutationAndCaptureLog(filename, false),
+              ::testing::Not(::testing::HasSubstr("Triples sorted")));
 }

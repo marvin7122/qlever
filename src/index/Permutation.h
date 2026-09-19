@@ -94,11 +94,17 @@ class Permutation {
   explicit Permutation(Enum permutation, Allocator allocator,
                        std::optional<std::string> readableName = std::nullopt);
 
-  // everything that has to be done when reading an index from disk
+  // Everything that has to be done when reading an index from disk.
+  //
+  // With `logRegistration` set to `false`, the "Registered ... permutation"
+  // message is not logged. That is for callers that load several permutations
+  // and write a progress bar of their own, which such a message would
+  // interrupt.
   void loadFromDisk(
       const std::string& onDiskBase, bool loadInternalPermutation = false,
       Type permutationType = Type::NORMAL,
-      ad_utility::HashSet<ColumnIndex> possiblyUndefinedColumns = {});
+      ad_utility::HashSet<ColumnIndex> possiblyUndefinedColumns = {},
+      bool logRegistration = true);
 
   // Set the original metadata for the delta triples. This also sets the
   // metadata for internal permutation if present.
@@ -229,7 +235,7 @@ class Permutation {
   const std::string& fileSuffix() const { return fileSuffix_; }
 
   // _______________________________________________________
-  const KeyOrder& keyOrder() const { return keyOrder_; };
+  const KeyOrder& keyOrder() const { return keyOrder_; }
 
   // _______________________________________________________
   const bool& isLoaded() const { return isLoaded_; }
