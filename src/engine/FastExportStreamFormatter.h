@@ -405,6 +405,7 @@ class FastExportStreamFormatter {
         }
       };
       writeChar('"');
+      writeRaw("\"\"");
       writeCsvDoubled(term.rdfTermString_);
       writeRaw("\"\"^^<");
       writeCsvDoubled(term.rdfTermDataType_);
