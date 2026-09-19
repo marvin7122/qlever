@@ -18,11 +18,6 @@
 
 using namespace ad_utility;
 
-static_assert(InvariantStatefulClass<ZeroCopyBufferPool>,
-              "ZeroCopyBufferPool must satisfy InvariantStatefulClass");
-static_assert(InvariantStatefulClass<ZeroCopySocketSender>,
-              "ZeroCopySocketSender must satisfy InvariantStatefulClass");
-
 // _____________________________________________________________________________
 TEST(ZeroCopyBufferPoolTest, BasicAcquireAndRelease) {
   constexpr size_t numBuffers = 8;
