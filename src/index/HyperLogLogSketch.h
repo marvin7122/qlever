@@ -8,32 +8,43 @@
 
 #pragma once
 
+#include <absl/numeric/bits.h>
+
 #include <algorithm>
-#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <vector>
 
-#include "backports/span.h"
 #include "global/Id.h"
 
 namespace ql::index::stats {
 
 // _____________________________________________________________________________
 // HyperLogLog++ Metadata Cardinality Sketch:
-// 1 KB compact sketch (1024 8-bit registers) embedded inside relation metadata
-// to provide instantaneous O(1) distinct cardinality estimates and set union
-// cardinalities during query planning.
+// Compact sketch of NUM_REGISTERS 8-bit registers (1 KB at the default
+// Precision 10) embedded inside relation metadata to provide instantaneous
+// O(1) distinct cardinality estimates and set union cardinalities during
+// query planning.
 template <size_t Precision = 10>  // 2^10 = 1024 registers
 class HyperLogLogSketch {
  public:
-  static constexpr size_t NUM_REGISTERS = 1 << Precision;
-  static constexpr uint64_t REGISTER_MASK = NUM_REGISTERS - 1;
+  static constexpr size_t NUM_REGISTERS = size_t{1} << Precision;
+
+  static_assert(Precision >= 4 && Precision <= 16,
+                "Precision must be in [4, 16] per the HyperLogLog++ "
+                "recommendation; register values rely on this bound");
+
+  // NOTE: This class is NOT thread-safe. Concurrent insert() or merge()
+  // calls on the same instance require external synchronization. Sharing
+  // const references across threads (e.g. in the query planner) is safe.
 
  private:
   std::vector<uint8_t> registers_;
 
-  // Fast 64-bit splitmix hash function
+  // Fast 64-bit splitmix hash function.
+  // Note: hashes the full bit representation of the Id, including the
+  // datatype bits. The same logical value with different datatypes (e.g. Int
+  // 42 vs. Double 42.0) therefore counts as distinct keys.
   [[nodiscard]] static constexpr uint64_t hashValue(Id id) noexcept {
     uint64_t z = id.getBits() + 0x9e3779b97f4a7c15ULL;
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -48,7 +59,8 @@ class HyperLogLogSketch {
     uint64_t hash = hashValue(id);
     size_t regIdx = static_cast<size_t>(hash >> (64 - Precision));
     uint64_t remaining = (hash << Precision) | 1ULL;
-    uint8_t leadingZeros = static_cast<uint8_t>(std::countl_zero(remaining)) + 1;
+    uint8_t leadingZeros =
+        static_cast<uint8_t>(absl::countl_zero(remaining)) + 1;
 
     if (leadingZeros > registers_[regIdx]) {
       registers_[regIdx] = leadingZeros;
@@ -68,13 +80,17 @@ class HyperLogLogSketch {
     size_t zeroRegisters = 0;
 
     for (size_t i = 0; i < NUM_REGISTERS; ++i) {
-      sum += 1.0 / static_cast<double>(1ULL << registers_[i]);
+      // ldexp instead of 1.0 / (1ULL << r): the shift is undefined for
+      // r >= 64, which a saturated register can reach, while ldexp is
+      // well-defined over the full uint8_t register range.
+      sum += std::ldexp(1.0, -static_cast<int>(registers_[i]));
       if (registers_[i] == 0) {
         zeroRegisters++;
       }
     }
 
-    // Alpha correction factor for m = 1024
+    // Alpha correction factor in its general form for m >= 128, with
+    // m = NUM_REGISTERS for this sketch.
     constexpr double alpha = 0.7213 / (1.0 + 1.079 / static_cast<double>(NUM_REGISTERS));
     double rawEstimate = alpha * static_cast<double>(NUM_REGISTERS * NUM_REGISTERS) / sum;
 
