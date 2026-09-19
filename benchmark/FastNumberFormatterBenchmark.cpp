@@ -254,8 +254,8 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
             "std::string concat (prefix + to_string)", [&]() {
               size_t bytes = 0;
               for (uint64_t id : qids) {
-                std::string s = std::string{WIKIDATA_ENTITY_PREFIX} +
-                                std::to_string(id);
+                std::string s =
+                    std::string{WIKIDATA_ENTITY_PREFIX} + std::to_string(id);
                 bytes += s.size();
               }
               totalBytes = bytes;
@@ -284,9 +284,9 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
           for (uint64_t id : qids) {
             std::memcpy(buffer, WIKIDATA_ENTITY_PREFIX.data(),
                         WIKIDATA_ENTITY_PREFIX.size());
-            auto [ptr, ec] = std::to_chars(
-                buffer + WIKIDATA_ENTITY_PREFIX.size(),
-                buffer + sizeof(buffer), id);
+            auto [ptr, ec] =
+                std::to_chars(buffer + WIKIDATA_ENTITY_PREFIX.size(),
+                              buffer + sizeof(buffer), id);
             AD_CORRECTNESS_CHECK(ec == std::errc{});
             bytes += static_cast<size_t>(ptr - buffer);
           }
