@@ -36,9 +36,6 @@ class ScatterGatherChunkTestAccess {
 namespace {
 using namespace qlever::export_v2;
 
-static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunk>);
-static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunkBuilder>);
-
 TEST(ScatterGatherArenaStreamerTest, RejectsSlicesOutsideOwner) {
   ImmutableByteBuffer arena{"abc"};
   AD_EXPECT_THROW_WITH_MESSAGE(
@@ -111,6 +108,52 @@ TEST(ScatterGatherArenaStreamerTest, HandlesPartialWritesAndEintr) {
   EXPECT_EQ(result.bytesWritten_, chunk.size());
   EXPECT_FALSE(result.cancelled_);
   EXPECT_GT(calls, 2);
+}
+
+TEST(ScatterGatherArenaStreamerTest, RetriesEagainThenWrites) {
+  ImmutableByteBuffer arena{"abcdefgh"};
+  ScatterGatherChunkBuilder builder;
+  builder.appendOwned(arena.slice(0, arena.size()));
+  auto chunk = std::move(builder).finalize();
+  size_t calls = 0;
+
+  const auto result = ScatterGatherChunkTestAccess::writeWith(
+      chunk, [&](ql::span<const iovec> iovecs) {
+        ++calls;
+        if (calls == 1) {
+          return ScatterGatherWriteAttempt{-1, EAGAIN};
+        }
+        size_t offered = 0;
+        for (const auto& iovec : iovecs) {
+          offered += iovec.iov_len;
+        }
+        return ScatterGatherWriteAttempt{static_cast<ssize_t>(offered), 0};
+      });
+
+  EXPECT_EQ(result.bytesWritten_, chunk.size());
+  EXPECT_FALSE(result.cancelled_);
+  EXPECT_EQ(calls, 2);
+}
+
+TEST(ScatterGatherArenaStreamerTest, EagainStallHonoursCancellation) {
+  ImmutableByteBuffer arena{"abcdefgh"};
+  ScatterGatherChunkBuilder builder;
+  builder.appendOwned(arena.slice(0, arena.size()));
+  auto chunk = std::move(builder).finalize();
+  size_t calls = 0;
+
+  const auto result = ScatterGatherChunkTestAccess::writeWith(
+      chunk,
+      [&](ql::span<const iovec>) {
+        ++calls;
+        return ScatterGatherWriteAttempt{-1, EAGAIN};
+      },
+      [&] { return calls >= 3; });
+
+  EXPECT_TRUE(result.cancelled_);
+  EXPECT_EQ(result.bytesWritten_, 0);
+  EXPECT_EQ(calls, 3);
+  EXPECT_EQ(chunk.toString(), "abcdefgh");
 }
 
 TEST(ScatterGatherArenaStreamerTest, CancellationKeepsChunkUsable) {

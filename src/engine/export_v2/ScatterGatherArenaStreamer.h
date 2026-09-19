@@ -105,8 +105,7 @@ class ScatterGatherChunk {
   size_t totalBytes_ = 0;
 
   explicit ScatterGatherChunk(std::vector<Segment> segments, size_t totalBytes)
-      : segments_{std::move(segments)}, totalBytes_{totalBytes} {
-  }
+      : segments_{std::move(segments)}, totalBytes_{totalBytes} {}
 
   using Writer =
       std::function<ScatterGatherWriteAttempt(ql::span<const iovec>)>;
@@ -133,6 +132,8 @@ class ScatterGatherChunk {
       for (size_t index = segmentIndex; index < end; ++index) {
         const auto& segment = segments_[index];
         const size_t offset = index == segmentIndex ? segmentOffset : 0;
+        // `iov_base` is `void*`, so exposing the read-only segment bytes
+        // requires `const_cast`; `writev` only reads the referenced memory.
         iovecs.push_back({const_cast<char*>(segment.owner_->data() +
                                             segment.offset_ + offset),
                           segment.size_ - offset});
@@ -141,6 +142,15 @@ class ScatterGatherChunk {
       const auto attempt = writer({iovecs.data(), iovecs.size()});
       if (attempt.bytesWritten_ < 0) {
         if (attempt.errorNumber_ == EINTR) {
+          continue;
+        }
+        if (attempt.errorNumber_ == EAGAIN ||
+            attempt.errorNumber_ == EWOULDBLOCK) {
+          // Non-blocking fd with no progress yet: re-poll cancellation
+          // before retrying so a stalled fd cannot spin past cancellation.
+          if (isCancelled()) {
+            return {totalWritten, true};
+          }
           continue;
         }
         AD_THROW(absl::StrCat("scatter-gather write failed: ",
@@ -217,7 +227,6 @@ class ScatterGatherChunkBuilder {
   size_t totalBytes_ = 0;
 
  public:
-
   void appendCopy(std::string_view bytes) {
     if (bytes.empty()) {
       return;
@@ -243,8 +252,15 @@ class ScatterGatherChunkBuilder {
   }
 
   [[nodiscard]] ScatterGatherChunk finalize() && {
-    auto copiedOwner =
-        std::make_shared<const std::string>(std::move(copiedBytes_));
+    // Only allocate the shared copied-bytes owner when a copied segment
+    // exists; purely referenced chunks finalize with zero allocations here.
+    // (`appendCopy` early-returns on empty input, so a null owner can never
+    // coincide with a `copied_` segment.)
+    std::shared_ptr<const std::string> copiedOwner;
+    if (!copiedBytes_.empty()) {
+      copiedOwner =
+          std::make_shared<const std::string>(std::move(copiedBytes_));
+    }
     std::vector<ScatterGatherChunk::Segment> result;
     result.reserve(segments_.size());
     for (auto& segment : segments_) {
