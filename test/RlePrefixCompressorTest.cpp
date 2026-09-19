@@ -19,9 +19,6 @@
 
 using namespace ql::engine::rle;
 
-// Structural invariant concept checks were removed with the retired
-// InvariantStatefulClass framework (non-MVP).
-
 TEST(RlePrefixCompressorTest, BasicRunLengthConstantFolding) {
   RlePrefixFormatter formatter{
       RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
