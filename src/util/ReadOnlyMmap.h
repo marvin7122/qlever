@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <cstddef>
+#include <limits>
 #include <utility>
 
 #include "util/Log.h"
@@ -47,8 +48,7 @@ class ReadOnlyMmap {
       : alignedBase_{std::exchange(other.alignedBase_, nullptr)},
         mappedBytes_{std::exchange(other.mappedBytes_, 0)},
         data_{std::exchange(other.data_, nullptr)},
-        numBytes_{std::exchange(other.numBytes_, 0)} {
-  }
+        numBytes_{std::exchange(other.numBytes_, 0)} {}
   ReadOnlyMmap& operator=(ReadOnlyMmap&& other) noexcept {
     if (this != &other) {
       unmap();
@@ -72,10 +72,17 @@ class ReadOnlyMmap {
     if (numBytes == 0 || fileOffset < 0) {
       return false;
     }
-    const size_t pageSize = static_cast<size_t>(::sysconf(_SC_PAGE_SIZE));
+    const long pageSizeOrError = ::sysconf(_SC_PAGE_SIZE);
+    if (pageSizeOrError <= 0) {
+      return false;
+    }
+    const size_t pageSize = static_cast<size_t>(pageSizeOrError);
     const auto offset = static_cast<uint64_t>(fileOffset);
     const uint64_t alignedOffset = offset - offset % pageSize;
     const size_t delta = static_cast<size_t>(offset - alignedOffset);
+    if (numBytes > std::numeric_limits<size_t>::max() - delta) {
+      return false;
+    }
     void* base = ::mmap(nullptr, numBytes + delta, PROT_READ, MAP_SHARED, fd,
                         static_cast<off_t>(alignedOffset));
     if (base == MAP_FAILED) {
@@ -112,7 +119,7 @@ class ReadOnlyMmap {
     AD_CONTRACT_CHECK(isMapped());
     return data_;
   }
-  [[nodiscard]] size_t size() const noexcept { return numBytes_;}
+  [[nodiscard]] size_t size() const noexcept { return numBytes_; }
 };
 
 }  // namespace ad_utility
