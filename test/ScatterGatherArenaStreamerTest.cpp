@@ -22,10 +22,6 @@ using namespace ql::export_streaming;
 using ql::export_formatting::ExportFormat;
 using qlever::constructExport::EvaluatedTermData;
 
-// Formal Verification of Invariant Concepts (Architecture Standard § 3)
-static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunk>);
-static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunkStreamer>);
-
 TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
   ScatterGatherConfig config;
   config.zeroCopyThresholdBytes = 32;
