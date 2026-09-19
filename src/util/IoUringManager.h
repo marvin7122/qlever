@@ -13,6 +13,7 @@
 
 #include <gtest/gtest_prod.h>
 
+#include <array>
 #include <cstdint>
 #include <unordered_map>
 
@@ -207,6 +208,30 @@ class IoUringPolicy {
   // CQE. `minComplete` must be in `[1, numInFlightReadRequests_]`.
   void drainAtLeast(unsigned minComplete);
 
+  // The vocabulary path that uses this policy serves exactly two stable
+  // files (the offsets file and the word-data file).
+  static constexpr size_t kNumFixedFiles = 2;
+
+  // One fixed-file slot: the descriptor seen by `addBatch` (`ownerFd`, never
+  // closed here) and the `dup`ed descriptor handed to the ring
+  // (`registeredFd`). The `dup` keeps the ring's file-table entry alive
+  // independently of the caller's descriptor lifetime. `-1` marks an unused
+  // slot.
+  struct FixedFile {
+    int ownerFd = -1;
+    int registeredFd = -1;
+  };
+
+  // The (at most) `kNumFixedFiles` distinct files seen by `addBatch`, in
+  // registration order. Empty slots hold `FixedFile{}`.
+  std::array<FixedFile, kNumFixedFiles> fixedFiles_;
+
+  // Return the fixed-file slot for `fd`, registering (and `dup`ing) it on
+  // first use. Throws when every slot is taken by another descriptor, so a
+  // third file fails loudly instead of silently falling back to an
+  // unregistered read.
+  unsigned fileIndexForFd(int fd);
+
   // Reap every CQE that is already ready. Does not block.
   void drainAllReadyCqes();
 
@@ -223,6 +248,9 @@ class IoUringPolicy {
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
+  // Throws when the kernel does not support fixed files
+  // (`IORING_REGISTER_FILES`), so `makeBatchManager` falls back to
+  // synchronous reads on such kernels.
   explicit IoUringPolicy(unsigned ringSize);
   ~IoUringPolicy();
 
@@ -230,8 +258,10 @@ class IoUringPolicy {
   // `kSubmitWave` SQEs at a time. When the ring is full, wait for at least
   // `kReapWave` completions, then submit the next wave. Do not drain one CQE
   // and immediately submit one SQE: that is one `io_uring_enter` per read.
-  // Read `i` reads `numBytesToRead[i]` bytes from `fd` at `offsets[i]` into
-  // `buffers[i]`. Track the reads under `handle` for `wait()`.
+  // Read `i` reads `numBytesToRead[i]` bytes from the file registered for
+  // `fd` (see `kNumFixedFiles`) at `offsets[i]` into `buffers[i]`. Every read
+  // uses `IOSQE_FIXED_FILE`, so the kernel skips the per-request file-table
+  // lookup. Track the reads under `handle` for `wait()`.
   static constexpr unsigned kSubmitWave = 32;
   static constexpr unsigned kReapWave = 8;
 

@@ -71,6 +71,19 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   if (ret < 0) {
     AD_THROW("io_uring_queue_init failed in IoUringManager");
   }
+  // Probe fixed-file support now, so kernels without `IORING_REGISTER_FILES`
+  // fail fast here (and `makeBatchManager` falls back to synchronous reads)
+  // instead of failing the first `addBatch`. Registering an empty table is
+  // enough for the probe; real descriptors are registered lazily.
+  std::array<int, IoUringPolicy::kNumFixedFiles> noFiles;
+  noFiles.fill(-1);
+  if (io_uring_register_files(&ring_, noFiles.data(),
+                              static_cast<unsigned>(noFiles.size())) < 0) {
+    AD_THROW(
+        "io_uring_register_files failed in IoUringManager; fixed files are "
+        "required");
+  }
+  io_uring_unregister_files(&ring_);
 }
 
 //______________________________________________________________________________
@@ -94,7 +107,54 @@ IoUringPolicy::~IoUringPolicy() {
     io_uring_cqe_seen(&ring_, cqe);
     --numInFlightReadRequests_;
   }
+  // Drop the fixed-file table before tearing down the ring, then close the
+  // `dup`ed descriptors. The caller's own descriptors were never closed here.
+  io_uring_unregister_files(&ring_);
+  for (const FixedFile& slot : fixedFiles_) {
+    if (slot.registeredFd >= 0) {
+      close(slot.registeredFd);
+    }
+  }
   io_uring_queue_exit(&ring_);
+}
+
+//______________________________________________________________________________
+unsigned IoUringPolicy::fileIndexForFd(int fd) {
+  for (size_t i = 0; i < fixedFiles_.size(); ++i) {
+    if (fixedFiles_[i].ownerFd == fd) {
+      return static_cast<unsigned>(i);
+    }
+  }
+  for (size_t i = 0; i < fixedFiles_.size(); ++i) {
+    if (fixedFiles_[i].ownerFd >= 0) {
+      continue;
+    }
+    const int duped = dup(fd);
+    if (duped < 0) {
+      AD_THROW("dup failed in IoUringManager while registering fixed file");
+    }
+    fixedFiles_[i].ownerFd = fd;
+    fixedFiles_[i].registeredFd = duped;
+    std::array<int, kNumFixedFiles> registeredFds;
+    for (size_t j = 0; j < fixedFiles_.size(); ++j) {
+      registeredFds[j] = fixedFiles_[j].registeredFd;
+    }
+    // Re-registering the whole table while earlier reads are in flight is
+    // safe: in-flight requests already hold their file reference, and the
+    // slots they use keep pointing at the same files.
+    if (io_uring_register_files(&ring_, registeredFds.data(),
+                                static_cast<unsigned>(registeredFds.size())) <
+        0) {
+      close(duped);
+      fixedFiles_[i] = FixedFile{};
+      AD_THROW("io_uring_register_files failed in IoUringManager");
+    }
+    return static_cast<unsigned>(i);
+  }
+  AD_THROW(
+      "IoUringPolicy supports at most two vocabulary files as fixed files; "
+      "rejecting a further descriptor instead of reading it without fixed-file"
+      " registration");
 }
 
 //______________________________________________________________________________
@@ -110,12 +170,17 @@ void IoUringPolicy::addBatch(int fd,
   }
   numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
 
+  // Resolve the fixed-file slot once per batch: every read in the batch
+  // addresses the same file, so they all share the slot.
+  const unsigned fileIndex = fileIndexForFd(fd);
   auto prepareOne = [&](size_t i) {
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     AD_CORRECTNESS_CHECK(sqe != nullptr);
-    io_uring_prep_read(sqe, fd, targetBufferPerRequest[i],
+    io_uring_prep_read(sqe, static_cast<int>(fileIndex),
+                       targetBufferPerRequest[i],
                        static_cast<unsigned>(numBytesToReadPerRequest[i]),
                        static_cast<__u64>(fileOffsetPerRequest[i]));
+    sqe->flags |= IOSQE_FIXED_FILE;
     const uint64_t requestId = nextRequestIdToAssign_++;
     inFlightReadsByRequestId_[requestId] =
         InFlightRead{handle, numBytesToReadPerRequest[i]};
