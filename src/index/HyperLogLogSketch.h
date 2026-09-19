@@ -91,14 +91,18 @@ class HyperLogLogSketch {
 
     // Alpha correction factor in its general form for m >= 128, with
     // m = NUM_REGISTERS for this sketch.
-    constexpr double alpha = 0.7213 / (1.0 + 1.079 / static_cast<double>(NUM_REGISTERS));
-    double rawEstimate = alpha * static_cast<double>(NUM_REGISTERS * NUM_REGISTERS) / sum;
+    constexpr double alpha =
+        0.7213 / (1.0 + 1.079 / static_cast<double>(NUM_REGISTERS));
+    double rawEstimate =
+        alpha * static_cast<double>(NUM_REGISTERS * NUM_REGISTERS) / sum;
 
-    if (rawEstimate <= 2.5 * static_cast<double>(NUM_REGISTERS) && zeroRegisters > 0) {
+    if (rawEstimate <= 2.5 * static_cast<double>(NUM_REGISTERS) &&
+        zeroRegisters > 0) {
       // Linear counting for small cardinalities
-      return static_cast<uint64_t>(static_cast<double>(NUM_REGISTERS) *
-                                   std::log(static_cast<double>(NUM_REGISTERS) /
-                                            static_cast<double>(zeroRegisters)));
+      return static_cast<uint64_t>(
+          static_cast<double>(NUM_REGISTERS) *
+          std::log(static_cast<double>(NUM_REGISTERS) /
+                   static_cast<double>(zeroRegisters)));
     }
 
     return static_cast<uint64_t>(rawEstimate);
