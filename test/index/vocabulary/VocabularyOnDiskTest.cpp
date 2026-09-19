@@ -153,6 +153,8 @@ std::vector<std::vector<size_t>> makeConcurrentTestBatches(size_t vocabSize,
                                                            size_t batchSize) {
   std::vector<std::vector<size_t>> batches(numBatches,
                                            std::vector<size_t>(batchSize));
+  // 64-bit LCG with Knuth's MMIX multiplier and the PCG default increment;
+  // fixed seed, so the batches are deterministic across runs and threads.
   uint64_t state = 0x9E3779B97F4A7C15ull;
   for (auto& batch : batches) {
     for (auto& idx : batch) {
