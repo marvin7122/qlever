@@ -90,8 +90,7 @@ class ScatterGatherChunk {
         totalBytes_{totalBytes},
         numTriples_{numTriples},
         zeroCopySpansCount_{zeroCopySpansCount},
-        zeroCopyBytes_{zeroCopyBytes} {
-  }
+        zeroCopyBytes_{zeroCopyBytes} {}
 
   ~ScatterGatherChunk() = default;
 
@@ -141,13 +140,25 @@ class ScatterGatherChunk {
     }
     AD_CONTRACT_CHECK(fd >= 0);
 
+    // The compile-time UIO_MAXIOV (default 1024 above) can exceed the
+    // runtime sysconf(_SC_IOV_MAX) on some platforms, where an oversized
+    // writev fails with EINVAL. Clamp each call to the runtime limit.
+    static const size_t maxIovecsPerWritev = []() -> size_t {
+      const long sysMax = ::sysconf(_SC_IOV_MAX);
+      if (sysMax <= 0) {
+        return 16;  // POSIX _XOPEN_IOV_MAX minimum guarantee.
+      }
+      return static_cast<size_t>(sysMax);
+    }();
+
     std::vector<struct iovec> remainingIov = iovecs_;
     size_t offset = 0;
     ssize_t totalWritten = 0;
 
     while (offset < remainingIov.size()) {
       int count = static_cast<int>(
-          std::min<size_t>(remainingIov.size() - offset, UIO_MAXIOV));
+          std::min({remainingIov.size() - offset,
+                    static_cast<size_t>(UIO_MAXIOV), maxIovecsPerWritev}));
       ssize_t bytes = ::writev(fd, remainingIov.data() + offset, count);
       if (bytes < 0) {
         if (errno == EINTR) {
@@ -155,6 +166,9 @@ class ScatterGatherChunk {
         }
         AD_THROW(absl::StrCat("writev failed (errno: ", strerror(errno), ")"));
       }
+      // A 0 return for a nonzero request is unreachable on blocking fds;
+      // fail loudly instead of spinning forever (e.g. on a non-blocking fd).
+      AD_CORRECTNESS_CHECK(bytes != 0);
       totalWritten += bytes;
       size_t remainingToAdvance = static_cast<size_t>(bytes);
       while (offset < remainingIov.size() && remainingToAdvance > 0) {
@@ -404,7 +418,6 @@ class ScatterGatherChunkStreamer {
                    ql::span<const char> objectLiteral,
                    std::string_view datatype = "",
                    std::string_view langTag = "") {
-
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeIri(subject);
       writeChar(' ');
@@ -438,7 +451,6 @@ class ScatterGatherChunkStreamer {
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
                    const qlever::constructExport::EvaluatedTermData& o) {
-
     const char delim = (format == ExportFormat::Csv)
                            ? ','
                            : ((format == ExportFormat::Tsv) ? '\t' : ' ');

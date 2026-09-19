@@ -17,10 +17,35 @@
 #include "engine/ConstructTypes.h"
 #include "engine/ScatterGatherArenaStreamer.h"
 #include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "global/Constants.h"
 
 using namespace ql::export_streaming;
 using ql::export_formatting::ExportFormat;
 using qlever::constructExport::EvaluatedTermData;
+
+// Zero-copy thresholds used below. Each sits below its test's payload size
+// (zero-copy path), except kThresholdAboveShortLiteral which forces the
+// header-copy path.
+constexpr size_t kThresholdBelowLargePayload = 10;
+constexpr size_t kThresholdBelowSmallPayload = 16;
+constexpr size_t kThresholdBelowLargeLiteral = 32;
+constexpr size_t kThresholdAboveShortLiteral = 64;
+constexpr size_t kTinyMaxChunkBytes = 100;
+
+// RAII holder for pipe file descriptors: closes both ends on scope exit,
+// including ASSERT-failure paths that return from the test early.
+struct ScopedPipeFds {
+  int readFd = -1;
+  int writeFd = -1;
+  ~ScopedPipeFds() {
+    if (readFd >= 0) {
+      ::close(readFd);
+    }
+    if (writeFd >= 0) {
+      ::close(writeFd);
+    }
+  }
+};
 
 // Formal Verification of Invariant Concepts (Architecture Standard § 3)
 static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunk>);
@@ -28,7 +53,8 @@ static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunkStreamer>);
 
 TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
   ScatterGatherConfig config;
-  config.zeroCopyThresholdBytes = 32;
+  // Below the 64-byte arena literal, so the literal takes the zero-copy path.
+  config.zeroCopyThresholdBytes = kThresholdBelowLargeLiteral;
 
   std::vector<ScatterGatherChunk> chunks;
   ScatterGatherChunkStreamer streamer(
@@ -79,7 +105,8 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
 
 TEST(ScatterGatherArenaStreamerTest, ShortStringsCopiedToHeader) {
   ScatterGatherConfig config;
-  config.zeroCopyThresholdBytes = 64;  // High threshold
+  // Above the 5-byte literal, forcing the header-copy path.
+  config.zeroCopyThresholdBytes = kThresholdAboveShortLiteral;
 
   std::vector<ScatterGatherChunk> chunks;
   ScatterGatherChunkStreamer streamer(
@@ -103,8 +130,9 @@ TEST(ScatterGatherArenaStreamerTest, ShortStringsCopiedToHeader) {
 
 TEST(ScatterGatherArenaStreamerTest, AutoFlushOnChunkByteLimit) {
   ScatterGatherConfig config;
-  config.maxChunkBytes = 100;  // Tiny chunk limit
-  config.zeroCopyThresholdBytes = 16;
+  config.maxChunkBytes = kTinyMaxChunkBytes;
+  // Below the 36-byte payload, so payloads take the zero-copy path.
+  config.zeroCopyThresholdBytes = kThresholdBelowSmallPayload;
 
   std::vector<ScatterGatherChunk> chunks;
   ScatterGatherChunkStreamer streamer(
@@ -119,7 +147,9 @@ TEST(ScatterGatherArenaStreamerTest, AutoFlushOnChunkByteLimit) {
   }
 
   auto summary = std::move(streamer).finalize();
-  EXPECT_GT(summary.chunksEmitted_, 1);
+  // 5 x 36 = 180 bytes with greedy packing into 100-byte chunks: a third
+  // payload would exceed the limit, so chunks hold 72 + 72 + 36 bytes.
+  EXPECT_EQ(summary.chunksEmitted_, 3);
   EXPECT_EQ(chunks.size(), summary.chunksEmitted_);
 
   size_t totalReceivedBytes = 0;
@@ -131,7 +161,8 @@ TEST(ScatterGatherArenaStreamerTest, AutoFlushOnChunkByteLimit) {
 
 TEST(ScatterGatherArenaStreamerTest, WriteTripleFormats) {
   ScatterGatherConfig config;
-  config.zeroCopyThresholdBytes = 10;
+  // Below the object literal length, so it takes the zero-copy path.
+  config.zeroCopyThresholdBytes = kThresholdBelowLargePayload;
 
   std::string subj = "<http://subj>";
   std::string pred = "<http://pred>";
@@ -182,7 +213,8 @@ TEST(ScatterGatherArenaStreamerTest, WriteTripleFormats) {
 
 TEST(ScatterGatherArenaStreamerTest, EvaluatedTermDataOverload) {
   ScatterGatherConfig config;
-  config.zeroCopyThresholdBytes = 10;
+  // Below the IRI lengths, so terms take the zero-copy path.
+  config.zeroCopyThresholdBytes = kThresholdBelowLargePayload;
 
   EvaluatedTermData s("<http://s>", nullptr);
   EvaluatedTermData p("<http://p>", nullptr);
@@ -197,11 +229,15 @@ TEST(ScatterGatherArenaStreamerTest, EvaluatedTermDataOverload) {
 }
 
 TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
-  int pipeFds[2];
-  ASSERT_EQ(::pipe(pipeFds), 0);
+  ScopedPipeFds pipe;
+  int rawFds[2];
+  ASSERT_EQ(::pipe(rawFds), 0);
+  pipe.readFd = rawFds[0];
+  pipe.writeFd = rawFds[1];
 
   ScatterGatherConfig config;
-  config.zeroCopyThresholdBytes = 10;
+  // Below the payload length, so it takes the zero-copy path.
+  config.zeroCopyThresholdBytes = kThresholdBelowLargePayload;
 
   ScatterGatherChunkStreamer streamer(config);
   std::string s = "<http://s>";
@@ -215,13 +251,11 @@ TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
   auto chunkOpt = streamer.flush();
   ASSERT_TRUE(chunkOpt.has_value());
 
-  ssize_t written = chunkOpt->writeToFd(pipeFds[1]);
+  ssize_t written = chunkOpt->writeToFd(pipe.writeFd);
   EXPECT_EQ(written, static_cast<ssize_t>(chunkOpt->totalBytes()));
-  ::close(pipeFds[1]);
 
   std::string readBuf(chunkOpt->totalBytes(), '\0');
-  ssize_t bytesRead = ::read(pipeFds[0], readBuf.data(), readBuf.size());
-  ::close(pipeFds[0]);
+  ssize_t bytesRead = ::read(pipe.readFd, readBuf.data(), readBuf.size());
 
   EXPECT_EQ(bytesRead, static_cast<ssize_t>(chunkOpt->totalBytes()));
   EXPECT_EQ(readBuf, chunkOpt->toString());
