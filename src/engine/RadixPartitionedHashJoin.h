@@ -12,7 +12,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "backports/span.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
 #include "util/Exception.h"
@@ -20,15 +19,18 @@
 namespace ql::engine::join {
 
 // _____________________________________________________________________________
-// Radix-Partitioned Vectorized Hash Join:
-// Partitions large input tables into 2^k partitions so that each build hash
-// table fits completely within the L2 CPU Cache (512 KB), eliminating
-// Last-Level Cache (LLC) misses.
+// Radix-partitioned join counting:
+// Partitions both input tables by radix hash and counts matches per partition
+// with a sorted build run plus binary search, keeping each partition's
+// working set small. Counts follow bag semantics: every pair of equal keys
+// contributes one match.
 template <size_t RadixBits = 6>  // 2^6 = 64 partitions
 class RadixPartitionedHashJoin {
  public:
-  static constexpr size_t NUM_PARTITIONS = 1 << RadixBits;
-  static constexpr uint64_t RADIX_MASK = NUM_PARTITIONS - 1;
+  static_assert(RadixBits < 8 * sizeof(size_t),
+                "RadixBits must fit into a size_t shift");
+  static constexpr size_t NUM_PARTITIONS = size_t{1} << RadixBits;
+  static constexpr size_t RADIX_MASK = NUM_PARTITIONS - 1;
 
   // Simple, fast multiplicative hash for 64-bit Id integers.
   [[nodiscard]] static constexpr size_t getPartitionIndex(Id id) noexcept {
@@ -44,9 +46,10 @@ class RadixPartitionedHashJoin {
     std::vector<size_t> rowIndices;
   };
 
-  // Partition an IdTable by join column into 2^RadixBits cache-sized buckets.
+  // Partition an IdTable by join column into 2^RadixBits buckets.
   static std::vector<PartitionBucket> partitionTable(const IdTable& table,
                                                      size_t joinColumnIndex) {
+    AD_CORRECTNESS_CHECK(joinColumnIndex < table.numColumns());
     std::vector<PartitionBucket> partitions(NUM_PARTITIONS);
     const size_t numRows = table.numRows();
 
@@ -73,7 +76,7 @@ class RadixPartitionedHashJoin {
         continue;
       }
 
-      // Build small L2-resident hash map for left bucket
+      // Build a sorted run of the left bucket's keys
       std::vector<Id> buildKeys;
       buildKeys.reserve(leftBucket.size());
       for (size_t lRow : leftBucket) {
@@ -81,14 +84,13 @@ class RadixPartitionedHashJoin {
       }
       std::sort(buildKeys.begin(), buildKeys.end());
 
-      // Probe right bucket
+      // Probe the right bucket; every equal key pair counts (bag semantics)
       for (size_t rRow : rightBucket) {
         Id probeKey = rightTable(rRow, rightCol);
-        auto it =
-            std::lower_bound(buildKeys.begin(), buildKeys.end(), probeKey);
-        if (it != buildKeys.end() && *it == probeKey) {
-          totalMatches++;
-        }
+        auto range =
+            std::equal_range(buildKeys.begin(), buildKeys.end(), probeKey);
+        totalMatches += static_cast<size_t>(
+            std::distance(range.first, range.second));
       }
     }
 

@@ -39,6 +39,28 @@ TEST(RadixPartitionedHashJoinTest, BasicPartitionAndJoin) {
   EXPECT_EQ(matches, 500u);
 }
 
+TEST(RadixPartitionedHashJoinTest, DuplicateKeysCountWithBagSemantics) {
+  auto allocator = makeAllocator();
+
+  IdTable leftTable{1, allocator};
+  IdTable rightTable{1, allocator};
+
+  // Left key 7 appears 3 times, key 8 once; right key 7 appears twice.
+  // Bag semantics: 3 * 2 = 6 matches for key 7, 0 for key 8.
+  leftTable.push_back({Id::makeFromInt(7)});
+  leftTable.push_back({Id::makeFromInt(7)});
+  leftTable.push_back({Id::makeFromInt(7)});
+  leftTable.push_back({Id::makeFromInt(8)});
+  rightTable.push_back({Id::makeFromInt(7)});
+  rightTable.push_back({Id::makeFromInt(7)});
+  rightTable.push_back({Id::makeFromInt(9)});
+
+  size_t matches = RadixPartitionedHashJoin<2>::executeJoinCount(leftTable, 0,
+                                                                 rightTable, 0);
+
+  EXPECT_EQ(matches, 6u);
+}
+
 TEST(RadixPartitionedHashJoinTest, DisjointTablesZeroMatches) {
   auto allocator = makeAllocator();
 
