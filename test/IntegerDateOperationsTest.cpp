@@ -16,7 +16,16 @@
 using namespace ql::engine::scalar;
 
 TEST(IntegerDateOperationsTest, ScalarDateExtraction) {
-  auto dateId = Id::makeFromDate(DateYearOrDuration{Date{2026, 9, 3, 15, 30, 0.0}});
+  auto dateId =
+      Id::makeFromDate(DateYearOrDuration{Date{2026, 9, 3, 15, 30, 0.0}});
+
+  EXPECT_EQ(IntegerDateOperations::extractYear(dateId), 2026);
+  EXPECT_EQ(IntegerDateOperations::extractMonth(dateId), 9);
+  EXPECT_EQ(IntegerDateOperations::extractDay(dateId), 3);
+}
+
+TEST(IntegerDateOperationsTest, MakePackedDateRoundTrip) {
+  auto dateId = IntegerDateOperations::makePackedDate(2026, 9, 3, 15, 30, 0);
 
   EXPECT_EQ(IntegerDateOperations::extractYear(dateId), 2026);
   EXPECT_EQ(IntegerDateOperations::extractMonth(dateId), 9);

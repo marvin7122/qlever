@@ -34,17 +34,13 @@ class IntegerDateOperations {
   static constexpr uint64_t YEAR_MASK = 0xFFFF;
 
   // ___________________________________________________________________________
-  [[nodiscard]] static constexpr Id makePackedDate(
-      int16_t year, uint8_t month, uint8_t day, uint8_t hour = 0,
-      uint8_t minute = 0, uint8_t second = 0) noexcept {
-    uint64_t bits = 0;
-    bits |= (static_cast<uint64_t>(static_cast<uint16_t>(year)) << YEAR_SHIFT);
-    bits |= (static_cast<uint64_t>(month) << MONTH_SHIFT);
-    bits |= (static_cast<uint64_t>(day) << DAY_SHIFT);
-    bits |= (static_cast<uint64_t>(hour) << HOUR_SHIFT);
-    bits |= (static_cast<uint64_t>(minute) << MINUTE_SHIFT);
-    bits |= (static_cast<uint64_t>(second) << SECOND_SHIFT);
-
+  // Not constexpr: `DateYearOrDuration` has no constexpr constructor, so no
+  // invocation could ever be a constant expression. The SHIFT/MASK constants
+  // above document the logical component layout.
+  [[nodiscard]] static Id makePackedDate(int16_t year, uint8_t month,
+                                         uint8_t day, uint8_t hour = 0,
+                                         uint8_t minute = 0,
+                                         uint8_t second = 0) noexcept {
     return Id::makeFromDate(
         DateYearOrDuration{Date{static_cast<int>(year), month, day, hour,
                                 minute, static_cast<double>(second)}});
