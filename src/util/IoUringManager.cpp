@@ -15,6 +15,7 @@
 #include <stdexcept>
 
 #include "util/Exception.h"
+#include "util/IoWaitAccounting.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -115,7 +116,12 @@ void IoUringPolicy::addBatch(int fd,
     if (numInFlightReadRequests_ >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
-      io_uring_submit(&ring_);
+      // The return value is intentionally unchecked, as in the surrounding
+      // code and upstream: `timed` measures the call only when
+      // `measure-io-wait` is set and otherwise calls it directly.
+      (void)ad_utility::ioWait::timed(
+          ad_utility::ioWait::ioUringSubmitCounters,
+          [&]() { return io_uring_submit(&ring_); });
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
       }
@@ -144,7 +150,9 @@ void IoUringPolicy::addBatch(int fd,
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
-  io_uring_submit(&ring_);
+  // See above: unchecked return value, timed only when enabled.
+  (void)ad_utility::ioWait::timed(ad_utility::ioWait::ioUringSubmitCounters,
+                                  [&]() { return io_uring_submit(&ring_); });
 }
 
 //______________________________________________________________________________
@@ -162,7 +170,11 @@ void IoUringPolicy::wait(BatchHandle handle) {
 void ad_utility::IoUringPolicy::drainOneCqe() {
   // Block until at least one completion queue entry (CQE) is available.
   io_uring_cqe* cqe = nullptr;
-  int ret = io_uring_wait_cqe(&ring_, &cqe);
+  // Timed because this is where the thread blocks waiting for the device. A
+  // no-op unless `measure-io-wait` is set.
+  int ret = ad_utility::ioWait::timed(
+      ad_utility::ioWait::ioUringWaitCounters,
+      [&]() { return io_uring_wait_cqe(&ring_, &cqe); });
   if (ret < 0) {
     AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
   }
