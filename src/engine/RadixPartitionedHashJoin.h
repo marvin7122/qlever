@@ -89,8 +89,8 @@ class RadixPartitionedHashJoin {
         Id probeKey = rightTable(rRow, rightCol);
         auto range =
             std::equal_range(buildKeys.begin(), buildKeys.end(), probeKey);
-        totalMatches += static_cast<size_t>(
-            std::distance(range.first, range.second));
+        totalMatches +=
+            static_cast<size_t>(std::distance(range.first, range.second));
       }
     }
 
