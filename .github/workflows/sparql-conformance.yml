@@ -5,7 +5,6 @@ on:
     branches: [ master ]
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-    branches: [ master ]
   merge_group:
 
 # The default GITHUB_TOKEN only needs to read the repository here.
