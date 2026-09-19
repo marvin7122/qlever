@@ -71,10 +71,11 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   if (ret < 0) {
     AD_THROW("io_uring_queue_init failed in IoUringManager");
   }
-  // Probe fixed-file support now, so kernels without `IORING_REGISTER_FILES`
-  // fail fast here (and `makeBatchManager` falls back to synchronous reads)
-  // instead of failing the first `addBatch`. Registering an empty table is
-  // enough for the probe; real descriptors are registered lazily.
+  // Register an empty fixed-file table now, so kernels without
+  // `IORING_REGISTER_FILES` fail fast here (and `makeBatchManager` falls back
+  // to synchronous reads) instead of failing the first `addBatch`. The table
+  // stays registered for the ring's lifetime; real descriptors fill its free
+  // slots lazily via `IORING_REGISTER_FILES_UPDATE`.
   std::array<int, IoUringPolicy::kNumFixedFiles> noFiles;
   noFiles.fill(-1);
   if (io_uring_register_files(&ring_, noFiles.data(),
@@ -83,7 +84,6 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
         "io_uring_register_files failed in IoUringManager; fixed files are "
         "required");
   }
-  io_uring_unregister_files(&ring_);
 }
 
 //______________________________________________________________________________
@@ -133,22 +133,16 @@ unsigned IoUringPolicy::fileIndexForFd(int fd) {
     if (duped < 0) {
       AD_THROW("dup failed in IoUringManager while registering fixed file");
     }
+    // Fill only this slot: re-registering the whole table over an already
+    // registered one fails with `EBUSY`, so update the single free slot.
+    // Other slots (and reads in flight on them) are untouched.
+    if (io_uring_register_files_update(&ring_, static_cast<unsigned>(i), &duped,
+                                       1) < 0) {
+      close(duped);
+      AD_THROW("io_uring_register_files_update failed in IoUringManager");
+    }
     fixedFiles_[i].ownerFd = fd;
     fixedFiles_[i].registeredFd = duped;
-    std::array<int, kNumFixedFiles> registeredFds;
-    for (size_t j = 0; j < fixedFiles_.size(); ++j) {
-      registeredFds[j] = fixedFiles_[j].registeredFd;
-    }
-    // Re-registering the whole table while earlier reads are in flight is
-    // safe: in-flight requests already hold their file reference, and the
-    // slots they use keep pointing at the same files.
-    if (io_uring_register_files(&ring_, registeredFds.data(),
-                                static_cast<unsigned>(registeredFds.size())) <
-        0) {
-      close(duped);
-      fixedFiles_[i] = FixedFile{};
-      AD_THROW("io_uring_register_files failed in IoUringManager");
-    }
     return static_cast<unsigned>(i);
   }
   AD_THROW(
