@@ -22,6 +22,7 @@ namespace {
 
 // Per-column intermediate state between the three evaluation phases below.
 struct ColumnWork {
+  // The `IdTable` column index being evaluated.
   ColumnIndex columnIdx_;
   // Resolved values per batch row; cache hits are scattered in phase A, cache
   // misses in phase C.
