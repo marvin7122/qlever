@@ -42,7 +42,11 @@ class UnicodeVocabulary {
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
     if constexpr (HasLookupBatchWithBuilder<UnderlyingVocabulary>::value) {
-      return _underlyingVocabulary.lookupBatch(indices, builder);
+      // Like `PolymorphicVocabulary::lookupBatch`: the builder overload
+      // fills `builder` and may return `void` (e.g. `CompressedVocabulary`),
+      // so discard its return value and finalize the builder here.
+      _underlyingVocabulary.lookupBatch(indices, builder);
+      return std::move(builder).finalize();
     } else {
       return _underlyingVocabulary.lookupBatch(indices);
     }
