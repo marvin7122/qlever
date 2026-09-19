@@ -2,6 +2,11 @@
 //
 // 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
@@ -145,7 +150,8 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
   const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
   auto result = vocab.lookupBatch(indices);
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
-  EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
+  EXPECT_THROW(vocab.lookupBatch(ql::span<const size_t>{}),
+               ad_utility::Exception);
 }
 
 // _______________________________________________________

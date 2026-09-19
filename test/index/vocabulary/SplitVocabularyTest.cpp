@@ -2,6 +2,11 @@
 //
 // 2025        Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gmock/gmock.h>
 
@@ -479,7 +484,7 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   auto result = sv.lookupBatch(indices);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv, result,
                                                                 indices);
-  EXPECT_ANY_THROW(sv.lookupBatch(ql::span<const size_t>{}));
+  EXPECT_THROW(sv.lookupBatch(ql::span<const size_t>{}), ad_utility::Exception);
 
   const std::array<size_t, 3> oneMarker{
       static_cast<size_t>(sv.addMarker(0, 1)),
