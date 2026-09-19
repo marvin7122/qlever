@@ -20,7 +20,8 @@
 namespace ql::index::v2 {
 
 // _____________________________________________________________________________
-// 8-bit Datatype Bitmask for fast type-filtering and pruning at block granularity.
+// 8-bit Datatype Bitmask for fast type-filtering and pruning at block
+// granularity.
 enum class DatatypeBitmask : uint8_t {
   None = 0,
   Iri = 1 << 0,
@@ -34,13 +35,13 @@ enum class DatatypeBitmask : uint8_t {
 };
 
 [[nodiscard]] constexpr DatatypeBitmask operator|(DatatypeBitmask a,
-                                                 DatatypeBitmask b) noexcept {
+                                                  DatatypeBitmask b) noexcept {
   return static_cast<DatatypeBitmask>(static_cast<uint8_t>(a) |
                                       static_cast<uint8_t>(b));
 }
 
 [[nodiscard]] constexpr DatatypeBitmask operator&(DatatypeBitmask a,
-                                                 DatatypeBitmask b) noexcept {
+                                                  DatatypeBitmask b) noexcept {
   return static_cast<DatatypeBitmask>(static_cast<uint8_t>(a) &
                                       static_cast<uint8_t>(b));
 }
@@ -136,8 +137,7 @@ class LeafletAggregator {
 
   [[nodiscard]] static TypedCountResult countTypedColumn(
       ql::span<const CompressedBlockMetadataV2> blocks,
-      DatatypeBitmask targetType,
-      size_t columnIndex = 1) {
+      DatatypeBitmask targetType, size_t columnIndex = 1) {
     AD_CORRECTNESS_CHECK(targetType != DatatypeBitmask::None);
     TypedCountResult result;
     for (size_t i = 0; i < blocks.size(); ++i) {
