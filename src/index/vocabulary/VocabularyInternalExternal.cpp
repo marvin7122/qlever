@@ -1,8 +1,20 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (kalmbach@cs.uni-freiburg.de)
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyInternalExternal.h"
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "backports/algorithm.h"
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
@@ -11,6 +23,63 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
     return std::string{fromInternal.value()};
   }
   return externalVocab_[i];
+}
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
+    ql::span<const size_t> indices) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+
+  // Fast path: every index misses the RAM cache, so hand the caller's span
+  // straight through to the on-disk batch lookup without copying the indices
+  // or allocating assembly buffers.
+  bool allDisk = true;
+  for (size_t idx : indices) {
+    if (internalVocab_[idx].has_value()) {
+      allDisk = false;
+      break;
+    }
+  }
+  if (allDisk) {
+    return externalVocab_.lookupBatch(indices);
+  }
+
+  std::vector<std::string_view> assembled(indices.size());
+  std::vector<size_t> diskIndices;
+  std::vector<size_t> diskSlots;
+  std::vector<size_t> internalIndices;
+  std::vector<size_t> internalSlots;
+  diskIndices.reserve(indices.size());
+  diskSlots.reserve(indices.size());
+  internalIndices.reserve(indices.size());
+  internalSlots.reserve(indices.size());
+
+  for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
+    if (internalVocab_[idx].has_value()) {
+      internalSlots.push_back(static_cast<size_t>(i));
+      internalIndices.push_back(idx);
+    } else {
+      diskSlots.push_back(static_cast<size_t>(i));
+      diskIndices.push_back(idx);
+    }
+  }
+
+  std::vector<VocabBatchOwner> owners;
+  owners.reserve(2);
+  if (!diskIndices.empty()) {
+    auto disk = externalVocab_.lookupBatch(diskIndices);
+    scatterVocabBatchLookupResult(std::move(disk), diskSlots, assembled,
+                                  owners);
+  }
+  if (!internalIndices.empty()) {
+    // The internal words live in `internalVocab_`, which the result must not
+    // reference directly: resolve them into an owning child batch and retain
+    // it, so no view can dangle.
+    auto internal = internalVocab_.lookupBatch(internalIndices);
+    scatterVocabBatchLookupResult(std::move(internal), internalSlots, assembled,
+                                  owners);
+  }
+  return keepAliveVocabBatch(std::move(owners), std::move(assembled));
 }
 
 // _____________________________________________________________________________

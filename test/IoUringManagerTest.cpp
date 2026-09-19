@@ -315,6 +315,21 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
               ::testing::ElementsAreArray(scenario.expected()));
 }
 
+// Verify that a batch much larger than the ring still completes. Reap a wave
+// and refill instead of one-in/one-out.
+TYPED_TEST(IoUringManagerTest, SlidingWindowSmallRing) {
+  constexpr size_t N = 80;
+  SequentialReadScenarioForTesting scenario;
+  for (size_t i = 0; i < N; ++i) {
+    scenario.addRead(std::string(4, static_cast<char>('A' + (i % 26))));
+  }
+  auto [tmp, fd] = makeTempFile(scenario.content());
+  TypeParam manager(8);
+  manager.wait(scenario.submitTo(manager, fd));
+  EXPECT_THAT(scenario.results(),
+              ::testing::ElementsAreArray(scenario.expected()));
+}
+
 // Verify that many independent `addBatch` calls can be outstanding (submitted
 // to the kernel but not yet waited on) at once, and that the manager tracks
 // each batch's completion correctly. M batches of one read each are submitted
@@ -371,6 +386,19 @@ TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
 
   AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(batch.submitTo(manager, fd)),
                                HasSubstr("read fewer bytes than requested"));
+}
+
+// An invalid file descriptor must throw. `SyncIoPolicy` throws from `pread`
+// in `addBatch`. `IoUringPolicy` submits the SQE and throws from `wait` when
+// the CQE reports `res < 0`.
+TYPED_TEST(IoUringManagerTest, InvalidFdThrows) {
+  TypeParam manager(64);
+  ReadBatchForTesting batch;
+  batch.add(0, 4);
+  constexpr int invalidFd = -1;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      manager.wait(batch.submitTo(manager, invalidFd)),
+      AnyOf(HasSubstr("pread failed"), HasSubstr("I/O error")));
 }
 
 // A read that is fully satisfied returns the requested bytes from the requested
