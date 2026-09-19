@@ -1,4 +1,4 @@
-name: OpenCodeReview
+name: OpenCodeReview (fan-out project rules)
 
 on:
   pull_request_target:
@@ -12,11 +12,11 @@ permissions:
   issues: write
 
 concurrency:
-  group: ocr-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  group: ocr-fanout-project-rules-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  review:
+  review-fanout-project-rules:
     if: >-
       github.event_name == 'pull_request_target' ||
       (github.event.issue.pull_request &&
@@ -24,12 +24,17 @@ jobs:
        (github.event.comment.author_association == 'MEMBER' ||
         github.event.comment.author_association == 'OWNER' ||
         github.event.comment.author_association == 'COLLABORATOR') &&
-       (startsWith(github.event.comment.body, '/open-code-review') ||
-        startsWith(github.event.comment.body, '@open-code-review')))
-    runs-on: [self-hosted, linux, x64, ocr-local]
-    timeout-minutes: 240
+       (startsWith(github.event.comment.body, '/open-code-review-fanout') ||
+        startsWith(github.event.comment.body, '@open-code-review-fanout')))
+    runs-on: [self-hosted, linux, x64, ocr-fanout-local]
+    # Full fan-out project-rules reviews need ~3.5-4h on larger diffs: runs
+    # 35110677564 and 35288058721 were both killed at exactly the old
+    # 180 min limit while the review agent was still streaming progress.
+    # Values above 360 are fine here: the 6h cap applies to GitHub-hosted
+    # runners only, this job runs on self-hosted runners.
+    timeout-minutes: 1800
     env:
-      PATH: /home/userNoPriv/.local/bin:/home/userNoPriv/.local/share/npm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PATH: /home/userNoPriv/.local/bin:/home/userNoPriv/.local/share/npm/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     steps:
       - name: Resolve PR context for comment-triggered reviews
         id: pr-context
@@ -46,19 +51,17 @@ jobs:
             core.setOutput('head_sha', pr.head.sha);
       - name: Isolate npm prefix for this run
         run: |
-          # Concurrent OCR jobs on the same self-hosted host share HOME *and*
-          # RUNNER_TEMP (_work/_temp is per runner, not per job), so the npm
-          # prefix must additionally be unique per run: one job's
-          # `npm install -g` would otherwise delete the `ocr` binary out from
-          # under another job's `ocr config` step (node MODULE_NOT_FOUND).
-          # The shared npm cache stays as-is (content-addressed).
           prefix="${RUNNER_TEMP}/ocr-npm-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "${prefix}"
           echo "NPM_CONFIG_PREFIX=${prefix}" >> "$GITHUB_ENV"
           echo "OCR_NPM_PREFIX=${prefix}" >> "$GITHUB_ENV"
           echo "${prefix}/bin" >> "$GITHUB_PATH"
-      - name: Review pull request
-        uses: alibaba/open-code-review@810aeb5dc2e2b9485f5a1981485e65b25250f609 # v1.11.7
+      - name: Set up Go toolchain (ocr_install_from=source builds from source)
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+      - name: Review pull request with fan-out project rules
+        uses: marvin7122/open-code-review@48cc191fc147f0b4642e9658717805f6a3dfefa5
         with:
           # Deliberately the job-scoped GITHUB_TOKEN, not an App installation
           # token: installation tokens expire after 1 hour, but large-diff
@@ -70,18 +73,20 @@ jobs:
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
+          ocr_install_from: source
+          fan_out_project_rules: 'true'
+          rule: .opencodereview/rule.json
           review_concurrency: '1'
-          effort: low
-          sticky_summary: 'true'
+          effort: high
+          sticky_summary: 'false'
           incremental: 'true'
           upload_artifacts: 'true'
           stream_progress: 'true'
-          ocr_version: '1.11.7'
       - name: Stamp summary with Actions run URL
         if: always()
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
-          OCR_POSTER_LABEL: OCR stock
+          OCR_POSTER_LABEL: OCR fan-out
         with:
           github-token: ${{ github.token }}
           script: |
