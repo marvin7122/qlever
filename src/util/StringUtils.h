@@ -297,10 +297,12 @@ constexpr std::string_view constexprStrCat() {
 // strings are returned as-is.
 std::string truncateOperationString(std::string_view operation);
 
-// Allocate a string of `bound` bytes without zero-initialization, decode
-// directly into its buffer via the `decode` invocable (which receives a
-// `ql::span<char>` of that size and returns the number of bytes actually
-// written), and resize the string to that decoded size.
+// Allocate a string of `bound` bytes, decode directly into its buffer via
+// the `decode` invocable (which receives a `ql::span<char>` of that size and
+// returns the number of bytes actually written), and resize the string to
+// that decoded size. The buffer is left uninitialized where the toolchain
+// provides C++23 `resize_and_overwrite`; the `ql::resize_and_overwrite`
+// fallback uses value-initializing `resize` instead.
 CPP_template(typename Decode)(
     requires ql::concepts::invocable<Decode, ql::span<char>>) std::string
     decodeToOwnedString(size_t bound, Decode decode) {

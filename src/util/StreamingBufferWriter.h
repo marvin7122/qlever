@@ -10,6 +10,8 @@
 #ifndef QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 #define QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 
+#include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -156,8 +158,7 @@ class StreamingBufferWriter {
       : buffer_{destinationBuffer.data()},
         capacity_{destinationBuffer.size()},
         bytesWritten_{0},
-        ownedBuffer_{std::nullopt} {
-  }
+        ownedBuffer_{std::nullopt} {}
 
   // ___________________________________________________________________________
   // Construct a writer wrapping a caller-provided memory pointer and capacity.
@@ -233,15 +234,11 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Complete the current streaming chunk and drain CPU write-combining buffers.
-  void flush() {
-    sfence();
-  }
+  void flush() { sfence(); }
 
   // ___________________________________________________________________________
   // Reset write position to the beginning of the existing buffer.
-  void reset() noexcept {
-    bytesWritten_ = 0;
-  }
+  void reset() noexcept { bytesWritten_ = 0; }
 
   // ___________________________________________________________________________
   // Retarget the writer to a new caller-provided buffer span.
