@@ -10,6 +10,7 @@
 #define QLEVER_SRC_ENGINE_EXPORT_V2_CSVCHUNKSINK_H
 
 #include <string>
+#include <utility>
 
 #include "engine/QueryExecutionTree.h"
 #include "engine/idTable/IdTable.h"
@@ -24,11 +25,15 @@ namespace ql::engine::export_v2 {
 // exactly the V1 conversion (`idToStringAndType` with `escapeForCsv`), so
 // V1 and V2 bytes agree by construction. Later work packages replace this
 // sink with vectorized serializers without touching the call site.
+//
+// The selected columns are stored by value: the sink is a small per-request
+// object, and owning the column list removes any lifetime coupling between
+// the sink and the caller's column vector.
 class CsvChunkSink {
  public:
   CsvChunkSink(const Index& index,
-               const QueryExecutionTree::ColumnIndicesAndTypes& selectedColumns)
-      : index_{index}, selectedColumns_{selectedColumns} {}
+               QueryExecutionTree::ColumnIndicesAndTypes selectedColumns)
+      : index_{index}, selectedColumns_{std::move(selectedColumns)} {}
 
   // Append the CSV rendering of every row in `table` (resolved against
   // `vocab`) to `out`.
@@ -55,7 +60,7 @@ class CsvChunkSink {
 
  private:
   const Index& index_;
-  const QueryExecutionTree::ColumnIndicesAndTypes& selectedColumns_;
+  QueryExecutionTree::ColumnIndicesAndTypes selectedColumns_;
 };
 
 }  // namespace ql::engine::export_v2

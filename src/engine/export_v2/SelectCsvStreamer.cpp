@@ -53,6 +53,8 @@ STREAMABLE_GENERATOR_TYPE streamChunks(
     sink.appendChunk(block.idTable_, block.localVocab_, chunks.back());
   };
 
+  // Rows scheduled for export (post limit/offset, counted by
+  // `getRowIndices`); logged below for parity with the V1 accounting.
   uint64_t resultSize = 0;
   for (const auto& [pair, range] : ExportQueryExecutionTrees::getRowIndices(
            limitAndOffset, *result, resultSize)) {
@@ -62,9 +64,15 @@ STREAMABLE_GENERATOR_TYPE streamChunks(
     const auto& view = pair.idTable();
     const size_t numColumns = view.numColumns();
     IdTable slice{numColumns, qet.getQec()->getAllocator()};
+    slice.reserve(range.size());
     row.clear();
     row.reserve(numColumns);
     for (uint64_t i : range) {
+      // Cancellation is checked per block below; also poll inside the copy
+      // loop so large blocks stay responsive (V1 checks per row).
+      if ((i & 0x1FFF) == 0) {
+        cancellationHandle->throwIfCancelled();
+      }
       row.clear();
       for (size_t column = 0; column < numColumns; ++column) {
         row.push_back(view(i, column));
@@ -80,7 +88,8 @@ STREAMABLE_GENERATOR_TYPE streamChunks(
     }
     cancellationHandle->throwIfCancelled();
   }
-  AD_LOG_DEBUG << "Done creating V2 CSV result.\n";
+  AD_LOG_DEBUG << "Done creating V2 CSV result (" << resultSize
+               << " rows scheduled).\n";
   STREAMABLE_RETURN;
 }
 
