@@ -25,6 +25,7 @@
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/FsstCompressor.h"
+#include "util/Compression.h"
 #include "util/InputRangeUtils.h"
 #include "util/OverloadCallOperator.h"
 #include "util/Serializer/FileSerializer.h"
