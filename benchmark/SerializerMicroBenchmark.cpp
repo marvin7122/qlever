@@ -19,13 +19,14 @@
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/ConstructTypes.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________
-// Memory allocation tracker for measuring exact heap allocation counts.
+// Memory allocation tracker for measuring heap allocation counts via the
+// scalar and array `operator new` overloads.
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
@@ -61,6 +62,22 @@ void* operator new(std::size_t size) {
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+
+void* operator new[](std::size_t size) {
+  if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
+    AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
+    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
+  }
+  void* ptr = std::malloc(size);
+  if (!ptr) {
+    throw std::bad_alloc();
+  }
+  return ptr;
+}
+
+void operator delete[](void* ptr) noexcept { std::free(ptr); }
+
+void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
 
 namespace ad_benchmark {
 namespace {
@@ -113,9 +130,13 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
             "\"Simple Label " + std::to_string(i) + "\"@en", nullptr);
         break;
       case 2:
-        // Literal requiring escaping (quotes, newlines, tabs)
+        // Literal requiring escaping (quotes, newlines, tabs). In a
+        // normalized literal an embedded quote is a real `"` character
+        // (only escaped at the C++ source level); a backslash-quote
+        // sequence would denote a literal backslash and measure
+        // double-escaping instead of the real export path.
         obj = std::make_shared<EvaluatedTermData>(
-            "\"Title with \\\"quotes\\\" and \nnewline and \ttab " +
+            "\"Title with \"quotes\" and \nnewline and \ttab " +
                 std::to_string(i) + "\"",
             nullptr);
         break;

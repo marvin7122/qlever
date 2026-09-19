@@ -6,8 +6,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_FASTEXPORTSTREAMFORMATTER_H
-#define QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_FASTEXPORTSTREAMFORMATTER_H
+#ifndef QLEVER_SRC_ENGINE_FASTEXPORTSTREAMFORMATTER_H
+#define QLEVER_SRC_ENGINE_FASTEXPORTSTREAMFORMATTER_H
 
 #include <algorithm>
 #include <array>
@@ -19,6 +19,8 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <system_error>
+#include <type_traits>
 #include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
@@ -186,15 +188,17 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Directly append a raw character.
-  void writeChar(char c) noexcept {
+  // Directly append a raw character. Can throw: `ensureAvailable` throws
+  // `ad_utility::Exception` in fixed-span mode on overflow, and growing the
+  // managed buffer in streaming mode can throw `std::bad_alloc`.
+  void writeChar(char c) {
     ensureAvailable(1);
     bufferPtr_[writePos_++] = c;
   }
 
   // ___________________________________________________________________________
   // Directly append a raw string slice without escaping.
-  void writeRaw(std::string_view sv) noexcept {
+  void writeRaw(std::string_view sv) {
     if (sv.empty()) {
       return;
     }
@@ -207,7 +211,7 @@ class FastExportStreamFormatter {
   // Write an integer directly without heap allocation.
   template <typename IntegerType>
   requires std::is_integral_v<IntegerType>
-  void writeInteger(IntegerType value) noexcept {
+  void writeInteger(IntegerType value) {
     ensureAvailable(32);
     auto [ptr, ec] = std::to_chars(bufferPtr_ + writePos_,
                                    bufferPtr_ + bufferCapacity_, value);
@@ -312,10 +316,13 @@ class FastExportStreamFormatter {
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
 
-    // If no internal special chars, write directly
+    // If no internal special chars, write directly. Scan only the content
+    // between the quotes: the surrounding quotes themselves are in
+    // `turtleSpecialTable`, so scanning the whole literal would always hit
+    // and defeat this fast path.
     if (posSecondQuote == posLastQuote &&
         !detail::hasSpecialCharacters<detail::turtleSpecialTable>(
-            normLiteral)) {
+            normLiteral.substr(1, posLastQuote - 1))) {
       writeRaw(normLiteral);
       return;
     }
@@ -380,6 +387,24 @@ class FastExportStreamFormatter {
       } else {
         writeRaw(term.rdfTermString_);
       }
+    } else if (format == ExportFormat::Csv) {
+      // Fully-qualified form: "value"^^<datatype>. Escape exactly like
+      // `RdfEscaping::escapeForCsv` applied to the whole term in
+      // `formatTriple`: quote the field and double embedded quotes.
+      const auto writeCsvDoubled = [this](std::string_view sv) {
+        for (char c : sv) {
+          if (c == '"') {
+            writeRaw("\"\"");
+          } else {
+            writeChar(c);
+          }
+        }
+      };
+      writeChar('"');
+      writeCsvDoubled(term.rdfTermString_);
+      writeRaw("\"\"^^<");
+      writeCsvDoubled(term.rdfTermDataType_);
+      writeRaw(">\"");
     } else {
       // Fully-qualified form: "value"^^<datatype>
       writeChar('"');
@@ -396,7 +421,6 @@ class FastExportStreamFormatter {
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
                    const qlever::constructExport::EvaluatedTermData& o) {
-
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeTerm(s, format);
       writeChar(' ');
@@ -436,6 +460,8 @@ class FastExportStreamFormatter {
   // ___________________________________________________________________________
   // Write a tabular row for SELECT query export.
   void writeRow(ExportFormat format, ql::span<const std::string_view> cells) {
+    AD_CONTRACT_CHECK(format == ExportFormat::Csv ||
+                      format == ExportFormat::Tsv);
     const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
     for (size_t i = 0; i < cells.size(); ++i) {
       if (i > 0) {
@@ -512,4 +538,4 @@ class FastExportStreamFormatter {
 
 }  // namespace ql::export_formatting
 
-#endif  // QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_FASTEXPORTSTREAMFORMATTER_H
+#endif  // QLEVER_SRC_ENGINE_FASTEXPORTSTREAMFORMATTER_H
