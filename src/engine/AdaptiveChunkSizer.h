@@ -125,16 +125,7 @@ class AdaptiveChunkSizer {
     AD_CONTRACT_CHECK(config_.maxChunkRows_ >= config_.minChunkRows_);
   }
 
-  // ___________________________________________________________________________
-  // Convenience constructor with explicit capacity parameters.
-  AdaptiveChunkSizer(size_t initialBytes, size_t maxBytes,
-                     double growthFactor = 2.0,
-                     double initialEstimatedRowBytes = 120.0)
-      : AdaptiveChunkSizer(AdaptiveChunkConfig{
-            .initialChunkBytes_ = initialBytes,
-            .maxChunkBytes_ = maxBytes,
-            .growthFactor_ = growthFactor,
-            .initialEstimatedRowBytes_ = initialEstimatedRowBytes}) {}
+
 
   // ___________________________________________________________________________
   // Target byte capacity for the active chunk buffer.
