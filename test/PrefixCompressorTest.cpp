@@ -74,7 +74,7 @@ TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
     EXPECT_EQ(viaString, word);
   };
   for (std::string_view word :
-       {"a", "al", "alp", "alpine", "alpha", "alphabet", "nothing"}) {
+       {"", "a", "al", "alp", "alpine", "alpha", "alphabet", "nothing"}) {
     checkWord(word);
   }
   const std::string onlyPrefix = p.compress("alpha");
