@@ -13,17 +13,14 @@
 
 #include "backports/span.h"
 #include "global/Id.h"
+#include "util/Exception.h"
 
 namespace ql::engine::scalar {
 
 // _____________________________________________________________________________
-// Zero-allocation, pure integer-space date extractors operating directly on
-// 64-bit packed ValueIds (Pillar 2).
-//
-// Bit Layout:
-// [63..56: DatatypeTag | 55..40: Year (16b signed) | 39..32: Month (8b) |
-//  31..24: Day (8b)    | 23..16: Hour (8b)         | 15..8:  Minute (8b)|
-//  7..0:   Second (8b) ]
+// Integer-space date extractors (Pillar 2): the SHIFT/MASK constants document
+// the logical component layout, while construction and extraction delegate to
+// the `Id`/`Date` representation so no additional allocation is required.
 class IntegerDateOperations {
  public:
   static constexpr uint64_t YEAR_SHIFT = 40;
@@ -76,10 +73,11 @@ class IntegerDateOperations {
   }
 
   // ___________________________________________________________________________
-  // Vectorized batch extractor: writes extracted year integers directly into output span.
-  static void extractYearsBatch(
-      ql::span<const Id> inputDates,
-      ql::span<int64_t> outputYears) noexcept {
+  // Batch extractor: writes extracted year integers directly into the output
+  // span (one scalar extraction per row, no intermediate allocation).
+  static void extractYearsBatch(ql::span<const Id> inputDates,
+                                ql::span<int64_t> outputYears) {
+    AD_CORRECTNESS_CHECK(outputYears.size() >= inputDates.size());
     const size_t n = inputDates.size();
     for (size_t i = 0; i < n; ++i) {
       outputYears[i] = extractYear(inputDates[i]);
