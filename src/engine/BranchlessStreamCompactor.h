@@ -13,6 +13,7 @@
 
 #include "backports/span.h"
 #include "global/Id.h"
+#include "util/Exception.h"
 
 namespace ql::engine::vector {
 
@@ -24,9 +25,14 @@ namespace ql::engine::vector {
 class BranchlessStreamCompactor {
  public:
   // Compact elements matching a predicate into output span, returning count.
+  // The unrolled loop writes output[outIdx] unconditionally and only bumps
+  // the index on match, so the output must hold at least input.size()
+  // elements even when few elements match. Exceptions thrown by the
+  // predicate propagate to the caller (compact itself is not noexcept).
   template <typename Predicate>
   static size_t compact(ql::span<const Id> input, ql::span<Id> output,
-                        Predicate&& pred) noexcept {
+                        Predicate&& pred) {
+    AD_CORRECTNESS_CHECK(output.size() >= input.size());
     size_t outIdx = 0;
     const size_t n = input.size();
 
