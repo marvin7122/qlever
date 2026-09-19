@@ -71,6 +71,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
 
  public:
   FsstScratchBufferBenchmark() {
+    // The `0` characters are literal characters of the synthetic alphabet,
+    // not numeric values; the modulo below indexes into this string.
     constexpr std::string_view alphabet{
         "abcdefghijklmnopqrstuvwxyz0123456789_:/.-#"};
     wordsStorage_.reserve(5'000);
