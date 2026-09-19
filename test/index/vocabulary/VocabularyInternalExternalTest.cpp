@@ -131,7 +131,8 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
   auto result = vocab.lookupBatch(indices);
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
-  EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
+  EXPECT_THROW(vocab.lookupBatch(ql::span<const size_t>{}),
+               ad_utility::Exception);
 
   // Index 0 is always RAM-cached and odd writer indices are passed with
   // `isExternal == false`, so indices 0, 1, and 3 are RAM-cached while 2 and

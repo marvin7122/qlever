@@ -484,7 +484,7 @@ TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   auto result = sv.lookupBatch(indices);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv, result,
                                                                 indices);
-  EXPECT_ANY_THROW(sv.lookupBatch(ql::span<const size_t>{}));
+  EXPECT_THROW(sv.lookupBatch(ql::span<const size_t>{}), ad_utility::Exception);
 
   const std::array<size_t, 3> oneMarker{
       static_cast<size_t>(sv.addMarker(0, 1)),

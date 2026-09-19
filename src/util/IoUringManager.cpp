@@ -161,6 +161,8 @@ void IoUringPolicy::addBatch(int fd,
 void IoUringPolicy::wait(BatchHandle handle) {
   while (numInFlightReadRequestsPerBatch_.find(handle) !=
          numInFlightReadRequestsPerBatch_.end()) {
+    // The batch still has outstanding reads, so the total in-flight count
+    // (which includes this batch's reads) is nonzero as well.
     const unsigned want = static_cast<unsigned>(
         std::min<size_t>(REAP_WAVE, numInFlightReadRequests_));
     AD_CORRECTNESS_CHECK(want > 0);
@@ -173,8 +175,10 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   AD_CORRECTNESS_CHECK(minComplete > 0);
   AD_CORRECTNESS_CHECK(minComplete <= numInFlightReadRequests_);
   io_uring_cqe* cqe = nullptr;
-  const int ret =
-      io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
+  int ret = 0;
+  do {
+    ret = io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
+  } while (ret == -EINTR);
   if (ret < 0) {
     AD_THROW("io_uring_wait_cqes failed in IoUringPolicy");
   }
