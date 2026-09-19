@@ -127,6 +127,61 @@ TEST(ExportPipelineRouterTest, AskQueryNotEligibleForFastStreaming) {
             ExportEngineMode::LegacyV1);
 }
 
+TEST(ExportPipelineRouterTest, HttpHeaderWinsOverUrlParam) {
+  auto query = parse("SELECT * WHERE { ?s ?p ?o }");
+
+  // fast-export=0 says V1, header says V2: header wins, query is eligible.
+  {
+    ParamValueMap params;
+    params["fast-export"] = {"0"};
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "v2"),
+              ExportEngineMode::FastStreamingV2);
+  }
+
+  // fast-export=1 says V2, header says V1: header wins.
+  {
+    ParamValueMap params;
+    params["fast-export"] = {"1"};
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "v1"),
+              ExportEngineMode::LegacyV1);
+  }
+}
+
+TEST(ExportPipelineRouterTest, MultiValueParamFirstWins) {
+  auto query = parse("SELECT * WHERE { ?s ?p ?o }");
+
+  ParamValueMap params;
+  params["fast-export"] = {"true", "false"};
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::FastStreamingV2);
+
+  params["fast-export"] = {"false", "true"};
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::LegacyV1);
+}
+
+TEST(ExportPipelineRouterTest, UnsupportedConstructsFallBackToV1) {
+  ParamValueMap params;
+  params["fast-export"] = {"1"};
+
+  // GROUP BY needs materialized grouping.
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                parse("SELECT ?s (COUNT(?o) AS ?c) WHERE { ?s ?p ?o } "
+                      "GROUP BY ?s"),
+                params),
+            ExportEngineMode::LegacyV1);
+
+  // Bare aggregate without GROUP BY.
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                parse("SELECT (COUNT(?o) AS ?c) WHERE { ?s ?p ?o }"), params),
+            ExportEngineMode::LegacyV1);
+
+  // ORDER BY needs materialized sorting.
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                parse("SELECT * WHERE { ?s ?p ?o } ORDER BY ?s"), params),
+            ExportEngineMode::LegacyV1);
+}
+
 TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
   auto selectQuery = parse("SELECT * WHERE { ?s ?p ?o }");
   auto askQuery = parse("ASK WHERE { ?s ?p ?o }");
