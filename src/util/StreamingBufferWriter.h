@@ -224,12 +224,11 @@ class StreamingBufferWriter {
   }
 
   // ___________________________________________________________________________
-  // Write string_view data using non-temporal streaming stores.
+  // Write string_view data using non-temporal streaming stores. (A
+  // `std::span<const char>` overload was deliberately omitted: it is
+  // ambiguous with this overload for `std::string` and string literals;
+  // span callers can pass `{data.data(), data.size()}`.)
   void write(std::string_view data) { write(data.data(), data.size()); }
-
-  // ___________________________________________________________________________
-  // Write span data using non-temporal streaming stores.
-  void write(std::span<const char> data) { write(data.data(), data.size()); }
 
   // ___________________________________________________________________________
   // Complete the current streaming chunk and drain CPU write-combining buffers.
