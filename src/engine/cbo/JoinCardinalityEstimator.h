@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include "index/HyperLogLogSketch.h"
 
@@ -108,8 +109,7 @@ class JoinCardinalityEstimator {
       double estRows =
           (static_cast<double>(rowsA) * static_cast<double>(rowsB)) /
           static_cast<double>(maxKeys);
-      size_t roundedRows =
-          std::max<size_t>(1, static_cast<size_t>(std::round(estRows)));
+      size_t roundedRows = cappedRoundRows(estRows);
       return {roundedRows, distinctKeys, model};
     }
 
@@ -118,12 +118,8 @@ class JoinCardinalityEstimator {
     unionSketch.merge(sketchB);
     uint64_t cardUnion = unionSketch.estimateCardinality();
 
-    // Use unsigned arithmetic to avoid implementation-defined behavior on
-    // overflow
-    uint64_t rawOverlap = 0;
-    if (cardA + cardB >= cardUnion) {
-      rawOverlap = cardA + cardB - cardUnion;
-    }
+    // Saturating inclusion-exclusion overlap; no intermediate sum can wrap.
+    uint64_t rawOverlap = saturatingOverlap(cardA, cardB, cardUnion);
 
     // Filter out statistical noise variance for disjoint sets (overlap at or
     // below the precision-scaled noise floor).
@@ -136,8 +132,7 @@ class JoinCardinalityEstimator {
 
     uint64_t distinctOverlap = static_cast<uint64_t>(rawOverlap);
     double estRows = static_cast<double>(distinctOverlap) * effMultA * effMultB;
-    size_t roundedRows =
-        std::max<size_t>(1, static_cast<size_t>(std::round(estRows)));
+    size_t roundedRows = cappedRoundRows(estRows);
 
     return {roundedRows, distinctOverlap, model};
   }
@@ -180,14 +175,42 @@ class JoinCardinalityEstimator {
     unionSketch.merge(sketchB);
     uint64_t cardUnion = unionSketch.estimateCardinality();
 
-    int64_t rawOverlap = static_cast<int64_t>(cardA) +
-                         static_cast<int64_t>(cardB) -
-                         static_cast<int64_t>(cardUnion);
+    uint64_t rawOverlap = saturatingOverlap(cardA, cardB, cardUnion);
     double noiseThreshold = overlapNoiseFloor(cardA, cardB);
     if (static_cast<double>(rawOverlap) <= noiseThreshold) {
       return 0;
     }
-    return static_cast<uint64_t>(rawOverlap);
+    return rawOverlap;
+  }
+
+ private:
+  // Saturating max(0, cardA + cardB - cardUnion): cover the union with A
+  // first, then with B; the uncovered remainders sum to the overlap. Every
+  // step subtracts a smaller value from a larger one, and the final sum
+  // saturates instead of wrapping.
+  [[nodiscard]] static uint64_t saturatingOverlap(uint64_t cardA,
+                                                  uint64_t cardB,
+                                                  uint64_t cardUnion) noexcept {
+    uint64_t coveredByA = std::min(cardA, cardUnion);
+    uint64_t remainingUnion = cardUnion - coveredByA;
+    uint64_t coveredByB = std::min(cardB, remainingUnion);
+    uint64_t uncoveredA = cardA - coveredByA;
+    uint64_t uncoveredB = cardB - coveredByB;
+    if (uncoveredB > std::numeric_limits<uint64_t>::max() - uncoveredA) {
+      return std::numeric_limits<uint64_t>::max();
+    }
+    return uncoveredA + uncoveredB;
+  }
+
+  // Round a row estimate to size_t with a floor of 1, capping absurd values
+  // so the double-to-size_t conversion can never overflow.
+  [[nodiscard]] static size_t cappedRoundRows(double estRows) noexcept {
+    if (!(estRows > 1.0)) {
+      return 1;
+    }
+    constexpr double maxRows =
+        static_cast<double>(std::numeric_limits<size_t>::max()) / 2.0;
+    return static_cast<size_t>(std::round(std::min(estRows, maxRows)));
   }
 };
 

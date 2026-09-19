@@ -15,21 +15,20 @@
 #include <cstdint>
 #include <vector>
 
-#include "backports/span.h"
 #include "global/Id.h"
 
 namespace ql::index::stats {
 
 // _____________________________________________________________________________
 // HyperLogLog++ Metadata Cardinality Sketch:
-// 1 KB compact sketch (1024 8-bit registers) embedded inside relation metadata
-// to provide instantaneous O(1) distinct cardinality estimates and set union
-// cardinalities during query planning.
+// Compact sketch of NUM_REGISTERS 8-bit registers (1 KB at the default
+// Precision 10) embedded inside relation metadata to provide instantaneous
+// O(1) distinct cardinality estimates and set union cardinalities during
+// query planning.
 template <size_t Precision = 10>  // 2^10 = 1024 registers
 class HyperLogLogSketch {
  public:
-  static constexpr size_t NUM_REGISTERS = 1 << Precision;
-  static constexpr uint64_t REGISTER_MASK = NUM_REGISTERS - 1;
+  static constexpr size_t NUM_REGISTERS = size_t{1} << Precision;
 
   static_assert(Precision >= 4 && Precision <= 16,
                 "Precision must be in [4, 16] per the HyperLogLog++ "
@@ -81,15 +80,17 @@ class HyperLogLogSketch {
     size_t zeroRegisters = 0;
 
     for (size_t i = 0; i < NUM_REGISTERS; ++i) {
-      // ldexp instead of 1.0 / (1ULL << r): shifting by 64 or more is
-      // undefined behavior, which a saturated register could trigger.
+      // ldexp instead of 1.0 / (1ULL << r): the shift is undefined for
+      // r >= 64, while ldexp is well-defined over the full uint8_t register
+      // range used here as the exponent.
       sum += std::ldexp(1.0, -static_cast<int>(registers_[i]));
       if (registers_[i] == 0) {
         zeroRegisters++;
       }
     }
 
-    // Alpha correction factor for m = 1024
+    // Alpha correction factor in its general form for m >= 128, with
+    // m = NUM_REGISTERS for this sketch.
     constexpr double alpha =
         0.7213 / (1.0 + 1.079 / static_cast<double>(NUM_REGISTERS));
     double rawEstimate =
