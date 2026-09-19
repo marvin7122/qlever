@@ -28,7 +28,7 @@
 
 #include "backports/span.h"
 #include "engine/ScatterGatherArenaStreamer.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "util/Exception.h"
 #include "util/Log.h"
 #include "util/Timer.h"
@@ -47,6 +47,30 @@ using ql::export_formatting::FastExportStreamFormatter;
 using ql::export_streaming::ScatterGatherChunk;
 using ql::export_streaming::ScatterGatherChunkStreamer;
 using ql::export_streaming::ScatterGatherConfig;
+
+// Default benchmark configuration (named constants instead of repeated
+// literals across the benchmark functions below).
+constexpr size_t kDefaultChunkBytes = 1024 * 1024;  // 1 MB chunks
+constexpr size_t kDefaultMaxIovecs = 1024;          // <= UIO_MAXIOV
+constexpr size_t kDefaultZeroCopyThresholdBytes = 64;
+
+// RAII guard for a POSIX file descriptor: closes on scope exit, including
+// exception paths (AD_THROW between open and close must not leak the fd).
+class ScopedFd {
+ public:
+  explicit ScopedFd(int fd) : fd_{fd} {}
+  ScopedFd(const ScopedFd&) = delete;
+  ScopedFd& operator=(const ScopedFd&) = delete;
+  ~ScopedFd() {
+    if (fd_ >= 0) {
+      ::close(fd_);
+    }
+  }
+  [[nodiscard]] int get() const noexcept { return fd_; }
+
+ private:
+  int fd_;
+};
 
 // _____________________________________________________________________________
 // Memory arena simulating decompression pages for large RDF vocabulary terms.
@@ -127,19 +151,14 @@ class ScatterGatherBenchmarkRunner {
   // buffer.
   static ScatterGatherBenchmarkMetric runContiguousCopy(
       const SimulatedDecompressionArena& arena,
-      size_t chunkSize = 1024 * 1024) {
+      size_t chunkSize = kDefaultChunkBytes) {
     const size_t n = arena.numTriples();
-    size_t chunksEmitted = 0;
-    size_t totalBytes = 0;
 
     auto startTime = std::chrono::steady_clock::now();
 
-    FastExportStreamFormatter formatter(
-        [&](std::string_view chunk) {
-          ++chunksEmitted;
-          totalBytes += chunk.size();
-        },
-        chunkSize);
+    // The metric below reads summary.totalBytesWritten_; no per-chunk
+    // accumulation is needed here.
+    FastExportStreamFormatter formatter([&](std::string_view) {}, chunkSize);
 
     for (size_t i = 0; i < n; ++i) {
       const auto s = arena.getSubject(i);
@@ -182,24 +201,21 @@ class ScatterGatherBenchmarkRunner {
   // Delimiters are written to local header buffer, while large literal spans
   // are referenced directly from arena memory without copying.
   static ScatterGatherBenchmarkMetric runScatterGatherStream(
-      const SimulatedDecompressionArena& arena, size_t chunkSize = 1024 * 1024,
-      size_t zeroCopyThreshold = 64) {
+      const SimulatedDecompressionArena& arena,
+      size_t chunkSize = kDefaultChunkBytes,
+      size_t zeroCopyThreshold = kDefaultZeroCopyThresholdBytes) {
     const size_t n = arena.numTriples();
-    size_t chunksEmitted = 0;
-    size_t totalBytes = 0;
     size_t totalZeroCopyBytes = 0;
 
     ScatterGatherConfig config;
     config.maxChunkBytes = chunkSize;
-    config.maxIovecs = 1024;
+    config.maxIovecs = kDefaultMaxIovecs;
     config.zeroCopyThresholdBytes = zeroCopyThreshold;
 
     auto startTime = std::chrono::steady_clock::now();
 
     ScatterGatherChunkStreamer streamer(
         [&](ScatterGatherChunk chunk) {
-          ++chunksEmitted;
-          totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
         },
         config);
@@ -244,28 +260,30 @@ class ScatterGatherBenchmarkRunner {
   // write)
   static ScatterGatherBenchmarkMetric runKernelScatterGatherTransmission(
       const SimulatedDecompressionArena& arena,
-      size_t chunkSize = 1024 * 1024) {
-    int nullFd = ::open("/dev/null", O_WRONLY);
-    if (nullFd < 0) {
+      size_t chunkSize = kDefaultChunkBytes) {
+    // ScopedFd closes the descriptor on all paths, including AD_THROW from
+    // writeTriple/writeToFd/finalize below.
+    ScopedFd nullFd{::open("/dev/null", O_WRONLY)};
+    if (nullFd.get() < 0) {
       AD_THROW("Failed to open /dev/null");
     }
 
     const size_t n = arena.numTriples();
     ScatterGatherConfig config;
     config.maxChunkBytes = chunkSize;
-    config.maxIovecs = 1024;
-    config.zeroCopyThresholdBytes = 64;
+    config.maxIovecs = kDefaultMaxIovecs;
+    config.zeroCopyThresholdBytes = kDefaultZeroCopyThresholdBytes;
 
-    size_t totalBytes = 0;
     size_t totalZeroCopyBytes = 0;
 
     auto startTime = std::chrono::steady_clock::now();
 
     ScatterGatherChunkStreamer streamer(
         [&](ScatterGatherChunk chunk) {
-          totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
-          chunk.writeToFd(nullFd);
+          ssize_t written = chunk.writeToFd(nullFd.get());
+          AD_CORRECTNESS_CHECK(written ==
+                               static_cast<ssize_t>(chunk.totalBytes()));
         },
         config);
 
@@ -281,7 +299,6 @@ class ScatterGatherBenchmarkRunner {
 
     auto summary = std::move(streamer).finalize();
     auto endTime = std::chrono::steady_clock::now();
-    ::close(nullFd);
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
@@ -338,8 +355,8 @@ void printBenchmarkTable(
   std::cout << "---------------------------------------------------------------"
                "----------------------------------------\n";
 
-  for (auto m : metrics) {
-    m.speedupVsBaseline =
+  for (const auto& m : metrics) {
+    double speedup =
         baselineThroughput > 0 ? (m.throughputGBs / baselineThroughput) : 1.0;
 
     std::cout << std::left << std::setw(42) << m.mode << std::right
@@ -349,7 +366,7 @@ void printBenchmarkTable(
               << std::setprecision(1) << std::setw(16) << m.throughputMBs
               << std::fixed << std::setprecision(2) << std::setw(18)
               << m.memoryBandwidthSavedGBs << std::fixed << std::setprecision(2)
-              << std::setw(11) << m.speedupVsBaseline << "x\n";
+              << std::setw(11) << speedup << "x\n";
   }
   std::cout << "==============================================================="
                "========================================\n\n";
