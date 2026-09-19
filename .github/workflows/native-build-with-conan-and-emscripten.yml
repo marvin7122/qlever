@@ -10,7 +10,6 @@ on:
     tags: [ "v*" ]
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-    branches: [ master ]
   merge_group:
 
 concurrency:
