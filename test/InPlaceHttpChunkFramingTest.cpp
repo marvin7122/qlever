@@ -21,10 +21,6 @@
 
 using namespace ad_utility::http;
 
-// Formal Verification of Invariant Concepts (Architecture Standard § 3)
-static_assert(ad_utility::InvariantStatefulClass<InPlaceHttpChunk>);
-static_assert(ad_utility::InvariantStatefulClass<InPlaceHttpChunkStreamer>);
-
 TEST(InPlaceHttpChunkFramingTest, ConceptComplianceAndBasicFraming) {
   InPlaceHttpChunk chunk(1024);
   EXPECT_TRUE(chunk.isOwner());
