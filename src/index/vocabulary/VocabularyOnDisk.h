@@ -48,21 +48,21 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
 
-  // Budget bounding how many threads may concurrently own a ring for this
-  // vocabulary (see `threadLocalManager`). Shared ownership so that
-  // `VocabularyOnDisk` stays movable and thread-local rings can release their
-  // slot at thread teardown, after the vocabulary itself may be gone.
+  // Per-vocabulary state shared with thread-local rings (see
+  // `threadLocalManager`). Shared ownership keeps `VocabularyOnDisk` movable;
+  // thread-local rings hold only weak references, so entries of a destroyed
+  // vocabulary expire and are pruned instead of keeping dead state alive.
   struct ThreadRingBudget {
     std::atomic<size_t> numOwnedRings{0};
+    // Initial io_uring preference, set by `open()`. Each thread loads it once
+    // when it creates its owned ring, so a failed `io_uring_queue_init`
+    // degrades only that thread to the synchronous fallback and never affects
+    // other threads. Atomic so the store in `open()` is correctly published
+    // to threads that read it later.
+    std::atomic<bool> preferIoUring{true};
   };
   mutable std::shared_ptr<ThreadRingBudget> threadRingBudget_ =
       std::make_shared<ThreadRingBudget>();
-
-  // Initial io_uring preference, set by `open()`. Each thread copies it into
-  // its own probe-once flag when it creates its owned ring, so a failed
-  // `io_uring_queue_init` degrades only that thread to the synchronous
-  // fallback and never affects other threads. Read-only after `open()`.
-  bool preferIoUring_ = true;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.

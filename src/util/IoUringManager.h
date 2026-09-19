@@ -125,10 +125,11 @@ class BatchManager final : public BatchManagerBase {
 };
 
 // Fallback implementation for the `IoUringPolicy` below. Schedules pread calls
-// in a synchronous (blocking) manner. The policy itself is stateless, so
-// distinct `BatchManager<SyncIoPolicy>` instances may be driven concurrently
-// from different threads; each single instance is still thread-confined (see
-// `BatchManager` below).
+// in a synchronous (blocking) manner. Thread-confinement comes from
+// `BatchManager` (above), whose non-atomic `nextBatchHandle_` requires all
+// calls on one instance to come from a single thread. The policy itself is
+// stateless, so distinct `BatchManager<SyncIoPolicy>` instances may still be
+// driven concurrently from different threads.
 struct SyncIoPolicy {
   using BatchHandle = uint64_t;
 
