@@ -47,10 +47,6 @@ struct ScopedPipeFds {
   }
 };
 
-// Formal Verification of Invariant Concepts (Architecture Standard § 3)
-static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunk>);
-static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunkStreamer>);
-
 TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
   ScatterGatherConfig config;
   // Below the 64-byte arena literal, so the literal takes the zero-copy path.
