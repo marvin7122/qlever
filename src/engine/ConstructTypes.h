@@ -52,13 +52,14 @@ struct EvaluatedTermData {
 using EvaluatedTerm = std::shared_ptr<const EvaluatedTermData>;
 
 // A term used while instantiating a CONSTRUCT triple. `data_` is never null
-// for an engaged `std::optional<EvaluatedTermRef>`. `keepAlive_` always owns
-// the term `data_` points to, so an `EvaluatedTriple` is self-contained and
-// may outlive the pipeline that instantiated it (e.g. collected into a
-// vector and formatted later): for a constant it shares ownership of the
-// precomputed term, for a variable it copies the cache/batch `shared_ptr`
-// so an LRU eviction cannot destroy the bytes, and for a blank node it owns
-// the newly allocated term.
+// for an engaged `std::optional<EvaluatedTermRef>`. Ownership differs by
+// term kind: a constant purely borrows the precomputed template term
+// (`keepAlive_` is empty), which is sound because the pipeline owns the
+// template for as long as any triple instantiated from it can be consumed.
+// A variable copies the cache/batch `shared_ptr` into `keepAlive_`, so an
+// LRU eviction cannot destroy the bytes. A blank node owns its freshly
+// allocated term through `owned_` (a `unique_ptr`, avoiding an atomic
+// refcount for an object that is never shared).
 struct EvaluatedTermRef {
   const EvaluatedTermData* data_ = nullptr;
   EvaluatedTerm keepAlive_{};
@@ -71,10 +72,6 @@ struct EvaluatedTermRef {
       : data_{data}, keepAlive_{std::move(keepAlive)} {}
   explicit EvaluatedTermRef(std::unique_ptr<EvaluatedTermData> owned)
       : data_{owned.get()}, owned_{std::move(owned)} {}
-
-  EvaluatedTermRef() = default;
-  EvaluatedTermRef(const EvaluatedTermData* data, EvaluatedTerm keepAlive)
-      : data_{data}, keepAlive_{std::move(keepAlive)} {}
   // Implicit conversion from an owning term: borrows `term` and keeps it
   // alive, so callers can write `EvaluatedTriple{term, ...}` directly.
   EvaluatedTermRef(const EvaluatedTerm& term)
