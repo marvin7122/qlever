@@ -40,6 +40,9 @@ class CompressedVocabLookupBatchMicroBenchmark : public BenchmarkInterface {
   struct TempFileCleanup {
     std::string basename_;
     ~TempFileCleanup() {
+      if (basename_.empty()) {
+        return;
+      }
       std::error_code ec;
       std::filesystem::remove(basename_ + ".words", ec);
       std::filesystem::remove(basename_ + ".codebooks", ec);

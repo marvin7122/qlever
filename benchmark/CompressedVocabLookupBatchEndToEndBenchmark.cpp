@@ -45,6 +45,9 @@ class CompressedVocabLookupBatchEndToEndBenchmark : public BenchmarkInterface {
   struct TempDirCleanup {
     std::filesystem::path dir_;
     ~TempDirCleanup() {
+      if (dir_.empty()) {
+        return;
+      }
       std::error_code ec;
       std::filesystem::remove_all(dir_, ec);
     }
