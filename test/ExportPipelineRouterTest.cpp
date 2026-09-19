@@ -173,7 +173,7 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
 }
 
 TEST(ExportPipelineRouterTest, SelectSendModeDefaultIsConcatenatedString) {
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
   EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
             ExportSendMode::ConcatenatedString);
   EXPECT_EQ(ExportPipelineRouter::selectSendMode(params, "unknown"),
@@ -181,7 +181,7 @@ TEST(ExportPipelineRouterTest, SelectSendModeDefaultIsConcatenatedString) {
 }
 
 TEST(ExportPipelineRouterTest, SelectSendModeUrlParam) {
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
   params["export-send"] = {"iovec"};
   EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),
             ExportSendMode::ScatterGather);
@@ -212,7 +212,7 @@ TEST(ExportPipelineRouterTest, UnsupportedConstructsFallBackToV1) {
   };
   for (const auto& queryStr : ineligibleQueries) {
     auto query = parse(queryStr);
-    ParamValueMap params;
+    ExportPipelineRouter::ParamValueMap params;
     params["fast-export"] = {"1"};
     EXPECT_FALSE(ExportPipelineRouter::isEligibleForFastStreaming(query))
         << "Failed for query: " << queryStr;
@@ -232,7 +232,7 @@ TEST(ExportPipelineRouterTest, EligibleShapesStillSelectV2) {
   };
   for (const auto& queryStr : eligibleQueries) {
     auto query = parse(queryStr);
-    ParamValueMap params;
+    ExportPipelineRouter::ParamValueMap params;
     params["fast-export"] = {"1"};
     EXPECT_TRUE(ExportPipelineRouter::isEligibleForFastStreaming(query))
         << "Failed for query: " << queryStr;
@@ -246,7 +246,7 @@ TEST(ExportPipelineRouterTest, IneligibleQueryExplainsFallback) {
   auto query = parse(
       "SELECT * WHERE { SERVICE <http://example.org/sparql> "
       "{ ?s ?p ?o } }");
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
   params["fast-export"] = {"1"};
   std::string desc = ExportPipelineRouter::describeDecision(query, params);
   EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
@@ -254,7 +254,7 @@ TEST(ExportPipelineRouterTest, IneligibleQueryExplainsFallback) {
 }
 
 TEST(ExportPipelineRouterTest, SelectSendModeHeader) {
-  ParamValueMap params;
+  ExportPipelineRouter::ParamValueMap params;
   EXPECT_EQ(ExportPipelineRouter::selectSendMode(params, "iovec"),
             ExportSendMode::ScatterGather);
   params["export-send"] = {"string"};
