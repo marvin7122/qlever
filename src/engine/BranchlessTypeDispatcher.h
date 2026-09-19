@@ -337,7 +337,7 @@ class BranchlessTypeDispatcher {
     AD_CONTRACT_CHECK(out != nullptr || ids.empty());
 
     char* curr = out;
-    const size_t numTerms = ids.size();
+for (size_t i = 0; i < ids.size(); ++i)
     for (size_t i = 0; i < numTerms; ++i) {
       curr = dispatchTermFormat(ids[i], rawTerms[i], curr, lut);
     }
