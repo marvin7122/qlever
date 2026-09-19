@@ -127,6 +127,8 @@ class LeafletAggregator {
 
   // O(blocks) typed count evaluator. Returns exact count for pure blocks
   // and identifies ambiguous blocks that require row-level decompression.
+  // `targetType` must be a non-empty set of flags: `None` matches no
+  // meaningful type and would miscount pure-empty blocks as exact hits.
   struct TypedCountResult {
     uint64_t exactCount = 0;
     std::vector<size_t> ambiguousBlockIndices;
@@ -136,6 +138,7 @@ class LeafletAggregator {
       ql::span<const CompressedBlockMetadataV2> blocks,
       DatatypeBitmask targetType,
       size_t columnIndex = 1) {
+    AD_CORRECTNESS_CHECK(targetType != DatatypeBitmask::None);
     TypedCountResult result;
     for (size_t i = 0; i < blocks.size(); ++i) {
       const auto& header = blocks[i].leafletHeader_;
