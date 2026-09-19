@@ -2,7 +2,7 @@
 
 **Status:** Approved Master Architecture RFC  
 **Target Repository:** `marvin7122/qlever` (`feat/export-engine-v2-streaming`)  
-**Design Standard:** Grounded in `~/ARCHITECTURE.md` (7 Universal Laws) & Single-Core CPU Discipline  
+**Design Standard:** Grounded in `ARCHITECTURE.md` (7 Universal Laws) & Single-Core CPU Discipline  
 
 ---
 
@@ -149,7 +149,7 @@
 ```
 
 ### 1. Inspiration & Prior Art Review
-* **ClickHouse Monomorphic Formatters:** Specializes serialization loops at compile-time using C++ template packs for known tuple layouts, enabling LLVM to unroll loops, eliminate all internal `switch` statements, and generate branch-free assembly.
+* **ClickHouse Monomorphic Formatters:** Specialize serialization loops at compile-time using C++ template packs for known tuple layouts, enabling LLVM to unroll loops, eliminate all internal `switch` statements, and generate branch-free assembly.
 * **simdjson & simdutf (Daniel Lemire):** Vectorized character classification (`_mm256_cmpeq_epi8` / `_mm256_movemask_epi8`) to scan 32 bytes of literal text in a single CPU instruction, skipping unescaped text with zero branch instructions.
 * **fast_float & Lemire Branchless Radix Conversion:** Converts integers to ASCII characters using lookup tables and branchless multiplication instead of division loops.
 
@@ -227,7 +227,7 @@
 
 ### 4. Benchmarking & Verification Plan
 * **Microbenchmarks:** `ScatterGatherBenchmark`, `HttpFramingBenchmark`.
-* **Validation:** Verified across 128B to 4096B literal sizes on Ural (`exit=0`).
+* **Validation:** Verified across 128B to 4096B literal sizes on a cluster worker node (`exit=0`).
 * **Metrics:** Memory copy bandwidth savings (GB/s) and single-core CPU utilization percentage.
 
 ---
