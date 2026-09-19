@@ -415,7 +415,6 @@ TEST(VocabBatchLookupData,
 }
 
 // _____________________________________________________________________________
-// _____________________________________________________________________________
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerIncompleteCoverageThrows) {
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
