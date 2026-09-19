@@ -13,8 +13,8 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
+#include "./util/GTestHelpers.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
@@ -72,13 +72,15 @@ TEST(FastExportStreamFormatterTest, CsvFullyQualifiedLiteralMatchesBaseline) {
             "XMLSchema#int>\"");
 }
 
-// `writeRow` only supports tabular formats; Turtle/N-Triples is a contract
-// violation, while CSV and TSV rows use the right delimiter and escaping.
+// `writeRow` only supports tabular formats: it throws
+// `ad_utility::Exception` for Turtle and N-Triples, while CSV and TSV rows
+// use the right delimiter and escaping.
 TEST(FastExportStreamFormatterTest, WriteRowRejectsNonTabularFormat) {
   CollectingFormatter collector;
   const std::array<std::string_view, 2> cells{"a,b", "c"};
-  EXPECT_THROW(collector.formatter_.writeRow(ExportFormat::Turtle, cells),
-               ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      collector.formatter_.writeRow(ExportFormat::Turtle, cells),
+      ::testing::HasSubstr("format == ExportFormat::Csv"));
 }
 
 TEST(FastExportStreamFormatterTest, WriteRowCsvAndTsv) {
@@ -94,8 +96,8 @@ TEST(FastExportStreamFormatterTest, WriteRowCsvAndTsv) {
   EXPECT_EQ(tsvCollector.output_, "a,b\tc\n");
 }
 
-// The throwing `ensureAvailable` makes `noexcept` on the write functions
-// wrong (an exception in a `noexcept` function calls `std::terminate`).
+// `ensureAvailable` throws, so the write functions must not be `noexcept`:
+// an exception escaping a `noexcept` function calls `std::terminate`.
 TEST(FastExportStreamFormatterTest, WriteFunctionsAreNotNoexcept) {
   static_assert(
       !noexcept(std::declval<FastExportStreamFormatter&>().writeChar('x')));
@@ -111,7 +113,8 @@ TEST(FastExportStreamFormatterTest, FixedSpanOverflowThrows) {
   FastExportStreamFormatter formatter{
       ql::span<char>{buffer.data(), buffer.size()}};
   formatter.writeRaw("ab");
-  EXPECT_THROW(formatter.writeRaw("cdef"), ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE(formatter.writeRaw("cdef"),
+                               ::testing::HasSubstr("buffer overflow"));
 }
 
 }  // namespace

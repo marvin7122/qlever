@@ -7,11 +7,11 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,7 +21,6 @@
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
-#include "util/Exception.h"
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________
@@ -85,6 +84,7 @@ namespace {
 using namespace qlever::constructExport;
 using namespace ql::export_formatting;
 
+// _____________________________________________________________________________
 // Generates 1,000,000 synthetic triples representing realistic SPARQL exports.
 std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
   std::vector<EvaluatedTriple> triples;
@@ -133,7 +133,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
         // Literal requiring escaping (quotes, newlines, tabs). In a
         // normalized literal an embedded quote is a real `"` character
         // (only escaped at the C++ source level); a backslash-quote
-        // sequence would denote a literal backslash and measure
+        // sequence would denote a literal backslash and would measure
         // double-escaping instead of the real export path.
         obj = std::make_shared<EvaluatedTermData>(
             "\"Title with \"quotes\" and \nnewline and \ttab " +
@@ -160,6 +160,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
   return triples;
 }
 
+// _____________________________________________________________________________
 class SerializerMicroBenchmark : public BenchmarkInterface {
  private:
   static constexpr size_t NUM_TRIPLES = 1'000'000;

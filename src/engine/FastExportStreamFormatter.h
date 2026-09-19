@@ -16,14 +16,13 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <memory>
-#include <optional>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
 #include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
+#include "backports/concepts.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
@@ -36,6 +35,9 @@ namespace ql::export_formatting {
 enum class ExportFormat { Turtle, NTriples, Csv, Tsv };
 
 // Summary metrics returned upon finalizing an export stream.
+// `totalBytesWritten_` counts flushed bytes only; bytes still buffered are
+// visible via `totalBytesWritten()`. `chunksEmitted_` counts sink
+// invocations (streaming mode only, zero in fixed-span mode).
 struct ExportStreamSummary {
   uint64_t totalTriples_ = 0;
   uint64_t totalBytesWritten_ = 0;
@@ -209,9 +211,9 @@ class FastExportStreamFormatter {
 
   // ___________________________________________________________________________
   // Write an integer directly without heap allocation.
-  template <typename IntegerType>
-  requires std::is_integral_v<IntegerType>
-  void writeInteger(IntegerType value) {
+  CPP_template(typename IntegerType)(
+      requires std::is_integral_v<IntegerType>) void writeInteger(IntegerType
+                                                                      value) {
     ensureAvailable(32);
     auto [ptr, ec] = std::to_chars(bufferPtr_ + writePos_,
                                    bufferPtr_ + bufferCapacity_, value);
@@ -244,7 +246,9 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Write a literal with optional datatype or language tag.
+  // Write a literal with optional datatype or language tag. The content is
+  // written verbatim: the caller owns escaping (use
+  // `writeEscapedTurtleLiteral` for normalized literals).
   void writeLiteral(std::string_view content, std::string_view datatype = "",
                     std::string_view langTag = "") {
     writeChar('"');
@@ -505,12 +509,14 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Inspect current buffer slice.
+  // Inspect the currently buffered (not yet flushed) slice. The view is
+  // invalidated by the next write, flush, or finalize.
   [[nodiscard]] std::string_view currentChunk() const noexcept {
     return std::string_view(bufferPtr_, writePos_);
   }
 
   [[nodiscard]] size_t bytesBuffered() const noexcept { return writePos_; }
+  // Total bytes including buffered-but-unflushed data.
   [[nodiscard]] uint64_t totalBytesWritten() const noexcept {
     return totalBytesWritten_ + writePos_;
   }
