@@ -4,6 +4,8 @@
 
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 
+namespace ad_utility::vocabulary {
+
 using std::string;
 
 // _____________________________________________________________________________
@@ -123,3 +125,4 @@ void VocabularyInMemoryBinSearch::WordWriter::finish() {
   writer_.finish();
   offsetWriter_.finish();
 }
+}  // namespace ad_utility::vocabulary

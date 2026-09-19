@@ -57,6 +57,13 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
   // stored inside the object, and a string with one additional character is
   // not.
   size_t capacity = pmrStringSsoCapacity();
+  // A zero capacity means this platform offers no inline string storage at
+  // all, so every SSO-dependent assertion below would be meaningless there.
+  // All supported STLs provide SSO; this states the premise explicitly
+  // instead of tripping the `maxSize > 0` contract inside
+  // `requirePmrStringInlineStorage` with a confusing message.
+  ASSERT_GT(capacity, 0u) << "This platform offers no inline string storage, "
+                             "so the SSO assertions below are meaningless";
   requirePmrStringInlineStorage(capacity);
   PmrSsoProbeString atCapacity(capacity, 'x');
   EXPECT_TRUE(pointsIntoObject(atCapacity.data(), atCapacity));

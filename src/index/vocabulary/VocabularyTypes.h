@@ -38,6 +38,8 @@
 #include "util/TypeTraits.h"
 #include "util/Views.h"
 
+namespace ad_utility::vocabulary {
+
 // _____________________________________________________________________________
 // Frozen owner of a batch's `string_view`s. Builders allocate and write, then
 // move the populated views and the backing storage into a derived class;
@@ -99,6 +101,28 @@ class VocabBatchLookupResult {
     if (!span_.empty()) {
       AD_CONTRACT_CHECK(storage_ != nullptr);
     }
+  }
+
+  // Copies share the storage (cheap: `shared_ptr` + view) and are required,
+  // e.g., to collect results into a vector (see `VocabularyTestHelpers.h`).
+  // Declared explicitly: the custom move operations below would otherwise
+  // suppress the implicit copies (Rule of Five).
+  VocabBatchLookupResult(const VocabBatchLookupResult&) = default;
+  VocabBatchLookupResult& operator=(const VocabBatchLookupResult&) = default;
+
+  // Moves reset the source span, so a moved-from result is empty (rather than
+  // a null owner paired with a stale view into the moved-to storage).
+  VocabBatchLookupResult(VocabBatchLookupResult&& other) noexcept
+      : storage_{std::move(other.storage_)}, span_{std::move(other.span_)} {
+    other.span_ = {};
+  }
+  VocabBatchLookupResult& operator=(VocabBatchLookupResult&& other) noexcept {
+    if (this != &other) {
+      storage_ = std::move(other.storage_);
+      span_ = std::move(other.span_);
+      other.span_ = {};
+    }
+    return *this;
   }
 
   // Provide the container and range interface.
@@ -236,10 +260,13 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
   // `char` allocations from the arena builders, for which any alignment
   // suffices, and the underlying `AllocatorWithLimit` has no alignment
   // concept (it counts bytes).
-  void* do_allocate(std::size_t bytes, std::size_t) override {
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+    (void)alignment;
     return alloc_.allocate(bytes);
   }
-  void do_deallocate(void* p, std::size_t bytes, std::size_t) override {
+  void do_deallocate(void* p, std::size_t bytes,
+                     std::size_t alignment) override {
+    (void)alignment;
     alloc_.deallocate(static_cast<std::byte*>(p), bytes);
   }
   bool do_is_equal(
@@ -457,6 +484,23 @@ class ArenaVocabBatchBuilder {
   }
 };
 
+// Whether `Vocab` provides the two-argument `lookupBatch` overload that
+// decodes into an `ArenaVocabBatchBuilder`. Implemented with `void_t` SFINAE
+// (instead of a requires-expression) so that it also works in C++17 builds,
+// where requires-expressions are unavailable.
+namespace detail {
+template <typename Vocab, typename = void>
+struct SupportsBuilderLookupBatchImpl : std::false_type {};
+template <typename Vocab>
+struct SupportsBuilderLookupBatchImpl<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+}  // namespace detail
+template <typename Vocab>
+constexpr bool SupportsBuilderLookupBatch =
+    detail::SupportsBuilderLookupBatchImpl<Vocab>::value;
+
 // _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
@@ -491,6 +535,9 @@ class MultiSourceVocabBatchAssembler {
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
       : assembledWordViews_(totalExpectedWords),
         slotFilledTracking_(totalExpectedWords, false) {
+    // Fail fast like every other factory in this file: finalization requires
+    // a non-empty view list, so an empty assembler could never succeed.
+    AD_CONTRACT_CHECK(totalExpectedWords > 0);
   }
 
   // ___________________________________________________________________________
@@ -709,7 +756,6 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
 // used by all vocabularies that do not provide a specialized (e.g. io_uring)
 // implementation. They simply loop over the indices and issue the ordinary
 // single-word `operator[]` lookups one after another.
-namespace ad_utility::vocabulary {
 // Return the placeholder that is reported for a vocabulary index that is not
 // contained in a vocabulary with "holes" (see `VocabularyInMemoryBinSearch`).
 // This happens when such a vocabulary was created by excluding some of the
@@ -826,8 +872,6 @@ VocabLookupOutput lookupBatchesStreamed(const Vocab& vocab,
                              return vocab.lookupBatch(indices);
                            })};
 }
-
-}  // namespace ad_utility::vocabulary
 
 // _____________________________________________________________________________
 // A word and its index in the vocabulary from which it was obtained. Also
@@ -965,5 +1009,7 @@ class WordWriterBase {
   // The base classes have to implement the actual logic for `finish` here.
   virtual void finishImpl() = 0;
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H
