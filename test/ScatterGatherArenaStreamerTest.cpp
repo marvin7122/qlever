@@ -16,7 +16,7 @@
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
 #include "engine/ScatterGatherArenaStreamer.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 
 using namespace ql::export_streaming;

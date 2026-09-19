@@ -42,6 +42,8 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ChunkStreamingBenchmark engine testUtil)
 
+    addAndLinkBenchmark(ScatterGatherBenchmark engine testUtil)
+
     addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
 
     addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
