@@ -13,6 +13,7 @@
 
 #include "backports/span.h"
 #include "global/Id.h"
+#include "util/Exception.h"
 
 namespace ql::engine::rle {
 
