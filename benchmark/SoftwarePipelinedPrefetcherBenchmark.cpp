@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <numeric>
 #include <random>
@@ -19,9 +20,11 @@
 using namespace ql::engine::prefetch;
 
 template <typename T>
-inline void escape(T&& val) {
+inline void escape(T& val) {
 #if defined(__GNUC__) || defined(__clang__)
   asm volatile("" : "+r,m"(val) : : "memory");
+#else
+  (void)val;
 #endif
 }
 

@@ -8,10 +8,7 @@
 
 #pragma once
 
-#include <cstdint>
-#include <vector>
-
-#include "backports/span.h"
+#include <cstddef>
 
 namespace ql::engine::prefetch {
 
