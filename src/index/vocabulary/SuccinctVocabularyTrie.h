@@ -8,7 +8,9 @@
 
 #pragma once
 
-#include <bit>
+#include <absl/numeric/bits.h>
+
+#include <algorithm>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -20,41 +22,51 @@ namespace ql::index::vocab {
 // _____________________________________________________________________________
 // Succinct Vocabulary Trie:
 // Encodes in-memory vocabulary prefix structures as succinct bit vectors.
-// Uses hardware POPCNT (Rank) to navigate trie child nodes in O(1) time
-// using less than 1.5 bits per character.
+// rank1() answers in O(1) time from per-word cumulative POPCNT checkpoints
+// plus a single masked POPCNT on the partial word.
 class SuccinctVocabularyTrie {
  private:
   std::vector<uint64_t> topologyBits_;  // Louds-style tree topology
   std::vector<char> labels_;            // Character transition labels
   size_t totalNodes_ = 0;
+  // rankCheckpoints_[i] holds the number of 1-bits in topologyBits_[0..i);
+  // rebuilt whenever the topology is set.
+  std::vector<size_t> rankCheckpoints_{0};
+
+  void rebuildRankCheckpoints() {
+    rankCheckpoints_.resize(topologyBits_.size() + 1);
+    rankCheckpoints_[0] = 0;
+    for (size_t i = 0; i < topologyBits_.size(); ++i) {
+      rankCheckpoints_[i + 1] =
+          rankCheckpoints_[i] + absl::popcount(topologyBits_[i]);
+    }
+  }
 
  public:
   SuccinctVocabularyTrie() = default;
 
-  // Compute Rank1 (number of 1-bits up to bitIndex) using hardware POPCNT
+  // Rank1 (number of 1-bits below bitIndex): O(1) via the checkpoints plus
+  // one POPCNT on the partially covered word.
   [[nodiscard]] size_t rank1(size_t bitIndex) const noexcept {
-    size_t fullWords = bitIndex / 64;
+    size_t fullWords = std::min(bitIndex / 64, topologyBits_.size());
+    size_t count = rankCheckpoints_[fullWords];
     size_t remainder = bitIndex % 64;
-    size_t count = 0;
-
-    for (size_t i = 0; i < fullWords && i < topologyBits_.size(); ++i) {
-      count += std::popcount(topologyBits_[i]);
-    }
-
     if (remainder > 0 && fullWords < topologyBits_.size()) {
       uint64_t mask = (1ULL << remainder) - 1;
-      count += std::popcount(topologyBits_[fullWords] & mask);
+      count += absl::popcount(topologyBits_[fullWords] & mask);
     }
 
     return count;
   }
 
-  // Insert a mock test topology
+  // Test and benchmark setup only: installs a mock topology and rebuilds the
+  // rank checkpoints, so the rank1() invariant always holds afterwards.
   void setMockTopology(const std::vector<uint64_t>& bits,
                        const std::vector<char>& labels) {
     topologyBits_ = bits;
     labels_ = labels;
     totalNodes_ = labels.size();
+    rebuildRankCheckpoints();
   }
 
   [[nodiscard]] size_t totalNodes() const noexcept { return totalNodes_; }

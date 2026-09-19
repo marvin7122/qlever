@@ -6,8 +6,6 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of this project.
 
-#include <chrono>
-
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "../benchmark/infrastructure/BenchmarkMeasurementContainer.h"
 #include "index/vocabulary/SuccinctVocabularyTrie.h"
@@ -33,17 +31,15 @@ class BMSuccinctVocabularyTrieRank1 : public BenchmarkInterface {
     SuccinctVocabularyTrie trie;
     trie.setMockTopology(bits, labels);
 
-    results.addMeasurement("Rank1 throughput", [&trie, &bits]() {
+    // Wall time is measured by the benchmark framework; the accumulated
+    // total only keeps the compiler from optimizing the queries away.
+    results.addMeasurement("Rank1 queries", [&trie, &bits]() {
       size_t totalRank = 0;
-      auto t0 = std::chrono::high_resolution_clock::now();
       for (size_t i = 0; i < NUM_QUERIES; ++i) {
         size_t bitIdx = (i * 137) % (bits.size() * 64);
         totalRank += trie.rank1(bitIdx);
       }
-      auto t1 = std::chrono::high_resolution_clock::now();
-      double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
       (void)totalRank;  // prevent optimization
-      (void)ms;         // prevent optimization
     });
 
     return results;
