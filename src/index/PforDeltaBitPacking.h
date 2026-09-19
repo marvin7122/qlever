@@ -8,17 +8,20 @@
 
 #pragma once
 
-#include <bit>
+#include <absl/numeric/bits.h>
+
 #include <cstdint>
 #include <vector>
 
 #include "backports/span.h"
 #include "global/Id.h"
+#include "util/Exception.h"
 
 namespace ql::index::compression {
 
 // _____________________________________________________________________________
-// PFOR-DELTA Bit-Packing:
+// Frame-of-reference bit packing with a per-block bit width (PFOR-style
+// deltas, but without exception/patch handling):
 // Compresses monotonically increasing 64-bit ValueId sequences into minimal
 // bit-widths (e.g. 4..16 bits per ID) by storing delta offsets.
 class PforDeltaBitPacking {
@@ -31,7 +34,10 @@ class PforDeltaBitPacking {
     std::vector<uint64_t> packedWords_;
   };
 
-  // Compress a block of 64 sorted Ids using frame-of-reference deltas.
+  // Compress a block of sorted Ids (typically BLOCK_SIZE) using
+  // frame-of-reference deltas. For a good compression ratio the input should
+  // be sorted non-decreasing by ValueId bits; the round-trip is exact for any
+  // input by unsigned modular arithmetic.
   static CompressedBlock compressBlock(ql::span<const Id> inputIds) {
     AD_CORRECTNESS_CHECK(!inputIds.empty());
     CompressedBlock block;
@@ -49,7 +55,7 @@ class PforDeltaBitPacking {
     }
 
     block.bitWidth_ =
-        (maxDelta == 0) ? 1 : static_cast<uint8_t>(std::bit_width(maxDelta));
+        (maxDelta == 0) ? 1 : static_cast<uint8_t>(absl::bit_width(maxDelta));
     if (block.bitWidth_ > 64) {
       block.bitWidth_ = 64;
     }
@@ -78,6 +84,9 @@ class PforDeltaBitPacking {
   static void decompressBlock(const CompressedBlock& block, size_t numRows,
                               ql::span<Id> outputIds) {
     AD_CORRECTNESS_CHECK(outputIds.size() >= numRows);
+    AD_CORRECTNESS_CHECK(block.bitWidth_ >= 1 && block.bitWidth_ <= 64);
+    AD_CORRECTNESS_CHECK(block.packedWords_.size() * 64 >=
+                         numRows * block.bitWidth_);
     const uint64_t mask =
         (block.bitWidth_ == 64) ? ~0ULL : ((1ULL << block.bitWidth_) - 1);
 

@@ -37,3 +37,24 @@ TEST(PforDeltaBitPackingTest, CompressAndDecompressMonotonicIds) {
     EXPECT_EQ(decompressed[i], inputIds[i]);
   }
 }
+
+TEST(PforDeltaBitPackingTest, RoundTripWithCrossWordBitWidth) {
+  // Max delta is 63 * 2 = 126, which needs 7 bits per ID. Since 7 does not
+  // divide 64, values straddle 64-bit word boundaries and exercise the
+  // cross-word pack/unpack paths.
+  std::vector<Id> inputIds;
+  inputIds.reserve(64);
+  for (uint64_t i = 0; i < 64; ++i) {
+    inputIds.push_back(Id::fromBits(1'000'000 + i * 2));
+  }
+
+  auto compressed = PforDeltaBitPacking::compressBlock(inputIds);
+  EXPECT_EQ(compressed.bitWidth_, 7);
+
+  std::vector<Id> decompressed(64);
+  PforDeltaBitPacking::decompressBlock(compressed, 64, decompressed);
+
+  for (size_t i = 0; i < 64; ++i) {
+    EXPECT_EQ(decompressed[i], inputIds[i]);
+  }
+}
