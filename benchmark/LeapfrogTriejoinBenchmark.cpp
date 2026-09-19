@@ -89,10 +89,15 @@ int main() {
   std::cout << "Runtime: " << binaryMs << " ms ("
             << (N / (binaryMs / 1000.0)) / 1e6
             << " M items/sec, intermediate size: " << intermediateAB.size()
-            << " rows)\n";
+            << " rows, matches: " << binaryResult.size() << ")\n";
+  if (binaryResult.size() != leapfrogResult.size()) {
+    std::cerr << "MISMATCH: baseline matches (" << binaryResult.size()
+              << ") != leapfrog matches (" << leapfrogResult.size() << ")\n";
+    return 1;
+  }
 
-  std::cout << "\n--- Prototype: Leapfrog Triejoin (Zero Intermediate "
-               "Allocation) ---\n";
+  std::cout << "\n--- Prototype: Leapfrog Triejoin (No Intermediate "
+               "Table) ---\n";
   std::cout << "Runtime: " << leapfrogMs << " ms ("
             << (N / (leapfrogMs / 1000.0)) / 1e6
             << " M items/sec, matches: " << leapfrogResult.size() << ")\n";

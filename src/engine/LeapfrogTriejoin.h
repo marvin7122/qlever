@@ -48,9 +48,9 @@ class LeapfrogIterator {
 };
 
 // _____________________________________________________________________________
-// Leapfrog Triejoin (Worst-Case Optimal Join - WCOJ):
-// Simultaneously intersects K sorted variable iterators in O(N^1.5) time for
-// triangle queries, completely eliminating O(N^2) intermediate tables.
+// Leapfrog-style simultaneous K-way intersection over sorted Id lists:
+// advances the iterator holding the smallest key towards the largest key, so
+// no intermediate result tables are materialized (only the output vector).
 class LeapfrogJoin {
  public:
   static std::vector<Id> intersect(std::vector<LeapfrogIterator>& iterators) {
@@ -65,9 +65,20 @@ class LeapfrogJoin {
       }
     }
 
-    // Sort iterators by current key
+    // Index of the iterator holding the smallest current key. The match test
+    // `key[p] == maxKey` is only valid when p is the minimum: together with
+    // maxKey being the maximum, equality implies all keys are equal.
     size_t k = iterators.size();
-    size_t p = 0;  // pointer to iterator with smallest key
+    auto indexOfMinKey = [&iterators, k]() {
+      size_t minIdx = 0;
+      for (size_t i = 1; i < k; ++i) {
+        if (iterators[i].key() < iterators[minIdx].key()) {
+          minIdx = i;
+        }
+      }
+      return minIdx;
+    };
+    size_t p = indexOfMinKey();
     Id maxKey = iterators[0].key();
     for (size_t i = 1; i < k; ++i) {
       if (iterators[i].key() > maxKey) {
@@ -79,7 +90,7 @@ class LeapfrogJoin {
       Id currentKey = iterators[p].key();
 
       if (currentKey == maxKey) {
-        // All iterators match on this key!
+        // Smallest and largest keys agree, so all iterators match here.
         result.push_back(currentKey);
         iterators[p].next();
         if (iterators[p].atEnd()) {
@@ -95,8 +106,9 @@ class LeapfrogJoin {
         maxKey = iterators[p].key();
       }
 
-      // Move to next iterator in round-robin fashion
-      p = (p + 1) % k;
+      // Re-establish the minimum holder; round-robin order is not valid
+      // because the updated iterator is no longer ordered relative to p.
+      p = indexOfMinKey();
     }
 
     return result;
