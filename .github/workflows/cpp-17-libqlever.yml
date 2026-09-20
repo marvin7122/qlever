@@ -124,7 +124,7 @@ jobs:
       run:
         shell: bash
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         # The two entries only differ in the compiler and in the C++ standard.
         # `USE_CPP_17_BACKPORTS` (and with it `boost::filesystem` instead of
