@@ -683,5 +683,33 @@ TEST(SqPollSetup, sqPollRequestStillServesReads) {
   EXPECT_THAT((std::vector<std::string>{first, second}),
               ::testing::ElementsAre("AAAA", "BBBB"));
 }
+
+// An SQPoll ring must serve a batch larger than the ring exactly like a
+// plain ring. The first export batch with `iouring-sqpoll=true` aborted
+// on `sqe != nullptr`; this test covers that oversized-batch path under
+// kernel-side polling.
+TEST(SqPollSetup, sqPollBatchLargerThanRing) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
+    GTEST_SKIP() << "SQPoll setup denied, fallback covered by plain tests";
+  }
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  options.sqThreadIdleMs = 10;
+  constexpr size_t N = 400;
+  constexpr size_t CHUNKSIZE = 4;
+  SequentialReadScenarioForTesting scenario;
+  for (size_t i = 0; i < N; ++i) {
+    scenario.addRead(std::string(CHUNKSIZE, static_cast<char>('A' + (i % 26))));
+  }
+  auto [tmp, fd] = makeTempFile(scenario.content());
+  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(64, options);
+  manager.wait(scenario.submitTo(manager, fd));
+  EXPECT_THAT(scenario.results(),
+              ::testing::ElementsAreArray(scenario.expected()));
+}
 #endif
 }  // namespace
