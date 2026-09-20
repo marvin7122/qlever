@@ -434,10 +434,9 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
-                using Serializer = MonomorphicRowSerializer<Types...>;
+              dispatchMonomorphicSerializer(schema, [&](auto& serializer) {
                 for (const auto& row : data_.tripleRows_) {
-                  Serializer::template serializeRow<ExportFormat::Csv>(
+                  serializer.template serializeRow<ExportFormat::Csv>(
                       formatter, ql::span<const CellValue>(row));
                 }
               });

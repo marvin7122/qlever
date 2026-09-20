@@ -156,9 +156,8 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
 
   std::string dispatchedOut =
       captureOutput([&](FastExportStreamFormatter& fmt) {
-        dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
-          using S = MonomorphicRowSerializer<Types...>;
-          S::template serializeRow<ExportFormat::Turtle>(
+        dispatchMonomorphicSerializer(schema, [&](auto& serializer) {
+          serializer.template serializeRow<ExportFormat::Turtle>(
               fmt, ql::span<const CellValue>(row));
         });
       });
