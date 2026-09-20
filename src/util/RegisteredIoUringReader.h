@@ -185,7 +185,6 @@ class PinnedArena {
       iovecs_.push_back(
           iovec{.iov_base = basePtr + (i * slotSize_), .iov_len = slotSize_});
     }
-
   }
 
   ~PinnedArena() {

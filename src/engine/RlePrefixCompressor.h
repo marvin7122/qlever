@@ -120,7 +120,6 @@ struct RleFormatterConfig {
   std::string_view prefix_{"<"};
   std::string_view suffix_{">"};
   std::string_view delimiter_{" "};
-
 };
 
 // _____________________________________________________________________________
@@ -148,8 +147,7 @@ class RlePrefixFormatter {
 
  public:
   explicit RlePrefixFormatter(RleFormatterConfig config = RleFormatterConfig{})
-      : config_{config} {
-  }
+      : config_{config} {}
 
   // ___________________________________________________________________________
   [[nodiscard]] const RleStats& stats() const noexcept { return stats_; }
