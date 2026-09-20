@@ -157,7 +157,7 @@
 * **Components:**
   - `src/engine/export_v2/MonomorphicSerializers.h`
   - `src/util/FastIntToString.h`
-  - `src/engine/SimdEscapeClassifier.h`
+  - `src/engine/export_v2/SimdEscapeClassifier.h`
   - `src/util/SwarDelimiterPacker.h`
 * **Mechanics:**
   1. The query planner analyzes the output column types (e.g. `Triple<IRI, IRI, LITERAL>`).
@@ -168,15 +168,17 @@
   5. Delimiters (tabs, quotes, angle brackets, newlines) are packed into 64-bit unsigned integers via `SwarDelimiterPacker` and written in single 64-bit store instructions.
 
 ### 3. Performance Rationale
-* **Branch Elimination:** Branch count drops from ~12 branches/row down to 0 branches/row on the fast path. Branch misprediction rate drops to <0.2%.
-* **High IPC (Instructions Per Cycle):** Compiler unrolling achieves sustained **>2.85 IPC** on modern x86-64 microarchitectures.
+All figures below are design targets, not measured results: the
+microbenchmarks that would validate them do not ship yet.
+* **Branch Elimination (target):** Branch count drops from ~12 branches/row down to 0 branches/row on the fast path. Branch misprediction rate drops to <0.2%.
+* **High IPC (Instructions Per Cycle, target):** Compiler unrolling achieves sustained **>2.75 IPC** on modern x86-64 microarchitectures (same target as the master specification Definition of Done).
 
 ### 4. Benchmarking & Verification Plan
-* **Microbenchmarks:**
-  - `FastNumberFormatterBenchmark` (Validated: >180M nums/sec)
-  - `SimdEscapeBenchmark` (Validated: 13.94 GB/s AVX2)
-  - `BranchlessDispatcherBenchmark` (Validated: 42.4M terms/sec)
-  - `MonomorphicSerializerBenchmark` (Validated: 2.90 IPC)
+* **Microbenchmarks (planned, not yet shipping):**
+  - Number formatting throughput (target: >180M nums/sec)
+  - `SimdEscapeClassifierBenchmark` (target: 13.94 GB/s AVX2)
+  - Type-dispatch throughput (target: 42.4M terms/sec)
+  - Monomorphic serialization (target: >2.75 IPC, <0.25% branch misprediction)
 * **Metrics:** Branch misprediction rate, CPU cycles per row, formatted throughput (MB/s).
 
 ---
