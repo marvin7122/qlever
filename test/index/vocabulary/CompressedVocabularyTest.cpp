@@ -14,7 +14,9 @@
 
 #include <array>
 
+#include "../../util/DanglingViewTestHelpers.h"
 #include "../../util/GTestHelpers.h"
+#include "../../util/PmrStringSsoTestHelpers.h"
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -51,7 +53,7 @@ struct DummyDecoder {
   }
 
   static std::string decompress(std::string_view compressed) {
-    std::string result{compressed.size(), '\0'};
+    std::string result(compressed.size(), '\0');
     decompressInto(compressed, ql::span<char>{result.data(), result.size()});
     return result;
   }
@@ -340,7 +342,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
 
   // Clobber the stack region a dangling SSO view would point into. Two deep
   // frames of sentinel bytes leave no plausible intact copy behind.
-  auto churn = []() { clobberStack(); };
+  auto churn = []() { clobberStack<4096>(); };
   churn();
   churn();
 
