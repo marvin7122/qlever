@@ -31,9 +31,11 @@ namespace qlever::export_streaming {
 // Configuration parameters for dynamic adaptive chunk sizing.
 // Defaults implement DuckDB-style exponential ramp-up:
 // Starts with a 64 KB buffer for sub-millisecond Time-To-First-Byte (TTFB),
-// doubling buffer size on each flush until reaching 4 MB bulk throughput capacity.
+// doubling buffer size on each flush until reaching 4 MB bulk throughput
+// capacity.
 struct AdaptiveChunkConfig {
-  // Initial chunk buffer capacity in bytes (64 KB). Ensures immediate first byte.
+  // Initial chunk buffer capacity in bytes (64 KB). Ensures immediate first
+  // byte.
   size_t initialChunkBytes_ = 64 * 1024;
 
   // Maximum chunk buffer capacity in bytes (4 MB) for sustained bulk streaming.
@@ -66,21 +68,25 @@ struct AdaptiveChunkStats {
 // _____________________________________________________________________________
 // Deep Module: Adaptive Chunk Sizer for Streaming Query Exports.
 //
-// In fixed-size chunking (e.g. 100K triples per chunk), the server must compute,
-// evaluate, and format a massive batch before releasing the very first byte to
-// the HTTP client. For slow or complex queries, this creates high initial
-// latency (Time-To-First-Byte / TTFB) and degrades interactive responsiveness.
+// In fixed-size chunking (e.g. 100K triples per chunk), the server must
+// compute, evaluate, and format a massive batch before releasing the very first
+// byte to the HTTP client. For slow or complex queries, this creates high
+// initial latency (Time-To-First-Byte / TTFB) and degrades interactive
+// responsiveness.
 //
 // `AdaptiveChunkSizer` manages dynamic buffer progression:
-//   1. First chunk starts at 64 KB: Formatted and flushed almost instantaneously
+//   1. First chunk starts at 64 KB: Formatted and flushed almost
+//   instantaneously
 //      (<1ms TTFB) so clients, UI dashboards, and command-line tools receive
 //      initial data immediately.
 //   2. Exponential Ramp-Up: On each subsequent flush, chunk capacity doubles
 //      (64 KB -> 128 KB -> 256 KB -> 512 KB -> 1 MB -> 2 MB -> 4 MB).
-//   3. High-Throughput Bulk Steady State: Once 4 MB is reached, chunks remain at
+//   3. High-Throughput Bulk Steady State: Once 4 MB is reached, chunks remain
+//   at
 //      4 MB for maximum sustained streaming throughput and optimal TCP socket
 //      utilization.
-//   4. Adaptive Row Estimation: Continuously observes actual serialized bytes per
+//   4. Adaptive Row Estimation: Continuously observes actual serialized bytes
+//   per
 //      row/triple and dynamically computes optimal row batch boundaries for
 //      internal iterators and table evaluators.
 //
@@ -173,7 +179,8 @@ class AdaptiveChunkSizer {
   }
 
   // ___________________________________________________________________________
-  // Check if a buffer containing `bytesBuffered` has reached the current target.
+  // Check if a buffer containing `bytesBuffered` has reached the current
+  // target.
   [[nodiscard]] bool isChunkFull(size_t bytesBuffered) const noexcept {
     return bytesBuffered >= currentChunkBytesTarget_;
   }
@@ -191,7 +198,6 @@ class AdaptiveChunkSizer {
   // Updates running empirical row-size statistics and exponentially scales up
   // chunk capacity for the next batch up to `maxChunkBytes_`.
   void recordChunk(size_t bytesWritten, size_t rowCount) {
-
     if (rowCount > 0 && bytesWritten > 0) {
       totalBytesObserved_ += bytesWritten;
       totalRowsObserved_ += rowCount;
@@ -235,8 +241,12 @@ class AdaptiveChunkSizer {
   // ___________________________________________________________________________
   // Accessors for diagnostic accounting and telemetry.
   [[nodiscard]] size_t chunksFlushed() const noexcept { return chunksFlushed_; }
-  [[nodiscard]] uint64_t totalBytes() const noexcept { return totalBytesObserved_; }
-  [[nodiscard]] uint64_t totalRows() const noexcept { return totalRowsObserved_; }
+  [[nodiscard]] uint64_t totalBytes() const noexcept {
+    return totalBytesObserved_;
+  }
+  [[nodiscard]] uint64_t totalRows() const noexcept {
+    return totalRowsObserved_;
+  }
   [[nodiscard]] const AdaptiveChunkConfig& config() const noexcept {
     return config_;
   }
@@ -269,7 +279,8 @@ class AdaptiveChunkBuffer {
 
  public:
   // ___________________________________________________________________________
-  explicit AdaptiveChunkBuffer(AdaptiveChunkConfig config = AdaptiveChunkConfig{})
+  explicit AdaptiveChunkBuffer(
+      AdaptiveChunkConfig config = AdaptiveChunkConfig{})
       : sizer_{std::move(config)},
         buffer_(sizer_.currentChunkBytes()),
         writePos_{0},

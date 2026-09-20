@@ -159,8 +159,8 @@ class AsyncChunkPipeline {
   // ___________________________________________________________________________
   // Consumer API: Retrieve the next chunk.
   // Blocks if buffer is currently empty and production is still ongoing.
-  // Returns `std::nullopt` when stream is finished and all chunks were consumed.
-  // Rethrows captured producer exception if one occurred.
+  // Returns `std::nullopt` when stream is finished and all chunks were
+  // consumed. Rethrows captured producer exception if one occurred.
   std::optional<ChunkType> pop() {
     std::unique_lock<std::mutex> lock(mutex_);
 
@@ -273,8 +273,8 @@ class AsyncChunkPipeline {
         }
       }
     };
-    auto guard = std::make_shared<WorkerGuard>(
-        WorkerGuard{pipeline, std::move(worker)});
+    auto guard =
+        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
 
     while (true) {
       auto chunkOpt = pipeline->pop();
@@ -291,8 +291,8 @@ class AsyncChunkPipeline {
   //
   // The callable receives `ChunkSink<ChunkType>& sink` and calls `sink.push()`.
   template <typename ProducerFunc>
-  static cppcoro::generator<ChunkType> pipelineStream(
-      ProducerFunc producerFunc, size_t capacity = 2) {
+  static cppcoro::generator<ChunkType> pipelineStream(ProducerFunc producerFunc,
+                                                      size_t capacity = 2) {
     AD_CONTRACT_CHECK(capacity >= 1);
     auto pipeline = std::make_shared<AsyncChunkPipeline<ChunkType>>(capacity);
 
@@ -318,8 +318,8 @@ class AsyncChunkPipeline {
         }
       }
     };
-    auto guard = std::make_shared<WorkerGuard>(
-        WorkerGuard{pipeline, std::move(worker)});
+    auto guard =
+        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
 
     while (true) {
       auto chunkOpt = pipeline->pop();

@@ -43,7 +43,8 @@ static std::string generateRdfChunk(size_t numTriples, size_t chunkIndex) {
     const size_t entityId = chunkIndex * numTriples + i;
     chunk.append("<http://qlever.cs.uni-freiburg.de/entity/");
     chunk.append(std::to_string(entityId));
-    chunk.append("> <http://www.w3.org/2000/01/rdf-schema#label> \"Label for entity ");
+    chunk.append(
+        "> <http://www.w3.org/2000/01/rdf-schema#label> \"Label for entity ");
     chunk.append(std::to_string(entityId));
     chunk.append(" with escaped chars \\\" \\n \\t and description\"@en .\n");
   }
@@ -51,7 +52,8 @@ static std::string generateRdfChunk(size_t numTriples, size_t chunkIndex) {
 }
 
 // _____________________________________________________________________________
-// Helper to simulate network socket transmission delay (latency + bandwidth delay).
+// Helper to simulate network socket transmission delay (latency + bandwidth
+// delay).
 static void simulateNetworkTransmission(size_t chunkBytes,
                                         std::chrono::milliseconds latency) {
   if (latency > 0ms) {
@@ -118,8 +120,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     }
 
     timer.stop();
-    const double duration =
-        ad_utility::timer::Timer::toSeconds(timer.value());
+    const double duration = ad_utility::timer::Timer::toSeconds(timer.value());
     const double mb = static_cast<double>(totalBytes) / (1024.0 * 1024.0);
 
     return BenchmarkRunResult{
@@ -131,7 +132,8 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
         .durationSeconds = duration,
         .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
         .throughputTriplesPerSec =
-            duration > 0 ? (static_cast<double>(totalTriples_) / duration) : 0.0,
+            duration > 0 ? (static_cast<double>(totalTriples_) / duration)
+                         : 0.0,
     };
   }
 
@@ -142,30 +144,31 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     const size_t numChunks = (totalTriples_ + chunkSize - 1) / chunkSize;
     const auto latency = std::chrono::milliseconds(latencyMs);
 
-    auto pipeline = std::make_shared<AsyncChunkPipeline<std::string>>(/*capacity=*/2);
+    auto pipeline =
+        std::make_shared<AsyncChunkPipeline<std::string>>(/*capacity=*/2);
 
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
     // Spawn background worker to generate chunks concurrently into Slot 2.
-    std::thread producerThread([pipeline, numChunks, chunkSize,
-                                totalTriples = totalTriples_]() {
-      try {
-        for (size_t c = 0; c < numChunks; ++c) {
-          if (pipeline->isCancelled()) {
-            break;
+    std::thread producerThread(
+        [pipeline, numChunks, chunkSize, totalTriples = totalTriples_]() {
+          try {
+            for (size_t c = 0; c < numChunks; ++c) {
+              if (pipeline->isCancelled()) {
+                break;
+              }
+              const size_t currentChunkSize =
+                  std::min(chunkSize, totalTriples - c * chunkSize);
+              std::string chunk = generateRdfChunk(currentChunkSize, c);
+              if (!pipeline->push(std::move(chunk))) {
+                break;
+              }
+            }
+            pipeline->finish();
+          } catch (...) {
+            pipeline->setException(std::current_exception());
           }
-          const size_t currentChunkSize =
-              std::min(chunkSize, totalTriples - c * chunkSize);
-          std::string chunk = generateRdfChunk(currentChunkSize, c);
-          if (!pipeline->push(std::move(chunk))) {
-            break;
-          }
-        }
-        pipeline->finish();
-      } catch (...) {
-        pipeline->setException(std::current_exception());
-      }
-    });
+        });
 
     // Consumer loop: transmits chunks over simulated network socket.
     size_t totalBytes = 0;
@@ -181,8 +184,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     }
 
     timer.stop();
-    const double duration =
-        ad_utility::timer::Timer::toSeconds(timer.value());
+    const double duration = ad_utility::timer::Timer::toSeconds(timer.value());
     const double mb = static_cast<double>(totalBytes) / (1024.0 * 1024.0);
     const PipelineStats stats = pipeline->stats();
 
@@ -195,7 +197,8 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
         .durationSeconds = duration,
         .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
         .throughputTriplesPerSec =
-            duration > 0 ? (static_cast<double>(totalTriples_) / duration) : 0.0,
+            duration > 0 ? (static_cast<double>(totalTriples_) / duration)
+                         : 0.0,
         .backpressureStalls = stats.backpressureStalls,
         .consumerWaitStalls = stats.consumerWaitStalls,
     };
@@ -205,40 +208,42 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
   BenchmarkResults runAllBenchmarks() override {
     BenchmarkResults results{};
 
-    std::cout << "\n========================================================================================================\n"
-              << " QLever SPARQL Export Streaming Benchmark: Lockstep vs Asynchronous Double-Buffering\n"
-              << " Total Triples: " << totalTriples_ << " | Buffer Capacity: 2 Chunks\n"
-              << "========================================================================================================\n";
+    std::cout << "\n==========================================================="
+                 "=============================================\n"
+              << " QLever SPARQL Export Streaming Benchmark: Lockstep vs "
+                 "Asynchronous Double-Buffering\n"
+              << " Total Triples: " << totalTriples_
+              << " | Buffer Capacity: 2 Chunks\n"
+              << "============================================================="
+                 "===========================================\n";
 
-    std::cout << std::left
-              << std::setw(24) << "Mode"
-              << std::setw(14) << "Chunk Size"
-              << std::setw(14) << "Latency"
-              << std::setw(12) << "Time (s)"
-              << std::setw(16) << "Throughput(MB/s)"
-              << std::setw(18) << "Triples/sec"
-              << std::setw(10) << "Speedup"
+    std::cout << std::left << std::setw(24) << "Mode" << std::setw(14)
+              << "Chunk Size" << std::setw(14) << "Latency" << std::setw(12)
+              << "Time (s)" << std::setw(16) << "Throughput(MB/s)"
+              << std::setw(18) << "Triples/sec" << std::setw(10) << "Speedup"
               << std::setw(10) << "Stalls"
               << "\n"
               << std::string(104, '-') << "\n";
 
     for (const size_t chunkSize : chunkSizesTriples_) {
       for (const size_t latencyMs : latenciesMs_) {
-        const std::string testDesc =
-            "Chunk " + std::to_string(chunkSize) + " triples, Latency " +
-            std::to_string(latencyMs) + "ms";
+        const std::string testDesc = "Chunk " + std::to_string(chunkSize) +
+                                     " triples, Latency " +
+                                     std::to_string(latencyMs) + "ms";
 
         // Measure Sync
         BenchmarkRunResult syncRes{};
-        results.addMeasurement("Sync: " + testDesc, [this, chunkSize, latencyMs, &syncRes]() {
-          syncRes = runSyncLockstep(chunkSize, latencyMs);
-        });
+        results.addMeasurement(
+            "Sync: " + testDesc, [this, chunkSize, latencyMs, &syncRes]() {
+              syncRes = runSyncLockstep(chunkSize, latencyMs);
+            });
 
         // Measure Async Double-Buffered
         BenchmarkRunResult asyncRes{};
         results.addMeasurement("Async Double-Buffered: " + testDesc,
                                [this, chunkSize, latencyMs, &asyncRes]() {
-                                 asyncRes = runAsyncDoubleBuffered(chunkSize, latencyMs);
+                                 asyncRes = runAsyncDoubleBuffered(chunkSize,
+                                                                   latencyMs);
                                });
 
         const double speedup =
@@ -247,39 +252,36 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
                 : 1.0;
 
         // Print formatted summary row
-        std::cout << std::left
-                  << std::setw(24) << syncRes.mode
-                  << std::setw(14) << (std::to_string(chunkSize) + " trp")
-                  << std::setw(14) << (std::to_string(latencyMs) + " ms")
-                  << std::fixed << std::setprecision(4)
-                  << std::setw(12) << syncRes.durationSeconds
-                  << std::fixed << std::setprecision(2)
-                  << std::setw(16) << syncRes.throughputMBPerSec
-                  << std::fixed << std::setprecision(0)
-                  << std::setw(18) << syncRes.throughputTriplesPerSec
-                  << std::setw(10) << "1.00x"
+        std::cout << std::left << std::setw(24) << syncRes.mode << std::setw(14)
+                  << (std::to_string(chunkSize) + " trp") << std::setw(14)
+                  << (std::to_string(latencyMs) + " ms") << std::fixed
+                  << std::setprecision(4) << std::setw(12)
+                  << syncRes.durationSeconds << std::fixed
+                  << std::setprecision(2) << std::setw(16)
+                  << syncRes.throughputMBPerSec << std::fixed
+                  << std::setprecision(0) << std::setw(18)
+                  << syncRes.throughputTriplesPerSec << std::setw(10) << "1.00x"
                   << std::setw(10) << "-"
                   << "\n";
 
-        std::cout << std::left
-                  << std::setw(24) << asyncRes.mode
+        std::cout << std::left << std::setw(24) << asyncRes.mode
                   << std::setw(14) << (std::to_string(chunkSize) + " trp")
                   << std::setw(14) << (std::to_string(latencyMs) + " ms")
-                  << std::fixed << std::setprecision(4)
-                  << std::setw(12) << asyncRes.durationSeconds
-                  << std::fixed << std::setprecision(2)
-                  << std::setw(16) << asyncRes.throughputMBPerSec
-                  << std::fixed << std::setprecision(0)
-                  << std::setw(18) << asyncRes.throughputTriplesPerSec
-                  << std::fixed << std::setprecision(2)
+                  << std::fixed << std::setprecision(4) << std::setw(12)
+                  << asyncRes.durationSeconds << std::fixed
+                  << std::setprecision(2) << std::setw(16)
+                  << asyncRes.throughputMBPerSec << std::fixed
+                  << std::setprecision(0) << std::setw(18)
+                  << asyncRes.throughputTriplesPerSec << std::fixed
+                  << std::setprecision(2)
                   << (std::to_string(speedup).substr(0, 4) + "x   ")
-                  << std::setw(10) << asyncRes.backpressureStalls
-                  << "\n"
+                  << std::setw(10) << asyncRes.backpressureStalls << "\n"
                   << std::string(104, '.') << "\n";
       }
     }
 
-    std::cout << "========================================================================================================\n\n";
+    std::cout << "============================================================="
+                 "===========================================\n\n";
 
     return results;
   }

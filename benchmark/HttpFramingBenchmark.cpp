@@ -78,8 +78,8 @@ class Standard2BufferCopyHttpFraming {
 
     // 1. Format hex size header
     char hexBuf[16];
-    auto [ptr, ec] = std::to_chars(hexBuf, hexBuf + sizeof(hexBuf),
-                                   payloadBytes, 16);
+    auto [ptr, ec] =
+        std::to_chars(hexBuf, hexBuf + sizeof(hexBuf), payloadBytes, 16);
     AD_CONTRACT_CHECK(ec == std::errc{});
     const size_t hexLen = ptr - hexBuf;
 
@@ -116,7 +116,8 @@ class SyntheticExportStreamGenerator {
     syntheticData_.resize(totalStreamBytes);
     std::mt19937_64 rng(42);
     static constexpr std::string_view alphabet =
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 <>/_-\".\n";
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
+        "<>/_-\".\n";
     for (size_t i = 0; i < totalStreamBytes; ++i) {
       syntheticData_[i] = alphabet[rng() % alphabet.size()];
     }
@@ -164,8 +165,8 @@ class HttpFramingBenchmarkRunner {
                   currentChunkSize);
 
       // Frame chunk via 2-buffer copy
-      auto framedSpan = framer.frameChunk(intermediatePayloadBuffer.data(),
-                                          currentChunkSize);
+      auto framedSpan =
+          framer.frameChunk(intermediatePayloadBuffer.data(), currentChunkSize);
       totalPayloadWritten += currentChunkSize;
       totalFramedWritten += framedSpan.size();
       ++chunksEmitted;
@@ -218,7 +219,8 @@ class HttpFramingBenchmarkRunner {
       const size_t currentChunkSize =
           std::min(chunkSize, totalStreamBytes - offset);
 
-      // Direct write into pre-reserved payload buffer (zero intermediate buffer)
+      // Direct write into pre-reserved payload buffer (zero intermediate
+      // buffer)
       std::memcpy(chunk.payloadData(), src + offset, currentChunkSize);
 
       // Zero-copy in-place framing (branchless hex header + CRLF in-place)
@@ -383,44 +385,44 @@ class HttpFramingBenchmarkRunner {
 // _____________________________________________________________________________
 // Pretty-printed summary table formatter
 void printBenchmarkTable(
-    size_t chunkSize,
-    const std::vector<HttpFramingBenchmarkMetric>& metrics) {
+    size_t chunkSize, const std::vector<HttpFramingBenchmarkMetric>& metrics) {
   if (metrics.empty()) return;
 
   const double baselineThroughput = metrics[0].throughputGBs;
 
-  std::cout << "\n========================================================================================================\n";
+  std::cout << "\n============================================================="
+               "===========================================\n";
   std::cout << "  BENCHMARK: HTTP 1.1 Chunked Framing (Chunk Size: "
-            << (chunkSize / 1024) << " KB, Total Stream: "
-            << std::fixed << std::setprecision(1)
-            << (static_cast<double>(metrics[0].totalPayloadBytes) / (1024.0 * 1024.0))
+            << (chunkSize / 1024) << " KB, Total Stream: " << std::fixed
+            << std::setprecision(1)
+            << (static_cast<double>(metrics[0].totalPayloadBytes) /
+                (1024.0 * 1024.0))
             << " MB)\n";
-  std::cout << "========================================================================================================\n";
-  std::cout << std::left << std::setw(44) << "Framing Engine Mode"
-            << std::right << std::setw(12) << "Time (s)"
-            << std::setw(16) << "Throughput(GB/s)"
-            << std::setw(16) << "Throughput(MB/s)"
-            << std::setw(18) << "Saved BW (GB/s)"
-            << std::setw(12) << "Speedup" << "\n";
-  std::cout << "--------------------------------------------------------------------------------------------------------\n";
+  std::cout << "==============================================================="
+               "=========================================\n";
+  std::cout << std::left << std::setw(44) << "Framing Engine Mode" << std::right
+            << std::setw(12) << "Time (s)" << std::setw(16)
+            << "Throughput(GB/s)" << std::setw(16) << "Throughput(MB/s)"
+            << std::setw(18) << "Saved BW (GB/s)" << std::setw(12) << "Speedup"
+            << "\n";
+  std::cout << "---------------------------------------------------------------"
+               "-----------------------------------------\n";
 
   for (auto m : metrics) {
     m.speedupVsBaseline =
         baselineThroughput > 0 ? (m.throughputGBs / baselineThroughput) : 1.0;
 
-    std::cout << std::left << std::setw(44) << m.mode
-              << std::right << std::fixed << std::setprecision(4)
-              << std::setw(12) << m.elapsedSeconds
-              << std::fixed << std::setprecision(2)
-              << std::setw(16) << m.throughputGBs
-              << std::fixed << std::setprecision(1)
-              << std::setw(16) << m.throughputMBs
-              << std::fixed << std::setprecision(2)
-              << std::setw(18) << m.memoryBandwidthSavedGBs
-              << std::fixed << std::setprecision(2)
+    std::cout << std::left << std::setw(44) << m.mode << std::right
+              << std::fixed << std::setprecision(4) << std::setw(12)
+              << m.elapsedSeconds << std::fixed << std::setprecision(2)
+              << std::setw(16) << m.throughputGBs << std::fixed
+              << std::setprecision(1) << std::setw(16) << m.throughputMBs
+              << std::fixed << std::setprecision(2) << std::setw(18)
+              << m.memoryBandwidthSavedGBs << std::fixed << std::setprecision(2)
               << std::setw(11) << m.speedupVsBaseline << "x\n";
   }
-  std::cout << "========================================================================================================\n\n";
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 }
 
 }  // namespace
@@ -439,27 +441,34 @@ class HttpFramingBenchmark : public BenchmarkInterface {
     constexpr size_t totalBytes = 500 * 1024 * 1024;  // 500 MB
     SyntheticExportStreamGenerator streamGen(totalBytes);
 
-    const std::vector<size_t> chunkSizes = {
-        16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024, 4096 * 1024};
+    const std::vector<size_t> chunkSizes = {16 * 1024, 64 * 1024, 256 * 1024,
+                                            1024 * 1024, 4096 * 1024};
 
     for (size_t cSize : chunkSizes) {
-      const std::string groupName = "Chunk Size " + std::to_string(cSize / 1024) + " KB";
+      const std::string groupName =
+          "Chunk Size " + std::to_string(cSize / 1024) + " KB";
       auto& group = results.addGroup(groupName);
 
       group.addMeasurement("Standard 2-Buffer Copy (Baseline)", [&]() {
-        return HttpFramingBenchmarkRunner::runStandard2BufferCopy(streamGen, cSize).totalFramedBytes;
+        return HttpFramingBenchmarkRunner::runStandard2BufferCopy(streamGen,
+                                                                  cSize)
+            .totalFramedBytes;
       });
 
       group.addMeasurement("Zero-Copy InPlaceHttpChunk (Opt 25)", [&]() {
-        return HttpFramingBenchmarkRunner::runInPlaceHttpChunk(streamGen, cSize).totalFramedBytes;
+        return HttpFramingBenchmarkRunner::runInPlaceHttpChunk(streamGen, cSize)
+            .totalFramedBytes;
       });
 
       group.addMeasurement("InPlaceHttpChunkStreamer (High-level)", [&]() {
-        return HttpFramingBenchmarkRunner::runInPlaceStreamer(streamGen, cSize).totalFramedBytes;
+        return HttpFramingBenchmarkRunner::runInPlaceStreamer(streamGen, cSize)
+            .totalFramedBytes;
       });
 
       group.addMeasurement("Zero-Copy Kernel write(2)", [&]() {
-        return HttpFramingBenchmarkRunner::runKernelTransmission(streamGen, cSize).totalFramedBytes;
+        return HttpFramingBenchmarkRunner::runKernelTransmission(streamGen,
+                                                                 cSize)
+            .totalFramedBytes;
       });
     }
 
@@ -474,17 +483,20 @@ AD_REGISTER_BENCHMARK(HttpFramingBenchmark);
 
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 int main() {
-  std::cout << "===================================================================================\n";
-  std::cout << " QLever Optimization 25: In-Place HTTP Chunk Framing Benchmark (500 MB Export)\n";
-  std::cout << "===================================================================================\n";
+  std::cout << "==============================================================="
+               "====================\n";
+  std::cout << " QLever Optimization 25: In-Place HTTP Chunk Framing Benchmark "
+               "(500 MB Export)\n";
+  std::cout << "==============================================================="
+               "====================\n";
 
   try {
     constexpr size_t totalExportBytes = 500 * 1024 * 1024;  // 500 MB
     std::cout << "Generating 500 MB synthetic RDF export data...\n";
     ad_benchmark::SyntheticExportStreamGenerator streamGen(totalExportBytes);
 
-    const std::vector<size_t> chunkSizes = {
-        16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024, 4096 * 1024};
+    const std::vector<size_t> chunkSizes = {16 * 1024, 64 * 1024, 256 * 1024,
+                                            1024 * 1024, 4096 * 1024};
 
     for (size_t cSize : chunkSizes) {
       std::vector<ad_benchmark::HttpFramingBenchmarkMetric> metrics;

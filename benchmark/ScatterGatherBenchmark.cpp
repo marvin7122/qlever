@@ -65,7 +65,8 @@ class SimulatedDecompressionArena {
     const size_t totalArenaBytes = numTriples * literalSizeBytes;
     storage_.resize(totalArenaBytes);
 
-    // Populate arena with simulated literal strings containing text, numbers, and symbols
+    // Populate arena with simulated literal strings containing text, numbers,
+    // and symbols
     std::mt19937_64 rng(1337);
     static constexpr std::string_view alphabet =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-./:";
@@ -79,16 +80,19 @@ class SimulatedDecompressionArena {
     predicates_.reserve(numTriples);
 
     for (size_t i = 0; i < numTriples; ++i) {
-      literalSpans_.push_back(
-          ql::span<const char>(&storage_[i * literalSizeBytes], literalSizeBytes));
+      literalSpans_.push_back(ql::span<const char>(
+          &storage_[i * literalSizeBytes], literalSizeBytes));
       subjects_.push_back("<http://qlever.cs.uni-freiburg.de/entity/" +
                           std::to_string(i) + ">");
       predicates_.push_back("<http://www.w3.org/2000/01/rdf-schema#comment>");
     }
   }
 
-  [[nodiscard]] size_t numTriples() const noexcept { return literalSpans_.size(); }
-  [[nodiscard]] ql::span<const char> getLiteralSpan(size_t index) const noexcept {
+  [[nodiscard]] size_t numTriples() const noexcept {
+    return literalSpans_.size();
+  }
+  [[nodiscard]] ql::span<const char> getLiteralSpan(
+      size_t index) const noexcept {
     return literalSpans_[index];
   }
   [[nodiscard]] std::string_view getSubject(size_t index) const noexcept {
@@ -119,7 +123,8 @@ struct ScatterGatherBenchmarkMetric {
 class ScatterGatherBenchmarkRunner {
  public:
   // 1. Contiguous Chunk Copy (Baseline):
-  // Copies every byte of subject, predicate, and large literal into chunk buffer.
+  // Copies every byte of subject, predicate, and large literal into chunk
+  // buffer.
   static ScatterGatherBenchmarkMetric runContiguousCopy(
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = 1024 * 1024) {
@@ -155,8 +160,8 @@ class ScatterGatherBenchmarkRunner {
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
-    const double gbWritten =
-        static_cast<double>(summary.totalBytesWritten_) / (1024.0 * 1024.0 * 1024.0);
+    const double gbWritten = static_cast<double>(summary.totalBytesWritten_) /
+                             (1024.0 * 1024.0 * 1024.0);
 
     return ScatterGatherBenchmarkMetric{
         .mode = "1. Contiguous Chunk Copy (Baseline)",
@@ -177,8 +182,7 @@ class ScatterGatherBenchmarkRunner {
   // Delimiters are written to local header buffer, while large literal spans
   // are referenced directly from arena memory without copying.
   static ScatterGatherBenchmarkMetric runScatterGatherStream(
-      const SimulatedDecompressionArena& arena,
-      size_t chunkSize = 1024 * 1024,
+      const SimulatedDecompressionArena& arena, size_t chunkSize = 1024 * 1024,
       size_t zeroCopyThreshold = 64) {
     const size_t n = arena.numTriples();
     size_t chunksEmitted = 0;
@@ -205,11 +209,9 @@ class ScatterGatherBenchmarkRunner {
       const auto p = arena.getPredicate(i);
       const auto lit = arena.getLiteralSpan(i);
 
-      streamer.writeTriple(
-          ExportFormat::Turtle,
-          ql::span<const char>(s.data(), s.size()),
-          ql::span<const char>(p.data(), p.size()),
-          lit);
+      streamer.writeTriple(ExportFormat::Turtle,
+                           ql::span<const char>(s.data(), s.size()),
+                           ql::span<const char>(p.data(), p.size()), lit);
     }
 
     auto summary = std::move(streamer).finalize();
@@ -217,8 +219,8 @@ class ScatterGatherBenchmarkRunner {
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
-    const double gbWritten =
-        static_cast<double>(summary.totalBytesWritten_) / (1024.0 * 1024.0 * 1024.0);
+    const double gbWritten = static_cast<double>(summary.totalBytesWritten_) /
+                             (1024.0 * 1024.0 * 1024.0);
     const double gbZeroCopy =
         static_cast<double>(totalZeroCopyBytes) / (1024.0 * 1024.0 * 1024.0);
 
@@ -238,7 +240,8 @@ class ScatterGatherBenchmarkRunner {
     };
   }
 
-  // 3. Simulated Kernel I/O Transmission (writev to /dev/null vs contiguous write)
+  // 3. Simulated Kernel I/O Transmission (writev to /dev/null vs contiguous
+  // write)
   static ScatterGatherBenchmarkMetric runKernelScatterGatherTransmission(
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = 1024 * 1024) {
@@ -271,11 +274,9 @@ class ScatterGatherBenchmarkRunner {
       const auto p = arena.getPredicate(i);
       const auto lit = arena.getLiteralSpan(i);
 
-      streamer.writeTriple(
-          ExportFormat::Turtle,
-          ql::span<const char>(s.data(), s.size()),
-          ql::span<const char>(p.data(), p.size()),
-          lit);
+      streamer.writeTriple(ExportFormat::Turtle,
+                           ql::span<const char>(s.data(), s.size()),
+                           ql::span<const char>(p.data(), p.size()), lit);
     }
 
     auto summary = std::move(streamer).finalize();
@@ -284,8 +285,8 @@ class ScatterGatherBenchmarkRunner {
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
-    const double gbWritten =
-        static_cast<double>(summary.totalBytesWritten_) / (1024.0 * 1024.0 * 1024.0);
+    const double gbWritten = static_cast<double>(summary.totalBytesWritten_) /
+                             (1024.0 * 1024.0 * 1024.0);
     const double gbZeroCopy =
         static_cast<double>(totalZeroCopyBytes) / (1024.0 * 1024.0 * 1024.0);
 
@@ -315,41 +316,43 @@ void printBenchmarkTable(
 
   const double baselineThroughput = metrics[0].throughputGBs;
 
-  std::cout << "\n=======================================================================================================\n";
+  std::cout << "\n============================================================="
+               "==========================================\n";
   std::cout << "  BENCHMARK: Literal Export Streamer (Term Literal Size: "
-            << literalSize << " bytes, " << metrics[0].numTriples << " Triples)\n";
-  std::cout << "  Total Output: "
-            << std::fixed << std::setprecision(2)
-            << (static_cast<double>(metrics[0].totalBytesWritten) / (1024.0 * 1024.0))
+            << literalSize << " bytes, " << metrics[0].numTriples
+            << " Triples)\n";
+  std::cout << "  Total Output: " << std::fixed << std::setprecision(2)
+            << (static_cast<double>(metrics[0].totalBytesWritten) /
+                (1024.0 * 1024.0))
             << " MB | Zero-Copy Payload: "
-            << (static_cast<double>(metrics[1].totalZeroCopyBytes) / (1024.0 * 1024.0))
+            << (static_cast<double>(metrics[1].totalZeroCopyBytes) /
+                (1024.0 * 1024.0))
             << " MB\n";
-  std::cout << "=======================================================================================================\n";
-  std::cout << std::left << std::setw(42) << "Streaming Mode"
-            << std::right << std::setw(12) << "Time (s)"
-            << std::setw(16) << "Throughput(GB/s)"
-            << std::setw(16) << "Throughput(MB/s)"
-            << std::setw(18) << "Saved BW (GB/s)"
-            << std::setw(12) << "Speedup" << "\n";
-  std::cout << "-------------------------------------------------------------------------------------------------------\n";
+  std::cout << "==============================================================="
+               "========================================\n";
+  std::cout << std::left << std::setw(42) << "Streaming Mode" << std::right
+            << std::setw(12) << "Time (s)" << std::setw(16)
+            << "Throughput(GB/s)" << std::setw(16) << "Throughput(MB/s)"
+            << std::setw(18) << "Saved BW (GB/s)" << std::setw(12) << "Speedup"
+            << "\n";
+  std::cout << "---------------------------------------------------------------"
+               "----------------------------------------\n";
 
   for (auto m : metrics) {
     m.speedupVsBaseline =
         baselineThroughput > 0 ? (m.throughputGBs / baselineThroughput) : 1.0;
 
-    std::cout << std::left << std::setw(42) << m.mode
-              << std::right << std::fixed << std::setprecision(4)
-              << std::setw(12) << m.elapsedSeconds
-              << std::fixed << std::setprecision(2)
-              << std::setw(16) << m.throughputGBs
-              << std::fixed << std::setprecision(1)
-              << std::setw(16) << m.throughputMBs
-              << std::fixed << std::setprecision(2)
-              << std::setw(18) << m.memoryBandwidthSavedGBs
-              << std::fixed << std::setprecision(2)
+    std::cout << std::left << std::setw(42) << m.mode << std::right
+              << std::fixed << std::setprecision(4) << std::setw(12)
+              << m.elapsedSeconds << std::fixed << std::setprecision(2)
+              << std::setw(16) << m.throughputGBs << std::fixed
+              << std::setprecision(1) << std::setw(16) << m.throughputMBs
+              << std::fixed << std::setprecision(2) << std::setw(18)
+              << m.memoryBandwidthSavedGBs << std::fixed << std::setprecision(2)
               << std::setw(11) << m.speedupVsBaseline << "x\n";
   }
-  std::cout << "=======================================================================================================\n\n";
+  std::cout << "==============================================================="
+               "========================================\n\n";
 }
 
 }  // namespace
@@ -359,7 +362,8 @@ void printBenchmarkTable(
 class ScatterGatherBenchmark : public BenchmarkInterface {
  public:
   std::string name() const final {
-    return "Zero-Copy Arena Scatter-Gather Streaming Benchmark (Optimization 19)";
+    return "Zero-Copy Arena Scatter-Gather Streaming Benchmark (Optimization "
+           "19)";
   }
 
   BenchmarkResults runAllBenchmarks() final {
@@ -370,19 +374,24 @@ class ScatterGatherBenchmark : public BenchmarkInterface {
 
     for (size_t litSize : literalSizes) {
       SimulatedDecompressionArena arena(numTriples, litSize);
-      const std::string groupName = "Literal Size " + std::to_string(litSize) + " B";
+      const std::string groupName =
+          "Literal Size " + std::to_string(litSize) + " B";
       auto& group = results.addGroup(groupName);
 
       group.addMeasurement("Contiguous Chunk Copy", [&]() {
-        return ScatterGatherBenchmarkRunner::runContiguousCopy(arena).totalBytesWritten;
+        return ScatterGatherBenchmarkRunner::runContiguousCopy(arena)
+            .totalBytesWritten;
       });
 
       group.addMeasurement("Scatter-Gather Arena Stream", [&]() {
-        return ScatterGatherBenchmarkRunner::runScatterGatherStream(arena).totalBytesWritten;
+        return ScatterGatherBenchmarkRunner::runScatterGatherStream(arena)
+            .totalBytesWritten;
       });
 
       group.addMeasurement("Scatter-Gather Kernel writev", [&]() {
-        return ScatterGatherBenchmarkRunner::runKernelScatterGatherTransmission(arena).totalBytesWritten;
+        return ScatterGatherBenchmarkRunner::runKernelScatterGatherTransmission(
+                   arena)
+            .totalBytesWritten;
       });
     }
 
@@ -397,9 +406,12 @@ AD_REGISTER_BENCHMARK(ScatterGatherBenchmark);
 
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 int main() {
-  std::cout << "=================================================================================\n";
-  std::cout << " QLever Optimization 19: Zero-Copy Arena Scatter-Gather Streaming Benchmark\n";
-  std::cout << "=================================================================================\n";
+  std::cout << "==============================================================="
+               "==================\n";
+  std::cout << " QLever Optimization 19: Zero-Copy Arena Scatter-Gather "
+               "Streaming Benchmark\n";
+  std::cout << "==============================================================="
+               "==================\n";
 
   try {
     const std::vector<size_t> testLiteralSizes = {128, 256, 512, 1024, 4096};
@@ -414,9 +426,10 @@ int main() {
       metrics.push_back(
           ad_benchmark::ScatterGatherBenchmarkRunner::runContiguousCopy(arena));
       metrics.push_back(
-          ad_benchmark::ScatterGatherBenchmarkRunner::runScatterGatherStream(arena));
-      metrics.push_back(
-          ad_benchmark::ScatterGatherBenchmarkRunner::runKernelScatterGatherTransmission(arena));
+          ad_benchmark::ScatterGatherBenchmarkRunner::runScatterGatherStream(
+              arena));
+      metrics.push_back(ad_benchmark::ScatterGatherBenchmarkRunner::
+                            runKernelScatterGatherTransmission(arena));
 
       ad_benchmark::printBenchmarkTable(litSize, metrics);
     }
