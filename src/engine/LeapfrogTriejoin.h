@@ -19,6 +19,10 @@ namespace ql::engine::wcoj {
 
 // _____________________________________________________________________________
 // Sorted Trie Iterator interface for Leapfrog Triejoin.
+//
+// Lifetime: implementations that borrow their key range (e.g. via `ql::span`)
+// must not outlive the underlying storage; callers keep the owning vector
+// alive for as long as any iterator over it is used.
 class LeapfrogIterator {
  private:
   ql::span<const Id> sortedKeys_;
