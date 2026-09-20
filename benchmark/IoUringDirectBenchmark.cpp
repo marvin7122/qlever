@@ -101,7 +101,12 @@ class SimulatedVocabularyFile {
       bytesWritten += writeChunkSize;
     }
 
+    // `fdatasync` is Linux-only; macOS syncs via `fcntl(F_FULLFSYNC)`.
+#if defined(__APPLE__)
+    ::fcntl(fd, F_FULLFSYNC);
+#else
     ::fdatasync(fd);
+#endif
     ::close(fd);
     std::free(writeBuf);
     isCreated_ = true;
