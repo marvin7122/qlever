@@ -11,6 +11,7 @@
 #include <charconv>
 #include <iterator>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -62,6 +63,14 @@ class RecordingWriter {
  private:
   template <typename Value>
   void appendNumber(Value value) {
+    if constexpr (std::floating_point<Value>) {
+      // No floating-point `std::to_chars` on macOS before 13.3; the
+      // ostringstream default formatting matches the expected output.
+      std::ostringstream stream;
+      stream << value;
+      output_ += stream.str();
+      return;
+    }
     char buffer[64];
     const auto [end, error] =
         std::to_chars(std::begin(buffer), std::end(buffer), value);
