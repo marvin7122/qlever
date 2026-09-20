@@ -27,8 +27,8 @@
 #include "engine/QueryExecutionContext.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
-#include "engine/export_v2/ElasticExportScheduler.h"
 #if defined(QLEVER_ENABLE_EXPORT_V2)
+#include "engine/export_v2/ElasticExportScheduler.h"
 #include "engine/export_v2/ScatterGatherHttpBody.h"
 #endif
 #include "index/IdTableUtils.h"

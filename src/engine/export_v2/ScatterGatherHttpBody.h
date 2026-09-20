@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <sys/uio.h>
+
 #include <cerrno>
 #include <exception>
 #include <utility>
