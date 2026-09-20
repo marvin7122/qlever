@@ -546,8 +546,15 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
   // full queue.
   scheduler->onForegroundQueryStarted();
   scheduler->setMaxForegroundQueriesForHelperAdmission(0);
-  blockedEnqueuer.join();
+  // Fail fast on a wakeup regression instead of hanging in join() until the
+  // global ctest timeout.
+  auto enqueueDeadline = std::chrono::steady_clock::now() + 5s;
+  while (!enqueueReturned.load() &&
+         std::chrono::steady_clock::now() < enqueueDeadline) {
+    std::this_thread::sleep_for(1ms);
+  }
   ASSERT_TRUE(enqueueReturned.load());
+  blockedEnqueuer.join();
   EXPECT_FALSE(enqueueResult.load());
 
   // Cleanup: release the workers and drain the three submitted morsels. The

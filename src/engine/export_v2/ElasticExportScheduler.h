@@ -252,7 +252,7 @@ class ElasticExportScheduler
   /// sessions). Returns false without blocking when helpers are currently
   /// ineligible or the scheduler is stopping; the coordinator then executes
   /// the morsel on the primary path instead.
-  bool enqueueMorsel(OwnedMorsel morsel);
+  [[nodiscard]] bool enqueueMorsel(OwnedMorsel morsel);
 
   /// Register an active session state for demand change notifications.
   void registerSession(std::weak_ptr<ExportJobStateBase> sessionState);
@@ -369,7 +369,10 @@ class ExportJobState final
     if (!pendingIndicesToEnqueue.empty()) {
       auto self = this->shared_from_this();
       for (size_t index : pendingIndicesToEnqueue) {
-        scheduler_->enqueueMorsel(OwnedMorsel(self, jobId_, newEpoch, index));
+        // Discard is safe: a rejected morsel stays Pending and the
+        // coordinator runs it lazily on the primary path.
+        static_cast<void>(scheduler_->enqueueMorsel(
+            OwnedMorsel(self, jobId_, newEpoch, index)));
       }
     }
   }
@@ -475,8 +478,10 @@ class ExportJobState final
     }
 
     if (shouldEnqueue) {
-      scheduler_->enqueueMorsel(
-          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index));
+      // Discard is safe: a rejected morsel stays Pending and the coordinator
+      // runs it lazily on the primary path.
+      static_cast<void>(scheduler_->enqueueMorsel(
+          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index)));
     }
     return index;
   }
