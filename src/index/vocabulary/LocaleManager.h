@@ -38,6 +38,8 @@
 #include "util/StringUtils.h"
 #include "util/TransparentFunctors.h"
 
+namespace ad_utility::vocabulary {
+
 // Base class holding the types shared by both the ICU and the NoICU variants of
 // the `LocaleManager` (see below). None of these types depend on ICU.
 class LocaleManagerBase {
@@ -432,5 +434,7 @@ using LocaleManager = LocaleManagerNoICU;
 #else
 using LocaleManager = LocaleManagerICU;
 #endif
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_LOCALEMANAGER_H
