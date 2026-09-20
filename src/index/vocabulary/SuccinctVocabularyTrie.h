@@ -15,8 +15,6 @@
 #include <string_view>
 #include <vector>
 
-#include "backports/span.h"
-
 namespace ql::index::vocab {
 
 // _____________________________________________________________________________
