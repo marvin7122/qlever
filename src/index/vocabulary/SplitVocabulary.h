@@ -11,8 +11,6 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 
-#include <gtest/gtest_prod.h>
-
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -36,6 +34,8 @@
 #include "util/Serializer/Serializer.h"
 #include "util/TypeTraits.h"
 #include "util/Views.h"
+
+namespace ad_utility::vocabulary {
 
 // The signature of the SplitFunction for a SplitVocabulary. For each literal or
 // IRI, it should return a marker index which of the underlying vocabularies of
@@ -232,7 +232,7 @@ class SplitVocabulary {
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto markerIndicesAndPositions =
-        ::partitionMarkerIndicesAndPositions<numberOfVocabs>(
+        partitionMarkerIndicesAndPositions<numberOfVocabs>(
             indices, [](uint64_t markedIndex) {
               return std::pair{getMarker(markedIndex),
                                getVocabIndex(markedIndex)};
@@ -254,8 +254,8 @@ class SplitVocabulary {
                            markerIndices.size());
     }
 
-    return ::mergeMarkerBatchesInInputOrder(std::move(markerLookups),
-                                            markerIndicesAndPositions);
+    return mergeMarkerBatchesInInputOrder(std::move(markerLookups),
+                                          markerIndicesAndPositions);
   }
 
   //____________________________________________________________________________
@@ -437,5 +437,7 @@ using SplitGeoVocabulary =
     SplitVocabulary<detail::splitVocabulary::GeoSplitFunc,
                     detail::splitVocabulary::GeoFilenameFunc,
                     UnderlyingVocabulary, GeoVocabulary<UnderlyingVocabulary>>;
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H

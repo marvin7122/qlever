@@ -68,8 +68,10 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
 
     for (size_t i = 0; i < length; ++i) {
       if (injectEscapes && i % 25 == 12) {
-        // Inject an escape character
-        switch (i % 4) {
+        // Inject an escape character. Covers Turtle specials as well as
+        // the CSV (`,`) and TSV (`\t`) format-specific characters so all
+        // scan arms exercise their own hit paths.
+        switch (i % 6) {
           case 0:
             literal.push_back('"');
             break;
@@ -81,6 +83,12 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
             break;
           case 3:
             literal.push_back('\r');
+            break;
+          case 4:
+            literal.push_back(',');
+            break;
+          default:
+            literal.push_back('\t');
             break;
         }
       } else {
@@ -144,6 +152,7 @@ std::string scalarEscapeTurtleLiteral(std::string_view normLiteral) {
     return std::string{normLiteral};
   }
   size_t posSecondQuote = normLiteral.find('"', 1);
+  AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
   size_t posLastQuote = normLiteral.rfind('"');
   if (posSecondQuote == posLastQuote &&
       normLiteral.find_first_of("\\\n\r") == std::string_view::npos) {
@@ -413,7 +422,9 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
       // SIMD Fast-Path Direct Buffer Copying (Turtle zero temporary string
       // allocations)
       {
-        std::vector<char> outputBuffer(256 * 1024 * 1024);
+        // Turtle escaping expands each byte to at most two; size the
+        // buffer from the input with margin instead of a magic constant.
+        std::vector<char> outputBuffer(dataset_.totalBytes * 2 + 1024);
         size_t totalOutputBytes = 0;
         auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement(
@@ -427,6 +438,7 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
               }
               totalOutputBytes =
                   static_cast<size_t>(outPtr - outputBuffer.data());
+              AD_CONTRACT_CHECK(totalOutputBytes <= outputBuffer.size());
               return totalOutputBytes;
             });
         auto end = std::chrono::high_resolution_clock::now();
