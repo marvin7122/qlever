@@ -153,16 +153,14 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
   EXPECT_EQ(session.state(), SessionState::HelpersEligible);
 
   std::promise<void> morsel0StartedPromise;
-  std::shared_future<void> morsel0Started =
-      morsel0StartedPromise.get_future().share();
+  std::future<void> morsel0Started = morsel0StartedPromise.get_future();
   std::promise<void> unblockMorsel0Promise;
-  std::shared_future<void> unblockMorsel0 =
-      unblockMorsel0Promise.get_future().share();
+  std::future<void> unblockMorsel0 = unblockMorsel0Promise.get_future();
 
   // Submit morsel 0 which pauses while holding the helper lease
   session.submitMorsel(
       [morsel0StartedPromise = std::move(morsel0StartedPromise),
-       unblockMorsel0]() mutable {
+       unblockMorsel0 = std::move(unblockMorsel0)]() mutable {
         morsel0StartedPromise.set_value();
         unblockMorsel0.wait();
         return 100;
@@ -250,14 +248,14 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
   std::promise<void> startedPromise;
   auto startedFuture = startedPromise.get_future();
   std::promise<void> unblockPromise;
-  auto unblockFuture = unblockPromise.get_future().share();
+  auto unblockFuture = unblockPromise.get_future();
 
-  session.submitMorsel(
-      [startedPromise = std::move(startedPromise), unblockFuture]() mutable {
-        startedPromise.set_value();
-        unblockFuture.wait();
-        return 42;
-      });
+  session.submitMorsel([startedPromise = std::move(startedPromise),
+                        unblockFuture = std::move(unblockFuture)]() mutable {
+    startedPromise.set_value();
+    unblockFuture.wait();
+    return 42;
+  });
 
   for (size_t i = 1; i < 5; ++i) {
     session.submitMorsel([]() { return 99; });
@@ -292,7 +290,7 @@ TEST(ElasticExportSchedulerTest, MoveSemanticsAndRAII) {
   auto movedSession = std::move(session);
   EXPECT_EQ(movedSession.consumeNextResult(), "moved");
 
-  ExportWorkLease lease1(scheduler.get(), 1, 10, 100);
+  ExportWorkLease lease1(scheduler, 1, 10, 100);
   EXPECT_TRUE(lease1.isValid());
   EXPECT_EQ(lease1.epoch(), 1u);
   EXPECT_EQ(lease1.jobId(), 10u);
@@ -351,6 +349,53 @@ TEST(ElasticExportSchedulerTest, RegistryCallbacksExpireSafelyWithScheduler) {
   // the query fires the end callback into an expired `weak_ptr`, which must
   // be a no-op rather than a use-after-free.
   query.reset();
+}
+
+// -----------------------------------------------------------------------------
+// Test 8c: Enqueue Refuses Work When Helpers Are Ineligible
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, EnqueueRefusesWorkWhenHelpersIneligible) {
+  auto scheduler = ElasticExportScheduler::create(2, 64);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  auto session = scheduler->createSession<std::string>();
+  auto state = session.stateHandle();
+
+  auto makeMorsel = [&](size_t index) {
+    return OwnedMorsel(state, session.jobId(), scheduler->demandEpoch(), index);
+  };
+  // Eligible with room: enqueued. (A worker may pop it concurrently; an
+  // index without a submitted slot is skipped safely.)
+  EXPECT_TRUE(scheduler->enqueueMorsel(makeMorsel(0)));
+
+  // Two foreground queries with max one: helpers ineligible, so enqueue
+  // must refuse promptly instead of blocking forever on a queue that
+  // workers refuse to drain.
+  scheduler->onForegroundQueryStarted();
+  scheduler->onForegroundQueryStarted();
+  EXPECT_FALSE(scheduler->enqueueMorsel(makeMorsel(1)));
+
+  // Eligibility restored: enqueue works again.
+  scheduler->onForegroundQueryEnded();
+  scheduler->onForegroundQueryEnded();
+  EXPECT_TRUE(scheduler->enqueueMorsel(makeMorsel(2)));
+}
+
+// -----------------------------------------------------------------------------
+// Test 8d: Lease Release After Scheduler Destruction Is A No-Op
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, LeaseReleaseAfterSchedulerDestruction) {
+  std::optional<ExportWorkLease> lease;
+  {
+    auto scheduler = ElasticExportScheduler::create(2, 64);
+    lease.emplace(scheduler, 1, 10, 100);
+    EXPECT_TRUE(lease->isValid());
+  }
+  // The scheduler is gone while the lease is still active. Releasing into
+  // the expired `weak_ptr` must be a no-op rather than a use-after-free.
+  lease->release();
+  EXPECT_FALSE(lease->isValid());
 }
 
 // -----------------------------------------------------------------------------
@@ -437,14 +482,15 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   // Slot 2 should still return 100
   EXPECT_EQ(session.consumeNextResult(), 100);
 
-  // Verify lease accounting did not leak. The worker releases its lease
-  // after signalling slot completion, so the counter reaches zero
-  // asynchronously with respect to `consumeNextResult`. Poll with a
-  // deadline: a genuine leak never reaches zero and still fails the test.
-  auto deadline = std::chrono::steady_clock::now() + 5s;
+  // Verify lease accounting did not leak. Workers destroy their leases as
+  // they finish loop iterations, which can lag behind the coordinator
+  // consuming the final result, so wait briefly for quiescence instead of
+  // asserting an instantaneous zero.
+  const auto quiescenceDeadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (scheduler->activeHelperCount() != 0u &&
-         std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(1ms);
+         std::chrono::steady_clock::now() < quiescenceDeadline) {
+    std::this_thread::yield();
   }
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
 }
@@ -472,35 +518,6 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
   scheduler->shutdown();
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
 }
-
-// -----------------------------------------------------------------------------
-// Test 12: EnqueueMorsel admits or rejects synchronously with eligibility
-// -----------------------------------------------------------------------------
-
-TEST(ElasticExportSchedulerTest,
-     EnqueueMorselRejectsImmediatelyWhenIneligible) {
-  auto scheduler = ElasticExportScheduler::create(2, 64);
-  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
-
-  auto session = scheduler->createSession<int>();
-  auto state = session.stateHandle();
-  auto makeMorsel = [&]() {
-    return OwnedMorsel(state, state->jobId(), scheduler->demandEpoch(), 0);
-  };
-
-  // Eligible while no foreground query is running: admitted synchronously.
-  EXPECT_TRUE(scheduler->enqueueMorsel(makeMorsel()));
-
-  // Two active queries exceed the admission threshold: rejected without
-  // blocking, so the coordinator runs such morsels on the primary path.
-  scheduler->onForegroundQueryStarted();
-  scheduler->onForegroundQueryStarted();
-  EXPECT_FALSE(scheduler->enqueueMorsel(makeMorsel()));
-
-  scheduler->onForegroundQueryEnded();
-  scheduler->onForegroundQueryEnded();
-}
-
 // -----------------------------------------------------------------------------
 // Test 13: Blocked enqueuer wakes when the admission threshold flips
 // -----------------------------------------------------------------------------
