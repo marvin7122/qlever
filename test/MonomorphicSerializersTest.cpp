@@ -11,6 +11,7 @@
 #include <charconv>
 #include <iterator>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -64,6 +65,14 @@ class RecordingWriter {
  private:
   template <typename Value>
   void appendNumber(Value value) {
+    if constexpr (std::floating_point<Value>) {
+      // No floating-point `std::to_chars` on macOS before 13.3; the
+      // ostringstream default formatting matches the expected output.
+      std::ostringstream stream;
+      stream << value;
+      output_ += stream.str();
+      return;
+    }
     char buffer[64];
     const auto [end, error] =
         std::to_chars(std::begin(buffer), std::end(buffer), value);
@@ -120,6 +129,27 @@ TEST(MonomorphicSerializersTest, BooleanRendersStoredIdLiteral) {
     Serializer::serializeRow<RowFormat::Csv>(writer, id);
     EXPECT_EQ(writer.output(), expected);
   }
+}
+
+TEST(MonomorphicSerializersTest, TurtleCoversDoubleUndefinedAndBlankNode) {
+  using Serializer =
+      MonomorphicRowSerializer<ColumnType::Double, ColumnType::Undefined,
+                               ColumnType::BlankNode>;
+  RecordingWriter writer;
+
+  Serializer::serializeRow<RowFormat::Turtle>(writer, 153.07, 0, "_:b0");
+
+  EXPECT_EQ(writer.output(), "153.07 UNDEF _:b0 .\n");
+}
+
+TEST(MonomorphicSerializersTest, NTriplesRendersIriAndLiteral) {
+  using Serializer =
+      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Literal>;
+  RecordingWriter writer;
+
+  Serializer::serializeRow<RowFormat::NTriples>(writer, "<s>", "lit");
+
+  EXPECT_EQ(writer.output(), "I<s> Llit .\n");
 }
 
 TEST(MonomorphicSerializersTest, ExposesTheStaticSchema) {

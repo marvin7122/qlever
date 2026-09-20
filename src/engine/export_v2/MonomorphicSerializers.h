@@ -146,6 +146,22 @@ void writeCell(Writer& writer, const Value& value) {
 
 }  // namespace detail
 
+// Writer shape required by `MonomorphicRowSerializer`. Checked (not used for
+// dispatch) so a writer missing an operation fails with a single readable
+// message at the call site instead of deep inside `CellWriter`.
+template <typename Writer>
+concept HasWriterOps =
+    requires(Writer& writer, char c, std::string_view s, int i, double d) {
+      writer.writeChar(c);
+      writer.writeRaw(s);
+      writer.writeEscapedCsv(s);
+      writer.writeEscapedTsv(s);
+      writer.writeEscapedTurtleLiteral(s);
+      writer.writeIri(s);
+      writer.writeInteger(i);
+      writer.writeDouble(d);
+    };
+
 // Serialize typed tuple values for one compile-time schema. This class does
 // not perform runtime schema dispatch. Callers only use it when the planner can
 // select a concrete instantiation before entering the row loop.
@@ -160,6 +176,11 @@ class MonomorphicRowSerializer {
 
   template <RowFormat Format, typename Writer, typename... Values>
   static void serializeRow(Writer& writer, const Values&... values) {
+    static_assert(HasWriterOps<Writer>,
+                  "The writer must provide the MonomorphicRowSerializer "
+                  "operations (writeChar/writeRaw/writeEscapedCsv/writeEscaped"
+                  "Tsv/writeEscapedTurtleLiteral/writeIri/writeInteger/"
+                  "writeDouble)");
     static_assert(sizeof...(Values) == numColumns,
                   "The argument count must match the static schema");
     serializeTuple<Format>(writer, std::tie(values...),
