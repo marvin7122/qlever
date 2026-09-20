@@ -441,8 +441,8 @@ class IoUringDirectBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Formatter for benchmark results table (only used by the standalone main
-// below; the benchmark-infrastructure path reports via BenchmarkResults).
+// Formatter for benchmark results table (only used by the standalone entry
+// point below; the registered infrastructure benchmark reports JSON instead).
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printResultsTable(std::string_view accessMode,
                        std::vector<BenchmarkMetric>& results) {

@@ -48,4 +48,7 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
 
+    addAndLinkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser
+        qlever_util)
+
 endif()

@@ -30,7 +30,7 @@
 #include "backports/concepts.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 
@@ -88,6 +88,11 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 
 // _____________________________________________________________________________
 // Lightweight value holder representing a cell value across formats and types.
+// String data is held as non-owning views (like `std::string_view` itself):
+// the producer owns the referenced memory and must keep it alive through
+// serialization. The `String` type additionally means pre-formatted content
+// that is passed through verbatim in every format; use `Literal` for values
+// that still need quoting or escaping.
 struct CellValue {
   ColumnType type_ = ColumnType::Undefined;
   std::string_view stringVal_{};
@@ -228,12 +233,18 @@ struct MonomorphicCellWriter {
         writer.writeRaw(cell.stringVal_);
       }
     } else {
-      // ColumnType::Undefined
-      if constexpr (Format == ExportFormat::Turtle ||
-                    Format == ExportFormat::NTriples) {
-        writer.writeRaw("UNDEF");
-      }
+      // ColumnType::Undefined: a placeholder in every format keeps tabular
+      // columns aligned (writing nothing would silently drop the column).
+      writer.writeRaw("UNDEF");
     }
+  }
+
+  // Typed overload for C strings: without it a string literal is an
+  // ambiguous match between the `CellValue` and `string_view` overloads
+  // (both need exactly one user-defined conversion).
+  template <typename Writer>
+  static void write(Writer& writer, const char* s) {
+    write(writer, std::string_view{s});
   }
 
   // Typed overload for raw string_view
@@ -511,7 +522,7 @@ class MonomorphicRowSerializer {
   static size_t serializeBatch(Writer& writer, const RowContainer& rows) {
     size_t count = 0;
     for (const auto& row : rows) {
-      serializeRow<Format>(writer, row);
+      serializeRowTuple<Format>(writer, row);
       ++count;
     }
     return count;
@@ -525,32 +536,44 @@ class MonomorphicRowSerializer {
 
 namespace detail {
 
+// Invoke `visitor` with a default-constructed (stateless) monomorphic
+// serializer for `Types...`, forwarding the remaining arguments. Passing the
+// serializer object (instead of the types as template arguments) keeps the
+// visitor protocol identical to the `DynamicRowSerializer` fallback below,
+// so a single `[&](auto& serializer)` visitor serves fast paths and fallback.
+template <ColumnType... Types, typename Visitor, typename... Args>
+decltype(auto) invokeWithMonomorphicSerializer(Visitor&& visitor,
+                                               Args&&... args) {
+  MonomorphicRowSerializer<Types...> serializer;
+  return visitor(serializer, std::forward<Args>(args)...);
+}
+
 // Fast-path dispatch for 1-column schemas
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
   switch (c0) {
     case ColumnType::Iri:
-      return visitor.template operator()<ColumnType::Iri>(
-          std::forward<Args>(args)...);
+      return invokeWithMonomorphicSerializer<ColumnType::Iri>(
+          visitor, std::forward<Args>(args)...);
     case ColumnType::Literal:
-      return visitor.template operator()<ColumnType::Literal>(
-          std::forward<Args>(args)...);
+      return invokeWithMonomorphicSerializer<ColumnType::Literal>(
+          visitor, std::forward<Args>(args)...);
     case ColumnType::Int:
-      return visitor.template operator()<ColumnType::Int>(
-          std::forward<Args>(args)...);
+      return invokeWithMonomorphicSerializer<ColumnType::Int>(
+          visitor, std::forward<Args>(args)...);
     case ColumnType::Double:
-      return visitor.template operator()<ColumnType::Double>(
-          std::forward<Args>(args)...);
+      return invokeWithMonomorphicSerializer<ColumnType::Double>(
+          visitor, std::forward<Args>(args)...);
     case ColumnType::BlankNode:
-      return visitor.template operator()<ColumnType::BlankNode>(
-          std::forward<Args>(args)...);
+      return invokeWithMonomorphicSerializer<ColumnType::BlankNode>(
+          visitor, std::forward<Args>(args)...);
     case ColumnType::Boolean:
-      return visitor.template operator()<ColumnType::Boolean>(
-          std::forward<Args>(args)...);
+      return invokeWithMonomorphicSerializer<ColumnType::Boolean>(
+          visitor, std::forward<Args>(args)...);
     case ColumnType::String:
     default:
-      return visitor.template operator()<ColumnType::String>(
-          std::forward<Args>(args)...);
+      return invokeWithMonomorphicSerializer<ColumnType::String>(
+          visitor, std::forward<Args>(args)...);
   }
 }
 
@@ -561,34 +584,34 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
   auto inner = [&](auto t0) {
     switch (c1) {
       case ColumnType::Iri:
-        return visitor
-            .template operator()<decltype(t0)::value, ColumnType::Iri>(
-                std::forward<Args>(args)...);
+        return invokeWithMonomorphicSerializer<decltype(t0)::value,
+                                               ColumnType::Iri>(
+            visitor, std::forward<Args>(args)...);
       case ColumnType::Literal:
-        return visitor
-            .template operator()<decltype(t0)::value, ColumnType::Literal>(
-                std::forward<Args>(args)...);
+        return invokeWithMonomorphicSerializer<decltype(t0)::value,
+                                               ColumnType::Literal>(
+            visitor, std::forward<Args>(args)...);
       case ColumnType::Int:
-        return visitor
-            .template operator()<decltype(t0)::value, ColumnType::Int>(
-                std::forward<Args>(args)...);
+        return invokeWithMonomorphicSerializer<decltype(t0)::value,
+                                               ColumnType::Int>(
+            visitor, std::forward<Args>(args)...);
       case ColumnType::Double:
-        return visitor
-            .template operator()<decltype(t0)::value, ColumnType::Double>(
-                std::forward<Args>(args)...);
+        return invokeWithMonomorphicSerializer<decltype(t0)::value,
+                                               ColumnType::Double>(
+            visitor, std::forward<Args>(args)...);
       case ColumnType::BlankNode:
-        return visitor
-            .template operator()<decltype(t0)::value, ColumnType::BlankNode>(
-                std::forward<Args>(args)...);
+        return invokeWithMonomorphicSerializer<decltype(t0)::value,
+                                               ColumnType::BlankNode>(
+            visitor, std::forward<Args>(args)...);
       case ColumnType::Boolean:
-        return visitor
-            .template operator()<decltype(t0)::value, ColumnType::Boolean>(
-                std::forward<Args>(args)...);
+        return invokeWithMonomorphicSerializer<decltype(t0)::value,
+                                               ColumnType::Boolean>(
+            visitor, std::forward<Args>(args)...);
       case ColumnType::String:
       default:
-        return visitor
-            .template operator()<decltype(t0)::value, ColumnType::String>(
-                std::forward<Args>(args)...);
+        return invokeWithMonomorphicSerializer<decltype(t0)::value,
+                                               ColumnType::String>(
+            visitor, std::forward<Args>(args)...);
     }
   };
 
@@ -619,67 +642,67 @@ decltype(auto) dispatch3Col(ColumnType c0, ColumnType c1, ColumnType c2,
   // Check common 3-column SPARQL schemas first for lightning-fast branch
   // prediction
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Iri) {
-    return visitor
-        .template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Iri>(
-            std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Iri,
+                                           ColumnType::Iri>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri &&
       c2 == ColumnType::Literal) {
-    return visitor.template
-    operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Iri,
+                                           ColumnType::Literal>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Int) {
-    return visitor
-        .template operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Int>(
-            std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Iri,
+                                           ColumnType::Int>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri &&
       c2 == ColumnType::Double) {
-    return visitor.template
-    operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Double>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Iri,
+                                           ColumnType::Double>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri &&
       c2 == ColumnType::BlankNode) {
-    return visitor.template
-    operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::BlankNode>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Iri,
+                                           ColumnType::BlankNode>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::BlankNode && c1 == ColumnType::Iri &&
       c2 == ColumnType::Iri) {
-    return visitor.template
-    operator()<ColumnType::BlankNode, ColumnType::Iri, ColumnType::Iri>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::BlankNode,
+                                           ColumnType::Iri, ColumnType::Iri>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::BlankNode && c1 == ColumnType::Iri &&
       c2 == ColumnType::Literal) {
-    return visitor.template
-    operator()<ColumnType::BlankNode, ColumnType::Iri, ColumnType::Literal>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<
+        ColumnType::BlankNode, ColumnType::Iri, ColumnType::Literal>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Literal &&
       c2 == ColumnType::Int) {
-    return visitor.template
-    operator()<ColumnType::Iri, ColumnType::Literal, ColumnType::Int>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Literal,
+                                           ColumnType::Int>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Literal &&
       c2 == ColumnType::Double) {
-    return visitor.template
-    operator()<ColumnType::Iri, ColumnType::Literal, ColumnType::Double>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Literal,
+                                           ColumnType::Double>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Literal && c1 == ColumnType::Literal &&
       c2 == ColumnType::Literal) {
-    return visitor.template
-    operator()<ColumnType::Literal, ColumnType::Literal, ColumnType::Literal>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<
+        ColumnType::Literal, ColumnType::Literal, ColumnType::Literal>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Int && c1 == ColumnType::Int && c2 == ColumnType::Int) {
-    return visitor
-        .template operator()<ColumnType::Int, ColumnType::Int, ColumnType::Int>(
-            std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Int, ColumnType::Int,
+                                           ColumnType::Int>(
+        visitor, std::forward<Args>(args)...);
   }
 
   // Fallback to dynamic serializer for rare 3-column combinations
@@ -693,33 +716,34 @@ decltype(auto) dispatch4Col(ColumnType c0, ColumnType c1, ColumnType c2,
                             ColumnType c3, Visitor&& visitor, Args&&... args) {
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Iri &&
       c3 == ColumnType::Iri) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri,
-                                       ColumnType::Iri, ColumnType::Iri>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Iri,
+                                           ColumnType::Iri, ColumnType::Iri>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Iri &&
       c3 == ColumnType::Literal) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri,
-                                       ColumnType::Iri, ColumnType::Literal>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<
+        ColumnType::Iri, ColumnType::Iri, ColumnType::Iri, ColumnType::Literal>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Literal &&
       c2 == ColumnType::Int && c3 == ColumnType::Double) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Literal,
-                                       ColumnType::Int, ColumnType::Double>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Literal,
+                                           ColumnType::Int, ColumnType::Double>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri && c2 == ColumnType::Int &&
       c3 == ColumnType::Double) {
-    return visitor.template operator()<ColumnType::Iri, ColumnType::Iri,
-                                       ColumnType::Int, ColumnType::Double>(
-        std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Iri,
+                                           ColumnType::Int, ColumnType::Double>(
+        visitor, std::forward<Args>(args)...);
   }
   if (c0 == ColumnType::Iri && c1 == ColumnType::Iri &&
       c2 == ColumnType::Literal && c3 == ColumnType::Literal) {
-    return visitor.template
-    operator()<ColumnType::Iri, ColumnType::Iri, ColumnType::Literal,
-               ColumnType::Literal>(std::forward<Args>(args)...);
+    return invokeWithMonomorphicSerializer<ColumnType::Iri, ColumnType::Iri,
+                                           ColumnType::Literal,
+                                           ColumnType::Literal>(
+        visitor, std::forward<Args>(args)...);
   }
 
   // Fallback
