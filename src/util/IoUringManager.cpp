@@ -191,12 +191,11 @@ void IoUringPolicy::addBatch(int fd,
     // state that decides `get_sqe`, to find why it returns null.
     if (sqe == nullptr) {
       std::fprintf(stderr,
-                   "SQE_NULL_DIAG ringSize=%u inFlight=%zu sqe_tail=%u "
-                   "sq_head=%u ring_entries=%u cq_head=%u cq_tail=%u "
-                   "sqpoll=%d\n",
-                   ringSize_, numInFlightReadRequests_, *ring_.sq.sqe_tail,
-                   *ring_.sq.head, *ring_.sq.ring_entries, *ring_.cq.head,
-                   *ring_.cq.tail, sqPollEnabled_);
+                   "SQE_NULL_DIAG ringSize=%u inFlight=%zu sq_ready=%u "
+                   "sq_space_left=%u sqpoll=%d\n",
+                   ringSize_, numInFlightReadRequests_,
+                   io_uring_sq_ready(&ring_), io_uring_sq_space_left(&ring_),
+                   sqPollEnabled_);
       std::fflush(stderr);
     }
     AD_CORRECTNESS_CHECK(sqe != nullptr);
