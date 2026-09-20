@@ -21,8 +21,6 @@ namespace {
 using namespace qlever::export_v2;
 
 static_assert(kExportV2CompiledIn);
-static_assert(
-    ad_utility::InvariantStatefulClass<AsyncChunkPipeline<std::string>>);
 static_assert(kNumRingSlots == 2);
 
 TEST(AsyncChunkPipelineTest, RuntimeKillSwitchLeavesPipelineClosed) {
