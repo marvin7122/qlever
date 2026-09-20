@@ -136,8 +136,8 @@ The supervisor's constraint is critical: **a heavy multi-threaded query must nev
 | :--- | :--- | :--- |
 | **Push-Based Morsel Execution** | Hyper / Umbra | 64KB vector chunks pushed from leaf scans directly to socket buffer; 0 intermediate `IdTable`s. |
 | **SIMD Radix Radical Conversion** | DuckDB / fast_float | Division-free branchless integer-to-ASCII conversion (>180M nums/sec). |
-| **Vectorized Character Masking** | simdjson / simdutf | 32-byte AVX2 escape scanning testing quotes/newlines in 1 instruction (13.94 GB/s). |
-| **Non-Temporal Streaming Stores** | ClickHouse / HPC | `_mm_stream_si128` streaming directly to DRAM, bypassing CPU cache hierarchy (14.71 GB/s). |
+| **Vectorized Character Masking** | simdjson / simdutf | 32-byte AVX2 escape scanning testing quotes/newlines in 1 instruction (target 13.94 GB/s, unmeasured). |
+| **Non-Temporal Streaming Stores** | ClickHouse / HPC | `_mm_stream_si128` streaming directly to DRAM, bypassing CPU cache hierarchy (target 14.71 GB/s, unmeasured). |
 | **SWAR Punctuation Packing** | High-Frequency Trading | Delimiter sequences (`"\t"`, `"< >"`, `"\r\n"`) packed into 64-bit unsigned integers. |
 | **Run-Length Prefix Folding** | DuckDB / ClickHouse | Formats repeated IRI subjects/predicates once and copies 128-bit words across sorted runs. |
 | **Scatter-Gather Zero-Copy** | Apache Arrow / Seastar | Assembles chunks via `struct iovec` arrays pointing to decompression arena pages (0 copies). |
@@ -199,9 +199,9 @@ To enable independent implementation and clean reviewability, the V2 engine is d
 ### Work Package 4: SIMD Character Classification & Literal Escaping
 * **Artifact Target:** `src/engine/export_v2/SimdEscapeClassifier.h` & `test/SimdEscapeClassifierTest.cpp`
 * **Task Description:**
-  - Implement AVX2 32-byte vector scanner for TSV (`\t`, `\n`, `\r`, `\\`), CSV (`"`), and Turtle (`"`, `\n`, `\r`, `\\`).
+  - Implement AVX2 32-byte vector scanner for TSV (`\t`, `\n`, `\r`, `\\`), CSV (`"`, `,`, `\r`, `\n`), and Turtle (`"`, `\\`, `\n`, `\r`).
   - Fast-path raw byte copying when 32-byte mask is 0.
-* **Definition of Done:** `SimdEscapeBenchmark` validates scanning throughput >13.5 GB/s on realistic literal datasets.
+* **Definition of Done:** `SimdEscapeClassifierBenchmark` validates scanning throughput >13.5 GB/s on realistic literal datasets.
 
 ---
 
