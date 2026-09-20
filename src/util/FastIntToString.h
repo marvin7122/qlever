@@ -115,7 +115,10 @@ inline constexpr uint64_t POWERS_OF_10_64[20] = {
 // Fast 8-digit formatting with SSE2 or a scalar lookup-table fallback. The
 // radix decomposition into four 2-digit values is scalar; SSE2 only converts
 // those four values to ASCII in parallel.
-inline void format8Digits(uint32_t v, char* dst) noexcept {
+// Note: none of the formatting functions in this header are `noexcept`:
+// the precondition checks below throw `ad_utility::Exception` on violation,
+// and a throw from a `noexcept` function would call `std::terminate`.
+inline void format8Digits(uint32_t v, char* dst) {
   AD_CONTRACT_CHECK(dst != nullptr);
   AD_CONTRACT_CHECK(v < 100000000U);
 
@@ -163,7 +166,7 @@ inline void format8Digits(uint32_t v, char* dst) noexcept {
 
 // _____________________________________________________________________________
 // Fast 4-digit formatting
-inline void format4Digits(uint32_t v, char* dst) noexcept {
+inline void format4Digits(uint32_t v, char* dst) {
   AD_CONTRACT_CHECK(dst != nullptr);
   AD_CONTRACT_CHECK(v < 10000U);
   uint32_t d0 = (v / 100) * 2;
@@ -174,7 +177,7 @@ inline void format4Digits(uint32_t v, char* dst) noexcept {
 
 // _____________________________________________________________________________
 // Fast 2-digit formatting
-inline void format2Digits(uint32_t v, char* dst) noexcept {
+inline void format2Digits(uint32_t v, char* dst) {
   AD_CONTRACT_CHECK(dst != nullptr);
   AD_CONTRACT_CHECK(v < 100U);
   std::memcpy(dst, &DIGIT_PAIRS[v * 2], 2);
@@ -216,7 +219,7 @@ inline constexpr std::string_view WIKIDATA_PROPERTY_PREFIX =
 // Writes digits directly to `out` and returns a pointer to one-past-the-end.
 // Precondition: `out` must point to a buffer with at least `numDigits(val)`
 // bytes.
-inline char* formatUIntBranchless(uint64_t val, char* out) noexcept {
+inline char* formatUIntBranchless(uint64_t val, char* out) {
   AD_CONTRACT_CHECK(out != nullptr);
   const uint32_t len = numDigits(val);
   char* p = out + len;
@@ -249,7 +252,7 @@ inline char* formatUIntBranchless(uint64_t val, char* out) noexcept {
 
 // _____________________________________________________________________________
 // Branchless, zero-allocation conversion of uint32_t to ASCII.
-inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
+inline char* formatUInt32Branchless(uint32_t val, char* out) {
   AD_CONTRACT_CHECK(out != nullptr);
   const uint32_t len = numDigits(val);
   char* p = out + len;
@@ -280,7 +283,7 @@ inline char* formatUInt32Branchless(uint32_t val, char* out) noexcept {
 // the magnitude plus one byte for the sign if `val` is negative (at most 20
 // bytes total, see `MAX_INT64_ASCII_LENGTH` for the size including a null
 // terminator).
-inline char* formatIntBranchless(int64_t val, char* out) noexcept {
+inline char* formatIntBranchless(int64_t val, char* out) {
   AD_CONTRACT_CHECK(out != nullptr);
   uint64_t uval;
   if (val < 0) {
@@ -295,7 +298,7 @@ inline char* formatIntBranchless(int64_t val, char* out) noexcept {
 
 // _____________________________________________________________________________
 // Branchless, zero-allocation conversion of int32_t to ASCII.
-inline char* formatInt32Branchless(int32_t val, char* out) noexcept {
+inline char* formatInt32Branchless(int32_t val, char* out) {
   AD_CONTRACT_CHECK(out != nullptr);
   uint32_t uval;
   if (val < 0) {
@@ -311,7 +314,9 @@ inline char* formatInt32Branchless(int32_t val, char* out) noexcept {
 // Single-pass RDF Wikidata QID formatting ("http://www.wikidata.org/entity/Q" +
 // id). Writes prefix and ASCII digits directly into `out` with zero
 // allocations. Returns a pointer to one-past-the-end.
-inline char* formatQid(uint64_t id, char* out) noexcept {
+// Precondition: `out` must point to a buffer with at least
+// `WIKIDATA_ENTITY_PREFIX.size() + numDigits(id)` bytes.
+inline char* formatQid(uint64_t id, char* out) {
   AD_CONTRACT_CHECK(out != nullptr);
   std::memcpy(out, WIKIDATA_ENTITY_PREFIX.data(),
               WIKIDATA_ENTITY_PREFIX.size());
@@ -321,7 +326,9 @@ inline char* formatQid(uint64_t id, char* out) noexcept {
 // _____________________________________________________________________________
 // Single-pass RDF Wikidata Property PID formatting
 // ("http://www.wikidata.org/prop/direct/P" + id).
-inline char* formatPid(uint64_t id, char* out) noexcept {
+// Precondition: `out` must point to a buffer with at least
+// `WIKIDATA_PROPERTY_PREFIX.size() + numDigits(id)` bytes.
+inline char* formatPid(uint64_t id, char* out) {
   AD_CONTRACT_CHECK(out != nullptr);
   std::memcpy(out, WIKIDATA_PROPERTY_PREFIX.data(),
               WIKIDATA_PROPERTY_PREFIX.size());
@@ -334,8 +341,7 @@ inline char* formatPid(uint64_t id, char* out) noexcept {
 // returns a pointer to one-past-the-end.
 // Precondition: `out` must point to a buffer with at least
 // `prefix.size() + numDigits(id)` bytes.
-inline char* formatPrefixedId(std::string_view prefix, uint64_t id,
-                              char* out) noexcept {
+inline char* formatPrefixedId(std::string_view prefix, uint64_t id, char* out) {
   AD_CONTRACT_CHECK(out != nullptr);
   if (!prefix.empty()) {
     std::memcpy(out, prefix.data(), prefix.size());
@@ -350,8 +356,7 @@ inline char* formatPrefixedId(std::string_view prefix, uint64_t id,
 // Precondition: `out` must point to a buffer with at least `prefix.size()`
 // plus `numDigits` of the magnitude plus one byte for the sign if `id` is
 // negative.
-inline char* formatPrefixedInt(std::string_view prefix, int64_t id,
-                               char* out) noexcept {
+inline char* formatPrefixedInt(std::string_view prefix, int64_t id, char* out) {
   AD_CONTRACT_CHECK(out != nullptr);
   if (!prefix.empty()) {
     std::memcpy(out, prefix.data(), prefix.size());
