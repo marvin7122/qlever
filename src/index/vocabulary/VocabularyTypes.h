@@ -517,8 +517,7 @@ class MultiSourceVocabBatchAssembler {
   // ___________________________________________________________________________
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
       : assembledWordViews_(totalExpectedWords),
-        slotFilledTracking_(totalExpectedWords, false) {
-  }
+        slotFilledTracking_(totalExpectedWords, false) {}
 
   // ___________________________________________________________________________
   // Place a single resolved string_view into its corresponding output position.
@@ -585,7 +584,6 @@ class MarkerIndicesAndPositions {
   std::vector<size_t> resultPositions_;
 
  public:
-
   // ___________________________________________________________________________
   // Pre-allocate capacity for both paired vectors, preserving their 1:1
   // correspondence.

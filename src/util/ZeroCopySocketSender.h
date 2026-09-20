@@ -114,7 +114,6 @@ class ZeroCopyBufferPool {
                               .iov_len = bufferSizeBytes_});
       freeSlots_.push_back(static_cast<uint32_t>(numBuffers_ - 1 - i));
     }
-
   }
 
   ~ZeroCopyBufferPool() {
@@ -303,7 +302,6 @@ class ZeroCopySocketSender {
   // flushes pending SQEs to the kernel and reaps CQEs until a slot is released.
   // Guaranteed zero heap allocation.
   [[nodiscard]] uint32_t acquireBuffer() {
-
     while (true) {
       auto slotOpt = bufferPool_.acquireSlot();
       if (slotOpt.has_value()) {
