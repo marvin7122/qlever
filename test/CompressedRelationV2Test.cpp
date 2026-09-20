@@ -81,7 +81,8 @@ TEST(CompressedRelationV2Test, TypedCountPruningFastPath) {
   blocks[3].leafletHeader_.datatypeBitmaskCol1_ = DatatypeBitmask::Literal;
   blocks[3].baseMetadata_.numRows_ = 1500;
 
-  auto result = LeafletAggregator::countTypedColumn(blocks, DatatypeBitmask::Literal, 1);
+  auto result =
+      LeafletAggregator::countTypedColumn(blocks, DatatypeBitmask::Literal, 1);
 
   // Exact count from pure blocks: 1000 + 1500 = 2500
   EXPECT_EQ(result.exactCount, 2500u);
