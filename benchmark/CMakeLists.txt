@@ -36,6 +36,9 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
-    addAndLinkBenchmark(HyperLogLogSketchBenchmark global qlever_util)
+    # Custom main(): link without benchmarkWithMain to avoid a duplicate
+    # main symbol.
+    add_executable(HyperLogLogSketchBenchmark HyperLogLogSketchBenchmark.cpp)
+    qlever_target_link_libraries(HyperLogLogSketchBenchmark global qlever_util)
 
 endif()
