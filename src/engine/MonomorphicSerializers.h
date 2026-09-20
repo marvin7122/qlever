@@ -239,6 +239,14 @@ struct MonomorphicCellWriter {
     }
   }
 
+  // Typed overload for C strings: without it a string literal is an
+  // ambiguous match between the `CellValue` and `string_view` overloads
+  // (both need exactly one user-defined conversion).
+  template <typename Writer>
+  static void write(Writer& writer, const char* s) {
+    write(writer, std::string_view{s});
+  }
+
   // Typed overload for raw string_view
   template <typename Writer>
   static void write(Writer& writer, std::string_view sv) {
@@ -514,7 +522,7 @@ class MonomorphicRowSerializer {
   static size_t serializeBatch(Writer& writer, const RowContainer& rows) {
     size_t count = 0;
     for (const auto& row : rows) {
-      serializeRow<Format>(writer, row);
+      serializeRowTuple<Format>(writer, row);
       ++count;
     }
     return count;
