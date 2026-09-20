@@ -103,6 +103,19 @@ class ConstructTripleGeneratorTest : public ::testing::Test {
     return EvaluationConfig{index_, std::move(handle), *qec_};
   }
 
+  // Collect an `evaluateTables` result range into a vector. `EvaluatedTriple`
+  // is move-only (blank-node terms own a `unique_ptr`), and the type-erased
+  // range yields lvalue references, which `ranges::to_vector` cannot
+  // materialize, so move the elements out explicitly.
+  static std::vector<EvaluatedTriple> moveTriplesToVector(
+      ad_utility::InputRangeTypeErased<EvaluatedTriple> range) {
+    std::vector<EvaluatedTriple> result;
+    for (EvaluatedTriple& triple : range) {
+      result.push_back(std::move(triple));
+    }
+    return result;
+  }
+
   // Run `ConstructTripleGenerator::evaluateTables` over a single
   // `TableWithRange` and collect `EvaluatedTriple`s.
   std::vector<EvaluatedTriple> run(
@@ -112,7 +125,7 @@ class ConstructTripleGeneratorTest : public ::testing::Test {
         triples, varMap, singleTableRange(std::move(table)), 0,
         makeConfig(std::move(handle)));
 
-    return ::ranges::to_vector(stringTriples);
+    return moveTriplesToVector(std::move(stringTriples));
   }
 
   // Build a single-triple CONSTRUCT template.
@@ -251,7 +264,7 @@ TEST_F(ConstructTripleGeneratorTest, rowOffsetAccumulatesAcrossTables) {
   // Table 2: rowOffset=3 (3 rows processed from table1), firstRow=5
   //   row 0: rowId = 3+5+0 = 8
   //   row 1: rowId = 3+5+1 = 9
-  EXPECT_THAT(::ranges::to_vector(std::move(range)),
+  EXPECT_THAT(moveTriplesToVector(std::move(range)),
               ElementsAre(matchTriple("_:u0_x", "<p>", "<o>"),
                           matchTriple("_:u1_x", "<p>", "<o>"),
                           matchTriple("_:u2_x", "<p>", "<o>"),
