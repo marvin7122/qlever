@@ -72,11 +72,22 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
   // a conservative (lower) bound for the "ring full" check below. See
   // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
   // details.
+  //
+  // With kernel-side polling (SQPOLL) the ring additionally gets `ringSize_`
+  // headroom entries on top. The poll thread consumes on its own CPU while a
+  // completion may be posted from another one, so a slot freed by a
+  // just-reaped completion may not be visible to this thread yet (observed as
+  // `get_sqe` returning null with fewer than `ringSize_` requests tracked in
+  // flight). The in-flight cap stays `ringSize_`, so the ring can never
+  // actually fill and the readiness check cannot fire on such a visibility
+  // lag. The extra entries cost a few kilobytes.
+  const unsigned entries =
+      ringSize_ + (setupOptions.useSqPoll ? ringSize_ : 0);
   const bool wantsSpecialSetup = setupOptions.useSqPoll ||
                                  setupOptions.deferTaskrun ||
                                  setupOptions.singleIssuer;
   if (!wantsSpecialSetup) {
-    int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
+    int ret = io_uring_queue_init(entries, &ring_, /*flags=*/0);
     if (ret < 0) {
       AD_THROW("io_uring_queue_init failed in IoUringManager");
     }
@@ -94,7 +105,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
   if (setupOptions.singleIssuer) {
     params.flags |= IORING_SETUP_SINGLE_ISSUER;
   }
-  int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+  int ret = io_uring_queue_init_params(entries, &ring_, &params);
   if (ret == -EPERM || ret == -EINVAL) {
     // The kernel denied the requested setup (missing `CAP_SYS_NICE` for the
     // SQPoll thread, or a kernel without support for one of the flags).
@@ -184,20 +195,10 @@ void IoUringPolicy::addBatch(int fd,
     }
 
     // Claim the next free SQE. The check above guarantees a slot is available,
-    // so `io_uring_get_sqe` must not return `nullptr` here. Under kernel-side
-    // polling (SQPOLL) the submission-queue head update can lag behind
-    // completion delivery: the poll thread consumes on its own CPU while a
-    // completion may be posted from another one, so a slot freed by a
-    // just-reaped completion may not be visible yet. Drain everything still
-    // tracked and retry once before giving up; a persistent failure is a
-    // real accounting bug, not a visibility lag.
+    // so `io_uring_get_sqe` must not return `nullptr` here. (Under SQPOLL a
+    // drain-and-retry here was tried and caused hangs under cancellation, so
+    // the ring is instead sized with headroom (see the constructor).)
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-    if (sqe == nullptr) {
-      while (numInFlightReadRequests_ > 0) {
-        drainOneCqe();
-      }
-      sqe = io_uring_get_sqe(&ring_);
-    }
     AD_CORRECTNESS_CHECK(sqe != nullptr);
 
     // Record the read's parameters in the SQE (this only sets the SQE's fields;
