@@ -450,8 +450,7 @@ template <typename SplitVocabulary>
 class ScopedSplitVocabularyFiles {
  public:
   explicit ScopedSplitVocabularyFiles(const std::string& filename)
-      : filenames_{SplitVocabulary::splitFilenameFunction_(filename)} {
-  }
+      : filenames_{SplitVocabulary::splitFilenameFunction_(filename)} {}
 
   ScopedSplitVocabularyFiles(const ScopedSplitVocabularyFiles&) = delete;
   ScopedSplitVocabularyFiles& operator=(const ScopedSplitVocabularyFiles&) =
