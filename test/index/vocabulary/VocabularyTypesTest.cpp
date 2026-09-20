@@ -350,8 +350,12 @@ TEST(VocabBatchLookupData,
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
   MultiSourceVocabBatchAssembler assembler(2);
+  // `volatile` keeps the out-of-bounds position opaque to the compiler:
+  // gcc's -Warray-bounds (as error) would otherwise reject the deliberate
+  // violation at compile time instead of letting the runtime check fire.
+  volatile size_t outOfBoundsPosition = 2;
   AD_EXPECT_THROW_WITH_MESSAGE(
-      assembler.assignWordAtPosition(2, "out-of-bounds"),
+      assembler.assignWordAtPosition(outOfBoundsPosition, "out-of-bounds"),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
 
   auto subBatch = makeStringVectorVocabBatchLookupResult({"out-of-bounds"});
