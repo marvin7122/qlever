@@ -88,6 +88,11 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 
 // _____________________________________________________________________________
 // Lightweight value holder representing a cell value across formats and types.
+// String data is held as non-owning views (like `std::string_view` itself):
+// the producer owns the referenced memory and must keep it alive through
+// serialization. The `String` type additionally means pre-formatted content
+// that is passed through verbatim in every format; use `Literal` for values
+// that still need quoting or escaping.
 struct CellValue {
   ColumnType type_ = ColumnType::Undefined;
   std::string_view stringVal_{};
@@ -228,11 +233,9 @@ struct MonomorphicCellWriter {
         writer.writeRaw(cell.stringVal_);
       }
     } else {
-      // ColumnType::Undefined
-      if constexpr (Format == ExportFormat::Turtle ||
-                    Format == ExportFormat::NTriples) {
-        writer.writeRaw("UNDEF");
-      }
+      // ColumnType::Undefined: a placeholder in every format keeps tabular
+      // columns aligned (writing nothing would silently drop the column).
+      writer.writeRaw("UNDEF");
     }
   }
 
@@ -332,7 +335,6 @@ class DynamicRowSerializer {
       : schema_(std::move(schema)) {
     AD_CONTRACT_CHECK(!schema_.empty());
   }
-
 
   [[nodiscard]] const std::vector<ColumnType>& schema() const noexcept {
     return schema_;

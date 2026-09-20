@@ -77,6 +77,22 @@ void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
 
+void* operator new[](std::size_t size) {
+  if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
+    AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
+    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
+  }
+  void* ptr = std::malloc(size);
+  if (!ptr) {
+    throw std::bad_alloc();
+  }
+  return ptr;
+}
+
+void operator delete[](void* ptr) noexcept { std::free(ptr); }
+
+void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+
 namespace ad_benchmark {
 namespace {
 

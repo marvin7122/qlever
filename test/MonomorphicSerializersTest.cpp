@@ -115,6 +115,38 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
   EXPECT_EQ(dynamicOut, "<http://example.org/x>,\"test\",42\n");
 }
 
+TEST(MonomorphicSerializersTest, RareSchemaFallbackMatchesDynamic) {
+  // {Double, Double, Double} has no monomorphic fast path and falls back
+  // to DynamicRowSerializer; the outputs must agree.
+  const std::vector<ColumnType> schema = {
+      ColumnType::Double, ColumnType::Double, ColumnType::Double};
+  std::array<CellValue, 3> row = {CellValue(1.5), CellValue(2.5),
+                                  CellValue(3.5)};
+  DynamicRowSerializer dynamicSerializer(schema);
+  std::string dynamicOut = captureOutput([&](FastExportStreamFormatter& fmt) {
+    dynamicSerializer.serializeRow<ExportFormat::Csv>(
+        fmt, ql::span<const CellValue>(row));
+  });
+  std::string dispatchedOut =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        dispatchMonomorphicSerializer(schema, [&](auto& serializer) {
+          serializer.template serializeRow<ExportFormat::Csv>(
+              fmt, ql::span<const CellValue>(row));
+        });
+      });
+  EXPECT_EQ(dispatchedOut, dynamicOut);
+}
+
+TEST(MonomorphicSerializersTest, UndefinedKeepsTabularColumnsAligned) {
+  std::array<CellValue, 2> row = {CellValue::makeIri("<http://s>"),
+                                  CellValue()};
+  std::string csv = captureOutput([&](FastExportStreamFormatter& fmt) {
+    MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Undefined>::
+        serializeRow<ExportFormat::Csv>(fmt, ql::span<const CellValue>(row));
+  });
+  EXPECT_EQ(csv, "<http://s>,UNDEF\n");
+}
+
 TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
   const std::vector<ColumnType> schema = {ColumnType::Iri, ColumnType::Iri,
                                           ColumnType::Literal};
