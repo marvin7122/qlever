@@ -26,7 +26,8 @@ TEST(HyperLogLogSketchTest, AccurateDistinctEstimation) {
   uint64_t estimate = hll.estimateCardinality();
 
   // For p=10 (1024 registers), standard error is ~1.04 / sqrt(1024) = ~3.25%
-  double relativeError = std::abs(static_cast<double>(estimate) - static_cast<double>(EXACT_COUNT)) /
+  double relativeError = std::abs(static_cast<double>(estimate) -
+                                  static_cast<double>(EXACT_COUNT)) /
                          static_cast<double>(EXACT_COUNT);
 
   EXPECT_LE(relativeError, 0.05);  // within 5%
@@ -51,7 +52,8 @@ TEST(HyperLogLogSketchTest, SketchMergeCorrectness) {
   uint64_t mergedEstimate = hll1.estimateCardinality();
   constexpr uint64_t TOTAL_DISTINCT = 40'000;
 
-  double relativeError = std::abs(static_cast<double>(mergedEstimate) - static_cast<double>(TOTAL_DISTINCT)) /
+  double relativeError = std::abs(static_cast<double>(mergedEstimate) -
+                                  static_cast<double>(TOTAL_DISTINCT)) /
                          static_cast<double>(TOTAL_DISTINCT);
 
   EXPECT_LE(relativeError, 0.05);
