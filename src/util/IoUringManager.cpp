@@ -13,7 +13,6 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 
@@ -178,37 +177,26 @@ void IoUringPolicy::addBatch(int fd,
     if (numInFlightReadRequests_ >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
-      // TEMPORARY SQPOLL DIAGNOSTIC (remove before merge).
-      std::fprintf(stderr,
-                   "SQE_TRACE submit inFlight=%zu sq_ready=%u sq_space_left=%u\n",
-                   numInFlightReadRequests_, io_uring_sq_ready(&ring_),
-                   io_uring_sq_space_left(&ring_));
-      int submitRes = io_uring_submit(&ring_);
-      std::fprintf(stderr, "SQE_TRACE submitted=%d\n", submitRes);
+      io_uring_submit(&ring_);
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
       }
-      std::fprintf(stderr,
-                   "SQE_TRACE drained inFlight=%zu sq_ready=%u "
-                   "sq_space_left=%u\n",
-                   numInFlightReadRequests_, io_uring_sq_ready(&ring_),
-                   io_uring_sq_space_left(&ring_));
-      std::fflush(stderr);
     }
 
     // Claim the next free SQE. The check above guarantees a slot is available,
-    // so `io_uring_get_sqe` must not return `nullptr` here.
+    // so `io_uring_get_sqe` must not return `nullptr` here. Under kernel-side
+    // polling (SQPOLL) the submission-queue head update can lag behind
+    // completion delivery: the poll thread consumes on its own CPU while a
+    // completion may be posted from another one, so a slot freed by a
+    // just-reaped completion may not be visible yet. Drain everything still
+    // tracked and retry once before giving up; a persistent failure is a
+    // real accounting bug, not a visibility lag.
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-    // TEMPORARY SQPOLL DIAGNOSTIC (remove before merge): dump the ring
-    // state that decides `get_sqe`, to find why it returns null.
     if (sqe == nullptr) {
-      std::fprintf(stderr,
-                   "SQE_NULL_DIAG ringSize=%u inFlight=%zu sq_ready=%u "
-                   "sq_space_left=%u sqpoll=%d\n",
-                   ringSize_, numInFlightReadRequests_,
-                   io_uring_sq_ready(&ring_), io_uring_sq_space_left(&ring_),
-                   sqPollEnabled_);
-      std::fflush(stderr);
+      while (numInFlightReadRequests_ > 0) {
+        drainOneCqe();
+      }
+      sqe = io_uring_get_sqe(&ring_);
     }
     AD_CORRECTNESS_CHECK(sqe != nullptr);
 
