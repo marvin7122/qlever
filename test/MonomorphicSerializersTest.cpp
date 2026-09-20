@@ -12,8 +12,8 @@
 #include <string>
 #include <vector>
 
-#include "engine/MonomorphicSerializers.h"
 #include "engine/FastExportStreamFormatter.h"
+#include "engine/MonomorphicSerializers.h"
 
 using namespace ql::serialization;
 using namespace ql::export_formatting;
