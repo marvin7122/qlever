@@ -79,8 +79,8 @@ template <EscapeFormat Format>
 
 #ifdef QLEVER_EXPORT_V2_X86
 template <EscapeFormat Format>
-[[nodiscard]] QLEVER_EXPORT_V2_AVX2_TARGET uint32_t scanChunkAvx2(
-    const char* data) {
+[[nodiscard]] QLEVER_EXPORT_V2_AVX2_TARGET uint32_t
+scanChunkAvx2(const char* data) {
   const __m256i chunk =
       _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data));
   __m256i matches;
