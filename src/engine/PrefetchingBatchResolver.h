@@ -69,7 +69,6 @@ struct PrefetchConfig {
   // cursor. Typically 4 to 16 iterations hide DRAM/L3 cache miss latency
   // (~60ns) while keeping L1 cache lines active.
   size_t prefetchDistance{8};
-
 };
 
 // _____________________________________________________________________________
@@ -97,8 +96,7 @@ class PrefetchingBatchResolver {
   explicit PrefetchingBatchResolver(
       PrefetchConfig config =
           PrefetchConfig{.prefetchDistance = DEFAULT_PREFETCH_DISTANCE})
-      : config_{config} {
-  }
+      : config_{config} {}
 
   // ___________________________________________________________________________
   [[nodiscard]] size_t prefetchDistance() const noexcept {

@@ -62,8 +62,7 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
 
   // Prefetched resolution with various prefetch distances
   for (size_t distance : {1, 2, 4, 8, 16}) {
-    PrefetchingBatchResolver resolver(
-        PrefetchConfig{distance});
+    PrefetchingBatchResolver resolver(PrefetchConfig{distance});
     auto prefetchedResults =
         resolver.idsToStringAndType(index, testIds, localVocab, ql::identity{});
 
