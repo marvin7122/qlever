@@ -125,8 +125,8 @@ class PrefetchingBatchResolver {
     }
 
     AD_CONTRACT_CHECK(results.size() >= ids.size());
-    AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t i) {
-      return ids[i].getDatatype() == Datatype::VocabIndex;
+    AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t pos) {
+      return pos < ids.size() && ids[pos].getDatatype() == Datatype::VocabIndex;
     }));
 
     const size_t n = positions.size();
@@ -136,7 +136,6 @@ class PrefetchingBatchResolver {
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t pfPos = positions[k];
       prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-      prefetchVocabEntry(&positions[k], static_cast<int>(distance));
     }
 
     // Main pipelined loop: prefetch row (i + distance) ahead while serializing
@@ -145,8 +144,6 @@ class PrefetchingBatchResolver {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        prefetchVocabEntry(&positions[i + distance],
-                           static_cast<int>(distance));
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
           const auto wordVocabIndex = pfId.getVocabIndex();
@@ -218,7 +215,7 @@ class PrefetchingBatchResolver {
 
       // 3. Resolve current item i
       const size_t curIdx = indices[i];
-      AD_CORRECTNESS_CHECK(curIdx + 1 < offsets.size());
+      AD_CORRECTNESS_CHECK(idx < offsets.size());
       const auto curOffset = offsets[curIdx];
       const auto nextOffset = offsets[curIdx + 1];
       const size_t strLen = nextOffset - curOffset;
