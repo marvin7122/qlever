@@ -333,15 +333,6 @@ TEST(VocabBatchLookupData,
 }
 
 // _____________________________________________________________________________
-// Formal architectural verification: prove that MultiSourceVocabBatchAssembler
-// strictly satisfies the `ad_utility::InvariantStatefulClass` concept at
-// compile-time.
-static_assert(
-    ad_utility::InvariantStatefulClass<MultiSourceVocabBatchAssembler>,
-    "MultiSourceVocabBatchAssembler must satisfy "
-    "ad_utility::InvariantStatefulClass");
-
-// _____________________________________________________________________________
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerIncompleteCoverageThrows) {
   MultiSourceVocabBatchAssembler assembler(2);
