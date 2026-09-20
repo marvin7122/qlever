@@ -217,7 +217,7 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
       const size_t live = liveSessionCount_.load(std::memory_order_relaxed);
       const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
       const size_t share = fairShareUnsafe(live);
-      const size_t committed = committedOutstandingUnsafe(morsel.jobId_);
+      const size_t committed = committedOutstandingUnsafe(morsel.jobId());
       // Even split with a progress floor of one: below-share sessions post
       // immediately while total capacity allows, the rest wait first-in
       // first-out in pendingAdmission_.
@@ -225,7 +225,7 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
         // Reserve the share atomically with the decision: a concurrent
         // enqueuer must see the reservation, and `postReady` below must
         // not count the morsel a second time.
-        accountOutstandingUnsafe(morsel.jobId_);
+        accountOutstandingUnsafe(morsel.jobId());
         toPost.emplace(std::move(morsel));
       } else {
         pendingAdmission_.push_back(std::move(morsel));
@@ -270,7 +270,7 @@ void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
 
 absl::AnyInvocable<void()> ElasticExportScheduler::makePostedWork(
     OwnedMorsel morsel) {
-  const uint64_t jobId = morsel.jobId_;
+  const uint64_t jobId = morsel.jobId();
   return [this, jobId, morsel = std::move(morsel)]() mutable {
     try {
       runPostedMorsel(std::move(morsel));
@@ -350,7 +350,7 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
     }
     OwnedMorsel morsel = std::move(*best);
     pendingAdmission_.erase(best);
-    accountOutstandingUnsafe(morsel.jobId_);
+    accountOutstandingUnsafe(morsel.jobId());
     readyToPost.push_back(std::move(morsel));
   }
   return readyToPost;
@@ -364,7 +364,7 @@ void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
   auto targetJobState = std::move(morsel.jobState_);
   const size_t targetMorselIndex = morsel.morselIndex_;
   const uint64_t submissionEpoch = morsel.submissionEpoch_;
-  const uint64_t jobId = morsel.jobId_;
+  const uint64_t jobId = morsel.jobId();
   const uint64_t leaseEpoch = demandEpoch_.load(std::memory_order_relaxed);
   const uint64_t leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
   totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
@@ -430,7 +430,7 @@ void ElasticExportScheduler::workerLoop() {
       targetJobState = std::move(morsel.jobState_);
       targetMorselIndex = morsel.morselIndex_;
       submissionEpoch = morsel.submissionEpoch_;
-      jobId = morsel.jobId_;
+      jobId = morsel.jobId();
 
       leaseEpoch = demandEpoch_.load(std::memory_order_relaxed);
       leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);

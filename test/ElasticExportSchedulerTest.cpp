@@ -738,7 +738,7 @@ struct FixedIdJobState : ExportJobStateBase {
 TEST(ElasticExportSchedulerTest, OwnedMorselDerivesJobIdFromState) {
   auto state = std::make_shared<FixedIdJobState>(42);
   OwnedMorsel morsel(state, 7, 3);
-  EXPECT_EQ(morsel.jobId_, 42u);
+  EXPECT_EQ(morsel.jobId(), 42u);
   EXPECT_EQ(morsel.submissionEpoch_, 7u);
   EXPECT_EQ(morsel.morselIndex_, 3u);
   EXPECT_EQ(morsel.jobState_, state);
