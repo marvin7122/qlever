@@ -15,14 +15,21 @@
 #include <random>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "util/StreamingBufferWriter.h"
 
 using ad_utility::StreamingBufferWriter;
 
-// Statically verify compliance with the InvariantStatefulClass concept.
-static_assert(ad_utility::InvariantStatefulClass<StreamingBufferWriter>);
+// The invariant-framework concept was removed from the tree, so verify the
+// stateful-writer properties directly: the writer is nothrow-movable but
+// never copied, so buffer ownership cannot alias, and the fence never throws.
+static_assert(std::is_nothrow_move_constructible_v<StreamingBufferWriter>);
+static_assert(std::is_nothrow_move_assignable_v<StreamingBufferWriter>);
+static_assert(!std::is_copy_constructible_v<StreamingBufferWriter>);
+static_assert(!std::is_copy_assignable_v<StreamingBufferWriter>);
+static_assert(noexcept(StreamingBufferWriter::sfence()));
 
 // _____________________________________________________________________________
 TEST(StreamingBufferWriterTest, BasicStreamingWriteAndFlush) {
