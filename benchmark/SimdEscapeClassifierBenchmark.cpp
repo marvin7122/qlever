@@ -29,6 +29,14 @@ using namespace ad_benchmark;
 
 constexpr size_t targetBytesPerMeasurement = 64 * 1024 * 1024;
 
+// Prevent dead-code elimination of benchmark computations.
+template <typename T>
+inline void escapeSink(T&& val) {
+#if defined(__GNUC__) || defined(__clang__)
+  asm volatile("" : "+r,m"(val) : : "memory");
+#endif
+}
+
 template <EscapeFormat Format, bool UseSimd>
 double measure(const std::vector<std::string>& inputs, size_t length) {
   const size_t repetitions =
@@ -45,6 +53,7 @@ double measure(const std::vector<std::string>& inputs, size_t length) {
     }
   }
   const auto elapsed = std::chrono::steady_clock::now() - start;
+  escapeSink(checksum);
   const double bytes =
       static_cast<double>(repetitions * inputs.size() * length);
   const double nanoseconds =
@@ -52,24 +61,29 @@ double measure(const std::vector<std::string>& inputs, size_t length) {
   return nanoseconds / bytes;
 }
 
-// `fmt.format` in the loop below is a runtime value and therefore cannot be
-// used as a template argument for `measure`. Dispatch to the matching
-// instantiation explicitly and return the {scalar, simd} measurements.
-std::pair<double, double> measureBoth(EscapeFormat format,
-                                      const std::vector<std::string>& inputs,
-                                      size_t length) {
-  switch (format) {
-    case EscapeFormat::Csv:
-      return {measure<EscapeFormat::Csv, false>(inputs, length),
-              measure<EscapeFormat::Csv, true>(inputs, length)};
-    case EscapeFormat::Tsv:
-      return {measure<EscapeFormat::Tsv, false>(inputs, length),
-              measure<EscapeFormat::Tsv, true>(inputs, length)};
-    case EscapeFormat::Turtle:
-      return {measure<EscapeFormat::Turtle, false>(inputs, length),
-              measure<EscapeFormat::Turtle, true>(inputs, length)};
+// Register one scalar and one SIMD entry per input length. Each entry times
+// a lambda that performs the actual measurement (the framework records the
+// lambda execution time, so registering precomputed values would record
+// ~0ns). Speedup is derived offline from the two entries.
+template <EscapeFormat Format>
+void runLengths(BenchmarkResults& results, std::string_view name, char escape,
+                const std::array<size_t, 14>& lengths) {
+  for (const size_t length : lengths) {
+    std::vector<std::string> inputs(4096, std::string(length, 'a'));
+    for (size_t index = 0; index < inputs.size(); index += 12) {
+      inputs[index][length / 2] = escape;
+    }
+    std::string measurementName =
+        std::string{name} + "," + std::to_string(length);
+    results.addMeasurement(measurementName + "_scalar_ns_per_byte",
+                           [&inputs, length]() {
+                             escapeSink(measure<Format, false>(inputs, length));
+                           });
+    results.addMeasurement(measurementName + "_simd_ns_per_byte",
+                           [&inputs, length]() {
+                             escapeSink(measure<Format, true>(inputs, length));
+                           });
   }
-  AD_FAIL();
 }
 
 class BMSimdEscapeClassifier : public BenchmarkInterface {
@@ -82,37 +96,9 @@ class BMSimdEscapeClassifier : public BenchmarkInterface {
     constexpr std::array<size_t, 14> lengths{10, 16,  24,  31,  32,  48,  64,
                                              96, 128, 192, 250, 256, 512, 1024};
 
-    struct FormatInfo {
-      EscapeFormat format;
-      std::string_view name;
-      char escape;
-    };
-
-    const std::array<FormatInfo, 3> formats{
-        FormatInfo{EscapeFormat::Turtle, "turtle", '"'},
-        FormatInfo{EscapeFormat::Csv, "csv", ','},
-        FormatInfo{EscapeFormat::Tsv, "tsv", '\t'}};
-
-    for (const auto& fmt : formats) {
-      for (const size_t length : lengths) {
-        std::vector<std::string> inputs(4096, std::string(length, 'a'));
-        for (size_t index = 0; index < inputs.size(); index += 12) {
-          inputs[index][length / 2] = fmt.escape;
-        }
-
-        const auto [scalar, simd] = measureBoth(fmt.format, inputs, length);
-
-        std::string measurementName =
-            fmt.name.data() + std::string(",") + std::to_string(length);
-
-        results.addMeasurement(measurementName + "_scalar_ns_per_byte",
-                               [scalar]() { (void)scalar; });
-        results.addMeasurement(measurementName + "_simd_ns_per_byte",
-                               [simd]() { (void)simd; });
-        results.addMeasurement(measurementName + "_simd_speedup",
-                               [scalar, simd]() { (void)(scalar / simd); });
-      }
-    }
+    runLengths<EscapeFormat::Turtle>(results, "turtle", '"', lengths);
+    runLengths<EscapeFormat::Csv>(results, "csv", ',', lengths);
+    runLengths<EscapeFormat::Tsv>(results, "tsv", '\t', lengths);
 
     return results;
   }

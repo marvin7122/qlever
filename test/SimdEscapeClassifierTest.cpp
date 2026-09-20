@@ -49,6 +49,25 @@ TEST(SimdEscapeClassifierTest, ScalarAndSimdAgreeAtBoundaries) {
             std::string_view::npos);
 }
 
+TEST(SimdEscapeClassifierTest, ScalarAndSimdAgreeForEveryEscapeCharacter) {
+  for (char escape : {'"', ',', '\r', '\n'}) {
+    expectScalarAndSimdAgree<EscapeFormat::Csv>(escape);
+  }
+  for (char escape : {'\t', '\n', '\r', '\\'}) {
+    expectScalarAndSimdAgree<EscapeFormat::Tsv>(escape);
+  }
+  for (char escape : {'"', '\\', '\n', '\r'}) {
+    expectScalarAndSimdAgree<EscapeFormat::Turtle>(escape);
+  }
+}
+
+TEST(SimdEscapeClassifierTest, CopyAndEscapeMatchesReference) {
+  EXPECT_EQ(escaped<EscapeFormat::Csv>("\"x,y\r\n"), "\"\"x,y\r\n");
+  EXPECT_EQ(escaped<EscapeFormat::Tsv>("\ta\nb\rc\\"), "\\ta\\nb\\rc\\\\");
+  EXPECT_EQ(escaped<EscapeFormat::Turtle>("\"a\\b\nc\rd"),
+            "\\\"a\\\\b\\nc\\rd");
+}
+
 TEST(SimdEscapeClassifierTest, ClassifiesEveryPositionInAChunk) {
   std::string input(32, 'a');
   EXPECT_EQ(SimdEscapeClassifier::classify32<EscapeFormat::Turtle>(
@@ -86,7 +105,7 @@ TEST(SimdEscapeClassifierTest, CopiesAndEscapesAcrossChunkBoundaries) {
   EXPECT_EQ(escaped<EscapeFormat::Turtle>(turtle), expected);
 
   EXPECT_EQ(escaped<EscapeFormat::Csv>("a,\"b\n"), "a,\"\"b\n");
-  EXPECT_EQ(escaped<EscapeFormat::Tsv>("a\tb\nc\\d\r"), "a b\\nc\\\\d\\r");
+  EXPECT_EQ(escaped<EscapeFormat::Tsv>("a\tb\nc\\d\r"), "a\\tb\\nc\\\\d\\r");
   EXPECT_EQ(escaped<EscapeFormat::Tsv>(""), "");
 }
 

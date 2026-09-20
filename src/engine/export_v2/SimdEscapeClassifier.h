@@ -123,8 +123,11 @@ scanChunkAvx2(const char* data) {
 #endif
 
 template <EscapeFormat Format>
-char* emitEscaped(char character, char* output) {
+[[nodiscard]] char* emitEscaped(char character, char* output) {
   if constexpr (Format == EscapeFormat::Csv) {
+    // Quote doubling only; the caller must wrap fields containing `,`, `\r`
+    // or `\n` in double quotes for the output to be valid CSV. Byte-oriented:
+    // non-ASCII bytes pass through untouched.
     if (character == '"') {
       *output++ = '"';
       *output++ = '"';
@@ -133,7 +136,8 @@ char* emitEscaped(char character, char* output) {
     }
   } else if constexpr (Format == EscapeFormat::Tsv) {
     if (character == '\t') {
-      *output++ = ' ';
+      *output++ = '\\';
+      *output++ = 't';
     } else if (character == '\\') {
       *output++ = '\\';
       *output++ = '\\';
@@ -207,6 +211,9 @@ class SimdEscapeClassifier {
   template <EscapeFormat Format>
   [[nodiscard]] static ql::span<char> copyAndEscape(
       std::string_view input, ql::span<char> outputBuffer) {
+    // Worst case every input byte expands to two output bytes (quote
+    // doubling / backslash escapes), so the output buffer must hold at
+    // least twice the input size even when nothing needs escaping.
     AD_CONTRACT_CHECK(input.size() <= outputBuffer.size() / 2);
     if (input.empty()) {
       return {outputBuffer.data(), 0};
