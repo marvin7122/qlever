@@ -158,35 +158,34 @@ CPP_template(typename UnderlyingVocabulary,
         });
   }
 
-  // Batch-read the compressed words from the underlying vocabulary, then
-  // decompress each word with the decoder of its block. The result order
-  // matches `indices`. If the underlying vocabulary has holes, resolve each
-  // index individually like `operator[]` does: holes have no word and no
-  // decoder, so they must report the placeholder instead of being
-  // decompressed. Batching would buy nothing here anyway because the
-  // underlying vocabulary is in memory.
+  //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     if constexpr (underlyingHasHoles) {
+      // Indices that are holes report a placeholder; keep the per-index path
+      // that implements that mapping.
       return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    } else {
+      // Fetch the compressed words in one batch through the underlying
+      // vocabulary (an on-disk underlying vocabulary serves this from its
+      // io_uring ring pool), then decompress each word with the decoder for
+      // its block. The underlying lookup preserves order, so result `i`
+      // belongs to `indices[i]`, exactly like the sequential path.
+      auto compressed = underlyingVocabulary_.lookupBatch(indices);
+      auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+      data->buffer().reserve(indices.size());
+      for (size_t i = 0; i < indices.size(); ++i) {
+        data->buffer().push_back(compressionWrapper_.decompress(
+            (*compressed)[i], getDecoderIdx(indices[i])));
+      }
+      // Build the views after the buffer is complete, so no reallocation can
+      // move the bytes the views point into.
+      data->views().reserve(data->buffer().size());
+      for (const auto& word : data->buffer()) {
+        data->views().emplace_back(word);
+      }
+      return StringVectorVocabBatchLookupData::asResult(std::move(data));
     }
-    auto compressed = underlyingVocabulary_.lookupBatch(indices);
-    AD_CORRECTNESS_CHECK(compressed->size() == indices.size());
-
-    auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
-    std::vector<std::string_view> views;
-    views.reserve(indices.size());
-
-    for (const auto& idxAndWord : ::ranges::views::zip(indices, *compressed)) {
-      const auto& [idx, word] = idxAndWord;
-      std::string decompressed =
-          compressionWrapper_.decompress(word, getDecoderIdx(idx));
-      char* mem = static_cast<char*>(buffer->allocate(decompressed.size()));
-      std::memcpy(mem, decompressed.data(), decompressed.size());
-      views.emplace_back(mem, decompressed.size());
-    }
-
-    return makePmrVocabBatchLookupResult(std::move(buffer), std::move(views));
   }
 
   //____________________________________________________________________________

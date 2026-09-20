@@ -60,11 +60,56 @@ class VocabularyInternalExternal {
   // vocabulary.
   auto scanAll() const { return externalVocab_.scanAll(); }
 
-  // Resolve `indices` in request order. Words present in `internalVocab_` are
-  // taken from RAM. The remaining indices are resolved in one
+  // Resolve `indices` in request order. Words present in `internalVocab_`
+  // are taken from RAM. The remaining indices are resolved in one
   // `externalVocab_.lookupBatch` call (the on-disk path). If every index
-  // misses the RAM cache, return that disk result without copying.
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
+  // misses the RAM cache, hand the caller's span straight through to the
+  // on-disk batch lookup without copying the indices or allocating
+  // assembly buffers.
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    AD_CONTRACT_CHECK(!indices.empty());
+    bool allDisk = true;
+    for (size_t idx : indices) {
+      if (internalVocab_[idx].has_value()) {
+        allDisk = false;
+        break;
+      }
+    }
+    if (allDisk) {
+      return externalVocab_.lookupBatch(indices);
+    }
+    // Serve every index from the in-RAM vocabulary when present; batch all
+    // remaining indices into a single lookup on the external (on-disk)
+    // vocabulary, which serves them from its io_uring ring pool. Results keep
+    // input order, exactly like sequential single lookups.
+    auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+    data->buffer().resize(indices.size());
+    std::vector<size_t> missPositions;
+    std::vector<size_t> missIndices;
+    missPositions.reserve(indices.size());
+    missIndices.reserve(indices.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      if (auto hit = internalVocab_[indices[i]]; hit.has_value()) {
+        data->buffer()[i] = std::string{hit.value()};
+      } else {
+        missPositions.push_back(i);
+        missIndices.push_back(indices[i]);
+      }
+    }
+    if (!missIndices.empty()) {
+      auto external = externalVocab_.lookupBatch(missIndices);
+      for (size_t m = 0; m < missIndices.size(); ++m) {
+        data->buffer()[missPositions[m]] = std::string{(*external)[m]};
+      }
+    }
+    // Build the views after the buffer is complete, so no reallocation can
+    // move the bytes the views point into.
+    data->views().reserve(data->buffer().size());
+    for (const auto& word : data->buffer()) {
+      data->views().emplace_back(word);
+    }
+    return StringVectorVocabBatchLookupData::asResult(std::move(data));
+  }
 
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {

@@ -25,62 +25,10 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   return externalVocab_[i];
 }
 
-// _____________________________________________________________________________
-VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
-    ql::span<const size_t> indices) const {
-  AD_CONTRACT_CHECK(!indices.empty());
-
-  // Fast path: every index misses the RAM cache, so hand the caller's span
-  // straight through to the on-disk batch lookup without copying the indices
-  // or allocating assembly buffers.
-  bool allDisk = true;
-  for (size_t idx : indices) {
-    if (internalVocab_[idx].has_value()) {
-      allDisk = false;
-      break;
-    }
-  }
-  if (allDisk) {
-    return externalVocab_.lookupBatch(indices);
-  }
-
-  std::vector<std::string_view> assembled(indices.size());
-  std::vector<size_t> diskIndices;
-  std::vector<size_t> diskSlots;
-  std::vector<size_t> internalIndices;
-  std::vector<size_t> internalSlots;
-  diskIndices.reserve(indices.size());
-  diskSlots.reserve(indices.size());
-  internalIndices.reserve(indices.size());
-  internalSlots.reserve(indices.size());
-
-  for (auto [i, idx] : ::ranges::views::enumerate(indices)) {
-    if (internalVocab_[idx].has_value()) {
-      internalSlots.push_back(static_cast<size_t>(i));
-      internalIndices.push_back(idx);
-    } else {
-      diskSlots.push_back(static_cast<size_t>(i));
-      diskIndices.push_back(idx);
-    }
-  }
-
-  std::vector<VocabBatchOwner> owners;
-  owners.reserve(2);
-  if (!diskIndices.empty()) {
-    auto disk = externalVocab_.lookupBatch(diskIndices);
-    scatterVocabBatchLookupResult(std::move(disk), diskSlots, assembled,
-                                  owners);
-  }
-  if (!internalIndices.empty()) {
-    // The internal words live in `internalVocab_`, which the result must not
-    // reference directly: resolve them into an owning child batch and retain
-    // it, so no view can dangle.
-    auto internal = internalVocab_.lookupBatch(internalIndices);
-    scatterVocabBatchLookupResult(std::move(internal), internalSlots, assembled,
-                                  owners);
-  }
-  return keepAliveVocabBatch(std::move(owners), std::move(assembled));
-}
+// `lookupBatch` is defined inline in the header, next to its contract: the
+// all-RAM-miss fast path hands the span straight to the on-disk lookup,
+// otherwise RAM hits and one disk batch assemble into owned storage with
+// views built after the buffer is complete.
 
 // _____________________________________________________________________________
 VocabularyInternalExternal::WordWriter::WordWriter(const std::string& filename,
