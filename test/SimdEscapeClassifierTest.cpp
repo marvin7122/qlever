@@ -19,6 +19,16 @@ namespace {
 using ql::engine::export_v2::EscapeFormat;
 using ql::engine::export_v2::SimdEscapeClassifier;
 
+// Reference helper used by the tests below; defined before first use.
+template <EscapeFormat Format>
+std::string escaped(std::string_view input) {
+  std::string output(input.size() * 2, '\0');
+  const auto written = SimdEscapeClassifier::copyAndEscape<Format>(
+      input, ql::span<char>{output.data(), output.size()});
+  output.resize(written.size());
+  return output;
+}
+
 template <EscapeFormat Format>
 void expectScalarAndSimdAgree(char escape) {
   for (const size_t length : {1, 15, 16, 31, 32, 33, 63, 64, 65, 250}) {
@@ -83,15 +93,6 @@ TEST(SimdEscapeClassifierTest, ClassifiesEveryPositionInAChunk) {
     EXPECT_EQ(mask.count(), 1);
     input[position] = 'a';
   }
-}
-
-template <EscapeFormat Format>
-std::string escaped(std::string_view input) {
-  std::string output(input.size() * 2, '\0');
-  const auto written = SimdEscapeClassifier::copyAndEscape<Format>(
-      input, ql::span<char>{output.data(), output.size()});
-  output.resize(written.size());
-  return output;
 }
 
 TEST(SimdEscapeClassifierTest, CopiesAndEscapesAcrossChunkBoundaries) {
