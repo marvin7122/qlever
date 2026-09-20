@@ -714,5 +714,42 @@ TEST(SqPollSetup, optInFlagsWithoutSqPollStillServeReads) {
   expectServesReads(false, true);
   expectServesReads(true, true);
 }
+
+// An SQPoll ring must serve a batch larger than the ring exactly like a plain
+// ring. With SQPoll, the poll thread publishes the submission-queue head only
+// after handing off a batch of entries, so without headroom
+// `io_uring_get_sqe` returned `nullptr` although fewer than `ringSize` reads
+// were in flight, and `addBatch` failed on `sqe != nullptr` (observed at ring
+// size 256). Run batches of eight rings' worth of reads at several ring sizes,
+// repeatedly, so the ring is refilled many times while the poller runs.
+TEST(SqPollSetup, sqPollBatchLargerThanRing) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
+    GTEST_SKIP() << "SQPoll setup denied, fallback covered by plain tests";
+  }
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  options.sqThreadIdleMs = 10;
+  constexpr size_t CHUNKSIZE = 4;
+  for (unsigned ringSize : {16u, 64u, 256u}) {
+    ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(ringSize,
+                                                                options);
+    for (size_t repetition = 0; repetition < 10; ++repetition) {
+      SequentialReadScenarioForTesting scenario;
+      for (size_t i = 0; i < 8 * size_t{ringSize}; ++i) {
+        scenario.addRead(
+            std::string(CHUNKSIZE, static_cast<char>('A' + (i % 26))));
+      }
+      auto [tmp, fd] = makeTempFile(scenario.content());
+      manager.wait(scenario.submitTo(manager, fd));
+      EXPECT_THAT(scenario.results(),
+                  ::testing::ElementsAreArray(scenario.expected()))
+          << "ring size " << ringSize << ", repetition " << repetition;
+    }
+  }
+}
 #endif
 }  // namespace
