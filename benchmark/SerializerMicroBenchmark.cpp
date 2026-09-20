@@ -60,10 +60,15 @@ void* operator new(std::size_t size) {
 
 // The global operator new above allocates with malloc, so the matching
 // operator delete must release with free. Compilers cannot prove this pairing
-// (-Wmismatched-new-delete), hence the local suppression for GCC and Clang.
+// (-Wmismatched-new-delete on the declarations, -Wmismatched-dealloc at the
+// free call sites), hence the local suppression for GCC and Clang.
 #if defined(__clang__) || defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#if defined(__GNUC__) && !defined(__clang__)
+// GCC-only: fired at the free() call sites below.
+#pragma GCC diagnostic ignored "-Wmismatched-dealloc"
+#endif
 #endif
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
