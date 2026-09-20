@@ -1552,7 +1552,7 @@ void IndexImpl::applyConfiguration(const nlohmann::json& configuration) {
       std::make_unique<ad_utility::BlankNodeManager>(numBlankNodesTotal);
 
   loadDataMember("encoded-iri-prefixes", encodedIriManager_,
-                 EncodedIriManager{});
+                 ad_utility::vocabulary::EncodedIriManager{});
   loadDataMember("graphNameManager", graphNameManager_,
                  GraphNameManager(std::string(QLEVER_NEW_GRAPH_PREFIX), 1));
 }
@@ -1922,13 +1922,14 @@ Index::NumNormalAndInternal IndexImpl::numDistinctCol0(
 }
 
 // ___________________________________________________________________________
-RdfsVocabulary::AccessReturnType IndexImpl::indexToString(VocabIndex id) const {
+ad_utility::vocabulary::RdfsVocabulary::AccessReturnType
+IndexImpl::indexToString(VocabIndex id) const {
   return vocab_[id];
 }
 
 // ___________________________________________________________________________
-TextVocabulary::AccessReturnType IndexImpl::indexToString(
-    WordVocabIndex id) const {
+ad_utility::vocabulary::TextVocabulary::AccessReturnType
+IndexImpl::indexToString(WordVocabIndex id) const {
   return textVocab_[id];
 }
 
@@ -2008,8 +2009,8 @@ CPP_template_def(typename... NextSorter)(requires(
         if (graph.getDatatype() != Datatype::EncodedVal) {
           return;
         }
-        auto [prefix, payload] =
-            EncodedIriManager::splitIntoPrefixIdxAndDecodedPayload(graph);
+        auto [prefix, payload] = ad_utility::vocabulary::EncodedIriManager::
+            splitIntoPrefixIdxAndDecodedPayload(graph);
         if (prefix != newGraphPrefixIdx) {
           return;
         }
@@ -2137,8 +2138,8 @@ ad_utility::BlankNodeManager* IndexImpl::getBlankNodeManager() const {
 // _____________________________________________________________________________
 void IndexImpl::setPrefixesForEncodedValues(
     std::vector<std::string> prefixesWithoutAngleBrackets) {
-  encodedIriManager_ =
-      EncodedIriManager{std::move(prefixesWithoutAngleBrackets)};
+  encodedIriManager_ = ad_utility::vocabulary::EncodedIriManager{
+      std::move(prefixesWithoutAngleBrackets)};
 }
 
 // _____________________________________________________________________________
