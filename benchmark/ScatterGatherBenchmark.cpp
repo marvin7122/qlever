@@ -27,8 +27,8 @@
 #include <vector>
 
 #include "backports/span.h"
-#include "engine/ScatterGatherArenaStreamer.h"
 #include "engine/FastExportStreamFormatter.h"
+#include "engine/ScatterGatherArenaStreamer.h"
 #include "util/Exception.h"
 #include "util/Log.h"
 #include "util/Timer.h"

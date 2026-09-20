@@ -396,7 +396,6 @@ class FastExportStreamFormatter {
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
                    const qlever::constructExport::EvaluatedTermData& o) {
-
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeTerm(s, format);
       writeChar(' ');
