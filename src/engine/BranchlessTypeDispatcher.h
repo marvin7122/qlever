@@ -177,36 +177,41 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::Double)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#double>", &formatDouble};
 
-  // 4: VocabIndex (IRI by default when formatting raw names)
+  // VocabIndex (IRI by default when formatting raw names)
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 5: LocalVocabIndex
+  // LocalVocabIndex
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 6: TextRecordIndex
+  // SecondaryVocabIndex: same vocabulary-term treatment as the main
+  // vocabularies (an unmapped slot would silently emit nothing).
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+
+  // TextRecordIndex
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 7: Date
+  // Date
   lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
 
-  // 8: GeoPoint
+  // GeoPoint
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
 
-  // 9: WordVocabIndex
+  // WordVocabIndex
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 10: BlankNodeIndex
+  // BlankNodeIndex
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
       TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
 
-  // 11: EncodedVal
+  // EncodedVal
   lut[static_cast<size_t>(Datatype::EncodedVal)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
@@ -232,6 +237,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
@@ -269,6 +276,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
@@ -308,7 +317,7 @@ class BranchlessTypeDispatcher {
   // Returns: Pointer past the last byte written.
   static inline char* dispatchTermFormat(
       ValueId id, std::string_view rawTerm, char* out,
-      const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
+      const LookupTable& lut = kDefaultTypeFormatLut) {
     AD_CONTRACT_CHECK(out != nullptr);
     const uint8_t typeTag =
         static_cast<uint8_t>(id.getBits() >> ValueId::numDataBits) & 0x0F;
@@ -323,7 +332,7 @@ class BranchlessTypeDispatcher {
   // Returns: Total number of bytes written.
   static inline size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
-      char* out, const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
+      char* out, const LookupTable& lut = kDefaultTypeFormatLut) {
     AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
     AD_CONTRACT_CHECK(out != nullptr || ids.empty());
 

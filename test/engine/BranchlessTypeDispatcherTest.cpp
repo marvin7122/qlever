@@ -89,6 +89,17 @@ TEST(BranchlessTypeDispatcherTest, FormatBlankNode) {
   EXPECT_EQ(result, "_:bn9876");
 }
 
+TEST(BranchlessTypeDispatcherTest, FormatSecondaryVocabIndex) {
+  std::array<char, 256> buffer{};
+  auto id = ValueId::makeFromSecondaryVocabIndex(SecondaryVocabIndex::make(7));
+  std::string_view rawTerm = "http://example.org/secondary";
+
+  char* end = BranchlessTypeDispatcher::dispatchTermFormat(
+      id, rawTerm, buffer.data(), BranchlessTypeDispatcher::defaultLut());
+  std::string_view result(buffer.data(), end - buffer.data());
+  EXPECT_EQ(result, "<http://example.org/secondary>");
+}
+
 TEST(BranchlessTypeDispatcherTest, FormatTurtleCompact) {
   std::array<char, 256> buffer{};
   auto idInt = ValueId::makeFromInt(42);

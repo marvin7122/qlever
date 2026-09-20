@@ -32,6 +32,16 @@ using namespace ql::engine;
 namespace {
 
 // _____________________________________________________________________________
+// Copy a string literal into `out` without a magic length: `sizeof` counts
+// the terminator, so `N - 1` is exactly the payload size.
+template <size_t N>
+char* copyLiteral(char* out, const char (&literal)[N]) {
+  static_assert(N >= 1);
+  std::memcpy(out, literal, N - 1);
+  return out + (N - 1);
+}
+
+// _____________________________________________________________________________
 // Linux perf_event hardware branch counter tracker.
 class HardwarePerfCounter {
  private:
@@ -117,83 +127,70 @@ struct BranchingSwitchDispatcher {
       case Datatype::Undefined:
         return out;
       case Datatype::Bool: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         const bool b = id.getBool();
         if (b) {
-          std::memcpy(out, "true", 4);
-          out += 4;
+          out = copyLiteral(out, "true");
         } else {
-          std::memcpy(out, "false", 5);
-          out += 5;
+          out = copyLiteral(out, "false");
         }
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", 45);
-        out += 45;
+        out =
+            copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>");
         return out;
       }
       case Datatype::Int: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         auto [p, ec] = std::to_chars(out, out + 24, id.getInt());
         out = p;
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>", 45);
-        out += 45;
+        out =
+            copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>");
         return out;
       }
       case Datatype::Double: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
         out = p;
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
-        out += 44;
+        out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>");
         return out;
       }
       case Datatype::VocabIndex:
       case Datatype::LocalVocabIndex:
+      case Datatype::SecondaryVocabIndex:
       case Datatype::EncodedVal: {
-        std::memcpy(out, "<", 1);
-        out += 1;
+        out = copyLiteral(out, "<");
         std::memcpy(out, rawTerm.data(), rawTerm.size());
         out += rawTerm.size();
-        std::memcpy(out, ">", 1);
-        out += 1;
+        out = copyLiteral(out, ">");
         return out;
       }
       case Datatype::TextRecordIndex:
       case Datatype::WordVocabIndex: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         std::memcpy(out, rawTerm.data(), rawTerm.size());
         out += rawTerm.size();
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         return out;
       }
       case Datatype::Date: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         auto [str, type] = id.getDate().toStringAndType();
         std::memcpy(out, str.data(), str.size());
         out += str.size();
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", 46);
-        out += 46;
+        out =
+            copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>");
         return out;
       }
       case Datatype::GeoPoint: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         auto [str, type] = id.getGeoPoint().toStringAndType();
         std::memcpy(out, str.data(), str.size());
         out += str.size();
-        std::memcpy(
-            out, "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>", 52);
-        out += 52;
+        out = copyLiteral(
+            out, "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>");
         return out;
       }
       case Datatype::BlankNodeIndex: {
-        std::memcpy(out, "_:bn", 4);
-        out += 4;
+        out = copyLiteral(out, "_:bn");
         auto [p, ec] =
             std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
         out = p;
@@ -223,57 +220,59 @@ struct BranchingIfElseDispatcher {
                                   char* out) noexcept {
     const Datatype dt = id.getDatatype();
     if (dt == Datatype::VocabIndex || dt == Datatype::LocalVocabIndex ||
-        dt == Datatype::EncodedVal) {
-      std::memcpy(out, "<", 1);
-      out += 1;
+        dt == Datatype::SecondaryVocabIndex || dt == Datatype::EncodedVal) {
+      out = copyLiteral(out, "<");
       std::memcpy(out, rawTerm.data(), rawTerm.size());
       out += rawTerm.size();
-      std::memcpy(out, ">", 1);
-      out += 1;
+      out = copyLiteral(out, ">");
       return out;
     } else if (dt == Datatype::TextRecordIndex ||
                dt == Datatype::WordVocabIndex) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       std::memcpy(out, rawTerm.data(), rawTerm.size());
       out += rawTerm.size();
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       return out;
     } else if (dt == Datatype::Int) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       auto [p, ec] = std::to_chars(out, out + 24, id.getInt());
       out = p;
-      std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>", 45);
-      out += 45;
+      out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>");
       return out;
     } else if (dt == Datatype::BlankNodeIndex) {
-      std::memcpy(out, "_:bn", 4);
-      out += 4;
+      out = copyLiteral(out, "_:bn");
       auto [p, ec] = std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
       out = p;
       return out;
     } else if (dt == Datatype::Double) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
       out = p;
-      std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
-      out += 44;
+      out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>");
       return out;
     } else if (dt == Datatype::Bool) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       if (id.getBool()) {
-        std::memcpy(out, "true", 4);
-        out += 4;
+        out = copyLiteral(out, "true");
       } else {
-        std::memcpy(out, "false", 5);
-        out += 5;
+        out = copyLiteral(out, "false");
       }
-      std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", 45);
-      out += 45;
+      out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>");
+      return out;
+    } else if (dt == Datatype::Date) {
+      out = copyLiteral(out, "\"");
+      auto [str, type] = id.getDate().toStringAndType();
+      std::memcpy(out, str.data(), str.size());
+      out += str.size();
+      out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>");
+      return out;
+    } else if (dt == Datatype::GeoPoint) {
+      out = copyLiteral(out, "\"");
+      auto [str, type] = id.getGeoPoint().toStringAndType();
+      std::memcpy(out, str.data(), str.size());
+      out += str.size();
+      out = copyLiteral(
+          out, "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>");
       return out;
     }
     return out;
