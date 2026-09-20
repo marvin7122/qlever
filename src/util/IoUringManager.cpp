@@ -178,10 +178,22 @@ void IoUringPolicy::addBatch(int fd,
     if (numInFlightReadRequests_ >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
-      io_uring_submit(&ring_);
+      // TEMPORARY SQPOLL DIAGNOSTIC (remove before merge).
+      std::fprintf(stderr,
+                   "SQE_TRACE submit inFlight=%zu sq_ready=%u sq_space_left=%u\n",
+                   numInFlightReadRequests_, io_uring_sq_ready(&ring_),
+                   io_uring_sq_space_left(&ring_));
+      int submitRes = io_uring_submit(&ring_);
+      std::fprintf(stderr, "SQE_TRACE submitted=%d\n", submitRes);
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
       }
+      std::fprintf(stderr,
+                   "SQE_TRACE drained inFlight=%zu sq_ready=%u "
+                   "sq_space_left=%u\n",
+                   numInFlightReadRequests_, io_uring_sq_ready(&ring_),
+                   io_uring_sq_space_left(&ring_));
+      std::fflush(stderr);
     }
 
     // Claim the next free SQE. The check above guarantees a slot is available,
