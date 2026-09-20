@@ -337,11 +337,11 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
     auto best = pendingAdmission_.end();
     for (auto it = pendingAdmission_.begin(); it != pendingAdmission_.end();
          ++it) {
-      const size_t committed = committedOutstandingUnsafe(it->jobId_);
+      const size_t committed = committedOutstandingUnsafe(it->jobId());
       if (committed >= share) {
         continue;
       }
-      if (best == pendingAdmission_.end() || it->jobId_ < best->jobId_) {
+      if (best == pendingAdmission_.end() || it->jobId() < best->jobId()) {
         best = it;
       }
     }
