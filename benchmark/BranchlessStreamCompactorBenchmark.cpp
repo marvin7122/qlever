@@ -113,16 +113,27 @@ int main() {
 
     for (size_t rep = 0; rep < NUM_REPS; ++rep) {
       auto t0 = std::chrono::high_resolution_clock::now();
-      size_t count = 0;
+      // Compact each column independently with its own predicate, mirroring
+      // the vector path below so both sides measure the same work.
+      size_t c0 = 0, c1 = 0, c2 = 0;
       for (size_t i = 0; i < NUM_ROWS; ++i) {
         if (col0[i].getInt() % 2 == 0) {
-          out0[count] = col0[i];
-          out1[count] = col1[i];
-          out2[count] = col2[i];
-          ++count;
-          escape(out2[count - 1]);
+          out0[c0++] = col0[i];
         }
       }
+      for (size_t i = 0; i < NUM_ROWS; ++i) {
+        if (col1[i].getInt() % 2 == 0) {
+          out1[c1++] = col1[i];
+        }
+      }
+      for (size_t i = 0; i < NUM_ROWS; ++i) {
+        if (col2[i].getInt() % 2 == 0) {
+          out2[c2++] = col2[i];
+        }
+      }
+      escape(out0[c0 > 0 ? c0 - 1 : 0]);
+      escape(out1[c1 > 0 ? c1 - 1 : 0]);
+      escape(out2[c2 > 0 ? c2 - 1 : 0]);
       auto t1 = std::chrono::high_resolution_clock::now();
       scalarTimes.push_back(
           std::chrono::duration<double, std::milli>(t1 - t0).count());

@@ -31,3 +31,65 @@ TEST(BranchlessStreamCompactorTest, CompactEvenNumbers) {
     EXPECT_EQ(output[i], Id::makeFromInt(static_cast<int>(i * 2)));
   }
 }
+
+TEST(BranchlessStreamCompactorTest, EmptyInputReturnsZero) {
+  std::vector<Id> input;
+  std::vector<Id> output(4);
+  size_t count = BranchlessStreamCompactor::compact(
+      input, output, [](Id id) { return id.getInt() % 2 == 0; });
+  EXPECT_EQ(count, 0u);
+}
+
+TEST(BranchlessStreamCompactorTest, AllElementsMatch) {
+  std::vector<Id> input;
+  for (int i = 0; i < 10; ++i) {
+    input.push_back(Id::makeFromInt(2 * i));
+  }
+  std::vector<Id> output(10);
+  size_t count = BranchlessStreamCompactor::compact(
+      input, output, [](Id id) { return id.getInt() % 2 == 0; });
+  EXPECT_EQ(count, 10u);
+  for (size_t i = 0; i < count; ++i) {
+    EXPECT_EQ(output[i], Id::makeFromInt(static_cast<int>(2 * i)));
+  }
+}
+
+TEST(BranchlessStreamCompactorTest, NoElementsMatch) {
+  std::vector<Id> input;
+  for (int i = 0; i < 10; ++i) {
+    input.push_back(Id::makeFromInt(2 * i + 1));
+  }
+  std::vector<Id> output(10);
+  size_t count = BranchlessStreamCompactor::compact(
+      input, output, [](Id id) { return id.getInt() % 2 == 0; });
+  EXPECT_EQ(count, 0u);
+}
+
+TEST(BranchlessStreamCompactorTest, SizeNotDivisibleByFourUsesEpilogue) {
+  // 7 elements: 4 via the unrolled loop, 3 via the scalar epilogue.
+  std::vector<Id> input;
+  for (int i = 0; i < 7; ++i) {
+    input.push_back(Id::makeFromInt(i));
+  }
+  std::vector<Id> output(7);
+  size_t count = BranchlessStreamCompactor::compact(
+      input, output, [](Id id) { return id.getInt() % 2 == 0; });
+  ASSERT_EQ(count, 4u);
+  for (size_t i = 0; i < count; ++i) {
+    EXPECT_EQ(output[i], Id::makeFromInt(static_cast<int>(i * 2)));
+  }
+}
+
+TEST(BranchlessStreamCompactorTest, SmallerThanUnrollWidthSkipsLoop) {
+  // 3 elements: the unrolled loop is skipped entirely.
+  std::vector<Id> input;
+  for (int i = 0; i < 3; ++i) {
+    input.push_back(Id::makeFromInt(i));
+  }
+  std::vector<Id> output(3);
+  size_t count = BranchlessStreamCompactor::compact(
+      input, output, [](Id id) { return id.getInt() % 2 == 0; });
+  ASSERT_EQ(count, 2u);
+  EXPECT_EQ(output[0], Id::makeFromInt(0));
+  EXPECT_EQ(output[1], Id::makeFromInt(2));
+}

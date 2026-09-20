@@ -29,6 +29,9 @@ class BranchlessStreamCompactor {
   // the index on match, so the output must hold at least input.size()
   // elements even when few elements match. Exceptions thrown by the
   // predicate propagate to the caller (compact itself is not noexcept).
+  // The predicate runs up to 4 times per unrolled iteration (plus once per
+  // epilogue element), so keep it cheap (a simple comparison, not I/O or
+  // allocation).
   template <typename Predicate>
   static size_t compact(ql::span<const Id> input, ql::span<Id> output,
                         Predicate&& pred) {
@@ -36,9 +39,10 @@ class BranchlessStreamCompactor {
     size_t outIdx = 0;
     const size_t n = input.size();
 
-    // Process 4 elements per iteration (scalar unroll, not hardware SIMD)
+    // Process 4 elements per iteration (scalar unroll, not hardware SIMD).
+    // `n - i >= 4` avoids any theoretical overflow of `i + 4` near SIZE_MAX.
     size_t i = 0;
-    for (; i + 4 <= n; i += 4) {
+    for (; n - i >= 4; i += 4) {
       bool m0 = pred(input[i]);
       bool m1 = pred(input[i + 1]);
       bool m2 = pred(input[i + 2]);
