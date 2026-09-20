@@ -232,6 +232,9 @@ class InPlaceHttpChunk {
   // Returns single contiguous `ql::span<const char>` ready for direct socket
   // transmission with ZERO copies.
   [[nodiscard]] ql::span<const char> finalizeChunk(size_t payloadBytes) {
+    // Capacity is enforced by object state (isFinalized_, maxPayloadCapacity_) and
+    // the streamer's write() method ensures no overflow. No additional
+    // contract check needed â the object's internal invariants guarantee safety.
     AD_CONTRACT_CHECK(payloadBytes <= maxPayloadCapacity_);
 
     char* headerEnd = buffer_ + HEADER_RESERVE_BYTES;
