@@ -8,7 +8,9 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "backports/span.h"
@@ -35,7 +37,17 @@ class RleVectorStream {
  public:
   void append(Id value, uint32_t length) {
     if (!runs_.empty() && runs_.back().value_ == value) {
-      runs_.back().length_ += length;
+      // Merging two `uint32_t` lengths can wrap past `UINT32_MAX`: saturate
+      // the current run and spill the remainder into a fresh run instead.
+      uint64_t merged = static_cast<uint64_t>(runs_.back().length_) + length;
+      if (merged <= std::numeric_limits<uint32_t>::max()) {
+        runs_.back().length_ = static_cast<uint32_t>(merged);
+      } else {
+        runs_.back().length_ = std::numeric_limits<uint32_t>::max();
+        runs_.push_back(
+            {value, static_cast<uint32_t>(
+                        merged - std::numeric_limits<uint32_t>::max())});
+      }
     } else {
       runs_.push_back({value, length});
     }
@@ -54,9 +66,8 @@ class RleVectorStream {
     AD_CORRECTNESS_CHECK(dest.size() >= totalUncompressedRows_);
     size_t outIdx = 0;
     for (const auto& run : runs_) {
-      for (uint32_t k = 0; k < run.length_; ++k) {
-        dest[outIdx++] = run.value_;
-      }
+      std::fill_n(dest.data() + outIdx, run.length_, run.value_);
+      outIdx += run.length_;
     }
   }
 };
