@@ -99,13 +99,7 @@ class HardwarePerfCounter {
       (void)r1;
       (void)r2;
     } else {
-      branchCount = 0;
-      missCount = 0;
-    }
-#else
-    branchCount = 0;
-    missCount = 0;
-#endif
+      
   }
 };
 
