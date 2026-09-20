@@ -185,7 +185,6 @@ class PinnedArena {
       iovecs_.push_back(
           iovec{.iov_base = basePtr + (i * slotSize_), .iov_len = slotSize_});
     }
-
   }
 
   ~PinnedArena() {
@@ -249,11 +248,11 @@ class PinnedArena {
 // _____________________________________________________________________________
 // Invariant-proven descriptor for a block read request.
 struct BlockReadRequest {
-  uint32_t fileIndex = 0;    // Registered file index (or raw fd if unpinned)
-  uint64_t fileOffset = 0;   // File byte offset (4KB aligned for O_DIRECT)
-  uint32_t bufferIndex = 0;  // Registered buffer index
-  uint32_t bufferOffset = 0;  // Offset within registered buffer (4KB aligned)
-  uint32_t numBytes = 0;      // Number of bytes to read (multiple of 4KB)
+  uint32_t fileIndex = 0;       // Registered file index (or raw fd if unpinned)
+  uint64_t fileOffset = 0;      // File byte offset (4KB aligned for O_DIRECT)
+  uint32_t bufferIndex = 0;     // Registered buffer index
+  uint32_t bufferOffset = 0;    // Offset within registered buffer (4KB aligned)
+  uint32_t numBytes = 0;        // Number of bytes to read (multiple of 4KB)
   char* destination = nullptr;  // Target memory address (4KB aligned)
 
   BlockReadRequest() = default;
@@ -412,8 +411,8 @@ class RegisteredIoUringReader {
         static_cast<unsigned int>(registeredFds_.size()));
     if (ret < 0) {
       registeredFds_.clear();
-      AD_THROW(absl::StrCat("io_uring_register_files failed (errno: ", -ret,
-                            ")"));
+      AD_THROW(
+          absl::StrCat("io_uring_register_files failed (errno: ", -ret, ")"));
     }
     filesRegistered_ = true;
 #else
@@ -456,8 +455,8 @@ class RegisteredIoUringReader {
         static_cast<unsigned int>(registeredIovecs_.size()));
     if (ret < 0) {
       registeredIovecs_.clear();
-      AD_THROW(absl::StrCat("io_uring_register_buffers failed (errno: ", -ret,
-                            ")"));
+      AD_THROW(
+          absl::StrCat("io_uring_register_buffers failed (errno: ", -ret, ")"));
     }
     buffersRegistered_ = true;
 #else
@@ -499,7 +498,8 @@ class RegisteredIoUringReader {
     inFlightByBatchId_[batchId] = requests.size();
 
     for (const auto& req : requests) {
-      // If submission queue is saturated, flush and drain completions to free slots
+      // If submission queue is saturated, flush and drain completions to free
+      // slots
       if (numInFlightRequests_ >= config_.ringEntries) {
         io_uring_submit(&ring_);
         while (numInFlightRequests_ >= config_.ringEntries) {
@@ -666,8 +666,8 @@ class RegisteredIoUringReader {
                             ")"));
     }
     if (static_cast<size_t>(res) != meta.expectedBytes) {
-      AD_THROW(absl::StrCat("io_uring short read: expected ", meta.expectedBytes,
-                            " got ", res));
+      AD_THROW(absl::StrCat("io_uring short read: expected ",
+                            meta.expectedBytes, " got ", res));
     }
 
     auto batchIt = inFlightByBatchId_.find(meta.batchId);

@@ -43,7 +43,8 @@ inline uint64_t readCpuCycles() noexcept {
 }
 
 // _____________________________________________________________________________
-// Benchmark suite comparing scalar byte-by-byte writes vs SWAR 64-bit delimiter packing
+// Benchmark suite comparing scalar byte-by-byte writes vs SWAR 64-bit delimiter
+// packing
 class SwarDelimiterBenchmark : public BenchmarkInterface {
  private:
   // Pre-allocated recycling streaming buffer (64 MB) to prevent cache thrashing
@@ -53,7 +54,8 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
   SwarDelimiterBenchmark() : outputBuffer_(64 * 1024 * 1024) {}
 
   std::string name() const final {
-    return "SWAR Delimiter Packing vs Scalar Serialization Micro-Benchmark (5,000,000 rows)";
+    return "SWAR Delimiter Packing vs Scalar Serialization Micro-Benchmark "
+           "(5,000,000 rows)";
   }
 
   BenchmarkResults runAllBenchmarks() final {
@@ -84,7 +86,8 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
     // =========================================================================
     {
       auto& group = results.addGroup(
-          "1. N-Triples IRI Row Serialization (5,000,000 rows, <s> <p> <o> .\\n)");
+          "1. N-Triples IRI Row Serialization (5,000,000 rows, <s> <p> <o> "
+          ".\\n)");
 
       // 1.1 Scalar byte-by-byte writes (11 scalar stores per row)
       {
@@ -92,51 +95,58 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
         uint64_t startCycles = readCpuCycles();
         auto start = std::chrono::high_resolution_clock::now();
 
-        auto& m = group.addMeasurement("Scalar 1-byte stores (11 stores/row)", [&]() {
-          char* out = bufStart;
-          for (size_t i = 0; i < NUM_ROWS; ++i) {
-            if (out >= bufLimit) {
+        auto& m =
+            group.addMeasurement("Scalar 1-byte stores (11 stores/row)", [&]() {
+              char* out = bufStart;
+              for (size_t i = 0; i < NUM_ROWS; ++i) {
+                if (out >= bufLimit) {
+                  totalBytesWritten += static_cast<size_t>(out - bufStart);
+                  out = bufStart;
+                }
+                *out++ = '<';
+                std::memcpy(out, sub.data(), sub.size());
+                out += sub.size();
+                *out++ = '>';
+                *out++ = ' ';
+                *out++ = '<';
+                std::memcpy(out, pred.data(), pred.size());
+                out += pred.size();
+                *out++ = '>';
+                *out++ = ' ';
+                *out++ = '<';
+                std::memcpy(out, obj.data(), obj.size());
+                out += obj.size();
+                *out++ = '>';
+                *out++ = ' ';
+                *out++ = '.';
+                *out++ = '\n';
+              }
               totalBytesWritten += static_cast<size_t>(out - bufStart);
-              out = bufStart;
-            }
-            *out++ = '<';
-            std::memcpy(out, sub.data(), sub.size());
-            out += sub.size();
-            *out++ = '>';
-            *out++ = ' ';
-            *out++ = '<';
-            std::memcpy(out, pred.data(), pred.size());
-            out += pred.size();
-            *out++ = '>';
-            *out++ = ' ';
-            *out++ = '<';
-            std::memcpy(out, obj.data(), obj.size());
-            out += obj.size();
-            *out++ = '>';
-            *out++ = ' ';
-            *out++ = '.';
-            *out++ = '\n';
-          }
-          totalBytesWritten += static_cast<size_t>(out - bufStart);
-          return totalBytesWritten;
-        });
+              return totalBytesWritten;
+            });
 
         auto end = std::chrono::high_resolution_clock::now();
         uint64_t endCycles = readCpuCycles();
-        uint64_t elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 end - start)
-                                 .count();
-        uint64_t totalCycles = (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
+        uint64_t elapsedNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+                .count();
+        uint64_t totalCycles =
+            (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
 
         double throughputMRowsPerSec =
-            (static_cast<double>(NUM_ROWS) / (static_cast<double>(elapsedNs) / 1e9)) /
+            (static_cast<double>(NUM_ROWS) /
+             (static_cast<double>(elapsedNs) / 1e9)) /
             1e6;
-        double cyclesPerRow = static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
-        double latencyNsPerRow = static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
-        double totalMbWritten = static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
+        double cyclesPerRow =
+            static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
+        double latencyNsPerRow =
+            static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
+        double totalMbWritten =
+            static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
 
         m.metadata().addKeyValuePair("rows-processed", NUM_ROWS);
-        m.metadata().addKeyValuePair("throughput-m-rows-per-sec", throughputMRowsPerSec);
+        m.metadata().addKeyValuePair("throughput-m-rows-per-sec",
+                                     throughputMRowsPerSec);
         m.metadata().addKeyValuePair("cycles-per-row", cyclesPerRow);
         m.metadata().addKeyValuePair("latency-ns-per-row", latencyNsPerRow);
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);
@@ -176,20 +186,26 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
 
         auto end = std::chrono::high_resolution_clock::now();
         uint64_t endCycles = readCpuCycles();
-        uint64_t elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 end - start)
-                                 .count();
-        uint64_t totalCycles = (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
+        uint64_t elapsedNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+                .count();
+        uint64_t totalCycles =
+            (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
 
         double throughputMRowsPerSec =
-            (static_cast<double>(NUM_ROWS) / (static_cast<double>(elapsedNs) / 1e9)) /
+            (static_cast<double>(NUM_ROWS) /
+             (static_cast<double>(elapsedNs) / 1e9)) /
             1e6;
-        double cyclesPerRow = static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
-        double latencyNsPerRow = static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
-        double totalMbWritten = static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
+        double cyclesPerRow =
+            static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
+        double latencyNsPerRow =
+            static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
+        double totalMbWritten =
+            static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
 
         m.metadata().addKeyValuePair("rows-processed", NUM_ROWS);
-        m.metadata().addKeyValuePair("throughput-m-rows-per-sec", throughputMRowsPerSec);
+        m.metadata().addKeyValuePair("throughput-m-rows-per-sec",
+                                     throughputMRowsPerSec);
         m.metadata().addKeyValuePair("cycles-per-row", cyclesPerRow);
         m.metadata().addKeyValuePair("latency-ns-per-row", latencyNsPerRow);
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);
@@ -209,49 +225,56 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
         uint64_t startCycles = readCpuCycles();
         auto start = std::chrono::high_resolution_clock::now();
 
-        auto& m = group.addMeasurement("Scalar 1-byte stores (9 stores/row)", [&]() {
-          char* out = bufStart;
-          for (size_t i = 0; i < NUM_ROWS; ++i) {
-            if (out >= bufLimit) {
+        auto& m =
+            group.addMeasurement("Scalar 1-byte stores (9 stores/row)", [&]() {
+              char* out = bufStart;
+              for (size_t i = 0; i < NUM_ROWS; ++i) {
+                if (out >= bufLimit) {
+                  totalBytesWritten += static_cast<size_t>(out - bufStart);
+                  out = bufStart;
+                }
+                *out++ = '"';
+                std::memcpy(out, csv1.data(), csv1.size());
+                out += csv1.size();
+                *out++ = '"';
+                *out++ = ',';
+                *out++ = '"';
+                std::memcpy(out, csv2.data(), csv2.size());
+                out += csv2.size();
+                *out++ = '"';
+                *out++ = ',';
+                *out++ = '"';
+                std::memcpy(out, csv3.data(), csv3.size());
+                out += csv3.size();
+                *out++ = '"';
+                *out++ = '\n';
+              }
               totalBytesWritten += static_cast<size_t>(out - bufStart);
-              out = bufStart;
-            }
-            *out++ = '"';
-            std::memcpy(out, csv1.data(), csv1.size());
-            out += csv1.size();
-            *out++ = '"';
-            *out++ = ',';
-            *out++ = '"';
-            std::memcpy(out, csv2.data(), csv2.size());
-            out += csv2.size();
-            *out++ = '"';
-            *out++ = ',';
-            *out++ = '"';
-            std::memcpy(out, csv3.data(), csv3.size());
-            out += csv3.size();
-            *out++ = '"';
-            *out++ = '\n';
-          }
-          totalBytesWritten += static_cast<size_t>(out - bufStart);
-          return totalBytesWritten;
-        });
+              return totalBytesWritten;
+            });
 
         auto end = std::chrono::high_resolution_clock::now();
         uint64_t endCycles = readCpuCycles();
-        uint64_t elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 end - start)
-                                 .count();
-        uint64_t totalCycles = (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
+        uint64_t elapsedNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+                .count();
+        uint64_t totalCycles =
+            (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
 
         double throughputMRowsPerSec =
-            (static_cast<double>(NUM_ROWS) / (static_cast<double>(elapsedNs) / 1e9)) /
+            (static_cast<double>(NUM_ROWS) /
+             (static_cast<double>(elapsedNs) / 1e9)) /
             1e6;
-        double cyclesPerRow = static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
-        double latencyNsPerRow = static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
-        double totalMbWritten = static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
+        double cyclesPerRow =
+            static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
+        double latencyNsPerRow =
+            static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
+        double totalMbWritten =
+            static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
 
         m.metadata().addKeyValuePair("rows-processed", NUM_ROWS);
-        m.metadata().addKeyValuePair("throughput-m-rows-per-sec", throughputMRowsPerSec);
+        m.metadata().addKeyValuePair("throughput-m-rows-per-sec",
+                                     throughputMRowsPerSec);
         m.metadata().addKeyValuePair("cycles-per-row", cyclesPerRow);
         m.metadata().addKeyValuePair("latency-ns-per-row", latencyNsPerRow);
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);
@@ -291,20 +314,26 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
 
         auto end = std::chrono::high_resolution_clock::now();
         uint64_t endCycles = readCpuCycles();
-        uint64_t elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 end - start)
-                                 .count();
-        uint64_t totalCycles = (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
+        uint64_t elapsedNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+                .count();
+        uint64_t totalCycles =
+            (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
 
         double throughputMRowsPerSec =
-            (static_cast<double>(NUM_ROWS) / (static_cast<double>(elapsedNs) / 1e9)) /
+            (static_cast<double>(NUM_ROWS) /
+             (static_cast<double>(elapsedNs) / 1e9)) /
             1e6;
-        double cyclesPerRow = static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
-        double latencyNsPerRow = static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
-        double totalMbWritten = static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
+        double cyclesPerRow =
+            static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
+        double latencyNsPerRow =
+            static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
+        double totalMbWritten =
+            static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
 
         m.metadata().addKeyValuePair("rows-processed", NUM_ROWS);
-        m.metadata().addKeyValuePair("throughput-m-rows-per-sec", throughputMRowsPerSec);
+        m.metadata().addKeyValuePair("throughput-m-rows-per-sec",
+                                     throughputMRowsPerSec);
         m.metadata().addKeyValuePair("cycles-per-row", cyclesPerRow);
         m.metadata().addKeyValuePair("latency-ns-per-row", latencyNsPerRow);
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);
@@ -312,11 +341,13 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
     }
 
     // =========================================================================
-    // Group 3: Pure Delimiter Micro-Benchmark (5,000,000 row delimiter transitions)
+    // Group 3: Pure Delimiter Micro-Benchmark (5,000,000 row delimiter
+    // transitions)
     // =========================================================================
     {
       auto& group = results.addGroup(
-          "3. Pure Delimiter Writing Micro-Benchmark (5,000,000 rows, zero payload copy)");
+          "3. Pure Delimiter Writing Micro-Benchmark (5,000,000 rows, zero "
+          "payload copy)");
 
       // 3.1 Scalar pure delimiter writes
       {
@@ -349,20 +380,26 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
 
         auto end = std::chrono::high_resolution_clock::now();
         uint64_t endCycles = readCpuCycles();
-        uint64_t elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 end - start)
-                                 .count();
-        uint64_t totalCycles = (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
+        uint64_t elapsedNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+                .count();
+        uint64_t totalCycles =
+            (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
 
         double throughputMRowsPerSec =
-            (static_cast<double>(NUM_ROWS) / (static_cast<double>(elapsedNs) / 1e9)) /
+            (static_cast<double>(NUM_ROWS) /
+             (static_cast<double>(elapsedNs) / 1e9)) /
             1e6;
-        double cyclesPerRow = static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
-        double latencyNsPerRow = static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
-        double totalMbWritten = static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
+        double cyclesPerRow =
+            static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
+        double latencyNsPerRow =
+            static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
+        double totalMbWritten =
+            static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
 
         m.metadata().addKeyValuePair("rows-processed", NUM_ROWS);
-        m.metadata().addKeyValuePair("throughput-m-rows-per-sec", throughputMRowsPerSec);
+        m.metadata().addKeyValuePair("throughput-m-rows-per-sec",
+                                     throughputMRowsPerSec);
         m.metadata().addKeyValuePair("cycles-per-row", cyclesPerRow);
         m.metadata().addKeyValuePair("latency-ns-per-row", latencyNsPerRow);
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);
@@ -375,7 +412,8 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
         auto start = std::chrono::high_resolution_clock::now();
 
         auto& m = group.addMeasurement(
-            "SwarDelimiterPacker pure delimiter writing (3 64-bit stores/row)", [&]() {
+            "SwarDelimiterPacker pure delimiter writing (3 64-bit stores/row)",
+            [&]() {
               char* out = bufStart;
               for (size_t i = 0; i < NUM_ROWS; ++i) {
                 if (out >= bufLimit) {
@@ -395,20 +433,26 @@ class SwarDelimiterBenchmark : public BenchmarkInterface {
 
         auto end = std::chrono::high_resolution_clock::now();
         uint64_t endCycles = readCpuCycles();
-        uint64_t elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 end - start)
-                                 .count();
-        uint64_t totalCycles = (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
+        uint64_t elapsedNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+                .count();
+        uint64_t totalCycles =
+            (endCycles >= startCycles) ? (endCycles - startCycles) : 0;
 
         double throughputMRowsPerSec =
-            (static_cast<double>(NUM_ROWS) / (static_cast<double>(elapsedNs) / 1e9)) /
+            (static_cast<double>(NUM_ROWS) /
+             (static_cast<double>(elapsedNs) / 1e9)) /
             1e6;
-        double cyclesPerRow = static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
-        double latencyNsPerRow = static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
-        double totalMbWritten = static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
+        double cyclesPerRow =
+            static_cast<double>(totalCycles) / static_cast<double>(NUM_ROWS);
+        double latencyNsPerRow =
+            static_cast<double>(elapsedNs) / static_cast<double>(NUM_ROWS);
+        double totalMbWritten =
+            static_cast<double>(totalBytesWritten) / (1024.0 * 1024.0);
 
         m.metadata().addKeyValuePair("rows-processed", NUM_ROWS);
-        m.metadata().addKeyValuePair("throughput-m-rows-per-sec", throughputMRowsPerSec);
+        m.metadata().addKeyValuePair("throughput-m-rows-per-sec",
+                                     throughputMRowsPerSec);
         m.metadata().addKeyValuePair("cycles-per-row", cyclesPerRow);
         m.metadata().addKeyValuePair("latency-ns-per-row", latencyNsPerRow);
         m.metadata().addKeyValuePair("total-mb-written", totalMbWritten);

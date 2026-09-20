@@ -23,33 +23,39 @@ namespace ad_utility {
 // _____________________________________________________________________________
 // Helper to pack up to 8 characters from a string view into a 64-bit unsigned
 // integer using little-endian byte ordering.
-[[nodiscard]] constexpr uint64_t packDelimPattern(std::string_view sv) noexcept {
+[[nodiscard]] constexpr uint64_t packDelimPattern(
+    std::string_view sv) noexcept {
   uint64_t val = 0;
   const size_t limit = sv.size() < 8 ? sv.size() : 8;
   for (size_t i = 0; i < limit; ++i) {
-    val |= (static_cast<uint64_t>(static_cast<unsigned char>(sv[i])) << (i * 8));
+    val |=
+        (static_cast<uint64_t>(static_cast<unsigned char>(sv[i])) << (i * 8));
   }
   return val;
 }
 
 // _____________________________________________________________________________
 // Helper to pack up to 4 characters into a 32-bit unsigned integer.
-[[nodiscard]] constexpr uint32_t packDelimPattern32(std::string_view sv) noexcept {
+[[nodiscard]] constexpr uint32_t packDelimPattern32(
+    std::string_view sv) noexcept {
   uint32_t val = 0;
   const size_t limit = sv.size() < 4 ? sv.size() : 4;
   for (size_t i = 0; i < limit; ++i) {
-    val |= (static_cast<uint32_t>(static_cast<unsigned char>(sv[i])) << (i * 8));
+    val |=
+        (static_cast<uint32_t>(static_cast<unsigned char>(sv[i])) << (i * 8));
   }
   return val;
 }
 
 // _____________________________________________________________________________
 // Helper to pack up to 2 characters into a 16-bit unsigned integer.
-[[nodiscard]] constexpr uint16_t packDelimPattern16(std::string_view sv) noexcept {
+[[nodiscard]] constexpr uint16_t packDelimPattern16(
+    std::string_view sv) noexcept {
   uint16_t val = 0;
   const size_t limit = sv.size() < 2 ? sv.size() : 2;
   for (size_t i = 0; i < limit; ++i) {
-    val |= (static_cast<uint16_t>(static_cast<unsigned char>(sv[i])) << (i * 8));
+    val |=
+        (static_cast<uint16_t>(static_cast<unsigned char>(sv[i])) << (i * 8));
   }
   return val;
 }
@@ -99,16 +105,16 @@ class SwarDelimiterPacker {
  public:
   // ___________________________________________________________________________
   // Core Store Intrinsics:
-  // Performs an unaligned 64-bit store of `delimPattern` into `out` and advances
-  // the pointer by `len` bytes.
-  // Preconditions:
+  // Performs an unaligned 64-bit store of `delimPattern` into `out` and
+  // advances the pointer by `len` bytes. Preconditions:
   // - `out` must not be nullptr.
   // - `out` must point to a buffer with at least 8 bytes of writable capacity.
   // - `len` must be <= 8.
   //
-  // Compiles to a single unaligned 64-bit store instruction (e.g. `mov [rdi], rsi`)
-  // with zero branching.
-  [[nodiscard]] static inline char* writeDelim64(char* out, uint64_t delimPattern,
+  // Compiles to a single unaligned 64-bit store instruction (e.g. `mov [rdi],
+  // rsi`) with zero branching.
+  [[nodiscard]] static inline char* writeDelim64(char* out,
+                                                 uint64_t delimPattern,
                                                  size_t len) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 8);
@@ -118,8 +124,8 @@ class SwarDelimiterPacker {
 
   // Compile-time fixed-length overload for maximum compiler optimization.
   template <size_t Len>
-  [[nodiscard]] static inline char* writeDelim64(char* out,
-                                                 uint64_t delimPattern) noexcept {
+  [[nodiscard]] static inline char* writeDelim64(
+      char* out, uint64_t delimPattern) noexcept {
     static_assert(Len <= 8, "SWAR delimiter length must be <= 8 bytes");
     AD_CONTRACT_CHECK(out != nullptr);
     std::memcpy(out, &delimPattern, sizeof(uint64_t));
@@ -127,13 +133,14 @@ class SwarDelimiterPacker {
   }
 
   // Write a strongly typed PackedDelimiter
-  [[nodiscard]] static inline char* writeDelim(char* out,
-                                               const PackedDelimiter& delim) noexcept {
+  [[nodiscard]] static inline char* writeDelim(
+      char* out, const PackedDelimiter& delim) noexcept {
     return writeDelim64(out, delim.pattern(), delim.len());
   }
 
   // 32-bit store intrinsic (writes 4 bytes unaligned, advances by `len` <= 4)
-  [[nodiscard]] static inline char* writeDelim32(char* out, uint32_t delimPattern,
+  [[nodiscard]] static inline char* writeDelim32(char* out,
+                                                 uint32_t delimPattern,
                                                  size_t len) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 4);
@@ -142,7 +149,8 @@ class SwarDelimiterPacker {
   }
 
   // 16-bit store intrinsic (writes 2 bytes unaligned, advances by `len` <= 2)
-  [[nodiscard]] static inline char* writeDelim16(char* out, uint16_t delimPattern,
+  [[nodiscard]] static inline char* writeDelim16(char* out,
+                                                 uint16_t delimPattern,
                                                  size_t len) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 2);
@@ -157,46 +165,70 @@ class SwarDelimiterPacker {
 
   // ___________________________________________________________________________
   // TSV Delimiter Bit Patterns:
-  static constexpr uint64_t TSV_TAB = packDelimPattern("\t");                  // '\t' (1B)
-  static constexpr uint64_t TSV_NEWLINE = packDelimPattern("\n");              // '\n' (1B)
-  static constexpr uint64_t TSV_CRLF = packDelimPattern("\r\n");               // "\r\n" (2B)
-  static constexpr uint64_t TSV_TAB_TAB = packDelimPattern("\t\t");            // "\t\t" (2B)
-  static constexpr uint64_t TSV_TAB_NEWLINE = packDelimPattern("\t\n");        // "\t\n" (2B)
-  static constexpr uint64_t TSV_TAB_CRLF = packDelimPattern("\t\r\n");         // "\t\r\n" (3B)
+  static constexpr uint64_t TSV_TAB = packDelimPattern("\t");      // '\t' (1B)
+  static constexpr uint64_t TSV_NEWLINE = packDelimPattern("\n");  // '\n' (1B)
+  static constexpr uint64_t TSV_CRLF = packDelimPattern("\r\n");  // "\r\n" (2B)
+  static constexpr uint64_t TSV_TAB_TAB =
+      packDelimPattern("\t\t");  // "\t\t" (2B)
+  static constexpr uint64_t TSV_TAB_NEWLINE =
+      packDelimPattern("\t\n");  // "\t\n" (2B)
+  static constexpr uint64_t TSV_TAB_CRLF =
+      packDelimPattern("\t\r\n");  // "\t\r\n" (3B)
 
   // CSV Delimiter Bit Patterns:
-  static constexpr uint64_t CSV_COMMA = packDelimPattern(",");                 // ',' (1B)
-  static constexpr uint64_t CSV_NEWLINE = packDelimPattern("\n");              // '\n' (1B)
-  static constexpr uint64_t CSV_CRLF = packDelimPattern("\r\n");               // "\r\n" (2B)
-  static constexpr uint64_t CSV_QUOTE = packDelimPattern("\"");                // '"' (1B)
-  static constexpr uint64_t CSV_QUOTE_COMMA_QUOTE = packDelimPattern("\",\""); // "\",\"" (3B)
-  static constexpr uint64_t CSV_COMMA_QUOTE = packDelimPattern(",\"");         // ",\"" (2B)
-  static constexpr uint64_t CSV_QUOTE_COMMA = packDelimPattern("\",");         // "\"," (2B)
-  static constexpr uint64_t CSV_QUOTE_NEWLINE = packDelimPattern("\"\n");      // "\"\n" (2B)
-  static constexpr uint64_t CSV_QUOTE_CRLF = packDelimPattern("\"\r\n");       // "\"\r\n" (3B)
-  static constexpr uint64_t CSV_NEWLINE_QUOTE = packDelimPattern("\n\"");      // "\n\"" (2B)
-  static constexpr uint64_t CSV_CRLF_QUOTE = packDelimPattern("\r\n\"");       // "\r\n\"" (3B)
+  static constexpr uint64_t CSV_COMMA = packDelimPattern(",");     // ',' (1B)
+  static constexpr uint64_t CSV_NEWLINE = packDelimPattern("\n");  // '\n' (1B)
+  static constexpr uint64_t CSV_CRLF = packDelimPattern("\r\n");  // "\r\n" (2B)
+  static constexpr uint64_t CSV_QUOTE = packDelimPattern("\"");   // '"' (1B)
+  static constexpr uint64_t CSV_QUOTE_COMMA_QUOTE =
+      packDelimPattern("\",\"");  // "\",\"" (3B)
+  static constexpr uint64_t CSV_COMMA_QUOTE =
+      packDelimPattern(",\"");  // ",\"" (2B)
+  static constexpr uint64_t CSV_QUOTE_COMMA =
+      packDelimPattern("\",");  // "\"," (2B)
+  static constexpr uint64_t CSV_QUOTE_NEWLINE =
+      packDelimPattern("\"\n");  // "\"\n" (2B)
+  static constexpr uint64_t CSV_QUOTE_CRLF =
+      packDelimPattern("\"\r\n");  // "\"\r\n" (3B)
+  static constexpr uint64_t CSV_NEWLINE_QUOTE =
+      packDelimPattern("\n\"");  // "\n\"" (2B)
+  static constexpr uint64_t CSV_CRLF_QUOTE =
+      packDelimPattern("\r\n\"");  // "\r\n\"" (3B)
 
   // Turtle & N-Triples Delimiter Bit Patterns:
-  static constexpr uint64_t SPACE = packDelimPattern(" ");                     // ' ' (1B)
-  static constexpr uint64_t DOT_NEWLINE = packDelimPattern(" .\n");            // " .\n" (3B)
-  static constexpr uint64_t DOT_CRLF = packDelimPattern(" .\r\n");             // " .\r\n" (4B)
-  static constexpr uint64_t SHORT_DOT_NEWLINE = packDelimPattern(".\n");       // ".\n" (2B)
-  static constexpr uint64_t SHORT_DOT_CRLF = packDelimPattern(".\r\n");        // ".\r\n" (3B)
-  static constexpr uint64_t IRI_OPEN = packDelimPattern("<");                  // '<' (1B)
-  static constexpr uint64_t IRI_CLOSE = packDelimPattern(">");                 // '>' (1B)
-  static constexpr uint64_t IRI_CLOSE_SPACE = packDelimPattern("> ");          // "> " (2B)
-  static constexpr uint64_t IRI_CLOSE_SPACE_OPEN = packDelimPattern("> <");    // "> <" (3B)
-  static constexpr uint64_t IRI_CLOSE_SPACE_QUOTE = packDelimPattern("> \"");  // "> \"" (3B)
-  static constexpr uint64_t IRI_CLOSE_DOT_NEWLINE = packDelimPattern("> .\n"); // "> .\n" (4B)
-  static constexpr uint64_t IRI_CLOSE_DOT_CRLF = packDelimPattern("> .\r\n");  // "> .\r\n" (5B)
-  static constexpr uint64_t LITERAL_QUOTE = packDelimPattern("\"");            // '"' (1B)
-  static constexpr uint64_t LITERAL_QUOTE_SPACE = packDelimPattern("\" ");     // "\" " (2B)
-  static constexpr uint64_t LITERAL_QUOTE_SPACE_OPEN = packDelimPattern("\" <"); // "\" <" (3B)
-  static constexpr uint64_t LITERAL_QUOTE_DOT_NEWLINE = packDelimPattern("\" .\n"); // "\" .\n" (4B)
-  static constexpr uint64_t LITERAL_QUOTE_DOT_CRLF = packDelimPattern("\" .\r\n"); // "\" .\r\n" (5B)
-  static constexpr uint64_t SEMICOLON_SPACE = packDelimPattern("; ");          // "; " (2B)
-  static constexpr uint64_t COMMA_SPACE = packDelimPattern(", ");              // ", " (2B)
+  static constexpr uint64_t SPACE = packDelimPattern(" ");  // ' ' (1B)
+  static constexpr uint64_t DOT_NEWLINE =
+      packDelimPattern(" .\n");  // " .\n" (3B)
+  static constexpr uint64_t DOT_CRLF =
+      packDelimPattern(" .\r\n");  // " .\r\n" (4B)
+  static constexpr uint64_t SHORT_DOT_NEWLINE =
+      packDelimPattern(".\n");  // ".\n" (2B)
+  static constexpr uint64_t SHORT_DOT_CRLF =
+      packDelimPattern(".\r\n");                                // ".\r\n" (3B)
+  static constexpr uint64_t IRI_OPEN = packDelimPattern("<");   // '<' (1B)
+  static constexpr uint64_t IRI_CLOSE = packDelimPattern(">");  // '>' (1B)
+  static constexpr uint64_t IRI_CLOSE_SPACE =
+      packDelimPattern("> ");  // "> " (2B)
+  static constexpr uint64_t IRI_CLOSE_SPACE_OPEN =
+      packDelimPattern("> <");  // "> <" (3B)
+  static constexpr uint64_t IRI_CLOSE_SPACE_QUOTE =
+      packDelimPattern("> \"");  // "> \"" (3B)
+  static constexpr uint64_t IRI_CLOSE_DOT_NEWLINE =
+      packDelimPattern("> .\n");  // "> .\n" (4B)
+  static constexpr uint64_t IRI_CLOSE_DOT_CRLF =
+      packDelimPattern("> .\r\n");  // "> .\r\n" (5B)
+  static constexpr uint64_t LITERAL_QUOTE = packDelimPattern("\"");  // '"' (1B)
+  static constexpr uint64_t LITERAL_QUOTE_SPACE =
+      packDelimPattern("\" ");  // "\" " (2B)
+  static constexpr uint64_t LITERAL_QUOTE_SPACE_OPEN =
+      packDelimPattern("\" <");  // "\" <" (3B)
+  static constexpr uint64_t LITERAL_QUOTE_DOT_NEWLINE =
+      packDelimPattern("\" .\n");  // "\" .\n" (4B)
+  static constexpr uint64_t LITERAL_QUOTE_DOT_CRLF =
+      packDelimPattern("\" .\r\n");  // "\" .\r\n" (5B)
+  static constexpr uint64_t SEMICOLON_SPACE =
+      packDelimPattern("; ");                                      // "; " (2B)
+  static constexpr uint64_t COMMA_SPACE = packDelimPattern(", ");  // ", " (2B)
 
   // ___________________________________________________________________________
   // High-Level Pre-configured RDF Triple Transitions:
@@ -209,8 +241,10 @@ class SwarDelimiterPacker {
   // Object IRI closing to Triple terminator: "> .\n" (4B)
   static constexpr PackedDelimiter TRIPLE_O_IRI_END{IRI_CLOSE_DOT_NEWLINE, 4};
   // Object Literal closing quote to Triple terminator: "\" .\n" (4B)
-  static constexpr PackedDelimiter TRIPLE_O_LIT_END{LITERAL_QUOTE_DOT_NEWLINE, 4};
-  // Raw Object (blank node / numeric / boolean) to Triple terminator: " .\n" (3B)
+  static constexpr PackedDelimiter TRIPLE_O_LIT_END{LITERAL_QUOTE_DOT_NEWLINE,
+                                                    4};
+  // Raw Object (blank node / numeric / boolean) to Triple terminator: " .\n"
+  // (3B)
   static constexpr PackedDelimiter TRIPLE_O_RAW_END{DOT_NEWLINE, 3};
 
   // ___________________________________________________________________________
@@ -227,12 +261,15 @@ class SwarDelimiterPacker {
   static constexpr PackedDelimiter DELIM_CSV_NEWLINE{CSV_NEWLINE, 1};
   static constexpr PackedDelimiter DELIM_CSV_CRLF{CSV_CRLF, 2};
   static constexpr PackedDelimiter DELIM_CSV_QUOTE{CSV_QUOTE, 1};
-  static constexpr PackedDelimiter DELIM_CSV_QUOTE_COMMA_QUOTE{CSV_QUOTE_COMMA_QUOTE, 3};
+  static constexpr PackedDelimiter DELIM_CSV_QUOTE_COMMA_QUOTE{
+      CSV_QUOTE_COMMA_QUOTE, 3};
   static constexpr PackedDelimiter DELIM_CSV_COMMA_QUOTE{CSV_COMMA_QUOTE, 2};
   static constexpr PackedDelimiter DELIM_CSV_QUOTE_COMMA{CSV_QUOTE_COMMA, 2};
-  static constexpr PackedDelimiter DELIM_CSV_QUOTE_NEWLINE{CSV_QUOTE_NEWLINE, 2};
+  static constexpr PackedDelimiter DELIM_CSV_QUOTE_NEWLINE{CSV_QUOTE_NEWLINE,
+                                                           2};
   static constexpr PackedDelimiter DELIM_CSV_QUOTE_CRLF{CSV_QUOTE_CRLF, 3};
-  static constexpr PackedDelimiter DELIM_CSV_NEWLINE_QUOTE{CSV_NEWLINE_QUOTE, 2};
+  static constexpr PackedDelimiter DELIM_CSV_NEWLINE_QUOTE{CSV_NEWLINE_QUOTE,
+                                                           2};
 
   // ___________________________________________________________________________
   // Turtle & N-Triples Packed Delimiters:
@@ -243,7 +280,8 @@ class SwarDelimiterPacker {
   static constexpr PackedDelimiter DELIM_IRI_CLOSE{IRI_CLOSE, 1};
   static constexpr PackedDelimiter DELIM_IRI_CLOSE_SPACE{IRI_CLOSE_SPACE, 2};
   static constexpr PackedDelimiter DELIM_LITERAL_QUOTE{LITERAL_QUOTE, 1};
-  static constexpr PackedDelimiter DELIM_LITERAL_QUOTE_SPACE{LITERAL_QUOTE_SPACE, 2};
+  static constexpr PackedDelimiter DELIM_LITERAL_QUOTE_SPACE{
+      LITERAL_QUOTE_SPACE, 2};
 };
 
 }  // namespace ad_utility

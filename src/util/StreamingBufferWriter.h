@@ -47,7 +47,8 @@ class StreamingBufferWriter {
   static constexpr size_t BlockSize = 64;
 
   using AlignedBuffer =
-      std::vector<char, AlignedAllocator<char, std::allocator<char>, Alignment>>;
+      std::vector<char,
+                  AlignedAllocator<char, std::allocator<char>, Alignment>>;
 
  private:
   char* buffer_{nullptr};
@@ -57,7 +58,8 @@ class StreamingBufferWriter {
 
  public:
   // ___________________________________________________________________________
-  // Static Helper: Drain CPU write-combining buffers and enforce store ordering.
+  // Static Helper: Drain CPU write-combining buffers and enforce store
+  // ordering.
   static void sfence() noexcept {
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
     _mm_sfence();
@@ -84,8 +86,9 @@ class StreamingBufferWriter {
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
     // Phase 1: Align destination pointer to 16-byte vector boundary.
     const auto destAddr = reinterpret_cast<uintptr_t>(destPtr);
-    const size_t unalignedHead = (VectorStoreSize - (destAddr & (VectorStoreSize - 1))) &
-                                 (VectorStoreSize - 1);
+    const size_t unalignedHead =
+        (VectorStoreSize - (destAddr & (VectorStoreSize - 1))) &
+        (VectorStoreSize - 1);
     const size_t headBytes = std::min(unalignedHead, count);
 
     if (headBytes > 0) {
@@ -122,8 +125,7 @@ class StreamingBufferWriter {
 
     // Phase 3: Stream any remaining 16-byte aligned pieces.
     while (count >= VectorStoreSize) {
-      const auto v = _mm_loadu_si128(
-          reinterpret_cast<const __m128i*>(srcPtr));
+      const auto v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(srcPtr));
       _mm_stream_si128(reinterpret_cast<__m128i*>(destPtr), v);
       destPtr += VectorStoreSize;
       srcPtr += VectorStoreSize;
@@ -141,7 +143,8 @@ class StreamingBufferWriter {
   }
 
   // ___________________________________________________________________________
-  // Static Helper: Non-temporal streaming memory copy with trailing memory fence.
+  // Static Helper: Non-temporal streaming memory copy with trailing memory
+  // fence.
   static void streamCopy(void* dest, const void* src, size_t count) {
     streamCopyNoFence(dest, src, count);
     sfence();
@@ -153,8 +156,7 @@ class StreamingBufferWriter {
       : buffer_{destinationBuffer.data()},
         capacity_{destinationBuffer.size()},
         bytesWritten_{0},
-        ownedBuffer_{std::nullopt} {
-  }
+        ownedBuffer_{std::nullopt} {}
 
   // ___________________________________________________________________________
   // Construct a writer wrapping a caller-provided memory pointer and capacity.
@@ -169,8 +171,7 @@ class StreamingBufferWriter {
   // ___________________________________________________________________________
   // Construct an owning writer with a 64-byte aligned internal buffer.
   explicit StreamingBufferWriter(size_t initialCapacity)
-      : capacity_{initialCapacity},
-        bytesWritten_{0} {
+      : capacity_{initialCapacity}, bytesWritten_{0} {
     ownedBuffer_.emplace(initialCapacity);
     buffer_ = ownedBuffer_->data();
   }
@@ -226,21 +227,15 @@ class StreamingBufferWriter {
   // `std::span<const char>` overload was deliberately omitted: it is
   // ambiguous with this overload for `std::string` and string literals;
   // span callers can pass `{data.data(), data.size()}`.)
-  void write(std::string_view data) {
-    write(data.data(), data.size());
-  }
+  void write(std::string_view data) { write(data.data(), data.size()); }
 
   // ___________________________________________________________________________
   // Complete the current streaming chunk and drain CPU write-combining buffers.
-  void flush() {
-    sfence();
-  }
+  void flush() { sfence(); }
 
   // ___________________________________________________________________________
   // Reset write position to the beginning of the existing buffer.
-  void reset() noexcept {
-    bytesWritten_ = 0;
-  }
+  void reset() noexcept { bytesWritten_ = 0; }
 
   // ___________________________________________________________________________
   // Retarget the writer to a new caller-provided buffer span.
@@ -259,8 +254,12 @@ class StreamingBufferWriter {
     return capacity_ - bytesWritten_;
   }
   [[nodiscard]] bool empty() const noexcept { return bytesWritten_ == 0; }
-  [[nodiscard]] bool full() const noexcept { return bytesWritten_ == capacity_; }
-  [[nodiscard]] bool isOwner() const noexcept { return ownedBuffer_.has_value(); }
+  [[nodiscard]] bool full() const noexcept {
+    return bytesWritten_ == capacity_;
+  }
+  [[nodiscard]] bool isOwner() const noexcept {
+    return ownedBuffer_.has_value();
+  }
 
   [[nodiscard]] char* currentWritePointer() noexcept {
     return buffer_ + bytesWritten_;

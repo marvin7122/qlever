@@ -68,8 +68,10 @@ struct WikidataStreamDataset {
     ds.objects_.reserve(targetTriples);
 
     std::mt19937 gen(seed);
-    std::poisson_distribution<size_t> runDist(static_cast<double>(avgTriplesPerSubject));
-    std::uniform_int_distribution<size_t> predDist(0, 49);  // 50 common predicates
+    std::poisson_distribution<size_t> runDist(
+        static_cast<double>(avgTriplesPerSubject));
+    std::uniform_int_distribution<size_t> predDist(0,
+                                                   49);  // 50 common predicates
     std::uniform_int_distribution<size_t> objDist(0, 999'999);
 
     // Populate common predicates in vocabulary
@@ -77,8 +79,9 @@ struct WikidataStreamDataset {
     predicateIds.reserve(50);
     for (size_t p = 0; p < 50; ++p) {
       uint64_t idx = ds.vocab_.insert("http://www.wikidata.org/prop/direct/P" +
-                                     std::to_string(p + 1));
-      predicateIds.push_back(ValueId::makeFromVocabIndex(VocabIndex::make(idx)));
+                                      std::to_string(p + 1));
+      predicateIds.push_back(
+          ValueId::makeFromVocabIndex(VocabIndex::make(idx)));
     }
 
     size_t currentSubjectNum = 1;
@@ -100,9 +103,10 @@ struct WikidataStreamDataset {
         ds.predicates_.push_back(predicateIds[pIndex]);
 
         // Object
-        uint64_t objIdx = ds.vocab_.insert(
-            "http://www.wikidata.org/entity/Q" + std::to_string(objDist(gen)));
-        ds.objects_.push_back(ValueId::makeFromVocabIndex(VocabIndex::make(objIdx)));
+        uint64_t objIdx = ds.vocab_.insert("http://www.wikidata.org/entity/Q" +
+                                           std::to_string(objDist(gen)));
+        ds.objects_.push_back(
+            ValueId::makeFromVocabIndex(VocabIndex::make(objIdx)));
       }
     }
 
@@ -167,8 +171,8 @@ struct RleConstantFoldingSerializer {
       return ds.vocab_.lookup(id);
     };
 
-    char* end = formatter.formatTriplesBatch(
-        ds.subjects_, ds.predicates_, ds.objects_, lookupFunctor, out);
+    char* end = formatter.formatTriplesBatch(ds.subjects_, ds.predicates_,
+                                             ds.objects_, lookupFunctor, out);
     return static_cast<size_t>(end - out);
   }
 };
@@ -200,7 +204,8 @@ BenchmarkResult runBenchmark(const std::string& name,
   for (size_t iter = 0; iter < iterations; ++iter) {
     auto t0 = std::chrono::high_resolution_clock::now();
 
-    bytesWritten = Serializer::serializeTriples(ds, outputBuffer.data(), totalLookups);
+    bytesWritten =
+        Serializer::serializeTriples(ds, outputBuffer.data(), totalLookups);
 
     auto t1 = std::chrono::high_resolution_clock::now();
     totalMs += std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -212,36 +217,39 @@ BenchmarkResult runBenchmark(const std::string& name,
   double nsPerTriple = (avgMs * 1e6) / totalTriples;
 
   size_t baselineLookups = ds.subjects_.size() * 3;
-  double reductionPct =
-      100.0 * (1.0 - (static_cast<double>(totalLookups) / static_cast<double>(baselineLookups)));
+  double reductionPct = 100.0 * (1.0 - (static_cast<double>(totalLookups) /
+                                        static_cast<double>(baselineLookups)));
 
-  return BenchmarkResult{name, avgMs, mTriplesPerSec, nsPerTriple, totalLookups,
-                         reductionPct, bytesWritten};
+  return BenchmarkResult{name,        avgMs,        mTriplesPerSec,
+                         nsPerTriple, totalLookups, reductionPct,
+                         bytesWritten};
 }
 
 void printResults(const std::vector<BenchmarkResult>& results) {
-  std::cout << "\n========================================================================================================\n";
-  std::cout << " Optimization 24: RLE Prefix Constant Folding Benchmark (DuckDB-style)\n";
-  std::cout << " Workload: Sorted Wikidata SPO Triples Stream (Avg 500 triples / subject)\n";
-  std::cout << "========================================================================================================\n\n";
+  std::cout << "\n============================================================="
+               "===========================================\n";
+  std::cout << " Optimization 24: RLE Prefix Constant Folding Benchmark "
+               "(DuckDB-style)\n";
+  std::cout << " Workload: Sorted Wikidata SPO Triples Stream (Avg 500 triples "
+               "/ subject)\n";
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 
-  std::cout << std::left << std::setw(32) << "Serializer Strategy"
-            << std::right << std::setw(12) << "Time (ms)"
-            << std::setw(20) << "Throughput (M/s)"
-            << std::setw(16) << "ns / triple"
-            << std::setw(18) << "Vocab Lookups"
-            << std::setw(16) << "Lookup Savings"
+  std::cout << std::left << std::setw(32) << "Serializer Strategy" << std::right
+            << std::setw(12) << "Time (ms)" << std::setw(20)
+            << "Throughput (M/s)" << std::setw(16) << "ns / triple"
+            << std::setw(18) << "Vocab Lookups" << std::setw(16)
+            << "Lookup Savings"
             << "\n";
   std::cout << std::string(114, '-') << "\n";
 
   for (const auto& r : results) {
-    std::cout << std::left << std::setw(32) << r.name_
-              << std::right << std::fixed << std::setprecision(2)
-              << std::setw(12) << r.elapsedMs_
-              << std::setw(20) << r.throughputMTriplesPerSec_
-              << std::setw(16) << r.nsPerTriple_
-              << std::setw(18) << r.totalLookups_
-              << std::setw(15) << r.lookupReductionPct_ << "%"
+    std::cout << std::left << std::setw(32) << r.name_ << std::right
+              << std::fixed << std::setprecision(2) << std::setw(12)
+              << r.elapsedMs_ << std::setw(20) << r.throughputMTriplesPerSec_
+              << std::setw(16) << r.nsPerTriple_ << std::setw(18)
+              << r.totalLookups_ << std::setw(15) << r.lookupReductionPct_
+              << "%"
               << "\n";
   }
 
@@ -251,14 +259,15 @@ void printResults(const std::vector<BenchmarkResult>& results) {
     double baseThroughput = results[0].throughputMTriplesPerSec_;
     double rleThroughput = results[1].throughputMTriplesPerSec_;
     double speedup = rleThroughput / baseThroughput;
-    std::cout << ">> RLE Prefix Constant Folding Speedup: "
-              << std::fixed << std::setprecision(2) << speedup << "x ("
+    std::cout << ">> RLE Prefix Constant Folding Speedup: " << std::fixed
+              << std::setprecision(2) << speedup << "x ("
               << ((speedup - 1.0) * 100.0) << "% throughput improvement)\n";
-    std::cout << ">> Total Vocabulary String Lookups Reduced by: "
-              << std::fixed << std::setprecision(1) << results[1].lookupReductionPct_
+    std::cout << ">> Total Vocabulary String Lookups Reduced by: " << std::fixed
+              << std::setprecision(1) << results[1].lookupReductionPct_
               << "% across the triple stream\n";
   }
-  std::cout << "========================================================================================================\n\n";
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 }
 
 }  // namespace

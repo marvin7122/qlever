@@ -62,17 +62,15 @@ class HardwarePerformanceMonitor {
     double durationSeconds{0.0};
 
     [[nodiscard]] double l1dMissRatePercent() const noexcept {
-      return l1dReadAccesses > 0
-                 ? (100.0 * static_cast<double>(l1dReadMisses) /
-                    static_cast<double>(l1dReadAccesses))
-                 : 0.0;
+      return l1dReadAccesses > 0 ? (100.0 * static_cast<double>(l1dReadMisses) /
+                                    static_cast<double>(l1dReadAccesses))
+                                 : 0.0;
     }
 
     [[nodiscard]] double llcMissRatePercent() const noexcept {
-      return llcReadAccesses > 0
-                 ? (100.0 * static_cast<double>(llcReadMisses) /
-                    static_cast<double>(llcReadAccesses))
-                 : 0.0;
+      return llcReadAccesses > 0 ? (100.0 * static_cast<double>(llcReadMisses) /
+                                    static_cast<double>(llcReadAccesses))
+                                 : 0.0;
     }
 
     [[nodiscard]] double ipc() const noexcept {
@@ -248,15 +246,14 @@ class PrefetchingBenchmark : public BenchmarkInterface {
   std::vector<size_t> lookupPositions_;
 
  public:
-  PrefetchingBenchmark() {
-    setupSyntheticVocabulary();
-  }
+  PrefetchingBenchmark() { setupSyntheticVocabulary(); }
 
   [[nodiscard]] std::string name() const override {
     return "Optimization 16: Software Cache Prefetching Benchmark";
   }
 
-  // Generate 1M realistic vocabulary words and 500k uniformly randomized lookup IDs
+  // Generate 1M realistic vocabulary words and 500k uniformly randomized lookup
+  // IDs
   void setupSyntheticVocabulary() {
     std::vector<std::string> words;
     words.reserve(NUM_VOCAB_ENTRIES);
@@ -311,8 +308,7 @@ class PrefetchingBenchmark : public BenchmarkInterface {
             const auto data = vocabWords_.dataSpan();
 
             for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
-              const size_t wordIdx =
-                  lookupIds_[i].getVocabIndex().get();
+              const size_t wordIdx = lookupIds_[i].getVocabIndex().get();
               const auto curOffset = offsets[wordIdx];
               const auto nextOffset = offsets[wordIdx + 1];
               resolved[i] = std::string_view(data.data() + curOffset,
@@ -352,8 +348,9 @@ class PrefetchingBenchmark : public BenchmarkInterface {
       PrefetchingBatchResolver resolver(
           PrefetchConfig{.prefetchDistance = distance});
 
-      std::string label = "Prefetched Lookup (Pipelined K = " +
-                          std::to_string(distance) + " rows ahead)";
+      std::string label =
+          "Prefetched Lookup (Pipelined K = " + std::to_string(distance) +
+          " rows ahead)";
 
       auto& m = group.addMeasurement(label, [&]() {
         perfMonitor.start();
