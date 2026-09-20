@@ -90,8 +90,7 @@ class ScatterGatherChunk {
         totalBytes_{totalBytes},
         numTriples_{numTriples},
         zeroCopySpansCount_{zeroCopySpansCount},
-        zeroCopyBytes_{zeroCopyBytes} {
-  }
+        zeroCopyBytes_{zeroCopyBytes} {}
 
   ~ScatterGatherChunk() = default;
 
@@ -404,7 +403,6 @@ class ScatterGatherChunkStreamer {
                    ql::span<const char> objectLiteral,
                    std::string_view datatype = "",
                    std::string_view langTag = "") {
-
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeIri(subject);
       writeChar(' ');
@@ -438,7 +436,6 @@ class ScatterGatherChunkStreamer {
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
                    const qlever::constructExport::EvaluatedTermData& o) {
-
     const char delim = (format == ExportFormat::Csv)
                            ? ','
                            : ((format == ExportFormat::Tsv) ? '\t' : ' ');

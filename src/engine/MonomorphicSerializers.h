@@ -334,7 +334,6 @@ class DynamicRowSerializer {
     AD_CONTRACT_CHECK(!schema_.empty());
   }
 
-
   [[nodiscard]] const std::vector<ColumnType>& schema() const noexcept {
     return schema_;
   }

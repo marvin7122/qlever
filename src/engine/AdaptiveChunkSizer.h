@@ -198,7 +198,6 @@ class AdaptiveChunkSizer {
   // Updates running empirical row-size statistics and exponentially scales up
   // chunk capacity for the next batch up to `maxChunkBytes_`.
   void recordChunk(size_t bytesWritten, size_t rowCount) {
-
     if (rowCount > 0 && bytesWritten > 0) {
       totalBytesObserved_ += bytesWritten;
       totalRowsObserved_ += rowCount;
