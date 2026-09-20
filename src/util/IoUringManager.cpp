@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 
@@ -186,6 +187,18 @@ void IoUringPolicy::addBatch(int fd,
     // Claim the next free SQE. The check above guarantees a slot is available,
     // so `io_uring_get_sqe` must not return `nullptr` here.
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    // TEMPORARY SQPOLL DIAGNOSTIC (remove before merge): dump the ring
+    // state that decides `get_sqe`, to find why it returns null.
+    if (sqe == nullptr) {
+      std::fprintf(stderr,
+                   "SQE_NULL_DIAG ringSize=%u inFlight=%zu sqe_tail=%u "
+                   "sq_head=%u ring_entries=%u cq_head=%u cq_tail=%u "
+                   "sqpoll=%d\n",
+                   ringSize_, numInFlightReadRequests_, *ring_.sq.sqe_tail,
+                   *ring_.sq.head, *ring_.sq.ring_entries, *ring_.cq.head,
+                   *ring_.cq.tail, sqPollEnabled_);
+      std::fflush(stderr);
+    }
     AD_CORRECTNESS_CHECK(sqe != nullptr);
 
     // Record the read's parameters in the SQE (this only sets the SQE's fields;
