@@ -8,8 +8,11 @@
 
 #pragma once
 
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
+    defined(_M_IX86)
 #include <emmintrin.h>
-#include <smmintrin.h>
+#define QLEVER_SLICER_X86 1
+#endif
 
 #include <array>
 #include <cstddef>
@@ -51,7 +54,7 @@ class VectorizedPrefixTable {
       entries_{};
 
  public:
-  VectorizedPrefixTable() noexcept {
+  VectorizedPrefixTable() {
     initEntry(WellKnownPrefixId::WikidataEntity,
               "http://www.wikidata.org/entity/");
     initEntry(WellKnownPrefixId::WikidataDirectProp,
@@ -68,10 +71,14 @@ class VectorizedPrefixTable {
 
   // ___________________________________________________________________________
   // Write a well-known prefix into `out` using 128-bit vector stores.
-  // Returns the number of bytes written.
+  // Returns the number of valid bytes (`entry.length`). The stores cover
+  // whole 16-byte blocks, so `out` must have room for the length rounded
+  // up to a multiple of 16 (16, 32, or 48 bytes for the prefixes below);
+  // sizing `out` for exactly `entry.length` bytes would overflow.
   [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id,
                                               char* out) const noexcept {
     const auto& entry = entries_[static_cast<size_t>(id)];
+#ifdef QLEVER_SLICER_X86
     const __m128i* src = reinterpret_cast<const __m128i*>(entry.data);
     __m128i* dst = reinterpret_cast<__m128i*>(out);
 
@@ -85,19 +92,23 @@ class VectorizedPrefixTable {
       _mm_storeu_si128(dst + 1, _mm_load_si128(src + 1));
       _mm_storeu_si128(dst + 2, _mm_load_si128(src + 2));
     }
+#else
+    std::memcpy(out, entry.data, entry.length);
+#endif
     return entry.length;
   }
 
   // ___________________________________________________________________________
   // Returns the static singleton instance.
-  static const VectorizedPrefixTable& instance() noexcept {
+  static const VectorizedPrefixTable& instance() {
     static const VectorizedPrefixTable table;
     return table;
   }
 
  private:
-  void initEntry(WellKnownPrefixId id, std::string_view prefix) noexcept {
+  void initEntry(WellKnownPrefixId id, std::string_view prefix) {
     auto& e = entries_[static_cast<size_t>(id)];
+    AD_CONTRACT_CHECK(prefix.size() <= sizeof(e.data));
     std::memset(e.data, 0, sizeof(e.data));
     std::memcpy(e.data, prefix.data(), prefix.size());
     e.length = prefix.size();

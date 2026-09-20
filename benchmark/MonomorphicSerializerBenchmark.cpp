@@ -28,8 +28,8 @@
 #endif
 
 #include "../benchmark/infrastructure/Benchmark.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "engine/MonomorphicSerializers.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/http/MediaTypes.h"
@@ -76,6 +76,22 @@ void* operator new(std::size_t size) {
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+
+void* operator new[](std::size_t size) {
+  if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
+    AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
+    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
+  }
+  void* ptr = std::malloc(size);
+  if (!ptr) {
+    throw std::bad_alloc();
+  }
+  return ptr;
+}
+
+void operator delete[](void* ptr) noexcept { std::free(ptr); }
+
+void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
 
 namespace ad_benchmark {
 namespace {
@@ -418,10 +434,9 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
-                using Serializer = MonomorphicRowSerializer<Types...>;
+              dispatchMonomorphicSerializer(schema, [&](auto& serializer) {
                 for (const auto& row : data_.tripleRows_) {
-                  Serializer::template serializeRow<ExportFormat::Csv>(
+                  serializer.template serializeRow<ExportFormat::Csv>(
                       formatter, ql::span<const CellValue>(row));
                 }
               });

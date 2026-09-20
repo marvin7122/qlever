@@ -45,8 +45,6 @@ using namespace ad_utility::export_prototypes;
 // 1 GB simulated vocabulary file constants:
 constexpr size_t kTotalFileSizeBytes = 1024ULL * 1024ULL * 1024ULL;  // 1 GB
 constexpr size_t kBlockSizeBytes = 4096;                             // 4 KB
-constexpr size_t kTotalBlocks =
-    kTotalFileSizeBytes / kBlockSizeBytes;   // 262,144 blocks
 constexpr size_t kDefaultBatchBlocks = 256;  // 1 MB per batch (256 * 4KB)
 
 // _____________________________________________________________________________
@@ -155,7 +153,6 @@ class IoUringDirectBenchmarkRunner {
     DirectIoFile file(filePath_, /*useDirectIo=*/false);
     AD_CONTRACT_CHECK(file.isOpen());
 
-    const size_t batchBytes = batchBlocks_ * kBlockSizeBytes;
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
 
     std::vector<uint64_t> offsets = generateOffsets(randomAccess);
@@ -444,7 +441,9 @@ class IoUringDirectBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Formatter for benchmark results table
+// Formatter for benchmark results table (only used by the standalone entry
+// point below; the registered infrastructure benchmark reports JSON instead).
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printResultsTable(std::string_view accessMode,
                        std::vector<BenchmarkMetric>& results) {
   if (results.empty()) return;
@@ -481,6 +480,7 @@ void printResultsTable(std::string_view accessMode,
   std::cout << "==============================================================="
                "=========================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 
