@@ -8,6 +8,11 @@ on:
       - .github/workflows/wolga-smoke.yml
   workflow_dispatch:
 
+# Least privilege: this smoke test only probes the runner machine and needs
+# no GitHub API access.
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: [self-hosted, linux, x64, wolga]

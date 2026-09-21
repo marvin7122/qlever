@@ -27,6 +27,10 @@ jobs:
         with:
           submodules: recursive
       - name: Native gcc-13 Release build inside prebuilt CI image
+        # Passed via the environment (not interpolated into the script) so
+        # shell metacharacters in a manual dispatch input stay inert.
+        env:
+          TARGET_INPUT: ${{ inputs.target }}
         run: |
           mkdir -p "${PODMAN_ROOT}" "${PODMAN_TMP}"
           podman --root "${PODMAN_ROOT}" --tmpdir "${PODMAN_TMP}" run --rm \
@@ -45,8 +49,8 @@ jobs:
                 -DBUILD_SHARED_LIBS=ON -DQLEVER_ONE_TEST_CASE_PER_FILE=ON \
                 -DUSE_PRECOMPILED_HEADERS=OFF -DCHEAPER_COMPILATION=OFF \
                 -DQLEVER_ALLOCATOR_BACKEND=limit
-              if [ -n "${{ inputs.target }}" ]; then
-                TARGET_ARG="--target ${{ inputs.target }}"
+              if [ -n "${TARGET_INPUT}" ]; then
+                TARGET_ARG="--target ${TARGET_INPUT}"
               else
                 TARGET_ARG=""
               fi
