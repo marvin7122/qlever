@@ -266,6 +266,10 @@ class AsyncChunkPipeline {
         });
 
     // RAII guard ensuring worker is cancelled and joined upon generator exit.
+    // NOTE: `WorkerGuard` has a user-declared destructor, so it has no
+    // implicit move constructor; it is therefore populated in place instead
+    // of being moved into the `shared_ptr` (moving would fall back to the
+    // deleted copy of the `std::thread` member).
     struct WorkerGuard {
       std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
       std::thread thread;
@@ -278,8 +282,9 @@ class AsyncChunkPipeline {
         }
       }
     };
-    auto guard =
-        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
+    auto guard = std::make_shared<WorkerGuard>();
+    guard->pipe = pipeline;
+    guard->thread = std::move(worker);
 
     while (true) {
       auto chunkOpt = pipeline->pop();
@@ -311,6 +316,8 @@ class AsyncChunkPipeline {
       }
     });
 
+    // NOTE: populated in place, see `makeDoubleBuffered` above: the
+    // user-declared destructor suppresses the implicit move constructor.
     struct WorkerGuard {
       std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
       std::thread thread;
@@ -323,8 +330,9 @@ class AsyncChunkPipeline {
         }
       }
     };
-    auto guard =
-        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
+    auto guard = std::make_shared<WorkerGuard>();
+    guard->pipe = pipeline;
+    guard->thread = std::move(worker);
 
     while (true) {
       auto chunkOpt = pipeline->pop();
