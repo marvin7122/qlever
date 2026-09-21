@@ -61,6 +61,9 @@ struct ZeroCopySenderConfig {
   size_t bufferSizeBytes = 64 * 1024;  // 64 KB per slot
   bool useRegisteredBuffers = true;
   bool useZeroCopy = true;
+  // Extra flags for io_uring_queue_init (e.g. IORING_SETUP_SQPOLL). Invalid
+  // flags are not fatal: initRing logs a warning and falls back to
+  // synchronous send().
   unsigned int additionalFlags = 0;
 };
 
@@ -332,6 +335,9 @@ class ZeroCopySocketSender {
   void sendChunk(int sockfd, uint32_t bufferIndex, size_t numBytes,
                  int flags = 0, [[maybe_unused]] unsigned int zcFlags = 0) {
     (void)zcFlags;
+    // Suppress SIGPIPE on a closed peer for every path (the sync fallback
+    // already ORs this in; the io_uring paths receive the same flags).
+    flags |= MSG_NOSIGNAL;
     AD_CONTRACT_CHECK(sockfd >= 0);
     AD_CONTRACT_CHECK(bufferIndex < config_.numBuffers);
     AD_CONTRACT_CHECK(numBytes > 0);
