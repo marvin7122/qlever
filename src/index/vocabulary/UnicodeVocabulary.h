@@ -45,22 +45,22 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    // Fill-only protocol: leaf vocabularies append to `builder` (returning
-    // `void`) and the caller finalizes. When the underlying vocabulary has
-    // no builder-taking overload, copy its single-shot words into the
-    // builder first, so the unconditional `finalize()` sees a populated
-    // builder (same pattern as `Vocabulary` and `PolymorphicVocabulary`).
+    // `builder` must be finalized exactly once. A fill-only leaf (returns
+    // `void`, e.g. `CompressedVocabulary`) appends to `builder` and we
+    // finalize below. An inner wrapper already finalized exactly once, so
+    // forward its result instead of finalizing the moved-from `builder` a
+    // second time (same pattern as `Vocabulary` and
+    // `PolymorphicVocabulary`). When the underlying vocabulary has no
+    // builder-taking overload, copy its single-shot words into the builder
+    // first, so the `finalize()` below sees a populated builder.
     if constexpr (requires {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
-      if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
-                        indices, builder))>) {
+      using InnerResult =
+          decltype(_underlyingVocabulary.lookupBatch(indices, builder));
+      if constexpr (std::is_void_v<InnerResult>) {
         _underlyingVocabulary.lookupBatch(indices, builder);
       } else {
-        // The underlying overload (e.g. `PolymorphicVocabulary`) finalizes
-        // the builder itself and returns the result. Propagate it directly:
-        // finalizing again would trip the `finalize` precondition on the
-        // moved-from builder.
         return _underlyingVocabulary.lookupBatch(indices, builder);
       }
     } else {

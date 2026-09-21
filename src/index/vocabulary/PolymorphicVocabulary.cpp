@@ -71,15 +71,17 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   return std::visit(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
-        // Fill-only protocol: see `UnicodeVocabulary::lookupBatch`.
+        // `builder` must be finalized exactly once, see
+        // `UnicodeVocabulary::lookupBatch`.
         if constexpr (requires { vocab.lookupBatch(indices, builder); }) {
-          if constexpr (std::is_void_v<decltype(vocab.lookupBatch(indices,
-                                                                  builder))>) {
+          using InnerResult = decltype(vocab.lookupBatch(indices, builder));
+          if constexpr (std::is_void_v<InnerResult>) {
+            // Fill-only leaf: it appended to `builder`, finalize once below.
             vocab.lookupBatch(indices, builder);
           } else {
-            // A result-returning builder overload finalizes the builder
-            // itself; propagate its result instead of finalizing the
-            // moved-from builder a second time.
+            // Inner wrapper already finalized exactly once: forward its
+            // result instead of finalizing the moved-from `builder` a
+            // second time.
             return vocab.lookupBatch(indices, builder);
           }
         } else {

@@ -314,22 +314,22 @@ template <typename S, typename C, typename I>
 VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  // Fill-only protocol: see `UnicodeVocabulary::lookupBatch`.
+  // `builder` must be finalized exactly once, see
+  // `UnicodeVocabulary::lookupBatch`.
   if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
-    if constexpr (std::is_void_v<decltype(vocabulary_.lookupBatch(indices,
-                                                                  builder))>) {
+    using InnerResult = decltype(vocabulary_.lookupBatch(indices, builder));
+    if constexpr (std::is_void_v<InnerResult>) {
+      // Fill-only leaf: it appended to `builder`, finalize once below.
       vocabulary_.lookupBatch(indices, builder);
     } else {
-      // The underlying overload (e.g. `UnicodeVocabulary` over
-      // `PolymorphicVocabulary`) finalizes the builder itself and returns
-      // the result. Propagate it directly: finalizing again would trip the
-      // `finalize` precondition on the moved-from builder.
+      // Inner wrapper already finalized exactly once: forward its result
+      // instead of finalizing the moved-from `builder` a second time.
       return vocabulary_.lookupBatch(indices, builder);
     }
   } else {
     // The underlying vocabulary has no batched leaf: reuse its single-shot
     // batch path and copy the words into the caller's builder, so the
-    // unconditional `finalize()` below sees a populated builder.
+    // `finalize()` below sees a populated builder.
     auto singleShot = vocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
     for (std::string_view word : singleShot) {
