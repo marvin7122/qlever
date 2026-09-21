@@ -63,8 +63,8 @@ class PolymorphicVocabLookupBatchMicroBenchmark : public BenchmarkInterface {
 
   static void buildVocabulary(
       ad_utility::vocabulary::PolymorphicVocabulary& vocab,
-                              ad_utility::VocabularyType::Enum vocabType,
-                              const std::string& basename, size_t numWords) {
+      ad_utility::VocabularyType::Enum vocabType, const std::string& basename,
+      size_t numWords) {
     ad_utility::VocabularyType type{vocabType};
     auto writerPtr =
         ad_utility::vocabulary::PolymorphicVocabulary::makeDiskWriterPtr(
@@ -134,42 +134,46 @@ class PolymorphicVocabLookupBatchMicroBenchmark : public BenchmarkInterface {
     AD_CONTRACT_CHECK(repetitions > 0);
     AD_CONTRACT_CHECK(repetitions <= maxRepetitions);
 
-    const auto runComparison = [&](auto& group,
-                                   const ad_utility::vocabulary::PolymorphicVocabulary&
-                                       vocab) {
-      group.addMeasurement("sequential operator[]", [&] {
-        size_t totalBytes = 0;
-        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
-          for (size_t index : batch_) {
-            std::string word{vocab[index]};
-            totalBytes += word.size();
-          }
-        }
-        return totalBytes;
-      });
-      group.addMeasurement("batched lookupBatch", [&] {
-        size_t totalBytes = 0;
-        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
-          auto result = vocab.lookupBatch(batch_);
-          for (const auto& word : result) {
-            totalBytes += word.size();
-          }
-        }
-        return totalBytes;
-      });
-      group.addMeasurement("batched lookupBatch with builder", [&] {
-        size_t totalBytes = 0;
-        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
-          ad_utility::vocabulary::ArenaVocabBatchBuilder builder(batch_.size());
-          vocab.lookupBatch(batch_, builder);
-          auto result = std::move(builder).finalize();
-          for (const auto& word : result) {
-            totalBytes += word.size();
-          }
-        }
-        return totalBytes;
-      });
-    };
+    const auto runComparison =
+        [&](auto& group,
+            const ad_utility::vocabulary::PolymorphicVocabulary& vocab) {
+          group.addMeasurement("sequential operator[]", [&] {
+            size_t totalBytes = 0;
+            for (size_t repetition = 0; repetition < repetitions;
+                 ++repetition) {
+              for (size_t index : batch_) {
+                std::string word{vocab[index]};
+                totalBytes += word.size();
+              }
+            }
+            return totalBytes;
+          });
+          group.addMeasurement("batched lookupBatch", [&] {
+            size_t totalBytes = 0;
+            for (size_t repetition = 0; repetition < repetitions;
+                 ++repetition) {
+              auto result = vocab.lookupBatch(batch_);
+              for (const auto& word : result) {
+                totalBytes += word.size();
+              }
+            }
+            return totalBytes;
+          });
+          group.addMeasurement("batched lookupBatch with builder", [&] {
+            size_t totalBytes = 0;
+            for (size_t repetition = 0; repetition < repetitions;
+                 ++repetition) {
+              ad_utility::vocabulary::ArenaVocabBatchBuilder builder(
+                  batch_.size());
+              vocab.lookupBatch(batch_, builder);
+              auto result = std::move(builder).finalize();
+              for (const auto& word : result) {
+                totalBytes += word.size();
+              }
+            }
+            return totalBytes;
+          });
+        };
 
     auto& compressedGroup = results.addGroup(
         "Synthetic micro-batches: 2,048 lookups into 2,048 words "
