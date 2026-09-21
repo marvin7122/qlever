@@ -17,6 +17,7 @@
 #include "engine/export_v2/SimdEscapeClassifier.h"
 #include "engine/idTable/IdTable.h"
 #include "index/LocalVocab.h"
+#include "util/Exception.h"
 
 namespace ql::engine::export_v2 {
 
@@ -29,6 +30,9 @@ using qlever::export_v2::ScatterGatherChunkBuilder;
 inline ScatterGatherChunk serializeTableChunk(
     const IdTable& idTable, [[maybe_unused]] const LocalVocab& localVocab,
     RowFormat format, ScatterGatherChunkBuilder& builder) {
+  // This lightweight test/integer-only path only supports delimited formats;
+  // Turtle/NTriples must go through the production serializer.
+  AD_CORRECTNESS_CHECK(format == RowFormat::Csv || format == RowFormat::Tsv);
   const size_t numRows = idTable.numRows();
   const size_t numCols = idTable.numColumns();
 
