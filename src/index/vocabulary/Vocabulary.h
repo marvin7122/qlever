@@ -133,8 +133,10 @@ class Vocabulary {
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   // Same as `lookupBatch(indices)`, but decode into `builder` when the
-  // underlying vocabulary supports it (compressed). Otherwise `builder` is
-  // unused and the underlying result is returned.
+  // underlying vocabulary supports it (compressed), finalizing `builder`
+  // exactly once. Otherwise the single-shot words are copied into `builder`
+  // (no builder-taking overload below us), or the inner wrapper's
+  // already-finalized result is returned directly.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const;
 

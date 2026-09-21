@@ -528,7 +528,11 @@ class MultiSourceVocabBatchAssembler {
     AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
     AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
     slotFilledTracking_[resultPosition] = true;
-    assembledWordViews_[resultPosition] = word;
+    // Use the bounds-checked `at()` for the store: the check above already
+    // throws on out-of-bounds positions, but GCC's `-Warray-bounds` (promoted
+    // by `-Werror`) still flags `operator[]` once a constant out-of-bounds
+    // index from a test is inlined here.
+    assembledWordViews_.at(resultPosition) = word;
   }
 
   // ___________________________________________________________________________
