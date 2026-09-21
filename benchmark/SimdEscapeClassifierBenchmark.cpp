@@ -10,16 +10,13 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
-#include <iomanip>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "../benchmark/infrastructure/BenchmarkMeasurementContainer.h"
 #include "engine/export_v2/SimdEscapeClassifier.h"
-#include "util/Exception.h"
 
 namespace {
 
