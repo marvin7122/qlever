@@ -45,7 +45,11 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs.
+// runs. The pairing of `malloc`-based `operator new` with `free`-based
+// `operator delete` is intentional; suppress the mismatched-allocation
+// heuristic, which cannot see through the global replacement.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -63,6 +67,7 @@ void operator delete(void* ptr) noexcept { std::free(ptr); }
 void operator delete(void* ptr, std::size_t) noexcept {
   ::operator delete(ptr);
 }
+#pragma GCC diagnostic pop
 
 namespace ad_benchmark {
 namespace {

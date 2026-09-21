@@ -383,8 +383,9 @@ class HttpFramingBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
-void printBenchmarkTable(
+// Pretty-printed summary table formatter (only used by the standalone
+// `main` below, not when the benchmark infrastructure is available).
+[[maybe_unused]] void printBenchmarkTable(
     size_t chunkSize, const std::vector<HttpFramingBenchmarkMetric>& metrics) {
   if (metrics.empty()) return;
 

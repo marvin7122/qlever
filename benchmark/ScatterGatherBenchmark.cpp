@@ -265,7 +265,7 @@ class ScatterGatherBenchmarkRunner {
         [&](ScatterGatherChunk chunk) {
           totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
-          chunk.writeToFd(nullFd);
+          static_cast<void>(chunk.writeToFd(nullFd));
         },
         config);
 
@@ -308,8 +308,9 @@ class ScatterGatherBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
-void printBenchmarkTable(
+// Pretty-printed summary table formatter (only used by the standalone
+// `main` below, not when the benchmark infrastructure is available).
+[[maybe_unused]] void printBenchmarkTable(
     size_t literalSize,
     const std::vector<ScatterGatherBenchmarkMetric>& metrics) {
   if (metrics.empty()) return;
