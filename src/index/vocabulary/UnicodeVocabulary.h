@@ -5,6 +5,8 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
+#include <type_traits>
+
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
 
@@ -46,10 +48,18 @@ class UnicodeVocabulary {
     if constexpr (requires {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
-      // Use the returned result: the underlying vocabulary may take its
-      // documented fallback path without touching `builder`, in which case
-      // finalizing `builder` here would fail on an empty batch.
-      return _underlyingVocabulary.lookupBatch(indices, builder);
+      if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
+                         indices, builder))>) {
+        // Fill-only protocol (e.g. `CompressedVocabulary`): the words were
+        // decoded into the caller's `builder`, finalize it here.
+        _underlyingVocabulary.lookupBatch(indices, builder);
+        return std::move(builder).finalize();
+      } else {
+        // Use the returned result: the underlying vocabulary may take its
+        // documented fallback path without touching `builder`, in which case
+        // finalizing `builder` here would fail on an empty batch.
+        return _underlyingVocabulary.lookupBatch(indices, builder);
+      }
     } else {
       return _underlyingVocabulary.lookupBatch(indices);
     }
