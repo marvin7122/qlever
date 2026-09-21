@@ -9,6 +9,7 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <array>
+#include <memory_resource>
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
@@ -296,6 +297,26 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
     IndexAndWord indexAndWord = *it;
     EXPECT_EQ(indexAndWord.index_, 0);
     EXPECT_EQ(indexAndWord.word_, words.at(0));
+  }
+}
+
+// _____________________________________________________________________________
+// Assert that `std::pmr::string` stores `n` characters inline (small-string
+// optimization) without allocating: construction against the null memory
+// resource throws `std::bad_alloc` as soon as a heap allocation is attempted.
+inline void requirePmrStringInlineStorage(size_t n) {
+  std::pmr::string s(n, 'x', std::pmr::null_memory_resource());
+  ASSERT_EQ(s.size(), n);
+}
+
+// Overwrite a chunk of the current stack frame with sentinel bytes, so that a
+// dangling view into a destroyed stack object is overwhelmingly likely to
+// observe corrupted contents. `volatile` keeps the stores from being
+// optimized away.
+inline void clobberStack() {
+  volatile char buffer[4096];
+  for (auto& c : buffer) {
+    c = '\xA5';
   }
 }
 

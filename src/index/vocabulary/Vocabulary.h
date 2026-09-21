@@ -130,6 +130,11 @@ class Vocabulary {
   // Batch lookup: look up multiple indices at once and return their words.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
+  // Batch lookup into a caller-provided arena builder (see
+  // `PolymorphicVocabulary::lookupBatch` for the fallback contract).
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder& builder) const;
+
   // Streaming variant of batch lookup.
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const;
 

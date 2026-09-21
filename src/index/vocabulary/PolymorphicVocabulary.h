@@ -98,6 +98,12 @@ class PolymorphicVocabulary {
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
+  // Batch lookup into a caller-provided arena builder. Vocabularies without
+  // the two-argument overload fall back to the single-argument lookup, the
+  // result of the fallback is returned and the builder is left untouched.
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder& builder) const;
+
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const;
 

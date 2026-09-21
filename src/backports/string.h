@@ -11,6 +11,7 @@
 #define QLEVER_SRC_BACKPORTS_STRING_H
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -40,10 +41,13 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
     return newSize;
   });
 #else
-  str.resize(count);
-  const size_t newSize = std::forward<Operation>(op)(str.data(), count);
+  // NOTE: `str.resize(count)` would value-initialize (zero-fill) all `count`
+  // characters before `op` overwrites them, so decode into an uninitialized
+  // temporary buffer and assign the result instead.
+  std::unique_ptr<CharT[]> buffer(new CharT[count]);
+  const size_t newSize = std::forward<Operation>(op)(buffer.get(), count);
   AD_CONTRACT_CHECK(newSize <= count);
-  str.resize(newSize);
+  str.assign(buffer.get(), newSize);
 #endif
 }
 
