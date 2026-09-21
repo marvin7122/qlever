@@ -8,6 +8,8 @@
 
 #include <boost/asio/post.hpp>
 #include <boost/asio/static_thread_pool.hpp>
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <future>
 #include <memory>
