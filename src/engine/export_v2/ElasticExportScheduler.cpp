@@ -405,7 +405,13 @@ void ElasticExportScheduler::registerSession(
                      [](const auto& weak) { return weak.expired(); }),
       sessions_.end());
   sessions_.push_back(std::move(sessionState));
-  liveSessionCount_.store(sessions_.size(), std::memory_order_relaxed);
+  // Count live entries rather than trusting the vector size: the newly
+  // registered handle may already be expired, which would otherwise skew
+  // the even-split admission share by one.
+  const size_t live =
+      std::count_if(sessions_.begin(), sessions_.end(),
+                    [](const auto& weak) { return !weak.expired(); });
+  liveSessionCount_.store(live, std::memory_order_relaxed);
 }
 
 void ElasticExportScheduler::onLeaseReleased(
