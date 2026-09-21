@@ -62,7 +62,9 @@ class VocabularyInternalExternal {
 
   //____________________________________________________________________________
   // Look up words for `indices` in a batch, returning string views in request
-  // order. `indices` must not be empty.
+  // order. `indices` must not be empty. The returned result is self-contained:
+  // it retains shared ownership of the underlying word storage, so the views
+  // stay valid after this vocabulary is closed or destroyed.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________

@@ -28,8 +28,8 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 // Partition input indices into internal-vocabulary hits and indices that must
 // be resolved by the external vocabulary, while keeping their positions in the
 // original input. Keeping the two groups separate allows each vocabulary to be
-// looked up in batches independently; the stored result positions are required to
-// restore the original request order when the sub-results are assembled.
+// looked up in batches independently; the stored result positions are required
+// to restore the original request order when the sub-results are assembled.
 //
 // Helpers for `VocabularyInternalExternal::lookupBatch` (see below).
 namespace {
@@ -111,7 +111,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   auto internal = internalVocab_.lookupBatch(
       partition.internalSlots_.getUnderlyingIndices());
   assembler.scatterSubBatchResultAtPositions(
-      std::move(internal), partition.internalSlots_.getResultPositions());
+      internal, partition.internalSlots_.getResultPositions());
 
   // 2. Pass the external sub-result to the assembler and retain its result data
   // so the returned string views remain valid, placing the values at their
@@ -119,7 +119,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   auto disk =
       externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
   assembler.scatterSubBatchResultAtPositions(
-      std::move(disk), partition.diskSlots_.getResultPositions());
+      disk, partition.diskSlots_.getResultPositions());
 
   return std::move(assembler).finalizeVocabBatchLookupResult();
 }

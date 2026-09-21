@@ -147,12 +147,18 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
               ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
-TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
-  auto vocab = createVocabulary("LookupBatchRejectsMissingIndex")(
+TEST(VocabularyInMemoryBinSearch,
+     LookupBatchReportsPlaceholderForMissingIndex) {
+  auto vocab = createVocabulary("LookupBatchPlaceholderForMissingIndex")(
       std::vector<std::string>{"alpha", "beta"});
   const std::array<size_t, 1> missingIndex{2};
 
-  EXPECT_THROW(vocab.lookupBatch(missingIndex), ad_utility::Exception);
+  // A missing index yields a placeholder rather than an exception, like the
+  // "holes" of a vocabulary with non-contiguous ids (see
+  // `replaceOptionalByPlaceholderOnExport` in `VocabularyTypes.h`).
+  EXPECT_THAT(vocab.lookupBatch(missingIndex),
+              ::testing::ElementsAre(
+                  ad_utility::vocabulary::placeholderForMissingVocabIndex(2)));
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
 }
