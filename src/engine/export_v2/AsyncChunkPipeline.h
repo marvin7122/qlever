@@ -82,8 +82,7 @@ class AsyncChunkPipeline {
   explicit AsyncChunkPipeline(AsyncChunkPipelineConfig config = {})
       : state_{kExportV2CompiledIn && config.runtimeEnabled_
                    ? State::Running
-                   : State::Disabled} {
-  }
+                   : State::Disabled} {}
 
   AsyncChunkPipeline(const AsyncChunkPipeline&) = delete;
   AsyncChunkPipeline& operator=(const AsyncChunkPipeline&) = delete;
