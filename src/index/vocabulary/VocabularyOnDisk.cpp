@@ -266,6 +266,13 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     combined->buffer().insert(combined->buffer().end(), data->buffer().begin(),
                               data->buffer().end());
     for (std::string_view view : data->views()) {
+      // Empty views may hold a null `data()` (the window buffer is an empty
+      // `std::vector<char>`), so pointer arithmetic on them is undefined
+      // behavior. They carry no bytes, so emit a default empty view instead.
+      if (view.empty()) {
+        combined->views().emplace_back();
+        continue;
+      }
       const size_t offsetInWindow =
           static_cast<size_t>(view.data() - windowBase);
       combined->views().emplace_back(

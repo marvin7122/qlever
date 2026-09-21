@@ -8,6 +8,7 @@
 
 #include "global/RuntimeParameters.h"
 
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
 #include "backports/algorithm.h"
