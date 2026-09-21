@@ -315,7 +315,9 @@ class ZeroCopySenderBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Formatter for benchmark results table
+// Formatter for benchmark results table (standalone-main only, like `main`
+// below; the framework path reports via BenchmarkResults instead).
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printResultsTable(std::vector<BenchmarkMetric>& results) {
   if (results.empty()) return;
 
@@ -359,6 +361,7 @@ void printResultsTable(std::vector<BenchmarkMetric>& results) {
   std::cout << "==============================================================="
                "=========================================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 

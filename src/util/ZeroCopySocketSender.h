@@ -331,7 +331,7 @@ class ZeroCopySocketSender {
   // If the submission queue is saturated, automatically flushes SQEs to the
   // kernel and drains CQEs.
   void sendChunk(int sockfd, uint32_t bufferIndex, size_t numBytes,
-                 int flags = 0, unsigned int zcFlags = 0) {
+                 int flags = 0, [[maybe_unused]] unsigned int zcFlags = 0) {
     AD_CONTRACT_CHECK(sockfd >= 0);
     AD_CONTRACT_CHECK(bufferIndex < config_.numBuffers);
     AD_CONTRACT_CHECK(numBytes > 0);

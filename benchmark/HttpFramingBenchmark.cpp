@@ -383,7 +383,8 @@ class HttpFramingBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
+// Pretty-printed summary table formatter (standalone-main only).
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printBenchmarkTable(
     size_t chunkSize, const std::vector<HttpFramingBenchmarkMetric>& metrics) {
   if (metrics.empty()) return;
@@ -424,6 +425,7 @@ void printBenchmarkTable(
   std::cout << "==============================================================="
                "=========================================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 

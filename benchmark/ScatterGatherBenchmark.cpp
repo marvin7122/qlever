@@ -308,7 +308,8 @@ class ScatterGatherBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
+// Pretty-printed summary table formatter (standalone-main only).
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 void printBenchmarkTable(
     size_t literalSize,
     const std::vector<ScatterGatherBenchmarkMetric>& metrics) {
@@ -354,6 +355,7 @@ void printBenchmarkTable(
   std::cout << "==============================================================="
                "========================================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 
