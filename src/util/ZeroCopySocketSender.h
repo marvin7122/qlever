@@ -504,14 +504,17 @@ class ZeroCopySocketSender {
   void teardown() noexcept {
 #ifdef QLEVER_HAS_LIBURING
     if (ringInitialized_) {
+      // Drain via `drainOneCqe`, which releases both the request and the
+      // kernel-pinned buffer (including the second CQE for zero-copy sends
+      // with `IORING_CQE_F_MORE`). A hand-rolled loop that only counts
+      // requests would hang once buffers outlive their requests. Best effort:
+      // `drainOneCqe` throws on I/O errors, which teardown must swallow to
+      // stay `noexcept`.
       while (numInFlightRequests_ > 0 || numInFlightBuffers_ > 0) {
-        io_uring_cqe* cqe = nullptr;
-        if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+        try {
+          drainOneCqe();
+        } catch (...) {
           break;
-        }
-        io_uring_cqe_seen(&ring_, cqe);
-        if (numInFlightRequests_ > 0) {
-          --numInFlightRequests_;
         }
       }
 
@@ -587,18 +590,27 @@ class ZeroCopySocketSender {
   }
 #endif
 
-  // Synchronous send fallback.
+  // Synchronous send fallback. Retries until all `numBytes` are sent:
+  // `send` on a blocking socket may legally return a short count.
   void sendChunkSync(int sockfd, uint32_t bufferIndex, size_t numBytes,
                      int flags) {
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
-    ssize_t bytesSent =
-        ::send(sockfd, slotSpan.data(), numBytes, flags | MSG_NOSIGNAL);
-    if (bytesSent < 0) {
-      bufferPool_.releaseSlot(bufferIndex);
-      AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+    size_t totalSent = 0;
+    while (totalSent < numBytes) {
+      ssize_t bytesSent =
+          ::send(sockfd, slotSpan.data() + totalSent, numBytes - totalSent,
+                 flags | MSG_NOSIGNAL);
+      if (bytesSent < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+      }
+      totalSent += static_cast<size_t>(bytesSent);
     }
 
-    totalBytesSent_ += static_cast<size_t>(bytesSent);
+    totalBytesSent_ += numBytes;
     ++totalPacketsSent_;
     bufferPool_.releaseSlot(bufferIndex);
   }
