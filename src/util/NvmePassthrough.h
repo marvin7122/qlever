@@ -6,13 +6,14 @@
 #ifndef QLEVER_SRC_UTIL_NVMEPASSTHROUGH_H
 #define QLEVER_SRC_UTIL_NVMEPASSTHROUGH_H
 
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <optional>
-#include <sys/ioctl.h>
-#include <sys/stat.h>
 
 #include "util/Exception.h"
 
@@ -92,12 +93,10 @@ inline std::optional<ReadParams> translateToReadParams(
   if (namespaceId == 0 || logicalBlockSize == 0 || numBytes == 0) {
     return std::nullopt;
   }
-  if (fileOffset % logicalBlockSize != 0 ||
-      numBytes % logicalBlockSize != 0) {
+  if (fileOffset % logicalBlockSize != 0 || numBytes % logicalBlockSize != 0) {
     return std::nullopt;
   }
-  const uint64_t numBlocks =
-      static_cast<uint64_t>(numBytes) / logicalBlockSize;
+  const uint64_t numBlocks = static_cast<uint64_t>(numBytes) / logicalBlockSize;
   if (numBlocks == 0 || numBlocks > kMaxBlocksPerRead) {
     return std::nullopt;
   }
@@ -133,7 +132,7 @@ inline bool isNvmeNamespaceCharacterDevice(int fd) noexcept {
 // capable", so a failed probe disables passthrough for the fd without failing
 // the batch.
 inline bool isPassthroughCandidate(int fd) noexcept {
-  struct stat sb{};
+  struct stat sb {};
   if (::fstat(fd, &sb) != 0) {
     return false;
   }
@@ -150,6 +149,19 @@ inline bool isPassthroughCandidate(int fd) noexcept {
 }
 
 #ifdef QLEVER_HAS_NVME_URING_CMD
+// Copy `n` bytes to the SQE128 command tail. Not inlined: FORTIFY would
+// otherwise bound the destination by the 64-byte `io_uring_sqe` type, while
+// the bytes live in the 128-byte ring slot (or a 128-byte test buffer).
+[[gnu::noinline]] inline void copyIntoSqe128Tail(io_uring_sqe* sqe,
+                                                 const unsigned char* src,
+                                                 size_t n) noexcept {
+  auto* dst =
+      reinterpret_cast<unsigned char*>(sqe) + offsetof(io_uring_sqe, cmd);
+  for (size_t i = 0; i < n; ++i) {
+    dst[i] = src[i];
+  }
+}
+
 // Prepare `sqe` (claimed via `io_uring_get_sqe` from a ring created with
 // `IORING_SETUP_SQE128`; the 80-byte command area only exists there) as a
 // native NVMe read submitted to `deviceFd` (an NVMe character device). The
@@ -175,7 +187,7 @@ inline void preparePassthroughRead(io_uring_sqe* sqe, int deviceFd,
   sqe->addr = 0;
   sqe->len = 0;
   sqe->cmd_op = NVME_URING_CMD_IO;
-  struct nvme_uring_cmd cmd{};
+  struct nvme_uring_cmd cmd {};
   cmd.opcode = kNvmReadOpcode;
   cmd.nsid = params.namespaceId;
   cmd.addr = reinterpret_cast<__u64>(targetBuffer);
@@ -183,8 +195,13 @@ inline void preparePassthroughRead(io_uring_sqe* sqe, int deviceFd,
   cmd.cdw10 = static_cast<__u32>(params.startLba & 0xFFFFFFFFULL);
   cmd.cdw11 = static_cast<__u32>(params.startLba >> 32);
   cmd.cdw12 = params.numBlocksZeroBased;
-  std::memset(sqe->cmd, 0, kUringCmdDataSize);
-  std::memcpy(sqe->cmd, &cmd, sizeof(cmd));
+  // `sqe->cmd` is a zero-length array at the end of the 64-byte SQE type.
+  // The 80 command bytes sit in the SQE128 slot past that type. A direct
+  // memset of `sqe->cmd` is a FORTIFY overflow on any object the compiler
+  // can see is only `sizeof(io_uring_sqe)`.
+  unsigned char area[kUringCmdDataSize]{};
+  std::memcpy(area, &cmd, sizeof(cmd));
+  copyIntoSqe128Tail(sqe, area, kUringCmdDataSize);
 }
 #endif
 

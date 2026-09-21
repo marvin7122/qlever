@@ -12,6 +12,7 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -879,12 +880,10 @@ TEST(NvmePassthroughTranslation, alignedRangeTranslates) {
 // the caller keeps the plain read path with identical bytes.
 TEST(NvmePassthroughTranslation, untranslatableRangesFallBack) {
   using ad_utility::nvmePassthrough::translateToReadParams;
-  EXPECT_FALSE(
-      translateToReadParams(100, 4096, 1, 512).has_value());  // offset
-  EXPECT_FALSE(
-      translateToReadParams(0, 100, 1, 512).has_value());  // length
-  EXPECT_FALSE(translateToReadParams(0, 0, 1, 512).has_value());  // empty
-  EXPECT_FALSE(translateToReadParams(0, 512, 0, 512).has_value());  // nsid
+  EXPECT_FALSE(translateToReadParams(100, 4096, 1, 512).has_value());  // offset
+  EXPECT_FALSE(translateToReadParams(0, 100, 1, 512).has_value());     // length
+  EXPECT_FALSE(translateToReadParams(0, 0, 1, 512).has_value());       // empty
+  EXPECT_FALSE(translateToReadParams(0, 512, 0, 512).has_value());     // nsid
   EXPECT_FALSE(translateToReadParams(0, 512, 1, 0).has_value());  // block size
   EXPECT_FALSE(translateToReadParams(0, 0x10001ULL * 512, 1, 512)
                    .has_value());  // too many blocks
@@ -994,19 +993,21 @@ TEST(NvmePassthrough, preparesValidUringCmdSqe) {
   ASSERT_TRUE(params.has_value());
 
   std::string buffer(4096, '\0');
-  io_uring_sqe sqe{};
-  std::memset(&sqe, 0xFF, sizeof(sqe));
-  ad_utility::nvmePassthrough::preparePassthroughRead(
-      &sqe, /*deviceFd=*/7, *params, buffer.data());
+  // The C type is 64 bytes. The command tail needs the 128-byte SQE128 slot.
+  alignas(io_uring_sqe) unsigned char sqeStorage[128];
+  std::memset(sqeStorage, 0xFF, sizeof(sqeStorage));
+  auto* sqe = reinterpret_cast<io_uring_sqe*>(sqeStorage);
+  ad_utility::nvmePassthrough::preparePassthroughRead(sqe, /*deviceFd=*/7,
+                                                      *params, buffer.data());
 
-  EXPECT_EQ(sqe.opcode, IORING_OP_URING_CMD);
-  EXPECT_EQ(sqe.fd, 7);
-  EXPECT_EQ(sqe.cmd_op, static_cast<uint32_t>(NVME_URING_CMD_IO));
+  EXPECT_EQ(sqe->opcode, IORING_OP_URING_CMD);
+  EXPECT_EQ(sqe->fd, 7);
+  EXPECT_EQ(sqe->cmd_op, static_cast<uint32_t>(NVME_URING_CMD_IO));
 
-  struct nvme_uring_cmd cmd{};
-  static_assert(sizeof(cmd) <=
-                ad_utility::nvmePassthrough::kUringCmdDataSize);
-  std::memcpy(&cmd, sqe.cmd, sizeof(cmd));
+  struct nvme_uring_cmd cmd {};
+  static_assert(sizeof(cmd) <= ad_utility::nvmePassthrough::kUringCmdDataSize);
+  const auto* tail = sqeStorage + offsetof(io_uring_sqe, cmd);
+  std::memcpy(&cmd, tail, sizeof(cmd));
   EXPECT_EQ(cmd.opcode, ad_utility::nvmePassthrough::kNvmReadOpcode);
   EXPECT_EQ(cmd.nsid, 2u);
   EXPECT_EQ(cmd.addr, reinterpret_cast<__u64>(buffer.data()));
@@ -1016,10 +1017,9 @@ TEST(NvmePassthrough, preparesValidUringCmdSqe) {
   EXPECT_EQ(cmd.cdw12, 0u);  // one block, 0-based
 
   // The command area past the NVMe command is zeroed.
-  const auto* bytes = reinterpret_cast<const unsigned char*>(sqe.cmd);
   for (size_t i = sizeof(cmd);
        i < ad_utility::nvmePassthrough::kUringCmdDataSize; ++i) {
-    EXPECT_EQ(bytes[i], 0u) << "nonzero byte at command offset " << i;
+    EXPECT_EQ(tail[i], 0u) << "nonzero byte at command offset " << i;
   }
 }
 #endif
