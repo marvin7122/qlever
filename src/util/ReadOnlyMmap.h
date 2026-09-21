@@ -79,6 +79,10 @@ class ReadOnlyMmap {
     const size_t pageSize = static_cast<size_t>(pageSizeOrError);
     const auto offset = static_cast<uint64_t>(fileOffset);
     const uint64_t alignedOffset = offset - offset % pageSize;
+    if (alignedOffset >
+        static_cast<uint64_t>(std::numeric_limits<off_t>::max())) {
+      return false;
+    }
     const size_t delta = static_cast<size_t>(offset - alignedOffset);
     if (numBytes > std::numeric_limits<size_t>::max() - delta) {
       return false;
