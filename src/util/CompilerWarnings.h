@@ -62,6 +62,15 @@
   _Pragma("GCC diagnostic push")      \
       _Pragma("GCC diagnostic ignored \"-Warray-bounds\"")
 
+// Disable the `mismatched-new-delete` warning for a global `operator delete`
+// that frees memory allocated by a matching custom global `operator new` in
+// terms of `std::malloc`/`std::free`. GCC cannot see through the custom
+// `operator new` and wrongly believes the `free` operates on `new`-allocated
+// memory.
+#define DISABLE_MISMATCHED_NEW_DELETE_WARNINGS \
+  _Pragma("GCC diagnostic push")               \
+      _Pragma("GCC diagnostic ignored \"-Wmismatched-new-delete\"")
+
 // Re-enable the warnings disabled by the last `DISABLE_...` call.
 #define GCC_REENABLE_WARNINGS _Pragma("GCC diagnostic pop")
 
@@ -74,6 +83,7 @@
 #define DISABLE_AGGRESSIVE_LOOP_OPT_WARNINGS
 #define DISABLE_DANGLING_REFERENCE_WARNINGS
 #define DISABLE_ARRAY_BOUNDS_WARNINGS
+#define DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 #define GCC_REENABLE_WARNINGS
 #endif
 
