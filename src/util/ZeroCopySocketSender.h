@@ -597,9 +597,8 @@ class ZeroCopySocketSender {
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
     size_t totalSent = 0;
     while (totalSent < numBytes) {
-      ssize_t bytesSent =
-          ::send(sockfd, slotSpan.data() + totalSent, numBytes - totalSent,
-                 flags | MSG_NOSIGNAL);
+      ssize_t bytesSent = ::send(sockfd, slotSpan.data() + totalSent,
+                                 numBytes - totalSent, flags | MSG_NOSIGNAL);
       if (bytesSent < 0) {
         if (errno == EINTR) {
           continue;
