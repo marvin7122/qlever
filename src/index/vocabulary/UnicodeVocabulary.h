@@ -5,6 +5,8 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
+#include <type_traits>
+
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
 
@@ -43,15 +45,24 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    // Fill-only protocol: leaf vocabularies append to `builder` (returning
-    // `void`) and the caller finalizes. When the underlying vocabulary has
-    // no builder-taking overload, copy its single-shot words into the
-    // builder first, so the unconditional `finalize()` sees a populated
-    // builder (same pattern as `Vocabulary` and `PolymorphicVocabulary`).
+    // `builder` must be finalized exactly once. A fill-only leaf (returns
+    // `void`, e.g. `CompressedVocabulary`) appends to `builder` and we
+    // finalize below. An inner wrapper already finalized exactly once, so
+    // forward its result instead of finalizing the moved-from `builder` a
+    // second time (same pattern as `Vocabulary` and
+    // `PolymorphicVocabulary`). When the underlying vocabulary has no
+    // builder-taking overload, copy its single-shot words into the builder
+    // first, so the `finalize()` below sees a populated builder.
     if constexpr (requires {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
-      _underlyingVocabulary.lookupBatch(indices, builder);
+      using InnerResult =
+          decltype(_underlyingVocabulary.lookupBatch(indices, builder));
+      if constexpr (std::is_void_v<InnerResult>) {
+        _underlyingVocabulary.lookupBatch(indices, builder);
+      } else {
+        return _underlyingVocabulary.lookupBatch(indices, builder);
+      }
     } else {
       auto singleShot = _underlyingVocabulary.lookupBatch(indices);
       AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
