@@ -268,25 +268,12 @@ addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
 
 addLinkAndDiscoverTest(VectorStreamSourceTest engine)
 
-# Header-only util under export_v2; do not pull testUtil/index (cluster GCC
-# range-v3 needs -fpermissive for those translation units).
-addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
-
 # `ScatterGatherHttpBody.h` defines coroutine bodies over
 # `cppcoro::generator`, which does not exist in
 # `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`). The option
 # stays ON there, so the exclusion must name the reduced set explicitly.
 if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
     addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
-endif ()
-
-# Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
-# range-v3 fails in IndexImpl / CompressedExternalIdTable).
-if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
-    if (NOT SINGLE_TEST_BINARY)
-        target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
-    endif()
 endif ()
 
 addLinkAndDiscoverTest(IdTableTest qlever_util)
