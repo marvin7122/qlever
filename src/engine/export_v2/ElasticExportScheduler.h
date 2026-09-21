@@ -196,6 +196,10 @@ class ElasticExportScheduler
   // Live V2: post CPU morsels onto Server::queryThreadPool_ so we do not
   // create a second pool. When another query is registered, admission
   // stops and in-flight tasks no-op; the coordinator serializes itself.
+  // Lifetime contract: the poster must not invoke previously posted work
+  // after the scheduler is destroyed (posted closures borrow `this`).
+  // `Server` satisfies this by declaring `queryThreadPool_` after
+  // `exportScheduler_`, so pool teardown joins outstanding work first.
   using WorkPoster = absl::AnyInvocable<void(absl::AnyInvocable<void()>)>;
   [[nodiscard]] static std::shared_ptr<ElasticExportScheduler> create(
       WorkPoster poster, size_t queueCapacity = 1024);
