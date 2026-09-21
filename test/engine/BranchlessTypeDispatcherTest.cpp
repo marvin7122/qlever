@@ -54,12 +54,15 @@ TEST(BranchlessTypeDispatcherTest, FormatInteger) {
 
 TEST(BranchlessTypeDispatcherTest, FormatDouble) {
   std::array<char, 256> buffer{};
-  auto id = ValueId::makeFromDouble(3.14159);
+  // 3.5 is exactly representable even in `ValueId`'s 49-bit truncated double
+  // mantissa; values like 3.14159 do not round-trip through `makeFromDouble`
+  // and must not be used for exact string expectations here.
+  auto id = ValueId::makeFromDouble(3.5);
 
   char* end = BranchlessTypeDispatcher::dispatchTermFormat(
       id, "", buffer.data(), BranchlessTypeDispatcher::defaultLut());
   std::string_view result(buffer.data(), end - buffer.data());
-  EXPECT_TRUE(ql::starts_with(result, "\"3.14159"));
+  EXPECT_TRUE(ql::starts_with(result, "\"3.5\""));
   EXPECT_TRUE(
       ql::ends_with(result, "\"^^<http://www.w3.org/2001/XMLSchema#double>"));
 }
