@@ -99,9 +99,9 @@ class SimulatedVocabularyFile {
       bytesWritten += writeChunkSize;
     }
 
-    // `fdatasync` is Linux-only; macOS syncs via `fcntl(F_FULLFSYNC)`.
-#if defined(__APPLE__)
-    ::fcntl(fd, F_FULLFSYNC);
+#ifdef __APPLE__
+    // macOS libc has no `fdatasync`; plain `fsync` is the portable fallback.
+    ::fsync(fd);
 #else
     ::fdatasync(fd);
 #endif
