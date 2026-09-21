@@ -858,4 +858,154 @@ TEST(FiberScheduler, exceptionInBodyPropagatesAfterJoin) {
   EXPECT_TRUE(siblingRan);
 }
 #endif
+
+// File-offset to LBA translation is pure math and needs no device: an
+// aligned range maps to (namespace, starting LBA, 0-based block count).
+TEST(NvmePassthroughTranslation, alignedRangeTranslates) {
+  const auto params = ad_utility::nvmePassthrough::translateToReadParams(
+      /*fileOffset=*/4096, /*numBytes=*/8192, /*namespaceId=*/3,
+      /*logicalBlockSize=*/4096);
+  ASSERT_TRUE(params.has_value());
+  EXPECT_EQ(params->namespaceId, 3u);
+  EXPECT_EQ(params->startLba, 1u);
+  EXPECT_EQ(params->numBlocksZeroBased, 1u);
+  EXPECT_EQ(params->transferBytes, 8192u);
+}
+
+// Anything that cannot be expressed as whole blocks (unaligned offset or
+// length, empty read, zero namespace or block size, more than 2^16 blocks)
+// translates to `std::nullopt`, so the caller keeps the plain read path with
+// identical bytes.
+TEST(NvmePassthroughTranslation, untranslatableRangesFallBack) {
+  using ad_utility::nvmePassthrough::translateToReadParams;
+  EXPECT_FALSE(
+      translateToReadParams(100, 4096, 1, 512).has_value());  // offset
+  EXPECT_FALSE(
+      translateToReadParams(0, 100, 1, 512).has_value());  // length
+  EXPECT_FALSE(translateToReadParams(0, 0, 1, 512).has_value());  // empty
+  EXPECT_FALSE(translateToReadParams(0, 512, 0, 512).has_value());  // nsid
+  EXPECT_FALSE(translateToReadParams(0, 512, 1, 0).has_value());  // block size
+  EXPECT_FALSE(translateToReadParams(0, 0x10001ULL * 512, 1, 512)
+                   .has_value());  // too many blocks
+}
+
+// The capability probe fails closed without throwing: an invalid fd and a
+// regular file are both "not capable", so enabling passthrough can never
+// divert regular vocabulary files to the `uring_cmd` path.
+TEST(NvmePassthroughProbe, failsClosedForNonDevices) {
+  EXPECT_FALSE(ad_utility::nvmePassthrough::isPassthroughCandidate(-1));
+  auto [tmp, fd] = makeTempFile("X");
+  EXPECT_FALSE(ad_utility::nvmePassthrough::isPassthroughCandidate(fd));
+}
+
+#ifdef QLEVER_HAS_IO_URING
+// Passthrough is disabled by default: a fresh policy reports it off and
+// serves plain reads.
+TEST(NvmePassthrough, disabledByDefault) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime";
+  }
+  ad_utility::IoUringPolicy policy(64);
+  EXPECT_FALSE(policy.isNvmePassthroughEnabled());
+  EXPECT_FALSE(policy.uses128ByteSqes());
+}
+
+// Enabling passthrough must not change a single byte for regular files: the
+// probe fails (not a character device), so the batch takes the plain path
+// and a failed probe never fails the batch. The block-aligned second batch
+// shows the same even when translation would succeed.
+TEST(NvmePassthrough, enabledStillReadsRegularFilesCorrectly) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime";
+  }
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+
+  ad_utility::IoUringPolicy policy(64);
+  policy.configureNvmePassthrough(/*namespaceId=*/1, /*logicalBlockSize=*/4);
+  policy.setNvmePassthroughEnabled(true);
+  EXPECT_TRUE(policy.isNvmePassthroughEnabled());
+  EXPECT_FALSE(policy.isNvmeCapable(fd));
+
+  ReadBatchForTesting batch;
+  batch.add({{8, 4}, {0, 4}, {12, 4}});
+  batch.submitToWithHandle(policy, fd, 0);
+  policy.wait(0);
+  EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
+
+  // The policy stays usable after the failed probe (cache reports incapable,
+  // plain path serves the next batch too).
+  ReadBatchForTesting batch2;
+  batch2.add({{4, 4}, {0, 4}});
+  batch2.submitToWithHandle(policy, fd, 1);
+  EXPECT_FALSE(policy.isNvmeCapable(fd));
+  policy.wait(1);
+  EXPECT_THAT(batch2.result(), ::testing::ElementsAre("BBBB", "AAAA"));
+}
+
+// A policy built with passthrough options serves regular files through the
+// plain path on its 128-byte-SQE ring: the ring accepts ordinary reads, so
+// fallback batches need no special handling.
+TEST(NvmePassthrough, optionsRingReadsRegularFilesCorrectly) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime";
+  }
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+
+  ad_utility::nvmePassthrough::Options options;
+  options.enabled = true;
+  options.namespaceId = 1;
+  options.logicalBlockSize = 4;
+  ad_utility::IoUringPolicy policy(64, options);
+  EXPECT_TRUE(policy.isNvmePassthroughEnabled());
+  EXPECT_TRUE(policy.uses128ByteSqes());
+
+  ReadBatchForTesting batch;
+  batch.add({{8, 4}, {0, 4}, {12, 4}});
+  batch.submitToWithHandle(policy, fd, 0);
+  policy.wait(0);
+  EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
+}
+#endif
+
+#if defined(QLEVER_HAS_IO_URING) && defined(QLEVER_HAS_NVME_URING_CMD)
+// Preparing a passthrough SQE sets the `uring_cmd` opcode, the NVMe command
+// operation, and the native read command bytes (namespace, buffer, length,
+// starting LBA split across CDW10/11, 0-based block count in CDW12), and
+// zeroes the rest of the command area. No device is involved.
+TEST(NvmePassthrough, preparesValidUringCmdSqe) {
+  const auto params = ad_utility::nvmePassthrough::translateToReadParams(
+      /*fileOffset=*/8192, /*numBytes=*/4096, /*namespaceId=*/2,
+      /*logicalBlockSize=*/4096);
+  ASSERT_TRUE(params.has_value());
+
+  std::string buffer(4096, '\0');
+  io_uring_sqe sqe{};
+  std::memset(&sqe, 0xFF, sizeof(sqe));
+  ad_utility::nvmePassthrough::preparePassthroughRead(
+      &sqe, /*deviceFd=*/7, *params, buffer.data());
+
+  EXPECT_EQ(sqe.opcode, IORING_OP_URING_CMD);
+  EXPECT_EQ(sqe.fd, 7);
+  EXPECT_EQ(sqe.cmd_op, static_cast<uint32_t>(NVME_URING_CMD_IO));
+
+  struct nvme_uring_cmd cmd{};
+  static_assert(sizeof(cmd) <=
+                ad_utility::nvmePassthrough::kUringCmdDataSize);
+  std::memcpy(&cmd, sqe.cmd, sizeof(cmd));
+  EXPECT_EQ(cmd.opcode, ad_utility::nvmePassthrough::kNvmReadOpcode);
+  EXPECT_EQ(cmd.nsid, 2u);
+  EXPECT_EQ(cmd.addr, reinterpret_cast<__u64>(buffer.data()));
+  EXPECT_EQ(cmd.data_len, 4096u);
+  EXPECT_EQ(cmd.cdw10, 2u);  // startLba = 8192 / 4096 = 2
+  EXPECT_EQ(cmd.cdw11, 0u);
+  EXPECT_EQ(cmd.cdw12, 0u);  // one block, 0-based
+
+  // The command area past the NVMe command is zeroed.
+  const auto* bytes = reinterpret_cast<const unsigned char*>(sqe.cmd);
+  for (size_t i = sizeof(cmd);
+       i < ad_utility::nvmePassthrough::kUringCmdDataSize; ++i) {
+    EXPECT_EQ(bytes[i], 0u) << "nonzero byte at command offset " << i;
+  }
+}
+#endif
 }  // namespace
