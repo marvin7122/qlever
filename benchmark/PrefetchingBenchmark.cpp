@@ -151,7 +151,12 @@ class HardwarePerformanceMonitor {
     fdCacheRef_ =
         openPerfCounter(PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_REFERENCES);
 
-    supported_ = (fdCycles_ >= 0);
+    // All counters must be available: a partially opened set would report
+    // valid-looking zero/partial rates for the missing counters.
+    supported_ = (fdCycles_ >= 0) && (fdInstructions_ >= 0) &&
+                 (fdL1dAccess_ >= 0) && (fdL1dMiss_ >= 0) &&
+                 (fdLlcAccess_ >= 0) && (fdLlcMiss_ >= 0) &&
+                 (fdCacheMiss_ >= 0) && (fdCacheRef_ >= 0);
 #else
     supported_ = false;
 #endif
@@ -245,7 +250,6 @@ class PrefetchingBenchmark : public BenchmarkInterface {
 
   CompactVectorOfStrings<char> vocabWords_;
   std::vector<Id> lookupIds_;
-  std::vector<size_t> lookupPositions_;
 
  public:
   PrefetchingBenchmark() {
@@ -282,13 +286,11 @@ class PrefetchingBenchmark : public BenchmarkInterface {
     std::uniform_int_distribution<uint64_t> dist(0, NUM_VOCAB_ENTRIES - 1);
 
     lookupIds_.reserve(NUM_LOOKUP_IDS);
-    lookupPositions_.reserve(NUM_LOOKUP_IDS);
 
     for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
       uint64_t vocabIndex = dist(rng);
       lookupIds_.push_back(
           Id::makeFromVocabIndex(VocabIndex::make(vocabIndex)));
-      lookupPositions_.push_back(i);
     }
   }
 

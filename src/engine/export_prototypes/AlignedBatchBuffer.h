@@ -11,7 +11,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 #include "backports/span.h"
@@ -24,9 +26,15 @@ namespace qlever::export_pipeline {
 // 64-byte Cache-Line Aligned Batch Buffer.
 // Enforces strict 64-byte alignment on ID vectors so sequential batch lookups
 // cleanly trigger CPU hardware L2 stream prefetchers and avoid split-cache-line penalties.
+//
+// `T` must be trivially copyable: elements are relocated with `memcpy` and
+// assigned into raw `operator new[]` storage without construction.
 template <typename T, size_t Alignment = 64>
 class AlignedBatchBuffer {
  public:
+  static_assert(std::is_trivially_copyable_v<T>,
+                "AlignedBatchBuffer relocates elements with memcpy and "
+                "therefore requires a trivially copyable T");
   static constexpr size_t kAlignment = Alignment;
 
  private:

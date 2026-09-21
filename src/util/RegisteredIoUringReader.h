@@ -15,6 +15,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -328,6 +329,9 @@ class RegisteredIoUringReader {
   };
   ad_utility::HashMap<uint64_t, InFlightMeta> inFlightByReqId_;
   ad_utility::HashMap<BatchId, size_t> inFlightByBatchId_;
+  // Results of batches completed by the synchronous fallback (`readSync`
+  // always reads the full request, so the result is known at submit time).
+  ad_utility::HashMap<BatchId, BatchResult> completedSyncBatches_;
   uint64_t nextReqId_ = 0;
 
  public:
@@ -356,6 +360,7 @@ class RegisteredIoUringReader {
         nextBatchId_{other.nextBatchId_},
         inFlightByReqId_{std::move(other.inFlightByReqId_)},
         inFlightByBatchId_{std::move(other.inFlightByBatchId_)},
+        completedSyncBatches_{std::move(other.completedSyncBatches_)},
         nextReqId_{other.nextReqId_} {
 #ifdef QLEVER_HAS_LIBURING
     other.ringInitialized_ = false;
@@ -382,6 +387,7 @@ class RegisteredIoUringReader {
       nextBatchId_ = other.nextBatchId_;
       inFlightByReqId_ = std::move(other.inFlightByReqId_);
       inFlightByBatchId_ = std::move(other.inFlightByBatchId_);
+      completedSyncBatches_ = std::move(other.completedSyncBatches_);
       nextReqId_ = other.nextReqId_;
 
       other.filesRegistered_ = false;
@@ -491,8 +497,14 @@ class RegisteredIoUringReader {
 
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
-      // Synchronous fallback if ring is not available
+      // Synchronous fallback if ring is not available. `readSync` always
+      // reads the full request (or throws), so record the result directly.
       submitBatchSync(requests);
+      BatchResult syncResult{requests.size(), 0, true};
+      for (const auto& req : requests) {
+        syncResult.totalBytesRead += req.numBytes;
+      }
+      completedSyncBatches_[batchId] = syncResult;
       return batchId;
     }
 
@@ -501,7 +513,11 @@ class RegisteredIoUringReader {
     for (const auto& req : requests) {
       // If submission queue is saturated, flush and drain completions to free slots
       if (numInFlightRequests_ >= config_.ringEntries) {
-        io_uring_submit(&ring_);
+        const int flushRet = io_uring_submit(&ring_);
+        if (flushRet < 0 && flushRet != -EAGAIN && flushRet != -EBUSY) {
+          AD_THROW(
+              absl::StrCat("io_uring_submit failed (errno: ", -flushRet, ")"));
+        }
         while (numInFlightRequests_ >= config_.ringEntries) {
           drainOneCqe();
         }
@@ -537,9 +553,18 @@ class RegisteredIoUringReader {
       ++numInFlightRequests_;
     }
 
-    io_uring_submit(&ring_);
+    const int submitRet = io_uring_submit(&ring_);
+    if (submitRet < 0 && submitRet != -EAGAIN && submitRet != -EBUSY) {
+      AD_THROW(
+          absl::StrCat("io_uring_submit failed (errno: ", -submitRet, ")"));
+    }
 #else
     submitBatchSync(requests);
+    BatchResult syncResult{requests.size(), 0, true};
+    for (const auto& req : requests) {
+      syncResult.totalBytesRead += req.numBytes;
+    }
+    completedSyncBatches_[batchId] = syncResult;
 #endif
 
     return batchId;
@@ -550,6 +575,14 @@ class RegisteredIoUringReader {
   BatchResult waitBatch(BatchId batchId) {
     if (batchId == 0) {
       return BatchResult{0, 0, true};
+    }
+
+    // Batches completed by the synchronous fallback were recorded at submit.
+    auto syncIt = completedSyncBatches_.find(batchId);
+    if (syncIt != completedSyncBatches_.end()) {
+      const BatchResult result = syncIt->second;
+      completedSyncBatches_.erase(syncIt);
+      return result;
     }
 
 #ifdef QLEVER_HAS_LIBURING

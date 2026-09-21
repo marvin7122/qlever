@@ -145,7 +145,6 @@ class PrefetchingBatchResolver {
                            static_cast<int>(distance));
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
-          const auto wordVocabIndex = pfId.getVocabIndex();
           // Prefetch the underlying index entry if possible
           const auto* vocabPtr =
               reinterpret_cast<const void*>(&index.getImpl());
@@ -175,7 +174,11 @@ class PrefetchingBatchResolver {
       const CompactVectorOfStrings<CharType>& words,
       ql::span<const size_t> indices,
       MappingFunc&& mappingFunc) const {
-    if (indices.empty() || !words.ready()) {
+    // Note: `ready()` only guarantees a non-empty offset span, but an empty
+    // vector still carries one sentinel offset (`size() == 0`). Without the
+    // size check, any non-empty `indices` would fail the bounds check below
+    // (or read out of bounds when correctness checks are disabled).
+    if (indices.empty() || !words.ready() || words.size() == 0) {
       return;
     }
 

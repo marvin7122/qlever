@@ -113,7 +113,11 @@ class AdaptiveChunkSizer {
         estimatedRowBytes_{config_.initialEstimatedRowBytes_} {
     AD_CONTRACT_CHECK(config_.initialChunkBytes_ > 0);
     AD_CONTRACT_CHECK(config_.maxChunkBytes_ >= config_.initialChunkBytes_);
+    // Non-finite factors would make the float-to-`size_t` conversions in
+    // `targetRowCount()`/`recordChunk()` undefined behavior.
+    AD_CONTRACT_CHECK(std::isfinite(config_.growthFactor_));
     AD_CONTRACT_CHECK(config_.growthFactor_ >= 1.0);
+    AD_CONTRACT_CHECK(std::isfinite(config_.initialEstimatedRowBytes_));
     AD_CONTRACT_CHECK(config_.initialEstimatedRowBytes_ > 0.0);
     AD_CONTRACT_CHECK(config_.minChunkRows_ >= 1);
     AD_CONTRACT_CHECK(config_.maxChunkRows_ >= config_.minChunkRows_);

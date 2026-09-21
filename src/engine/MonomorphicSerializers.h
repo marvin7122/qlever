@@ -513,6 +513,9 @@ decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
       return visitor.template operator()<ColumnType::BlankNode>(std::forward<Args>(args)...);
     case ColumnType::Boolean:
       return visitor.template operator()<ColumnType::Boolean>(std::forward<Args>(args)...);
+    case ColumnType::Undefined:
+      return visitor.template operator()<ColumnType::Undefined>(
+          std::forward<Args>(args)...);
     case ColumnType::String:
     default:
       return visitor.template operator()<ColumnType::String>(std::forward<Args>(args)...);

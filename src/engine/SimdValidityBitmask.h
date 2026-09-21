@@ -317,16 +317,19 @@ inline char* write64DelimiterPairsScalar(char* dest, char delimiter,
 class SimdValidityScanner {
  public:
   // ___________________________________________________________________________
-  // Scan a batch of exactly 64 ValueIds (512 bytes) and construct a ValidityBitmask64.
+  // Scan a batch of exactly 64 ValueIds (512 bytes) and construct a
+  // ValidityBitmask64. The IDs are first copied out via the supported
+  // `getBits()` API: reading the `ValueId` objects through a `uint64_t*` would
+  // violate the strict aliasing rules (`ValueId` is not an alias for
+  // `uint64_t`).
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
       const ValueId* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
-#if defined(QLEVER_SIMD_X86)
-    return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
-#else
-    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
-#endif
+    std::array<uint64_t, 64> raw{};
+    for (size_t i = 0; i < raw.size(); ++i) {
+      raw[i] = data[i].getBits();
+    }
+    return scanBatch64(raw.data());
   }
 
   // ___________________________________________________________________________

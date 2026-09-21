@@ -151,6 +151,7 @@ struct BranchingSwitchDispatcher {
       }
       case Datatype::VocabIndex:
       case Datatype::LocalVocabIndex:
+      case Datatype::SecondaryVocabIndex:
       case Datatype::EncodedVal: {
         std::memcpy(out, "<", 1);
         out += 1;
@@ -224,7 +225,7 @@ struct BranchingIfElseDispatcher {
                                   char* out) noexcept {
     const Datatype dt = id.getDatatype();
     if (dt == Datatype::VocabIndex || dt == Datatype::LocalVocabIndex ||
-        dt == Datatype::EncodedVal) {
+        dt == Datatype::SecondaryVocabIndex || dt == Datatype::EncodedVal) {
       std::memcpy(out, "<", 1);
       out += 1;
       std::memcpy(out, rawTerm.data(), rawTerm.size());
@@ -468,7 +469,12 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg != "-p" && !arg.empty() && std::isdigit(static_cast<unsigned char>(arg[0]))) {
-      numTerms = std::stoull(arg);
+      try {
+        numTerms = std::stoull(arg);
+      } catch (const std::exception&) {
+        std::cerr << "Invalid term count: " << arg << '\n';
+        return 1;
+      }
     }
   }
 

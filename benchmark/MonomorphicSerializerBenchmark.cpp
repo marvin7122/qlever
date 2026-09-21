@@ -92,6 +92,10 @@ using namespace ql::export_formatting;
 // Measures Hardware CPU Cycles, Instructions, Branch Instructions, and Branch Misses.
 class PerfCounterMonitor {
  public:
+  // Owns perf-event file descriptors; copying would double-close them.
+  PerfCounterMonitor(const PerfCounterMonitor&) = delete;
+  PerfCounterMonitor& operator=(const PerfCounterMonitor&) = delete;
+
   struct Metrics {
     uint64_t cycles = 0;
     uint64_t instructions = 0;
@@ -172,8 +176,10 @@ class PerfCounterMonitor {
         read(fdBranches_, &m.branches, sizeof(m.branches)) > 0) {
       m.available = true;
       if (fdBranchMisses_ >= 0) {
-        [[maybe_unused]] auto res =
-            read(fdBranchMisses_, &m.branchMisses, sizeof(m.branchMisses));
+        if (read(fdBranchMisses_, &m.branchMisses, sizeof(m.branchMisses)) !=
+            sizeof(m.branchMisses)) {
+          m.available = false;
+        }
       }
       if (m.cycles > 0) {
         m.ipc = static_cast<double>(m.instructions) / static_cast<double>(m.cycles);

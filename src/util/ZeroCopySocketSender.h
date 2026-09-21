@@ -579,7 +579,10 @@ class ZeroCopySocketSender {
       // Kernel is holding the buffer for zero-copy DMA; wait for CQE 2 (NOTIF)
       entry.waitingForNotification = true;
     } else {
-      // Standard completion or synchronous copy; release buffer immediately
+      // Standard completion or synchronous copy; release buffer immediately.
+      // A short send would silently truncate the chunk, so verify the full
+      // expected byte count before releasing the buffer.
+      AD_CORRECTNESS_CHECK(static_cast<size_t>(res) == entry.expectedBytes);
       bufferPool_.releaseSlot(entry.bufferIndex);
       AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
       AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);

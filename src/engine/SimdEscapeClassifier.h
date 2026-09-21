@@ -528,9 +528,14 @@ class SimdEscapeClassifier {
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
 
-    // If there are only two quotes and no internal special characters, pass through
+    // If there are only two quotes and no internal special characters, pass
+    // through. Note: the check must run on the content between the delimiters:
+    // `"` itself is in the Turtle escape set, so scanning the full literal
+    // (including its quotes) would always report escapes and defeat this path.
+    const std::string_view normalizedContent =
+        normLiteral.substr(1, posLastQuote - 1);
     if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
+        !hasEscapes<EscapeFormat::Turtle>(normalizedContent)) [[likely]] {
       return std::string{normLiteral};
     }
 

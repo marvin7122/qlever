@@ -124,17 +124,11 @@ class ScatterGatherBenchmarkRunner {
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = 1024 * 1024) {
     const size_t n = arena.numTriples();
-    size_t chunksEmitted = 0;
-    size_t totalBytes = 0;
 
     auto startTime = std::chrono::steady_clock::now();
 
-    FastExportStreamFormatter formatter(
-        [&](std::string_view chunk) {
-          ++chunksEmitted;
-          totalBytes += chunk.size();
-        },
-        chunkSize);
+    // The sink only drives the formatter; byte totals come from `summary`.
+    FastExportStreamFormatter formatter([&](std::string_view) {}, chunkSize);
 
     for (size_t i = 0; i < n; ++i) {
       const auto s = arena.getSubject(i);
@@ -181,8 +175,6 @@ class ScatterGatherBenchmarkRunner {
       size_t chunkSize = 1024 * 1024,
       size_t zeroCopyThreshold = 64) {
     const size_t n = arena.numTriples();
-    size_t chunksEmitted = 0;
-    size_t totalBytes = 0;
     size_t totalZeroCopyBytes = 0;
 
     ScatterGatherConfig config;
@@ -194,8 +186,6 @@ class ScatterGatherBenchmarkRunner {
 
     ScatterGatherChunkStreamer streamer(
         [&](ScatterGatherChunk chunk) {
-          ++chunksEmitted;
-          totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
         },
         config);

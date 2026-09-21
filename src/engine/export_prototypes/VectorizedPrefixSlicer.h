@@ -60,22 +60,23 @@ class VectorizedPrefixTable {
   }
 
   // ___________________________________________________________________________
-  // Write a well-known prefix into `out` using 128-bit vector stores.
-  // Returns the number of bytes written.
+  // Write a well-known prefix into `out` using 128-bit vector stores for the
+  // full 16-byte vectors plus a `memcpy` tail, so exactly `entry.length`
+  // bytes are written (a whole-vector store would overwrite up to 15 bytes
+  // past the prefix). Returns the number of bytes written.
   [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id, char* out) const noexcept {
     const auto& entry = entries_[static_cast<size_t>(id)];
     const __m128i* src = reinterpret_cast<const __m128i*>(entry.data);
     __m128i* dst = reinterpret_cast<__m128i*>(out);
 
-    if (entry.length <= 16) {
-      _mm_storeu_si128(dst, _mm_load_si128(src));
-    } else if (entry.length <= 32) {
-      _mm_storeu_si128(dst, _mm_load_si128(src));
-      _mm_storeu_si128(dst + 1, _mm_load_si128(src + 1));
-    } else {
-      _mm_storeu_si128(dst, _mm_load_si128(src));
-      _mm_storeu_si128(dst + 1, _mm_load_si128(src + 1));
-      _mm_storeu_si128(dst + 2, _mm_load_si128(src + 2));
+    const size_t fullVectors = entry.length / 16;
+    for (size_t i = 0; i < fullVectors; ++i) {
+      _mm_storeu_si128(dst + i, _mm_load_si128(src + i));
+    }
+    const size_t tailBytes = entry.length % 16;
+    if (tailBytes > 0) {
+      std::memcpy(out + fullVectors * 16, entry.data + fullVectors * 16,
+                  tailBytes);
     }
     return entry.length;
   }

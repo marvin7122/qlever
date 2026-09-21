@@ -185,28 +185,32 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 6: TextRecordIndex
+  // 6: SecondaryVocabIndex (IRIs sorted after the main vocabulary)
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+
+  // 7: TextRecordIndex
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 7: Date
+  // 8: Date
   lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
 
-  // 8: GeoPoint
+  // 9: GeoPoint
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
 
-  // 9: WordVocabIndex
+  // 10: WordVocabIndex
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 10: BlankNodeIndex
+  // 11: BlankNodeIndex
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
       TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
 
-  // 11: EncodedVal
+  // 12: EncodedVal
   lut[static_cast<size_t>(Datatype::EncodedVal)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
@@ -231,6 +235,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
@@ -267,6 +273,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
@@ -317,13 +325,14 @@ class BranchlessTypeDispatcher {
   // ___________________________________________________________________________
   // Batch format a contiguous slice of terms branchlessly.
   // Preconditions: `ids` and `rawTerms` must have identical lengths, and `out`
-  // must be non-null.
+  // must be non-null (also for empty batches: pointer arithmetic on null is
+  // undefined even when no bytes are written).
   // Returns: Total number of bytes written.
   static inline size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
       char* out, const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
     AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
-    AD_CONTRACT_CHECK(out != nullptr || ids.empty());
+    AD_CONTRACT_CHECK(out != nullptr);
 
     char* curr = out;
     const size_t numTerms = ids.size();

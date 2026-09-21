@@ -77,6 +77,10 @@ using enum LogLevel::Enum;
     (::ad_utility::detail::LogLock{::ad_utility::detail::logMutex},   \
      ::ad_utility::Log::getLog<x>())  // NOLINT
 
+// Compatibility aliases for the pre-unification logger macros.
+#define AD_LOG_BRANCHING(x) AD_LOG(x)
+#define AD_LOG_BRANCHLESS(x) AD_LOG(x)
+
 // Macros for the different log levels.
 #define AD_LOG_FATAL AD_LOG(LogLevel::Enum::FATAL)
 #define AD_LOG_ERROR AD_LOG(LogLevel::Enum::ERROR)
@@ -121,14 +125,25 @@ inline void setRuntimeLogLevel(LogLevel level) {
   detail::runtimeLogLevel.store(level.value(), std::memory_order_relaxed);
 }
 
-// RAII helper to temporarily set a runtime log level and restore it on scope exit.
+// Get the runtime log level (see `setRuntimeLogLevel`).
+inline LogLevel getRuntimeLogLevel() {
+  return detail::runtimeLogLevel.load(std::memory_order_relaxed);
+}
+
+// RAII helper to temporarily set a runtime log level and restore it on scope
+// exit. A level more verbose than the compile-time `LOGLEVEL` is clamped to
+// that level instead of throwing.
 class ScopedLogLevel {
  private:
   LogLevel::Enum previousLevel_;
 
  public:
   explicit ScopedLogLevel(LogLevel level)
-      : previousLevel_{detail::runtimeLogLevel.load(std::memory_order_relaxed)} {
+      : previousLevel_{
+            detail::runtimeLogLevel.load(std::memory_order_relaxed)} {
+    if (level.value() > LOGLEVEL) {
+      level = LogLevel{static_cast<LogLevel::Enum>(LOGLEVEL)};
+    }
     setRuntimeLogLevel(level);
   }
   ~ScopedLogLevel() {
@@ -187,7 +202,9 @@ class Log {
            << getTimeStamp() << " - " << LogLevel{LEVEL}.toString() << ": ";
   }
 
-  static void imbue(const std::locale& locale) { std::cout.imbue(locale); }
+  static void imbue(const std::locale& locale) {
+    LogstreamChoice::get().getStream().imbue(locale);
+  }
 
   static std::string getTimeStamp() {
     return absl::FormatTime("%Y-%m-%d %H:%M:%E3S", absl::Now(),
