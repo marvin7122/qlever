@@ -49,6 +49,9 @@ inline ScatterGatherChunk serializeTableChunk(
       } else if (id.getDatatype() == Datatype::Undefined) {
         // empty string for undef
       } else {
+        // Placeholder: this header-only test path has no index access, so
+        // non-numeric IDs cannot be resolved (production code uses
+        // `ql::exportIds::idsToStringAndType` with the local vocabulary).
         std::string raw = "<val>";
         std::array<char, 256> buf{};
         if (format == RowFormat::Csv) {
