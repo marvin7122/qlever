@@ -99,7 +99,12 @@ class SimulatedVocabularyFile {
       bytesWritten += writeChunkSize;
     }
 
+#ifdef __APPLE__
+    // macOS libc has no `fdatasync`; plain `fsync` is the portable fallback.
+    ::fsync(fd);
+#else
     ::fdatasync(fd);
+#endif
     ::close(fd);
     std::free(writeBuf);
     isCreated_ = true;
