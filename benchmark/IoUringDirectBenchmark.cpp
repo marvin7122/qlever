@@ -155,7 +155,6 @@ class IoUringDirectBenchmarkRunner {
     DirectIoFile file(filePath_, /*useDirectIo=*/false);
     AD_CONTRACT_CHECK(file.isOpen());
 
-    const size_t batchBytes = batchBlocks_ * kBlockSizeBytes;
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
 
     std::vector<uint64_t> offsets = generateOffsets(randomAccess);
@@ -444,9 +443,10 @@ class IoUringDirectBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Formatter for benchmark results table
-void printResultsTable(std::string_view accessMode,
-                       std::vector<BenchmarkMetric>& results) {
+// Formatter for benchmark results table (only used by the standalone
+// `main` below, not when the benchmark infrastructure is available).
+[[maybe_unused]] void printResultsTable(std::string_view accessMode,
+                                        std::vector<BenchmarkMetric>& results) {
   if (results.empty()) return;
 
   double baselineThroughput = results[0].throughputMBs;

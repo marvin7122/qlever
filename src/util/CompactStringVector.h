@@ -129,6 +129,21 @@ class CompactVectorOfStrings {
 
   bool ready() const { return !offsetsSpan().empty(); }
 
+  // Return a read-only view of the data, regardless of whether the storage
+  // currently owns its elements or is a non-owning view.
+  DataView dataSpan() const {
+    return std::visit(
+        [](const auto& x) -> DataView { return {x.data(), x.size()}; }, data_);
+  }
+
+  // Return a read-only view of the offsets, regardless of whether the
+  // storage currently owns its elements or is a non-owning view.
+  OffsetView offsetsSpan() const {
+    return std::visit(
+        [](const auto& x) -> OffsetView { return {x.data(), x.size()}; },
+        offsets_);
+  }
+
   /**
    * @brief operator []
    * @param i
@@ -181,21 +196,6 @@ class CompactVectorOfStrings {
   }
 
  private:
-  // Return a read-only view of the data, regardless of whether the storage
-  // currently owns its elements or is a non-owning view.
-  DataView dataSpan() const {
-    return std::visit(
-        [](const auto& x) -> DataView { return {x.data(), x.size()}; }, data_);
-  }
-
-  // Return a read-only view of the offsets, regardless of whether the
-  // storage currently owns its elements or is a non-owning view.
-  OffsetView offsetsSpan() const {
-    return std::visit(
-        [](const auto& x) -> OffsetView { return {x.data(), x.size()}; },
-        offsets_);
-  }
-
   // Access the owned vector alternatives. Throws (via `std::get`) if this
   // object is currently a non-owning view, which is a programming error (a
   // zero-copy view is read-only, so `build()` must not be called on it).
