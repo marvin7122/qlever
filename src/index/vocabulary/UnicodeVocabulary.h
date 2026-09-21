@@ -5,10 +5,10 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
+#include <type_traits>
+
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
-
-#include <type_traits>
 
 namespace ad_utility::vocabulary {
 
@@ -49,7 +49,7 @@ class UnicodeVocabulary {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
       if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
-                       indices, builder))>) {
+                        indices, builder))>) {
         // Fill-only protocol (e.g. `CompressedVocabulary`): the words were
         // decoded into the caller's `builder`, finalize it here.
         _underlyingVocabulary.lookupBatch(indices, builder);
