@@ -74,18 +74,14 @@ void* operator new(std::size_t size) {
 }
 
 // The global operator new above allocates with malloc, so the matching
-// operator delete must release with free. Compilers cannot prove this pairing
-// (-Wmismatched-new-delete), hence the local suppression for GCC and Clang.
-#if defined(__clang__) || defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
-#endif
+// operator delete must release with free. Compilers cannot prove this pairing,
+// and the diagnostic suppression around a direct `free` call does not silence
+// GCC 11's `-Wmismatched-new-delete` inside the sized deallocation function.
+// Forward the sized overload to the unsized one instead, so `free` appears in
+// exactly one place.
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
-#if defined(__clang__) || defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+void operator delete(void* ptr, std::size_t) noexcept { operator delete(ptr); }
 
 namespace ad_benchmark {
 namespace {
