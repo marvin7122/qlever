@@ -20,6 +20,7 @@
 #include "backports/concepts.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
+#include "util/NvmePassthrough.h"
 
 #ifdef QLEVER_HAS_IO_URING
 #include <liburing.h>
@@ -204,6 +205,34 @@ class IoUringPolicy {
   // `drainOneCqe`.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
+  // --- NVMe passthrough (`IORING_OP_URING_CMD`) state. Disabled by default;
+  // see `NvmePassthrough.h` for the submission helper and the design doc
+  // `docs/io_uring/nvme-passthrough-design.md` (branch
+  // `feat/iouring-nvme-passthrough`) for the full plan. When enabled and the
+  // fd passes the capability probe, `addBatch` submits native NVMe reads that
+  // bypass the generic storage stack; otherwise (regular files, kernels
+  // without `uring_cmd` support, unaligned ranges) it keeps the plain
+  // block-layer read, so the bytes read are identical either way.
+  bool nvmePassthroughEnabled_ = false;
+  uint32_t nvmeNamespaceId_ = 0;
+  uint32_t nvmeLogicalBlockSize_ = 0;
+  // Whether `ring_` was created with `IORING_SETUP_SQE128`. Only such a ring
+  // owns the 80-byte SQE command area the NVMe command travels in.
+  bool sqe128_ = false;
+  // Per-fd capability probe cache: the result of `isNvmeCapable`. Vocabulary
+  // files stay open for the process lifetime, so an fd number is not reused
+  // for a different device behind our back; a stale `true` can at worst turn
+  // a later completion into an I/O error, never into silent wrong bytes.
+  mutable ad_utility::HashMap<int, bool> nvmeCapableFds_;
+
+  // Try to prepare `sqe` as an NVMe passthrough read of `numBytes` bytes at
+  // `fileOffset` into `targetBuffer`. Returns false (leaving `sqe`
+  // untouched) whenever passthrough does not apply, in which case the caller
+  // falls back to the plain `io_uring_prep_read` path.
+  bool tryPrepareNvmePassthrough(io_uring_sqe* sqe, int fd,
+                                 uint64_t fileOffset, size_t numBytes,
+                                 char* targetBuffer);
+
   // Attribute an already-reaped `cqe` to its batch: recover the result and
   // the request id, consume the CQE slot, check for I/O and short-read
   // errors, and update the in-flight bookkeeping. Shared by the blocking
@@ -221,7 +250,32 @@ class IoUringPolicy {
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
+  // Same, but with NVMe passthrough options: when `nvmeOptions.enabled` (and
+  // the namespace id and block size are valid), the ring is created with
+  // 128-byte SQEs so that `addBatch` can submit native NVMe reads. When the
+  // extended SQEs are unavailable at compile time, construction falls back to
+  // a plain 64-byte-SQE ring with passthrough disabled. When the kernel
+  // rejects them at setup, construction throws like the primary constructor,
+  // so `makeBatchManager` keeps its probe-once sync fallback.
+  explicit IoUringPolicy(unsigned ringSize,
+                         const nvmePassthrough::Options& nvmeOptions);
   ~IoUringPolicy();
+
+  // Set the NVMe namespace the passthrough path addresses. Throws on a zero
+  // namespace id or block size (programmer error, not a probe result).
+  void configureNvmePassthrough(uint32_t namespaceId,
+                                uint32_t logicalBlockSize);
+  // Enable or disable the passthrough path (default: disabled). Enabling on a
+  // 64-byte-SQE ring only warns: without the SQE command area every request
+  // keeps the plain path.
+  void setNvmePassthroughEnabled(bool enabled);
+  bool isNvmePassthroughEnabled() const { return nvmePassthroughEnabled_; }
+  // True iff this ring was created with 128-byte SQEs.
+  bool uses128ByteSqes() const { return sqe128_; }
+  // True iff `fd` passed the passthrough capability probe (cached per fd; the
+  // first call probes, later calls reuse the cached result). Regular files
+  // always report false. Never throws.
+  bool isNvmeCapable(int fd) const;
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain

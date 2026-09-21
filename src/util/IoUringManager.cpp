@@ -72,6 +72,114 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
 }
 
 //______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize,
+                             const nvmePassthrough::Options& nvmeOptions)
+    : ringSize_(ringSize) {
+  if (!nvmeOptions.enabled) {
+    int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
+    if (ret < 0) {
+      AD_THROW("io_uring_queue_init failed in IoUringManager");
+    }
+    return;
+  }
+  if (nvmeOptions.namespaceId == 0 ||
+      nvmeOptions.logicalBlockSize == 0) {
+    AD_THROW(
+        "NVMe passthrough enabled with zero namespace id or block size in "
+        "IoUringPolicy");
+  }
+  nvmeNamespaceId_ = nvmeOptions.namespaceId;
+  nvmeLogicalBlockSize_ = nvmeOptions.logicalBlockSize;
+#ifdef IORING_SETUP_SQE128
+  if (nvmePassthrough::kUringCmdSupported) {
+    // 128-byte SQEs carry the 80-byte NVMe command payload. Plain
+    // `io_uring_prep_read` SQEs keep working on such a ring, so requests that
+    // fall back still submit unchanged.
+    struct io_uring_params params{};
+    params.flags = IORING_SETUP_SQE128;
+    int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+    if (ret < 0) {
+      AD_THROW(
+          "io_uring_queue_init_params with IORING_SETUP_SQE128 failed in "
+          "IoUringPolicy");
+    }
+    sqe128_ = true;
+    nvmePassthroughEnabled_ = true;
+    return;
+  }
+  AD_LOG_WARN << "NVMe passthrough requested, but this build has no NVMe "
+                 "`uring_cmd` support; continuing with a plain ring and the "
+                 "passthrough path disabled.\n";
+#else
+  AD_LOG_WARN << "NVMe passthrough requested, but this liburing has no "
+                 "`IORING_SETUP_SQE128`; continuing with a plain ring and the "
+                 "passthrough path disabled.\n";
+#endif
+  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
+  if (ret < 0) {
+    AD_THROW("io_uring_queue_init failed in IoUringManager");
+  }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::configureNvmePassthrough(uint32_t namespaceId,
+                                             uint32_t logicalBlockSize) {
+  if (namespaceId == 0 || logicalBlockSize == 0) {
+    AD_THROW(
+        "configureNvmePassthrough requires a nonzero namespace id and block "
+        "size");
+  }
+  nvmeNamespaceId_ = namespaceId;
+  nvmeLogicalBlockSize_ = logicalBlockSize;
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::setNvmePassthroughEnabled(bool enabled) {
+  if (enabled && !sqe128_) {
+    AD_LOG_WARN << "NVMe passthrough enabled on a 64-byte-SQE ring, which "
+                   "has no SQE command area; every request keeps the plain "
+                   "read path.\n";
+  }
+  nvmePassthroughEnabled_ = enabled;
+}
+
+//______________________________________________________________________________
+bool IoUringPolicy::isNvmeCapable(int fd) const {
+  auto it = nvmeCapableFds_.find(fd);
+  if (it != nvmeCapableFds_.end()) {
+    return it->second;
+  }
+  const bool capable = nvmePassthrough::isPassthroughCandidate(fd);
+  nvmeCapableFds_[fd] = capable;
+  return capable;
+}
+
+//______________________________________________________________________________
+bool IoUringPolicy::tryPrepareNvmePassthrough(io_uring_sqe* sqe, int fd,
+                                              uint64_t fileOffset,
+                                              size_t numBytes,
+                                              char* targetBuffer) {
+  // Fail fast (and leave `sqe` untouched) unless every requirement holds:
+  // explicitly enabled, compiled-in `uring_cmd` support, a 128-byte-SQE ring,
+  // a capable (NVMe character) device, and a whole-block range.
+  if (!nvmePassthroughEnabled_ || !nvmePassthrough::kUringCmdSupported ||
+      !sqe128_ || !isNvmeCapable(fd)) {
+    return false;
+  }
+  const auto params = nvmePassthrough::translateToReadParams(
+      fileOffset, numBytes, nvmeNamespaceId_, nvmeLogicalBlockSize_);
+  if (!params.has_value()) {
+    return false;
+  }
+#ifdef QLEVER_HAS_NVME_URING_CMD
+  nvmePassthrough::preparePassthroughRead(sqe, fd, *params, targetBuffer);
+  return true;
+#else
+  return false;
+#endif
+}
+
+//______________________________________________________________________________
 IoUringPolicy::~IoUringPolicy() {
   if (numInFlightReadRequests_ > 0) {
     AD_LOG_WARN << "IoUringPolicy destroyed with " << numInFlightReadRequests_
@@ -127,9 +235,17 @@ void IoUringPolicy::addBatch(int fd,
 
     // Record the read's parameters in the SQE (this only sets the SQE's fields;
     // the request is not handed to the kernel until a later `io_uring_submit`).
-    io_uring_prep_read(sqe, fd, targetBuf,
-                       static_cast<unsigned>(numBytesToRead),
-                       static_cast<__u64>(fileOffset));
+    // The passthrough path submits a native NVMe read through `uring_cmd`
+    // when the device supports it; otherwise (or when disabled) the plain
+    // block-layer read below runs, so the bytes read are identical. Both
+    // share the request-id tagging that follows, so completion handling in
+    // `drainOneCqe`/`wait` is unchanged.
+    if (!tryPrepareNvmePassthrough(sqe, fd, fileOffset, numBytesToRead,
+                                   targetBuf)) {
+      io_uring_prep_read(sqe, fd, targetBuf,
+                         static_cast<unsigned>(numBytesToRead),
+                         static_cast<__u64>(fileOffset));
+    }
 
     // Tag the SQE with a unique request id and record its metadata (the batch
     // it belongs to and how many bytes it should read). io_uring copies the
