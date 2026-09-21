@@ -8,6 +8,7 @@
 #include "index/vocabulary/Vocabulary.h"
 
 #include <iostream>
+#include <type_traits>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "index/ConstantsIndexBuilding.h"
@@ -315,7 +316,16 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
   AD_CONTRACT_CHECK(!indices.empty());
   // Fill-only protocol: see `UnicodeVocabulary::lookupBatch`.
   if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
-    vocabulary_.lookupBatch(indices, builder);
+    if constexpr (std::is_void_v<decltype(vocabulary_.lookupBatch(indices,
+                                                                  builder))>) {
+      vocabulary_.lookupBatch(indices, builder);
+    } else {
+      // The underlying overload (e.g. `UnicodeVocabulary` over
+      // `PolymorphicVocabulary`) finalizes the builder itself and returns
+      // the result. Propagate it directly: finalizing again would trip the
+      // `finalize` precondition on the moved-from builder.
+      return vocabulary_.lookupBatch(indices, builder);
+    }
   } else {
     // The underlying vocabulary has no batched leaf: reuse its single-shot
     // batch path and copy the words into the caller's builder, so the

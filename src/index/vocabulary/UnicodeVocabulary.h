@@ -5,6 +5,8 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
+#include <type_traits>
+
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
 
@@ -51,7 +53,16 @@ class UnicodeVocabulary {
     if constexpr (requires {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
-      _underlyingVocabulary.lookupBatch(indices, builder);
+      if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
+                        indices, builder))>) {
+        _underlyingVocabulary.lookupBatch(indices, builder);
+      } else {
+        // The underlying overload (e.g. `PolymorphicVocabulary`) finalizes
+        // the builder itself and returns the result. Propagate it directly:
+        // finalizing again would trip the `finalize` precondition on the
+        // moved-from builder.
+        return _underlyingVocabulary.lookupBatch(indices, builder);
+      }
     } else {
       auto singleShot = _underlyingVocabulary.lookupBatch(indices);
       AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
