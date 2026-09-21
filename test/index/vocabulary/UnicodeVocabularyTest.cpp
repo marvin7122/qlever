@@ -101,3 +101,18 @@ TEST(UnicodeVocabulary, ScanAllEmptyVocabulary) {
   auto vocab = createVocabulary({});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
 }
+
+// _____________________________________________________________________________
+// Regression test for the fill-only batch protocol: when the underlying
+// vocabulary has no builder-taking `lookupBatch` overload (like
+// `VocabularyInMemory`), the builder-taking overload must copy the
+// single-shot words into the caller's builder instead of returning them
+// directly, so the unconditional `finalize()` sees a populated builder.
+TEST(UnicodeVocabulary, LookupBatchFillsCallerBuilder) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma"};
+  auto vocab = createVocabulary(words);
+  const std::vector<size_t> indices{2, 0};
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(indices.size());
+  auto result = vocab.lookupBatch(indices, builder);
+  EXPECT_THAT(result, ::testing::ElementsAre("gamma", "alpha"));
+}

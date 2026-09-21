@@ -43,25 +43,23 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
+    // Fill-only protocol: leaf vocabularies append to `builder` (returning
+    // `void`) and the caller finalizes. When the underlying vocabulary has
+    // no builder-taking overload, copy its single-shot words into the
+    // builder first, so the unconditional `finalize()` sees a populated
+    // builder (same pattern as `Vocabulary` and `PolymorphicVocabulary`).
     if constexpr (requires {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
       _underlyingVocabulary.lookupBatch(indices, builder);
-      return std::move(builder).finalize();
     } else {
-      // The underlying vocabulary has no batched leaf: reuse its single-shot
-      // batch path and copy the words into the caller's builder, so the
-      // `finalize()` below sees a populated builder (same pattern as
-      // `Vocabulary` and `PolymorphicVocabulary`; returning the single-shot
-      // result directly would leave the builder empty and trip the
-      // `finalize` precondition).
       auto singleShot = _underlyingVocabulary.lookupBatch(indices);
       AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
       for (std::string_view word : singleShot) {
         builder.appendWord(word);
       }
-      return std::move(builder).finalize();
     }
+    return std::move(builder).finalize();
   }
 
   //____________________________________________________________________________
