@@ -129,17 +129,12 @@ class ScatterGatherBenchmarkRunner {
       const SimulatedDecompressionArena& arena,
       size_t chunkSize = 1024 * 1024) {
     const size_t n = arena.numTriples();
-    size_t chunksEmitted = 0;
-    size_t totalBytes = 0;
 
     auto startTime = std::chrono::steady_clock::now();
 
-    FastExportStreamFormatter formatter(
-        [&](std::string_view chunk) {
-          ++chunksEmitted;
-          totalBytes += chunk.size();
-        },
-        chunkSize);
+    // The sink is a no-op: byte and chunk totals are taken from the
+    // formatter's `finalize()` summary below.
+    FastExportStreamFormatter formatter([&](std::string_view) {}, chunkSize);
 
     for (size_t i = 0; i < n; ++i) {
       const auto s = arena.getSubject(i);
@@ -185,8 +180,6 @@ class ScatterGatherBenchmarkRunner {
       const SimulatedDecompressionArena& arena, size_t chunkSize = 1024 * 1024,
       size_t zeroCopyThreshold = 64) {
     const size_t n = arena.numTriples();
-    size_t chunksEmitted = 0;
-    size_t totalBytes = 0;
     size_t totalZeroCopyBytes = 0;
 
     ScatterGatherConfig config;
@@ -198,8 +191,6 @@ class ScatterGatherBenchmarkRunner {
 
     ScatterGatherChunkStreamer streamer(
         [&](ScatterGatherChunk chunk) {
-          ++chunksEmitted;
-          totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
         },
         config);
@@ -256,14 +247,12 @@ class ScatterGatherBenchmarkRunner {
     config.maxIovecs = 1024;
     config.zeroCopyThresholdBytes = 64;
 
-    size_t totalBytes = 0;
     size_t totalZeroCopyBytes = 0;
 
     auto startTime = std::chrono::steady_clock::now();
 
     ScatterGatherChunkStreamer streamer(
         [&](ScatterGatherChunk chunk) {
-          totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
           static_cast<void>(chunk.writeToFd(nullFd));
         },
@@ -341,7 +330,7 @@ void printBenchmarkTable(
   std::cout << "---------------------------------------------------------------"
                "----------------------------------------\n";
 
-  for (auto m : metrics) {
+  for (auto& m : metrics) {
     m.speedupVsBaseline =
         baselineThroughput > 0 ? (m.throughputGBs / baselineThroughput) : 1.0;
 

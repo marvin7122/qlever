@@ -1623,6 +1623,13 @@ QueryPlanner::runDynamicProgrammingOnConnectedComponent(
     checkCancellation();
   }
   auto& result = dpTab.back();
+  // Apply enforced filter substitutes (currently `SpatialJoin` with a
+  // fixed-value side). A full-cover replacement plan lands in the final row
+  // without passing through a DP round that may apply substitutes, so it is
+  // handled here. (Single-seed components were already handled above; the
+  // re-application is a no-op for them because the filters are marked as
+  // included.)
+  applyFiltersIfPossible<FilterMode::SeedSubstitutesOnly>(result, filters);
   applyFiltersIfPossible<FilterMode::ReplaceUnfilteredNoSubstitutes>(result,
                                                                      filters);
   applyTextLimitsIfPossible(result, textLimits, true);

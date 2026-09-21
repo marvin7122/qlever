@@ -52,14 +52,21 @@ struct AllocationTracker {
 // multiple-definition link errors. Under sanitizers the `heap-allocations`
 // metadata below reads 0.
 #ifndef QLEVER_UNDER_SANITIZER
-void* operator new(std::size_t size) {
-  if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
-    AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
-    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
-  }
+// `noinline` (like on `operator delete` below) keeps the middle end from
+// connecting the `std::malloc` call with the `std::free` calls at the call
+// sites, which would make `-Wmismatched-new-delete` fire (as an error under
+// `-Werror`).
+__attribute__((noinline)) void* operator new(std::size_t size) {
   void* ptr = std::malloc(size);
   if (!ptr) {
     throw std::bad_alloc();
+  }
+  // `acquire` pairs with the `seq_cst` stores in `start()`/`stop()`, so the
+  // enabled flag is never observed stale. Only successful allocations are
+  // counted.
+  if (AllocationTracker::enabled_.load(std::memory_order_acquire)) {
+    AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
+    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
   }
   return ptr;
 }
