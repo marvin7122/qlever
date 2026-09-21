@@ -7,11 +7,10 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <numeric>
-#include <random>
 #include <string>
 #include <vector>
 

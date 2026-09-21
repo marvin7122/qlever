@@ -103,6 +103,9 @@ class PerfCounterMonitor {
     double ipc = 0.0;
     double branchMissRate = 0.0;
     bool available = false;
+    // The branch-miss event is best-effort: when its fd failed to open, the
+    // core counters are still reported, but no branch-miss numbers are.
+    bool branchMissesAvailable = false;
   };
 
  private:
@@ -177,9 +180,10 @@ class PerfCounterMonitor {
         read(fdInstructions_, &m.instructions, sizeof(m.instructions)) > 0 &&
         read(fdBranches_, &m.branches, sizeof(m.branches)) > 0) {
       m.available = true;
-      if (fdBranchMisses_ >= 0) {
-        [[maybe_unused]] auto res =
-            read(fdBranchMisses_, &m.branchMisses, sizeof(m.branchMisses));
+      if (fdBranchMisses_ >= 0 &&
+          read(fdBranchMisses_, &m.branchMisses, sizeof(m.branchMisses)) ==
+              sizeof(m.branchMisses)) {
+        m.branchMissesAvailable = true;
       }
       if (m.cycles > 0) {
         m.ipc =
@@ -675,8 +679,11 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
       m.metadata().addKeyValuePair("hw-cycles", perf.cycles);
       m.metadata().addKeyValuePair("instructions-per-cycle (IPC)", perf.ipc);
       m.metadata().addKeyValuePair("hw-branches", perf.branches);
-      m.metadata().addKeyValuePair("hw-branch-misses", perf.branchMisses);
-      m.metadata().addKeyValuePair("branch-miss-rate-pct", perf.branchMissRate);
+      if (perf.branchMissesAvailable) {
+        m.metadata().addKeyValuePair("hw-branch-misses", perf.branchMisses);
+        m.metadata().addKeyValuePair("branch-miss-rate-pct",
+                                     perf.branchMissRate);
+      }
     }
   }
 };

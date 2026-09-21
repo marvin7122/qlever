@@ -70,8 +70,6 @@ struct WikidataStreamDataset {
     std::mt19937 gen(seed);
     std::poisson_distribution<size_t> runDist(
         static_cast<double>(avgTriplesPerSubject));
-    std::uniform_int_distribution<size_t> predDist(0,
-                                                   49);  // 50 common predicates
     std::uniform_int_distribution<size_t> objDist(0, 999'999);
 
     // Populate common predicates in vocabulary
@@ -276,6 +274,10 @@ int main(int argc, char** argv) {
   size_t numTriples = 2'000'000;
   if (argc > 1) {
     numTriples = std::stoull(argv[1]);
+  }
+  if (numTriples == 0) {
+    std::cerr << "Number of triples must be at least 1.\n";
+    return 1;
   }
 
   std::cout << "Generating sorted Wikidata SPO stream with " << numTriples

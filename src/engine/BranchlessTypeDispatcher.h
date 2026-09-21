@@ -185,28 +185,36 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 6: TextRecordIndex
+  // 6: SecondaryVocabIndex. Entries are keyed by the `Datatype` enum value
+  // (not by position), so every enumerator needs an explicit entry, or the
+  // slot keeps the `formatUndefined` no-op default and the term is silently
+  // dropped. Secondary-vocabulary words share the raw-name format of the
+  // main-vocabulary indices above.
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+
+  // 7: TextRecordIndex
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 7: Date
+  // 8: Date
   lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
 
-  // 8: GeoPoint
+  // 9: GeoPoint
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
 
-  // 9: WordVocabIndex
+  // 10: WordVocabIndex
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 10: BlankNodeIndex
+  // 11: BlankNodeIndex
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
       TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
 
-  // 11: EncodedVal
+  // 12: EncodedVal
   lut[static_cast<size_t>(Datatype::EncodedVal)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
@@ -232,6 +240,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
@@ -269,6 +279,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};

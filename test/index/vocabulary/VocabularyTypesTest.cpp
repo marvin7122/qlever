@@ -93,7 +93,7 @@ TEST(StringVectorVocabBatchLookupData, AsResultEmpty) {
 // (e.g. decompressing one word at a time in `CompressedVocabulary`). Each word
 // gets a pointer-stable allocation, so appending a later (differently sized)
 // word never invalidates an earlier `string_view`.
-TEST(PmrVocabBatchLookupData, PmrAsResultPointerStableAcrossAppends) {
+TEST(ArenaVocabBatchBuilder, AsResultPointerStableAcrossAppends) {
   ArenaVocabBatchBuilder builder(2);
   builder.appendWord("foo");
   builder.appendWord("barbaz");

@@ -9,6 +9,7 @@
 #ifndef QLEVER_SRC_UTIL_ZEROCOPYSOCKETSENDER_H
 #define QLEVER_SRC_UTIL_ZEROCOPYSOCKETSENDER_H
 
+#include <absl/strings/str_cat.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
