@@ -16,6 +16,7 @@
 #include "engine/NamedResultCache.h"
 #include "engine/QueryExecutionContext.h"
 #include "index/Index.h"
+#include "index/IndexSwap.h"
 #include "util/ParseException.h"
 #include "util/Timer.h"
 #include "util/json.h"
