@@ -472,6 +472,9 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
       // collected so far are still reported.
       BenchmarkMetricResult memcpyRes{};
       BenchmarkMetricResult streamRes{};
+      // `ResultGroup::addMeasurement(descriptor, lambda)` runs the lambda
+      // synchronously in the `ResultEntry` constructor, so capturing the
+      // loop-local result structs by reference is safe here.
       try {
         results.addMeasurement(
             "memcpy: " + desc,
