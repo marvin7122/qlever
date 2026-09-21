@@ -11,11 +11,8 @@
 #include <cstring>
 #include <limits>
 #include <optional>
-#include <sys/stat.h>
-
-#ifdef QLEVER_HAS_NVME_URING_CMD
 #include <sys/ioctl.h>
-#endif
+#include <sys/stat.h>
 
 #include "util/Exception.h"
 
