@@ -52,9 +52,13 @@ int main(int argc, char** argv) {
   size_t dummyV2Count = 0;
 
   for (size_t i = 0; i < numQueries; ++i) {
+    // Rotate through all three query forms so the benchmark also covers the
+    // ineligible (ASK routes to Legacy V1) path.
+    const ParsedQuery& query = (i % 3 == 0)   ? selectQuery
+                               : (i % 3 == 1) ? constructQuery
+                                              : askQuery;
     auto mode = ExportPipelineRouter::selectEngine(
-        (i % 2 == 0) ? selectQuery : constructQuery,
-        (i % 3 == 0) ? fastParams : defaultParams,
+        query, (i % 3 == 0) ? fastParams : defaultParams,
         (i % 5 == 0) ? std::optional<std::string_view>("v2") : std::nullopt);
     if (mode == ExportEngineMode::FastStreamingV2) {
       ++dummyV2Count;

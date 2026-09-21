@@ -20,7 +20,6 @@
 #include "util/Exception.h"
 #include "util/HashMap.h"
 #include "util/StringUtils.h"
-#include "util/http/MediaTypes.h"
 
 namespace ql::engine {
 
