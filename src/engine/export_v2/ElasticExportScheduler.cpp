@@ -313,8 +313,12 @@ void ElasticExportScheduler::onPostedMorselFinished(uint64_t jobId) {
     readyToPost = drainPendingAdmissionUnsafe();
   }
   // Outside the lock: posting may run work inline (see `enqueueMorsel`).
+  // `drainPendingAdmissionUnsafe` already counted these morsels as
+  // outstanding while selecting them, so post them directly: routing them
+  // through `postAccounted` would count them a second time, clog the fair
+  // shares, and strand pending morsels.
   for (auto& ready : readyToPost) {
-    postAccounted(std::move(ready));
+    poster_(makePostedWork(std::move(ready)));
   }
 }
 
