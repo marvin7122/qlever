@@ -46,8 +46,10 @@ class UnicodeVocabulary {
     if constexpr (requires {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
-      _underlyingVocabulary.lookupBatch(indices, builder);
-      return std::move(builder).finalize();
+      // Use the returned result: the underlying vocabulary may take its
+      // documented fallback path without touching `builder`, in which case
+      // finalizing `builder` here would fail on an empty batch.
+      return _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
       return _underlyingVocabulary.lookupBatch(indices);
     }
