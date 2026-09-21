@@ -328,6 +328,10 @@ class RegisteredIoUringReader {
   ad_utility::HashMap<uint64_t, InFlightMeta> inFlightByReqId_;
   ad_utility::HashMap<BatchId, size_t> inFlightByBatchId_;
   uint64_t nextReqId_ = 0;
+  // Results of batches completed via the synchronous fallback (ring
+  // unavailable): `waitBatch` serves and erases these, so completion and byte
+  // counts stay observable on every path.
+  ad_utility::HashMap<BatchId, BatchResult> syncResultsByBatchId_;
 
  public:
   explicit RegisteredIoUringReader(
@@ -355,7 +359,8 @@ class RegisteredIoUringReader {
         nextBatchId_{other.nextBatchId_},
         inFlightByReqId_{std::move(other.inFlightByReqId_)},
         inFlightByBatchId_{std::move(other.inFlightByBatchId_)},
-        nextReqId_{other.nextReqId_} {
+        nextReqId_{other.nextReqId_},
+        syncResultsByBatchId_{std::move(other.syncResultsByBatchId_)} {
 #ifdef QLEVER_HAS_LIBURING
     other.ringInitialized_ = false;
 #endif
@@ -382,6 +387,7 @@ class RegisteredIoUringReader {
       inFlightByReqId_ = std::move(other.inFlightByReqId_);
       inFlightByBatchId_ = std::move(other.inFlightByBatchId_);
       nextReqId_ = other.nextReqId_;
+      syncResultsByBatchId_ = std::move(other.syncResultsByBatchId_);
 
       other.filesRegistered_ = false;
       other.buffersRegistered_ = false;
@@ -490,8 +496,9 @@ class RegisteredIoUringReader {
 
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
-      // Synchronous fallback if ring is not available
-      submitBatchSync(requests);
+      // Synchronous fallback if ring is not available. The reads complete
+      // inline; record their counts so `waitBatch` observes them.
+      syncResultsByBatchId_[batchId] = submitBatchSync(requests);
       return batchId;
     }
 
@@ -501,7 +508,9 @@ class RegisteredIoUringReader {
       // If submission queue is saturated, flush and drain completions to free
       // slots
       if (numInFlightRequests_ >= config_.ringEntries) {
-        io_uring_submit(&ring_);
+        // A hard submit error must fail fast: draining below would otherwise
+        // wait forever on requests that were never sent.
+        AD_CORRECTNESS_CHECK(io_uring_submit(&ring_) >= 0);
         while (numInFlightRequests_ >= config_.ringEntries) {
           drainOneCqe();
         }
@@ -537,9 +546,9 @@ class RegisteredIoUringReader {
       ++numInFlightRequests_;
     }
 
-    io_uring_submit(&ring_);
+    AD_CORRECTNESS_CHECK(io_uring_submit(&ring_) >= 0);
 #else
-    submitBatchSync(requests);
+    syncResultsByBatchId_[batchId] = submitBatchSync(requests);
 #endif
 
     return batchId;
@@ -550,6 +559,15 @@ class RegisteredIoUringReader {
   BatchResult waitBatch(BatchId batchId) {
     if (batchId == 0) {
       return BatchResult{0, 0, true};
+    }
+
+    // A batch completed via the synchronous fallback reports its recorded
+    // counts instead of the zeroed placeholder.
+    if (auto it = syncResultsByBatchId_.find(batchId);
+        it != syncResultsByBatchId_.end()) {
+      BatchResult result = it->second;
+      syncResultsByBatchId_.erase(it);
+      return result;
     }
 
 #ifdef QLEVER_HAS_LIBURING
@@ -680,7 +698,8 @@ class RegisteredIoUringReader {
   }
 #endif
 
-  void submitBatchSync(ql::span<const BlockReadRequest> requests) {
+  BatchResult submitBatchSync(ql::span<const BlockReadRequest> requests) {
+    BatchResult result;
     for (const auto& req : requests) {
       int targetFd = static_cast<int>(req.fileIndex);
       if (filesRegistered_ && req.fileIndex < registeredFds_.size()) {
@@ -688,7 +707,10 @@ class RegisteredIoUringReader {
       }
       readSync(targetFd, req.fileOffset, {req.destination, req.numBytes},
                config_.useDirectIo);
+      ++result.requestsCompleted;
+      result.totalBytesRead += req.numBytes;
     }
+    return result;
   }
 };
 

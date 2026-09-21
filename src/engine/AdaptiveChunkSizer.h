@@ -143,12 +143,6 @@ class AdaptiveChunkSizer {
   }
 
   // ___________________________________________________________________________
-  // Target byte capacity alias for consistency.
-  [[nodiscard]] size_t currentChunkSizeBytes() const noexcept {
-    return currentChunkBytesTarget_;
-  }
-
-  // ___________________________________________________________________________
   // Average formatted bytes per row/triple observed so far.
   [[nodiscard]] double averageRowBytes() const noexcept {
     return estimatedRowBytes_;
@@ -288,6 +282,9 @@ class AdaptiveChunkBuffer {
 
   // ___________________________________________________________________________
   // Write a string_view slice into the buffer, expanding dynamically if needed.
+  // `memmove` (not `memcpy`): the slice may alias the buffer itself (e.g. a
+  // previously returned `currentView()`), and overlapping `memcpy` is
+  // undefined behavior.
   void write(std::string_view sv) {
     if (sv.empty()) {
       return;
@@ -295,7 +292,7 @@ class AdaptiveChunkBuffer {
     if (writePos_ + sv.size() > buffer_.size()) {
       buffer_.resize(std::max(buffer_.size() * 2, writePos_ + sv.size()));
     }
-    std::memcpy(buffer_.data() + writePos_, sv.data(), sv.size());
+    std::memmove(buffer_.data() + writePos_, sv.data(), sv.size());
     writePos_ += sv.size();
   }
 

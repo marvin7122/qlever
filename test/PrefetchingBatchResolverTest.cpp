@@ -62,8 +62,7 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
 
   // Prefetched resolution with various prefetch distances
   for (size_t distance : {1, 2, 4, 8, 16}) {
-    PrefetchingBatchResolver resolver(
-        PrefetchConfig{.prefetchDistance = distance});
+    PrefetchingBatchResolver resolver(PrefetchConfig{distance});
     auto prefetchedResults =
         resolver.idsToStringAndType(index, testIds, localVocab, ql::identity{});
 
@@ -82,7 +81,7 @@ TEST(PrefetchingBatchResolver, CompactVectorPipelinedResolution) {
                                        "\"literal2\"", "\"longer_literal_3\""};
   words.build(rawWords);
 
-  PrefetchingBatchResolver resolver(PrefetchConfig{.prefetchDistance = 4});
+  PrefetchingBatchResolver resolver(PrefetchConfig{4});
 
   std::vector<size_t> queryIndices = {0, 4, 1, 3, 2, 4, 0, 1};
   std::vector<std::string> resolvedWords(queryIndices.size());

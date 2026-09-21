@@ -310,8 +310,9 @@ class ZeroCopySocketSender {
 
 #ifdef QLEVER_HAS_LIBURING
       if (ringInitialized_) {
-        // Pool exhausted: submit pending queue and drain completions
-        io_uring_submit(&ring_);
+        // Pool exhausted: submit pending queue (hard submit errors throw
+        // instead of hanging the drain below) and reap one completion.
+        submit();
         drainOneCqe();
         continue;
       }
@@ -344,7 +345,7 @@ class ZeroCopySocketSender {
 
     // If submission ring is full, submit and reap CQEs to free ring entries
     if (numInFlightRequests_ >= config_.ringEntries) {
-      io_uring_submit(&ring_);
+      submit();
       while (numInFlightRequests_ >= config_.ringEntries) {
         drainOneCqe();
       }
@@ -355,20 +356,23 @@ class ZeroCopySocketSender {
 
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
 
+    // `MSG_NOSIGNAL`: a closed peer must surface as a send error, never as a
+    // `SIGPIPE` terminating the process (same as the sync fallback below).
+    const int sendFlags = flags | MSG_NOSIGNAL;
     if (config_.useZeroCopy) {
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
         // Zero-Copy Send with Registered Fixed Buffer (Opcode:
         // IORING_OP_SEND_ZC)
         io_uring_prep_send_zc_fixed(sqe, sockfd, slotSpan.data(), numBytes,
-                                    flags, zcFlags, bufferIndex);
+                                    sendFlags, zcFlags, bufferIndex);
       } else {
         // Zero-Copy Send with Unpinned Buffer
-        io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, flags,
+        io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, sendFlags,
                               zcFlags);
       }
     } else {
       // Standard asynchronous io_uring send
-      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, flags);
+      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, sendFlags);
     }
 
     const uint64_t reqId = nextRequestId_++;
@@ -505,6 +509,11 @@ class ZeroCopySocketSender {
   void teardown() noexcept {
 #ifdef QLEVER_HAS_LIBURING
     if (ringInitialized_) {
+      // Best-effort submit of merely prepared SQEs: without this the wait
+      // below blocks forever on requests that were never sent. The return
+      // value is deliberately ignored (`noexcept`); already-submitted
+      // requests still drain normally.
+      io_uring_submit(&ring_);
       while (numInFlightRequests_ > 0 || numInFlightBuffers_ > 0) {
         io_uring_cqe* cqe = nullptr;
         if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
@@ -572,6 +581,9 @@ class ZeroCopySocketSender {
                             ", errno: ", -res, ")"));
     }
 
+    // A short write must never be mistaken for a complete packet: fail fast
+    // instead of silently dropping the unsent suffix.
+    AD_CORRECTNESS_CHECK(static_cast<size_t>(res) == entry.expectedBytes);
     totalBytesSent_ += static_cast<size_t>(res);
     ++totalPacketsSent_;
 
@@ -600,6 +612,9 @@ class ZeroCopySocketSender {
       bufferPool_.releaseSlot(bufferIndex);
       AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
     }
+    // Same fail-fast rule as the async completion path above: a short write
+    // must not be recorded as a complete packet.
+    AD_CORRECTNESS_CHECK(static_cast<size_t>(bytesSent) == numBytes);
 
     totalBytesSent_ += static_cast<size_t>(bytesSent);
     ++totalPacketsSent_;

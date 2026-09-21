@@ -112,7 +112,9 @@ TEST_P(MaterializedViewsStarRewriteTest, starRewrite) {
                                         source_location sourceLocation =
                                             AD_CURRENT_SOURCE_LOC()) {
     auto l = generateLocationTrace(sourceLocation);
-    expectNotSuitableForRewrite(qlv, manager, "noStarRewriteView", query);
+    expectNotSuitableForRewrite(qlv, manager, "noStarRewriteView", query,
+                                "No supported query pattern for rewriting "
+                                "joins was found");
   };
 
   noStarRewrite("SELECT * { <s1> <p1> ?o1 . ?s <p2> ?o2 }");

@@ -179,6 +179,12 @@ class RlePrefixFormatter {
     // Cache miss: format new prefix slice
     ++stats_.cacheMisses_;
     std::array<char, 2048> tempBuf{};
+    // Fail fast instead of overflowing the stack buffer below: terms longer
+    // than the scratch capacity (e.g. very long literals) are not supported
+    // by this fixed-size fast path.
+    AD_CONTRACT_CHECK(config_.prefix_.size() + rawTerm.size() +
+                          config_.suffix_.size() + config_.delimiter_.size() <=
+                      tempBuf.size());
     char* curr = tempBuf.data();
 
     // Opening delimiter (e.g. "<")
@@ -228,6 +234,12 @@ class RlePrefixFormatter {
     std::string_view rawTerm = lookupFunc(id);
 
     std::array<char, 2048> tempBuf{};
+    // Fail fast instead of overflowing the stack buffer below: terms longer
+    // than the scratch capacity (e.g. very long literals) are not supported
+    // by this fixed-size fast path.
+    AD_CONTRACT_CHECK(config_.prefix_.size() + rawTerm.size() +
+                          config_.suffix_.size() + config_.delimiter_.size() <=
+                      tempBuf.size());
     char* curr = tempBuf.data();
 
     if (!config_.prefix_.empty()) {

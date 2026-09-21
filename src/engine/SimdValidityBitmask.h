@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
@@ -325,6 +326,11 @@ class SimdValidityScanner {
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
       const ValueId* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
+    // The word-wise scan below reads the batch through `uint64_t`: `ValueId`
+    // is a single-word standard-layout type, assert the layout this relies on.
+    static_assert(sizeof(ValueId) == sizeof(uint64_t));
+    static_assert(alignof(ValueId) <= alignof(uint64_t));
+    static_assert(std::is_standard_layout_v<ValueId>);
     const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
     return ValidityBitmask64{detail::scanBatch64Avx2(raw)};

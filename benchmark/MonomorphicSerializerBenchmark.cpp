@@ -201,7 +201,6 @@ struct DatasetStorage {
   std::vector<std::array<CellValue, 3>> tripleRows_;
   std::vector<std::array<CellValue, 3>> metricRows_;
   std::vector<std::array<CellValue, 4>> relationalRows_;
-  std::vector<std::array<CellValue, 3>> graphEdgeRows_;
 
   // Typed tuples for monomorphic direct testing
   std::vector<std::tuple<std::string_view, std::string_view, std::string_view>>
@@ -218,7 +217,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   data.tripleRows_.reserve(numRows);
   data.metricRows_.reserve(numRows);
   data.relationalRows_.reserve(numRows);
-  data.graphEdgeRows_.reserve(numRows);
 
   data.tripleTuples_.reserve(numRows);
   data.metricTuples_.reserve(numRows);
@@ -232,7 +230,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   data.stringPool_.push_back("<http://example.org/prop/areaSqKm>");
 
   std::string_view predLabel = data.stringPool_[0];
-  std::string_view predType = data.stringPool_[1];
   std::string_view predPop = data.stringPool_[2];
   std::string_view predArea = data.stringPool_[3];
 
@@ -246,10 +243,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
     data.stringPool_.push_back("\"Metropolitan City Name " + std::to_string(i) +
                                "\"@en");
     std::string_view literal = data.stringPool_.back();
-
-    // Objects
-    data.stringPool_.push_back("<http://example.org/class/City>");
-    std::string_view classCity = data.stringPool_.back();
 
     int64_t popVal = static_cast<int64_t>(100'000 + (i % 5'000'000));
     double areaVal = 12.5 + static_cast<double>(i % 500) * 0.75;
@@ -271,11 +264,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
         {CellValue::makeIri(subj), CellValue::makeLiteral(literal),
          CellValue::makeInt(popVal), CellValue::makeDouble(areaVal)});
     data.relationalTuples_.push_back({subj, literal, popVal, areaVal});
-
-    // 4. Graph Edge Schema: <IRI, IRI, IRI>
-    data.graphEdgeRows_.push_back({CellValue::makeIri(subj),
-                                   CellValue::makeIri(predType),
-                                   CellValue::makeIri(classCity)});
   }
 
   return data;

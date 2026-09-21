@@ -10,6 +10,8 @@
 #ifndef QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 #define QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 
+#include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -19,9 +21,16 @@
 #include <string_view>
 #include <vector>
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
+// SSE2 is guaranteed on x86-64, but on 32-bit x86 only when the `__SSE2__`
+// feature macro is set (e.g. via `-msse2`); without it the `_mm_*`
+// intrinsics below would fail to compile or trap at runtime.
+#if defined(__x86_64__) || defined(_M_X64) || \
+    (defined(__i386__) && defined(__SSE2__))
 #include <emmintrin.h>
 #include <immintrin.h>
+// SSE2 intrinsics are usable: guaranteed on x86-64, and on 32-bit x86 only
+// when the `__SSE2__` feature macro is set (e.g. via `-msse2`).
+#define QLEVER_STREAMING_HAS_SSE2 1
 #endif
 
 #include "util/AlignedAllocator.h"
@@ -61,7 +70,7 @@ class StreamingBufferWriter {
   // Static Helper: Drain CPU write-combining buffers and enforce store
   // ordering.
   static void sfence() noexcept {
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
+#if defined(QLEVER_STREAMING_HAS_SSE2)
     _mm_sfence();
 #else
     std::atomic_thread_fence(std::memory_order_release);
@@ -83,7 +92,7 @@ class StreamingBufferWriter {
     auto* destPtr = static_cast<char*>(dest);
     const auto* srcPtr = static_cast<const char*>(src);
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
+#if defined(QLEVER_STREAMING_HAS_SSE2)
     // Phase 1: Align destination pointer to 16-byte vector boundary.
     const auto destAddr = reinterpret_cast<uintptr_t>(destPtr);
     const size_t unalignedHead =
