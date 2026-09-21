@@ -10,12 +10,6 @@
 #ifndef QLEVER_COMPRESSION_H
 #define QLEVER_COMPRESSION_H
 
-#include <cstddef>
-#include <string_view>
-
-#include "backports/span.h"
-#include "util/Exception.h"
-
 namespace ad_utility {
 
 // Compression functionality is intentionally not declared in this header.
