@@ -315,8 +315,9 @@ class ZeroCopySenderBenchmarkRunner {
 };
 
 // _____________________________________________________________________________
-// Formatter for benchmark results table
-void printResultsTable(std::vector<BenchmarkMetric>& results) {
+// Formatter for benchmark results table (only used by the standalone
+// `main` below, not when the benchmark infrastructure is available).
+[[maybe_unused]] void printResultsTable(std::vector<BenchmarkMetric>& results) {
   if (results.empty()) return;
 
   double baselineThroughput = results[0].throughputMBs;
