@@ -10,6 +10,7 @@
 
 #include "util/IoUringManager.h"
 
+#include <sched.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -120,20 +121,38 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
 
 //______________________________________________________________________________
 bool IoUringPolicy::sqPollAvailable() {
-  struct io_uring probe {};
-  struct io_uring_params params {};
-  // Request the poll thread, pinned to CPU 0, with a short idle timeout so a
-  // granted poller sleeps again almost immediately after the probe.
-  params.flags = IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF;
-  params.sq_thread_cpu = 0;
-  params.sq_thread_idle = 10;
-  // A tiny ring keeps the probe cheap; 8 is below liburing's minimum and gets
-  // rounded up.
-  if (io_uring_queue_init_params(8, &probe, &params) < 0) {
+  // Probe each CPU in this process's affinity mask instead of hardcoding CPU
+  // 0: on systems where CPU 0 is offline or isolated, the probe would fail
+  // even though SQPoll works elsewhere.
+  cpu_set_t affinity;
+  CPU_ZERO(&affinity);
+  if (sched_getaffinity(0, sizeof(affinity), &affinity) != 0) {
     return false;
   }
-  io_uring_queue_exit(&probe);
-  return true;
+  for (unsigned cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+    if (!CPU_ISSET(cpu, &affinity)) {
+      continue;
+    }
+    struct io_uring probe {};
+    struct io_uring_params params {};
+    // Request the poll thread, pinned to `cpu`, with a short idle timeout so
+    // a granted poller sleeps again almost immediately after the probe.
+    params.flags = IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF;
+    params.sq_thread_cpu = cpu;
+    params.sq_thread_idle = 10;
+    // A tiny ring keeps the probe cheap; 8 is below liburing's minimum and
+    // gets rounded up.
+    const int ret = io_uring_queue_init_params(8, &probe, &params);
+    if (ret == 0) {
+      io_uring_queue_exit(&probe);
+      return true;
+    }
+    if (ret == -EPERM) {
+      // Missing `CAP_SYS_NICE`: no CPU will be granted a poller.
+      return false;
+    }
+  }
+  return false;
 }
 
 //______________________________________________________________________________
