@@ -19,9 +19,6 @@
 #include "../benchmark/infrastructure/BenchmarkMeasurementContainer.h"
 #include "../benchmark/infrastructure/BenchmarkMetadata.h"
 #include "engine/AsyncChunkPipeline.h"
-#include "util/Exception.h"
-#include "util/Log.h"
-#include "util/Random.h"
 #include "util/Timer.h"
 
 namespace ad_benchmark {
