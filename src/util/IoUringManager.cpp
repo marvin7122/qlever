@@ -238,21 +238,25 @@ void IoUringPolicy::addBatch(int fd,
     // The passthrough path submits a native NVMe read through `uring_cmd`
     // when the device supports it; otherwise (or when disabled) the plain
     // block-layer read below runs, so the bytes read are identical. Both
-    // share the request-id tagging that follows, so completion handling in
-    // `drainOneCqe`/`wait` is unchanged.
-    if (!tryPrepareNvmePassthrough(sqe, fd, fileOffset, numBytesToRead,
-                                   targetBuf)) {
+    // share the request-id tagging that follows; `attributeCompletion`
+    // interprets their completions differently (byte count vs. command
+    // status), so the submission kind is recorded per request below.
+    const bool isNvmePassthrough = tryPrepareNvmePassthrough(
+        sqe, fd, fileOffset, numBytesToRead, targetBuf);
+    if (!isNvmePassthrough) {
       io_uring_prep_read(sqe, fd, targetBuf,
                          static_cast<unsigned>(numBytesToRead),
                          static_cast<__u64>(fileOffset));
     }
 
     // Tag the SQE with a unique request id and record its metadata (the batch
-    // it belongs to and how many bytes it should read). io_uring copies the
-    // request id (the SQE's `user_data`) verbatim into the matching completion,
-    // so `drainOneCqe` can recover it.
+    // it belongs to, how many bytes it should read, and whether it is a
+    // passthrough read). io_uring copies the request id (the SQE's
+    // `user_data`) verbatim into the matching completion, so `drainOneCqe`
+    // can recover it.
     const uint64_t requestId = nextRequestIdToAssign_++;
-    inFlightReadsByRequestId_[requestId] = InFlightRead{handle, numBytesToRead};
+    inFlightReadsByRequestId_[requestId] =
+        InFlightRead{handle, numBytesToRead, isNvmePassthrough};
     io_uring_sqe_set_data64(sqe, requestId);
     numInFlightReadRequests_++;
   }
@@ -358,9 +362,18 @@ void ad_utility::IoUringPolicy::attributeCompletion(io_uring_cqe* cqe) {
   if (numBytesRead < 0) {
     AD_THROW("I/O error in IoUringPolicy read operation");
   }
-  // A result smaller than requested (a partial read, or 0 at end of file) means
-  // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != inFlightRead.expectedNumBytes) {
+  if (inFlightRead.isNvmePassthrough) {
+    // An `IORING_OP_URING_CMD` completion carries the driver-defined command
+    // result (0 on success), not a byte count, so a successful passthrough
+    // read must not be compared against `expectedNumBytes`. Any nonzero
+    // result means the NVMe command itself reported failure.
+    if (numBytesRead != 0) {
+      AD_THROW("NVMe passthrough read failed in IoUringPolicy");
+    }
+  } else if (static_cast<size_t>(numBytesRead) !=
+             inFlightRead.expectedNumBytes) {
+    // A result smaller than requested (a partial read, or 0 at end of file)
+    // means we read fewer bytes than expected, which we treat as an error.
     AD_THROW("read fewer bytes than requested in IoUringPolicy");
   }
 

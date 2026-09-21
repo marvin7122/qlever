@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -873,9 +874,9 @@ TEST(NvmePassthroughTranslation, alignedRangeTranslates) {
 }
 
 // Anything that cannot be expressed as whole blocks (unaligned offset or
-// length, empty read, zero namespace or block size, more than 2^16 blocks)
-// translates to `std::nullopt`, so the caller keeps the plain read path with
-// identical bytes.
+// length, empty read, zero namespace or block size, more than 2^16 blocks, or
+// an LBA translation that would overflow) translates to `std::nullopt`, so
+// the caller keeps the plain read path with identical bytes.
 TEST(NvmePassthroughTranslation, untranslatableRangesFallBack) {
   using ad_utility::nvmePassthrough::translateToReadParams;
   EXPECT_FALSE(
@@ -887,15 +888,29 @@ TEST(NvmePassthroughTranslation, untranslatableRangesFallBack) {
   EXPECT_FALSE(translateToReadParams(0, 512, 1, 0).has_value());  // block size
   EXPECT_FALSE(translateToReadParams(0, 0x10001ULL * 512, 1, 512)
                    .has_value());  // too many blocks
+  // A large `lbaBase` plus a nonzero block offset would wrap the starting
+  // LBA and address the wrong blocks, so the translation is rejected ...
+  EXPECT_FALSE(translateToReadParams(512, 512, 1, 512,
+                                     std::numeric_limits<uint64_t>::max())
+                   .has_value());  // LBA overflow
+  // ... while the same base with offset zero still translates exactly.
+  const auto atMax = translateToReadParams(
+      0, 512, 1, 512, std::numeric_limits<uint64_t>::max());
+  ASSERT_TRUE(atMax.has_value());
+  EXPECT_EQ(atMax->startLba, std::numeric_limits<uint64_t>::max());
 }
 
-// The capability probe fails closed without throwing: an invalid fd and a
-// regular file are both "not capable", so enabling passthrough can never
-// divert regular vocabulary files to the `uring_cmd` path.
+// The capability probe fails closed without throwing: an invalid fd, a
+// regular file, and a non-NVMe character device (such as `/dev/null`) are
+// all "not capable", so enabling passthrough can never divert them to the
+// `uring_cmd` path.
 TEST(NvmePassthroughProbe, failsClosedForNonDevices) {
   EXPECT_FALSE(ad_utility::nvmePassthrough::isPassthroughCandidate(-1));
   auto [tmp, fd] = makeTempFile("X");
   EXPECT_FALSE(ad_utility::nvmePassthrough::isPassthroughCandidate(fd));
+  ad_utility::File nullFile{"/dev/null", "r"};
+  EXPECT_FALSE(
+      ad_utility::nvmePassthrough::isPassthroughCandidate(nullFile.fd()));
 }
 
 #ifdef QLEVER_HAS_IO_URING

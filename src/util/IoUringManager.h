@@ -187,12 +187,15 @@ class IoUringPolicy {
   ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
-  // belongs to, and how many bytes it was supposed to read (so that reading
-  // fewer bytes than expected can be detected). See
+  // belongs to, how many bytes it was supposed to read (so that reading
+  // fewer bytes than expected can be detected), and whether the read was
+  // submitted as an NVMe passthrough `uring_cmd` (whose completion carries a
+  // driver-defined status instead of a byte count). See
   // `inFlightReadsByRequestId_`.
   struct InFlightRead {
     BatchHandle batchHandle;
     size_t expectedNumBytes;
+    bool isNvmePassthrough = false;
   };
 
   // Monotonically increasing counter that mints a unique request id for each
@@ -235,7 +238,9 @@ class IoUringPolicy {
 
   // Attribute an already-reaped `cqe` to its batch: recover the result and
   // the request id, consume the CQE slot, check for I/O and short-read
-  // errors, and update the in-flight bookkeeping. Shared by the blocking
+  // errors, and update the in-flight bookkeeping. Plain reads report a byte
+  // count; NVMe passthrough reads report a driver-defined command status (0
+  // on success), which is interpreted accordingly. Shared by the blocking
   // (`drainOneCqe`) and non-blocking (`tryReapOneCqe`) reap paths.
   void attributeCompletion(io_uring_cqe* cqe);
 
@@ -274,7 +279,7 @@ class IoUringPolicy {
   bool uses128ByteSqes() const { return sqe128_; }
   // True iff `fd` passed the passthrough capability probe (cached per fd; the
   // first call probes, later calls reuse the cached result). Regular files
-  // always report false. Never throws.
+  // and non-NVMe character devices always report false. Never throws.
   bool isNvmeCapable(int fd) const;
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the

@@ -9,8 +9,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <sys/stat.h>
+
+#ifdef QLEVER_HAS_NVME_URING_CMD
+#include <sys/ioctl.h>
+#endif
 
 #include "util/Exception.h"
 
@@ -81,9 +86,9 @@ inline constexpr uint64_t kMaxBlocksPerRead = 0x10000;
 // namespace, as on a rig where the vocabulary image was written contiguously
 // to a raw namespace). Returns `std::nullopt` when the read cannot be
 // expressed as whole blocks (unaligned offset or length, empty read, more
-// than 2^16 blocks, or a transfer length that does not fit 32 bits), in which
-// case the caller must use the plain block-layer read path, so the bytes read
-// stay identical.
+// than 2^16 blocks, a transfer length that does not fit 32 bits, or an LBA
+// translation that would overflow), in which case the caller must use the
+// plain block-layer read path, so the bytes read stay identical.
 inline std::optional<ReadParams> translateToReadParams(
     uint64_t fileOffset, size_t numBytes, uint32_t namespaceId,
     uint32_t logicalBlockSize, uint64_t lbaBase = 0) {
@@ -102,16 +107,32 @@ inline std::optional<ReadParams> translateToReadParams(
   if (numBytes > 0xFFFFFFFFULL) {
     return std::nullopt;
   }
-  return ReadParams{namespaceId, lbaBase + fileOffset / logicalBlockSize,
+  const uint64_t offsetLba = fileOffset / logicalBlockSize;
+  if (offsetLba > std::numeric_limits<uint64_t>::max() - lbaBase) {
+    return std::nullopt;
+  }
+  return ReadParams{namespaceId, lbaBase + offsetLba,
                     static_cast<uint32_t>(numBlocks - 1),
                     static_cast<uint32_t>(numBytes)};
 }
 
-// True iff `fd` is a character device. This is the necessary (but not
-// sufficient) condition for NVMe passthrough: `uring_cmd` passthrough submits
-// native NVMe commands to an NVMe character device (`/dev/ngXnY`), never to a
-// regular file. Regular vocabulary files therefore always fail this probe and
-// keep the plain read path. Never throws: any `fstat` failure means "not
+#ifdef QLEVER_HAS_NVME_URING_CMD
+// True iff `fd` is an NVMe namespace character device (`/dev/ngXnY`).
+// `NVME_IOCTL_ID` returns the namespace id (a positive integer) on such a
+// device and fails with a negative errno on anything else. Never throws.
+inline bool isNvmeNamespaceCharacterDevice(int fd) noexcept {
+  return ::ioctl(fd, NVME_IOCTL_ID) > 0;
+}
+#endif
+
+// True iff `fd` may receive NVMe passthrough reads. Being a character device
+// is the necessary (but not sufficient) condition: `uring_cmd` passthrough
+// submits native NVMe commands to an NVMe character device (`/dev/ngXnY`),
+// never to a regular file. The NVMe identity check on top rejects other
+// character devices (such as `/dev/null` or a tty), which must keep the plain
+// read path instead of receiving an NVMe command they cannot serve. Regular
+// vocabulary files therefore always fail this probe and keep the plain read
+// path. Never throws: any `fstat` or identity-check failure means "not
 // capable", so a failed probe disables passthrough for the fd without failing
 // the batch.
 inline bool isPassthroughCandidate(int fd) noexcept {
@@ -119,7 +140,16 @@ inline bool isPassthroughCandidate(int fd) noexcept {
   if (::fstat(fd, &sb) != 0) {
     return false;
   }
-  return S_ISCHR(sb.st_mode) != 0;
+  if (S_ISCHR(sb.st_mode) == 0) {
+    return false;
+  }
+#ifdef QLEVER_HAS_NVME_URING_CMD
+  return isNvmeNamespaceCharacterDevice(fd);
+#else
+  // Without the NVMe `uring_cmd` layout no passthrough SQE can be prepared,
+  // so no fd can be a passthrough candidate.
+  return false;
+#endif
 }
 
 #ifdef QLEVER_HAS_NVME_URING_CMD
