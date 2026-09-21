@@ -186,9 +186,9 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
 
 // _____________________________________________________________________________
 // Regression test: the delegating `lookupBatch(indices, builder)` overloads
-// must populate the builder and return the `finalize()`d result. The
-// underlying builder overload returns void, so returning its result directly
-// is ill-formed (this failed to compile before the fix).
+// are fill-only (they populate the builder without finalizing it); the caller
+// finalizes exactly once. Finalizing inside the overload as well would consume
+// the builder twice and fail the `!views_.empty()` contract check.
 TYPED_TEST(CompressedVocabularyF, LookupBatchWithBuilderThroughDelegation) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
                                        "epsilon"};
@@ -199,7 +199,8 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchWithBuilderThroughDelegation) {
                                             decltype(comparator)>
       vocab{comparator, std::move(compressed)};
   ad_utility::vocabulary::ArenaVocabBatchBuilder builder(indices.size());
-  const auto result = vocab.lookupBatch(indices, builder);
+  vocab.lookupBatch(indices, builder);
+  const auto result = std::move(builder).finalize();
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
 
@@ -510,8 +511,10 @@ TEST(CompressedVocabularyWithHoles, lookupBatchMatchesAccessOperator) {
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
   auto vocab =
       createVocabularyWithHoles(filename, wordsWithHoles(), indicesWithHoles());
-  // Mix contained indices, holes, duplicates, and an index past the end.
-  const std::vector<size_t> indices{0, 1, 2, 4, 5, 7, 1, 31, 32, 35};
+  // Mix contained indices, holes, and duplicates. Indices past the end are a
+  // contract violation for `lookupBatch` (it rejects them instead of
+  // returning placeholders), so only contained indices and holes are used.
+  const std::vector<size_t> indices{0, 1, 2, 4, 5, 7, 1, 31};
   const auto result = vocab.lookupBatch(ql::span<const size_t>{indices});
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
