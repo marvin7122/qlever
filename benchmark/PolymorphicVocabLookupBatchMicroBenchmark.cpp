@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "../benchmark/infrastructure/Benchmark.h"
@@ -157,7 +158,8 @@ class PolymorphicVocabLookupBatchMicroBenchmark : public BenchmarkInterface {
         size_t totalBytes = 0;
         for (size_t repetition = 0; repetition < repetitions; ++repetition) {
           ad_utility::vocabulary::ArenaVocabBatchBuilder builder(batch_.size());
-          auto result = vocab.lookupBatch(batch_, builder);
+          vocab.lookupBatch(batch_, builder);
+          auto result = std::move(builder).finalize();
           for (const auto& word : result) {
             totalBytes += word.size();
           }
