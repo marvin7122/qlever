@@ -13,6 +13,7 @@
 #include <string_view>
 #include <vector>
 
+#include "backports/StartsWithAndEndsWith.h"
 #include "engine/BranchlessTypeDispatcher.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
@@ -58,9 +59,9 @@ TEST(BranchlessTypeDispatcherTest, FormatDouble) {
   char* end = BranchlessTypeDispatcher::dispatchTermFormat(
       id, "", buffer.data(), BranchlessTypeDispatcher::defaultLut());
   std::string_view result(buffer.data(), end - buffer.data());
-  EXPECT_TRUE(result.starts_with("\"3.14159"));
+  EXPECT_TRUE(ql::starts_with(result, "\"3.14159"));
   EXPECT_TRUE(
-      result.ends_with("\"^^<http://www.w3.org/2001/XMLSchema#double>"));
+      ql::ends_with(result, "\"^^<http://www.w3.org/2001/XMLSchema#double>"));
 }
 
 TEST(BranchlessTypeDispatcherTest, FormatBoolean) {
