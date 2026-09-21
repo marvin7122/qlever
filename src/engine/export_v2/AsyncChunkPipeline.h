@@ -139,6 +139,10 @@ class AsyncChunkPipeline {
     }
   }
 
+  // Report a producer failure, rethrown to the consumer by `pop` once queued
+  // chunks are drained. Calling `fail` when not `Running` is a deliberate
+  // no-op: the consumer is already done or gone, so there is nowhere to
+  // deliver the error.
   void fail(std::exception_ptr exception) {
     AD_CONTRACT_CHECK(exception != nullptr);
     if (state_ != State::Running) {
@@ -148,6 +152,10 @@ class AsyncChunkPipeline {
     state_ = State::Failed;
   }
 
+  // Abandon queued chunks and close the pipeline. Only discards performed
+  // here are counted in `chunksDiscarded_`; chunks still queued when the
+  // pipeline is destroyed on the `Failed`/`Finished` paths are released
+  // without being counted.
   void cancel() {
     if (state_ == State::Running) {
       state_ = State::Cancelled;

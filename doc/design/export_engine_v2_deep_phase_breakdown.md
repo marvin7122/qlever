@@ -244,11 +244,11 @@
                     │                                             │
                     ▼ Slot 1                                      ▼ Slot 2
         ┌──────────────────────────────┐              ┌──────────────────────────────┐
-        │ Active Network Transmission  │              │ Simultaneous Chunk Generation│
+        │ Awaiting Transmission          │              │ Simultaneous Chunk Generation│
         ├──────────────────────────────┤              ├──────────────────────────────┤
-        │ • NIC transmitting via DMA   │              │ • CPU unrolling rows         │
-        │ • Zero CPU intervention      │              │ • SIMD radix & escape scan   │
-        │ • Socket draining            │              │ • Assembling next chunk      │
+        │ • Drained by the consumer    │              │ • CPU unrolling rows         │
+        │ • No worker threads          │              │ • SIMD radix & escape scan   │
+        │ • No socket I/O in this phase│              │ • Assembling next chunk      │
         └──────────────┬───────────────┘              └──────────────┬───────────────┘
                        │                                             │
                        └──────────────────────┬──────────────────────┘
@@ -263,11 +263,17 @@
 ### 2. What is it & How does it work?
 * **Component:** `src/engine/export_v2/AsyncChunkPipeline.h`
 * **Mechanics:**
-  1. Maintains two page-aligned 4MB buffer slots (`Slot A` and `Slot B`).
-  2. While `Slot A` is being transmitted to the client socket asynchronously (via non-blocking socket I/O, Boost.Asio coroutine, or `io_uring`), the CPU immediately begins decompressing, resolving, and formatting `Slot B`.
-  3. When `Slot B` is full, the pipeline waits for `Slot A`'s transmission completion (which typically finished long before), then seamlessly flips the active slots.
+  1. Maintains two reusable chunk slots. Chunk sizes are determined by the
+     producer; there is no fixed 4MB policy and no page-alignment requirement.
+  2. While one slot holds an undrained chunk, the producer fills the other;
+     when both slots are full, `push` reports `Full` and chunk generation
+     suspends. Overlap with socket transmission is future work: this phase
+     performs no socket I/O and spawns no worker threads.
+  3. The consumer drains slots via non-blocking `pop`; each drained slot is
+     immediately reusable, so the ring rotates without allocation.
   4. **Strict Single-Core Concurrency:** All operations execute on the single query worker thread using cooperative asynchronous suspension, honoring single-core supervisor constraints.
-  5. **Backpressure Safety:** If the network socket is choked by a slow client, chunk generation suspends until the socket drains, preventing unbounded memory growth.
+  5. **Backpressure Safety:** If the consumer stops draining, generation
+     suspends at `Full` instead of growing memory without bounds.
 
 ### 3. Performance Rationale
 * **100% Hardware Concurrency on 1 Core:** The CPU core never sits idle waiting for network socket acknowledgments, and the network NIC never sits idle waiting for chunk formatting.

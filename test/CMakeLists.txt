@@ -610,5 +610,9 @@ if (NOT SINGLE_TEST_BINARY)
   addLinkAndDiscoverTest(AsyncChunkPipelineTest)
   target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
 
-  addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+  # The disabled variant asserts the switch is off, which only holds when the
+  # option is off: the root CMakeLists propagates it to every target otherwise.
+  if (NOT QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+  endif ()
 endif ()

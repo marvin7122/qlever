@@ -125,4 +125,35 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
                std::runtime_error);
 }
 
+TEST(AsyncChunkPipelineTest, FailAfterFinishIsNoOp) {
+  AsyncChunkPipeline<std::string> pipeline{{.runtimeEnabled_ = true}};
+  ASSERT_EQ(pipeline.push("only"), PushResult::Accepted);
+  pipeline.finish();
+  pipeline.fail(std::make_exception_ptr(std::runtime_error{"too late"}));
+  EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"only"});
+  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
+  EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
+}
+
+TEST(AsyncChunkPipelineTest, CancelAfterFinishIsNoOp) {
+  AsyncChunkPipeline<std::string> pipeline{{.runtimeEnabled_ = true}};
+  ASSERT_EQ(pipeline.push("only"), PushResult::Accepted);
+  pipeline.finish();
+  pipeline.cancel();
+  EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"only"});
+  EXPECT_EQ(pipeline.stats().chunksDiscarded_, 0);
+}
+
+TEST(AsyncChunkPipelineTest, SecondFailKeepsFirstException) {
+  AsyncChunkPipeline<std::string> pipeline{{.runtimeEnabled_ = true}};
+  pipeline.fail(std::make_exception_ptr(std::runtime_error{"first"}));
+  pipeline.fail(std::make_exception_ptr(std::runtime_error{"second"}));
+  try {
+    static_cast<void>(pipeline.pop());
+    FAIL() << "pop must rethrow the recorded failure";
+  } catch (const std::runtime_error& e) {
+    EXPECT_STREQ(e.what(), "first");
+  }
+}
+
 }  // namespace

@@ -37,7 +37,7 @@ This master specification deepens the design of the **Fast-Path Streaming Export
 │    • Direct iovec / SEND_ZC pointer arrays referencing page-pinned decompression arenas     │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 7. Asynchronous Double-Buffered Ring (`src/engine/export_v2/AsyncChunkPipeline.h`)         │
-│    • 2-slot 4MB ring interleaving CPU formatting with network transmission                  │
+│    • 2-slot chunk handoff (passive, single-threaded; no socket I/O yet)                     │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 8. Server Integration & Differential Verifier (`benchmark/EndToEndExportBenchmark.cpp`)    │
 │    • Bit-for-bit output validation against Legacy V1, latency (TTFB), and FlameGraph suites │
@@ -217,10 +217,14 @@ To enable independent implementation and clean reviewability, the V2 engine is d
 ### Work Package 6: Asynchronous Double-Buffered Backpressure Ring
 * **Artifact Target:** `src/engine/export_v2/AsyncChunkPipeline.h` & `test/AsyncChunkPipelineTest.cpp`
 * **Task Description:**
-  - Implement 2-slot 4MB buffer ring using non-blocking socket I/O / Boost.Asio coroutines.
-  - Interleave single-core CPU formatting with network NIC DMA transmission.
+  - Implement 2-slot chunk handoff ring (`AsyncChunkPipeline`): two reusable
+    slots, non-blocking push/pop with Full/empty backpressure signals, chunk
+    sizing determined by the producer; passive single-threaded handoff with
+    no worker threads and no socket I/O in this work package.
   - Implement backpressure suspension for slow client connections.
-* **Definition of Done:** `ChunkStreamingBenchmark` demonstrates 0 CPU idle stalls under 5ms simulated network latency.
+* **Definition of Done:** `AsyncChunkPipelineTest` covers push/pop ordering,
+  Full/empty backpressure signals, wraparound slot reuse, cancel/fail paths
+  and their edge cases, and the compile-time/runtime kill switches.
 
 ---
 
