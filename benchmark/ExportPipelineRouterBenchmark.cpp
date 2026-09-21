@@ -22,9 +22,18 @@ int main(int argc, char** argv) {
   size_t numQueries = 1'000'000;
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg != "-p" && !arg.empty() &&
-        std::isdigit(static_cast<unsigned char>(arg[0]))) {
-      numQueries = std::stoull(arg);
+    if (arg == "-p") {
+      // Tolerate `-p <value>` harness flags; the value is not a query count.
+      ++i;
+      continue;
+    }
+    if (!arg.empty() && std::isdigit(static_cast<unsigned char>(arg[0]))) {
+      try {
+        numQueries = std::stoull(arg);
+      } catch (const std::exception& e) {
+        std::cerr << "Ignoring invalid iteration count '" << arg
+                  << "': " << e.what() << '\n';
+      }
     }
   }
 
@@ -40,7 +49,6 @@ int main(int argc, char** argv) {
       SparqlParser::parseQuery(nullptr, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
   auto constructQuery = SparqlParser::parseQuery(
       nullptr, "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
-  auto askQuery = SparqlParser::parseQuery(nullptr, "ASK WHERE { ?s ?p ?o }");
 
   ParamValueMap fastParams;
   fastParams["fast-export"] = {"1"};
