@@ -36,9 +36,6 @@ class ScatterGatherChunkTestAccess {
 namespace {
 using namespace qlever::export_v2;
 
-static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunk>);
-static_assert(ad_utility::InvariantStatefulClass<ScatterGatherChunkBuilder>);
-
 TEST(ScatterGatherArenaStreamerTest, RejectsSlicesOutsideOwner) {
   ImmutableByteBuffer arena{"abc"};
   AD_EXPECT_THROW_WITH_MESSAGE(

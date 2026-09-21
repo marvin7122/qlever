@@ -510,8 +510,10 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   // Slot 0 should return 42
   EXPECT_EQ(session.consumeNextResult(), 42);
 
-  // Slot 1 should throw std::runtime_error
-  EXPECT_THROW(session.consumeNextResult(), std::runtime_error);
+  // Slot 1 should throw std::runtime_error with the task's message.
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      session.consumeNextResult(),
+      ::testing::HasSubstr("Simulated morsel processing failure"));
 
   // Slot 2 should still return 100
   EXPECT_EQ(session.consumeNextResult(), 100);
@@ -740,7 +742,7 @@ struct FixedIdJobState : ExportJobStateBase {
 TEST(ElasticExportSchedulerTest, OwnedMorselDerivesJobIdFromState) {
   auto state = std::make_shared<FixedIdJobState>(42);
   OwnedMorsel morsel(state, 7, 3);
-  EXPECT_EQ(morsel.jobId_, 42u);
+  EXPECT_EQ(morsel.jobId(), 42u);
   EXPECT_EQ(morsel.submissionEpoch_, 7u);
   EXPECT_EQ(morsel.morselIndex_, 3u);
   EXPECT_EQ(morsel.jobState_, state);

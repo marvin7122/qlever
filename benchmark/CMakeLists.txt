@@ -41,7 +41,10 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
 
-    addAndLinkBenchmark(SimdEscapeClassifierBenchmark engine sparqlParser qlever_util)
+    # Custom main(): link without benchmarkWithMain to avoid a duplicate
+    # main symbol (same pattern as ExportPipelineRouterBenchmark below).
+    add_executable(SimdEscapeClassifierBenchmark SimdEscapeClassifierBenchmark.cpp)
+    qlever_target_link_libraries(SimdEscapeClassifierBenchmark engine sparqlParser qlever_util)
     addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
     # Standalone: do not use addAndLinkBenchmark (benchmark → sparqlParser →
     # IndexImpl). That graph fails on Wolga GCC 11 + range-v3; SEND_ZC only

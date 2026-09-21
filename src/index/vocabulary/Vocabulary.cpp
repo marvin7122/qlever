@@ -313,12 +313,20 @@ template <typename S, typename C, typename I>
 VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
+  // Fill-only protocol: see `UnicodeVocabulary::lookupBatch`.
   if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
     vocabulary_.lookupBatch(indices, builder);
-    return std::move(builder).finalize();
   } else {
-    return vocabulary_.lookupBatch(indices);
+    // The underlying vocabulary has no batched leaf: reuse its single-shot
+    // batch path and copy the words into the caller's builder, so the
+    // unconditional `finalize()` below sees a populated builder.
+    auto singleShot = vocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+    for (std::string_view word : singleShot) {
+      builder.appendWord(word);
+    }
   }
+  return std::move(builder).finalize();
 }
 
 // _____________________________________________________________________________

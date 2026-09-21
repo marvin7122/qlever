@@ -13,7 +13,7 @@
 namespace ad_utility::export_v2 {
 
 // -----------------------------------------------------------------------------
-// Production Job State Interface & Owned Morsel
+// Job State Interface & Owned Morsel
 // -----------------------------------------------------------------------------
 // Type-erased job side of the scheduler contract. The scheduler only ever
 // observes jobs through this interface, so cancellation, demand changes, and
@@ -36,12 +36,12 @@ class ExportJobStateBase {
 
 struct OwnedMorsel {
   std::shared_ptr<ExportJobStateBase> jobState_;
-  uint64_t jobId_{0};
   uint64_t submissionEpoch_{0};
   size_t morselIndex_{0};
 
   // The job id is derived from the state, never passed alongside it: the
-  // state owns its identity, so a mismatched id is unrepresentable.
+  // state owns its identity, so a mismatched id is unrepresentable. The
+  // cached id is private so no later mutation can break that guarantee.
   OwnedMorsel(std::shared_ptr<ExportJobStateBase> jobState,
               uint64_t submissionEpoch, size_t morselIndex)
       : jobState_{std::move(jobState)},
@@ -50,6 +50,11 @@ struct OwnedMorsel {
     AD_CONTRACT_CHECK(jobState_ != nullptr);
     jobId_ = jobState_->jobId();
   }
+
+  [[nodiscard]] uint64_t jobId() const noexcept { return jobId_; }
+
+ private:
+  uint64_t jobId_{0};
 };
 
 }  // namespace ad_utility::export_v2
