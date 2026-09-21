@@ -209,6 +209,16 @@ CPP_template(typename UnderlyingVocabulary,
     std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
+      if constexpr (underlyingHasHoles) {
+        if (!underlyingVocabulary_.positionOfIndex(idx).has_value()) {
+          // Holes carry no compressed payload: report the placeholder exactly
+          // like `operator[]` instead of feeding placeholder text into the
+          // decompressor.
+          builder.appendWord(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+          continue;
+        }
+      }
       const size_t decoderIdx = getDecoderIdx(idx);
       AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       builder.appendDecompressedWord(
