@@ -62,8 +62,7 @@ TEST(PrefetchingBatchResolver, EquivalenceWithStandardBatchResolution) {
 
   // Prefetched resolution with various prefetch distances
   for (size_t distance : {1, 2, 4, 8, 16}) {
-    PrefetchingBatchResolver resolver(
-        PrefetchConfig{distance});
+    PrefetchingBatchResolver resolver(PrefetchConfig{distance});
     auto prefetchedResults =
         resolver.idsToStringAndType(index, testIds, localVocab, ql::identity{});
 
@@ -111,7 +110,9 @@ TEST(PrefetchingBatchResolver, EmptyAndBoundaryInputs) {
       resolver.idsToStringAndType(index, ql::span<const Id>{}, localVocab);
   EXPECT_TRUE(emptyResults.empty());
 
-  // Empty positions
+  // Empty positions: the resolver intentionally returns early and resolves
+  // nothing, so this must not throw even though `results` is smaller than
+  // `ids` (the size contract only applies to non-empty position spans).
   std::vector<std::optional<std::pair<std::string, const char*>>> results(1);
   std::vector<Id> ids = {ad_utility::testing::IntId(1)};
   EXPECT_NO_THROW(resolver.resolveVocabIndexIds(

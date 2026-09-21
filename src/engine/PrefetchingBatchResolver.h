@@ -69,7 +69,6 @@ struct PrefetchConfig {
   // cursor. Typically 4 to 16 iterations hide DRAM/L3 cache miss latency
   // (~60ns) while keeping L1 cache lines active.
   size_t prefetchDistance{8};
-
 };
 
 // _____________________________________________________________________________
@@ -97,8 +96,7 @@ class PrefetchingBatchResolver {
   explicit PrefetchingBatchResolver(
       PrefetchConfig config =
           PrefetchConfig{.prefetchDistance = DEFAULT_PREFETCH_DISTANCE})
-      : config_{config} {
-  }
+      : config_{config} {}
 
   // ___________________________________________________________________________
   [[nodiscard]] size_t prefetchDistance() const noexcept {
@@ -139,19 +137,14 @@ class PrefetchingBatchResolver {
     }
 
     // Main pipelined loop: prefetch row (i + distance) ahead while serializing
-    // row i
+    // row i. Only the `Id` array element itself is prefetched: the vocabulary
+    // string data lives in separate heap structures that are not reachable
+    // through `index` here, so prefetching `&index.getImpl()` would only touch
+    // the `IndexImpl` object and provide no caching benefit.
     for (size_t i = 0; i < n; ++i) {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        const Id pfId = ids[pfPos];
-        if (pfId.getDatatype() == Datatype::VocabIndex) {
-          const auto wordVocabIndex = pfId.getVocabIndex();
-          // Prefetch the underlying index entry if possible
-          const auto* vocabPtr =
-              reinterpret_cast<const void*>(&index.getImpl());
-          prefetchVocabEntry(vocabPtr, static_cast<int>(distance));
-        }
       }
 
       const size_t pos = positions[i];
@@ -213,9 +206,10 @@ class PrefetchingBatchResolver {
         }
       }
 
-      // 3. Resolve current item i
+      // 3. Resolve current item i. The `+ 1` covers the `offsets[curIdx + 1]`
+      // access below: `curIdx` must not be the final (sentinel) offset.
       const size_t curIdx = indices[i];
-      AD_CORRECTNESS_CHECK(idx < offsets.size());
+      AD_CORRECTNESS_CHECK(curIdx + 1 < offsets.size());
       const auto curOffset = offsets[curIdx];
       const auto nextOffset = offsets[curIdx + 1];
       const size_t strLen = nextOffset - curOffset;
