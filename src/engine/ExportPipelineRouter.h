@@ -11,6 +11,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <cctype>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -19,9 +20,6 @@
 #include "parser/GraphPatternOperation.h"
 #include "parser/ParsedQuery.h"
 #include "parser/SparqlTriple.h"
-#include "util/Exception.h"
-#include "util/StringUtils.h"
-#include "util/http/MediaTypes.h"
 #include "util/http/UrlParser.h"
 
 namespace ql::engine {
@@ -45,10 +43,17 @@ enum class ExportEngineMode {
   return "Unknown";
 }
 
+// An explicitly requested engine override, parsed from the request's URL
+// parameters and HTTP headers (see `parseExplicitRequest`).
+enum class ExplicitEngineRequest { None, WantV1, WantV2 };
+
 // _____________________________________________________________________________
 // Deep module routing incoming SPARQL requests between the standard relational
 // execution pipeline (Legacy V1) and the specialized push-based streaming
 // export engine (Fast-Path V2).
+//
+// Precedence of explicit overrides: the `X-QLever-Export-Engine` HTTP header
+// wins over URL parameters, which win over the server default.
 //
 // Adheres to the 7 Universal Laws:
 // - Law 1: Deep Module (concise public interface, encapsulated plan analysis)
@@ -65,42 +70,17 @@ class ExportPipelineRouter {
   [[nodiscard]] static ExportEngineMode selectEngine(
       const ParsedQuery& query, const ParamValueMap& parameters,
       std::optional<std::string_view> exportHeader = std::nullopt,
-      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) noexcept {
-    // 1. Check explicit query parameter overrides
-    const auto optFastExport = getParameterValue(parameters, "fast-export");
-    const auto optExportEngine = getParameterValue(parameters, "export-engine");
-
-    if (optFastExport.has_value()) {
-      if (isTruthy(optFastExport.value())) {
+      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) {
+    switch (parseExplicitRequest(parameters, exportHeader)) {
+      case ExplicitEngineRequest::WantV2:
         return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-      } else if (isFalsy(optFastExport.value())) {
+      case ExplicitEngineRequest::WantV1:
         return ExportEngineMode::LegacyV1;
-      }
+      case ExplicitEngineRequest::None:
+        break;
     }
 
-    if (optExportEngine.has_value()) {
-      const auto optVal =
-          ad_utility::getLowercase(std::string(optExportEngine.value()));
-      if (optVal == "v2" || optVal == "fast") {
-        return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-      } else if (optVal == "v1" || optVal == "legacy") {
-        return ExportEngineMode::LegacyV1;
-      }
-    }
-
-    // 2. Check explicit HTTP Header override (e.g. X-QLever-Export-Engine: v2)
-    if (exportHeader.has_value()) {
-      const auto headerVal =
-          ad_utility::getLowercase(std::string(exportHeader.value()));
-      if (headerVal == "v2" || headerVal == "fast" ||
-          headerVal == "streaming") {
-        return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-      } else if (headerVal == "v1" || headerVal == "legacy") {
-        return ExportEngineMode::LegacyV1;
-      }
-    }
-
-    // 3. Check server-wide default mode
+    // Check server-wide default mode
     if (serverDefault == ExportEngineMode::FastStreamingV2) {
       return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
     }
@@ -111,9 +91,9 @@ class ExportPipelineRouter {
   // ___________________________________________________________________________
   // Inspect the `ParsedQuery` AST to determine whether it is eligible for
   // `FastStreamingV2`. Return true for standard scan, join, projection, and
-  // construct queries. Return false for queries containing unsupported
-  // constructs (e.g. distributed federated queries or complex custom service
-  // endpoints).
+  // construct queries without unsupported constructs (see
+  // `hasUnsupportedConstructs`). Return false otherwise (e.g. ASK and
+  // DESCRIBE, which currently use standard evaluation).
   [[nodiscard]] static bool isEligibleForFastStreaming(
       const ParsedQuery& query) noexcept {
     // CONSTRUCT and SELECT queries without unsupported constructs (see
@@ -145,40 +125,11 @@ class ExportPipelineRouter {
           "Fast-Path V2 selected (eligible export query with explicit or "
           "default opt-in)";
     } else {
-      const auto optFastExport = getParameterValue(parameters, "fast-export");
-      const auto optExportEngine =
-          getParameterValue(parameters, "export-engine");
-
-      bool explicitlyRequestedV2 = false;
-      bool explicitlyRequestedV1 = false;
-
-      if (optFastExport.has_value()) {
-        if (isTruthy(optFastExport.value())) {
-          explicitlyRequestedV2 = true;
-        } else if (isFalsy(optFastExport.value())) {
-          explicitlyRequestedV1 = true;
-        }
-      }
-
-      if (optExportEngine.has_value()) {
-        const auto val =
-            ad_utility::getLowercase(std::string(optExportEngine.value()));
-        if (val == "v2" || val == "fast") {
-          explicitlyRequestedV2 = true;
-        } else if (val == "v1" || val == "legacy") {
-          explicitlyRequestedV1 = true;
-        }
-      }
-
-      if (exportHeader.has_value()) {
-        const auto val =
-            ad_utility::getLowercase(std::string(exportHeader.value()));
-        if (val == "v2" || val == "fast" || val == "streaming") {
-          explicitlyRequestedV2 = true;
-        } else if (val == "v1" || val == "legacy") {
-          explicitlyRequestedV1 = true;
-        }
-      }
+      const auto request = parseExplicitRequest(parameters, exportHeader);
+      const bool explicitlyRequestedV2 =
+          request == ExplicitEngineRequest::WantV2;
+      const bool explicitlyRequestedV1 =
+          request == ExplicitEngineRequest::WantV1;
 
       if (explicitlyRequestedV2 && !eligible) {
         reason =
@@ -313,7 +264,71 @@ class ExportPipelineRouter {
   }
 
  private:
-  // Heterogeneous, zero-allocation parameter lookup on ParamValueMap.
+  // ASCII case-insensitive equality without heap allocation, so the
+  // request-path helpers below can stay `noexcept`.
+  [[nodiscard]] static bool equalsAsciiCaseInsensitive(
+      std::string_view a, std::string_view b) noexcept {
+    if (a.size() != b.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+      if (std::tolower(static_cast<unsigned char>(a[i])) !=
+          std::tolower(static_cast<unsigned char>(b[i]))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Parse the explicit per-request override shared by `selectEngine` and
+  // `describeDecision`, so wording and action cannot diverge. The HTTP header
+  // wins over URL parameters when both are set.
+  [[nodiscard]] static ExplicitEngineRequest parseExplicitRequest(
+      const ParamValueMap& parameters,
+      std::optional<std::string_view> exportHeader) noexcept {
+    if (exportHeader.has_value()) {
+      const auto headerVal = exportHeader.value();
+      if (equalsAsciiCaseInsensitive(headerVal, "v2") ||
+          equalsAsciiCaseInsensitive(headerVal, "fast") ||
+          equalsAsciiCaseInsensitive(headerVal, "streaming")) {
+        return ExplicitEngineRequest::WantV2;
+      }
+      if (equalsAsciiCaseInsensitive(headerVal, "v1") ||
+          equalsAsciiCaseInsensitive(headerVal, "legacy")) {
+        return ExplicitEngineRequest::WantV1;
+      }
+    }
+
+    const auto optFastExport = getParameterValue(parameters, "fast-export");
+    if (optFastExport.has_value()) {
+      if (isTruthy(optFastExport.value())) {
+        return ExplicitEngineRequest::WantV2;
+      }
+      if (isFalsy(optFastExport.value())) {
+        return ExplicitEngineRequest::WantV1;
+      }
+    }
+
+    const auto optExportEngine = getParameterValue(parameters, "export-engine");
+    if (optExportEngine.has_value()) {
+      const auto engineVal = optExportEngine.value();
+      if (equalsAsciiCaseInsensitive(engineVal, "v2") ||
+          equalsAsciiCaseInsensitive(engineVal, "fast")) {
+        return ExplicitEngineRequest::WantV2;
+      }
+      if (equalsAsciiCaseInsensitive(engineVal, "v1") ||
+          equalsAsciiCaseInsensitive(engineVal, "legacy")) {
+        return ExplicitEngineRequest::WantV1;
+      }
+    }
+
+    return ExplicitEngineRequest::None;
+  }
+
+  // Heterogeneous, zero-allocation parameter lookup on ParamValueMap. When a
+  // key carries multiple values (e.g. `?fast-export=true&fast-export=false`),
+  // the first value wins; this is documented here and pinned by test (unlike
+  // `getParameterCheckAtMostOnce` in `UrlParser.h`, which throws).
   [[nodiscard]] static std::optional<std::string_view> getParameterValue(
       const ParamValueMap& parameters, std::string_view key) noexcept {
     auto it = parameters.find(key);
@@ -324,7 +339,7 @@ class ExportPipelineRouter {
   }
 
   [[nodiscard]] static ExportEngineMode evaluateEligibility(
-      const ParsedQuery& query, ExportEngineMode targetMode) noexcept {
+      const ParsedQuery& query, ExportEngineMode targetMode) {
     if (targetMode == ExportEngineMode::FastStreamingV2) {
       if (isEligibleForFastStreaming(query)) {
         return ExportEngineMode::FastStreamingV2;
@@ -336,13 +351,15 @@ class ExportPipelineRouter {
   }
 
   [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
+    return val == "1" || equalsAsciiCaseInsensitive(val, "true") ||
+           equalsAsciiCaseInsensitive(val, "yes") ||
+           equalsAsciiCaseInsensitive(val, "on");
   }
 
   [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "0" || lower == "false" || lower == "no" || lower == "off";
+    return val == "0" || equalsAsciiCaseInsensitive(val, "false") ||
+           equalsAsciiCaseInsensitive(val, "no") ||
+           equalsAsciiCaseInsensitive(val, "off");
   }
 };
 
