@@ -9,6 +9,7 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/static_thread_pool.hpp>
 #include <functional>
+#include <future>
 #include <memory>
 #include <set>
 #include <stdexcept>
