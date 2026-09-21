@@ -21,6 +21,7 @@
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
+#include "util/CompilerWarnings.h"
 #include "util/Exception.h"
 #include "util/http/MediaTypes.h"
 
@@ -71,6 +72,11 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
+// `noinline` keeps the `free` call in a single non-inlined body: otherwise
+// GCC inlines `operator delete` into call sites and reports
+// `-Wmismatched-new-delete` once per inlined copy, where a definition-site
+// pragma cannot reach it.
 __attribute__((noinline)) void operator delete(void* ptr) noexcept {
   std::free(ptr);
 }
@@ -79,7 +85,7 @@ __attribute__((noinline)) void operator delete(void* ptr,
                                                std::size_t) noexcept {
   std::free(ptr);
 }
-#pragma GCC diagnostic pop
+GCC_REENABLE_WARNINGS
 #endif  // QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 
 namespace ad_benchmark {

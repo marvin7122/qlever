@@ -88,8 +88,7 @@ CPP_concept RequiresScratchDecompressInto =
 // Hold a `vector<DecoderT>` and forward `decompress`,
 // `maxDecompressedSize`, and `decompressInto` to `decoders_[index]`. Use this
 // as a building block for types that fulfill the `CompressionWrapper` concept
-// above. An out-of-range `decoderIndex` throws `std::out_of_range` from all
-// three dispatching methods.
+// above.
 template <typename DecoderT>
 struct DecoderMultiplexer {
   using Decoder = DecoderT;
@@ -115,9 +114,8 @@ struct DecoderMultiplexer {
   // `compressed` with `decoderIndex`.
   [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed,
                                            size_t decoderIndex) const {
-    // Like `decompress` below, an invalid index throws `std::out_of_range`
-    // (via `at`) rather than an `ad_utility::Exception`, so that all
-    // dispatching methods reject out-of-range indices the same way.
+    // `at` reports an invalid decoder index via `std::out_of_range`, like
+    // `decompress` already does.
     const size_t bound =
         decoders_.at(decoderIndex).maxDecompressedSize(compressed);
     return bound;
@@ -131,11 +129,11 @@ struct DecoderMultiplexer {
   [[nodiscard]] size_t decompressInto(std::string_view compressed,
                                       size_t decoderIndex, ql::span<char> out,
                                       std::string& scratch) const {
-    // Like `decompress` above, an invalid index throws `std::out_of_range`
-    // (via `at`) rather than an `ad_utility::Exception`.
-    auto& decoder = decoders_.at(decoderIndex);
     AD_CORRECTNESS_CHECK(!out.empty() || compressed.empty());
     DISABLE_CLANG_UNUSED_RESULT_WARNING
+    // `at` reports an invalid decoder index via `std::out_of_range`, like
+    // `decompress` already does.
+    auto& decoder = decoders_.at(decoderIndex);
     size_t decompressedSize;
     if constexpr (RequiresScratchDecompressInto<Decoder>) {
       decompressedSize = decoder.decompressInto(compressed, out, scratch);

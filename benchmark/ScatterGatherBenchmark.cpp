@@ -324,8 +324,11 @@ class ScatterGatherBenchmarkRunner {
   }
 };
 
+#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 // _____________________________________________________________________________
-// Pretty-printed summary table formatter
+// Pretty-printed summary table formatter for the standalone `main` below. It
+// is compiled out when the benchmark-infrastructure integration above is
+// active, which has no caller for it (`-Wunused-function` otherwise).
 void printBenchmarkTable(
     size_t literalSize,
     const std::vector<ScatterGatherBenchmarkMetric>& metrics) {
@@ -371,6 +374,7 @@ void printBenchmarkTable(
   std::cout << "==============================================================="
                "========================================\n\n";
 }
+#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 
 }  // namespace
 

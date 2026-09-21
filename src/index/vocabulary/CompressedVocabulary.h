@@ -209,13 +209,14 @@ CPP_template(typename UnderlyingVocabulary,
     std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
-      // A hole has no compressed word: report the placeholder directly, like
-      // `operator[]` does, instead of decoding the underlying placeholder
-      // text as if it were compressed data. The index is translated to a
-      // position exactly once and then reused for the decoder selection.
+      // For an underlying vocabulary with holes, a hole index has no stored
+      // word: like `operator[]`, report the placeholder for it instead of
+      // feeding the plain-text placeholder to the decoder.
       size_t decoderIdx;
       if constexpr (underlyingHasHoles) {
-        auto position = underlyingVocabulary_.positionOfIndex(idx);
+        // Translate the index to a position exactly once and reuse it for
+        // the decoder selection below (like `operator[]` does).
+        const auto position = underlyingVocabulary_.positionOfIndex(idx);
         if (!position.has_value()) {
           builder.appendWord(
               ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));

@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -90,9 +91,10 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 // Lightweight value holder representing a cell value across formats and types.
 // String data is held as non-owning views (like `std::string_view` itself):
 // the producer owns the referenced memory and must keep it alive through
-// serialization. The `String` type additionally means pre-formatted content
-// that is passed through verbatim in every format; use `Literal` for values
-// that still need quoting or escaping.
+// serialization. `Literal` cells carry normalized, pre-quoted lexical forms
+// (e.g. `"Freiburg"@en`) that are passed through verbatim in CSV and TSV
+// and re-escaped only for Turtle; the `String` type means pre-formatted
+// content that is passed through verbatim in every format.
 struct CellValue {
   ColumnType type_ = ColumnType::Undefined;
   std::string_view stringVal_{};
@@ -180,10 +182,22 @@ concept FormatterWriter =
 
 namespace detail {
 
-// Double / Float serialization without dynamic allocation
+// Double / Float serialization without dynamic allocation.
+// `std::to_chars` for floating-point types is only available on macOS 13.3
+// and later (the CI deployment target is older), so Apple builds fall back to
+// `snprintf`. `%.17g` preserves round-trip fidelity; only the shortest-digit
+// spelling of `to_chars` differs.
 template <typename Writer>
 inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   std::array<char, 32> buffer;
+#if defined(__APPLE__)
+  int len = std::snprintf(buffer.data(), buffer.size(), "%.17g", val);
+  if (len > 0 && static_cast<size_t>(len) < buffer.size()) {
+    writer.writeRaw(std::string_view(buffer.data(), static_cast<size_t>(len)));
+  } else {
+    writer.writeRaw("0.0");
+  }
+#else
   auto [ptr, ec] =
       std::to_chars(buffer.data(), buffer.data() + buffer.size(), val);
   if (ec == std::errc{}) {
@@ -191,6 +205,7 @@ inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   } else {
     writer.writeRaw("0.0");
   }
+#endif
 }
 
 // _____________________________________________________________________________
@@ -209,8 +224,12 @@ struct MonomorphicCellWriter {
         writer.writeIri(cell.stringVal_);
       }
     } else if constexpr (Type == ColumnType::Literal) {
+      // Literals arrive as normalized, pre-quoted lexical forms (the same
+      // representation the Turtle path contract-checks). Passing them
+      // through verbatim keeps CSV consistent with TSV and Turtle; RFC 4180
+      // escaping here would double-quote the delimiters (`"""..."""`).
       if constexpr (Format == ExportFormat::Csv) {
-        writer.writeEscapedCsv(cell.stringVal_);
+        writer.writeRaw(cell.stringVal_);
       } else if constexpr (Format == ExportFormat::Tsv) {
         writer.writeEscapedTsv(cell.stringVal_);
       } else {
@@ -259,8 +278,10 @@ struct MonomorphicCellWriter {
         writer.writeIri(sv);
       }
     } else if constexpr (Type == ColumnType::Literal) {
+      // Same normalized-literal passthrough as the `CellValue` overload
+      // above: tuple elements carry pre-quoted lexical forms.
       if constexpr (Format == ExportFormat::Csv) {
-        writer.writeEscapedCsv(sv);
+        writer.writeRaw(sv);
       } else if constexpr (Format == ExportFormat::Tsv) {
         writer.writeEscapedTsv(sv);
       } else {
