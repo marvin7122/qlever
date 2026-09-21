@@ -49,7 +49,7 @@ class UnicodeVocabulary {
                     _underlyingVocabulary.lookupBatch(indices, builder);
                   }) {
       if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
-                         indices, builder))>) {
+                        indices, builder))>) {
         // Fill-only protocol (e.g. `CompressedVocabulary`): the words were
         // decoded into the caller's `builder`, finalize it here.
         _underlyingVocabulary.lookupBatch(indices, builder);
