@@ -177,6 +177,19 @@ TEST(AdaptiveChunkSizerTest, ZeroRowAndZeroByteHandling) {
   EXPECT_EQ(sizer.currentChunkBytes(), 128 * 1024);
 }
 
+TEST(AdaptiveChunkSizerTest, ZeroBytesNonZeroRowsHandling) {
+  AdaptiveChunkSizer sizer;
+
+  // Zero bytes with non-zero rows: no row-size observation is recorded, but
+  // the flush still counts and the chunk target still ramps up.
+  sizer.recordChunk(0, 100);
+  EXPECT_EQ(sizer.chunksFlushed(), 1);
+  EXPECT_EQ(sizer.totalBytes(), 0);
+  EXPECT_EQ(sizer.totalRows(), 0);
+  EXPECT_DOUBLE_EQ(sizer.averageRowBytes(), 120.0);
+  EXPECT_EQ(sizer.currentChunkBytes(), 128 * 1024);
+}
+
 TEST(AdaptiveChunkSizerTest, CustomConfiguration) {
   AdaptiveChunkConfig config{
       .initialChunkBytes_ = 32 * 1024,

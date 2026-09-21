@@ -276,6 +276,26 @@ struct BranchingIfElseDispatcher {
       std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", 45);
       out += 45;
       return out;
+    } else if (dt == Datatype::Date) {
+      std::memcpy(out, "\"", 1);
+      out += 1;
+      auto [str, type] = id.getDate().toStringAndType();
+      std::memcpy(out, str.data(), str.size());
+      out += str.size();
+      std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", 46);
+      out += 46;
+      return out;
+    } else if (dt == Datatype::GeoPoint) {
+      std::memcpy(out, "\"", 1);
+      out += 1;
+      auto [str, type] = id.getGeoPoint().toStringAndType();
+      std::memcpy(out, str.data(), str.size());
+      out += str.size();
+      std::memcpy(out,
+                  "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
+                  52);
+      out += 52;
+      return out;
     }
     return out;
   }

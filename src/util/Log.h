@@ -134,6 +134,9 @@ class ScopedLogLevel {
   ~ScopedLogLevel() {
     detail::runtimeLogLevel.store(previousLevel_, std::memory_order_relaxed);
   }
+
+  ScopedLogLevel(const ScopedLogLevel&) = delete;
+  ScopedLogLevel& operator=(const ScopedLogLevel&) = delete;
 };
 
 // A singleton that holds a pointer to a single `std::ostream`. This enables us
