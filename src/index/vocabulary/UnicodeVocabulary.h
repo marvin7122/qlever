@@ -49,7 +49,18 @@ class UnicodeVocabulary {
       _underlyingVocabulary.lookupBatch(indices, builder);
       return std::move(builder).finalize();
     } else {
-      return _underlyingVocabulary.lookupBatch(indices);
+      // The underlying vocabulary has no batched leaf: reuse its single-shot
+      // batch path and copy the words into the caller's builder, so the
+      // unconditional `finalize()` below sees a populated builder (same
+      // pattern as `Vocabulary` and `PolymorphicVocabulary`; returning the
+      // single-shot result directly would leave the builder empty and trip
+      // the `finalize` precondition).
+      auto singleShot = _underlyingVocabulary.lookupBatch(indices);
+      AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+      for (std::string_view word : singleShot) {
+        builder.appendWord(word);
+      }
+      return std::move(builder).finalize();
     }
   }
 
