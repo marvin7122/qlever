@@ -209,7 +209,23 @@ CPP_template(typename UnderlyingVocabulary,
     std::string scratch;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
-      const size_t decoderIdx = getDecoderIdx(idx);
+      // For an underlying vocabulary with holes, a hole index has no stored
+      // word: like `operator[]`, report the placeholder for it instead of
+      // feeding the plain-text placeholder to the decoder.
+      size_t decoderIdx;
+      if constexpr (underlyingHasHoles) {
+        // Translate the index to a position exactly once and reuse it for
+        // the decoder selection below (like `operator[]` does).
+        const auto position = underlyingVocabulary_.positionOfIndex(idx);
+        if (!position.has_value()) {
+          builder.appendWord(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+          continue;
+        }
+        decoderIdx = getDecoderIdxFromPosition(position.value());
+      } else {
+        decoderIdx = getDecoderIdx(idx);
+      }
       AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
@@ -221,6 +237,7 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    AD_CONTRACT_CHECK(!indices.empty());
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
     return std::move(builder).finalize();
