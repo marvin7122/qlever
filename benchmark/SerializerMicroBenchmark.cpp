@@ -45,7 +45,20 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs.
+// runs. The sanitizer runtimes provide their own global `operator new` and
+// `operator delete`, so the replacements are disabled under sanitizers, where
+// they would otherwise fail to link with "multiple definition" errors. The
+// allocation counts are then only reported as benchmark metadata (zero under
+// sanitizers), which no test depends on.
+#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) &&        \
+    !defined(__SANITIZE_MEMORY__) && !defined(__SANITIZE_UNDEFINED__) &&      \
+    !(defined(__has_feature) &&                                               \
+      (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+       __has_feature(memory_sanitizer) ||                                     \
+       __has_feature(undefined_behavior_sanitizer)))
+#define QLEVER_SERIALIZER_BENCHMARK_COUNT_ALLOCATIONS 1
+#endif
+#ifdef QLEVER_SERIALIZER_BENCHMARK_COUNT_ALLOCATIONS
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -77,6 +90,7 @@ void* operator new[](std::size_t size) {
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
 
 void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+#endif  // QLEVER_SERIALIZER_BENCHMARK_COUNT_ALLOCATIONS
 
 namespace ad_benchmark {
 namespace {

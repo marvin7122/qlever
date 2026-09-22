@@ -99,7 +99,12 @@ class SimulatedVocabularyFile {
       bytesWritten += writeChunkSize;
     }
 
+#if defined(__APPLE__)
+    // `fdatasync` is Linux-specific; `fsync` is the portable fallback.
+    ::fsync(fd);
+#else
     ::fdatasync(fd);
+#endif
     ::close(fd);
     std::free(writeBuf);
     isCreated_ = true;
