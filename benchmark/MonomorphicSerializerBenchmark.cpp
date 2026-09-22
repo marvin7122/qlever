@@ -66,9 +66,16 @@ struct AllocationTracker {
 // runtimes (in particular AddressSanitizer and ThreadSanitizer) provide their
 // own global operator new/delete replacements that would otherwise fail the
 // link with multiple-definition errors. The sized deallocation functions
-// forward to the unsized ones instead of calling `std::free` directly, which
-// GCC rejects with `-Werror=mismatched-new-delete`.
+// forward to the unsized ones. GCC's `-Wmismatched-new-delete` cannot see
+// that these replacements form matching malloc/free pairs and flags the
+// `std::free` calls once they get inlined into callers (observed with GCC 11
+// in Release with `-Werror`), so the warning is disabled locally for these
+// definitions only.
 #ifndef QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -104,6 +111,9 @@ void operator delete[](void* ptr) noexcept { std::free(ptr); }
 void operator delete[](void* ptr, std::size_t) noexcept {
   ::operator delete[](ptr);
 }
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #endif  // QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 
 namespace ad_benchmark {
