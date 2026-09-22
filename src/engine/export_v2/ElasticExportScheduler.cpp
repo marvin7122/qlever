@@ -5,6 +5,7 @@
 #include "engine/export_v2/ElasticExportScheduler.h"
 
 #include <algorithm>
+#include <exception>
 #include <optional>
 #include <vector>
 
@@ -212,6 +213,7 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
     // `queueMutex_` again (a non-recursive mutex), so posting while holding
     // the lock deadlocks a synchronous poster.
     std::optional<OwnedMorsel> toPost;
+    std::vector<OwnedMorsel> readyToPost;
     {
       std::lock_guard<std::mutex> lock(queueMutex_);
       const size_t live = liveSessionCount_.load(std::memory_order_relaxed);
@@ -229,11 +231,17 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
         toPost.emplace(std::move(morsel));
       } else {
         pendingAdmission_.push_back(std::move(morsel));
+        // The session may sit at its base share while total capacity is
+        // still free (an indivisible max/live leaves a remainder): run the
+        // admission loop now so remainder slots fill promptly instead of
+        // waiting for the next completion.
+        readyToPost = drainPendingAdmissionUnsafe();
       }
     }
     if (toPost.has_value()) {
       postReady(std::move(*toPost));
     }
+    postReadyBatch(std::move(readyToPost));
     return true;
   }
   std::unique_lock<std::mutex> lock(queueMutex_);
@@ -265,7 +273,37 @@ void ElasticExportScheduler::accountOutstandingUnsafe(uint64_t jobId) {
 void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
   // Never holds `queueMutex_` here (see `enqueueMorsel`): `poster_` may run
   // the closure inline, and its completion path takes `queueMutex_` again.
-  poster_(makePostedWork(std::move(morsel)));
+  const uint64_t jobId = morsel.jobId_;
+  try {
+    poster_(makePostedWork(std::move(morsel)));
+  } catch (...) {
+    // The morsel was counted at admission time, before posting: release its
+    // reservation (and admit waiting morsels for the freed share) so a
+    // throwing poster cannot permanently block the session. The exception
+    // itself propagates unchanged.
+    onPostedMorselFinished(jobId);
+    throw;
+  }
+}
+
+// Post several already-accounted morsels without holding `queueMutex_`. A
+// throwing poster rolls its own morsel back via `postReady`; keep posting
+// the rest so no accounted morsel is stranded, then rethrow the first
+// failure.
+void ElasticExportScheduler::postReadyBatch(std::vector<OwnedMorsel> batch) {
+  std::exception_ptr firstFailure;
+  for (auto& morsel : batch) {
+    try {
+      postReady(std::move(morsel));
+    } catch (...) {
+      if (firstFailure == nullptr) {
+        firstFailure = std::current_exception();
+      }
+    }
+  }
+  if (firstFailure != nullptr) {
+    std::rethrow_exception(firstFailure);
+  }
 }
 
 absl::AnyInvocable<void()> ElasticExportScheduler::makePostedWork(
@@ -294,9 +332,7 @@ void ElasticExportScheduler::onPostedMorselFinished(uint64_t jobId) {
   // Outside the lock: posting may run work inline (see `enqueueMorsel`).
   // The morsels are already accounted by the drain, so post without
   // counting them a second time.
-  for (auto& ready : readyToPost) {
-    postReady(std::move(ready));
-  }
+  postReadyBatch(std::move(readyToPost));
 }
 
 size_t ElasticExportScheduler::committedOutstandingUnsafe(
@@ -328,11 +364,28 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
           pendingAdmission_.begin(), pendingAdmission_.end(),
           [](const OwnedMorsel& m) { return m.jobState_->isCancelled(); }),
       pendingAdmission_.end());
-  // Oldest session first: lowest jobId among servable entries wins, which
-  // implements the remainder-oldest rule while preserving first-in
-  // first-out order within each session. Each pass scans the pending queue
-  // once; the queue stays short in practice (admission fills every free
-  // share eagerly), so a per-session index is future work for proven load.
+  // Admit one pending morsel and account it as outstanding.
+  auto admitIt = [this, &readyToPost](auto it) {
+    OwnedMorsel morsel = std::move(*it);
+    pendingAdmission_.erase(it);
+    accountOutstandingUnsafe(morsel.jobId_);
+    readyToPost.push_back(std::move(morsel));
+  };
+  // Oldest session first means the lowest jobId, earliest in the queue on
+  // ties, which preserves first-in first-out order within each session.
+  auto oldestIt = [this]() {
+    auto best = pendingAdmission_.begin();
+    for (auto it = std::next(best); it != pendingAdmission_.end(); ++it) {
+      if (it->jobId_ < best->jobId_) {
+        best = it;
+      }
+    }
+    return best;
+  };
+  // Phase 1, even split: admit sessions still below the base share. Each
+  // pass scans the pending queue once; the queue stays short in practice
+  // (admission fills every free share eagerly), so a per-session index is
+  // future work for proven load.
   while (totalOutstanding_ < max && !pendingAdmission_.empty()) {
     auto best = pendingAdmission_.end();
     for (auto it = pendingAdmission_.begin(); it != pendingAdmission_.end();
@@ -348,10 +401,13 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
     if (best == pendingAdmission_.end()) {
       break;
     }
-    OwnedMorsel morsel = std::move(*best);
-    pendingAdmission_.erase(best);
-    accountOutstandingUnsafe(morsel.jobId_);
-    readyToPost.push_back(std::move(morsel));
+    admitIt(best);
+  }
+  // Phase 2, remainder-oldest: `max / live` truncates, so an indivisible
+  // capacity leaves remainder slots that no below-share session can claim.
+  // Hand them to the oldest waiting sessions instead of stranding them.
+  while (totalOutstanding_ < max && !pendingAdmission_.empty()) {
+    admitIt(oldestIt());
   }
   return readyToPost;
 }
