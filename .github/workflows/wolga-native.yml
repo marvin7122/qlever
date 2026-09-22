@@ -1,22 +1,29 @@
-name: Wolga build pilot (rootless podman)
+name: Wolga native (gcc-13)
 
-# Pilot for migrating heavy Linux CI legs to Wolga self-hosted runners.
-# Isolated workflow: manual dispatch only, zero impact on the required
-# matrix. Builds one native leg inside an Ubuntu container via rootless
-# podman (no sudo on the host; container provides its own toolchain).
+# First production Wolga leg of the heavy Linux CI migration (pilot proved
+# the rootless-podman path in wolga-build-pilot.yml). Runs the gcc-13
+# Release build + unit tests inside the prebuilt localhost/qlever-ci:gcc13
+# image, so it is immune to Launchpad PPA outages that keep killing the
+# GitHub-hosted legs. Isolated workflow: not required, zero impact on the
+# existing matrix. More toolchains follow as their images land.
+
 on:
-  workflow_dispatch:
-    inputs:
-      target:
-        description: CMake target to build (empty builds everything)
-        required: false
-        default: ''
+  push:
+    branches: [ master ]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  merge_group:
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     runs-on: [self-hosted, linux, x64, wolga]
     timeout-minutes: 240
     env:
@@ -26,7 +33,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - name: Native gcc-13 Release build inside prebuilt CI image
+      - name: Native gcc-13 Release build + tests inside prebuilt CI image
         run: |
           mkdir -p "${PODMAN_ROOT}" "${PODMAN_TMP}"
           podman --root "${PODMAN_ROOT}" --tmpdir "${PODMAN_TMP}" run --rm \
@@ -45,11 +52,7 @@ jobs:
                 -DBUILD_SHARED_LIBS=ON -DQLEVER_ONE_TEST_CASE_PER_FILE=ON \
                 -DUSE_PRECOMPILED_HEADERS=OFF -DCHEAPER_COMPILATION=OFF \
                 -DQLEVER_ALLOCATOR_BACKEND=limit
-              if [ -n "${{ inputs.target }}" ]; then
-                TARGET_ARG="--target ${{ inputs.target }}"
-              else
-                TARGET_ARG=""
-              fi
-              # shellcheck disable=SC2086
-              cmake --build /work/build --config Release ${TARGET_ARG} -- -j $(nproc)
+              cmake --build /work/build --config Release -- -j $(nproc)
+              cd /work/build/test
+              env CTEST_OUTPUT_ON_FAILURE=1 ctest -C Release -j $(nproc) .
             '
