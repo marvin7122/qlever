@@ -389,8 +389,14 @@ TEST(VocabBatchLookupData,
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
+  // NOTE: the out-of-bounds position is deliberately passed via a `volatile`
+  // variable. A literal `2` lets GCC prove the out-of-bounds access at compile
+  // time and error out under `-Werror=array-bounds`, even though the
+  // `AD_CORRECTNESS_CHECK` in `assignWordAtPosition` throws before any memory
+  // is touched.
+  volatile size_t outOfBoundsPosition = 2;
   AD_EXPECT_THROW_WITH_MESSAGE(
-      assembler.assignWordAtPosition(2, "out-of-bounds"),
+      assembler.assignWordAtPosition(outOfBoundsPosition, "out-of-bounds"),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
 
   auto subBatch =
