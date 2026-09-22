@@ -216,9 +216,11 @@ class FastExportStreamFormatter {
     }
     ensureAvailable(len);
     if (bufferCapacity_ - writePos_ >= sizeof(uint64_t)) {
-      char* next = ad_utility::SwarDelimiterPacker::writeDelim(
-          bufferPtr_ + writePos_, delim);
-      writePos_ = static_cast<size_t>(next - bufferPtr_);
+      // Single unaligned 64-bit store; capacity for the full wide store was
+      // checked above, only `len` bytes are logically appended.
+      const uint64_t pattern = delim.pattern();
+      std::memcpy(bufferPtr_ + writePos_, &pattern, sizeof(uint64_t));
+      writePos_ += len;
     } else {
       const uint64_t pattern = delim.pattern();
       std::memcpy(bufferPtr_ + writePos_, &pattern, len);

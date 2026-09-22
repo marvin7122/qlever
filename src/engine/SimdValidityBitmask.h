@@ -9,13 +9,15 @@
 #ifndef QLEVER_SRC_ENGINE_SIMDVALIDITYBITMASK_H
 #define QLEVER_SRC_ENGINE_SIMDVALIDITYBITMASK_H
 
+#include <absl/numeric/bits.h>
+
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
@@ -38,6 +40,23 @@
 #include "util/Exception.h"
 
 namespace ad_utility::simd {
+
+// _____________________________________________________________________________
+// Runtime AVX2 availability check. The `target("avx2")` attribute only changes
+// code generation; it does not check CPU support, so executing AVX2 code on a
+// pre-AVX2 x86 host raises SIGILL. Gate every AVX2 call site on this check
+// and fall back to the scalar implementation when AVX2 is unavailable.
+[[nodiscard]] inline bool cpuSupportsAvx2() noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+#if defined(__x86_64__) || defined(__i386__)
+  return __builtin_cpu_supports("avx2");
+#else
+  return false;
+#endif
+#else
+  return false;
+#endif
+}
 
 // _____________________________________________________________________________
 // ValidityBitmask64: Invariant-bearing 64-bit column validity tracker.
@@ -112,23 +131,23 @@ class ValidityBitmask64 {
   }
 
   [[nodiscard]] constexpr size_t countValid() const noexcept {
-    return static_cast<size_t>(std::popcount(mask_));
+    return static_cast<size_t>(absl::popcount(mask_));
   }
 
   [[nodiscard]] constexpr size_t countUnbound() const noexcept {
-    return 64 - static_cast<size_t>(std::popcount(mask_));
+    return 64 - static_cast<size_t>(absl::popcount(mask_));
   }
 
   [[nodiscard]] constexpr uint64_t rawMask() const noexcept { return mask_; }
 
   // Returns the index of the first unbound row (0..63), or 64 if all are valid.
   [[nodiscard]] constexpr size_t firstUnboundIndex() const noexcept {
-    return static_cast<size_t>(std::countr_one(mask_));
+    return static_cast<size_t>(absl::countr_one(mask_));
   }
 
   // Returns the index of the first valid row (0..63), or 64 if all are unbound.
   [[nodiscard]] constexpr size_t firstValidIndex() const noexcept {
-    return mask_ == 0ULL ? 64 : static_cast<size_t>(std::countr_zero(mask_));
+    return mask_ == 0ULL ? 64 : static_cast<size_t>(absl::countr_zero(mask_));
   }
 
   // Iteration helpers over set/unset bits
@@ -136,7 +155,7 @@ class ValidityBitmask64 {
   void forEachValid(Func&& func) const {
     uint64_t remaining = mask_;
     while (remaining != 0) {
-      size_t idx = static_cast<size_t>(std::countr_zero(remaining));
+      size_t idx = static_cast<size_t>(absl::countr_zero(remaining));
       func(idx);
       remaining &= (remaining - 1);  // Clear lowest set bit
     }
@@ -146,7 +165,7 @@ class ValidityBitmask64 {
   void forEachUnbound(Func&& func) const {
     uint64_t remaining = ~mask_;
     while (remaining != 0) {
-      size_t idx = static_cast<size_t>(std::countr_zero(remaining));
+      size_t idx = static_cast<size_t>(absl::countr_zero(remaining));
       func(idx);
       remaining &= (remaining - 1);  // Clear lowest set bit
     }
@@ -327,9 +346,17 @@ class SimdValidityScanner {
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
       const ValueId* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
+    // `ValueId` is a standard-layout wrapper around a single `uint64_t`, so
+    // a pointer to it is pointer-interconvertible with a pointer to the raw
+    // bits and word-wise loads through the cast pointer are well-defined.
+    static_assert(std::is_standard_layout_v<ValueId> &&
+                  sizeof(ValueId) == sizeof(uint64_t));
     const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
-    return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
+    if (cpuSupportsAvx2()) {
+      return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
+    }
+    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
 #else
     return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
 #endif
@@ -341,7 +368,10 @@ class SimdValidityScanner {
       const uint64_t* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return ValidityBitmask64{detail::scanBatch64Avx2(data)};
+    if (cpuSupportsAvx2()) {
+      return ValidityBitmask64{detail::scanBatch64Avx2(data)};
+    }
+    return ValidityBitmask64{detail::scanBatch64Scalar(data)};
 #else
     return ValidityBitmask64{detail::scanBatch64Scalar(data)};
 #endif
@@ -352,17 +382,20 @@ class SimdValidityScanner {
   [[nodiscard]] static inline bool isAllUnbound64(
       const ValueId* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
+    static_assert(std::is_standard_layout_v<ValueId> &&
+                  sizeof(ValueId) == sizeof(uint64_t));
     const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
-    return detail::isAllUnbound64Avx2(raw);
-#else
+    if (cpuSupportsAvx2()) {
+      return detail::isAllUnbound64Avx2(raw);
+    }
+#endif
     for (size_t i = 0; i < 64; ++i) {
       if (raw[i] != 0) {
         return false;
       }
     }
     return true;
-#endif
   }
 
   // ___________________________________________________________________________
@@ -431,10 +464,11 @@ class SimdValidityScanner {
                                            char delimiter = ',') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimitersAvx2(dest, delimiter);
-#else
-    return detail::write64DelimitersScalar(dest, delimiter);
+    if (cpuSupportsAvx2()) {
+      return detail::write64DelimitersAvx2(dest, delimiter);
+    }
 #endif
+    return detail::write64DelimitersScalar(dest, delimiter);
   }
 
   // ___________________________________________________________________________
@@ -444,10 +478,11 @@ class SimdValidityScanner {
                                            char delimiter = '\t') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimitersAvx2(dest, delimiter);
-#else
-    return detail::write64DelimitersScalar(dest, delimiter);
+    if (cpuSupportsAvx2()) {
+      return detail::write64DelimitersAvx2(dest, delimiter);
+    }
 #endif
+    return detail::write64DelimitersScalar(dest, delimiter);
   }
 
   // ___________________________________________________________________________
@@ -457,10 +492,11 @@ class SimdValidityScanner {
                                           char rowSeparator = '\n') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
-#else
-    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
+    if (cpuSupportsAvx2()) {
+      return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
+    }
 #endif
+    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
   }
 
   // ___________________________________________________________________________
@@ -470,10 +506,11 @@ class SimdValidityScanner {
                                           char rowSeparator = '\n') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
-#else
-    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
+    if (cpuSupportsAvx2()) {
+      return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
+    }
 #endif
+    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
   }
 };
 

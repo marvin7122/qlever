@@ -23,6 +23,11 @@ namespace ad_utility {
 // _____________________________________________________________________________
 // Helper to pack up to 8 characters from a string view into a 64-bit unsigned
 // integer using little-endian byte ordering.
+//
+// The emitted byte sequence in memory is little-endian by construction: byte
+// `i` of the input lands in bits `[8*i, 8*i+8)` and is stored via `memcpy`
+// from the integer. Correct output therefore requires a little-endian host
+// (all QLever targets: x86-64, ARM64).
 [[nodiscard]] constexpr uint64_t packDelimPattern(
     std::string_view sv) noexcept {
   uint64_t val = 0;
@@ -105,24 +110,32 @@ class SwarDelimiterPacker {
  public:
   // ___________________________________________________________________________
   // Core Store Intrinsics:
-  // Performs an unaligned 64-bit store of `delimPattern` into `out` and
-  // advances the pointer by `len` bytes. Preconditions:
+  // Copies exactly `len` bytes of `delimPattern` into `out` and advances the
+  // pointer by `len` bytes. Safe for exact-fit buffers: unlike the
+  // compile-time fixed-length overload below, this dynamic overload never
+  // writes past `out + len`. Preconditions:
   // - `out` must not be nullptr.
-  // - `out` must point to a buffer with at least 8 bytes of writable capacity.
+  // - `out` must point to a buffer with at least `len` bytes of writable
+  //   capacity.
   // - `len` must be <= 8.
   //
-  // Compiles to a single unaligned 64-bit store instruction (e.g. `mov [rdi],
-  // rsi`) with zero branching.
+  // Callers that can guarantee 8 bytes of writable capacity and need the
+  // single unaligned 64-bit store should use the fixed-length template
+  // overload (or an explicit 8-byte `memcpy`) instead.
   [[nodiscard]] static inline char* writeDelim64(char* out,
                                                  uint64_t delimPattern,
                                                  size_t len) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 8);
-    std::memcpy(out, &delimPattern, sizeof(uint64_t));
+    std::memcpy(out, &delimPattern, len);
     return out + len;
   }
 
   // Compile-time fixed-length overload for maximum compiler optimization.
+  // Performs a single unaligned 64-bit store (e.g. `mov [rdi], rsi`) with
+  // zero branching. Requires 8 bytes of writable capacity at `out`, even
+  // when `Len < 8` (the trailing bytes are scratch overwritten by the wide
+  // store); use the dynamic overload for exact-fit buffers.
   template <size_t Len>
   [[nodiscard]] static inline char* writeDelim64(
       char* out, uint64_t delimPattern) noexcept {
@@ -132,29 +145,32 @@ class SwarDelimiterPacker {
     return out + Len;
   }
 
-  // Write a strongly typed PackedDelimiter
+  // Write a strongly typed PackedDelimiter. Copies exactly `delim.len()`
+  // bytes; safe for exact-fit buffers.
   [[nodiscard]] static inline char* writeDelim(
       char* out, const PackedDelimiter& delim) noexcept {
     return writeDelim64(out, delim.pattern(), delim.len());
   }
 
-  // 32-bit store intrinsic (writes 4 bytes unaligned, advances by `len` <= 4)
+  // 32-bit store intrinsic (copies exactly `len` <= 4 bytes, advances by
+  // `len`). Safe for exact-fit buffers.
   [[nodiscard]] static inline char* writeDelim32(char* out,
                                                  uint32_t delimPattern,
                                                  size_t len) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 4);
-    std::memcpy(out, &delimPattern, sizeof(uint32_t));
+    std::memcpy(out, &delimPattern, len);
     return out + len;
   }
 
-  // 16-bit store intrinsic (writes 2 bytes unaligned, advances by `len` <= 2)
+  // 16-bit store intrinsic (copies exactly `len` <= 2 bytes, advances by
+  // `len`). Safe for exact-fit buffers.
   [[nodiscard]] static inline char* writeDelim16(char* out,
                                                  uint16_t delimPattern,
                                                  size_t len) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 2);
-    std::memcpy(out, &delimPattern, sizeof(uint16_t));
+    std::memcpy(out, &delimPattern, len);
     return out + len;
   }
 
