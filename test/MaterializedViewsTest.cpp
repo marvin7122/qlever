@@ -932,7 +932,11 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
     EXPECT_THAT(res->idTableView(), matchesIdTable(expectedIdTable));
   }
 
-  // Write a materialized view through a simulated HTTP POST request.
+  // Write a materialized view through a simulated HTTP POST request. All HTTP
+  // sub-cases below go through `handleHttpRequest` (the same entry point that
+  // `Server::run()` uses), so that handler errors are translated to HTTP
+  // error responses instead of escaping as C++ exceptions, which would abort
+  // the test binary if uncaught.
   {
     clearLog();
     auto request = makePostRequest(
@@ -940,7 +944,7 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
         "accessToken",
         "application/sparql-query", simpleWriteQuery_);
     auto response = responseBodyAsJson(
-        makeServerForTesting(testIndexBase_).process(request));
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request));
 
     // Check HTTP response.
     ASSERT_TRUE(response.has_value());
@@ -963,7 +967,7 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
         "&query=SELECT%20*%20%7B%20%3Fs%20%3Fp%20%3Fo%20.%20BIND(1%"
         "20AS%20%3Fg)%20%7D");
     auto response = responseBodyAsJson(
-        makeServerForTesting(testIndexBase_).process(request));
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request));
 
     // Check HTTP response.
     ASSERT_TRUE(response.has_value());
@@ -984,7 +988,7 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
         "/?cmd=load-materialized-view&view-name=testViewFromHTTP2"
         "&access-token=accessToken");
     auto response = responseBodyAsJson(
-        makeServerForTesting(testIndexBase_).process(request));
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request));
 
     // Check HTTP response.
     ASSERT_TRUE(response.has_value());
@@ -999,17 +1003,22 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
             "Loading materialized view \"testViewFromHTTP2\" from disk"));
   }
 
-  // Test error message for wrong query type.
+  // Test error message for wrong query type. The server translates the handler
+  // error to a `400 Bad Request` response with the message as plain-text
+  // body, so no C++ exception escapes (same for the other error sub-cases
+  // below).
   {
     auto request = makePostRequest(
         "/?cmd=write-materialized-view&view-name=testViewFromHTTP3&"
         "access-token=accessToken",
         "application/sparql-update", "INSERT DATA { <a> <b> <c> }");
-    AD_EXPECT_THROW_WITH_MESSAGE(
-        responseBodyAsJson(
-            makeServerForTesting(testIndexBase_).process(request)),
-        ::testing::HasSubstr(
-            "Action 'write-materialized-view' requires a 'SELECT' query"));
+    auto response =
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request);
+    EXPECT_EQ(response.result(), http::status::bad_request);
+    EXPECT_THAT(responseBodyToString(std::move(response.body())),
+                ::testing::HasSubstr(
+                    "Action 'write-materialized-view' requires a 'SELECT' "
+                    "query"));
   }
 
   // Test access token check.
@@ -1017,9 +1026,12 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
     auto request = makePostRequest(
         "/?cmd=write-materialized-view&view-name=testViewFromHTTP3",
         "application/sparql-query", simpleWriteQuery_);
-    expectRequiresValidAccessToken("write-materialized-view", [&] {
-      makeServerForTesting(testIndexBase_).process(request);
-    });
+    auto response =
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request);
+    EXPECT_EQ(response.result(), http::status::forbidden);
+    EXPECT_THAT(responseBodyToString(std::move(response.body())),
+                ::testing::HasSubstr(
+                    "write-materialized-view requires a valid access token"));
   }
 
   // Test check for name of the view (missing).
@@ -1027,12 +1039,13 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
     auto request = makePostRequest(
         "/?cmd=write-materialized-view&access-token=accessToken",
         "application/sparql-query", simpleWriteQuery_);
-    AD_EXPECT_THROW_WITH_MESSAGE(
-        responseBodyAsJson(
-            makeServerForTesting(testIndexBase_).process(request)),
-        ::testing::HasSubstr(
-            "Writing a materialized view requires a name to be set "
-            "via the 'view-name' parameter"));
+    auto response =
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request);
+    EXPECT_EQ(response.result(), http::status::bad_request);
+    EXPECT_THAT(responseBodyToString(std::move(response.body())),
+                ::testing::HasSubstr(
+                    "Writing a materialized view requires a name to be set "
+                    "via the 'view-name' parameter"));
   }
 
   // Test check for name of the view (empty).
@@ -1040,10 +1053,11 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
     auto request = makePostRequest(
         "/?cmd=write-materialized-view&view-name=&access-token=accessToken",
         "application/sparql-query", simpleWriteQuery_);
-    AD_EXPECT_THROW_WITH_MESSAGE(
-        responseBodyAsJson(
-            makeServerForTesting(testIndexBase_).process(request)),
-        ::testing::HasSubstr("The name for the view may not be empty"));
+    auto response =
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request);
+    EXPECT_EQ(response.result(), http::status::bad_request);
+    EXPECT_THAT(responseBodyToString(std::move(response.body())),
+                ::testing::HasSubstr("The name for the view may not be empty"));
   }
 
   // Delete a materialized view through a simulated HTTP GET request.
@@ -1055,7 +1069,7 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
         "/?cmd=delete-materialized-view&view-name=testViewFromHTTP2"
         "&access-token=accessToken");
     auto response = responseBodyAsJson(
-        makeServerForTesting(testIndexBase_).process(request));
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request));
 
     // Check HTTP response.
     ASSERT_TRUE(response.has_value());
@@ -1075,9 +1089,12 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
   {
     auto request = makeGetRequest(
         "/?cmd=delete-materialized-view&view-name=testViewFromHTTP");
-    expectRequiresValidAccessToken("delete-materialized-view", [&] {
-      makeServerForTesting(testIndexBase_).process(request);
-    });
+    auto response =
+        makeServerForTesting(testIndexBase_).handleHttpRequest(request);
+    EXPECT_EQ(response.result(), http::status::forbidden);
+    EXPECT_THAT(responseBodyToString(std::move(response.body())),
+                ::testing::HasSubstr(
+                    "delete-materialized-view requires a valid access token"));
   }
 }
 #endif  // __EMSCRIPTEN__
