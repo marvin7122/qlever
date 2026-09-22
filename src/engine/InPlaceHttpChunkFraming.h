@@ -394,6 +394,10 @@ class InPlaceHttpChunkStreamer {
   // Write std::string_view slice.
   void write(std::string_view sv) { write(sv.data(), sv.size()); }
 
+  // Write std::string. Without this overload, a `std::string` argument is
+  // ambiguous between the `string_view` and the `span` overloads.
+  void write(const std::string& str) { write(str.data(), str.size()); }
+
   // ___________________________________________________________________________
   // Write ql::span<const char> slice.
   void write(ql::span<const char> span) { write(span.data(), span.size()); }
