@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -698,9 +699,12 @@ TEST(ElasticExportSchedulerTest, SynchronousPosterDoesNotDeadlock) {
   // A poster that runs work inline must not deadlock: posting happens
   // without holding the queue mutex, so completion accounting can take the
   // non-recursive mutex again on the same thread.
-  ElasticExportScheduler scheduler(
+  // Heap-owned: the worker holds a copy of the `shared_ptr`, so the
+  // scheduler outlives a detached worker after a timeout instead of being
+  // destroyed from under it.
+  auto scheduler = std::make_shared<ElasticExportScheduler>(
       [](absl::AnyInvocable<void()> work) { std::move(work)(); }, 64);
-  scheduler.setMaxConcurrentMorsels(2);
+  scheduler->setMaxConcurrentMorsels(2);
 
   // A posting-under-lock regression deadlocks instead of failing, so run
   // the scenario off-thread with a bounded wait. The worker only touches
@@ -710,9 +714,9 @@ TEST(ElasticExportSchedulerTest, SynchronousPosterDoesNotDeadlock) {
   // hanging the test binary.
   std::promise<std::vector<int>> done;
   auto finished = done.get_future();
-  std::thread worker([&scheduler, promise = std::move(done)]() mutable {
+  std::thread worker([scheduler, promise = std::move(done)]() mutable {
     try {
-      auto session = scheduler.createSession<int>();
+      auto session = scheduler->createSession<int>();
       for (int i = 0; i < 4; ++i) {
         session.submitMorsel([i]() { return i * 10; });
       }
@@ -727,13 +731,44 @@ TEST(ElasticExportSchedulerTest, SynchronousPosterDoesNotDeadlock) {
   });
   if (finished.wait_for(10s) != std::future_status::ready) {
     // Detach so the regression fails instead of terminating (a joinable
-    // thread must never be destroyed) or hanging the test binary.
+    // thread must never be destroyed) or hanging the test binary. The
+    // detached worker keeps the scheduler alive through its own copy.
     worker.detach();
     FAIL() << "Inline poster deadlocked: posting must not hold the queue mutex";
   }
   worker.join();
   EXPECT_EQ(finished.get(), (std::vector<int>{0, 10, 20, 30}));
-  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+  EXPECT_EQ(scheduler->activeHelperCount(), 0u);
+}
+
+TEST(ElasticExportSchedulerTest, RemainderSlotGoesToOldestSession) {
+  DeferredPoster deferred;
+  ElasticExportScheduler scheduler(
+      [&deferred](absl::AnyInvocable<void()> work) {
+        deferred.post(std::move(work));
+      },
+      64);
+  // Three slots over two sessions: base share one each, remainder one.
+  scheduler.setMaxConcurrentMorsels(3);
+  scheduler.onForegroundQueryStarted();
+
+  auto sessionA = scheduler.createSession<std::string>();
+  auto sessionB = scheduler.createSession<std::string>();
+  for (size_t i = 0; i < 3; ++i) {
+    sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
+    sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
+  }
+  // Base shares post A0 and B0; the truncated remainder slot goes to the
+  // oldest session (A), so A1 posts promptly instead of waiting for the
+  // next completion while capacity sits idle.
+  EXPECT_EQ(deferred.totalPosted_, 3u);
+
+  deferred.runToIdle();
+  EXPECT_EQ(deferred.totalPosted_, 6u);
+  for (size_t i = 0; i < 3; ++i) {
+    EXPECT_EQ(sessionA.consumeNextResult(), "a_" + std::to_string(i));
+    EXPECT_EQ(sessionB.consumeNextResult(), "b_" + std::to_string(i));
+  }
 }
 
 TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
