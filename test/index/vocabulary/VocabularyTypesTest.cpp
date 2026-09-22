@@ -389,9 +389,15 @@ TEST(VocabBatchLookupData,
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
+// The out-of-bounds access below is deliberate: it checks that the bounds
+// check throws. Ignore `-Warray-bounds` for it, which would otherwise fail
+// the build under `-Werror` because the constant index is visible.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.assignWordAtPosition(2, "out-of-bounds"),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
+#pragma GCC diagnostic pop
 
   auto subBatch =
       ad_utility::vocabulary::makeStringVectorVocabBatchLookupResult(
