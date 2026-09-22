@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-#include "../util/GTestHelpers.h"
+#include "util/GTestHelpers.h"
 #include "engine/SimdValidityBitmask.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
