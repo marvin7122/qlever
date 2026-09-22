@@ -29,6 +29,9 @@ RUN wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh \
  && rm -rf /var/lib/apt/lists/* ./llvm.sh
 ENV CC=clang-18 CXX=clang++-18
 # Flatten ownership so the image imports rootless (see header NOTE).
-RUN chown -R 0:0 / \
+# Flatten ownership so the image imports rootless (chown -R / would die on
+# the read-only /etc/hosts, /etc/hostname and /etc/resolv.conf bind mounts).
+RUN find / -xdev \( -path /etc/hosts -o -path /etc/hostname -o -path /etc/resolv.conf \) -prune \
+    -o -exec chown 0:0 {} + 2>/dev/null || true \
  && chmod 640 /etc/shadow /etc/gshadow \
  && echo TOOLCHAIN-IMAGE-OK

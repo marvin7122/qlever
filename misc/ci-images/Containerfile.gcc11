@@ -24,6 +24,9 @@ ENV CC=gcc-11 CXX=g++-11
 # .github/workflows/toolchain-image-builder.yml), NOT rootless on the
 # cluster (same UID/GID reason as above). Flatten ownership so the tarball
 # imports cleanly under a single-UID mapping via `podman load`.
-RUN chown -R 0:0 / \
+# Flatten ownership so the image imports rootless (chown -R / would die on
+# the read-only /etc/hosts, /etc/hostname and /etc/resolv.conf bind mounts).
+RUN find / -xdev \( -path /etc/hosts -o -path /etc/hostname -o -path /etc/resolv.conf \) -prune \
+    -o -exec chown 0:0 {} + 2>/dev/null || true \
  && chmod 640 /etc/shadow /etc/gshadow \
  && echo TOOLCHAIN-IMAGE-OK
