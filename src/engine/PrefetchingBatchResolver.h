@@ -207,7 +207,9 @@ class PrefetchingBatchResolver {
       // 2. Prefetch string character data line for (i + distance / 2)
       if (i + (distance / 2) < n) {
         const size_t midIdx = indices[i + (distance / 2)];
-        if (midIdx + 1 < offsets.size()) {
+        // Two-step check: `midIdx < offsets.size()` first, so `midIdx + 1`
+        // cannot wrap (in particular for `midIdx == SIZE_MAX`).
+        if (midIdx < offsets.size() && midIdx + 1 < offsets.size()) {
           const auto strOffset = offsets[midIdx];
           if (strOffset < data.size()) {
             prefetchVocabEntry(data.data() + strOffset,
@@ -218,9 +220,13 @@ class PrefetchingBatchResolver {
 
       // 3. Resolve current item i
       const size_t curIdx = indices[i];
+      // Two-step check for the same wraparound reason as above.
+      AD_CORRECTNESS_CHECK(curIdx < offsets.size());
       AD_CORRECTNESS_CHECK(curIdx + 1 < offsets.size());
       const auto curOffset = offsets[curIdx];
       const auto nextOffset = offsets[curIdx + 1];
+      AD_CORRECTNESS_CHECK(curOffset <= nextOffset);
+      AD_CORRECTNESS_CHECK(nextOffset <= data.size());
       const size_t strLen = nextOffset - curOffset;
       const CharType* strPtr = data.data() + curOffset;
       std::basic_string_view<CharType> view(strPtr, strLen);

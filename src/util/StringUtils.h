@@ -18,7 +18,6 @@
 #include "util/Concepts.h"
 #include "util/ConstexprSmallString.h"
 #include "util/Exception.h"
-#include "util/TypeTraits.h"
 #include "util/UnicodeSupport.h"
 
 namespace ad_utility {

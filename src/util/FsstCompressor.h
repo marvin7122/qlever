@@ -177,6 +177,9 @@ class FsstRepeatedDecoder {
   // `maxDecompressedSize(str)`. For `N >= 2`, grow `scratch` to `out.size()`
   // if it is smaller, then ping-pong stages between `out` and `scratch` so
   // the last stage always writes `out`. Return the number of bytes written.
+  // Preconditions: `str` must overlap neither `out` nor `scratch` (each
+  // stage reads its input while writing its destination, and growing
+  // `scratch` may reallocate it).
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
                                       std::string& scratch) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(str));
@@ -203,7 +206,8 @@ class FsstRepeatedDecoder {
 
   // ___________________________________________________________________________
   // Decompress `str` into `out` without requiring a caller-owned scratch
-  // buffer.
+  // buffer. Precondition: `str` must not overlap `out` (`fsst_decompress`
+  // reads the compressed input while writing the destination).
   [[nodiscard]] size_t decompressInto(std::string_view str,
                                       ql::span<char> out) const {
     if constexpr (N == 1) {
