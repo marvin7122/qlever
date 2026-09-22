@@ -15,7 +15,7 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
-#include "util/GTestHelpers.h"
+#include "../../util/GTestHelpers.h"
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
