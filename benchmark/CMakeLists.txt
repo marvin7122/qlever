@@ -36,4 +36,10 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    # Standalone microbenchmark with its own `main` (TSV output, fixed seeds,
+    # `perf stat` friendly), so it cannot use `addAndLinkBenchmark`, which
+    # links the infrastructure `main`.
+    add_executable(RadixJoinBenchmark RadixJoinBenchmark.cpp)
+    qlever_target_link_libraries(RadixJoinBenchmark engine)
+
 endif()
