@@ -422,6 +422,31 @@ TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
 }
 
 // -----------------------------------------------------------------------------
+// Test 15: Unordered Emission Honors Completion Order
+// -----------------------------------------------------------------------------
+TEST(ElasticExportSchedulerTest, UnorderedEmissionHonorsCompletionOrder) {
+  ElasticExportScheduler scheduler(2, 64);
+  auto session = scheduler.createSession<int>();
+  session.setOrdered(false);
+
+  // Slot 0 finishes last (200ms); slot 1 finishes (near-)immediately. Both
+  // run on the helpers, so after the wait below both are Completed and
+  // slot 1's `completedAt_` timestamp is strictly earlier.
+  session.submitMorsel([]() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    return 0;
+  });
+  session.submitMorsel([]() { return 1; });
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+
+  // The morsel that completed first must be emitted first. Slot-index
+  // order would emit slot 0 here.
+  EXPECT_EQ(session.consumeNextResult(), 1);
+  EXPECT_EQ(session.consumeNextResult(), 0);
+  EXPECT_FALSE(session.hasMoreResults());
+}
+
+// -----------------------------------------------------------------------------
 // Test 11: TrySubmitMorsel Reports Instead Of Firing
 // -----------------------------------------------------------------------------
 
