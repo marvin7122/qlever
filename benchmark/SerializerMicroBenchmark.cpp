@@ -21,6 +21,7 @@
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
+#include "util/CompilerWarnings.h"
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________
@@ -58,6 +59,10 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+// The sized overload forwards to `std::free` by design (the memory was
+// allocated with `std::malloc`), which GCC's `-Wmismatched-new-delete`
+// analysis flags as a false positive.
+DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
@@ -77,6 +82,7 @@ void* operator new[](std::size_t size) {
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
 
 void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+GCC_REENABLE_WARNINGS
 
 namespace ad_benchmark {
 namespace {

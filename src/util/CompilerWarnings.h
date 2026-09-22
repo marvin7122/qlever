@@ -62,6 +62,15 @@
   _Pragma("GCC diagnostic push")      \
       _Pragma("GCC diagnostic ignored \"-Warray-bounds\"")
 
+// Disable the `mismatched-new-delete` warning, which produces false positives
+// for the global allocation-counting `operator delete` replacements in
+// `benchmark/SerializerMicroBenchmark.cpp` (the sized overloads forward to
+// `std::free` by design). The warning was introduced in GCC 11; the pragma is
+// a no-op on earlier versions that don't know the flag.
+#define DISABLE_MISMATCHED_NEW_DELETE_WARNINGS \
+  _Pragma("GCC diagnostic push")               \
+      _Pragma("GCC diagnostic ignored \"-Wmismatched-new-delete\"")
+
 // Re-enable the warnings disabled by the last `DISABLE_...` call.
 #define GCC_REENABLE_WARNINGS _Pragma("GCC diagnostic pop")
 
@@ -74,6 +83,7 @@
 #define DISABLE_AGGRESSIVE_LOOP_OPT_WARNINGS
 #define DISABLE_DANGLING_REFERENCE_WARNINGS
 #define DISABLE_ARRAY_BOUNDS_WARNINGS
+#define DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 #define GCC_REENABLE_WARNINGS
 #endif
 
