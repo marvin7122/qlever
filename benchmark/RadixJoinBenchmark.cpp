@@ -169,8 +169,11 @@ int main(int argc, char** argv) {
       runArm(name, func, left, right, config, expected);
     }
   };
+  auto radixCount = [](const IdTable& left, const IdTable& right) {
+    return RadixPartitionedHashJoin<>::executeJoinCount(left, 0, right, 0);
+  };
   runIf("hashmap", hashMapCount);
   runIf("sort", sortCount);
-  runIf("radix", RadixPartitionedHashJoin<>::executeJoinCount);
+  runIf("radix", radixCount);
   return 0;
 }
