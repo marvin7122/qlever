@@ -254,8 +254,9 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
 if (QLEVER_ENABLE_EXPORT_V2)
-    # The `server` library is not built on Emscripten, matching the pattern used
-    # for MaterializedViewsTest below.
+    # The `server` library is not built for Emscripten (see
+    # `src/engine/CMakeLists.txt`); the scheduler test needs no `server`
+    # symbols, so link it only where the target exists.
     if (TARGET server)
         addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
     else ()
