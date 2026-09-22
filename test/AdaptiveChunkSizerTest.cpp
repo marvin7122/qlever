@@ -9,6 +9,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include "engine/AdaptiveChunkSizer.h"
 
 namespace {
@@ -221,6 +223,59 @@ TEST(AdaptiveChunkBufferTest, WriteAndFlushRampUp) {
   EXPECT_EQ(buffer.rowsBuffered(), 0);
   EXPECT_EQ(buffer.sizer().chunksFlushed(), 1);
   EXPECT_EQ(buffer.sizer().currentChunkBytes(), 128 * 1024);
+}
+
+TEST(AdaptiveChunkBufferTest, MultipleWritesAccumulate) {
+  AdaptiveChunkBuffer buffer;
+
+  buffer.write("Hello, ");
+  buffer.write("World");
+  buffer.write("!\n");
+  buffer.recordRow();
+  buffer.recordRow();
+
+  EXPECT_EQ(buffer.bytesBuffered(), 14);
+  EXPECT_EQ(buffer.rowsBuffered(), 2);
+  EXPECT_EQ(buffer.currentView(), "Hello, World!\n");
+
+  EXPECT_EQ(buffer.flush(), "Hello, World!\n");
+  EXPECT_EQ(buffer.bytesBuffered(), 0);
+  EXPECT_EQ(buffer.currentView(), "");
+}
+
+TEST(AdaptiveChunkBufferTest, OversizedWriteExpandsCapacity) {
+  AdaptiveChunkBuffer buffer;
+
+  // A single write larger than the initial 64 KB capacity must resize the
+  // buffer and preserve all bytes.
+  const std::string big(100 * 1024, 'x');
+  buffer.write(big);
+  EXPECT_EQ(buffer.bytesBuffered(), big.size());
+  EXPECT_EQ(buffer.currentView(), big);
+  EXPECT_TRUE(buffer.isReadyToFlush());
+
+  EXPECT_EQ(buffer.flush(), big);
+  EXPECT_EQ(buffer.bytesBuffered(), 0);
+}
+
+TEST(AdaptiveChunkBufferTest, FlushReadinessAtByteThreshold) {
+  AdaptiveChunkBuffer buffer;
+  EXPECT_FALSE(buffer.isReadyToFlush());
+
+  // Just below the initial 64 KB threshold: not ready (row count is zero,
+  // so only the byte threshold applies).
+  buffer.write(std::string(64 * 1024 - 1, 'a'));
+  EXPECT_FALSE(buffer.isReadyToFlush());
+
+  buffer.write("b");
+  EXPECT_TRUE(buffer.isReadyToFlush());
+}
+
+TEST(AdaptiveChunkBufferTest, FlushEmptyBufferReturnsEmpty) {
+  AdaptiveChunkBuffer buffer;
+  EXPECT_EQ(buffer.flush(), "");
+  EXPECT_EQ(buffer.bytesBuffered(), 0);
+  EXPECT_EQ(buffer.rowsBuffered(), 0);
 }
 
 }  // namespace

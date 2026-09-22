@@ -92,11 +92,15 @@ TEST(StringVectorVocabBatchLookupData, AsResultEmpty) {
 // Tests for the PMR arena backing (`ArenaVocabBatchBuilder`): used when words
 // are produced incrementally with sizes not known up front (e.g.
 // decompressing one word at a time in `CompressedVocabulary`).
-TEST(PmrVocabBatchLookupData, PmrAsResultPointerStableAcrossAppends) {
-  ArenaVocabBatchBuilder builder{2};
-  builder.appendWord("foo");
-  builder.appendWord("barbaz");
-  VocabBatchLookupResult result = std::move(builder).finalize();
+TEST(ArenaVocabBatchBuilder, ResultRemainsStableAcrossAppends) {
+  VocabBatchLookupResult result;
+  {
+    ArenaVocabBatchBuilder builder{2};
+    builder.appendWord("foo");
+    builder.appendWord("barbaz");
+    result = std::move(builder).finalize();
+  }
+  // The builder is destroyed here: the result must own its storage.
   ASSERT_EQ(result.size(), 2u);
   EXPECT_EQ(result[0], "foo");
   EXPECT_EQ(result[1], "barbaz");

@@ -19,7 +19,6 @@
 #include <re2/re2.h>
 
 #include <memory>
-#include <memory_resource>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -348,10 +347,10 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
 
 // _____________________________________________________________________________
 // A PMR string type with the allocator spelled out explicitly: the
-// `std::pmr::string` convenience alias is not declared by the standard
+// `ql::pmr::string` convenience alias is not declared by the standard
 // headers on all supported toolchains.
 using PmrString = std::basic_string<char, std::char_traits<char>,
-                                    std::pmr::polymorphic_allocator<char>>;
+                                    ql::pmr::polymorphic_allocator<char>>;
 
 // _____________________________________________________________________________
 // Return the largest number of characters that a `PmrString` is
@@ -366,9 +365,9 @@ inline size_t pmrStringSsoCapacity() {
   // A counting memory resource lets us detect an allocation directly instead of
   // guessing from pointer addresses: a string uses SSO exactly when
   // constructing it performs no allocation through its allocator.
-  struct CountingMemoryResource : public std::pmr::memory_resource {
+  struct CountingMemoryResource : public ql::pmr::memory_resource {
    private:
-    std::pmr::memory_resource* upstream_ = std::pmr::get_default_resource();
+    ql::pmr::memory_resource* upstream_ = ql::pmr::get_default_resource();
     size_t numAllocations_ = 0;
 
     void* do_allocate(size_t bytes, size_t alignment) override {
@@ -379,7 +378,7 @@ inline size_t pmrStringSsoCapacity() {
       upstream_->deallocate(ptr, bytes, alignment);
     }
     bool do_is_equal(
-        const std::pmr::memory_resource& other) const noexcept override {
+        const ql::pmr::memory_resource& other) const noexcept override {
       return this == &other;
     }
 
@@ -408,7 +407,7 @@ inline size_t pmrStringSsoCapacity() {
 // Preconditions:
 // - `maxSize > 0`: there are callers only for non-empty test words.
 // NOTE: There is deliberately no default for `maxSize`: the SSO capacity of
-// `std::pmr::string` is implementation-defined (e.g. 15 characters for
+// `ql::pmr::string` is implementation-defined (e.g. 15 characters for
 // libstdc++ and 22 for libc++), so every caller must state exactly the size
 // it relies on instead of silently depending on one STL's limit.
 inline void requirePmrStringInlineStorage(size_t maxSize) {
@@ -416,7 +415,7 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
   const size_t capacity = pmrStringSsoCapacity();
   AD_CORRECTNESS_CHECK(
       capacity >= maxSize,
-      absl::StrCat("Platform premise violated: std::pmr::string does not "
+      absl::StrCat("Platform premise violated: ql::pmr::string does not "
                    "store ",
                    maxSize,
                    " characters on this platform (capacity: ", capacity, ")"));

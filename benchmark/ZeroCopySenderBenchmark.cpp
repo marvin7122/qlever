@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -30,6 +31,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "backports/span.h"
@@ -112,6 +114,21 @@ class SocketPairConnection {
   SocketPairConnection(const SocketPairConnection&) = delete;
   SocketPairConnection& operator=(const SocketPairConnection&) = delete;
 
+  // Movable (fd ownership transfers); copying stays deleted so two owners
+  // can never double-close the same descriptors.
+  SocketPairConnection(SocketPairConnection&& other) noexcept
+      : sendFd_{std::exchange(other.sendFd_, -1)},
+        recvFd_{std::exchange(other.recvFd_, -1)} {}
+
+  SocketPairConnection& operator=(SocketPairConnection&& other) noexcept {
+    if (this != &other) {
+      close();
+      sendFd_ = std::exchange(other.sendFd_, -1);
+      recvFd_ = std::exchange(other.recvFd_, -1);
+    }
+    return *this;
+  }
+
   void close() noexcept {
     if (sendFd_ >= 0) {
       ::close(sendFd_);
@@ -160,6 +177,11 @@ class ZeroCopySenderBenchmarkRunner {
       size_t totalBytes = kTotalSendSizeBytes,
       size_t chunkSize = kChunkSizeBytes)
       : totalBytes_{totalBytes}, chunkSize_{chunkSize} {
+    // All `run*` methods send `totalBytes_ / chunkSize_` whole chunks; a
+    // remainder would silently drop trailing bytes.
+    AD_CONTRACT_CHECK(totalBytes > 0);
+    AD_CONTRACT_CHECK(chunkSize > 0);
+    AD_CONTRACT_CHECK(totalBytes % chunkSize == 0);
     testPayload_.resize(chunkSize_);
     std::mt19937 rng(42);
     for (size_t i = 0; i < chunkSize_; ++i) {
@@ -192,7 +214,11 @@ class ZeroCopySenderBenchmarkRunner {
         ssize_t n = ::send(conn.sendFd(), testPayload_.data() + chunkSent,
                            chunkSize_ - chunkSent, MSG_NOSIGNAL);
         if (n < 0) {
-          if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+          // The socketpair sockets are blocking, so `EAGAIN`/`EWOULDBLOCK`
+          // cannot occur; only `EINTR` is retried here.
+          if (errno == EINTR) {
+            continue;
+          }
           AD_THROW("send() failed");
         }
         chunkSent += static_cast<size_t>(n);
