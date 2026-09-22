@@ -67,6 +67,10 @@ if(BUILD_SHARED_LIBS)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     add_compile_options(-fPIC -fno-semantic-interposition)
 endif()
+# Scratch profile-only builds keep frame pointers so perf resolves user
+# stacks (fp directly, dwarf via fallback). Never merge this to master:
+# it costs a few percent runtime and exists only for flamegraph profiles.
+add_compile_options(-fno-omit-frame-pointer)
 
 # Link QLever's shared libraries with `--no-undefined`, such that a library that
 # is missing one of its dependencies fails to link right away. Without this, such
