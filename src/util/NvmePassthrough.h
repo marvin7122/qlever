@@ -145,15 +145,15 @@ inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
                                     const std::vector<size_t>& sizes) {
   AD_CONTRACT_CHECK(fileOffsets.size() == sizes.size());
   BlockReadPlan plan;
-  plan.slices.reserve(sizes.size());
   std::vector<uint64_t> firstBlocks(sizes.size());
   std::vector<uint64_t> lastBlocks(sizes.size());
   std::vector<uint64_t> blocks;
   for (size_t i = 0; i < sizes.size(); ++i) {
     if (sizes[i] == 0) {
+      // Empty marker (`last < first`); the slice is appended in order in
+      // the second pass below.
       firstBlocks[i] = 1;
       lastBlocks[i] = 0;
-      plan.slices.push_back({0, 0});
       continue;
     }
     AD_CONTRACT_CHECK(fileOffsets[i] <=
@@ -186,8 +186,11 @@ inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
     i = j + 1;
   }
   plan.stagingBytes = stagingBytes;
+  // Exactly one slice per input word, in input order.
+  plan.slices.reserve(sizes.size());
   for (size_t i = 0; i < sizes.size(); ++i) {
     if (lastBlocks[i] < firstBlocks[i]) {
+      plan.slices.push_back({0, 0});
       continue;
     }
     const size_t run = std::upper_bound(runFirstBlocks.begin(),

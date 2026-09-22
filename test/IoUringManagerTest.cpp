@@ -907,11 +907,11 @@ TEST(NvmePassthroughTranslation, untranslatableRangesFallBack) {
 TEST(NvmeBlockCoalescing, coversWordsWithMergedRuns) {
   using ad_utility::nvmePassthrough::planBlockReads;
   const auto plan = planBlockReads({0, 100, 1000, 5000}, {512, 100, 600, 10});
-  ASSERT_EQ(plan.runs.size(), 3u);
+  ASSERT_EQ(plan.runs.size(), 2u);
   EXPECT_EQ(plan.runs[0].fileOffset, 0u);
-  EXPECT_EQ(plan.runs[0].numBytes, 512u);
-  EXPECT_EQ(plan.runs[1].fileOffset, 512u);
-  EXPECT_EQ(plan.runs[1].numBytes, 1536u);
+  EXPECT_EQ(plan.runs[0].numBytes, 2048u);
+  EXPECT_EQ(plan.runs[1].fileOffset, 4608u);
+  EXPECT_EQ(plan.runs[1].numBytes, 512u);
   EXPECT_EQ(plan.runs[2].fileOffset, 4608u);
   EXPECT_EQ(plan.runs[2].numBytes, 512u);
   EXPECT_EQ(plan.stagingBytes, 2560u);
