@@ -45,9 +45,12 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    if constexpr (requires {
-                    _underlyingVocabulary.lookupBatch(indices, builder);
-                  }) {
+    // NOTE: C++17-compatible overload detection via
+    // `detail::HasLookupBatchWithBuilder_v` (a C++20 `requires`-expression
+    // cannot be used here: this header is also compiled in the C++17
+    // configuration for GCC 8).
+    if constexpr (detail::HasLookupBatchWithBuilder_v<
+                      std::decay_t<decltype(_underlyingVocabulary)>>) {
       if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
                         indices, builder))>) {
         // Fill-only protocol (e.g. `CompressedVocabulary`): the words were

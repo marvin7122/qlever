@@ -233,6 +233,13 @@ void ElasticExportScheduler::workerLoop() {
       }
 
       if (queue_.empty() || !isHelperAdmissionEligibleUnsafe()) {
+        if (stopping_.load(std::memory_order_relaxed)) {
+          // Shutdown with work still queued but helpers ineligible: never
+          // start new work here, otherwise the worker spins on the wait
+          // predicate (which `stopping_` keeps true) forever and `shutdown()`
+          // hangs while joining it.
+          break;
+        }
         continue;
       }
 
@@ -255,7 +262,14 @@ void ElasticExportScheduler::workerLoop() {
     if (targetJobState && !targetJobState->isCancelled()) {
       if (submissionEpoch == leaseEpoch) {
         targetJobState->onHelperLeaseAcquired(leaseEpoch);
-        targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
+        try {
+          targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
+        } catch (...) {
+          // An exception must never escape the worker thread: that would call
+          // `std::terminate`. The release below still runs, so waiters are
+          // notified and the slot leaves the `Running` state; the job observes
+          // the missing morsel result through its own protocol.
+        }
         targetJobState->onHelperLeaseReleased(leaseEpoch);
       }
     }

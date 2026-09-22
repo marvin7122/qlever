@@ -8,6 +8,7 @@
 #include "index/vocabulary/Vocabulary.h"
 
 #include <iostream>
+#include <type_traits>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "index/ConstantsIndexBuilding.h"
@@ -313,7 +314,12 @@ template <typename S, typename C, typename I>
 VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
+  // NOTE: C++17-compatible overload detection via
+  // `detail::HasLookupBatchWithBuilder_v` (a C++20 `requires`-expression
+  // cannot be used here: this file is also compiled in the C++17
+  // configuration for GCC 8).
+  if constexpr (detail::HasLookupBatchWithBuilder_v<
+                    std::decay_t<decltype(vocabulary_)>>) {
     // Use the returned result: the underlying vocabulary may take its
     // documented fallback path without touching `builder` (e.g. a
     // polymorphic vocabulary resolving to an on-disk implementation), in

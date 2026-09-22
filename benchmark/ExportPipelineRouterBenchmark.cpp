@@ -6,9 +6,11 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <cctype>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,11 @@ int main(int argc, char** argv) {
         std::isdigit(static_cast<unsigned char>(arg[0]))) {
       numQueries = std::stoull(arg);
     }
+  }
+  // The reported rates divide by `numQueries`, so reject zero iterations.
+  if (numQueries == 0) {
+    std::cerr << "numQueries must be greater than zero\n";
+    return 1;
   }
 
   std::cout << "==============================================================="

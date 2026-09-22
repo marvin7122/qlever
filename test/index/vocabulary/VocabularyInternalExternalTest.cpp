@@ -135,13 +135,14 @@ TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
 
-  // Use the test writer's RAM cache for even IDs and read odd IDs from disk.
+  // The test writer is called with `isExternal == (id % 2 == 0)`, so odd IDs
+  // are RAM-cached while even IDs greater than 0 are disk-only (index 0 is
+  // always cached, see `WordWriter::operator()`).
   EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
-  // Even writer indices are RAM-cached; odd indices are disk-only.
-  const std::array<size_t, 3> ramOnly{0, 2, 4};
+  const std::array<size_t, 3> ramOnly{0, 1, 3};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(ramOnly), ramOnly);
-  const std::array<size_t, 3> diskOnly{1, 3, 1};
+  const std::array<size_t, 3> diskOnly{2, 4, 2};
   assertLookupResultMatchesVocabularyAtIndices(
       vocab, vocab.lookupBatch(diskOnly), diskOnly);
 

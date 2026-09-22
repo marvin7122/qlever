@@ -68,7 +68,8 @@ TEST(SimdEscapeClassifierTest, ClassifiesEveryPositionInAChunk) {
 
 template <EscapeFormat Format>
 std::string escaped(std::string_view input) {
-  std::string output(input.size() * 2, '\0');
+  // CSV fields with special characters are additionally wrapped in quotes.
+  std::string output(input.size() * 2 + 2, '\0');
   const auto written = SimdEscapeClassifier::copyAndEscape<Format>(
       input, ql::span<char>{output.data(), output.size()});
   output.resize(written.size());
@@ -85,7 +86,11 @@ TEST(SimdEscapeClassifierTest, CopiesAndEscapesAcrossChunkBoundaries) {
       "\\\"" + std::string(30, 'a') + "\\\\\\n" + std::string(31, 'a') + "\\r";
   EXPECT_EQ(escaped<EscapeFormat::Turtle>(turtle), expected);
 
-  EXPECT_EQ(escaped<EscapeFormat::Csv>("a,\"b\n"), "a,\"\"b\n");
+  // A CSV field with a comma or newline is wrapped in quotes (RFC 4180),
+  // with inner quotes doubled; a field without special characters is copied
+  // unchanged.
+  EXPECT_EQ(escaped<EscapeFormat::Csv>("a,\"b\n"), "\"a,\"\"b\n\"");
+  EXPECT_EQ(escaped<EscapeFormat::Csv>("plain"), "plain");
   EXPECT_EQ(escaped<EscapeFormat::Tsv>("a\tb\nc\\d\r"), "a b\\nc\\\\d\\r");
   EXPECT_EQ(escaped<EscapeFormat::Tsv>(""), "");
 }

@@ -10,6 +10,7 @@
 #include "index/vocabulary/PolymorphicVocabulary.h"
 
 #include <string_view>
+#include <type_traits>
 
 #include "engine/CallFixedSize.h"
 #include "util/Exception.h"
@@ -72,7 +73,8 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
   return std::visit(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
         AD_CONTRACT_CHECK(!indices.empty());
-        if constexpr (requires { vocab.lookupBatch(indices, builder); }) {
+        if constexpr (detail::HasLookupBatchWithBuilder_v<
+                          std::decay_t<decltype(vocab)>>) {
           vocab.lookupBatch(indices, builder);
           return std::move(builder).finalize();
         } else {

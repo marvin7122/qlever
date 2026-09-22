@@ -630,7 +630,13 @@ if (QLEVER_ENABLE_EXPORT_V2)
         target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     endif()
 endif ()
-addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+# The disabled-pipeline test asserts the compile-time switch is off, which is
+# impossible when `QLEVER_ENABLE_EXPORT_V2` is enabled (in particular, the
+# `SINGLE_TEST_BINARY` build defines it on the shared test main for all
+# tests). Only build it in the disabled configuration.
+if (NOT QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+endif ()
 
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
 # range-v3 fails in IndexImpl / CompressedExternalIdTable).
