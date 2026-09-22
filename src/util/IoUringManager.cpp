@@ -80,6 +80,9 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   noFiles.fill(-1);
   if (io_uring_register_files(&ring_, noFiles.data(),
                               static_cast<unsigned>(noFiles.size())) < 0) {
+    // The destructor does not run when the constructor throws, so release the
+    // queues here; otherwise the failed construction leaks them.
+    io_uring_queue_exit(&ring_);
     AD_THROW(
         "io_uring_register_files failed in IoUringManager; fixed files are "
         "required");
@@ -162,11 +165,13 @@ void IoUringPolicy::addBatch(int fd,
   if (numReadRequestsToPerform == 0) {
     return;
   }
-  numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
-
   // Resolve the fixed-file slot once per batch: every read in the batch
-  // addresses the same file, so they all share the slot.
+  // addresses the same file, so they all share the slot. Resolve before
+  // inserting the batch bookkeeping below: `fileIndexForFd` throws when the
+  // descriptor cannot be registered, and a premature entry would leave a batch
+  // with no submitted reads behind that `wait()` could never drain.
   const unsigned fileIndex = fileIndexForFd(fd);
+  numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
   auto prepareOne = [&](size_t i) {
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     AD_CORRECTNESS_CHECK(sqe != nullptr);
@@ -197,8 +202,18 @@ void IoUringPolicy::addBatch(int fd,
       prepareOne(next + k);
     }
     next += wave;
-    if (io_uring_submit(&ring_) < 0) {
-      AD_THROW("io_uring_submit failed in IoUringPolicy");
+    // `io_uring_submit` may return fewer SQEs than prepared. Those leftovers
+    // stay in the SQ; submit them before preparing the next wave. A zero
+    // return is treated as failure: draining would deadlock if nothing has
+    // reached the kernel yet.
+    size_t stillToSubmit = wave;
+    while (stillToSubmit > 0) {
+      const int submitted = io_uring_submit(&ring_);
+      if (submitted <= 0) {
+        AD_THROW("io_uring_submit failed in IoUringPolicy");
+      }
+      AD_CORRECTNESS_CHECK(static_cast<size_t>(submitted) <= stillToSubmit);
+      stillToSubmit -= static_cast<size_t>(submitted);
     }
   }
 }
