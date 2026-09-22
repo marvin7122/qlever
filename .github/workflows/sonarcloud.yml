@@ -6,6 +6,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
 
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
 # The default GITHUB_TOKEN only needs to read the repository here.
 permissions:
   contents: read
@@ -16,6 +20,7 @@ jobs:
     strategy:
       fail-fast: false
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
     - uses: actions/checkout@v7
       with:
