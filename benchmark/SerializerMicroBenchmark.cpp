@@ -58,9 +58,20 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+// The matching `operator new` above allocates with `std::malloc`, so
+// `std::free` is the correct deallocator here. GCC cannot see across the
+// allocation boundary and warns with `-Wmismatched-new-delete`; silence that
+// false positive locally (the pragma spelling is shared by Clang).
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace ad_benchmark {
 namespace {

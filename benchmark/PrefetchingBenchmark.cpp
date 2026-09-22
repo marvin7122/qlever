@@ -304,15 +304,10 @@ class PrefetchingBenchmark : public BenchmarkInterface {
       auto& m = group.addMeasurement(
           "Baseline (Standard Sequential Lookup, No Prefetch)", [&]() {
             perfMonitor.start();
-            const auto offsets = vocabWords_.offsetsSpan();
-            const auto data = vocabWords_.dataSpan();
 
             for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
               const size_t wordIdx = lookupIds_[i].getVocabIndex().get();
-              const auto curOffset = offsets[wordIdx];
-              const auto nextOffset = offsets[wordIdx + 1];
-              resolved[i] = std::string_view(data.data() + curOffset,
-                                             nextOffset - curOffset);
+              resolved[i] = vocabWords_[wordIdx];
             }
 
             sample = perfMonitor.stop();
