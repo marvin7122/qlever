@@ -19,6 +19,7 @@
 #include <string_view>
 
 #include "backports/span.h"
+#include "engine/PortableDoubleToChars.h"
 #include "global/Constants.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
@@ -88,13 +89,8 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-#if defined(__APPLE__)
-  int len = std::snprintf(out, 32, "%.17g", id.getDouble());
-  out += len > 0 ? len : 0;
-#else
-  auto [ptr, ec] = std::to_chars(out, out + 32, id.getDouble());
+  auto [ptr, ec] = doubleToChars(out, out + 32, id.getDouble());
   out = ptr;
-#endif
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;

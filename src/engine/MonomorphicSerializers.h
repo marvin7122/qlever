@@ -32,6 +32,7 @@
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
+#include "engine/PortableDoubleToChars.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 
@@ -190,22 +191,13 @@ namespace detail {
 template <typename Writer>
 inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   std::array<char, 32> buffer;
-#if defined(__APPLE__)
-  int len = std::snprintf(buffer.data(), buffer.size(), "%.17g", val);
-  if (len > 0 && static_cast<size_t>(len) < buffer.size()) {
-    writer.writeRaw(std::string_view(buffer.data(), static_cast<size_t>(len)));
-  } else {
-    writer.writeRaw("0.0");
-  }
-#else
-  auto [ptr, ec] =
-      std::to_chars(buffer.data(), buffer.data() + buffer.size(), val);
+  auto [ptr, ec] = ql::engine::detail::doubleToChars(
+      buffer.data(), buffer.data() + buffer.size(), val);
   if (ec == std::errc{}) {
     writer.writeRaw(std::string_view(buffer.data(), ptr - buffer.data()));
   } else {
     writer.writeRaw("0.0");
   }
-#endif
 }
 
 // _____________________________________________________________________________

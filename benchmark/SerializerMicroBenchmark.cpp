@@ -46,7 +46,12 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs.
+// runs. Disabled under ThreadSanitizer, whose runtime provides its own
+// definitions of these operators (multiple definition link error otherwise).
+// The sized deallocation function forwards to the unsized one instead of
+// calling `std::free` directly, which GCC rejects with
+// `-Werror=mismatched-new-delete`.
+#ifndef __SANITIZE_THREAD__
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -59,11 +64,12 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
-DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
-GCC_REENABLE_WARNINGS
+void operator delete(void* ptr, std::size_t) noexcept {
+  ::operator delete(ptr);
+}
+#endif
 
 namespace ad_benchmark {
 namespace {
