@@ -114,7 +114,10 @@ class RadixPartitionedHashJoin {
       for (const Id& probeKey : probeKeys) {
         auto range =
             std::equal_range(buildKeys.begin(), buildKeys.end(), probeKey);
-        partitionMatches += static_cast<size_t>(range.second - range.first);
+        size_t matches = static_cast<size_t>(range.second - range.first);
+        AD_CONTRACT_CHECK(partitionMatches <=
+                          std::numeric_limits<size_t>::max() - matches);
+        partitionMatches += matches;
       }
       AD_CONTRACT_CHECK(totalMatches <=
                         std::numeric_limits<size_t>::max() - partitionMatches);
