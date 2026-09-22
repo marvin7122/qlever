@@ -274,6 +274,23 @@ template <EscapeFormat Format>
   }
 }
 
+// Runtime detection of AVX2 support. AVX2 is not part of the x86-64 baseline,
+// so calling AVX2 code unconditionally faults (SIGILL) on older x86-64 CPUs;
+// the `target("avx2")` attribute only affects code generation, not dispatch.
+// `__builtin_cpu_supports` performs the CPUID initialization implicitly and
+// the result is cached, so the per-call cost is a single predictable branch
+// (and the branch folds away entirely when compiled with `-mavx2`).
+[[nodiscard]] inline bool cpuSupportsAvx2() noexcept {
+#if defined(__AVX2__)
+  // AVX2 enabled globally: the compilation baseline guarantees support.
+  return true;
+#elif defined(__GNUC__) || defined(__clang__)
+  return __builtin_cpu_supports("avx2");
+#else
+  return false;
+#endif
+}
+
 #endif  // QLEVER_SIMD_X86
 
 // Portable scalar fallback for 32-byte chunks.
@@ -313,7 +330,12 @@ class SimdEscapeClassifier {
   [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32(
       const char* data) noexcept {
 #if defined(QLEVER_SIMD_X86)
-    return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    // AVX2 is not baseline x86-64: dispatch at runtime, scalar fallback on
+    // CPUs without AVX2.
+    if (detail::cpuSupportsAvx2()) {
+      return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    }
+    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
 #else
     return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
 #endif
@@ -532,14 +554,16 @@ class SimdEscapeClassifier {
     size_t posLastQuote = normLiteral.rfind('"');
 
     // If there are only two quotes and no internal special characters, pass
-    // through
+    // through. Only the content between the delimiters is scanned: the
+    // delimiters themselves are Turtle escape characters, so scanning the
+    // whole literal would never take this fast path.
+    std::string_view normalizedContent =
+        normLiteral.substr(1, posLastQuote - 1);
     if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
+        !hasEscapes<EscapeFormat::Turtle>(normalizedContent)) [[likely]] {
       return std::string{normLiteral};
     }
 
-    std::string_view normalizedContent =
-        normLiteral.substr(1, posLastQuote - 1);
     std::string result;
     result.resize(normLiteral.size() * 2 + 2);
     char* out = result.data();
