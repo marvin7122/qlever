@@ -137,19 +137,14 @@ class PrefetchingBatchResolver {
     }
 
     // Main pipelined loop: prefetch row (i + distance) ahead while serializing
-    // row i
+    // row i. Only the `Id` array element itself is prefetched: the vocabulary
+    // string data lives in separate heap structures that are not reachable
+    // through `index` here, so prefetching `&index.getImpl()` would only touch
+    // the `IndexImpl` object and provide no caching benefit.
     for (size_t i = 0; i < n; ++i) {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        const Id pfId = ids[pfPos];
-        if (pfId.getDatatype() == Datatype::VocabIndex) {
-          const auto wordVocabIndex = pfId.getVocabIndex();
-          // Prefetch the underlying index entry if possible
-          const auto* vocabPtr =
-              reinterpret_cast<const void*>(&index.getImpl());
-          prefetchVocabEntry(vocabPtr, static_cast<int>(distance));
-        }
       }
 
       const size_t pos = positions[i];
@@ -206,7 +201,8 @@ class PrefetchingBatchResolver {
         prefetchEntry(indices[i + (distance / 2)]);
       }
 
-      // 3. Resolve current item i
+      // 3. Resolve current item i. The `+ 1` covers the `offsets[curIdx + 1]`
+      // access below: `curIdx` must not be the final (sentinel) offset.
       const size_t curIdx = indices[i];
       AD_CORRECTNESS_CHECK(curIdx < numWords);
       const auto entry = words[curIdx];
