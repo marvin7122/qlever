@@ -60,8 +60,8 @@ TEST(FastIntToStringTest, NumDigitsUInt64) {
   EXPECT_EQ(numDigits(uint64_t{100000000000000000}), 18U);
   EXPECT_EQ(numDigits(uint64_t{999999999999999999}), 18U);
   EXPECT_EQ(numDigits(uint64_t{1000000000000000000}), 19U);
-  EXPECT_EQ(numDigits(uint64_t{9999999999999999999}), 19U);
-  EXPECT_EQ(numDigits(uint64_t{10000000000000000000}), 20U);
+  EXPECT_EQ(numDigits(uint64_t{9999999999999999999ULL}), 19U);
+  EXPECT_EQ(numDigits(uint64_t{10000000000000000000ULL}), 20U);
   EXPECT_EQ(numDigits(std::numeric_limits<uint64_t>::max()), 20U);
 }
 
