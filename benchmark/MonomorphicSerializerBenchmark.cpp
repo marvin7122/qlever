@@ -84,6 +84,30 @@ using namespace ql::serialization;
 using namespace ql::export_formatting;
 
 // _____________________________________________________________________________
+// Visitor for `dispatchMonomorphicSerializer` over triple rows. Serves both
+// dispatch protocols: the type-parameterized fast paths and the
+// `DynamicRowSerializer` fallback. Defined at namespace scope because local
+// classes may not declare member templates.
+struct CsvRowSerializer {
+  FastExportStreamFormatter& formatter;
+  const std::vector<std::array<CellValue, 3>>& rows;
+  template <ColumnType... Types>
+  void operator()() const {
+    using Serializer = MonomorphicRowSerializer<Types...>;
+    for (const auto& row : rows) {
+      Serializer::template serializeRow<ExportFormat::Csv>(
+          formatter, ql::span<const CellValue>(row));
+    }
+  }
+  void operator()(DynamicRowSerializer& dynamicSerializer) const {
+    for (const auto& row : rows) {
+      dynamicSerializer.serializeRow<ExportFormat::Csv>(
+          formatter, ql::span<const CellValue>(row));
+    }
+  }
+};
+
+// _____________________________________________________________________________
 // Hardware Performance Counter Monitor (Linux perf_event_open)
 // Measures Hardware CPU Cycles, Instructions, Branch Instructions, and Branch
 // Misses.
@@ -405,27 +429,6 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              // Visitor serving both dispatch protocols: the
-              // type-parameterized fast paths and the
-              // `DynamicRowSerializer` fallback.
-              struct CsvRowSerializer {
-                FastExportStreamFormatter& formatter;
-                const std::vector<std::array<CellValue, 3>>& rows;
-                template <ColumnType... Types>
-                void operator()() const {
-                  using Serializer = MonomorphicRowSerializer<Types...>;
-                  for (const auto& row : rows) {
-                    Serializer::template serializeRow<ExportFormat::Csv>(
-                        formatter, ql::span<const CellValue>(row));
-                  }
-                }
-                void operator()(DynamicRowSerializer& dynamicSerializer) const {
-                  for (const auto& row : rows) {
-                    dynamicSerializer.serializeRow<ExportFormat::Csv>(
-                        formatter, ql::span<const CellValue>(row));
-                  }
-                }
-              };
               dispatchMonomorphicSerializer(
                   schema, CsvRowSerializer{formatter, data_.tripleRows_});
               auto summary = std::move(formatter).finalize();
