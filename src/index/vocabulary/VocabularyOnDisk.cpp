@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "global/Constants.h"
 #include "util/ExceptionHandling.h"
@@ -198,6 +199,8 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   data->buffer().resize(::ranges::accumulate(sizes, size_t{0}));
   data->views().resize(numIndices);
 
+  // Packed destination positions; identical for both paths below, so the
+  // result layout never depends on how the bytes were read.
   std::vector<char*> targets(numIndices);
   size_t bufferOffset = 0;
   for (auto&& [target, view, size] :
@@ -207,7 +210,37 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     bufferOffset += size;
   }
 
-  manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
+  if (coalesceForPassthrough_) {
+    // Read whole blocks covering the words, then scatter the words out of
+    // the staging buffer into their packed positions. Every run is
+    // block-aligned by construction, so the backend can serve it via NVMe
+    // passthrough; unaligned remainders cannot occur.
+    const auto plan =
+        ad_utility::nvmePassthrough::planBlockReads(fileOffsets, sizes);
+    std::vector<char> staging(plan.stagingBytes);
+    std::vector<size_t> runSizes;
+    std::vector<uint64_t> runOffsets;
+    std::vector<char*> runTargets;
+    runSizes.reserve(plan.runs.size());
+    runOffsets.reserve(plan.runs.size());
+    runTargets.reserve(plan.runs.size());
+    for (const auto& run : plan.runs) {
+      runSizes.push_back(run.numBytes);
+      runOffsets.push_back(run.fileOffset);
+      runTargets.push_back(staging.data() + run.stagingOffset);
+    }
+    manager.wait(
+        manager.addBatch(file_.fd(), runSizes, runOffsets, runTargets));
+    AD_CORRECTNESS_CHECK(plan.slices.size() == numIndices);
+    for (size_t i = 0; i < numIndices; ++i) {
+      if (plan.slices[i].numBytes > 0) {
+        std::memcpy(targets[i], staging.data() + plan.slices[i].stagingOffset,
+                    plan.slices[i].numBytes);
+      }
+    }
+  } else {
+    manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
+  }
   return VocabBatchLookupData::asResult(std::move(data));
 }
 
@@ -312,6 +345,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
     }
     nvmeOptions = {true, namespaceId, blockSize};
   }
+  coalesceForPassthrough_ = nvmeOptions.enabled;
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
     ioManagers_->push(ad_utility::makeBatchManager(preferIoUring, nvmeOptions));

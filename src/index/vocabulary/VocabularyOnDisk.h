@@ -44,6 +44,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
 
+  // Coalesce word reads into whole-block runs (see `planBlockReads`) so the
+  // backend can serve them via NVMe passthrough. Set from
+  // `QLEVER_NVME_PASSTHROUGH` in `open`; disabled by default, which keeps
+  // the exact per-word read pattern bit-identical to the unmodified path.
+  bool coalesceForPassthrough_ = false;
+
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
   static constexpr std::string_view offsetSuffix_ = ".offsets";

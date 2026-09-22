@@ -9,11 +9,13 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <vector>
 
 #include "util/Exception.h"
 
@@ -110,6 +112,93 @@ inline std::optional<ReadParams> translateToReadParams(
   return ReadParams{namespaceId, lbaBase + offsetLba,
                     static_cast<uint32_t>(numBlocks - 1),
                     static_cast<uint32_t>(numBytes)};
+}
+
+// Coalescing granularity for `planBlockReads`: 512-byte blocks divide every
+// standard NVMe namespace block size, so ranges built from whole 512-byte
+// blocks satisfy `translateToReadParams` on 512-byte namespaces (verified on
+// Toshiba KXG60 hardware with 512-byte blocks). A namespace with larger
+// blocks needs its own granularity here.
+inline constexpr uint64_t kCoalesceBlockSize = 512;
+
+// A block-aligned read plan for a batch of byte ranges. The `runs` cover
+// every input range with whole blocks (merged, sorted, disjoint), one
+// batched read each, and `slices[i]` locates input word `i` inside the
+// staging buffer that the runs fill in order. Zero-length words cover no
+// block and slice to `{0, 0}`; the caller skips their copy.
+struct BlockReadPlan {
+  struct Run {
+    uint64_t fileOffset;
+    size_t numBytes;
+    size_t stagingOffset;
+  };
+  struct Slice {
+    size_t stagingOffset;
+    size_t numBytes;
+  };
+  std::vector<Run> runs;
+  std::vector<Slice> slices;
+  size_t stagingBytes = 0;
+};
+
+inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
+                                    const std::vector<size_t>& sizes) {
+  AD_CONTRACT_CHECK(fileOffsets.size() == sizes.size());
+  BlockReadPlan plan;
+  plan.slices.reserve(sizes.size());
+  std::vector<uint64_t> firstBlocks(sizes.size());
+  std::vector<uint64_t> lastBlocks(sizes.size());
+  std::vector<uint64_t> blocks;
+  for (size_t i = 0; i < sizes.size(); ++i) {
+    if (sizes[i] == 0) {
+      firstBlocks[i] = 1;
+      lastBlocks[i] = 0;
+      plan.slices.push_back({0, 0});
+      continue;
+    }
+    AD_CONTRACT_CHECK(fileOffsets[i] <=
+                      std::numeric_limits<uint64_t>::max() - sizes[i]);
+    const uint64_t first = fileOffsets[i] / kCoalesceBlockSize;
+    const uint64_t last = (fileOffsets[i] + sizes[i] - 1) / kCoalesceBlockSize;
+    firstBlocks[i] = first;
+    lastBlocks[i] = last;
+    for (uint64_t b = first; b <= last; ++b) {
+      blocks.push_back(b);
+    }
+  }
+  std::sort(blocks.begin(), blocks.end());
+  blocks.erase(std::unique(blocks.begin(), blocks.end()), blocks.end());
+  // Merge contiguous blocks into runs and assign staging offsets.
+  std::vector<uint64_t> runFirstBlocks;
+  std::vector<size_t> runStagingOffsets;
+  size_t stagingBytes = 0;
+  for (size_t i = 0; i < blocks.size();) {
+    size_t j = i;
+    while (j + 1 < blocks.size() && blocks[j + 1] == blocks[j] + 1) {
+      ++j;
+    }
+    runFirstBlocks.push_back(blocks[i]);
+    runStagingOffsets.push_back(stagingBytes);
+    const size_t runBytes = (j - i + 1) * kCoalesceBlockSize;
+    plan.runs.push_back(
+        {blocks[i] * kCoalesceBlockSize, runBytes, stagingBytes});
+    stagingBytes += runBytes;
+    i = j + 1;
+  }
+  plan.stagingBytes = stagingBytes;
+  for (size_t i = 0; i < sizes.size(); ++i) {
+    if (lastBlocks[i] < firstBlocks[i]) {
+      continue;
+    }
+    const size_t run = std::upper_bound(runFirstBlocks.begin(),
+                                        runFirstBlocks.end(), firstBlocks[i]) -
+                       runFirstBlocks.begin() - 1;
+    const uint64_t runStart = runFirstBlocks[run] * kCoalesceBlockSize;
+    plan.slices.push_back({runStagingOffsets[run] +
+                               static_cast<size_t>(fileOffsets[i] - runStart),
+                           sizes[i]});
+  }
+  return plan;
 }
 
 #ifdef QLEVER_HAS_NVME_URING_CMD
