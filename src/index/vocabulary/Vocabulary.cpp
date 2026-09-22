@@ -314,9 +314,10 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
   if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
-    // The underlying overload returns the finalized result (it finalizes the
-    // builder itself); finalizing again would trip the `finalize`
-    // precondition on the moved-from builder.
+    // Use the returned result: the underlying vocabulary may take its
+    // documented fallback path without touching `builder` (e.g. a
+    // polymorphic vocabulary resolving to an on-disk implementation), in
+    // which case finalizing `builder` here would fail on an empty batch.
     return vocabulary_.lookupBatch(indices, builder);
   } else {
     // The underlying vocabulary has no batched leaf: reuse its single-shot

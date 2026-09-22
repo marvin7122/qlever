@@ -50,18 +50,29 @@ class UnicodeVocabulary {
                   }) {
       if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
                         indices, builder))>) {
-        // Fill-only leaf (e.g. `CompressedVocabulary`): the builder is
-        // populated but not finalized, so finalize it here.
+        // Fill-only protocol (e.g. `CompressedVocabulary`): the words were
+        // decoded into the caller's `builder`, finalize it here.
         _underlyingVocabulary.lookupBatch(indices, builder);
         return std::move(builder).finalize();
       } else {
-        // The underlying overload returns the finalized result already (e.g.
-        // `PolymorphicVocabulary`); finalizing again would trip the
-        // `finalize` precondition on the moved-from builder.
+        // Use the returned result: the underlying vocabulary may take its
+        // documented fallback path without touching `builder`, in which case
+        // finalizing `builder` here would fail on an empty batch.
         return _underlyingVocabulary.lookupBatch(indices, builder);
       }
     } else {
-      return _underlyingVocabulary.lookupBatch(indices);
+      // The underlying vocabulary has no batched leaf: reuse its single-shot
+      // batch path and copy the words into the caller's builder, so the
+      // unconditional `finalize()` below sees a populated builder (same
+      // pattern as `Vocabulary` and `PolymorphicVocabulary`; returning the
+      // single-shot result directly would leave the builder empty and trip
+      // the `finalize` precondition).
+      auto singleShot = _underlyingVocabulary.lookupBatch(indices);
+      AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+      for (std::string_view word : singleShot) {
+        builder.appendWord(word);
+      }
+      return std::move(builder).finalize();
     }
   }
 

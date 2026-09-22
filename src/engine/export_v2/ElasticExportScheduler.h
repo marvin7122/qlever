@@ -653,12 +653,31 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Running) {
-        // Wait for running helper worker to finish CPU morsel
+        // Wait for a running helper worker to finish a CPU morsel. In
+        // unordered mode completions broadcast on this cv, so wake on any
+        // finished unconsumed slot and re-select: emitting whichever morsel
+        // is ready avoids head-of-line blocking behind the selected one.
+        // Ordered sessions preserve slot order and keep waiting.
         cv_.wait(lock, [&] {
           return slots_[index].status_ == MorselStatus::Completed ||
                  slots_[index].status_ == MorselStatus::Failed ||
-                 cancelled_.load(std::memory_order_relaxed);
+                 cancelled_.load(std::memory_order_relaxed) ||
+                 (!ordered_ && std::any_of(slots_.begin(), slots_.end(),
+                                           [](const Slot& slot) {
+                                             return !slot.consumed_ &&
+                                                    slot.status_ ==
+                                                        MorselStatus::Completed;
+                                           }));
         });
+        if (!ordered_ && slots_[index].status_ != MorselStatus::Completed) {
+          for (size_t i = 0; i < slots_.size(); ++i) {
+            if (!slots_[i].consumed_ &&
+                slots_[i].status_ == MorselStatus::Completed) {
+              index = i;
+              break;
+            }
+          }
+        }
       }
     }
   }
