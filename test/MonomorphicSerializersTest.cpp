@@ -38,11 +38,14 @@ TEST(MonomorphicSerializersTest, MonomorphicTripleCsvSerialization) {
   using Serializer = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
                                               ColumnType::Literal>;
 
+  // NOTE: `Literal` terms take native (unquoted) values here, matching what
+  // `writeEscapedCsv` expects (cf. `writeEscapedTurtleLiteral`, which takes
+  // Turtle-quoted input instead).
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Csv>(
         fmt, std::string_view{"<http://example.org/subj>"},
         std::string_view{"<http://example.org/pred>"},
-        std::string_view{"\"Hello, World!\""});
+        std::string_view{"Hello, World!"});
   });
 
   EXPECT_EQ(result,
@@ -106,7 +109,7 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
                                ColumnType::Int>;
 
   std::array<CellValue, 3> row = {CellValue::makeIri("<http://example.org/x>"),
-                                  CellValue::makeLiteral("\"test\""),
+                                  CellValue::makeLiteral("test"),
                                   CellValue::makeInt(42)};
 
   std::string dynamicOut = captureOutput([&](FastExportStreamFormatter& fmt) {

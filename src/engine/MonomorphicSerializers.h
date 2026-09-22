@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -176,17 +177,38 @@ concept FormatterWriter =
 
 namespace detail {
 
-// Double / Float serialization without dynamic allocation. Uses `snprintf`
-// with `%.17g` (exact round-trip) instead of floating-point `std::to_chars`,
+// Double / Float serialization without dynamic allocation. Mirrors the
+// formatting of `idToStringAndTypeForEncodedValue` exactly (integral doubles
+// with one decimal place, all others with `%.13g` plus a ".0" suffix when
+// neither '.' nor an exponent resulted, non-finite values with the canonical
+// RDF spellings), so formatted output stays byte-identical to the scalar
+// export path. Uses `snprintf` instead of floating-point `std::to_chars`,
 // which is unavailable on the macOS deployment targets built by CI.
 template <typename Writer>
 inline void writeFormattedDouble(Writer& writer, double val) noexcept {
-  std::array<char, 32> buffer;
-  const int len = std::snprintf(buffer.data(), buffer.size(), "%.17g", val);
-  if (len > 0 && static_cast<size_t>(len) < buffer.size()) {
-    writer.writeRaw(std::string_view(buffer.data(), static_cast<size_t>(len)));
-  } else {
+  // Non-finite values use the canonical RDF spellings.
+  if (std::isnan(val)) {
+    writer.writeRaw("NaN");
+    return;
+  }
+  if (std::isinf(val)) {
+    writer.writeRaw(val > 0 ? "INF" : "-INF");
+    return;
+  }
+  // `%.1f` of large integral doubles needs up to ~312 characters.
+  std::array<char, 320> buffer{};
+  double intPart = 0.0;
+  const bool integral = std::modf(val, &intPart) == 0.0;
+  const int len = std::snprintf(buffer.data(), buffer.size(),
+                                integral ? "%.1f" : "%.13g", val);
+  if (len <= 0 || static_cast<size_t>(len) >= buffer.size()) {
     writer.writeRaw("0.0");
+    return;
+  }
+  const std::string_view out(buffer.data(), static_cast<size_t>(len));
+  writer.writeRaw(out);
+  if (!integral && out.find_first_of(".e") == std::string_view::npos) {
+    writer.writeRaw(".0");
   }
 }
 

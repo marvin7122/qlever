@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -80,21 +81,40 @@ inline char* formatInteger(ValueId id, std::string_view, char* out,
   return out;
 }
 
-// Fast branchless formatter for double values. Uses `snprintf` with `%.17g`
-// (exact round-trip) instead of floating-point `std::to_chars`, which is
-// unavailable on the macOS deployment targets built by CI.
+// Fast branchless formatter for double values. Mirrors
+// `idToStringAndTypeForEncodedValue` (integral doubles with one decimal
+// place, all others with `%.13g`) so output stays byte-identical to the
+// scalar export path. Uses `snprintf` instead of floating-point
+// `std::to_chars`, which is unavailable on the macOS deployment targets
+// built by CI.
 inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view prefix,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  const int len = std::snprintf(out, 32, "%.17g", id.getDouble());
-  // `snprintf` always fits: 32 bytes hold any `%.17g` double. Fall back to
-  // `"0.0"` on unexpected encoding errors.
-  if (len > 0 && len < 32) {
-    out += len;
+  const double val = id.getDouble();
+  if (std::isnan(val)) {
+    out = std::copy_n("NaN", 3, out);
+  } else if (std::isinf(val)) {
+    out = std::copy_n(val > 0 ? "INF" : "-INF", val > 0 ? 3 : 4, out);
   } else {
-    out = std::copy_n("0.0", 3, out);
+    // `%.1f` of large integral doubles needs up to ~312 characters; the
+    // caller-provided scratch region must accommodate it (see the buffer
+    // contract on `BranchlessTypeDispatcher`).
+    double intPart = 0.0;
+    const bool integral = std::modf(val, &intPart) == 0.0;
+    const int len = std::snprintf(out, 320, integral ? "%.1f" : "%.13g", val);
+    if (len <= 0) {
+      out = std::copy_n("0.0", 3, out);
+    } else {
+      out += len;
+      if (!integral) {
+        const std::string_view written(out - len, static_cast<size_t>(len));
+        if (written.find_first_of(".e") == std::string_view::npos) {
+          out = std::copy_n(".0", 2, out);
+        }
+      }
+    }
   }
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
