@@ -87,6 +87,7 @@ TEST(ScatterGatherArenaStreamerTest, ShortStringsCopiedToHeader) {
       ql::span<const char>(shortLiteral.data(), shortLiteral.size()));
 
   auto summary = std::move(streamer).finalize();
+  EXPECT_EQ(summary.chunksEmitted_, 1);
   ASSERT_EQ(chunks.size(), 1);
 
   const auto& chunk = chunks[0];
