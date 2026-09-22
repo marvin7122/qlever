@@ -224,6 +224,10 @@ BenchmarkResult runBenchmark(const std::string& name,
 
   double avgMs = totalMs / static_cast<double>(iterations);
   double totalTriples = static_cast<double>(ds.subjects_.size());
+  if (ds.subjects_.empty() || !(avgMs > 0.0)) {
+    return BenchmarkResult{name,         avgMs, 0.0,         0.0,
+                           totalLookups, 0.0,   bytesWritten};
+  }
   double mTriplesPerSec = (totalTriples / (avgMs / 1000.0)) / 1e6;
   double nsPerTriple = (avgMs * 1e6) / totalTriples;
 
@@ -269,7 +273,8 @@ void printResults(const std::vector<BenchmarkResult>& results) {
   if (results.size() >= 2) {
     double baseThroughput = results[0].throughputMTriplesPerSec_;
     double rleThroughput = results[1].throughputMTriplesPerSec_;
-    double speedup = rleThroughput / baseThroughput;
+    double speedup =
+        (baseThroughput > 0.0) ? rleThroughput / baseThroughput : 0.0;
     std::cout << ">> RLE Prefix Constant Folding Speedup: " << std::fixed
               << std::setprecision(2) << speedup << "x ("
               << ((speedup - 1.0) * 100.0) << "% throughput improvement)\n";

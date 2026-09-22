@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -21,7 +22,6 @@
 #include <memory>
 #include <numeric>
 #include <random>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,15 +70,27 @@ class SimulatedVocabularyFile {
     std::cout << "Generating 1GB simulated vocabulary data in: " << filePath_
               << " ... " << std::flush;
 
+    // RAII guard: the fd is closed on every exit path, including exceptions
+    // from the fill/write loop below.
+    struct FdGuard {
+      int fd_ = -1;
+      ~FdGuard() {
+        if (fd_ >= 0) {
+          ::close(fd_);
+        }
+      }
+    };
+    FdGuard fdGuard{fd};
+
     // Allocate 4KB aligned write buffer
-    void* writeBuf = nullptr;
+    void* rawBuf = nullptr;
     constexpr size_t writeChunkSize = 1024 * 1024;  // 1 MB chunks
-    if (posix_memalign(&writeBuf, kDirectIoAlignment, writeChunkSize) != 0) {
-      ::close(fd);
+    if (posix_memalign(&rawBuf, kDirectIoAlignment, writeChunkSize) != 0) {
       AD_THROW("posix_memalign failed");
     }
+    std::unique_ptr<void, decltype(&std::free)> writeBuf(rawBuf, &std::free);
 
-    auto* bytePtr = static_cast<char*>(writeBuf);
+    auto* bytePtr = static_cast<char*>(writeBuf.get());
     std::mt19937_64 rng(42);
 
     // Populate with simulated vocabulary entries: prefix IDs, string tokens,
@@ -90,11 +102,18 @@ class SimulatedVocabularyFile {
         std::memcpy(bytePtr + i, &val, sizeof(uint64_t));
       }
 
-      ssize_t written = ::write(fd, writeBuf, writeChunkSize);
-      if (written != static_cast<ssize_t>(writeChunkSize)) {
-        std::free(writeBuf);
-        ::close(fd);
-        AD_THROW("Failed to write full chunk to simulated vocabulary file");
+      // Retry partial writes (and `EINTR`) until the full chunk is on disk.
+      size_t chunkWritten = 0;
+      while (chunkWritten < writeChunkSize) {
+        ssize_t written =
+            ::write(fd, bytePtr + chunkWritten, writeChunkSize - chunkWritten);
+        if (written < 0) {
+          if (errno == EINTR) {
+            continue;
+          }
+          AD_THROW("Failed to write chunk to simulated vocabulary file");
+        }
+        chunkWritten += static_cast<size_t>(written);
       }
       bytesWritten += writeChunkSize;
     }
@@ -106,8 +125,6 @@ class SimulatedVocabularyFile {
 #else
     ::fdatasync(fd);
 #endif
-    ::close(fd);
-    std::free(writeBuf);
     isCreated_ = true;
     std::cout << "Done (1,073,741,824 bytes written)." << std::endl;
   }
@@ -155,30 +172,17 @@ class IoUringDirectBenchmarkRunner {
     AD_CONTRACT_CHECK(file.isOpen());
 
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        RegisteredIoUringReader::readSync(file.fd(), blockOffset,
-                                          bufferArena.getSlotSpan(i),
-                                          /*directIo=*/false);
-        totalBytes += kBlockSizeBytes;
-      }
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("1. Sync pread (Page Cache)", startTime, endTime,
-                           totalBytes, numBatches);
+    const std::vector<uint64_t> offsets = generateOffsets(randomAccess);
+    return runBatches(
+        "1. Sync pread (Page Cache)", offsets, [&](uint64_t baseOffset) {
+          for (size_t i = 0; i < batchBlocks_; ++i) {
+            RegisteredIoUringReader::readSync(
+                file.fd(), clampBlockOffset(baseOffset + (i * kBlockSizeBytes)),
+                bufferArena.getSlotSpan(i),
+                /*directIo=*/false);
+          }
+          return batchBlocks_ * kBlockSizeBytes;
+        });
   }
 
   // 2. Synchronous pread() with Direct I/O (O_DIRECT)
@@ -187,117 +191,59 @@ class IoUringDirectBenchmarkRunner {
     AD_CONTRACT_CHECK(file.isOpen());
 
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        RegisteredIoUringReader::readSync(file.fd(), blockOffset,
-                                          bufferArena.getSlotSpan(i),
-                                          /*directIo=*/true);
-        totalBytes += kBlockSizeBytes;
-      }
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("2. Sync pread (O_DIRECT)", startTime, endTime,
-                           totalBytes, numBatches);
+    const std::vector<uint64_t> offsets = generateOffsets(randomAccess);
+    return runBatches(
+        "2. Sync pread (O_DIRECT)", offsets, [&](uint64_t baseOffset) {
+          for (size_t i = 0; i < batchBlocks_; ++i) {
+            RegisteredIoUringReader::readSync(
+                file.fd(), clampBlockOffset(baseOffset + (i * kBlockSizeBytes)),
+                bufferArena.getSlotSpan(i),
+                /*directIo=*/true);
+          }
+          return batchBlocks_ * kBlockSizeBytes;
+        });
   }
 
   // 3. io_uring Standard (Unpinned buffers & Unregistered files)
   BenchmarkMetric runIoUringUnpinned(bool randomAccess = false) {
-    DirectIoFile file(filePath_, /*useDirectIo=*/false);
-    AD_CONTRACT_CHECK(file.isOpen());
-
-    RegisteredReaderConfig config;
-    config.ringEntries = 512;
-    config.useDirectIo = false;
-    config.useRegisteredFiles = false;
-    config.useRegisteredBuffers = false;
-
-    RegisteredIoUringReader reader(config);
-    PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-    std::vector<BlockReadRequest> requests(batchBlocks_);
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        requests[i] = BlockReadRequest(file.fd(), blockOffset, /*bufIndex=*/0,
-                                       /*bufOffset=*/0, kBlockSizeBytes,
-                                       bufferArena.getSlotSpan(i).data(),
-                                       /*requireDirectIoAlignment=*/false);
-      }
-
-      auto batchId = reader.submitBatch(requests);
-      auto res = reader.waitBatch(batchId);
-      totalBytes += res.totalBytesRead;
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("3. io_uring (Unpinned + Unregistered)", startTime,
-                           endTime, totalBytes, numBatches);
+    return runIoUringUnpinnedImpl("3. io_uring (Unpinned + Unregistered)",
+                                  /*useDirectIo=*/false, randomAccess);
   }
 
   // 4. io_uring with O_DIRECT (Unpinned buffers)
   BenchmarkMetric runIoUringDirectUnpinned(bool randomAccess = false) {
-    DirectIoFile file(filePath_, /*useDirectIo=*/true);
+    return runIoUringUnpinnedImpl("4. io_uring O_DIRECT (Unpinned)",
+                                  /*useDirectIo=*/true, randomAccess);
+  }
+
+  // Shared implementation for the two unpinned io_uring paradigms; only the
+  // Direct I/O mode differs.
+  BenchmarkMetric runIoUringUnpinnedImpl(std::string name, bool useDirectIo,
+                                         bool randomAccess) {
+    DirectIoFile file(filePath_, useDirectIo);
     AD_CONTRACT_CHECK(file.isOpen());
 
     RegisteredReaderConfig config;
     config.ringEntries = 512;
-    config.useDirectIo = true;
+    config.useDirectIo = useDirectIo;
     config.useRegisteredFiles = false;
     config.useRegisteredBuffers = false;
 
     RegisteredIoUringReader reader(config);
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
+    const std::vector<uint64_t> offsets = generateOffsets(randomAccess);
     std::vector<BlockReadRequest> requests(batchBlocks_);
 
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
+    return runBatches(std::move(name), offsets, [&](uint64_t baseOffset) {
       for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        requests[i] = BlockReadRequest(file.fd(), blockOffset, /*bufIndex=*/0,
-                                       /*bufOffset=*/0, kBlockSizeBytes,
-                                       bufferArena.getSlotSpan(i).data(),
-                                       /*requireDirectIoAlignment=*/true);
+        requests[i] = BlockReadRequest(
+            file.fd(), clampBlockOffset(baseOffset + (i * kBlockSizeBytes)),
+            /*bufIndex=*/0, /*bufOffset=*/0, kBlockSizeBytes,
+            bufferArena.getSlotSpan(i).data(), useDirectIo);
       }
-
       auto batchId = reader.submitBatch(requests);
-      auto res = reader.waitBatch(batchId);
-      totalBytes += res.totalBytesRead;
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("4. io_uring O_DIRECT (Unpinned)", startTime,
-                           endTime, totalBytes, numBatches);
+      return reader.waitBatch(batchId).totalBytesRead;
+    });
   }
 
   // 5. io_uring with Registered Files (IORING_REGISTER_FILES) + Unpinned
@@ -317,34 +263,23 @@ class IoUringDirectBenchmarkRunner {
     reader.registerFiles({&fd, 1});
 
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
+    const std::vector<uint64_t> offsets = generateOffsets(randomAccess);
     std::vector<BlockReadRequest> requests(batchBlocks_);
 
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        requests[i] = BlockReadRequest(
-            /*fileIndex=*/0, blockOffset, /*bufIndex=*/0, /*bufOffset=*/0,
-            kBlockSizeBytes, bufferArena.getSlotSpan(i).data(),
-            /*requireDirectIoAlignment=*/true);
-      }
-
-      auto batchId = reader.submitBatch(requests);
-      auto res = reader.waitBatch(batchId);
-      totalBytes += res.totalBytesRead;
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("5. io_uring (Registered Files + O_DIRECT)",
-                           startTime, endTime, totalBytes, numBatches);
+    return runBatches(
+        "5. io_uring (Registered Files + O_DIRECT)", offsets,
+        [&](uint64_t baseOffset) {
+          for (size_t i = 0; i < batchBlocks_; ++i) {
+            requests[i] = BlockReadRequest(
+                /*fileIndex=*/0,
+                clampBlockOffset(baseOffset + (i * kBlockSizeBytes)),
+                /*bufIndex=*/0, /*bufOffset=*/0, kBlockSizeBytes,
+                bufferArena.getSlotSpan(i).data(),
+                /*requireDirectIoAlignment=*/true);
+          }
+          auto batchId = reader.submitBatch(requests);
+          return reader.waitBatch(batchId).totalBytesRead;
+        });
   }
 
   // 6. io_uring Fully Registered: IORING_REGISTER_FILES +
@@ -366,41 +301,52 @@ class IoUringDirectBenchmarkRunner {
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
     reader.registerBuffers(bufferArena.iovecs());
 
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
+    const std::vector<uint64_t> offsets = generateOffsets(randomAccess);
     std::vector<BlockReadRequest> requests(batchBlocks_);
 
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        // Zero-copy DMA fixed buffer request
-        requests[i] = BlockReadRequest(
-            /*fileIndex=*/0, blockOffset,
-            /*bufferIndex=*/static_cast<uint32_t>(i),
-            /*bufferOffset=*/0, kBlockSizeBytes,
-            bufferArena.getSlotSpan(i).data(),
-            /*requireDirectIoAlignment=*/true);
-      }
-
-      auto batchId = reader.submitBatch(requests);
-      auto res = reader.waitBatch(batchId);
-      totalBytes += res.totalBytesRead;
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric(
-        "6. io_uring (Fully Registered Files+Buffers+O_DIRECT)", startTime,
-        endTime, totalBytes, numBatches);
+    return runBatches(
+        "6. io_uring (Fully Registered Files+Buffers+O_DIRECT)", offsets,
+        [&](uint64_t baseOffset) {
+          for (size_t i = 0; i < batchBlocks_; ++i) {
+            // Zero-copy DMA fixed buffer request
+            requests[i] = BlockReadRequest(
+                /*fileIndex=*/0,
+                clampBlockOffset(baseOffset + (i * kBlockSizeBytes)),
+                /*bufferIndex=*/static_cast<uint32_t>(i),
+                /*bufferOffset=*/0, kBlockSizeBytes,
+                bufferArena.getSlotSpan(i).data(),
+                /*requireDirectIoAlignment=*/true);
+          }
+          auto batchId = reader.submitBatch(requests);
+          return reader.waitBatch(batchId).totalBytesRead;
+        });
   }
 
  private:
+  // Base offsets always tile the file exactly (`numBatches =
+  // fileSize/batchSize`), so clamping a block offset back to 0 on overrun is
+  // a no-op safety net rather than a skew of the results.
+  static uint64_t clampBlockOffset(uint64_t blockOffset) {
+    return (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) ? 0
+                                                                 : blockOffset;
+  }
+
+  // Shared timing driver for all six I/O paradigms: runs `readBatch` once
+  // per base offset and aggregates the per-batch byte counts into a metric.
+  template <typename ReadBatch>
+  BenchmarkMetric runBatches(std::string name,
+                             const std::vector<uint64_t>& offsets,
+                             ReadBatch&& readBatch) {
+    const size_t numBatches = offsets.size();
+    const auto startTime = std::chrono::steady_clock::now();
+    size_t totalBytes = 0;
+    for (uint64_t baseOffset : offsets) {
+      totalBytes += readBatch(baseOffset);
+    }
+    const auto endTime = std::chrono::steady_clock::now();
+    return calculateMetric(name, startTime, endTime, totalBytes, numBatches);
+  }
+
   std::vector<uint64_t> generateOffsets(bool randomAccess) const {
     const size_t batchSizeBytes = batchBlocks_ * kBlockSizeBytes;
     const size_t numBatches = kTotalFileSizeBytes / batchSizeBytes;

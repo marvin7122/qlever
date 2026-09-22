@@ -7,13 +7,16 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <numeric>
 #include <random>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if defined(__linux__)
@@ -26,6 +29,7 @@
 #include "../benchmark/infrastructure/Benchmark.h"
 #include "../benchmark/infrastructure/BenchmarkMeasurementContainer.h"
 #include "../benchmark/infrastructure/BenchmarkMetadata.h"
+#include "backports/span.h"
 #include "util/AlignedAllocator.h"
 #include "util/Log.h"
 #include "util/Random.h"
@@ -134,7 +138,16 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
       sum += vocabData[i];
     }
     // Prevent compiler dead-code elimination.
-    asm volatile("" : : "r"(sum) : "memory");
+    asm volatile("" : : "r"(sum) : "memory", "cc");
+  }
+
+  // Consistent fixed-width percentage formatting for the results table
+  // (`std::to_string(...).substr(0, 4)` yields ragged columns).
+  static std::string formatHitRatio(double hitRatio, std::string_view suffix) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(1) << std::setw(5) << hitRatio
+        << suffix;
+    return out.str();
   }
 
   // ___________________________________________________________________________
@@ -149,15 +162,20 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     }
 
     timer.stop();
-    asm volatile("" : : "r"(dummySink) : "memory");
+    asm volatile("" : : "r"(dummySink) : "memory", "cc");
 
     const double totalNs = static_cast<double>(timer.value().count()) * 1000.0;
     return totalNs / static_cast<double>(probeIndices.size());
   }
 
   // ___________________________________________________________________________
-  // Run Standard memcpy Export Benchmark
-  BenchmarkMetricResult runMemcpyBenchmark(size_t chunkSize) const {
+  // Shared setup + measurement harness for both write strategies.
+  // `writeChunks` streams `src` into `dest` in `chunkSize` pieces; the
+  // harness owns the buffers, vocab table, probes, warmup, perf counter,
+  // timing and metric assembly, so the strategies cannot diverge.
+  template <typename WriteChunks>
+  BenchmarkMetricResult runBenchmarkWithWriter(
+      std::string method, size_t chunkSize, WriteChunks&& writeChunks) const {
     using AlignedBuf =
         std::vector<char, AlignedAllocator<char, std::allocator<char>, 64>>;
     AlignedBuf srcBuffer(BufferSizeBytes, 'Q');
@@ -188,16 +206,13 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     l1MissCounter.start();
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
-    // Stream 256 MB buffer in chunks using standard memcpy (pollutes CPU
-    // caches)
-    for (size_t offset = 0; offset < BufferSizeBytes; offset += chunkSize) {
-      const size_t currentChunk = std::min(chunkSize, BufferSizeBytes - offset);
-      std::memcpy(destBuffer.data() + offset, srcBuffer.data() + offset,
-                  currentChunk);
-    }
+    writeChunks(srcBuffer, destBuffer, chunkSize);
 
     timer.stop();
-    const uint64_t l1Misses = l1MissCounter.stop();
+    // Without perf_event support the counter has no fd; report 0 misses
+    // instead of a meaningless reading.
+    const uint64_t l1Misses =
+        l1MissCounter.isSupported() ? l1MissCounter.stop() : 0;
 
     const double durationMs =
         static_cast<double>(timer.value().count()) / 1000.0;
@@ -214,90 +229,56 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     const double hitRatio =
         std::clamp(1.0 - (latencyNs - 3.0) / 60.0, 0.05, 0.99);
 
+    // Field order: method, bufferSizeMB, chunkSizeKB, durationMs,
+    // throughputGBPerSec, probeLatencyNs, estimatedCacheHitRatio, l1dMisses.
     return BenchmarkMetricResult{
-        .method = "Standard memcpy",
-        .bufferSizeMB = BufferSizeBytes / (1024 * 1024),
-        .chunkSizeKB = chunkSize / 1024,
-        .durationMs = durationMs,
-        .throughputGBPerSec = throughputGBPerSec,
-        .probeLatencyNs = latencyNs,
-        .estimatedCacheHitRatio = hitRatio * 100.0,
-        .l1dMisses = l1Misses,
-    };
+        std::move(method),  BufferSizeBytes / (1024 * 1024),
+        chunkSize / 1024,   durationMs,
+        throughputGBPerSec, latencyNs,
+        hitRatio * 100.0,   l1Misses};
+  }
+
+  // ___________________________________________________________________________
+  // Run Standard memcpy Export Benchmark
+  BenchmarkMetricResult runMemcpyBenchmark(size_t chunkSize) const {
+    return runBenchmarkWithWriter(
+        "Standard memcpy", chunkSize,
+        [](const auto& srcBuffer, auto& destBuffer, size_t chunkSize) {
+          // Stream 256 MB buffer in chunks using standard memcpy (pollutes CPU
+          // caches)
+          for (size_t offset = 0; offset < BufferSizeBytes;
+               offset += chunkSize) {
+            const size_t currentChunk =
+                std::min(chunkSize, BufferSizeBytes - offset);
+            std::memcpy(destBuffer.data() + offset, srcBuffer.data() + offset,
+                        currentChunk);
+          }
+        });
   }
 
   // ___________________________________________________________________________
   // Run StreamingBufferWriter Benchmark
   BenchmarkMetricResult runStreamingWriterBenchmark(size_t chunkSize) const {
-    using AlignedBuf =
-        std::vector<char, AlignedAllocator<char, std::allocator<char>, 64>>;
-    AlignedBuf srcBuffer(BufferSizeBytes, 'Q');
-    AlignedBuf destBuffer(BufferSizeBytes, 0);
+    return runBenchmarkWithWriter(
+        "StreamingBufferWriter", chunkSize,
+        [](const auto& srcBuffer, auto& destBuffer, size_t chunkSize) {
+          StreamingBufferWriter writer(
+              ql::span<char>{destBuffer.data(), destBuffer.size()});
 
-    std::vector<uint32_t> vocabTable(VocabWorkingSetSize / sizeof(uint32_t));
-    std::iota(vocabTable.begin(), vocabTable.end(), 1);
-
-    std::vector<size_t> probeIndices(NumProbes);
-    std::mt19937_64 rng(42);
-    std::uniform_int_distribution<size_t> dist(0, vocabTable.size() - 1);
-    for (size_t& idx : probeIndices) {
-      idx = dist(rng);
-    }
-
-    // Baseline cache warm up
-    warmCache(vocabTable);
-
-#if defined(__linux__) && defined(PERF_COUNT_HW_CACHE_L1D)
-    PerfCounter l1MissCounter(PERF_TYPE_HW_CACHE,
-                              PERF_COUNT_HW_CACHE_L1D |
-                                  (PERF_COUNT_HW_CACHE_OP_READ << 8) |
-                                  (PERF_COUNT_HW_CACHE_RESULT_MISS << 16));
-#else
-    PerfCounter l1MissCounter(0, 0);
-#endif
-
-    l1MissCounter.start();
-    ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
-
-    StreamingBufferWriter writer(
-        std::span<char>{destBuffer.data(), destBuffer.size()});
-
-    // Stream 256 MB buffer in chunks using non-temporal streaming stores
-    // (bypasses CPU caches)
-    for (size_t offset = 0; offset < BufferSizeBytes; offset += chunkSize) {
-      const size_t currentChunk = std::min(chunkSize, BufferSizeBytes - offset);
-      writer.write(srcBuffer.data() + offset, currentChunk);
-    }
-    writer.flush();
-
-    timer.stop();
-    const uint64_t l1Misses = l1MissCounter.stop();
-
-    const double durationMs =
-        static_cast<double>(timer.value().count()) / 1000.0;
-    const double gb =
-        static_cast<double>(BufferSizeBytes) / (1024.0 * 1024.0 * 1024.0);
-    const double throughputGBPerSec =
-        (durationMs > 0) ? (gb / (durationMs / 1000.0)) : 0.0;
-
-    // Immediately measure vocabulary access latency post-export
-    const double latencyNs = probeCacheLatency(vocabTable, probeIndices);
-    const double hitRatio =
-        std::clamp(1.0 - (latencyNs - 3.0) / 60.0, 0.05, 0.99);
-
-    return BenchmarkMetricResult{
-        .method = "StreamingBufferWriter",
-        .bufferSizeMB = BufferSizeBytes / (1024 * 1024),
-        .chunkSizeKB = chunkSize / 1024,
-        .durationMs = durationMs,
-        .throughputGBPerSec = throughputGBPerSec,
-        .probeLatencyNs = latencyNs,
-        .estimatedCacheHitRatio = hitRatio * 100.0,
-        .l1dMisses = l1Misses,
-    };
+          // Stream 256 MB buffer in chunks using non-temporal streaming stores
+          // (bypasses CPU caches)
+          for (size_t offset = 0; offset < BufferSizeBytes;
+               offset += chunkSize) {
+            const size_t currentChunk =
+                std::min(chunkSize, BufferSizeBytes - offset);
+            writer.write(srcBuffer.data() + offset, currentChunk);
+          }
+          writer.flush();
+        });
   }
 
   // ___________________________________________________________________________
+
   BenchmarkResults runAllBenchmarks() override {
     BenchmarkResults results{};
 
@@ -342,30 +323,28 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
             streamRes = runStreamingWriterBenchmark(chunkSize);
           });
 
-      std::cout
-          << std::left << std::setw(24) << memcpyRes.method << std::setw(14)
-          << (std::to_string(memcpyRes.chunkSizeKB) + " KB") << std::fixed
-          << std::setprecision(2) << std::setw(12) << memcpyRes.durationMs
-          << std::fixed << std::setprecision(2) << std::setw(18)
-          << memcpyRes.throughputGBPerSec << std::fixed << std::setprecision(2)
-          << std::setw(18) << memcpyRes.probeLatencyNs << std::fixed
-          << std::setprecision(1)
-          << (std::to_string(memcpyRes.estimatedCacheHitRatio).substr(0, 4) +
-              "%")
-          << "\n";
+      std::cout << std::left << std::setw(24) << memcpyRes.method
+                << std::setw(14)
+                << (std::to_string(memcpyRes.chunkSizeKB) + " KB") << std::fixed
+                << std::setprecision(2) << std::setw(12) << memcpyRes.durationMs
+                << std::fixed << std::setprecision(2) << std::setw(18)
+                << memcpyRes.throughputGBPerSec << std::fixed
+                << std::setprecision(2) << std::setw(18)
+                << memcpyRes.probeLatencyNs
+                << formatHitRatio(memcpyRes.estimatedCacheHitRatio, "%")
+                << "\n";
 
-      std::cout
-          << std::left << std::setw(24) << streamRes.method << std::setw(14)
-          << (std::to_string(streamRes.chunkSizeKB) + " KB") << std::fixed
-          << std::setprecision(2) << std::setw(12) << streamRes.durationMs
-          << std::fixed << std::setprecision(2) << std::setw(18)
-          << streamRes.throughputGBPerSec << std::fixed << std::setprecision(2)
-          << std::setw(18) << streamRes.probeLatencyNs << std::fixed
-          << std::setprecision(1)
-          << (std::to_string(streamRes.estimatedCacheHitRatio).substr(0, 4) +
-              "% (HOT)")
-          << "\n"
-          << std::string(102, '.') << "\n";
+      std::cout << std::left << std::setw(24) << streamRes.method
+                << std::setw(14)
+                << (std::to_string(streamRes.chunkSizeKB) + " KB") << std::fixed
+                << std::setprecision(2) << std::setw(12) << streamRes.durationMs
+                << std::fixed << std::setprecision(2) << std::setw(18)
+                << streamRes.throughputGBPerSec << std::fixed
+                << std::setprecision(2) << std::setw(18)
+                << streamRes.probeLatencyNs
+                << formatHitRatio(streamRes.estimatedCacheHitRatio, "% (HOT)")
+                << "\n"
+                << std::string(102, '.') << "\n";
     }
 
     std::cout << "============================================================="
