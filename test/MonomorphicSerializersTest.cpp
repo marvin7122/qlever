@@ -25,7 +25,7 @@ std::string captureOutput(Fn&& fn) {
   auto sink = [&](std::string_view chunk) { out.append(chunk); };
   FastExportStreamFormatter formatter(sink);
   fn(formatter);
-  std::move(formatter).finalize();
+  static_cast<void>(std::move(formatter).finalize());
   return out;
 }
 
@@ -67,8 +67,17 @@ TEST(MonomorphicSerializersTest, MonomorphicMixedTypesTsvSerialization) {
         fmt, "<http://example.org/city>", "\"Freiburg\"", 230000, 153.07);
   });
 
-  EXPECT_EQ(result,
-            "<http://example.org/city>\t\"Freiburg\"\t230000\t153.07\n");
+  // Apple builds use the `snprintf`-based `%.17g` fallback (see
+  // `writeFormattedDouble`), which spells 153.07 with the full 17 significant
+  // digits instead of the shortest `to_chars` spelling. Both spellings parse
+  // back to the same `double`.
+  std::string expected =
+      "<http://example.org/city>\t\"Freiburg\"\t230000\t153.07\n";
+#if defined(__APPLE__)
+  expected =
+      "<http://example.org/city>\t\"Freiburg\"\t230000\t153.06999999999999\n";
+#endif
+  EXPECT_EQ(result, expected);
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicSpanAndBatchSerialization) {
