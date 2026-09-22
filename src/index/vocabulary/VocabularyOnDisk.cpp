@@ -74,8 +74,8 @@ std::string VocabularyOnDisk::operator[](uint64_t idx) const {
       runOffsets.push_back(run.fileOffset);
       runTargets.push_back(staging.data() + run.stagingOffset);
     }
-    manager.wait(
-        manager.addBatch(file_.fd(), runSizes, runOffsets, runTargets));
+    manager->wait(
+        manager->addBatch(file_.fd(), runSizes, runOffsets, runTargets));
     AD_CORRECTNESS_CHECK(plan.slices.size() == 1);
     std::memcpy(result.data(), staging.data() + plan.slices[0].stagingOffset,
                 plan.slices[0].numBytes);
