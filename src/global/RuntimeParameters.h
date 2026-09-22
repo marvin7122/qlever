@@ -236,14 +236,18 @@ struct RuntimeParameters {
   LogLevelParameter logLevel_{LogLevel{ad_utility::detail::defaultLogLevel},
                               "log-level"};
 
-  // Controls deduplication of triples in CONSTRUCT query results.
-  // "none" (default): no duplicate tracking; every valid instantiated result
-  // triple is emitted.
-  // "full": one shared set stores the full triple keys for the whole query;
-  // repeated result triples are suppressed.
-  // "lru:<positive integer>": one shared LRU cache stores at most that many
-  // recently seen unique full triple keys; bounded memory, partial
-  // deduplication.
+  // Control deduplication of triples in CONSTRUCT query results.
+  // Set the mode to `none` (default) to track no duplicates and emit every
+  // valid instantiated result triple.
+  // Set the mode to `full` to store the full triple keys in one shared set
+  // for the whole query and suppress repeated result triples without blank
+  // nodes. Triples with blank nodes bypass deduplication and are always
+  // emitted.
+  // Set the mode to `lru:<positive integer>` to store at most that many
+  // recently seen unique full triple keys in one shared LRU cache. Bound
+  // memory with partial deduplication. The cache is reset once its local
+  // vocabulary exceeds a size threshold, so previously seen keys may be
+  // emitted again.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 

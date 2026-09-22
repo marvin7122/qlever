@@ -8,22 +8,32 @@
 
 #pragma once
 
+#include <absl/hash/hash.h>
+
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
+#include "util/AllocatorWithLimit.h"
 #include "util/Exception.h"
+#include "util/VectorWithMemoryLimit.h"
 
 namespace ql::engine::join {
 
-// _____________________________________________________________________________
-// Radix-partitioned join counting:
-// Partitions both input tables by radix hash and counts matches per partition
-// with a sorted build run plus binary search, keeping each partition's
-// working set small. Counts follow bag semantics: every pair of equal keys
-// contributes one match.
+// Count the matches of an equi-join between the join columns of two
+// `IdTable`s, following bag semantics: every pair of equal keys contributes
+// one match. Only the number of matches is computed; no result rows are
+// materialized.
+//
+// Preconditions: `leftCol` and `rightCol` are valid column indices of their
+// respective tables. Violations throw (via `AD_CONTRACT_CHECK`). All `Id`
+// datatypes are supported: partitioning hashes each key with the same hash
+// that `Id::operator==` is consistent with, so equal keys always land in the
+// same partition.
 template <size_t RadixBits = 6>  // 2^6 = 64 partitions
 class RadixPartitionedHashJoin {
  public:
@@ -32,66 +42,72 @@ class RadixPartitionedHashJoin {
   static constexpr size_t NUM_PARTITIONS = size_t{1} << RadixBits;
   static constexpr size_t RADIX_MASK = NUM_PARTITIONS - 1;
 
-  // Simple, fast multiplicative hash for 64-bit Id integers.
-  [[nodiscard]] static constexpr size_t getPartitionIndex(Id id) noexcept {
-    uint64_t key = id.getBits();
-    key ^= key >> 33;
-    key *= 0xff51afd7ed558ccdULL;
-    key ^= key >> 33;
-    return static_cast<size_t>(key & RADIX_MASK);
+  // Return the partition index for a join key. The hash is consistent with
+  // `Id::operator==` for all datatypes (including `LocalVocabIndex`), so
+  // equal keys always share a partition.
+  [[nodiscard]] static size_t getPartitionIndex(Id id) {
+    return absl::Hash<Id>{}(id)&RADIX_MASK;
   }
 
-  // Structure representing a single cache-resident partition bucket.
+  // A single partition bucket. The join keys are stored directly (rather
+  // than row indices), so the build phase needs no indirection back into
+  // the table. All memory is charged against the memory limit of the
+  // partitioned table.
   struct PartitionBucket {
-    std::vector<size_t> rowIndices;
+    explicit PartitionBucket(
+        const ad_utility::AllocatorWithLimit<Id>& allocator)
+        : keys(allocator) {}
+    ad_utility::VectorWithMemoryLimit<Id> keys;
   };
 
-  // Partition an IdTable by join column into 2^RadixBits buckets.
+  // Partition the join column of `table` into `NUM_PARTITIONS` buckets.
   static std::vector<PartitionBucket> partitionTable(const IdTable& table,
-                                                     size_t joinColumnIndex) {
-    AD_CORRECTNESS_CHECK(joinColumnIndex < table.numColumns());
-    std::vector<PartitionBucket> partitions(NUM_PARTITIONS);
+                                                     ColumnIndex joinColumn) {
+    AD_CONTRACT_CHECK(joinColumn < table.numColumns());
+    ad_utility::AllocatorWithLimit<Id> allocator{table.getAllocator()};
+    std::vector<PartitionBucket> partitions;
+    partitions.reserve(NUM_PARTITIONS);
+    for (size_t i = 0; i < NUM_PARTITIONS; ++i) {
+      partitions.emplace_back(allocator);
+    }
     const size_t numRows = table.numRows();
-
     for (size_t row = 0; row < numRows; ++row) {
-      size_t p = getPartitionIndex(table(row, joinColumnIndex));
-      partitions[p].rowIndices.push_back(row);
+      Id key = table(row, joinColumn);
+      partitions[getPartitionIndex(key)].keys.push_back(key);
     }
     return partitions;
   }
 
-  // Count matches between two partitioned tables in cache-isolated loops.
-  static size_t executeJoinCount(const IdTable& leftTable, size_t leftCol,
-                                 const IdTable& rightTable, size_t rightCol) {
+  // Count the matches between the join columns of the two tables.
+  static size_t executeJoinCount(const IdTable& leftTable, ColumnIndex leftCol,
+                                 const IdTable& rightTable,
+                                 ColumnIndex rightCol) {
     auto leftPartitions = partitionTable(leftTable, leftCol);
     auto rightPartitions = partitionTable(rightTable, rightCol);
 
     size_t totalMatches = 0;
 
     for (size_t p = 0; p < NUM_PARTITIONS; ++p) {
-      const auto& leftBucket = leftPartitions[p].rowIndices;
-      const auto& rightBucket = rightPartitions[p].rowIndices;
+      auto& buildKeys = leftPartitions[p].keys;
+      const auto& probeKeys = rightPartitions[p].keys;
 
-      if (leftBucket.empty() || rightBucket.empty()) {
+      if (buildKeys.empty() || probeKeys.empty()) {
         continue;
       }
-
-      // Build a sorted run of the left bucket's keys
-      std::vector<Id> buildKeys;
-      buildKeys.reserve(leftBucket.size());
-      for (size_t lRow : leftBucket) {
-        buildKeys.push_back(leftTable(lRow, leftCol));
+      if (buildKeys.size() > 1) {
+        std::sort(buildKeys.begin(), buildKeys.end());
       }
-      std::sort(buildKeys.begin(), buildKeys.end());
 
-      // Probe the right bucket; every equal key pair counts (bag semantics)
-      for (size_t rRow : rightBucket) {
-        Id probeKey = rightTable(rRow, rightCol);
+      // Every equal key pair counts (bag semantics).
+      size_t partitionMatches = 0;
+      for (const Id& probeKey : probeKeys) {
         auto range =
             std::equal_range(buildKeys.begin(), buildKeys.end(), probeKey);
-        totalMatches +=
-            static_cast<size_t>(std::distance(range.first, range.second));
+        partitionMatches += static_cast<size_t>(range.second - range.first);
       }
+      AD_CONTRACT_CHECK(totalMatches <=
+                        std::numeric_limits<size_t>::max() - partitionMatches);
+      totalMatches += partitionMatches;
     }
 
     return totalMatches;
