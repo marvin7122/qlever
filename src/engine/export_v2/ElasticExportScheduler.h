@@ -375,11 +375,15 @@ class ExportJobState final
       cv_.notify_all();
     }
 
-    // Enqueue pending morsels outside the lock
+    // Enqueue pending morsels outside the lock. Best-effort: a `false`
+    // return (helpers ineligible or stopping) leaves the morsel Pending
+    // and the coordinator runs it inline on the primary path, so the
+    // return value is intentionally ignored here.
     if (!pendingIndicesToEnqueue.empty()) {
       auto self = this->shared_from_this();
       for (size_t index : pendingIndicesToEnqueue) {
-        scheduler_->enqueueMorsel(OwnedMorsel(self, jobId_, newEpoch, index));
+        static_cast<void>(scheduler_->enqueueMorsel(
+            OwnedMorsel(self, jobId_, newEpoch, index)));
       }
     }
   }
@@ -512,9 +516,9 @@ class ExportJobState final
                         "No more submitted morsels to consume");
       index = nextSlotToConsume_++;
     } else {
-      // Completion order: a finished morsel first, else a pending one for
-      // inline execution, else a running one to wait on in the shared
-      // machine below. Anything else means nothing is consumable.
+      // Completion order: the morsel that finished first, else a pending
+      // one for inline execution, else a running one to wait on in the
+      // shared machine below. Anything else means nothing is consumable.
       size_t completed = slots_.size();
       size_t pending = slots_.size();
       size_t running = slots_.size();
@@ -523,8 +527,14 @@ class ExportJobState final
           continue;
         }
         if (slots_[i].status_ == MorselStatus::Completed) {
-          completed = i;
-          break;
+          // Keep the earliest completion timestamp so unordered sessions
+          // emit whichever morsel completed first. Ties keep the lower
+          // slot index via the strict comparison.
+          if (completed == slots_.size() ||
+              slots_[i].profile_.completedAt_ <
+                  slots_[completed].profile_.completedAt_) {
+            completed = i;
+          }
         }
         if (slots_[i].status_ == MorselStatus::Pending &&
             pending == slots_.size()) {
@@ -666,8 +676,11 @@ class ExportJobState final
       }
     }
     if (shouldEnqueue) {
-      scheduler_->enqueueMorsel(
-          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, *index));
+      // Best-effort offload: a rejected morsel stays Pending and the
+      // coordinator runs it inline on the primary path (see
+      // `consumeNextResult`), so the return value is intentionally ignored.
+      static_cast<void>(scheduler_->enqueueMorsel(OwnedMorsel(
+          this->shared_from_this(), jobId_, epochToSubmit, *index)));
     }
     return true;
   }
