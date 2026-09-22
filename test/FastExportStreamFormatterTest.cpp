@@ -53,8 +53,9 @@ TEST(FastExportStreamFormatterTest, TurtleEmbeddedQuotesEscapedOnce) {
   CollectingFormatter collector;
   EvaluatedTermData term{"\"Title with \"quotes\"\"", nullptr};
   collector.formatter_.writeTerm(term, ExportFormat::Turtle);
-  std::move(collector.formatter_).finalize();
+  auto summary = std::move(collector.formatter_).finalize();
   EXPECT_EQ(collector.output_, "\"Title with \\\"quotes\\\"\"");
+  EXPECT_EQ(summary.totalTriples_, 0u);
 }
 
 // A fully-qualified encoded literal in CSV output is escaped exactly like
@@ -65,7 +66,8 @@ TEST(FastExportStreamFormatterTest, CsvFullyQualifiedLiteralMatchesBaseline) {
   CollectingFormatter collector;
   EvaluatedTermData term{"NaN", XSD_DOUBLE_TYPE};
   collector.formatter_.writeTerm(term, ExportFormat::Csv);
-  std::move(collector.formatter_).finalize();
+  auto summary = std::move(collector.formatter_).finalize();
+  EXPECT_EQ(summary.totalTriples_, 0u);
   const std::string expected = RdfEscaping::escapeForCsv(
       absl::StrCat("\"NaN\"^^<", XSD_DOUBLE_TYPE, ">"));
   EXPECT_EQ(collector.output_, expected);
@@ -89,13 +91,15 @@ TEST(FastExportStreamFormatterTest, WriteRowCsvAndTsv) {
   CollectingFormatter csvCollector;
   const std::array<std::string_view, 2> cells{"a,b", "c"};
   csvCollector.formatter_.writeRow(ExportFormat::Csv, cells);
-  std::move(csvCollector.formatter_).finalize();
+  auto csvSummary = std::move(csvCollector.formatter_).finalize();
   EXPECT_EQ(csvCollector.output_, "\"a,b\",c\n");
+  EXPECT_EQ(csvSummary.totalTriples_, 0u);
 
   CollectingFormatter tsvCollector;
   tsvCollector.formatter_.writeRow(ExportFormat::Tsv, cells);
-  std::move(tsvCollector.formatter_).finalize();
+  auto tsvSummary = std::move(tsvCollector.formatter_).finalize();
   EXPECT_EQ(tsvCollector.output_, "a,b\tc\n");
+  EXPECT_EQ(tsvSummary.totalTriples_, 0u);
 }
 
 // `ensureAvailable` throws, so the write functions must not be `noexcept`:
