@@ -79,6 +79,11 @@ class RlePrefixSlice {
  public:
   constexpr RlePrefixSlice() noexcept = default;
 
+  // Maximum number of formatted bytes this slice can cache.
+  [[nodiscard]] static constexpr size_t maxSize() noexcept {
+    return MaxBufferSize;
+  }
+
   [[nodiscard]] constexpr bool isValid() const noexcept { return valid_; }
   [[nodiscard]] constexpr ValueId cachedId() const noexcept {
     return cachedId_;
@@ -145,6 +150,41 @@ class RlePrefixFormatter {
   RleFormatterConfig config_{};
   RleStats stats_{};
 
+  // Total formatted size of `rawTerm` including prefix, suffix and delimiter.
+  [[nodiscard]] size_t formattedSize(std::string_view rawTerm) const noexcept {
+    return config_.prefix_.size() + rawTerm.size() + config_.suffix_.size() +
+           config_.delimiter_.size();
+  }
+
+  // Write prefix + term + suffix + delimiter directly to `out` without
+  // touching the slice cache. Used for oversized terms that do not fit.
+  static char* writeDirect(std::string_view prefix, std::string_view rawTerm,
+                           std::string_view suffix, std::string_view delimiter,
+                           char* out) noexcept {
+    if (!prefix.empty()) {
+      std::memcpy(out, prefix.data(), prefix.size());
+      out += prefix.size();
+    }
+    if (!rawTerm.empty()) {
+      std::memcpy(out, rawTerm.data(), rawTerm.size());
+      out += rawTerm.size();
+    }
+    if (!suffix.empty()) {
+      std::memcpy(out, suffix.data(), suffix.size());
+      out += suffix.size();
+    }
+    if (!delimiter.empty()) {
+      std::memcpy(out, delimiter.data(), delimiter.size());
+      out += delimiter.size();
+    }
+    return out;
+  }
+
+  char* writeDirect(std::string_view rawTerm, char* out) const noexcept {
+    return writeDirect(config_.prefix_, rawTerm, config_.suffix_,
+                       config_.delimiter_, out);
+  }
+
  public:
   explicit RlePrefixFormatter(RleFormatterConfig config = RleFormatterConfig{})
       : config_{config} {}
@@ -166,6 +206,8 @@ class RlePrefixFormatter {
   // Format a column prefix when raw term string_view is provided.
   // If `id` matches the active cached run, skips formatting and splices slice.
   // When run ends (`id != cachedId`), re-formats into slice and updates cache.
+  // Terms whose formatted size exceeds the slice capacity bypass the cache
+  // and are written directly to `out`.
   inline char* formatPrefix(ValueId id, std::string_view rawTerm,
                             char* out) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
@@ -178,7 +220,10 @@ class RlePrefixFormatter {
 
     // Cache miss: format new prefix slice
     ++stats_.cacheMisses_;
-    std::array<char, 2048> tempBuf{};
+    if (formattedSize(rawTerm) > decltype(slice_)::maxSize()) {
+      return writeDirect(rawTerm, out);
+    }
+    std::array<char, decltype(slice_)::maxSize()> tempBuf{};
     char* curr = tempBuf.data();
 
     // Opening delimiter (e.g. "<")
@@ -227,7 +272,10 @@ class RlePrefixFormatter {
     ++stats_.cacheMisses_;
     std::string_view rawTerm = lookupFunc(id);
 
-    std::array<char, 2048> tempBuf{};
+    if (formattedSize(rawTerm) > decltype(slice_)::maxSize()) {
+      return writeDirect(rawTerm, out);
+    }
+    std::array<char, decltype(slice_)::maxSize()> tempBuf{};
     char* curr = tempBuf.data();
 
     if (!config_.prefix_.empty()) {
@@ -303,11 +351,8 @@ class RleTripleFormatter {
 
  public:
   explicit RleTripleFormatter(
-      RleFormatterConfig subjectConfig = RleFormatterConfig{.prefix_ = "<",
-                                                            .suffix_ = ">",
-                                                            .delimiter_ = " "},
-      RleFormatterConfig predicateConfig =
-          RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
+      RleFormatterConfig subjectConfig = RleFormatterConfig{"<", ">", " "},
+      RleFormatterConfig predicateConfig = RleFormatterConfig{"<", ">", " "},
       std::string_view objectPrefix = "<", std::string_view objectSuffix = ">",
       std::string_view rowTerminator = " .\n")
       : subjectFormatter_{subjectConfig},
@@ -319,24 +364,25 @@ class RleTripleFormatter {
   // ___________________________________________________________________________
   // Factory methods for standard export formats.
   [[nodiscard]] static RleTripleFormatter makeNTriplesFormatter() {
-    return RleTripleFormatter(
-        RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
-        RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
-        "<", ">", " .\n");
+    return RleTripleFormatter(RleFormatterConfig{"<", ">", " "},
+                              RleFormatterConfig{"<", ">", " "}, "<", ">",
+                              " .\n");
   }
 
   [[nodiscard]] static RleTripleFormatter makeTsvFormatter() {
-    return RleTripleFormatter(
-        RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = "\t"},
-        RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = "\t"},
-        "<", ">", "\n");
+    return RleTripleFormatter(RleFormatterConfig{"<", ">", "\t"},
+                              RleFormatterConfig{"<", ">", "\t"}, "<", ">",
+                              "\n");
   }
 
+  // CSV factory. Note: embedded quotes, commas and newlines inside term
+  // content are NOT escaped (no RFC 4180 quote doubling); callers must only
+  // pass CSV-safe terms or pre-escape them, matching the scalar CSV path of
+  // `FastExportStreamFormatter`, which performs escaping before formatting.
   [[nodiscard]] static RleTripleFormatter makeCsvFormatter() {
-    return RleTripleFormatter(
-        RleFormatterConfig{.prefix_ = "\"", .suffix_ = "\"", .delimiter_ = ","},
-        RleFormatterConfig{.prefix_ = "\"", .suffix_ = "\"", .delimiter_ = ","},
-        "\"", "\"", "\n");
+    return RleTripleFormatter(RleFormatterConfig{"\"", "\"", ","},
+                              RleFormatterConfig{"\"", "\"", ","}, "\"", "\"",
+                              "\n");
   }
 
   // ___________________________________________________________________________
@@ -392,6 +438,9 @@ class RleTripleFormatter {
 
   // ___________________________________________________________________________
   // Format a single sorted triple (S, P, O) with lazy lookup functor.
+  // Only the subject and predicate columns are RLE-folded; the object term
+  // is looked up and written on every row by design (in SPO/PSO order the
+  // object varies fastest, so folding it would rarely hit).
   template <typename LookupFunc>
   inline char* formatTripleWithLookup(ValueId subjId, ValueId predId,
                                       ValueId objId, LookupFunc&& lookupFunc,

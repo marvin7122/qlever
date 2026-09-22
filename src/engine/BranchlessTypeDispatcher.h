@@ -66,6 +66,8 @@ inline char* formatTermWithDelimiters(ValueId, std::string_view rawTerm,
 }
 
 // Fast branchless formatter for integer values.
+// A signed 64-bit integer needs at most 20 digits plus sign (21 chars), so
+// the 24-byte `to_chars` window can never overflow; `ec` is always success.
 inline char* formatInteger(ValueId id, std::string_view, char* out,
                            std::string_view prefix,
                            std::string_view suffix) noexcept {
@@ -103,6 +105,7 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
 inline constexpr std::array<std::string_view, 2> kBoolStrings{"false", "true"};
 
 // Fast branchless formatter for boolean values.
+// `ValueId::getBool()` returns `bool`, so the cast below is always 0 or 1.
 inline char* formatBoolean(ValueId id, std::string_view, char* out,
                            std::string_view prefix,
                            std::string_view suffix) noexcept {
@@ -190,32 +193,36 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 5: LocalVocabIndex
+  // LocalVocabIndex
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 6: TextRecordIndex
+  // SecondaryVocabIndex (IRI, like VocabIndex)
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+
+  // TextRecordIndex
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 7: Date
+  // Date
   lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
 
-  // 8: GeoPoint
+  // GeoPoint
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
 
-  // 9: WordVocabIndex
+  // WordVocabIndex
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 10: BlankNodeIndex
+  // BlankNodeIndex
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
       TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
 
-  // 11: EncodedVal
+  // EncodedVal
   lut[static_cast<size_t>(Datatype::EncodedVal)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
@@ -241,6 +248,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
@@ -279,6 +288,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
+      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::Date)] =
@@ -307,6 +318,12 @@ inline constexpr auto kRawVocabTypeFormatLut = detail::makeRawVocabLut();
 //
 // Eliminates branch mispredictions during export loops by indexing directly
 // into a 16-entry constexpr lookup table using the 4-bit ValueId datatype tag.
+//
+// Buffer contract (shared with the other export-path bump-pointer writers in
+// this stack): the formatters perform no per-write capacity checks. Callers
+// must reserve `rawTerm.size()` plus the descriptor's prefix/suffix (at most
+// ~50 bytes for the datatype suffixes above) plus 24 bytes of numeric scratch
+// per term before calling `dispatchTermFormat`/`dispatchBatchTermFormat`.
 class BranchlessTypeDispatcher {
  public:
   using LookupTable = std::array<TypeFormatDescriptor, 16>;
@@ -319,8 +336,15 @@ class BranchlessTypeDispatcher {
       ValueId id, std::string_view rawTerm, char* out,
       const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
     AD_CONTRACT_CHECK(out != nullptr);
-    const uint8_t typeTag =
-        static_cast<uint8_t>(id.getBits() >> ValueId::numDataBits) & 0x0F;
+    // `ValueId` stores the datatype tag in exactly `numDatatypeBits == 4`
+    // bits; `getDatatype()` is the canonical accessor, so the table index
+    // follows layout changes automatically. Every `Datatype` enumerator maps
+    // to an explicitly initialized slot (see the `make*Lut` builders).
+    static_assert(ValueId::numDatatypeBits == 4);
+    // `LookupTable` is the 16-entry array type below; every `Datatype`
+    // enumerator (up to `MaxValue`) must index a valid slot.
+    static_assert(static_cast<size_t>(Datatype::MaxValue) < 16);
+    const uint8_t typeTag = static_cast<uint8_t>(id.getDatatype());
     const auto& desc = lut[typeTag];
     return desc.formatFn_(id, rawTerm, out, desc.prefix_, desc.suffix_);
   }

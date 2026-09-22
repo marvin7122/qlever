@@ -20,8 +20,7 @@
 using namespace ql::engine::rle;
 
 TEST(RlePrefixCompressorTest, BasicRunLengthConstantFolding) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   auto id = ValueId::makeFromVocabIndex(VocabIndex::make(100));
   std::string_view rawTerm = "http://example.org/entity/Q42";
@@ -51,8 +50,7 @@ TEST(RlePrefixCompressorTest, BasicRunLengthConstantFolding) {
 }
 
 TEST(RlePrefixCompressorTest, DynamicSwitchingWhenRunEnds) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = "\t"}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", "\t"}};
 
   auto idA = ValueId::makeFromVocabIndex(VocabIndex::make(1));
   auto idB = ValueId::makeFromVocabIndex(VocabIndex::make(2));
@@ -93,8 +91,7 @@ TEST(RlePrefixCompressorTest, DynamicSwitchingWhenRunEnds) {
 }
 
 TEST(RlePrefixCompressorTest, UnsortedAlternatingIds) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   auto idA = ValueId::makeFromVocabIndex(VocabIndex::make(1));
   auto idB = ValueId::makeFromVocabIndex(VocabIndex::make(2));
@@ -123,8 +120,7 @@ TEST(RlePrefixCompressorTest, UnsortedAlternatingIds) {
 }
 
 TEST(RlePrefixCompressorTest, LookupFunctorAvoidance) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   auto idA = ValueId::makeFromVocabIndex(VocabIndex::make(10));
   auto idB = ValueId::makeFromVocabIndex(VocabIndex::make(20));
@@ -154,11 +150,21 @@ TEST(RlePrefixCompressorTest, LookupFunctorAvoidance) {
   EXPECT_EQ(formatter.stats().cacheMisses_, 2u);
   EXPECT_EQ(formatter.stats().cacheHits_, 98u);
   EXPECT_DOUBLE_EQ(formatter.stats().reductionPercentage(), 98.0);
+
+  // The cache must associate each run with the correct term: 50 formatted
+  // A prefixes followed by 50 formatted B prefixes.
+  std::string expected;
+  for (size_t i = 0; i < 50; ++i) {
+    expected += "<http://example.org/subjectA> ";
+  }
+  for (size_t i = 0; i < 50; ++i) {
+    expected += "<http://example.org/subjectB> ";
+  }
+  EXPECT_EQ(std::string_view(buffer.data(), curr - buffer.data()), expected);
 }
 
 TEST(RlePrefixCompressorTest, BatchFormatting) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   std::vector<ValueId> ids = {ValueId::makeFromVocabIndex(VocabIndex::make(1)),
                               ValueId::makeFromVocabIndex(VocabIndex::make(1)),
@@ -244,8 +250,7 @@ TEST(RlePrefixCompressorTest, MultiColumnTripleFormattingTsv) {
 }
 
 TEST(RlePrefixCompressorTest, ResetAndInvalidate) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   auto id = ValueId::makeFromVocabIndex(VocabIndex::make(1));
   std::string_view term = "http://test";
@@ -263,4 +268,39 @@ TEST(RlePrefixCompressorTest, ResetAndInvalidate) {
   formatter.formatPrefix(id, term, buffer.data());
   EXPECT_EQ(formatter.stats().cacheMisses_, 1u);
   EXPECT_EQ(formatter.stats().cacheHits_, 0u);
+}
+
+TEST(RlePrefixCompressorTest, OversizedTermBypassesSliceCache) {
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
+
+  auto id = ValueId::makeFromVocabIndex(VocabIndex::make(7));
+  // Formatted size exceeds the 2048-byte slice capacity.
+  const std::string bigTerm(3000, 'x');
+
+  std::string out(4096, '\0');
+  char* end = formatter.formatPrefix(id, bigTerm, out.data());
+
+  const std::string expected = "<" + bigTerm + "> ";
+  EXPECT_EQ(std::string_view(out.data(), end - out.data()), expected);
+  // Oversized terms are cache misses that must not poison the cache: a
+  // subsequent small term still formats correctly.
+  auto smallId = ValueId::makeFromVocabIndex(VocabIndex::make(8));
+  std::string out2(256, '\0');
+  char* end2 = formatter.formatPrefix(smallId, "abc", out2.data());
+  EXPECT_EQ(std::string_view(out2.data(), end2 - out2.data()), "<abc> ");
+}
+
+TEST(RlePrefixCompressorTest, CsvFormatterOutput) {
+  auto csvFormatter = RleTripleFormatter::makeCsvFormatter();
+
+  auto subjId = ValueId::makeFromVocabIndex(VocabIndex::make(1));
+  auto predId = ValueId::makeFromVocabIndex(VocabIndex::make(2));
+  auto objId = ValueId::makeFromVocabIndex(VocabIndex::make(3));
+
+  std::array<char, 512> buffer{};
+  char* curr = csvFormatter.formatTriple(subjId, "http://s", predId, "http://p",
+                                         objId, "http://o", buffer.data());
+
+  std::string_view actual(buffer.data(), curr - buffer.data());
+  EXPECT_EQ(actual, "\"http://s\",\"http://p\",\"http://o\"\n");
 }
