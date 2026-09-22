@@ -113,11 +113,20 @@ class BatchManager final : public BatchManagerBase {
   }
 
   // Block until every read in `handle` has completed.
-  void wait(BatchHandle handle) override { policy_.wait(handle); }
+  void wait(BatchHandle handle) override {
+    policy_.wait(handle);
+    // Periodically report passthrough usage while serving: the owning server
+    // dies on SIGTERM without running destructors, so teardown-only logging
+    // would never surface on a benchmark rig.
+    if (++batchesCompleted_ % 4096 == 0) {
+      policy_.dumpStats();
+    }
+  }
 
  private:
   [[no_unique_address]] ReadPolicy policy_;
   BatchHandle nextBatchHandle_ = 0;
+  uint64_t batchesCompleted_ = 0;
 
   template <typename Span0, typename... Spans>
   static void validateSameLength(const Span0& first, const Spans&... rest) {
