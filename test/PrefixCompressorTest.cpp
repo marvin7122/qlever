@@ -4,6 +4,10 @@
 
 #include <gmock/gmock.h>
 
+#include <algorithm>
+#include <string>
+
+#include "backports/span.h"
 #include "index/vocabulary/PrefixCompressor.h"
 #include "index/vocabulary/PrefixHeuristic.h"
 #include "util/Views.h"
@@ -94,4 +98,38 @@ TEST(PrefixCompressor, prefixCompression) {
   // common structure of the literals.
   EXPECT_THAT(calculatePrefixes(input, 127),
               Contains(ContainsRegex("\nabc\t\n")));
+}
+
+// _____________________________________________________________________________
+TEST(PrefixCompressor, DecompressIntoExactSizeAndAliasing) {
+  PrefixCompressor p;
+  p.buildCodebook(std::vector<std::string>{"alpha", "al"});
+
+  // One-byte no-prefix encoding: marker byte plus content.
+  const std::string compressedNoPrefix = p.compress("z");
+  ASSERT_EQ(compressedNoPrefix.size(), 2u);
+  EXPECT_FALSE(p.prefixIndex(compressedNoPrefix).has_value());
+  EXPECT_EQ(p.maxDecompressedSize(compressedNoPrefix), 1u);
+  std::string outNoPrefix(1, '\0');
+  EXPECT_EQ(p.decompressInto(compressedNoPrefix,
+                             ql::span<char>{outNoPrefix.data(), 1}),
+            1u);
+  EXPECT_EQ(outNoPrefix, "z");
+
+  // Prefix encoding with an exactly-sized output span.
+  const std::string compressed = p.compress("alphabet");
+  ASSERT_TRUE(p.prefixIndex(compressed).has_value());
+  EXPECT_EQ(p.maxDecompressedSize(compressed), 8u);
+  std::string outExact(8, '\0');
+  EXPECT_EQ(p.decompressInto(compressed, ql::span<char>{outExact.data(), 8}),
+            8u);
+  EXPECT_EQ(outExact, "alphabet");
+
+  // In-place (aliasing) decompression into the same buffer.
+  std::string inplace(8, '\0');
+  std::copy(compressed.begin(), compressed.end(), inplace.begin());
+  EXPECT_EQ(p.decompressInto(std::string_view{inplace.data(), 4},
+                             ql::span<char>{inplace.data(), 8}),
+            8u);
+  EXPECT_EQ(inplace, "alphabet");
 }

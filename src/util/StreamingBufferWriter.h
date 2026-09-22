@@ -17,7 +17,6 @@
 #include <cstring>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string_view>
 #include <vector>
 
@@ -26,6 +25,7 @@
 #include <immintrin.h>
 #endif
 
+#include "backports/span.h"
 #include "util/AlignedAllocator.h"
 #include "util/Exception.h"
 
@@ -154,7 +154,7 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Construct a writer wrapping a caller-provided destination buffer span.
-  explicit StreamingBufferWriter(std::span<char> destinationBuffer)
+  explicit StreamingBufferWriter(ql::span<char> destinationBuffer)
       : buffer_{destinationBuffer.data()},
         capacity_{destinationBuffer.size()},
         bytesWritten_{0},
@@ -192,6 +192,9 @@ class StreamingBufferWriter {
 
   StreamingBufferWriter& operator=(StreamingBufferWriter&& other) noexcept {
     if (this != &other) {
+      // Drain pending write-combining stores before the current owned storage
+      // (if any) is released by the move below.
+      sfence();
       buffer_ = other.buffer_;
       capacity_ = other.capacity_;
       bytesWritten_ = other.bytesWritten_;
@@ -208,13 +211,16 @@ class StreamingBufferWriter {
   StreamingBufferWriter(const StreamingBufferWriter&) = delete;
   StreamingBufferWriter& operator=(const StreamingBufferWriter&) = delete;
 
-  ~StreamingBufferWriter() = default;
+  // Drain pending write-combining stores before owned storage is released.
+  // (Member destruction runs after the destructor body.)
+  ~StreamingBufferWriter() noexcept { sfence(); }
 
   // ___________________________________________________________________________
   // Write raw bytes using non-temporal streaming stores.
   void write(const void* src, size_t numBytes) {
     AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
-    AD_CONTRACT_CHECK(bytesWritten_ + numBytes <= capacity_);
+    AD_CONTRACT_CHECK(bytesWritten_ <= capacity_ &&
+                      numBytes <= capacity_ - bytesWritten_);
 
     if (numBytes == 0) {
       return;
@@ -226,7 +232,7 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Write string_view data using non-temporal streaming stores. (A
-  // `std::span<const char>` overload was deliberately omitted: it is
+  // `ql::span<const char>` overload was deliberately omitted: it is
   // ambiguous with this overload for `std::string` and string literals;
   // span callers can pass `{data.data(), data.size()}`.)
   void write(std::string_view data) { write(data.data(), data.size()); }
@@ -236,12 +242,20 @@ class StreamingBufferWriter {
   void flush() { sfence(); }
 
   // ___________________________________________________________________________
-  // Reset write position to the beginning of the existing buffer.
-  void reset() noexcept { bytesWritten_ = 0; }
+  // Reset write position to the beginning of the existing buffer. Fences
+  // first so the previous generation of stores is globally ordered before
+  // the buffer is reused.
+  void reset() noexcept {
+    sfence();
+    bytesWritten_ = 0;
+  }
 
   // ___________________________________________________________________________
   // Retarget the writer to a new caller-provided buffer span.
-  void reset(std::span<char> newBuffer) noexcept {
+  void reset(ql::span<char> newBuffer) noexcept {
+    // Drain pending stores before owned storage is released and the write
+    // position is recycled.
+    sfence();
     ownedBuffer_.reset();
     buffer_ = newBuffer.data();
     capacity_ = newBuffer.size();
@@ -272,10 +286,10 @@ class StreamingBufferWriter {
   [[nodiscard]] char* data() noexcept { return buffer_; }
   [[nodiscard]] const char* data() const noexcept { return buffer_; }
 
-  [[nodiscard]] std::span<const char> writtenSpan() const noexcept {
+  [[nodiscard]] ql::span<const char> writtenSpan() const noexcept {
     return {buffer_, bytesWritten_};
   }
-  [[nodiscard]] std::span<char> remainingSpan() noexcept {
+  [[nodiscard]] ql::span<char> remainingSpan() noexcept {
     return {buffer_ + bytesWritten_, capacity_ - bytesWritten_};
   }
 };

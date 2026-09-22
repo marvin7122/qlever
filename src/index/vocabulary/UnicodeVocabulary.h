@@ -43,7 +43,10 @@ class UnicodeVocabulary {
                                      ArenaVocabBatchBuilder& builder) const {
     if constexpr (VocabSupportsBuilderLookupBatch<
                       UnderlyingVocabulary>::value) {
-      return _underlyingVocabulary.lookupBatch(indices, builder);
+      // The builder-based overload returns `void` and appends into `builder`;
+      // finalize the builder exactly like `PolymorphicVocabulary` does.
+      _underlyingVocabulary.lookupBatch(indices, builder);
+      return std::move(builder).finalize();
     } else {
       return _underlyingVocabulary.lookupBatch(indices);
     }

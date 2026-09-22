@@ -123,16 +123,26 @@ class PrefixCompressor {
 
   // ___________________________________________________________________________
   // Decompress `compressedWord` into `out`. `out.size()` must be at least
-  // `maxDecompressedSize(compressedWord)`. Return the number of bytes written.
+  // `maxDecompressedSize(compressedWord)`. Return the number of bytes written
+  // (always exactly `maxDecompressedSize(compressedWord)`). `out` may alias
+  // `compressedWord` (e.g. in-place expansion into the same buffer); aliased
+  // inputs are decompressed via a temporary.
   [[nodiscard]] size_t decompressInto(std::string_view compressedWord,
                                       ql::span<char> out) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(compressedWord));
 
     const auto idx = prefixIndex(compressedWord);
     const std::string_view rest = compressedWord.substr(1);
+    const std::string_view prefix =
+        idx.has_value() ? std::string_view{prefixToCode_[*idx]} : "";
+    if (rangesOverlap(out, compressedWord)) {
+      const std::string tmp = decompressUnaliased(compressedWord, idx, rest);
+      AD_CORRECTNESS_CHECK(tmp.size() <= out.size());
+      std::memcpy(out.data(), tmp.data(), tmp.size());
+      return tmp.size();
+    }
     size_t outputSize = 0;
-    if (idx.has_value()) {
-      const std::string& prefix = prefixToCode_[*idx];
+    if (!prefix.empty()) {
       AD_CORRECTNESS_CHECK(prefix.size() <= out.size());
       std::memcpy(out.data(), prefix.data(), prefix.size());
       outputSize = prefix.size();
@@ -148,10 +158,39 @@ class PrefixCompressor {
     std::string result(maxDecompressedSize(compressedWord), '\0');
     const size_t numBytesWritten = decompressInto(
         compressedWord, ql::span<char>{result.data(), result.size()});
-    result.resize(numBytesWritten);
+    // `decompressInto` always writes exactly `maxDecompressedSize` bytes.
+    AD_CORRECTNESS_CHECK(numBytesWritten == result.size());
     return result;
   }
 
+ private:
+  // Non-aliased decompression into a fresh string. Shared by `decompress` and
+  // the aliasing fallback of `decompressInto`.
+  [[nodiscard]] std::string decompressUnaliased(std::string_view compressedWord,
+                                                std::optional<size_t> idx,
+                                                std::string_view rest) const {
+    std::string result;
+    result.reserve(maxDecompressedSize(compressedWord));
+    if (idx.has_value()) {
+      result += prefixToCode_[*idx];
+    }
+    result += rest;
+    return result;
+  }
+
+  // True iff the output range and the input view overlap in memory.
+  // Numeric address comparison (not pointer relational comparison, which is
+  // only defined within a single object).
+  [[nodiscard]] static bool rangesOverlap(ql::span<char> out,
+                                          std::string_view in) noexcept {
+    const auto outBegin = reinterpret_cast<std::uintptr_t>(out.data());
+    const auto outEnd = outBegin + out.size();
+    const auto inBegin = reinterpret_cast<std::uintptr_t>(in.data());
+    const auto inEnd = inBegin + in.size();
+    return outBegin < inEnd && inBegin < outEnd;
+  }
+
+ public:
   // ___________________________________________________________________________
   // From the given list of prefixes, build the internal data structure for
   // efficient lookup. The prefixes do not have to be in any specific order. The
