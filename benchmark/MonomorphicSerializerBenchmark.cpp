@@ -60,7 +60,10 @@ struct AllocationTracker {
   }
 };
 
-// Global new/delete instrumentation
+// Global new/delete instrumentation. The matching `operator new` above
+// allocates with `std::malloc`, so `std::free` is the correct deallocator;
+// silence GCC's `-Wmismatched-new-delete` false positive locally (the pragma
+// spelling is shared by Clang).
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -73,9 +76,16 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace ad_benchmark {
 namespace {
