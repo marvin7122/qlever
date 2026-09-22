@@ -28,6 +28,16 @@ struct DummyDecoder {
     }
     return result;
   }
+  // Batch-lookup protocol additions, mirroring the `DecoderMultiplexer`
+  // requirements so the dummy stays a valid `Decoder`.
+  size_t maxDecompressedSize(std::string_view compressed) const {
+    return decompress(compressed).size();
+  }
+  size_t decompressInto(std::string_view compressed, ql::span<char> out) const {
+    std::string result = decompress(compressed);
+    result.copy(out.data(), result.size());
+    return result.size();
+  }
   // This class has no state, but it still needs to be serialized.
   template <typename T>
   friend std::true_type allowTrivialSerialization(DummyDecoder, T);
