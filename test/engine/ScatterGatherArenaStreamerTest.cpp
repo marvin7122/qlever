@@ -61,9 +61,13 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
       "This is a large literal string residing inside the memory arena.";
   ASSERT_GE(arenaLiteral.size(), 32);
 
-  streamer.writeIri(ql::span<const char>("<http://example.org/sub>"));
+  // A span deduced from a string literal includes the NUL terminator, so
+  // build the IRI spans from string_views to pass exactly the IRI characters.
+  constexpr std::string_view kSubject = "<http://example.org/sub>";
+  constexpr std::string_view kPredicate = "<http://example.org/pred>";
+  streamer.writeIri(ql::span<const char>(kSubject.data(), kSubject.size()));
   streamer.writeChar(' ');
-  streamer.writeIri(ql::span<const char>("<http://example.org/pred>"));
+  streamer.writeIri(ql::span<const char>(kPredicate.data(), kPredicate.size()));
   streamer.writeChar(' ');
   streamer.writeLiteral(
       ql::span<const char>(arenaLiteral.data(), arenaLiteral.size()),

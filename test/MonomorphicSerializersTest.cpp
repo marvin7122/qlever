@@ -67,8 +67,18 @@ TEST(MonomorphicSerializersTest, MonomorphicMixedTypesTsvSerialization) {
         fmt, "<http://example.org/city>", "\"Freiburg\"", 230000, 153.07);
   });
 
-  EXPECT_EQ(result,
-            "<http://example.org/city>\t\"Freiburg\"\t230000\t153.07\n");
+  // Apple builds format doubles with snprintf("%.17g") because
+  // floating-point std::to_chars needs macOS 13.3+: same value, but the
+  // longest-digit spelling instead of the shortest one.
+#ifdef __APPLE__
+  constexpr std::string_view kExpectedDouble = "153.06999999999999";
+#else
+  constexpr std::string_view kExpectedDouble = "153.07";
+#endif
+  const std::string expected =
+      std::string("<http://example.org/city>\t\"Freiburg\"\t230000\t") +
+      std::string(kExpectedDouble) + "\n";
+  EXPECT_EQ(result, expected);
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicSpanAndBatchSerialization) {
