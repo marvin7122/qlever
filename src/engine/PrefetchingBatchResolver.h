@@ -178,48 +178,39 @@ class PrefetchingBatchResolver {
 
     const size_t n = indices.size();
     const size_t distance = config_.prefetchDistance;
-    const auto offsets = words.offsetsSpan();
-    const auto data = words.dataSpan();
+    const size_t numWords = words.size();
 
-    // Stage 1 warmup: prefetch offset table lines for the first `distance`
-    // items
-    for (size_t k = 0; k < std::min(distance, n); ++k) {
-      const size_t idx = indices[k];
-      if (idx < offsets.size()) {
-        prefetchVocabEntry(&offsets[idx], static_cast<int>(distance));
+    // Prefetch the payload cache line of entry `idx`. `operator[]` is
+    // unchecked, so the bounds guard is load-bearing: prefetching must never
+    // fault on an out-of-range index.
+    auto prefetchEntry = [&words, numWords, distance](size_t idx) {
+      if (idx < numWords) {
+        prefetchVocabEntry(words[idx].data(), static_cast<int>(distance));
       }
+    };
+
+    // Stage 1 warmup: prefetch payload lines for the first `distance` items
+    for (size_t k = 0; k < std::min(distance, n); ++k) {
+      prefetchEntry(indices[k]);
     }
 
     // Main pipelined loop
     for (size_t i = 0; i < n; ++i) {
-      // 1. Prefetch offset table line for (i + distance)
+      // 1. Prefetch payload line for (i + distance)
       if (i + distance < n) {
-        const size_t pfIdx = indices[i + distance];
-        if (pfIdx < offsets.size()) {
-          prefetchVocabEntry(&offsets[pfIdx], static_cast<int>(distance));
-        }
+        prefetchEntry(indices[i + distance]);
       }
 
-      // 2. Prefetch string character data line for (i + distance / 2)
+      // 2. Prefetch payload line for (i + distance / 2)
       if (i + (distance / 2) < n) {
-        const size_t midIdx = indices[i + (distance / 2)];
-        if (midIdx + 1 < offsets.size()) {
-          const auto strOffset = offsets[midIdx];
-          if (strOffset < data.size()) {
-            prefetchVocabEntry(data.data() + strOffset,
-                               static_cast<int>(distance / 2));
-          }
-        }
+        prefetchEntry(indices[i + (distance / 2)]);
       }
 
       // 3. Resolve current item i
       const size_t curIdx = indices[i];
-      AD_CORRECTNESS_CHECK(idx < offsets.size());
-      const auto curOffset = offsets[curIdx];
-      const auto nextOffset = offsets[curIdx + 1];
-      const size_t strLen = nextOffset - curOffset;
-      const CharType* strPtr = data.data() + curOffset;
-      std::basic_string_view<CharType> view(strPtr, strLen);
+      AD_CORRECTNESS_CHECK(curIdx < numWords);
+      const auto entry = words[curIdx];
+      std::basic_string_view<CharType> view(entry.data(), entry.size());
 
       mappingFunc(i, curIdx, view);
     }
