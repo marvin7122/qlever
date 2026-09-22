@@ -58,9 +58,10 @@ inline constexpr bool kUringCmdSupported = true;
 inline constexpr bool kUringCmdSupported = false;
 #endif
 
-// NVMe NVM command-set opcode for Read (01h; 02h would be Write, which stays
-// out of scope: reads only).
-inline constexpr uint8_t kNvmReadOpcode = 0x01;
+// NVMe NVM command-set opcode for Read (02h; 01h is Write and must never be
+// submitted by the read path: a successful write completion carries res == 0
+// exactly like a read, so the inversion is silent and destroys the image).
+inline constexpr uint8_t kNvmReadOpcode = 0x02;
 
 // Bytes of command payload a 128-byte SQE (`IORING_SETUP_SQE128`) provides
 // after the fixed 48-byte SQE prefix.

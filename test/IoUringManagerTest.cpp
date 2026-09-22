@@ -1052,6 +1052,11 @@ TEST(NvmePassthrough, preparesValidUringCmdSqe) {
   const auto* tail = sqeStorage + offsetof(io_uring_sqe, cmd);
   std::memcpy(&cmd, tail, sizeof(cmd));
   EXPECT_EQ(cmd.opcode, ad_utility::nvmePassthrough::kNvmReadOpcode);
+  // Pin the numeric NVM opcode: 02h is Read, 01h is Write. A symbolic-only
+  // check let the inverted constant through, and a write completion reports
+  // res == 0 exactly like a read, so the inversion silently destroys the
+  // namespace image instead of failing.
+  EXPECT_EQ(cmd.opcode, 0x02);
   EXPECT_EQ(cmd.nsid, 2u);
   EXPECT_EQ(cmd.addr, reinterpret_cast<__u64>(buffer.data()));
   EXPECT_EQ(cmd.data_len, 4096u);
