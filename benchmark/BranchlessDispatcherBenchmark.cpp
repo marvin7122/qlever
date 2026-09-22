@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -23,6 +24,7 @@
 #include <unistd.h>
 #endif
 
+#include "backports/span.h"
 #include "engine/BranchlessTypeDispatcher.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
@@ -148,7 +150,8 @@ struct BranchingSwitchDispatcher {
       }
       case Datatype::Double: {
         out = copyLiteral(out, "\"");
-        out = detail::formatDoubleValue(out, out + 32, id.getDouble());
+        out = ql::engine::detail::formatDoubleValue(out, out + 32,
+                                                    id.getDouble());
         out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>");
         return out;
       }
@@ -245,7 +248,8 @@ struct BranchingIfElseDispatcher {
       return out;
     } else if (dt == Datatype::Double) {
       out = copyLiteral(out, "\"");
-      out = detail::formatDoubleValue(out, out + 32, id.getDouble());
+      out =
+          ql::engine::detail::formatDoubleValue(out, out + 32, id.getDouble());
       out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>");
       return out;
     } else if (dt == Datatype::Bool) {
