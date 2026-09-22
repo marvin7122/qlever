@@ -9,6 +9,11 @@ name: Build toolchain images (root as a service)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ ci/wolga-ci-images ]
+    paths:
+      - misc/ci-images/Containerfile.*
+      - .github/workflows/toolchain-image-builder.yml
 
 permissions:
   contents: read
