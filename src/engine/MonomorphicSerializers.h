@@ -296,10 +296,14 @@ struct MonomorphicCellWriter {
   }
 };
 
-// Delimiter emitter helper
+// Delimiter emitter helper: prefers a SWAR-packed single-store write when the
+// writer exposes `writeFieldSeparator` (e.g. `FastExportStreamFormatter`),
+// otherwise falls back to scalar stores for generic writers.
 template <ExportFormat Format, typename Writer>
 inline void writeColumnDelimiter(Writer& writer) noexcept {
-  if constexpr (Format == ExportFormat::Csv) {
+  if constexpr (requires { writer.writeFieldSeparator(Format); }) {
+    writer.writeFieldSeparator(Format);
+  } else if constexpr (Format == ExportFormat::Csv) {
     writer.writeChar(',');
   } else if constexpr (Format == ExportFormat::Tsv) {
     writer.writeChar('\t');
@@ -309,11 +313,15 @@ inline void writeColumnDelimiter(Writer& writer) noexcept {
   }
 }
 
-// Row terminator emitter helper
+// Row terminator emitter helper: prefers a SWAR-packed single-store write
+// when the writer exposes `writeTripleEnd`, otherwise falls back to scalar
+// stores for generic writers.
 template <ExportFormat Format, typename Writer>
 inline void writeRowTerminator(Writer& writer) noexcept {
-  if constexpr (Format == ExportFormat::Turtle ||
-                Format == ExportFormat::NTriples) {
+  if constexpr (requires { writer.writeTripleEnd(Format); }) {
+    writer.writeTripleEnd(Format);
+  } else if constexpr (Format == ExportFormat::Turtle ||
+                       Format == ExportFormat::NTriples) {
     writer.writeRaw(" .\n");
   } else {
     writer.writeChar('\n');

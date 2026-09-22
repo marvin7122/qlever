@@ -9,9 +9,11 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <string>
 #include <vector>
 
+#include "backports/span.h"
 #include "engine/FastExportStreamFormatter.h"
 #include "engine/MonomorphicSerializers.h"
 #include "util/OverloadCallOperator.h"
@@ -139,4 +141,48 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
       });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
+}
+
+// _____________________________________________________________________________
+// SWAR delimiter wiring: `writeFieldSeparator` / `writeTripleEnd` emit the
+// same bytes as the previous scalar stores for every export format.
+TEST(MonomorphicSerializersTest, SwarFieldSeparatorAndTripleEnd) {
+  const auto check = [](ExportFormat format, std::string_view separator,
+                        std::string_view terminator) {
+    std::string sep = captureOutput([&](FastExportStreamFormatter& fmt) {
+      fmt.writeFieldSeparator(format);
+    });
+    EXPECT_EQ(sep, separator);
+    std::string end = captureOutput(
+        [&](FastExportStreamFormatter& fmt) { fmt.writeTripleEnd(format); });
+    EXPECT_EQ(end, terminator);
+  };
+  check(ExportFormat::Turtle, " ", " .\n");
+  check(ExportFormat::NTriples, " ", " .\n");
+  check(ExportFormat::Csv, ",", "\n");
+  check(ExportFormat::Tsv, "\t", "\n");
+}
+
+// _____________________________________________________________________________
+// SWAR delimiter wiring: `writePacked` matches the equivalent scalar writes,
+// including an exact-fit fixed-span buffer where no 8-byte SWAR store fits.
+TEST(MonomorphicSerializersTest, SwarWritePackedMatchesScalar) {
+  using ad_utility::SwarDelimiterPacker;
+  // Streaming mode over all predefined packed delimiters.
+  const std::string packed = captureOutput([&](FastExportStreamFormatter& fmt) {
+    fmt.writePacked(SwarDelimiterPacker::TRIPLE_S_TO_P_IRI);
+    fmt.writePacked(SwarDelimiterPacker::TRIPLE_P_TO_O_LIT);
+    fmt.writePacked(SwarDelimiterPacker::TRIPLE_O_LIT_END);
+    fmt.writePacked(SwarDelimiterPacker::DELIM_CSV_QUOTE_COMMA_QUOTE);
+    fmt.writePacked(SwarDelimiterPacker::DELIM_TSV_TAB_NEWLINE);
+    fmt.writePacked(ad_utility::PackedDelimiter{});
+  });
+  EXPECT_EQ(packed, "> <> \"\" .\n\",\"\t\n");
+
+  // Exact-fit fixed-span buffer: scalar tail fallback, no overflow.
+  std::array<char, 4> exactFit{};
+  FastExportStreamFormatter fmt{
+      ql::span<char>{exactFit.data(), exactFit.size()}};
+  fmt.writePacked(SwarDelimiterPacker::TRIPLE_O_IRI_END);
+  EXPECT_EQ(fmt.currentChunk(), "> .\n");
 }

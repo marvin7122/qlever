@@ -592,6 +592,12 @@ addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
 
 addLinkAndDiscoverTest(ConstructTripleGeneratorTest engine)
 
+addLinkAndDiscoverTestNoLibs(SwarDelimiterPackerTest qlever_util)
+
+addLinkAndDiscoverTest(MonomorphicSerializersTest engine)
+
+addLinkAndDiscoverTest(ScatterGatherArenaStreamerTest engine)
+
 addLinkAndDiscoverTest(ConstructDeduplicatorTest engine)
 
 addLinkAndDiscoverTest(FilesystemHelpersTest qlever_util)

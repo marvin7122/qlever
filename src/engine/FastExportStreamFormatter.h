@@ -26,6 +26,7 @@
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
+#include "util/SwarDelimiterPacker.h"
 #include "util/http/MediaTypes.h"
 
 namespace ql::export_formatting {
@@ -201,6 +202,55 @@ class FastExportStreamFormatter {
     ensureAvailable(sv.size());
     std::memcpy(bufferPtr_ + writePos_, sv.data(), sv.size());
     writePos_ += sv.size();
+  }
+
+  // ___________________________________________________________________________
+  // Write a pre-packed SWAR delimiter with a single unaligned 64-bit store.
+  // Byte-identical to `writeRaw(delim.toString())`. When fewer than 8 bytes
+  // of contiguous capacity remain (fixed-span tail), falls back to a scalar
+  // copy, so exact-fit buffers keep their previous capacity behavior.
+  void writePacked(ad_utility::PackedDelimiter delim) noexcept {
+    const size_t len = delim.len();
+    if (len == 0) {
+      return;
+    }
+    ensureAvailable(len);
+    if (bufferCapacity_ - writePos_ >= sizeof(uint64_t)) {
+      char* next = ad_utility::SwarDelimiterPacker::writeDelim(
+          bufferPtr_ + writePos_, delim);
+      writePos_ = static_cast<size_t>(next - bufferPtr_);
+    } else {
+      const uint64_t pattern = delim.pattern();
+      std::memcpy(bufferPtr_ + writePos_, &pattern, len);
+      writePos_ += len;
+    }
+  }
+
+  // ___________________________________________________________________________
+  // Write the field separator for `format` (` `, `,`, `\t`) via SWAR packing.
+  void writeFieldSeparator(ExportFormat format) noexcept {
+    using ad_utility::SwarDelimiterPacker;
+    if (format == ExportFormat::Csv) {
+      writePacked(SwarDelimiterPacker::DELIM_CSV_COMMA);
+    } else if (format == ExportFormat::Tsv) {
+      writePacked(SwarDelimiterPacker::DELIM_TSV_TAB);
+    } else {
+      writePacked(SwarDelimiterPacker::DELIM_SPACE);
+    }
+  }
+
+  // ___________________________________________________________________________
+  // Write the triple terminator for `format` (` .\n`, `\n`) via SWAR packing.
+  void writeTripleEnd(ExportFormat format) noexcept {
+    using ad_utility::SwarDelimiterPacker;
+    if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
+      writePacked(SwarDelimiterPacker::DELIM_DOT_NEWLINE);
+    } else if (format == ExportFormat::Csv) {
+      writePacked(SwarDelimiterPacker::DELIM_CSV_NEWLINE);
+    } else {
+      AD_CORRECTNESS_CHECK(format == ExportFormat::Tsv);
+      writePacked(SwarDelimiterPacker::DELIM_TSV_NEWLINE);
+    }
   }
 
   // ___________________________________________________________________________
@@ -398,26 +448,26 @@ class FastExportStreamFormatter {
                    const qlever::constructExport::EvaluatedTermData& o) {
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeTerm(s, format);
-      writeChar(' ');
+      writeFieldSeparator(format);
       writeTerm(p, format);
-      writeChar(' ');
+      writeFieldSeparator(format);
       writeTerm(o, format);
-      writeRaw(" .\n");
+      writeTripleEnd(format);
     } else if (format == ExportFormat::Csv) {
       writeTerm(s, format);
-      writeChar(',');
+      writeFieldSeparator(format);
       writeTerm(p, format);
-      writeChar(',');
+      writeFieldSeparator(format);
       writeTerm(o, format);
-      writeChar('\n');
+      writeTripleEnd(format);
     } else {
       AD_CORRECTNESS_CHECK(format == ExportFormat::Tsv);
       writeTerm(s, format);
-      writeChar('\t');
+      writeFieldSeparator(format);
       writeTerm(p, format);
-      writeChar('\t');
+      writeFieldSeparator(format);
       writeTerm(o, format);
-      writeChar('\n');
+      writeTripleEnd(format);
     }
     ++totalTriples_;
   }
@@ -435,18 +485,22 @@ class FastExportStreamFormatter {
   // ___________________________________________________________________________
   // Write a tabular row for SELECT query export.
   void writeRow(ExportFormat format, ql::span<const std::string_view> cells) {
-    const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
+    // SELECT rows are CSV or TSV on the wire; other formats reuse the TSV
+    // encoding (matching the previous `'\t'` fallback).
+    const bool isCsv = (format == ExportFormat::Csv);
     for (size_t i = 0; i < cells.size(); ++i) {
       if (i > 0) {
-        writeChar(delimiter);
+        writePacked(isCsv ? ad_utility::SwarDelimiterPacker::DELIM_CSV_COMMA
+                          : ad_utility::SwarDelimiterPacker::DELIM_TSV_TAB);
       }
-      if (format == ExportFormat::Csv) {
+      if (isCsv) {
         writeEscapedCsv(cells[i]);
       } else {
         writeEscapedTsv(cells[i]);
       }
     }
-    writeChar('\n');
+    writePacked(isCsv ? ad_utility::SwarDelimiterPacker::DELIM_CSV_NEWLINE
+                      : ad_utility::SwarDelimiterPacker::DELIM_TSV_NEWLINE);
   }
 
   // ___________________________________________________________________________
