@@ -315,7 +315,16 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
                     std::decay_t<decltype(vocabulary_)>>::value) {
     return vocabulary_.lookupBatch(indices, builder);
   } else {
-    return vocabulary_.lookupBatch(indices);
+    // The underlying vocabulary has no builder-based lookup: copy the words
+    // from a regular batch lookup into `builder` and finalize it, so the
+    // caller observes the same protocol as for builder-native vocabularies
+    // (a builder finalized without any appended word is an error, and the
+    // caller finalizes nothing itself).
+    auto words = vocabulary_.lookupBatch(indices);
+    for (std::string_view word : words) {
+      builder.appendWord(word);
+    }
+    return std::move(builder).finalize();
   }
 }
 

@@ -53,7 +53,16 @@ class UnicodeVocabulary {
       _underlyingVocabulary.lookupBatch(indices, builder);
       return std::move(builder).finalize();
     } else {
-      return _underlyingVocabulary.lookupBatch(indices);
+      // The underlying vocabulary has no builder-based lookup: copy the
+      // words from a regular batch lookup into `builder` and finalize it,
+      // so the caller observes the same protocol as for builder-native
+      // vocabularies (a builder finalized without any appended word is an
+      // error, and the caller finalizes nothing itself).
+      auto words = _underlyingVocabulary.lookupBatch(indices);
+      for (std::string_view word : words) {
+        builder.appendWord(word);
+      }
+      return std::move(builder).finalize();
     }
   }
 

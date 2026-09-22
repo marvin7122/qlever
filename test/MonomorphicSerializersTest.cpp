@@ -124,7 +124,9 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
       });
 
   EXPECT_EQ(dynamicOut, monomorphicOut);
-  EXPECT_EQ(dynamicOut, "<http://example.org/x>,\"test\",42\n");
+  // `test` contains no CSV special characters, so conditional quoting
+  // (like upstream `escapeForCsv`, see the NOTE above) leaves it bare.
+  EXPECT_EQ(dynamicOut, "<http://example.org/x>,test,42\n");
 }
 
 TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
