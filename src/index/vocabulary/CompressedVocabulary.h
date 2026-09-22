@@ -215,7 +215,8 @@ CPP_template(typename UnderlyingVocabulary,
         // decoding a nonexistent word (see `getDecoderIdx`: the fallback
         // decoder index for a hole is meaningless).
         if (!underlyingVocabulary_.positionOfIndex(idx).has_value()) {
-          builder.appendWord(placeholderForMissingVocabIndex(idx));
+          builder.appendWord(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
           continue;
         }
       }
