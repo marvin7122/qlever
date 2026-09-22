@@ -235,6 +235,11 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    // An empty batch finalizes to nothing; in particular the builder below
+    // must never be finalized without any appended word.
+    if (indices.empty()) {
+      return {};
+    }
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
     return std::move(builder).finalize();

@@ -41,6 +41,11 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
+    // An empty batch leaves the builder untouched and yields an empty
+    // result (finalizing without any appended word is an error).
+    if (indices.empty()) {
+      return {};
+    }
     if constexpr (VocabSupportsBuilderLookupBatch<
                       UnderlyingVocabulary>::value) {
       // The builder-based overload returns `void` and appends into `builder`;

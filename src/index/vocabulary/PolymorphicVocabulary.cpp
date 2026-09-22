@@ -64,6 +64,11 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
 // _____________________________________________________________________________
 VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+  // An empty batch leaves the builder untouched and yields an empty result
+  // (finalizing without any appended word is an error).
+  if (indices.empty()) {
+    return {};
+  }
   return std::visit(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
         if constexpr (VocabSupportsBuilderLookupBatch<
