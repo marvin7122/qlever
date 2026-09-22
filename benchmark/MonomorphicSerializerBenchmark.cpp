@@ -60,7 +60,13 @@ struct AllocationTracker {
   }
 };
 
-// Global new/delete instrumentation
+// Global new/delete instrumentation for allocation counting during benchmark
+// runs. Disabled under ThreadSanitizer, whose runtime provides its own
+// definitions of these operators (multiple definition link error otherwise).
+// The sized deallocation functions forward to the unsized ones instead of
+// calling `std::free` directly, which GCC rejects with
+// `-Werror=mismatched-new-delete`.
+#ifndef __SANITIZE_THREAD__
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -75,7 +81,9 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+void operator delete(void* ptr, std::size_t) noexcept {
+  ::operator delete(ptr);
+}
 
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
@@ -91,7 +99,10 @@ void* operator new[](std::size_t size) {
 
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
 
-void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+void operator delete[](void* ptr, std::size_t) noexcept {
+  ::operator delete[](ptr);
+}
+#endif
 
 namespace ad_benchmark {
 namespace {
@@ -250,7 +261,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   std::string_view predLabel = data.stringPool_[0];
   std::string_view predType = data.stringPool_[1];
   std::string_view predPop = data.stringPool_[2];
-  std::string_view predArea = data.stringPool_[3];
 
   for (size_t i = 0; i < numRows; ++i) {
     // Subjects
