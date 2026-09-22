@@ -231,7 +231,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
 
   std::string_view predLabel = data.stringPool_[0];
   std::string_view predPop = data.stringPool_[2];
-  std::string_view predArea = data.stringPool_[3];
 
   for (size_t i = 0; i < numRows; ++i) {
     // Subjects
@@ -406,13 +405,29 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-              dispatchMonomorphicSerializer(schema, [&]<ColumnType... Types>() {
-                using Serializer = MonomorphicRowSerializer<Types...>;
-                for (const auto& row : data_.tripleRows_) {
-                  Serializer::template serializeRow<ExportFormat::Csv>(
-                      formatter, ql::span<const CellValue>(row));
+              // Visitor serving both dispatch protocols: the
+              // type-parameterized fast paths and the
+              // `DynamicRowSerializer` fallback.
+              struct CsvRowSerializer {
+                FastExportStreamFormatter& formatter;
+                const std::vector<std::array<CellValue, 3>>& rows;
+                template <ColumnType... Types>
+                void operator()() const {
+                  using Serializer = MonomorphicRowSerializer<Types...>;
+                  for (const auto& row : rows) {
+                    Serializer::template serializeRow<ExportFormat::Csv>(
+                        formatter, ql::span<const CellValue>(row));
+                  }
                 }
-              });
+                void operator()(DynamicRowSerializer& dynamicSerializer) const {
+                  for (const auto& row : rows) {
+                    dynamicSerializer.serializeRow<ExportFormat::Csv>(
+                        formatter, ql::span<const CellValue>(row));
+                  }
+                }
+              };
+              dispatchMonomorphicSerializer(
+                  schema, CsvRowSerializer{formatter, data_.tripleRows_});
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();

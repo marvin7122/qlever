@@ -265,7 +265,9 @@ class ScatterGatherBenchmarkRunner {
         [&](ScatterGatherChunk chunk) {
           totalBytes += chunk.totalBytes();
           totalZeroCopyBytes += chunk.zeroCopyBytes();
-          chunk.writeToFd(nullFd);
+          // Byte accounting happens via `totalBytes()` above; the `writeToFd`
+          // result is intentionally discarded.
+          static_cast<void>(chunk.writeToFd(nullFd));
         },
         config);
 
