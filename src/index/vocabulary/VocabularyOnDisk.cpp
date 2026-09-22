@@ -31,8 +31,11 @@ OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
   std::array<Offset, 2> offsets{};
   // Assert no unexpected padding.
   static_assert(sizeof(offsets) == sizeof(Offset) * 2);
-  offsetsFile_.read(offsets.data(), sizeof(offsets),
-                    static_cast<off_t>(i * sizeof(Offset)));
+  const ssize_t numRead = offsetsFile_.read(
+      offsets.data(), sizeof(offsets), static_cast<off_t>(i * sizeof(Offset)));
+  if (numRead != static_cast<ssize_t>(sizeof(offsets))) {
+    AD_THROW("failed to read word offsets in `VocabularyOnDisk`");
+  }
   return {offsets[0], offsets[1] - offsets[0]};
 }
 
@@ -41,8 +44,48 @@ std::string VocabularyOnDisk::operator[](uint64_t idx) const {
   AD_CONTRACT_CHECK(idx < size());
   auto offsetAndSize = getOffsetAndSize(idx);
   std::string result(offsetAndSize.size_, '\0');
-  file_.read(result.data(), offsetAndSize.size_,
-             static_cast<off_t>(offsetAndSize.offset_));
+  if (offsetAndSize.size_ == 0) {
+    return result;
+  }
+  if (coalesceForPassthrough_) {
+    // Serve single-word reads through the pooled batch manager with a
+    // one-word coalesced plan, so they take the same whole-block path as
+    // batch lookups. Plain `pread` cannot serve character devices at all,
+    // and silently returning unwritten memory would corrupt results without
+    // an error (e.g. an unresolvable IRI empties a whole query plan).
+    const auto plan = ad_utility::nvmePassthrough::planBlockReads(
+        {offsetAndSize.offset_}, {offsetAndSize.size_});
+    std::vector<char> staging(plan.stagingBytes);
+    auto manager = ioManagers_->pop().value();
+    absl::Cleanup returnManager{[this, &manager]() {
+      ad_utility::terminateIfThrows(
+          [this, &manager]() { ioManagers_->push(std::move(manager)); },
+          "returning the `IoManager` to the pool in "
+          "`VocabularyOnDisk::operator[]`");
+    }};
+    std::vector<size_t> runSizes;
+    std::vector<uint64_t> runOffsets;
+    std::vector<char*> runTargets;
+    runSizes.reserve(plan.runs.size());
+    runOffsets.reserve(plan.runs.size());
+    runTargets.reserve(plan.runs.size());
+    for (const auto& run : plan.runs) {
+      runSizes.push_back(run.numBytes);
+      runOffsets.push_back(run.fileOffset);
+      runTargets.push_back(staging.data() + run.stagingOffset);
+    }
+    manager.wait(
+        manager.addBatch(file_.fd(), runSizes, runOffsets, runTargets));
+    AD_CORRECTNESS_CHECK(plan.slices.size() == 1);
+    std::memcpy(result.data(), staging.data() + plan.slices[0].stagingOffset,
+                plan.slices[0].numBytes);
+    return result;
+  }
+  const ssize_t numRead = file_.read(result.data(), offsetAndSize.size_,
+                                     static_cast<off_t>(offsetAndSize.offset_));
+  if (numRead != static_cast<ssize_t>(offsetAndSize.size_)) {
+    AD_THROW("failed to read word in `VocabularyOnDisk::operator[]`");
+  }
   return result;
 }
 
