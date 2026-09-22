@@ -13,6 +13,7 @@
 #include <gmock/gmock.h>
 #include <unistd.h>
 
+#include <cassert>
 #include <cstdlib>
 
 #include "../../util/GTestHelpers.h"
@@ -350,7 +351,8 @@ class EnvVarGuard {
     if (old != nullptr) {
       old_ = old;
     }
-    ASSERT_EQ(::setenv(name, value, 1), 0);
+    // No GTest assertion here: assertions return from a constructor.
+    assert(::setenv(name, value, 1) == 0);
   }
   ~EnvVarGuard() {
     if (old_.has_value()) {
