@@ -29,7 +29,8 @@ std::string captureOutput(Fn&& fn) {
   auto sink = [&](std::string_view chunk) { out.append(chunk); };
   FastExportStreamFormatter formatter(sink);
   fn(formatter);
-  std::move(formatter).finalize();
+  const ExportStreamSummary summary = std::move(formatter).finalize();
+  EXPECT_EQ(summary.totalBytesWritten_, out.size());
   return out;
 }
 
