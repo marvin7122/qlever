@@ -192,6 +192,12 @@ class File {
       if (ret < 0) {
         return ret;
       }
+      // End of file returns 0 without advancing: report the bytes read so
+      // far instead of spinning forever. Callers that need the full length
+      // check the return value (a short read is an error for them).
+      if (ret == 0) {
+        return bytesRead;
+      }
       bytesRead += ret;
     }
     return bytesRead;
