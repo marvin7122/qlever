@@ -38,8 +38,9 @@ TEST(MonomorphicSerializersTest, MonomorphicTripleCsvSerialization) {
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Csv>(
-        fmt, "<http://example.org/subj>", "<http://example.org/pred>",
-        "\"Hello, World!\"");
+        fmt, std::string_view{"<http://example.org/subj>"},
+        std::string_view{"<http://example.org/pred>"},
+        std::string_view{"\"Hello, World!\""});
   });
 
   EXPECT_EQ(result,
@@ -53,7 +54,9 @@ TEST(MonomorphicSerializersTest, MonomorphicTripleTurtleSerialization) {
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Turtle>(
-        fmt, "<http://example.org/s>", "<http://example.org/p>", "\"val\"");
+        fmt, std::string_view{"<http://example.org/s>"},
+        std::string_view{"<http://example.org/p>"},
+        std::string_view{"\"val\""});
   });
 
   EXPECT_EQ(result,
@@ -67,7 +70,8 @@ TEST(MonomorphicSerializersTest, MonomorphicMixedTypesTsvSerialization) {
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Tsv>(
-        fmt, "<http://example.org/city>", "\"Freiburg\"", 230000, 153.07);
+        fmt, std::string_view{"<http://example.org/city>"},
+        std::string_view{"\"Freiburg\""}, 230000, 153.07);
   });
 
   EXPECT_EQ(result,

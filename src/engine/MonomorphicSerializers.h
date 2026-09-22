@@ -516,12 +516,13 @@ class MonomorphicRowSerializer {
   }
 
   // ___________________________________________________________________________
-  // High-throughput batch serialization over a collection of rows
+  // High-throughput batch serialization over a collection of tuple-like rows
+  // (e.g. `std::array<CellValue, N>` or `std::tuple<...>`).
   template <ExportFormat Format, typename Writer, typename RowContainer>
   static size_t serializeBatch(Writer& writer, const RowContainer& rows) {
     size_t count = 0;
     for (const auto& row : rows) {
-      serializeRow<Format>(writer, row);
+      serializeRowTuple<Format>(writer, row);
       ++count;
     }
     return count;
