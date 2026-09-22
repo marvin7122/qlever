@@ -6,9 +6,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <boost/asio/post.hpp>
 #include <boost/asio/static_thread_pool.hpp>
-#include <atomic>
 #include <chrono>
 #include <functional>
 #include <future>
