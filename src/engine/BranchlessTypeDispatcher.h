@@ -63,6 +63,7 @@ inline char* formatDoubleValue(char* out, char* last, double value) noexcept {
   return numChars > 0 ? out + numChars : out;
 #else
   auto [ptr, ec] = std::to_chars(out, last, value);
+  (void)ec;
   return ptr;
 #endif
 }
@@ -87,6 +88,7 @@ inline char* formatInteger(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [ptr, ec] = std::to_chars(out, out + 24, id.getInt());
+  (void)ec;
   out = ptr;
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
@@ -129,6 +131,7 @@ inline char* formatBlankNode(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [ptr, ec] = std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
+  (void)ec;
   out = ptr;
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
@@ -142,6 +145,7 @@ inline char* formatDate(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [str, type] = id.getDate().toStringAndType();
+  (void)type;
   std::memcpy(out, str.data(), str.size());
   out += str.size();
   std::memcpy(out, suffix.data(), suffix.size());
@@ -156,6 +160,7 @@ inline char* formatGeoPoint(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [str, type] = id.getGeoPoint().toStringAndType();
+  (void)type;
   std::memcpy(out, str.data(), str.size());
   out += str.size();
   std::memcpy(out, suffix.data(), suffix.size());
@@ -337,6 +342,7 @@ class BranchlessTypeDispatcher {
     const uint8_t typeTag =
         static_cast<uint8_t>(id.getBits() >> ValueId::numDataBits) & 0x0F;
     const auto& desc = lut[typeTag];
+    AD_CONTRACT_CHECK(desc.formatFn_ != nullptr);
     return desc.formatFn_(id, rawTerm, out, desc.prefix_, desc.suffix_);
   }
 
@@ -350,6 +356,9 @@ class BranchlessTypeDispatcher {
       char* out, const LookupTable& lut = kDefaultTypeFormatLut) {
     AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
     AD_CONTRACT_CHECK(out != nullptr || ids.empty());
+    if (ids.empty()) {
+      return 0;
+    }
 
     char* curr = out;
     const size_t numTerms = ids.size();
