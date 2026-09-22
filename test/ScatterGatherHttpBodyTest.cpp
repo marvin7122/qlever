@@ -42,6 +42,33 @@ std::string concatBuffers(
   return result;
 }
 
+// NOTE: These generators are namespace-scope coroutine functions rather than
+// immediately-invoked lambdas. GCC 11 crashes with an internal compiler error
+// (`build_special_member_call` in `morph_fn_to_coro`) when an
+// immediately-invoked lambda coroutine `co_yield`s a prvalue in this
+// translation unit; plain coroutine functions are unaffected.
+scatter_gather_body::value_type emptyGenerator() { co_return; }
+
+scatter_gather_body::value_type singleChunkGenerator() {
+  co_yield makeChunk({"ab", "cde"});
+}
+
+scatter_gather_body::value_type emptyThenDataChunkGenerator() {
+  co_yield makeChunk({});
+  co_yield makeChunk({"xy"});
+}
+
+scatter_gather_body::value_type throwingGenerator() {
+  throw std::runtime_error("Test Exception");
+  co_return;
+}
+
+scatter_gather_body::value_type chunkThenThrowingGenerator() {
+  co_yield makeChunk({"ok"});
+  throw std::runtime_error("Test Exception");
+  co_return;
+}
+
 scatter_gather_body::writer makeWriter(
     boost::beast::http::header<false, boost::beast::http::fields>& header,
     scatter_gather_body::value_type& generator) {
@@ -52,7 +79,7 @@ scatter_gather_body::writer makeWriter(
 
 // _____________________________________________________________________________
 TEST(ScatterGatherHttpBody, InitReturnsNoErrorCode) {
-  auto generator = []() -> scatter_gather_body::value_type { co_return; }();
+  auto generator = emptyGenerator();
   boost::beast::http::header<false, boost::beast::http::fields> header;
   auto writer = makeWriter(header, generator);
   boost::system::error_code errorCode;
@@ -63,7 +90,7 @@ TEST(ScatterGatherHttpBody, InitReturnsNoErrorCode) {
 
 // _____________________________________________________________________________
 TEST(ScatterGatherHttpBody, EmptyGeneratorReturnsEmptyResult) {
-  auto generator = []() -> scatter_gather_body::value_type { co_return; }();
+  auto generator = emptyGenerator();
   boost::beast::http::header<false, boost::beast::http::fields> header;
   auto writer = makeWriter(header, generator);
   boost::system::error_code errorCode;
@@ -75,9 +102,7 @@ TEST(ScatterGatherHttpBody, EmptyGeneratorReturnsEmptyResult) {
 
 // _____________________________________________________________________________
 TEST(ScatterGatherHttpBody, WriterSurfacesChunkSegmentsAsConstBuffers) {
-  auto generator = []() -> scatter_gather_body::value_type {
-    co_yield makeChunk({"ab", "cde"});
-  }();
+  auto generator = singleChunkGenerator();
   boost::beast::http::header<false, boost::beast::http::fields> header;
   auto writer = makeWriter(header, generator);
   boost::system::error_code errorCode;
@@ -95,10 +120,7 @@ TEST(ScatterGatherHttpBody, WriterSurfacesChunkSegmentsAsConstBuffers) {
 
 // _____________________________________________________________________________
 TEST(ScatterGatherHttpBody, WriterSkipsEmptyChunks) {
-  auto generator = []() -> scatter_gather_body::value_type {
-    co_yield makeChunk({});
-    co_yield makeChunk({"xy"});
-  }();
+  auto generator = emptyThenDataChunkGenerator();
   boost::beast::http::header<false, boost::beast::http::fields> header;
   auto writer = makeWriter(header, generator);
   boost::system::error_code errorCode;
@@ -115,10 +137,7 @@ TEST(ScatterGatherHttpBody, WriterSkipsEmptyChunks) {
 // through the test body.
 // _____________________________________________________________________________
 TEST(ScatterGatherHttpBody, ThrowBeforeFirstChunkMapsToEpipe) {
-  auto generator = []() -> scatter_gather_body::value_type {
-    throw std::runtime_error("Test Exception");
-    co_return;
-  }();
+  auto generator = throwingGenerator();
   boost::beast::http::header<false, boost::beast::http::fields> header;
   auto writer = makeWriter(header, generator);
   boost::system::error_code errorCode;
@@ -131,11 +150,7 @@ TEST(ScatterGatherHttpBody, ThrowBeforeFirstChunkMapsToEpipe) {
 
 // _____________________________________________________________________________
 TEST(ScatterGatherHttpBody, ThrowAfterFirstChunkMapsToEpipe) {
-  auto generator = []() -> scatter_gather_body::value_type {
-    co_yield makeChunk({"ok"});
-    throw std::runtime_error("Test Exception");
-    co_return;
-  }();
+  auto generator = chunkThenThrowingGenerator();
   boost::beast::http::header<false, boost::beast::http::fields> header;
   auto writer = makeWriter(header, generator);
   boost::system::error_code errorCode;
