@@ -60,7 +60,12 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+// NOTE: No sized `operator delete` overloads are provided on purpose. They
+// would only forward to `std::free` like the unsized overloads above, and
+// GCC 13 diagnoses that pattern with `-Werror=mismatched-new-delete`. Sized
+// deallocation transparently falls back to the unsized overloads, so the
+// `malloc`/`free` pairing (and the allocation tracking in `operator new`)
+// is unchanged.
 
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
@@ -75,8 +80,6 @@ void* operator new[](std::size_t size) {
 }
 
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
-
-void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
 
 namespace ad_benchmark {
 namespace {
