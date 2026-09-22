@@ -2,11 +2,13 @@
 # Mirrors .github/workflows/install-dependencies-ubuntu + install-compiler-ubuntu
 # so Wolga legs behave exactly like the GitHub-hosted legs. Boost 1.83 comes
 # from the standard Noble repositories (no PPA needed).
-# NOTE: rootless podman on the cluster hosts cannot unpack upstream Ubuntu
-# layers (non-root file owners need subuid ranges the build user lacks), so
-# toolchain images build FROM the flattened local clone (see
-# .github/workflows/base-clone-builder.yml), not from upstream Ubuntu.
-FROM localhost/wolga-clone:ubuntu24
+# NOTE: build this on GitHub (docker as root, see
+# .github/workflows/toolchain-image-builder.yml), NOT rootless on the
+# cluster: unpacking upstream Ubuntu layers and dpkg chowns need UID/GID
+# ranges the cluster build user lacks. The trailing chown makes every file
+# 0:0 so the tarball imports cleanly under a single-UID mapping via
+# `podman load` on the cluster host.
+FROM ubuntu:24.04
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 LC_CTYPE=C.UTF-8 DEBIAN_FRONTEND=noninteractive
 # Rootless build containers cannot setgroups(2), so apt's privilege-dropping
 # sandbox dies with "Operation not permitted". Disable it: CI legs run as
@@ -26,3 +28,7 @@ RUN wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh \
  && apt-get install -y clang-18 \
  && rm -rf /var/lib/apt/lists/* ./llvm.sh
 ENV CC=clang-18 CXX=clang++-18
+# Flatten ownership so the image imports rootless (see header NOTE).
+RUN chown -R 0:0 / \
+ && chmod 640 /etc/shadow /etc/gshadow \
+ && echo TOOLCHAIN-IMAGE-OK

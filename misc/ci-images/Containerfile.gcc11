@@ -20,3 +20,10 @@ RUN add-apt-repository -y ppa:mhier/libboost-latest && apt-get update \
     libboost-container1.83-dev libboost-filesystem1.83-dev \
  && rm -rf /var/lib/apt/lists/*
 ENV CC=gcc-11 CXX=g++-11
+# NOTE: build this on GitHub (docker as root, see
+# .github/workflows/toolchain-image-builder.yml), NOT rootless on the
+# cluster (same UID/GID reason as above). Flatten ownership so the tarball
+# imports cleanly under a single-UID mapping via `podman load`.
+RUN chown -R 0:0 / \
+ && chmod 640 /etc/shadow /etc/gshadow \
+ && echo TOOLCHAIN-IMAGE-OK
