@@ -342,8 +342,7 @@ class PrefetchingBenchmark : public BenchmarkInterface {
     for (size_t distance : testDistances) {
       std::vector<std::string_view> resolved(NUM_LOOKUP_IDS);
       HardwarePerformanceMonitor::CounterSample sample;
-      PrefetchingBatchResolver resolver(
-          PrefetchConfig{.prefetchDistance = distance});
+      PrefetchingBatchResolver resolver(PrefetchConfig{distance});
 
       std::string label =
           "Prefetched Lookup (Pipelined K = " + std::to_string(distance) +

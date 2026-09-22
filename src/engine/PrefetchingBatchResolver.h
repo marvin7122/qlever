@@ -94,8 +94,7 @@ class PrefetchingBatchResolver {
  public:
   // Default constructor with standard tuned prefetch distance of 8 rows.
   explicit PrefetchingBatchResolver(
-      PrefetchConfig config =
-          PrefetchConfig{.prefetchDistance = DEFAULT_PREFETCH_DISTANCE})
+      PrefetchConfig config = PrefetchConfig{DEFAULT_PREFETCH_DISTANCE})
       : config_{config} {}
 
   // ___________________________________________________________________________
@@ -284,8 +283,7 @@ inline void resolveVocabIndexIdsPrefetched(
     ql::span<const size_t> positions,
     ql::span<std::optional<std::pair<std::string, const char*>>> results,
     const EscapeFunction& escapeFunction = EscapeFunction{}) {
-  PrefetchingBatchResolver resolver{
-      PrefetchConfig{.prefetchDistance = PrefetchDistance}};
+  PrefetchingBatchResolver resolver{PrefetchConfig{PrefetchDistance}};
   resolver
       .resolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
           index, ids, positions, results, escapeFunction);
@@ -302,8 +300,7 @@ template <bool removeQuotesAndAngleBrackets = false,
 idsToStringAndTypePrefetched(
     const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
     const EscapeFunction& escapeFunction = EscapeFunction{}) {
-  PrefetchingBatchResolver resolver{
-      PrefetchConfig{.prefetchDistance = PrefetchDistance}};
+  PrefetchingBatchResolver resolver{PrefetchConfig{PrefetchDistance}};
   return resolver
       .idsToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
           index, ids, localVocab, escapeFunction);
