@@ -221,14 +221,17 @@ class ExportPipelineRouter {
         }
       }
 
-      if (explicitlyRequestedV2 && !eligible) {
-        reason =
-            "Fallback to Legacy V1 (fast-path requested but query is "
-            "ineligible for V2 streaming)";
-      } else if (explicitlyRequestedV1) {
+      // Same precedence as `selectEngine` above: an explicit V1 override wins
+      // over any V2 request (including for ineligible queries), so it must be
+      // diagnosed first.
+      if (explicitlyRequestedV1) {
         reason =
             "Legacy V1 selected (explicitly requested via query parameter or "
             "header override)";
+      } else if (explicitlyRequestedV2 && !eligible) {
+        reason =
+            "Fallback to Legacy V1 (fast-path requested but query is "
+            "ineligible for V2 streaming)";
       } else if (serverDefault == ExportEngineMode::FastStreamingV2 &&
                  !eligible) {
         reason =

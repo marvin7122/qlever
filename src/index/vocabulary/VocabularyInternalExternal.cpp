@@ -35,6 +35,10 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 struct IndexPartition {
   MarkerIndicesAndPositions internalSlots_;
   MarkerIndicesAndPositions diskSlots_;
+  // Words probed from the internal vocabulary while partitioning, in the same
+  // order as `internalSlots_`. Reusing them below avoids looking each
+  // internal hit up a second time inside `lookupBatch`.
+  std::vector<std::string_view> internalWords_;
 };
 
 // _____________________________________________________________________________
@@ -45,16 +49,26 @@ static IndexPartition partitionIndicesBySource(
   IndexPartition result;
   result.internalSlots_.reserve(indices.size());
   result.diskSlots_.reserve(indices.size());
+  result.internalWords_.reserve(indices.size());
 
   for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
     const auto& fromInternal = internalVocab[idx];
     if (fromInternal.has_value()) {
       result.internalSlots_.addPair(idx, i);
+      result.internalWords_.push_back(fromInternal.value());
     } else {
       result.diskSlots_.addPair(idx, i);
     }
   }
   return result;
+}
+
+// _____________________________________________________________________________
+// Assemble a self-contained batch result from the internal words preserved
+// during partitioning (no second vocabulary lookup for these hits).
+static VocabBatchLookupResult makeInternalSubBatchResult(
+    ql::span<const std::string_view> internalWords) {
+  return makePmrVocabBatchLookupResult(internalWords);
 }
 
 // _____________________________________________________________________________
@@ -72,8 +86,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   }
 
   if (partition.diskSlots_.empty()) {
-    return internalVocab_.lookupBatch(
-        partition.internalSlots_.getUnderlyingIndices());
+    return makeInternalSubBatchResult(partition.internalWords_);
   }
 
   // Handle mixed internal and external indices by assembling results from both
@@ -83,10 +96,9 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // 1. Pass the internal sub-result to the assembler, which takes ownership of
   // the result data so its string views remain valid, and place the values at
   // their original request positions.
-  auto internal = internalVocab_.lookupBatch(
-      partition.internalSlots_.getUnderlyingIndices());
+  auto internal = makeInternalSubBatchResult(partition.internalWords_);
   assembler.scatterSubBatchResultAtPositions(
-      std::move(internal), partition.internalSlots_.getResultPositions());
+      internal, partition.internalSlots_.getResultPositions());
 
   // 2. Pass the external sub-result to the assembler and retain its result data
   // so the returned string views remain valid, placing the values at their

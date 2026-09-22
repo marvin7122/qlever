@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -306,6 +307,10 @@ class ExportJobState final
     bool consumed_{false};
     absl::AnyInvocable<ResultType()> task_;
     std::optional<ResultType> result_;
+    // Captured failure of `task_`: rethrown by `consumeNextResult` so a
+    // throwing morsel can neither strand its slot in `Running` nor hang the
+    // consumer forever (see `executeHelperTask`).
+    std::exception_ptr error_;
     MorselProfile profile_;
   };
 
@@ -419,19 +424,37 @@ class ExportJobState final
     }
 
     auto startCpu = getCpuDuration();
-    ResultType result = task();
-    auto endCpu = getCpuDuration();
-    auto endWall = std::chrono::steady_clock::now();
+    try {
+      ResultType result = task();
+      auto endCpu = getCpuDuration();
+      auto endWall = std::chrono::steady_clock::now();
 
-    {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        slots_[morselIndex].result_ = std::move(result);
+        slots_[morselIndex].status_ = MorselStatus::Completed;
+        slots_[morselIndex].profile_.completedAt_ = endWall;
+        slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
+        slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
+        slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
+        cv_.notify_all();
+      }
+    } catch (...) {
+      // Convert the exception into a terminal slot state and wake the
+      // consumer: rethrowing lets `workerLoop` keep its never-escape
+      // guarantee while `consumeNextResult` observes the stored failure
+      // instead of waiting on a `Running` slot forever.
       std::lock_guard<std::mutex> lock(mutex_);
-      slots_[morselIndex].result_ = std::move(result);
-      slots_[morselIndex].status_ = MorselStatus::Completed;
-      slots_[morselIndex].profile_.completedAt_ = endWall;
-      slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
-      slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
-      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
+      slots_[morselIndex].error_ = std::current_exception();
+      slots_[morselIndex].status_ = MorselStatus::Cancelled;
+      slots_[morselIndex].profile_.completedAt_ =
+          std::chrono::steady_clock::now();
+      slots_[morselIndex].profile_.wallDuration_ =
+          slots_[morselIndex].profile_.completedAt_ - startWall;
+      slots_[morselIndex].profile_.cpuDuration_ = getCpuDuration() - startCpu;
+      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Cancelled;
       cv_.notify_all();
+      throw;
     }
   }
 
@@ -546,6 +569,19 @@ class ExportJobState final
         return std::move(*slots_[index].result_);
       }
 
+      if (slots_[index].status_ == MorselStatus::Cancelled) {
+        // A helper worker converted a task exception into this terminal
+        // state (see `executeHelperTask`): surface the original failure
+        // instead of hanging on a slot that will never complete.
+        std::exception_ptr error = slots_[index].error_;
+        lock.unlock();
+        if (error) {
+          std::rethrow_exception(error);
+        }
+        AD_THROW("Export job cancelled while awaiting result slot " +
+                 std::to_string(index));
+      }
+
       if (slots_[index].status_ == MorselStatus::Pending) {
         // Single-core fallback: execute directly on coordinator thread
         slots_[index].status_ = MorselStatus::Running;
@@ -558,20 +594,38 @@ class ExportJobState final
 
         lock.unlock();
         auto startCpu = getCpuDuration();
-        ResultType result = primaryTask();
-        auto endCpu = getCpuDuration();
-        auto endWall = std::chrono::steady_clock::now();
-        lock.lock();
+        try {
+          ResultType result = primaryTask();
+          auto endCpu = getCpuDuration();
+          auto endWall = std::chrono::steady_clock::now();
+          lock.lock();
 
-        slots_[index].result_ = std::move(result);
-        slots_[index].status_ = MorselStatus::Completed;
-        slots_[index].profile_.completedAt_ = endWall;
-        slots_[index].profile_.wallDuration_ = endWall - startWall;
-        slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
-        slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
-        slots_[index].consumed_ = true;
-        cv_.notify_all();
-        return std::move(*slots_[index].result_);
+          slots_[index].result_ = std::move(result);
+          slots_[index].status_ = MorselStatus::Completed;
+          slots_[index].profile_.completedAt_ = endWall;
+          slots_[index].profile_.wallDuration_ = endWall - startWall;
+          slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
+          slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
+          slots_[index].consumed_ = true;
+          cv_.notify_all();
+          return std::move(*slots_[index].result_);
+        } catch (...) {
+          // Same terminal-state protocol as the helper path, so the morsel
+          // profile never dangles in `Running`; the original exception
+          // propagates directly to this synchronous caller.
+          lock.lock();
+          slots_[index].error_ = std::current_exception();
+          slots_[index].status_ = MorselStatus::Cancelled;
+          slots_[index].profile_.completedAt_ =
+              std::chrono::steady_clock::now();
+          slots_[index].profile_.wallDuration_ =
+              slots_[index].profile_.completedAt_ - startWall;
+          slots_[index].profile_.cpuDuration_ = getCpuDuration() - startCpu;
+          slots_[index].profile_.finalStatus_ = MorselStatus::Cancelled;
+          cv_.notify_all();
+          lock.unlock();
+          throw;
+        }
       }
 
       if (slots_[index].status_ == MorselStatus::Running) {
@@ -579,9 +633,12 @@ class ExportJobState final
         // unordered mode completions broadcast on this cv, so wake on any
         // finished unconsumed slot and re-select: emitting whichever morsel
         // is ready avoids head-of-line blocking behind the selected one.
-        // Ordered sessions preserve slot order and keep waiting.
+        // Ordered sessions preserve slot order and keep waiting. A
+        // `Cancelled` wakeup means the worker stored a task failure (handled
+        // above on the next loop iteration).
         cv_.wait(lock, [&] {
           return slots_[index].status_ == MorselStatus::Completed ||
+                 slots_[index].status_ == MorselStatus::Cancelled ||
                  cancelled_.load(std::memory_order_relaxed) ||
                  (!ordered_ && std::any_of(slots_.begin(), slots_.end(),
                                            [](const Slot& slot) {
