@@ -203,6 +203,15 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
 // per-test filenames so the suites are independent.
 class VocabBatchLookupDataVocabTest : public ::testing::Test {
  protected:
+  // Remove the vocabulary files after each test, so no artifacts linger after
+  // the run and a failed run leaves no stale files for subsequent runs. The
+  // vocabulary itself is a test-local object, hence already destroyed here.
+  void TearDown() override {
+    const auto filename = gtestCurrentTestName();
+    ad_utility::deleteFile(filename, false);
+    ad_utility::deleteFile(filename + ".ids", false);
+  }
+
   // Build a vocabulary containing exactly `word` at index 0 and open it.
   ad_utility::vocabulary::VocabularyInMemoryBinSearch buildVocab(
       std::string_view word) {

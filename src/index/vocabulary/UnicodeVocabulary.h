@@ -5,10 +5,12 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
+#include <string_view>
 #include <type_traits>
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
+#include "util/Exception.h"
 
 namespace ad_utility::vocabulary {
 
@@ -58,13 +60,23 @@ class UnicodeVocabulary {
         _underlyingVocabulary.lookupBatch(indices, builder);
         return std::move(builder).finalize();
       } else {
-        // Use the returned result: the underlying vocabulary may take its
-        // documented fallback path without touching `builder`, in which case
-        // finalizing `builder` here would fail on an empty batch.
+        // Use the returned result: the underlying vocabulary populates
+        // `builder` on its own fallback path (see `Vocabulary` and
+        // `PolymorphicVocabulary`, whose callers finalize it
+        // unconditionally), so just forward the result here.
         return _underlyingVocabulary.lookupBatch(indices, builder);
       }
     } else {
-      return _underlyingVocabulary.lookupBatch(indices);
+      // The underlying vocabulary has no builder support: copy the
+      // single-shot words into the caller's builder, so the unconditional
+      // `finalize()` in outer delegations (e.g. `PolymorphicVocabulary`)
+      // sees a populated builder.
+      auto singleShot = _underlyingVocabulary.lookupBatch(indices);
+      AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+      for (std::string_view word : singleShot) {
+        builder.appendWord(word);
+      }
+      return std::move(builder).finalize();
     }
   }
 

@@ -141,11 +141,16 @@ class VocabularyInMemoryBinSearch
 
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    // Indices past `endIndex()` are out of range (missing indices *below*
-    // `endIndex()` are holes and yield a placeholder, see
-    // `wordAsStringOrPlaceholder`).
+    // Indices past the largest stored index are out of range (missing indices
+    // *below* it are holes and yield a placeholder, see
+    // `wordAsStringOrPlaceholder`). Compare against the last stored index
+    // rather than `endIndex()`: the latter is one past the last index and
+    // wraps to 0 for a vocabulary containing the valid index `UINT64_MAX`
+    // (which the writer accepts), wrongly rejecting that lookup.
+    const auto storedIndices = this->indices();
     for (size_t idx : indices) {
-      AD_CONTRACT_CHECK(idx < endIndex());
+      AD_CONTRACT_CHECK(storedIndices.empty() ||
+                        static_cast<uint64_t>(idx) <= storedIndices.back());
     }
     return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
   }

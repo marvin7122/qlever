@@ -266,9 +266,10 @@ void ElasticExportScheduler::workerLoop() {
           targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
         } catch (...) {
           // An exception must never escape the worker thread: that would call
-          // `std::terminate`. The release below still runs, so waiters are
-          // notified and the slot leaves the `Running` state; the job observes
-          // the missing morsel result through its own protocol.
+          // `std::terminate`. `executeHelperTask` converts a task failure
+          // into a terminal `Cancelled` slot state (storing the exception and
+          // notifying waiters) before rethrowing, so the release below still
+          // runs and `consumeNextResult` rethrows the original failure.
         }
         targetJobState->onHelperLeaseReleased(leaseEpoch);
       }

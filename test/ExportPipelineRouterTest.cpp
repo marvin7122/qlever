@@ -159,6 +159,20 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
     EXPECT_THAT(desc, testing::HasSubstr("explicitly requested"));
   }
 
+  // 3b. Conflicting overrides follow `selectEngine` precedence: the explicit
+  // V1 flag wins over the V2 request, so the diagnostic must report the V1
+  // override (not a V2 fallback) for an ineligible query.
+  {
+    ExportPipelineRouter::ParamValueMap params;
+    params["fast-export"] = {"0"};
+    params["export-engine"] = {"v2"};
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(askQuery, params),
+              ExportEngineMode::LegacyV1);
+    std::string desc = ExportPipelineRouter::describeDecision(askQuery, params);
+    EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
+    EXPECT_THAT(desc, testing::HasSubstr("explicitly requested"));
+  }
+
   // 4. Default standard relational pipeline
   {
     ExportPipelineRouter::ParamValueMap params;

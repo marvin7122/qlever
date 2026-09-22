@@ -17,6 +17,7 @@
 #include "engine/export_v2/SimdEscapeClassifier.h"
 #include "engine/idTable/IdTable.h"
 #include "index/LocalVocab.h"
+#include "util/Exception.h"
 
 namespace ql::engine::export_v2 {
 
@@ -25,12 +26,28 @@ using qlever::export_v2::ScatterGatherChunkBuilder;
 
 // Lightweight tabular chunk serialization used by ExportEngineV2 and by
 // ExportEngineV2Test. Kept free of QueryExecutionTree / index TUs so cluster
-// GCC 11 builds can compile the unit test without IndexImpl/range-v3.
+// GCC 11 builds can compile the unit test without IndexImpl/range-v3. Only
+// index-free `Id` datatypes can therefore be resolved here; index-backed IDs
+// fail loudly instead of being silently replaced by placeholder text (the
+// full `Id` -> string conversion lives in `index/ExportIds.h`).
 inline ScatterGatherChunk serializeTableChunk(
-    const IdTable& idTable, [[maybe_unused]] const LocalVocab& localVocab,
-    RowFormat format, ScatterGatherChunkBuilder& builder) {
+    const IdTable& idTable, const LocalVocab& localVocab, RowFormat format,
+    ScatterGatherChunkBuilder& builder) {
   const size_t numRows = idTable.numRows();
   const size_t numCols = idTable.numColumns();
+
+  auto appendEscaped = [&builder, format](std::string_view raw) {
+    std::array<char, 256> buf{};
+    if (format == RowFormat::Csv) {
+      auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Csv>(
+          raw, {buf.data(), buf.size()});
+      builder.appendCopy(std::string_view(escaped.data(), escaped.size()));
+    } else {
+      auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Tsv>(
+          raw, {buf.data(), buf.size()});
+      builder.appendCopy(std::string_view(escaped.data(), escaped.size()));
+    }
+  };
 
   for (size_t row = 0; row < numRows; ++row) {
     for (size_t col = 0; col < numCols; ++col) {
@@ -42,20 +59,21 @@ inline ScatterGatherChunk serializeTableChunk(
         builder.appendCopy(std::to_string(id.getInt()));
       } else if (id.getDatatype() == Datatype::Double) {
         builder.appendCopy(std::to_string(id.getDouble()));
+      } else if (id.getDatatype() == Datatype::Bool) {
+        builder.appendCopy(id.getBoolLiteral());
       } else if (id.getDatatype() == Datatype::Undefined) {
         // empty string for undef
+      } else if (id.getDatatype() == Datatype::LocalVocabIndex) {
+        // Same source as `ql::exportIds::getLiteralOrIriFromVocabIndex`: the
+        // entry already is a `LiteralOrIri`, so its string representation is
+        // the exported cell content.
+        std::string_view raw = localVocab.getWord(id.getLocalVocabIndex())
+                                   .toStringRepresentation();
+        appendEscaped(raw);
       } else {
-        std::string raw = "<val>";
-        std::array<char, 256> buf{};
-        if (format == RowFormat::Csv) {
-          auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Csv>(
-              raw, {buf.data(), buf.size()});
-          builder.appendCopy(std::string_view(escaped.data(), escaped.size()));
-        } else {
-          auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Tsv>(
-              raw, {buf.data(), buf.size()});
-          builder.appendCopy(std::string_view(escaped.data(), escaped.size()));
-        }
+        AD_FAIL(
+            "ExportEngineV2 cannot serialize index-backed `Id` without the "
+            "index vocabulary");
       }
     }
     builder.appendCopy("\n");
