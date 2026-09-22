@@ -82,8 +82,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
     }
     return;
   }
-  if (nvmeOptions.namespaceId == 0 ||
-      nvmeOptions.logicalBlockSize == 0) {
+  if (nvmeOptions.namespaceId == 0 || nvmeOptions.logicalBlockSize == 0) {
     AD_THROW(
         "NVMe passthrough enabled with zero namespace id or block size in "
         "IoUringPolicy");
@@ -98,7 +97,7 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
     // (`nvme_uring_cmd_checks` rejects anything else). Plain
     // `io_uring_prep_read` SQEs keep working on such a ring, so requests that
     // fall back still submit unchanged.
-    struct io_uring_params params{};
+    struct io_uring_params params {};
     params.flags = IORING_SETUP_SQE128 | IORING_SETUP_CQE32;
     int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
     if (ret < 0) {
@@ -178,14 +177,31 @@ bool IoUringPolicy::tryPrepareNvmePassthrough(io_uring_sqe* sqe, int fd,
   const auto params = nvmePassthrough::translateToReadParams(
       fileOffset, numBytes, nvmeNamespaceId_, nvmeLogicalBlockSize_);
   if (!params.has_value()) {
+    // Capable fd, but the range is not a whole-block read (single small
+    // words outside the coalesced path).
+    ++nvmeCapableFallbacks_;
     return false;
   }
 #ifdef QLEVER_HAS_NVME_URING_CMD
   nvmePassthrough::preparePassthroughRead(sqe, fd, *params, targetBuffer);
+  ++nvmeReadsSubmitted_;
+  nvmeReadBytesSubmitted_ += params->transferBytes;
   return true;
 #else
   return false;
 #endif
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::dumpStats() const {
+  if (!nvmePassthroughEnabled_ ||
+      (nvmeReadsSubmitted_ == 0 && nvmeCapableFallbacks_ == 0)) {
+    return;
+  }
+  AD_LOG_INFO << "NVMe passthrough lifetime stats: " << nvmeReadsSubmitted_
+              << " native reads (" << nvmeReadBytesSubmitted_ << " bytes), "
+              << nvmeCapableFallbacks_
+              << " capable-fd fallbacks to plain reads." << std::endl;
 }
 
 //______________________________________________________________________________

@@ -95,6 +95,9 @@ class BatchManager final : public BatchManagerBase {
 
   BatchManager(const BatchManager&) = delete;
   BatchManager& operator=(const BatchManager&) = delete;
+  // Report the policy's lifetime statistics (a no-op unless the policy took
+  // the passthrough path at least once).
+  ~BatchManager() { policy_.dumpStats(); }
 
   [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
                                      ql::span<const uint64_t> offsets,
@@ -157,6 +160,11 @@ struct SyncIoPolicy {
   void wait(BatchHandle) const {
     // No-op: `addBatch` already completed all reads synchronously.
   }
+
+  // No-op: the synchronous policy never takes the passthrough path, so there
+  // is nothing to report. Exists only so `BatchManager` can call it
+  // uniformly.
+  void dumpStats() const {}
 
   // Read exactly `numBytes` bytes from file descriptor `fd` at `fileOffset`
   // (from the start of the file) into `targetBuffer`. Throws exception if the
@@ -234,13 +242,20 @@ class IoUringPolicy {
   // a later completion into an I/O error, never into silent wrong bytes.
   mutable ad_utility::HashMap<int, bool> nvmeCapableFds_;
 
+  // Lifetime counters for the passthrough path: submitted native NVMe reads,
+  // their bytes, and capable-fd requests that fell back to plain reads
+  // (unaligned ranges). Reported by `dumpStats`; silent unless passthrough
+  // served or refused capable requests, so regular rigs stay quiet.
+  uint64_t nvmeReadsSubmitted_ = 0;
+  uint64_t nvmeReadBytesSubmitted_ = 0;
+  uint64_t nvmeCapableFallbacks_ = 0;
+
   // Try to prepare `sqe` as an NVMe passthrough read of `numBytes` bytes at
   // `fileOffset` into `targetBuffer`. Returns false (leaving `sqe`
   // untouched) whenever passthrough does not apply, in which case the caller
   // falls back to the plain `io_uring_prep_read` path.
-  bool tryPrepareNvmePassthrough(io_uring_sqe* sqe, int fd,
-                                 uint64_t fileOffset, size_t numBytes,
-                                 char* targetBuffer);
+  bool tryPrepareNvmePassthrough(io_uring_sqe* sqe, int fd, uint64_t fileOffset,
+                                 size_t numBytes, char* targetBuffer);
 
   // Attribute an already-reaped `cqe` to its batch: recover the result and
   // the request id, consume the CQE slot, check for I/O and short-read
@@ -281,6 +296,12 @@ class IoUringPolicy {
   // keeps the plain path.
   void setNvmePassthroughEnabled(bool enabled);
   bool isNvmePassthroughEnabled() const { return nvmePassthroughEnabled_; }
+
+  // Log lifetime passthrough counters (submitted reads, bytes, capable-fd
+  // fallbacks). Called from the owning `BatchManager` destructor so a server
+  // stop reports what the path served. Silent unless passthrough is enabled
+  // and served or refused at least one capable request.
+  void dumpStats() const;
   // True iff this ring was created with 128-byte SQEs.
   bool uses128ByteSqes() const { return sqe128_; }
   // True iff `fd` passed the passthrough capability probe (cached per fd; the
