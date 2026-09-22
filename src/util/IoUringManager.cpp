@@ -92,20 +92,29 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
   nvmeLogicalBlockSize_ = nvmeOptions.logicalBlockSize;
 #ifdef IORING_SETUP_SQE128
   if (nvmePassthrough::kUringCmdSupported) {
-    // 128-byte SQEs carry the 80-byte NVMe command payload. Plain
+#ifdef IORING_SETUP_CQE32
+    // 128-byte SQEs carry the 80-byte NVMe command payload, and the NVMe
+    // driver only accepts `uring_cmd` on rings with 32-byte CQEs as well
+    // (`nvme_uring_cmd_checks` rejects anything else). Plain
     // `io_uring_prep_read` SQEs keep working on such a ring, so requests that
     // fall back still submit unchanged.
     struct io_uring_params params{};
-    params.flags = IORING_SETUP_SQE128;
+    params.flags = IORING_SETUP_SQE128 | IORING_SETUP_CQE32;
     int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
     if (ret < 0) {
       AD_THROW(
-          "io_uring_queue_init_params with IORING_SETUP_SQE128 failed in "
-          "IoUringPolicy");
+          "io_uring_queue_init_params with IORING_SETUP_SQE128 | "
+          "IORING_SETUP_CQE32 failed in IoUringPolicy");
     }
     sqe128_ = true;
     nvmePassthroughEnabled_ = true;
     return;
+#else
+    AD_LOG_WARN << "NVMe passthrough requested, but this liburing has no "
+                   "`IORING_SETUP_CQE32` (required by the NVMe driver for "
+                   "`uring_cmd` completions); continuing with a plain ring "
+                   "and the passthrough path disabled.\n";
+#endif
   }
   AD_LOG_WARN << "NVMe passthrough requested, but this build has no NVMe "
                  "`uring_cmd` support; continuing with a plain ring and the "
