@@ -899,6 +899,51 @@ TEST(NvmePassthroughTranslation, untranslatableRangesFallBack) {
   EXPECT_EQ(atMax->startLba, std::numeric_limits<uint64_t>::max());
 }
 
+// Block coalescing covers every word with whole blocks: a single aligned
+// word is one run with an identity slice, unaligned words span their
+// ceiling blocks, adjacent words merge into one run while slices keep
+// input order, and disjoint words yield separate runs with accumulating
+// staging offsets.
+TEST(NvmeBlockCoalescing, coversWordsWithMergedRuns) {
+  using ad_utility::nvmePassthrough::planBlockReads;
+  const auto plan = planBlockReads({0, 100, 1000, 5000}, {512, 100, 600, 10});
+  ASSERT_EQ(plan.runs.size(), 3u);
+  EXPECT_EQ(plan.runs[0].fileOffset, 0u);
+  EXPECT_EQ(plan.runs[0].numBytes, 512u);
+  EXPECT_EQ(plan.runs[1].fileOffset, 512u);
+  EXPECT_EQ(plan.runs[1].numBytes, 1536u);
+  EXPECT_EQ(plan.runs[2].fileOffset, 4608u);
+  EXPECT_EQ(plan.runs[2].numBytes, 512u);
+  EXPECT_EQ(plan.stagingBytes, 2560u);
+  ASSERT_EQ(plan.slices.size(), 4u);
+  EXPECT_EQ(plan.slices[0].stagingOffset, 0u);
+  EXPECT_EQ(plan.slices[0].numBytes, 512u);
+  EXPECT_EQ(plan.slices[1].stagingOffset, 100u);
+  EXPECT_EQ(plan.slices[1].numBytes, 100u);
+  EXPECT_EQ(plan.slices[2].stagingOffset, 512u + 488);
+  EXPECT_EQ(plan.slices[2].numBytes, 600u);
+  EXPECT_EQ(plan.slices[3].stagingOffset, 2048u + 392);
+  EXPECT_EQ(plan.slices[3].numBytes, 10u);
+}
+
+// Duplicate ranges share their blocks (one run) but keep one slice each,
+// zero-length words cover nothing, and empty input plans nothing.
+TEST(NvmeBlockCoalescing, duplicatesAndEmptyWords) {
+  using ad_utility::nvmePassthrough::planBlockReads;
+  const auto plan = planBlockReads({600, 600, 2000}, {100, 100, 0});
+  ASSERT_EQ(plan.runs.size(), 1u);
+  EXPECT_EQ(plan.runs[0].fileOffset, 512u);
+  EXPECT_EQ(plan.runs[0].numBytes, 512u);
+  ASSERT_EQ(plan.slices.size(), 3u);
+  EXPECT_EQ(plan.slices[0].stagingOffset, 88u);
+  EXPECT_EQ(plan.slices[1].stagingOffset, 88u);
+  EXPECT_EQ(plan.slices[2].numBytes, 0u);
+  const auto empty = planBlockReads({}, {});
+  EXPECT_TRUE(empty.runs.empty());
+  EXPECT_TRUE(empty.slices.empty());
+  EXPECT_EQ(empty.stagingBytes, 0u);
+}
+
 // The capability probe fails closed without throwing: an invalid fd, a
 // regular file, and a non-NVMe character device (such as `/dev/null`) are
 // all "not capable", so enabling passthrough can never divert them to the
