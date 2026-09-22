@@ -155,7 +155,6 @@ class IoUringDirectBenchmarkRunner {
     DirectIoFile file(filePath_, /*useDirectIo=*/false);
     AD_CONTRACT_CHECK(file.isOpen());
 
-    const size_t batchBytes = batchBlocks_ * kBlockSizeBytes;
     PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
 
     std::vector<uint64_t> offsets = generateOffsets(randomAccess);
