@@ -60,7 +60,9 @@ if (NOT _NO_BENCHMARK)
     linkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser qlever_util)
 
     add_executable(BranchlessDispatcherBenchmark BranchlessDispatcherBenchmark.cpp)
-    linkBenchmark(BranchlessDispatcherBenchmark engine sparqlParser qlever_util)
+    # Standalone benchmark with its own main(): link the benchmark
+    # infrastructure without its default main to avoid duplicate main symbols.
+    qlever_target_link_libraries(BranchlessDispatcherBenchmark benchmark engine sparqlParser qlever_util)
 
     add_executable(ScatterGatherBenchmark ScatterGatherBenchmark.cpp)
     linkBenchmark(ScatterGatherBenchmark engine sparqlParser qlever_util)

@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -179,6 +180,16 @@ namespace detail {
 template <typename Writer>
 inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   std::array<char, 32> buffer;
+#if defined(__APPLE__)
+  // Floating-point std::to_chars needs macOS 13.3+, but the CI build uses an
+  // older deployment target, so fall back to snprintf on Apple platforms.
+  int numChars = std::snprintf(buffer.data(), buffer.size(), "%.17g", val);
+  if (numChars > 0 && static_cast<size_t>(numChars) < buffer.size()) {
+    writer.writeRaw(std::string_view(buffer.data(), numChars));
+  } else {
+    writer.writeRaw("0.0");
+  }
+#else
   auto [ptr, ec] =
       std::to_chars(buffer.data(), buffer.data() + buffer.size(), val);
   if (ec == std::errc{}) {
@@ -186,6 +197,7 @@ inline void writeFormattedDouble(Writer& writer, double val) noexcept {
   } else {
     writer.writeRaw("0.0");
   }
+#endif
 }
 
 // _____________________________________________________________________________

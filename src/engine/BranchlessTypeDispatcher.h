@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 
@@ -83,8 +84,17 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
+#if defined(__APPLE__)
+  // Floating-point std::to_chars needs macOS 13.3+, but the CI build uses an
+  // older deployment target, so fall back to snprintf on Apple platforms.
+  int numChars = std::snprintf(out, 32, "%.17g", id.getDouble());
+  if (numChars > 0 && numChars < 32) {
+    out += numChars;
+  }
+#else
   auto [ptr, ec] = std::to_chars(out, out + 32, id.getDouble());
   out = ptr;
+#endif
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;
