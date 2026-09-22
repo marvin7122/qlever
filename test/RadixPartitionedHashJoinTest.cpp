@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+
 #include "engine/RadixPartitionedHashJoin.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
@@ -21,11 +23,14 @@ using namespace ad_utility::memory_literals;
 
 // The two tables overlap on keys [500..999], each appearing once per table,
 // so the join has exactly 500 matching pairs under bag semantics.
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, BasicPartitionAndJoin) {
   auto allocator = makeAllocator(1_MB);
 
   IdTable leftTable{2, allocator};
   IdTable rightTable{2, allocator};
+  leftTable.reserve(1000);
+  rightTable.reserve(1000);
 
   for (int i = 0; i < 1000; ++i) {
     leftTable.push_back({Id::makeFromInt(i), Id::makeFromInt(i * 10)});
@@ -34,6 +39,8 @@ TEST(RadixPartitionedHashJoinTest, BasicPartitionAndJoin) {
     rightTable.push_back({Id::makeFromInt(i), Id::makeFromInt(i * 100)});
   }
 
+  // Fewer partitions than the default 64 for faster test execution; the
+  // result is partition-count independent (see ResultIndependentOfRadixBits).
   size_t matches = RadixPartitionedHashJoin<4>::executeJoinCount(leftTable, 0,
                                                                  rightTable, 0);
 
@@ -41,6 +48,7 @@ TEST(RadixPartitionedHashJoinTest, BasicPartitionAndJoin) {
   EXPECT_EQ(matches, 500u);
 }
 
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, DuplicateKeysCountWithBagSemantics) {
   auto allocator = makeAllocator(1_MB);
 
@@ -63,6 +71,7 @@ TEST(RadixPartitionedHashJoinTest, DuplicateKeysCountWithBagSemantics) {
   EXPECT_EQ(matches, 6u);
 }
 
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, DisjointTablesZeroMatches) {
   auto allocator = makeAllocator(1_MB);
 
@@ -80,6 +89,7 @@ TEST(RadixPartitionedHashJoinTest, DisjointTablesZeroMatches) {
 
 // Empty inputs have no matches, and a single row on each side counts only
 // when the keys are equal.
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, EmptyAndSingleRowInputs) {
   auto allocator = makeAllocator(1_MB);
   IdTable empty{1, allocator};
@@ -101,6 +111,7 @@ TEST(RadixPartitionedHashJoinTest, EmptyAndSingleRowInputs) {
 }
 
 // All rows share one key: the count is the full cross product.
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, AllRowsSameKey) {
   auto allocator = makeAllocator(1_MB);
   IdTable leftTable{1, allocator};
@@ -118,6 +129,7 @@ TEST(RadixPartitionedHashJoinTest, AllRowsSameKey) {
 }
 
 // The join column need not be column zero.
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, NonZeroJoinColumn) {
   auto allocator = makeAllocator(1_MB);
   IdTable leftTable{3, allocator};
@@ -136,6 +148,7 @@ TEST(RadixPartitionedHashJoinTest, NonZeroJoinColumn) {
 }
 
 // The result must not depend on the number of radix partitions.
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, ResultIndependentOfRadixBits) {
   auto allocator = makeAllocator(1_MB);
   IdTable leftTable{1, allocator};
@@ -156,6 +169,7 @@ TEST(RadixPartitionedHashJoinTest, ResultIndependentOfRadixBits) {
 }
 
 // Partition indices stay in range and are stable per key.
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, PartitionIndexInRangeAndStable) {
   for (int i = 0; i < 100; ++i) {
     Id key = Id::makeFromInt(i);
@@ -166,6 +180,7 @@ TEST(RadixPartitionedHashJoinTest, PartitionIndexInRangeAndStable) {
 }
 
 // `partitionTable` preserves every row: the buckets jointly hold all keys.
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, PartitionTablePreservesAllRows) {
   auto allocator = makeAllocator(1_MB);
   IdTable table{1, allocator};
@@ -186,6 +201,7 @@ TEST(RadixPartitionedHashJoinTest, PartitionTablePreservesAllRows) {
 }
 
 // Invalid column indices are contract violations and throw.
+// _____________________________________________________________________________
 TEST(RadixPartitionedHashJoinTest, InvalidColumnIndexThrows) {
   auto allocator = makeAllocator(1_MB);
   IdTable leftTable{1, allocator};

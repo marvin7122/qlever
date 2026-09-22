@@ -37,7 +37,7 @@ namespace ql::engine::join {
 template <size_t RadixBits = 6>  // 2^6 = 64 partitions
 class RadixPartitionedHashJoin {
  public:
-  static_assert(RadixBits < 8 * sizeof(size_t),
+  static_assert(RadixBits < std::numeric_limits<size_t>::digits,
                 "RadixBits must fit into a size_t shift");
   static constexpr size_t NUM_PARTITIONS = size_t{1} << RadixBits;
   static constexpr size_t RADIX_MASK = NUM_PARTITIONS - 1;
@@ -63,7 +63,9 @@ class RadixPartitionedHashJoin {
   // Partition the join column of `table` into `NUM_PARTITIONS` buckets.
   static std::vector<PartitionBucket> partitionTable(const IdTable& table,
                                                      ColumnIndex joinColumn) {
-    AD_CONTRACT_CHECK(joinColumn < table.numColumns());
+    AD_CONTRACT_CHECK(joinColumn < table.numColumns(),
+                      "joinColumn=", joinColumn,
+                      ", numColumns=", table.numColumns());
     ad_utility::AllocatorWithLimit<Id> allocator{table.getAllocator()};
     std::vector<PartitionBucket> partitions;
     partitions.reserve(NUM_PARTITIONS);
@@ -71,6 +73,10 @@ class RadixPartitionedHashJoin {
       partitions.emplace_back(allocator);
     }
     const size_t numRows = table.numRows();
+    const size_t estimatedBucketSize = numRows / NUM_PARTITIONS + 1;
+    for (auto& bucket : partitions) {
+      bucket.keys.reserve(estimatedBucketSize);
+    }
     for (size_t row = 0; row < numRows; ++row) {
       Id key = table(row, joinColumn);
       partitions[getPartitionIndex(key)].keys.push_back(key);
@@ -78,18 +84,23 @@ class RadixPartitionedHashJoin {
     return partitions;
   }
 
-  // Count the matches between the join columns of the two tables.
-  static size_t executeJoinCount(const IdTable& leftTable, ColumnIndex leftCol,
+  // Count the matches between the join columns of the two tables. Return
+  // the total number of matching key pairs.
+  //
+  // TODO<marvin7122> Process the independent partitions in parallel when
+  // this helper is used on large inputs.
+  static size_t executeJoinCount(const IdTable& leftTable,
+                                 ColumnIndex leftColumn,
                                  const IdTable& rightTable,
-                                 ColumnIndex rightCol) {
-    auto leftPartitions = partitionTable(leftTable, leftCol);
-    auto rightPartitions = partitionTable(rightTable, rightCol);
+                                 ColumnIndex rightColumn) {
+    auto leftPartitions = partitionTable(leftTable, leftColumn);
+    auto rightPartitions = partitionTable(rightTable, rightColumn);
 
     size_t totalMatches = 0;
 
-    for (size_t p = 0; p < NUM_PARTITIONS; ++p) {
-      auto& buildKeys = leftPartitions[p].keys;
-      const auto& probeKeys = rightPartitions[p].keys;
+    for (size_t partition = 0; partition < NUM_PARTITIONS; ++partition) {
+      auto& buildKeys = leftPartitions[partition].keys;
+      const auto& probeKeys = rightPartitions[partition].keys;
 
       if (buildKeys.empty() || probeKeys.empty()) {
         continue;
