@@ -635,8 +635,6 @@ TEST(CompressedVocabularyWithHoles, nonAscendingIndicesThrow) {
   }
 }
 
-}  // namespace
-
 // _____________________________________________________________________________
 // A vocabulary containing the empty string word ("") must be scanned correctly
 // across all compressors (exercising the `maxDecompressedSize == 0` fast path
