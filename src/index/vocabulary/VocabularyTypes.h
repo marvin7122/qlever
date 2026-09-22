@@ -527,11 +527,10 @@ class MultiSourceVocabBatchAssembler {
   void assignWordAtPosition(size_t resultPosition, std::string_view word) {
     AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
     AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
-    slotFilledTracking_[resultPosition] = true;
-    // Use the bounds-checked `at()` for the store: the check above already
-    // throws on out-of-bounds positions, but GCC's `-Warray-bounds` (promoted
-    // by `-Werror`) still flags `operator[]` once a constant out-of-bounds
-    // index from a test is inlined here.
+    // Checked access: the checks above make out-of-bounds stores unreachable,
+    // but GCC proves the constant index of the out-of-bounds unit test at
+    // compile time and fails `operator[]` under `-Werror=array-bounds`.
+    slotFilledTracking_.at(resultPosition) = true;
     assembledWordViews_.at(resultPosition) = word;
   }
 
