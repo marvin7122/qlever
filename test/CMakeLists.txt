@@ -254,7 +254,14 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
 if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    # The `server` library is not built for Emscripten (see
+    # `src/engine/CMakeLists.txt`); the scheduler test needs no `server`
+    # symbols, so link it only where the target exists.
+    if (TARGET server)
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    else ()
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine)
+    endif ()
 endif ()
 
 addLinkAndDiscoverTest(IdTableTest qlever_util)

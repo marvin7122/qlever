@@ -143,7 +143,12 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
-  ElasticExportScheduler scheduler(2, 64);
+  // Exactly one helper: it blocks inside morsel 0 while holding the lease,
+  // so morsel 1 stays queued until revocation hands it to the coordinator.
+  // With two helpers the idle worker would legitimately execute morsel 1
+  // before the foreground query arrives, and `profiles[1].executedByHelper_`
+  // would be `true`.
+  ElasticExportScheduler scheduler(1, 64);
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
   scheduler.onForegroundQueryStarted();  // Query count = 1 (eligible)
