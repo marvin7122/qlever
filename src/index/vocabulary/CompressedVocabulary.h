@@ -5,9 +5,12 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 
+#include <memory>
+
 #include "backports/algorithm.h"
 #include "index/ConstantsIndexBuilding.h"
 #include "index/vocabulary/CompressionWrappers.h"
+#include "index/vocabulary/DecompressedBlockCache.h"
 #include "index/vocabulary/PrefixCompressor.h"
 #include "index/vocabulary/PrefixHeuristic.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
@@ -45,6 +48,14 @@ CPP_template(typename UnderlyingVocabulary,
  private:
   UnderlyingVocabulary underlyingVocabulary_;
   CompressionWrapper compressionWrapper_;
+  // Bounded cache of recently decompressed words, consulted by `lookupBatch`
+  // before decompressing (see `DecompressedBlockCache.h`). A `shared_ptr` so
+  // that copies of this vocabulary (e.g. in tests) stay copyable and simply
+  // share the cache; it is never serialized, only the decoders are. The cache
+  // itself is thread-safe, so sharing it between copies is safe.
+  mutable std::shared_ptr<ad_utility::vocabulary::DecompressedBlockCache>
+      decompressedCache_ =
+          std::make_shared<ad_utility::vocabulary::DecompressedBlockCache>();
   // We need to store two files, one for the words and one for the codebooks.
   static constexpr std::string_view wordsSuffix = ".words";
   static constexpr std::string_view decodersSuffix = ".codebooks";
@@ -165,8 +176,19 @@ CPP_template(typename UnderlyingVocabulary,
       auto data = std::make_shared<StringVectorVocabBatchLookupData>();
       data->buffer().reserve(indices.size());
       for (size_t i = 0; i < indices.size(); ++i) {
-        data->buffer().push_back(compressionWrapper_.decompress(
-            (*compressed)[i], getDecoderIdx(indices[i])));
+        size_t index = indices[i];
+        size_t blockIndex = getDecoderIdx(index);
+        size_t offsetInBlock = index - blockIndex * NumWordsPerBlock;
+        if (auto cached =
+                decompressedCache_->lookup(blockIndex, offsetInBlock)) {
+          data->buffer().push_back(std::move(*cached));
+          continue;
+        }
+        std::string word =
+            compressionWrapper_.decompress((*compressed)[i], blockIndex);
+        // `store` copies, so `word` can still be moved into the result.
+        decompressedCache_->store(blockIndex, offsetInBlock, word);
+        data->buffer().push_back(std::move(word));
       }
       // Build the views after the buffer is complete, so no reallocation can
       // move the bytes the views point into.
@@ -275,6 +297,9 @@ CPP_template(typename UnderlyingVocabulary,
     std::vector<typename CompressionWrapper::Decoder> decoders;
     decoderReader >> decoders;
     compressionWrapper_ = CompressionWrapper{{std::move(decoders)}};
+    // The decoders have changed, so words cached from previous lookups must
+    // not be returned anymore.
+    decompressedCache_->clear();
     AD_CORRECTNESS_CHECK((size() == 0) || (getDecoderIdxFromPosition(size()) <=
                                            compressionWrapper_.numDecoders()));
   }
@@ -552,6 +577,15 @@ CPP_template(typename UnderlyingVocabulary,
     }
   }
 
+  // Read-only access to the cache of recently decompressed words that
+  // `lookupBatch` consults (see `DecompressedBlockCache.h`). Useful for tests
+  // and profiling (hit/miss statistics); the lookup results are the same with
+  // or without the cache.
+  const ad_utility::vocabulary::DecompressedBlockCache& decompressedBlockCache()
+      const {
+    return *decompressedCache_;
+  }
+
   // Access to the underlying vocabulary.
   UnderlyingVocabulary& getUnderlyingVocabulary() {
     return underlyingVocabulary_;
@@ -574,6 +608,9 @@ CPP_template(typename UnderlyingVocabulary,
       std::vector<typename CompressionWrapper::Decoder> decoders;
       serializer | decoders;
       arg.compressionWrapper_ = CompressionWrapper{{std::move(decoders)}};
+      // The decoders have changed, so words cached from previous lookups must
+      // not be returned anymore.
+      arg.decompressedCache_->clear();
     }
   }
 

@@ -6,7 +6,7 @@
 # of the `index` library. `PrefixHeuristic.cpp` is only used by
 # `CompressedVocabulary.h` and `CompressionWrappers.h`, so it belongs here as
 # well.
-add_library(vocabulary VocabularyInMemory.h VocabularyInMemory.cpp
+add_library(vocabulary DecompressedBlockCache.h VocabularyInMemory.h VocabularyInMemory.cpp
                        VocabularyInMemoryBinSearch.cpp VocabularyInternalExternal.cpp
                        VocabularyOnDisk.cpp SplitVocabulary.cpp GeoVocabulary.cpp PolymorphicVocabulary.cpp
                        Vocabulary.cpp EncodedIriManager.cpp PrefixHeuristic.cpp

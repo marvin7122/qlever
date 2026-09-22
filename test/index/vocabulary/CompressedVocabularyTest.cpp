@@ -459,6 +459,112 @@ TEST(CompressedVocabularyWithHoles, addWordAfterFinishThrows) {
 }
 
 // _____________________________________________________________________________
+// The decompressed-word block cache is bounded by block count and by exact
+// payload bytes, evicts least-recently-used blocks first, and never stores a
+// word larger than the byte budget.
+TEST(DecompressedBlockCache, BoundedWithExactAccounting) {
+  using ad_utility::vocabulary::DecompressedBlockCache;
+  DecompressedBlockCache cache{DecompressedBlockCache::Config{2, 10}};
+
+  cache.store(0, 0, "abc");
+  cache.store(0, 1, "de");
+  EXPECT_EQ(cache.numBlocks(), 1);
+  EXPECT_EQ(cache.numBytes(), 5);
+
+  EXPECT_EQ(cache.lookup(0, 0), "abc");
+  EXPECT_EQ(cache.lookup(0, 7), std::nullopt);
+
+  // At exactly the bounds: two blocks with ten bytes in total.
+  cache.store(1, 0, "fghij");
+  EXPECT_EQ(cache.numBlocks(), 2);
+  EXPECT_EQ(cache.numBytes(), 10);
+
+  // A third block evicts the least recently used block (block 0).
+  cache.store(2, 0, "x");
+  EXPECT_EQ(cache.numBlocks(), 2);
+  EXPECT_EQ(cache.numBytes(), 6);
+  EXPECT_EQ(cache.lookup(0, 0), std::nullopt);
+  EXPECT_EQ(cache.lookup(1, 0), "fghij");
+
+  // A word larger than the byte budget is silently not stored.
+  cache.store(3, 0, std::string(11, 'z'));
+  EXPECT_EQ(cache.numBlocks(), 2);
+  EXPECT_EQ(cache.numBytes(), 6);
+  EXPECT_EQ(cache.lookup(3, 0), std::nullopt);
+
+  // Overwriting a cached offset adjusts the accounting exactly.
+  cache.store(1, 0, "f");
+  EXPECT_EQ(cache.numBytes(), 2);
+  EXPECT_EQ(cache.lookup(1, 0), "f");
+
+  // Touching block 2 makes block 1 the least recently used one, so storing
+  // another block evicts block 1 and keeps blocks 2 and 4.
+  EXPECT_EQ(cache.lookup(2, 0), "x");
+  cache.store(4, 0, "yz");
+  EXPECT_EQ(cache.numBlocks(), 2);
+  EXPECT_EQ(cache.numBytes(), 3);
+  EXPECT_EQ(cache.lookup(1, 0), std::nullopt);
+  EXPECT_EQ(cache.lookup(2, 0), "x");
+  EXPECT_EQ(cache.lookup(4, 0), "yz");
+
+  EXPECT_EQ(cache.hits(), 6);
+  EXPECT_EQ(cache.misses(), 4);
+}
+
+// _____________________________________________________________________________
+// `CompressedVocabulary::lookupBatch` serves repeated lookups (within a batch
+// and across batches) from the decompressed-word block cache, returning
+// exactly the same bytes as direct decompression.
+TEST(CompressedVocabulary, LookupBatchCachesDecompressedWords) {
+  using Vocab = CompressedVocabulary<VocabularyInMemory,
+                                     FsstSquaredCompressionWrapper, 4>;
+  // Eight sorted words (as the writer requires) spanning two decoder blocks.
+  const std::vector<std::string> words{"alpha", "beta",  "delta", "gamma",
+                                       "kappa", "lambda", "omega", "sigma"};
+  std::string filename = gtestCurrentTestName();
+  absl::Cleanup cleanup = [&filename] {
+    for (const auto& suffix : {".words", ".codebooks"}) {
+      ad_utility::deleteFile(absl::StrCat(filename, suffix), false);
+    }
+  };
+  Vocab vocab;
+  {
+    auto writerPtr = vocab.makeDiskWriterPtr(filename);
+    auto& writer = *writerPtr;
+    for (const auto& word : words) {
+      writer(word, false);
+    }
+    writer.finish();
+  }
+  vocab.open(filename);
+
+  // Indices span both decoder blocks and repeat within the batch.
+  std::vector<size_t> indices{5, 1, 5, 0, 7, 1};
+  auto result = vocab.lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
+                                                                indices);
+  const auto& cache = vocab.decompressedBlockCache();
+  // Four distinct words decompressed once each, the two within-batch repeats
+  // served as hits.
+  EXPECT_EQ(cache.misses(), 4);
+  EXPECT_EQ(cache.hits(), 2);
+  EXPECT_EQ(cache.numBlocks(), 2);
+  EXPECT_EQ(cache.numBytes(), words[5].size() + words[1].size() +
+                                  words[0].size() + words[7].size());
+
+  // A repeated batch is served entirely from the cache, with identical bytes.
+  auto missesBefore = cache.misses();
+  auto hitsBefore = cache.hits();
+  auto secondResult = vocab.lookupBatch(indices);
+  EXPECT_EQ(cache.misses(), missesBefore);
+  EXPECT_EQ(cache.hits(), hitsBefore + indices.size());
+  ASSERT_EQ(secondResult->size(), result->size());
+  for (size_t i = 0; i < result->size(); ++i) {
+    EXPECT_EQ((*secondResult)[i], (*result)[i]) << "at position " << i;
+  }
+}
+
+// _____________________________________________________________________________
 TEST(CompressedVocabularyWithHoles, nonAscendingIndicesThrow) {
   std::string filename = gtestCurrentTestName();
   absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
