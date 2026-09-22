@@ -58,9 +58,17 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+// NOTE: The deallocation overloads below intentionally forward to
+// `std::free`, mirroring the `std::malloc` in the allocation overloads above.
+// GCC 13 misdiagnoses that pairing as `-Wmismatched-new-delete`, so the
+// warning is suppressed locally for these overloads; the pairing itself is
+// correct. Sized deallocation falls back to the unsized overloads, so only
+// the unsized overloads are provided.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* ptr) noexcept { std::free(ptr); }
-
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
 
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
@@ -75,8 +83,9 @@ void* operator new[](std::size_t size) {
 }
 
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
-
-void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace ad_benchmark {
 namespace {
