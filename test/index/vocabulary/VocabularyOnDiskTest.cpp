@@ -11,6 +11,9 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
+#include <unistd.h>
+
+#include <cstdlib>
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
@@ -335,4 +338,59 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
     for ([[maybe_unused]] auto& r : streamed) {
     }
   });
+}
+
+// RAII guard that sets an environment variable for the test duration and
+// restores the previous value (or unsets it) afterward, so parallel tests
+// never observe a leaked `QLEVER_NVME_PASSTHROUGH`.
+class EnvVarGuard {
+ public:
+  EnvVarGuard(const char* name, const char* value) : name_{name} {
+    const char* old = ::getenv(name);
+    if (old != nullptr) {
+      old_ = old;
+    }
+    ASSERT_EQ(::setenv(name, value, 1), 0);
+  }
+  ~EnvVarGuard() {
+    if (old_.has_value()) {
+      ::setenv(name_.c_str(), old_->c_str(), 1);
+    } else {
+      ::unsetenv(name_.c_str());
+    }
+  }
+
+ private:
+  std::string name_;
+  std::optional<std::string> old_;
+};
+
+// With coalescing enabled, single-word reads take the same whole-block batch
+// path as `lookupBatch`. On a regular file the runs fall back to plain reads,
+// so this exercises the plan-and-scatter logic without NVMe hardware: every
+// word must round-trip exactly, including unaligned offsets, an empty word,
+// and a word spanning multiple blocks.
+TEST(VocabularyOnDisk, AccessOperatorWithCoalescingEnabledMatchesWords) {
+  EnvVarGuard guard{"QLEVER_NVME_PASSTHROUGH", "1:512"};
+  std::vector<std::string> words{"a", std::string(700, 'x'), "bc", "", "tail"};
+  auto vocab = createVocabularyFromWords(words);
+  ASSERT_EQ(vocab->size(), words.size());
+  for (size_t i = 0; i < words.size(); ++i) {
+    EXPECT_EQ((*vocab)[i], words[i]) << "at index " << i;
+  }
+}
+
+// A truncated words file must fail loudly: `operator[]` used to ignore the
+// short read and return zero-filled memory, which silently emptied whole
+// query plans on devices where `pread` cannot serve the read at all.
+TEST(VocabularyOnDisk, AccessOperatorOnTruncatedWordsFileThrows) {
+  std::string filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  VocabularyCreator creator{filename};
+  creator.createVocabulary({"alpha", "beta", "gamma"});
+  // Keep the offsets file intact, but leave only the first three bytes of
+  // the words file ("alp").
+  ASSERT_EQ(::truncate(filename.c_str(), 3), 0);
+  VocabularyOnDisk vocabulary;
+  vocabulary.open(filename);
+  EXPECT_THROW(vocabulary[0], ad_utility::Exception);
 }
