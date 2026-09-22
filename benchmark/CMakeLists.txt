@@ -36,4 +36,19 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
+
+    addAndLinkBenchmark(SerializerMicroBenchmark engine sparqlParser qlever_util)
+
+    addAndLinkBenchmark(ChunkStreamingBenchmark engine testUtil)
+
+    addAndLinkBenchmark(ScatterGatherBenchmark engine testUtil)
+
+    addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
+
+    addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
+
+    addAndLinkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser
+        qlever_util)
+
 endif()
