@@ -259,7 +259,10 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
   // The alignment argument is intentionally ignored: this resource only serves
   // `char` allocations from the arena builders, for which any alignment
   // suffices, and the underlying `AllocatorWithLimit` has no alignment
-  // concept (it counts bytes).
+  // concept (it counts bytes). This relies on the backing storage being at
+  // least `max_align_t`-aligned (true for the `::operator new`- and
+  // malloc-backed allocators in use); a future backing store with weaker
+  // alignment must add an aligned allocation path here.
   void* do_allocate(std::size_t bytes, std::size_t alignment) override {
     (void)alignment;
     return alloc_.allocate(bytes);
