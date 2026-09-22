@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <ctime>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -46,6 +47,8 @@ enum class MorselStatus {
   Pending,    // Work submitted, awaiting execution
   Running,    // Actively executing on helper thread or primary thread
   Completed,  // Execution completed successfully; result is stored in slot
+  Failed,     // Execution threw; the exception is stored in the slot and
+              // rethrown when the coordinator consumes it
   Cancelled   // Job or morsel was cancelled
 };
 
@@ -73,6 +76,8 @@ inline std::string_view toString(MorselStatus status) noexcept {
       return "Running";
     case MorselStatus::Completed:
       return "Completed";
+    case MorselStatus::Failed:
+      return "Failed";
     case MorselStatus::Cancelled:
       return "Cancelled";
   }
@@ -318,6 +323,9 @@ class ExportJobState final
     bool consumed_{false};
     absl::AnyInvocable<ResultType()> task_;
     std::optional<ResultType> result_;
+    // Captured when the morsel body throws (helper or primary path); the
+    // coordinator rethrows it from `consumeNextResult`.
+    std::exception_ptr error_{nullptr};
     MorselProfile profile_;
   };
 
@@ -435,19 +443,38 @@ class ExportJobState final
     }
 
     auto startCpu = getCpuDuration();
-    ResultType result = task();
-    auto endCpu = getCpuDuration();
-    auto endWall = std::chrono::steady_clock::now();
+    try {
+      ResultType result = task();
+      auto endCpu = getCpuDuration();
+      auto endWall = std::chrono::steady_clock::now();
 
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      slots_[morselIndex].result_ = std::move(result);
-      slots_[morselIndex].status_ = MorselStatus::Completed;
-      slots_[morselIndex].profile_.completedAt_ = endWall;
-      slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
-      slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
-      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
-      cv_.notify_all();
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        slots_[morselIndex].result_ = std::move(result);
+        slots_[morselIndex].status_ = MorselStatus::Completed;
+        slots_[morselIndex].profile_.completedAt_ = endWall;
+        slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
+        slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
+        slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
+        cv_.notify_all();
+      }
+    } catch (...) {
+      // Capture instead of letting the exception escape the worker thread
+      // (which would call `std::terminate` and abort the process). The
+      // coordinator rethrows it from `consumeNextResult`.
+      auto endCpu = getCpuDuration();
+      auto endWall = std::chrono::steady_clock::now();
+
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        slots_[morselIndex].error_ = std::current_exception();
+        slots_[morselIndex].status_ = MorselStatus::Failed;
+        slots_[morselIndex].profile_.completedAt_ = endWall;
+        slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
+        slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
+        slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Failed;
+        cv_.notify_all();
+      }
     }
   }
 
@@ -526,7 +553,8 @@ class ExportJobState final
         if (slots_[i].consumed_) {
           continue;
         }
-        if (slots_[i].status_ == MorselStatus::Completed) {
+        if (slots_[i].status_ == MorselStatus::Completed ||
+            slots_[i].status_ == MorselStatus::Failed) {
           // Keep the earliest completion timestamp so unordered sessions
           // emit whichever morsel completed first. Ties keep the lower
           // slot index via the strict comparison.
@@ -562,6 +590,16 @@ class ExportJobState final
                  std::to_string(index));
       }
 
+      if (slots_[index].status_ == MorselStatus::Failed) {
+        AD_CORRECTNESS_CHECK(slots_[index].error_ != nullptr);
+        slots_[index].consumed_ = true;
+        auto error = std::move(slots_[index].error_);
+        // Unlock before rethrowing so a throwing consumer cannot observe a
+        // locked coordinator mutex during unwinding.
+        lock.unlock();
+        std::rethrow_exception(error);
+      }
+
       if (slots_[index].status_ == MorselStatus::Completed) {
         AD_CORRECTNESS_CHECK(slots_[index].result_.has_value());
         slots_[index].consumed_ = true;
@@ -580,26 +618,45 @@ class ExportJobState final
 
         lock.unlock();
         auto startCpu = getCpuDuration();
-        ResultType result = primaryTask();
-        auto endCpu = getCpuDuration();
-        auto endWall = std::chrono::steady_clock::now();
-        lock.lock();
+        try {
+          ResultType result = primaryTask();
+          auto endCpu = getCpuDuration();
+          auto endWall = std::chrono::steady_clock::now();
+          lock.lock();
 
-        slots_[index].result_ = std::move(result);
-        slots_[index].status_ = MorselStatus::Completed;
-        slots_[index].profile_.completedAt_ = endWall;
-        slots_[index].profile_.wallDuration_ = endWall - startWall;
-        slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
-        slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
-        slots_[index].consumed_ = true;
-        cv_.notify_all();
-        return std::move(*slots_[index].result_);
+          slots_[index].result_ = std::move(result);
+          slots_[index].status_ = MorselStatus::Completed;
+          slots_[index].profile_.completedAt_ = endWall;
+          slots_[index].profile_.wallDuration_ = endWall - startWall;
+          slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
+          slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
+          slots_[index].consumed_ = true;
+          cv_.notify_all();
+          return std::move(*slots_[index].result_);
+        } catch (...) {
+          // Same contract as the helper path: record the failure so slot
+          // bookkeeping stays consistent, then propagate to the caller.
+          auto endCpu = getCpuDuration();
+          auto endWall = std::chrono::steady_clock::now();
+          lock.lock();
+
+          slots_[index].error_ = std::current_exception();
+          slots_[index].status_ = MorselStatus::Failed;
+          slots_[index].profile_.completedAt_ = endWall;
+          slots_[index].profile_.wallDuration_ = endWall - startWall;
+          slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
+          slots_[index].profile_.finalStatus_ = MorselStatus::Failed;
+          slots_[index].consumed_ = true;
+          cv_.notify_all();
+          throw;
+        }
       }
 
       if (slots_[index].status_ == MorselStatus::Running) {
         // Wait for running helper worker to finish CPU morsel
         cv_.wait(lock, [&] {
           return slots_[index].status_ == MorselStatus::Completed ||
+                 slots_[index].status_ == MorselStatus::Failed ||
                  cancelled_.load(std::memory_order_relaxed);
         });
       }

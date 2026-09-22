@@ -52,6 +52,8 @@ inline cppcoro::generator<ExportMorsel> planExportMorsels(
     uint64_t rowsPerMorsel) {
   AD_CONTRACT_CHECK(rowsPerMorsel > 0);
   constexpr uint64_t unbounded = std::numeric_limits<uint64_t>::max();
+  // `unbounded` is `constexpr`, so it needs no capture; capturing it trips
+  // `-Wunused-lambda-capture` on Clang.
   auto reduce = [](uint64_t& value, uint64_t subtrahend) {
     if (value != unbounded) {
       value = value > subtrahend ? value - subtrahend : 0;
