@@ -67,17 +67,10 @@ TEST(MonomorphicSerializersTest, MonomorphicMixedTypesTsvSerialization) {
         fmt, "<http://example.org/city>", "\"Freiburg\"", 230000, 153.07);
   });
 
-  // Apple builds use the `snprintf`-based `%.17g` fallback (see
-  // `writeFormattedDouble`), which spells 153.07 with the full 17 significant
-  // digits instead of the shortest `to_chars` spelling. Both spellings parse
-  // back to the same `double`.
-  std::string expected =
-      "<http://example.org/city>\t\"Freiburg\"\t230000\t153.07\n";
-#if defined(__APPLE__)
-  expected =
-      "<http://example.org/city>\t\"Freiburg\"\t230000\t153.06999999999999\n";
-#endif
-  EXPECT_EQ(result, expected);
+  // PortableDoubleToChars yields the shortest round-trip spelling on every
+  // platform, so a single expectation holds for Apple and non-Apple builds.
+  EXPECT_EQ(result,
+            "<http://example.org/city>\t\"Freiburg\"\t230000\t153.07\n");
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicSpanAndBatchSerialization) {
