@@ -155,7 +155,7 @@ class DecompressedBlockCache {
   // is exceeded. The most recently used block is evicted last, so a block
   // that was just stored is only evicted again when it alone exceeds a bound
   // (which `store` already prevents for `maxBytes_`).
-  void evictWhileOverBudget() {
+  void evictWhileOverBudget() const {
     while (!lru_.empty() &&
            (lru_.size() > config_.maxBlocks_ || bytes_ > config_.maxBytes_)) {
       const auto& entry = lru_.back().second;
