@@ -912,8 +912,6 @@ TEST(NvmeBlockCoalescing, coversWordsWithMergedRuns) {
   EXPECT_EQ(plan.runs[0].numBytes, 2048u);
   EXPECT_EQ(plan.runs[1].fileOffset, 4608u);
   EXPECT_EQ(plan.runs[1].numBytes, 512u);
-  EXPECT_EQ(plan.runs[2].fileOffset, 4608u);
-  EXPECT_EQ(plan.runs[2].numBytes, 512u);
   EXPECT_EQ(plan.stagingBytes, 2560u);
   ASSERT_EQ(plan.slices.size(), 4u);
   EXPECT_EQ(plan.slices[0].stagingOffset, 0u);
