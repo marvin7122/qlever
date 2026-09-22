@@ -151,14 +151,32 @@ CPP_template(typename UnderlyingVocabulary,
 
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    // For an underlying vocabulary with holes each `operator[]` performs a
-    // binary search (`positionOfIndex`), so resolve the whole batch with a
-    // single galloping pass instead (see `lookupBatchWithGallopHints`). All
-    // other underlying vocabularies translate indices to positions in O(1).
+    AD_CONTRACT_CHECK(!indices.empty());
     if constexpr (underlyingHasHoles) {
+      // For an underlying vocabulary with holes each `operator[]` performs a
+      // binary search (`positionOfIndex`), so resolve the whole batch with a
+      // single galloping pass instead (see `lookupBatchWithGallopHints`).
       return lookupBatchWithGallopHints(indices);
     } else {
-      return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+      // Fetch the compressed words in one batch through the underlying
+      // vocabulary (an on-disk underlying vocabulary serves this from its
+      // io_uring ring pool), then decompress each word with the decoder for
+      // its block. The underlying lookup preserves order, so result `i`
+      // belongs to `indices[i]`, exactly like the sequential path.
+      auto compressed = underlyingVocabulary_.lookupBatch(indices);
+      auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+      data->buffer().reserve(indices.size());
+      for (size_t i = 0; i < indices.size(); ++i) {
+        data->buffer().push_back(compressionWrapper_.decompress(
+            (*compressed)[i], getDecoderIdx(indices[i])));
+      }
+      // Build the views after the buffer is complete, so no reallocation can
+      // move the bytes the views point into.
+      data->views().reserve(data->buffer().size());
+      for (const auto& word : data->buffer()) {
+        data->views().emplace_back(word);
+      }
+      return StringVectorVocabBatchLookupData::asResult(std::move(data));
     }
   }
 
