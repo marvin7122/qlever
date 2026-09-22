@@ -42,8 +42,13 @@ class DecompressedBlockCache {
     size_t maxBytes_ = 1ul << 20;
   };
 
-  explicit DecompressedBlockCache(Config config = Config{})
-      : config_{config} {}
+  // Default-constructed with a default `Config`. This is a separate overload
+  // (and not a `= Config{}` default argument) because a default argument
+  // that value-initializes the nested `Config` runs into a GCC 13
+  // limitation on member initializers of nested structs (the default
+  // argument is parsed before the enclosing class completes).
+  DecompressedBlockCache() = default;
+  explicit DecompressedBlockCache(Config config) : config_{config} {}
 
   // Non-copyable and non-movable (it holds a mutex). `CompressedVocabulary`
   // shares the cache between copies via a `shared_ptr` instead.
