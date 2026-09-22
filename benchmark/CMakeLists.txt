@@ -19,6 +19,14 @@ if (NOT _NO_BENCHMARK)
         qlever_target_link_libraries(${basename} benchmarkWithMain ${ARGN})
     endfunction()
 
+    # Like `linkBenchmark`, but without the default `main` function from
+    # `benchmarkWithMain`. Use this for benchmarks that define their own
+    # `main`, otherwise linkers that report duplicate symbols (e.g. mold)
+    # fail with `duplicate symbol: main`.
+    function (linkBenchmarkNoMain basename)
+        qlever_target_link_libraries(${basename} benchmark ${ARGN})
+    endfunction()
+
     # Compile the benchmark and link it.
     # Usage: addAndLinkBenchmark(baseName, [additionalLibraries...])
     #   - baseName: The name of the benchmark file without the .cpp ending.
@@ -46,7 +54,7 @@ if (NOT _NO_BENCHMARK)
     linkBenchmark(ChunkStreamingBenchmark engine testUtil)
 
     add_executable(IoUringDirectBenchmark IoUringDirectBenchmark.cpp)
-    linkBenchmark(IoUringDirectBenchmark engine sparqlParser qlever_util)
+    linkBenchmarkNoMain(IoUringDirectBenchmark engine sparqlParser qlever_util)
 
     add_executable(StreamingBufferBenchmark StreamingBufferBenchmark.cpp)
     linkBenchmark(StreamingBufferBenchmark engine sparqlParser qlever_util)
@@ -60,28 +68,29 @@ if (NOT _NO_BENCHMARK)
     linkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser qlever_util)
 
     add_executable(BranchlessDispatcherBenchmark BranchlessDispatcherBenchmark.cpp)
-    linkBenchmark(BranchlessDispatcherBenchmark engine sparqlParser qlever_util)
+    linkBenchmarkNoMain(BranchlessDispatcherBenchmark engine sparqlParser qlever_util)
 
     add_executable(ScatterGatherBenchmark ScatterGatherBenchmark.cpp)
-    linkBenchmark(ScatterGatherBenchmark engine sparqlParser qlever_util)
+    linkBenchmarkNoMain(ScatterGatherBenchmark engine sparqlParser qlever_util)
 
     add_executable(SimdEscapeBenchmark SimdEscapeBenchmark.cpp)
     linkBenchmark(SimdEscapeBenchmark engine sparqlParser qlever_util)
 
-    addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
+    add_executable(ZeroCopySenderBenchmark ZeroCopySenderBenchmark.cpp)
+    linkBenchmarkNoMain(ZeroCopySenderBenchmark qlever_util)
     addAndLinkBenchmark(EndToEndExportBenchmark engine sparqlParser qlever_util)
 
     add_executable(AdaptiveChunkBenchmark AdaptiveChunkBenchmark.cpp)
     linkBenchmark(AdaptiveChunkBenchmark engine sparqlParser qlever_util)
 
     add_executable(SimdValidityBenchmark SimdValidityBenchmark.cpp)
-    linkBenchmark(SimdValidityBenchmark engine sparqlParser qlever_util)
+    linkBenchmarkNoMain(SimdValidityBenchmark engine sparqlParser qlever_util)
 
     add_executable(RlePrefixBenchmark RlePrefixBenchmark.cpp)
-    linkBenchmark(RlePrefixBenchmark engine sparqlParser qlever_util)
+    linkBenchmarkNoMain(RlePrefixBenchmark engine sparqlParser qlever_util)
 
     add_executable(HttpFramingBenchmark HttpFramingBenchmark.cpp)
-    linkBenchmark(HttpFramingBenchmark engine sparqlParser qlever_util)
+    linkBenchmarkNoMain(HttpFramingBenchmark engine sparqlParser qlever_util)
 
     add_executable(SwarDelimiterBenchmark SwarDelimiterBenchmark.cpp)
     linkBenchmark(SwarDelimiterBenchmark engine sparqlParser qlever_util)

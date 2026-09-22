@@ -76,7 +76,14 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+// Delegate to the unsized deallocation function above (which forwards to
+// `std::free`, matching the `std::malloc` in the global `operator new`
+// above). Calling `std::free` directly here triggers
+// `-Wmismatched-new-delete` on GCC when this operator is inlined into
+// standard library code.
+void operator delete(void* ptr, std::size_t) noexcept {
+  ::operator delete(ptr);
+}
 
 namespace ad_benchmark {
 namespace {

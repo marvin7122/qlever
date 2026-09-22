@@ -22,6 +22,7 @@
 #include "global/Id.h"
 #include "global/ValueId.h"
 #include "util/Exception.h"
+#include "util/FloatToChars.h"
 
 namespace ql::engine {
 
@@ -83,8 +84,7 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 32, id.getDouble());
-  out = ptr;
+  out = ad_utility::doubleToChars(out, out + 32, id.getDouble());
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;

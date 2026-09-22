@@ -143,8 +143,7 @@ struct BranchingSwitchDispatcher {
       case Datatype::Double: {
         std::memcpy(out, "\"", 1);
         out += 1;
-        auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-        out = p;
+        out = ad_utility::doubleToChars(out, out + 32, id.getDouble());
         std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
         out += 44;
         return out;
@@ -257,8 +256,7 @@ struct BranchingIfElseDispatcher {
     } else if (dt == Datatype::Double) {
       std::memcpy(out, "\"", 1);
       out += 1;
-      auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-      out = p;
+      out = ad_utility::doubleToChars(out, out + 32, id.getDouble());
       std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
       out += 44;
       return out;
