@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 
@@ -51,6 +52,21 @@ struct TypeFormatDescriptor {
 
 namespace detail {
 
+// Format a double into `[out, last)`, returning the one-past-the-end pointer.
+// Floating-point `std::to_chars` is only available on macOS 13.3 and later,
+// but QLever still targets macOS 11.0, so fall back to `snprintf` on Apple
+// platforms.
+inline char* formatDoubleValue(char* out, char* last, double value) noexcept {
+#if defined(__APPLE__)
+  const int numChars =
+      std::snprintf(out, static_cast<size_t>(last - out), "%.17g", value);
+  return numChars > 0 ? out + numChars : out;
+#else
+  auto [ptr, ec] = std::to_chars(out, last, value);
+  return ptr;
+#endif
+}
+
 // Fast branchless copy for terms with opening and closing delimiters.
 inline char* formatTermWithDelimiters(ValueId, std::string_view rawTerm,
                                       char* out, std::string_view prefix,
@@ -83,8 +99,7 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 32, id.getDouble());
-  out = ptr;
+  out = formatDoubleValue(out, out + 32, id.getDouble());
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;

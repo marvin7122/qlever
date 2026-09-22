@@ -45,7 +45,21 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs.
+// runs. Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
+// already provide these replaceable allocation functions, so defining them
+// here causes multiple-definition link errors. Under sanitizers the
+// `heap-allocations` metadata below reads 0. Clang signals sanitizers via
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; neither mechanism works
+// on the other compiler, so both are checked.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+
+#ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -58,6 +72,13 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+// The `operator delete` overloads intentionally pair with the `std::malloc`
+// based `operator new` overloads above, which GCC's -Wmismatched-new-delete
+// cannot see through, so the warning is disabled locally for GCC only.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
@@ -77,6 +98,10 @@ void* operator new[](std::size_t size) {
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
 
 void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+#endif
 
 namespace ad_benchmark {
 namespace {

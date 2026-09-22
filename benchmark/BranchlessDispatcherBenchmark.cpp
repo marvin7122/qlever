@@ -148,8 +148,7 @@ struct BranchingSwitchDispatcher {
       }
       case Datatype::Double: {
         out = copyLiteral(out, "\"");
-        auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-        out = p;
+        out = detail::formatDoubleValue(out, out + 32, id.getDouble());
         out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>");
         return out;
       }
@@ -246,8 +245,7 @@ struct BranchingIfElseDispatcher {
       return out;
     } else if (dt == Datatype::Double) {
       out = copyLiteral(out, "\"");
-      auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-      out = p;
+      out = detail::formatDoubleValue(out, out + 32, id.getDouble());
       out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>");
       return out;
     } else if (dt == Datatype::Bool) {
