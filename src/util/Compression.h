@@ -19,16 +19,18 @@ namespace ad_utility {
 
 // Decompress a single word into `destination` using `decompress(span)`. The
 // caller guarantees that `decompress` writes at most `bound` bytes, so
-// `destination` must hold at least `bound` bytes (precondition), and at least
-// one byte (`bound > 0`, precondition): words with a zero upper bound carry no
-// payload, so callers register their empty views directly instead of routing
-// them through this helper. Writing zero bytes is still legitimate here:
+// `destination` must hold at least `bound` bytes (precondition). A `bound` of
+// 0 returns an empty view without calling `decompress` (mirroring the
+// overload in `index/vocabulary/VocabularyTypes.h`): words with a zero upper
+// bound carry no payload. Writing zero bytes is still legitimate here:
 // e.g. the FSST decoder emits nothing for an empty stored word even when it
 // is invoked with a positive bound.
 template <typename DecompressFunc>
 std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
                                     DecompressFunc&& decompress) {
-  AD_CONTRACT_CHECK(bound > 0);
+  if (bound == 0) {
+    return "";
+  }
   AD_CONTRACT_CHECK(destination.size() >= bound);
   size_t bytesWritten = decompress(destination);
   AD_CORRECTNESS_CHECK(bytesWritten <= bound);

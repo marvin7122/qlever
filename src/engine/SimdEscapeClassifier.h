@@ -539,8 +539,6 @@ class SimdEscapeClassifier {
       return std::string{normLiteral};
     }
 
-    std::string_view normalizedContent =
-        normLiteral.substr(1, posLastQuote - 1);
     std::string result;
     result.resize(normLiteral.size() * 2 + 2);
     char* out = result.data();
