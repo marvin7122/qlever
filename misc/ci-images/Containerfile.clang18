@@ -8,6 +8,10 @@
 # .github/workflows/base-clone-builder.yml), not from upstream Ubuntu.
 FROM localhost/wolga-clone:ubuntu24
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 LC_CTYPE=C.UTF-8 DEBIAN_FRONTEND=noninteractive
+# Rootless build containers cannot setgroups(2), so apt's privilege-dropping
+# sandbox dies with "Operation not permitted". Disable it: CI legs run as
+# root anyway, so the sandbox buys nothing here.
+RUN echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/99-no-sandbox
 RUN apt-get update && apt-get install -y \
     build-essential cmake ninja-build git wget pkg-config mold \
     libicu-dev tzdata libzstd-dev libjemalloc-dev libssl-dev \
