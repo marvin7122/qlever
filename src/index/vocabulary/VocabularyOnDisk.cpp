@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 
 #include "global/Constants.h"
 #include "util/ExceptionHandling.h"
@@ -291,8 +293,27 @@ void VocabularyOnDisk::open(const std::string& filename) {
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
+  // NVMe passthrough rig for the engaged benchmark (see
+  // `NvmePassthrough.h`): `QLEVER_NVME_PASSTHROUGH=<nsid>:<blocksize>`
+  // (e.g. `1:512`) enables the passthrough path for NVMe character devices
+  // opened by this vocabulary. Regular files keep the plain path through
+  // the per-fd capability probe, so setting this is safe for all
+  // vocabularies. Malformed values throw: a misconfigured engaged run must
+  // fail fast instead of silently measuring the fallback path.
+  ad_utility::nvmePassthrough::Options nvmeOptions;
+  if (const char* env = std::getenv("QLEVER_NVME_PASSTHROUGH")) {
+    unsigned int namespaceId = 0;
+    unsigned int blockSize = 0;
+    if (std::sscanf(env, "%u:%u", &namespaceId, &blockSize) != 2 ||
+        namespaceId == 0 || blockSize == 0) {
+      AD_THROW(
+          "Malformed QLEVER_NVME_PASSTHROUGH, expected <nsid>:<blocksize> "
+          "with nonzero values");
+    }
+    nvmeOptions = {true, namespaceId, blockSize};
+  }
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring, nvmeOptions));
   }
 }

@@ -87,6 +87,12 @@ class BatchManager final : public BatchManagerBase {
 
   explicit BatchManager(unsigned ringSize = 256) : policy_(ringSize) {}
 
+  // Same, but forward NVMe passthrough options to the policy. Only usable
+  // with policies that accept them (`IoUringPolicy`); any other policy
+  // fails to compile here, which is intended.
+  BatchManager(unsigned ringSize, const nvmePassthrough::Options& nvmeOptions)
+      : policy_(ringSize, nvmeOptions) {}
+
   BatchManager(const BatchManager&) = delete;
   BatchManager& operator=(const BatchManager&) = delete;
 
@@ -349,11 +355,13 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
+    bool& preferIoUring, nvmePassthrough::Options nvmeOptions = {},
+    unsigned ringSize = 256) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize);
+      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize,
+                                                           nvmeOptions);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
