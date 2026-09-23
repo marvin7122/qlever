@@ -194,9 +194,8 @@ class Server {
     // Overload resolution dispatches on the body type, which requires that
     // `ResponseT` cannot hold scatter-gather bodies. Fail fast if that
     // assumption is ever violated instead of silently misrouting responses.
-    static_assert(
-        !std::is_same_v<typename ResponseT::body_type,
-                         ql::engine::export_v2::scatter_gather_body>);
+    static_assert(!std::is_same_v<typename ResponseT::body_type,
+                                  ql::engine::export_v2::scatter_gather_body>);
     // Capture a scatter-gather (export-send=iovec) response in its own slot,
     // completing once it has been stored. Overload resolution dispatches on
     // the body type because `ResponseT` cannot hold these responses.
