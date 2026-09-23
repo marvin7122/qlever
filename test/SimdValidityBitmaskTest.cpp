@@ -14,10 +14,10 @@
 #include <string>
 #include <vector>
 
-#include "util/GTestHelpers.h"
 #include "engine/SimdValidityBitmask.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
+#include "util/GTestHelpers.h"
 
 using namespace ad_utility::simd;
 
