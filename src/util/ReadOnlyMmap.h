@@ -11,6 +11,7 @@
 #define QLEVER_SRC_UTIL_READONLYMMAP_H
 
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <cstddef>
@@ -85,6 +86,18 @@ class ReadOnlyMmap {
     }
     const size_t delta = static_cast<size_t>(offset - alignedOffset);
     if (numBytes > std::numeric_limits<size_t>::max() - delta) {
+      return false;
+    }
+    // `mmap` succeeds for a range that extends past the end of the file
+    // (mapping the final partial page), but touching the bytes beyond EOF
+    // raises `SIGBUS`. Reject such ranges here so the mapping never exposes
+    // bytes that cannot be read.
+    struct stat fileStat {};
+    if (::fstat(fd, &fileStat) != 0) {
+      return false;
+    }
+    const auto fileSize = static_cast<uint64_t>(fileStat.st_size);
+    if (offset > fileSize || numBytes > fileSize - offset) {
       return false;
     }
     void* base = ::mmap(nullptr, numBytes + delta, PROT_READ, MAP_SHARED, fd,
