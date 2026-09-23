@@ -140,8 +140,8 @@ struct LiteralsTokenizationDelimiter {
 
 /**
  * @brief A function that can be used to tokenize and normalize a given text.
- * @warning Both params are const refs where the original objects have to be
- * kept alive during the usage of the returned object.
+ * @note The returned vector owns its strings; the arguments are only needed
+ * during the call.
  * @param text The text to be tokenized and normalized.
  * @param localeManager The localeManager to be used for normalization.
  * @details This function can be used in the following way:
