@@ -48,10 +48,12 @@ namespace {
 
 using namespace ad_utility;
 
-// Benchmark payload constants (100 MB transmission)
+// Benchmark payload constants (100 MB transmission in 64 KB chunks, 1600
+// chunks in total).
 constexpr size_t kTotalSendSizeBytes = 100ULL * 1024ULL * 1024ULL;  // 100 MB
 constexpr size_t kChunkSizeBytes = 64 * 1024;                       // 64 KB
-constexpr size_t kTotalChunks = kTotalSendSizeBytes / kChunkSizeBytes;
+[[maybe_unused]] constexpr size_t kTotalChunks =
+    kTotalSendSizeBytes / kChunkSizeBytes;
 
 // _____________________________________________________________________________
 // Helper to measure thread/process CPU time using POSIX clock_gettime.
