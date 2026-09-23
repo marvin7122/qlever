@@ -55,12 +55,8 @@ struct AllocationTracker {
 // that these replacements form matching malloc/free pairs and flags the
 // `std::free` calls once they get inlined into callers (observed with GCC 11
 // in Release with `-Werror`), so the warning is disabled locally for these
-// definitions only.
+// definitions only (see `DISABLE_MISMATCHED_NEW_DELETE_WARNINGS`).
 #ifndef QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
-#endif
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -73,14 +69,13 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 void operator delete(void* ptr) noexcept { std::free(ptr); }
+GCC_REENABLE_WARNINGS
 
 void operator delete(void* ptr, std::size_t) noexcept {
   ::operator delete(ptr);
 }
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
 #endif  // QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 
 namespace ad_benchmark {

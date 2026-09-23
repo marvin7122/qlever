@@ -182,18 +182,19 @@ class ScatterGatherBenchmarkRunner {
     const double gbWritten = static_cast<double>(summary.totalBytesWritten_) /
                              (1024.0 * 1024.0 * 1024.0);
 
+    // Positional aggregate construction (designated initializers are
+    // C++20-only).
     return ScatterGatherBenchmarkMetric{
-        .mode = "1. Contiguous Chunk Copy (Baseline)",
-        .literalSizeBytes = arena.getLiteralSpan(0).size(),
-        .numTriples = n,
-        .totalBytesWritten = summary.totalBytesWritten_,
-        .totalZeroCopyBytes = 0,
-        .elapsedSeconds = elapsedSec,
-        .throughputMBs =
-            elapsedSec > 0 ? ((gbWritten * 1024.0) / elapsedSec) : 0.0,
-        .throughputGBs = elapsedSec > 0 ? (gbWritten / elapsedSec) : 0.0,
-        .memoryBandwidthSavedGBs = 0.0,
-        .speedupVsBaseline = 1.0,
+        "1. Contiguous Chunk Copy (Baseline)",
+        arena.getLiteralSpan(0).size(),
+        n,
+        summary.totalBytesWritten_,
+        0,
+        elapsedSec,
+        elapsedSec > 0 ? ((gbWritten * 1024.0) / elapsedSec) : 0.0,
+        elapsedSec > 0 ? (gbWritten / elapsedSec) : 0.0,
+        0.0,
+        1.0,
     };
   }
 
@@ -240,19 +241,19 @@ class ScatterGatherBenchmarkRunner {
     const double gbZeroCopy =
         static_cast<double>(totalZeroCopyBytes) / (1024.0 * 1024.0 * 1024.0);
 
+    // Positional aggregate construction (designated initializers are
+    // C++20-only).
     return ScatterGatherBenchmarkMetric{
-        .mode = "2. Zero-Copy Scatter-Gather Streamer",
-        .literalSizeBytes = arena.getLiteralSpan(0).size(),
-        .numTriples = n,
-        .totalBytesWritten = summary.totalBytesWritten_,
-        .totalZeroCopyBytes = totalZeroCopyBytes,
-        .elapsedSeconds = elapsedSec,
-        .throughputMBs =
-            elapsedSec > 0 ? ((gbWritten * 1024.0) / elapsedSec) : 0.0,
-        .throughputGBs = elapsedSec > 0 ? (gbWritten / elapsedSec) : 0.0,
-        .memoryBandwidthSavedGBs =
-            elapsedSec > 0 ? (gbZeroCopy / elapsedSec) : 0.0,
-        .speedupVsBaseline = 1.0,
+        "2. Zero-Copy Scatter-Gather Streamer",
+        arena.getLiteralSpan(0).size(),
+        n,
+        summary.totalBytesWritten_,
+        totalZeroCopyBytes,
+        elapsedSec,
+        elapsedSec > 0 ? ((gbWritten * 1024.0) / elapsedSec) : 0.0,
+        elapsedSec > 0 ? (gbWritten / elapsedSec) : 0.0,
+        elapsedSec > 0 ? (gbZeroCopy / elapsedSec) : 0.0,
+        1.0,
     };
   }
 
@@ -307,19 +308,19 @@ class ScatterGatherBenchmarkRunner {
     const double gbZeroCopy =
         static_cast<double>(totalZeroCopyBytes) / (1024.0 * 1024.0 * 1024.0);
 
+    // Positional aggregate construction (designated initializers are
+    // C++20-only).
     return ScatterGatherBenchmarkMetric{
-        .mode = "3. Zero-Copy Kernel writev(2) Direct",
-        .literalSizeBytes = arena.getLiteralSpan(0).size(),
-        .numTriples = n,
-        .totalBytesWritten = summary.totalBytesWritten_,
-        .totalZeroCopyBytes = totalZeroCopyBytes,
-        .elapsedSeconds = elapsedSec,
-        .throughputMBs =
-            elapsedSec > 0 ? ((gbWritten * 1024.0) / elapsedSec) : 0.0,
-        .throughputGBs = elapsedSec > 0 ? (gbWritten / elapsedSec) : 0.0,
-        .memoryBandwidthSavedGBs =
-            elapsedSec > 0 ? (gbZeroCopy / elapsedSec) : 0.0,
-        .speedupVsBaseline = 1.0,
+        "3. Zero-Copy Kernel writev(2) Direct",
+        arena.getLiteralSpan(0).size(),
+        n,
+        summary.totalBytesWritten_,
+        totalZeroCopyBytes,
+        elapsedSec,
+        elapsedSec > 0 ? ((gbWritten * 1024.0) / elapsedSec) : 0.0,
+        elapsedSec > 0 ? (gbWritten / elapsedSec) : 0.0,
+        elapsedSec > 0 ? (gbZeroCopy / elapsedSec) : 0.0,
+        1.0,
     };
   }
 };

@@ -9,6 +9,8 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 
+#include <type_traits>
+
 #include "engine/CallFixedSize.h"
 
 // _____________________________________________________________________________

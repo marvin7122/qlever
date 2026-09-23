@@ -458,6 +458,19 @@ class ArenaVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// Detection of the optional two-argument `lookupBatch(indices, builder)`
+// overload. `if constexpr (requires ...)` is C++20-only, so this equivalent
+// `void_t` detection idiom is used to stay compatible with the C++17 backport
+// build (`QLEVER_CPP_17`).
+template <typename T, typename = void>
+struct HasArenaVocabBatchLookup : std::false_type {};
+template <typename T>
+struct HasArenaVocabBatchLookup<
+    T, std::void_t<decltype(std::declval<const T&>().lookupBatch(
+           std::declval<ql::span<const size_t>>(),
+           std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+
+// _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(

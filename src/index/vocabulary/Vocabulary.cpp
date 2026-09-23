@@ -8,6 +8,7 @@
 #include "index/vocabulary/Vocabulary.h"
 
 #include <iostream>
+#include <type_traits>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "index/ConstantsIndexBuilding.h"

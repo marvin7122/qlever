@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -288,10 +290,7 @@ class ScatterGatherChunkStreamer {
       size_t offset = currentHeaderBuffer_.size();
       currentHeaderBuffer_.insert(currentHeaderBuffer_.end(), sv.begin(),
                                   sv.end());
-      currentSlices_.push_back(SliceRecord{.isArena = false,
-                                           .arenaPtr = nullptr,
-                                           .headerOffset = offset,
-                                           .len = sv.size()});
+      currentSlices_.push_back(SliceRecord{false, nullptr, offset, sv.size()});
     }
     currentChunkBytes_ += sv.size();
   }
@@ -331,10 +330,7 @@ class ScatterGatherChunkStreamer {
       flush();
     }
 
-    currentSlices_.push_back(SliceRecord{.isArena = true,
-                                         .arenaPtr = span.data(),
-                                         .headerOffset = 0,
-                                         .len = span.size()});
+    currentSlices_.push_back(SliceRecord{true, span.data(), 0, span.size()});
     currentChunkBytes_ += span.size();
     currentZeroCopyBytes_ += span.size();
     ++currentZeroCopySpans_;
@@ -358,7 +354,9 @@ class ScatterGatherChunkStreamer {
   }
 
   // ___________________________________________________________________________
-  // Write an RDF literal with optional datatype or language tag.
+  // Write an RDF literal with optional datatype or language tag. `content`
+  // is transported verbatim (zero-copy); format-specific escaping is the
+  // caller's responsibility, see `FastExportStreamFormatter::writeEscaped*`.
   void writeLiteral(ql::span<const char> content,
                     std::string_view datatype = "",
                     std::string_view langTag = "") {
