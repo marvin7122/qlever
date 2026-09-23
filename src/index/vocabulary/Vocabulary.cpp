@@ -316,7 +316,8 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
   AD_CONTRACT_CHECK(!indices.empty());
   // `builder` must be finalized exactly once, see
   // `UnicodeVocabulary::lookupBatch`.
-  if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
+  if constexpr (HasArenaVocabBatchLookup_v<
+                    std::decay_t<decltype(vocabulary_)>>) {
     using InnerResult = decltype(vocabulary_.lookupBatch(indices, builder));
     if constexpr (std::is_void_v<InnerResult>) {
       // Fill-only leaf: it appended to `builder`, finalize once below.

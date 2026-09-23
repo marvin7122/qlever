@@ -485,6 +485,23 @@ class ArenaVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// Whether `Vocab` has a builder-taking `lookupBatch(indices, builder)`
+// overload (called on a const object, as the wrappers only hold const
+// access). Written with `std::void_t` instead of a C++20
+// `requires`-expression so the vocabulary wrappers keep compiling under
+// `QLEVER_REDUCED_FEATURE_SET_FOR_CPP17` (GCC 8, C++17).
+template <typename Vocab, typename = void>
+struct HasArenaVocabBatchLookup : std::false_type {};
+template <typename Vocab>
+struct HasArenaVocabBatchLookup<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>&>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+template <typename Vocab>
+inline constexpr bool HasArenaVocabBatchLookup_v =
+    HasArenaVocabBatchLookup<Vocab>::value;
+
+// _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
