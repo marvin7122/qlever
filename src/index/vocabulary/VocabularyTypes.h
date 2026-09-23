@@ -986,6 +986,26 @@ class WordWriterBase {
   virtual void finishImpl() = 0;
 };
 
+// _____________________________________________________________________________
+// C++17-compatible detection of a builder-taking `lookupBatch` overload: true
+// when `vocab.lookupBatch(indices, builder)` is well-formed for a const
+// vocabulary and a mutable `ArenaVocabBatchBuilder`. This is the replacement
+// for `if constexpr (requires { ... })`, which the C++17 CI legs reject
+// (`requires` is C++20-only).
+namespace vocabDetail {
+template <typename Vocab, typename = void>
+struct HasBuilderLookupBatchImpl : std::false_type {};
+template <typename Vocab>
+struct HasBuilderLookupBatchImpl<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+}  // namespace vocabDetail
+
+template <typename Vocab>
+constexpr static bool HasBuilderLookupBatch_v =
+    vocabDetail::HasBuilderLookupBatchImpl<Vocab>::value;
+
 }  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H

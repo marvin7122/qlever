@@ -75,7 +75,7 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
         // `builder` must be finalized exactly once, see
         // `UnicodeVocabulary::lookupBatch`.
         AD_CONTRACT_CHECK(!indices.empty());
-        if constexpr (requires { vocab.lookupBatch(indices, builder); }) {
+        if constexpr (HasBuilderLookupBatch_v<std::decay_t<decltype(vocab)>>) {
           using InnerResult = decltype(vocab.lookupBatch(indices, builder));
           if constexpr (std::is_void_v<InnerResult>) {
             // Fill-only leaf: it appended to `builder`, finalize once below.

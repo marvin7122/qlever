@@ -53,9 +53,7 @@ class UnicodeVocabulary {
     // `PolymorphicVocabulary`). When the underlying vocabulary has no
     // builder-taking overload, copy its single-shot words into the builder
     // first, so the `finalize()` below sees a populated builder.
-    if constexpr (requires {
-                    _underlyingVocabulary.lookupBatch(indices, builder);
-                  }) {
+    if constexpr (HasBuilderLookupBatch_v<UnderlyingVocabulary>) {
       using InnerResult =
           decltype(_underlyingVocabulary.lookupBatch(indices, builder));
       if constexpr (std::is_void_v<InnerResult>) {
