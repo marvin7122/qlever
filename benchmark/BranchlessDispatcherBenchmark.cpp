@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -143,8 +144,15 @@ struct BranchingSwitchDispatcher {
       case Datatype::Double: {
         std::memcpy(out, "\"", 1);
         out += 1;
+#if defined(__APPLE__)
+        // Floating-point std::to_chars is unavailable in libc++ on Apple
+        // platforms; fall back to snprintf (same approach as
+        // writeFormattedDouble in MonomorphicSerializers.h).
+        out += std::snprintf(out, 32, "%.17g", id.getDouble());
+#else
         auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
         out = p;
+#endif
         std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
         out += 44;
         return out;
@@ -257,8 +265,15 @@ struct BranchingIfElseDispatcher {
     } else if (dt == Datatype::Double) {
       std::memcpy(out, "\"", 1);
       out += 1;
+#if defined(__APPLE__)
+      // Floating-point std::to_chars is unavailable in libc++ on Apple
+      // platforms; fall back to snprintf (same approach as
+      // writeFormattedDouble in MonomorphicSerializers.h).
+      out += std::snprintf(out, 32, "%.17g", id.getDouble());
+#else
       auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
       out = p;
+#endif
       std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
       out += 44;
       return out;
