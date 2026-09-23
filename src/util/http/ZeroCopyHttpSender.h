@@ -13,6 +13,7 @@
 #include <poll.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -87,11 +88,22 @@ inline void waitForSocketWritable(int sockfd) {
   pollfd pfd{sockfd, POLLOUT, 0};
   // No timeout: mirrors the blocking-send semantics of the fallback. The
   // session owns this socket exclusively while a response is being written.
-  int ret = ::poll(&pfd, 1, -1);
-  if (ret < 0) {
-    AD_THROW("poll for socket writability failed");
+  while (true) {
+    int ret = ::poll(&pfd, 1, -1);
+    if (ret < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      AD_THROW("poll for socket writability failed");
+    }
+    AD_CORRECTNESS_CHECK(ret == 1);
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+      AD_THROW("socket not writable (peer closed)");
+    }
+    if (pfd.revents & POLLOUT) {
+      return;
+    }
   }
-  AD_CORRECTNESS_CHECK(ret == 1);
 }
 
 // Send a chunked `streamable_body` response over `stream`, transmitting the
