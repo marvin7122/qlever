@@ -191,9 +191,26 @@ class FsstRepeatedDecoder {
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
                                       std::string& scratch) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(str));
+    // The decode writes each stage to `out`/`scratch` before reading it
+    // back as the next stage's input. A compressed input that overlaps
+    // either destination would corrupt unread input, so aliasing is a
+    // contract violation. All production and test callers pass disjoint
+    // ranges.
+    const auto overlaps = [](const char* firstBegin, size_t firstSize,
+                             const char* secondBegin, size_t secondSize) {
+      return firstSize > 0 && secondSize > 0 &&
+             firstBegin < secondBegin + secondSize &&
+             secondBegin < firstBegin + firstSize;
+    };
+    AD_CONTRACT_CHECK(
+        !overlaps(str.data(), str.size(), out.data(), out.size()));
     if constexpr (N == 1) {
       return decoders_[0].decompressInto(str, out);
     } else {
+      // A `str` into `scratch` would additionally dangle across the
+      // reallocation below.
+      AD_CONTRACT_CHECK(
+          !overlaps(str.data(), str.size(), scratch.data(), scratch.size()));
       if (scratch.size() < out.size()) {
         scratch.resize(out.size());
       }
