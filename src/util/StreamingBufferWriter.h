@@ -10,6 +10,8 @@
 #ifndef QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 #define QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 
+#include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -212,7 +214,10 @@ class StreamingBufferWriter {
   // Write raw bytes using non-temporal streaming stores.
   void write(const void* src, size_t numBytes) {
     AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
-    AD_CONTRACT_CHECK(bytesWritten_ + numBytes <= capacity_);
+    // Subtraction form: the naive `bytesWritten_ + numBytes <= capacity_`
+    // can wrap around `size_t` for huge `numBytes` and pass incorrectly.
+    AD_CONTRACT_CHECK(bytesWritten_ <= capacity_);
+    AD_CONTRACT_CHECK(numBytes <= capacity_ - bytesWritten_);
 
     if (numBytes == 0) {
       return;
@@ -262,10 +267,11 @@ class StreamingBufferWriter {
   }
 
   [[nodiscard]] char* currentWritePointer() noexcept {
-    return buffer_ + bytesWritten_;
+    // Avoid pointer arithmetic on a null `buffer_` for zero-capacity writers.
+    return bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_;
   }
   [[nodiscard]] const char* currentWritePointer() const noexcept {
-    return buffer_ + bytesWritten_;
+    return bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_;
   }
   [[nodiscard]] char* data() noexcept { return buffer_; }
   [[nodiscard]] const char* data() const noexcept { return buffer_; }
@@ -274,7 +280,9 @@ class StreamingBufferWriter {
     return {buffer_, bytesWritten_};
   }
   [[nodiscard]] std::span<char> remainingSpan() noexcept {
-    return {buffer_ + bytesWritten_, capacity_ - bytesWritten_};
+    // Avoid pointer arithmetic on a null `buffer_` for zero-capacity writers.
+    return {bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_,
+            capacity_ - bytesWritten_};
   }
 };
 
