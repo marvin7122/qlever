@@ -23,6 +23,13 @@
 // be used for unit tests.
 
 namespace ad_utility::testing {
+// Return a pointer to a single, lazily-initialized `EncodedIriManager`
+// instance shared across all tests.
+inline const EncodedIriManager* encodedIriManager() {
+  static EncodedIriManager instance;
+  return &instance;
+}
+
 // Create an empty `Index` object that has certain default settings overwritten
 // such that very small indices, as they are typically used for unit tests,
 // can be built without a lot of time and memory overhead. Using the parameter
@@ -72,6 +79,14 @@ struct TestIndexConfig {
   // If true, add `ql:has-word` triples for each word in each literal during
   // index building.
   bool addHasWordTriples = false;
+  // The words of the secondary vocabulary of the index (see
+  // `index/vocabulary/SecondaryVocabulary.h`). They have to be sorted and
+  // distinct, and must not be contained in `turtleInput`, because the
+  // secondary vocabulary is disjoint from the vocabulary of the main index.
+  // NOTE: A secondary vocabulary can currently only be created for testing
+  // (see `IndexImpl::setSecondaryVocabForTesting`), which is what this member
+  // does.
+  std::optional<std::vector<std::string>> secondaryVocabWords = std::nullopt;
 
   // A very typical use case is to only specify the turtle input, and leave all
   // the other members as the default. We therefore have a dedicated constructor
@@ -83,19 +98,21 @@ struct TestIndexConfig {
   // Hashing.
   template <typename H>
   friend H AbslHashValue(H h, const TestIndexConfig& c) {
-    return H::combine(
-        std::move(h), c.turtleInput, c.loadAllPermutations, c.usePatterns,
-        c.usePrefixCompression, c.blocksizePermutations, c.createTextIndex,
-        c.addWordsFromLiterals, c.contentsOfWordsFileAndDocsfile,
-        c.parserBufferSize, c.scoringMetric, c.bAndKParam, c.indexType,
-        c.encodedPrefixesWithoutAngleBrackets, c.addHasWordTriples);
+    return H::combine(std::move(h), c.turtleInput, c.loadAllPermutations,
+                      c.usePatterns, c.usePrefixCompression,
+                      c.blocksizePermutations, c.createTextIndex,
+                      c.addWordsFromLiterals, c.contentsOfWordsFileAndDocsfile,
+                      c.parserBufferSize, c.scoringMetric, c.bAndKParam,
+                      c.indexType, c.encodedPrefixesWithoutAngleBrackets,
+                      c.addHasWordTriples, c.secondaryVocabWords);
   }
   QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR_LOCAL(
       TestIndexConfig, turtleInput, loadAllPermutations, usePatterns,
       usePrefixCompression, blocksizePermutations, createTextIndex,
       addWordsFromLiterals, contentsOfWordsFileAndDocsfile, parserBufferSize,
       scoringMetric, bAndKParam, indexType, vocabularyType,
-      encodedPrefixesWithoutAngleBrackets, addHasWordTriples)
+      encodedPrefixesWithoutAngleBrackets, addHasWordTriples,
+      secondaryVocabWords)
 };
 
 // Create a test index at the given `indexBasename` and with the given `config`.

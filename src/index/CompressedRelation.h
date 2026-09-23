@@ -172,9 +172,10 @@ struct CompressedBlockMetadata : CompressedBlockMetadataNoBlockIndex {
   // blocks is being used.
   size_t blockIndex_;
 
-  // Two of these are equal if all members are equal.
-  QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR_LOCAL(CompressedBlockMetadata,
-                                              blockIndex_)
+  // Two of these are equal if all members are equal (including the members of
+  // the base class).
+  QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR_LOCAL_DERIVED(
+      CompressedBlockMetadata, CompressedBlockMetadataNoBlockIndex, blockIndex_)
 
   // Format CompressedBlockMetadata contents for debugging.
   friend std::ostream& operator<<(
@@ -377,10 +378,15 @@ class CompressedRelationWriter {
   // The `permutation` contains the column indices indicating the permutation to
   // be built (as an array, for example `[0, 1, 2]`). The `sortedTriples` must
   // be sorted by this permutation.
+  //
+  // With `showProgressBar` set to `false`, this writes no progress bar of its
+  // own. That is for callers that write several permutations and want to
+  // report the overall progress themselves.
   static PermutationSingleResult createPermutation(
       WriterAndCallback writerAndCallback,
       ad_utility::InputRangeTypeErased<IdTableStatic<0>> sortedTriples,
-      qlever::KeyOrder permutation, const PerBlockCallbacks& perBlockCallbacks);
+      qlever::KeyOrder permutation, const PerBlockCallbacks& perBlockCallbacks,
+      bool showProgressBar = true);
 
  private:
   // Internal helper for `PermutationWriter<true>` (that is, in pair mode).

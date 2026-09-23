@@ -416,8 +416,11 @@ void DeltaTriples::rewriteLocalVocabEntriesAndBlankNodes(Triples& triples) {
   // unchanged.
   auto convertId = [this, isGlobalBlankNode, &getLocalBlankNode](Id& id) {
     if (id.getDatatype() == Datatype::LocalVocabIndex) {
-      id = Id::makeFromLocalVocabIndex(
-          localVocab_.getIndexAndAddIfNotContained(*id.getLocalVocabIndex()));
+      // NOTE: `getIdAndAddIfNotContained` (not `getIndexAndAddIfNotContained`)
+      // is essential here: storing a word that is already in the vocabulary of
+      // the index would give the delta triples two different `Id`s for it, and
+      // a later index rebuild would try to add it to the vocabulary again.
+      id = localVocab_.getIdAndAddIfNotContained(*id.getLocalVocabIndex());
     } else if (id.getDatatype() == Datatype::BlankNodeIndex) {
       auto idx = id.getBlankNodeIndex();
       if (isGlobalBlankNode(idx) ||
@@ -483,11 +486,14 @@ void DeltaTriples::modifyTriplesImpl(CancellationHandle cancellationHandle,
 LocatedTriplesSharedState DeltaTriples::getLocatedTriplesSharedStateCopy()
     const {
   // Create a copy of the `LocatedTriplesState` for use as a constant
-  // snapshot.
+  // snapshot. NOTE: `LocatedTriplesState` is an aggregate, and `make_shared`
+  // initializes with parentheses, which only works for aggregates since C++20.
+  // The explicit `LocatedTriplesState{...}` is therefore required for C++17.
   return LocatedTriplesSharedState{std::make_shared<LocatedTriplesState>(
-      locatedTriples_->locatedTriplesPerBlock_,
-      locatedTriples_->internalLocatedTriplesPerBlock_,
-      localVocab_.getLifetimeExtender(), locatedTriples_->index_, getCounts())};
+      LocatedTriplesState{locatedTriples_->locatedTriplesPerBlock_,
+                          locatedTriples_->internalLocatedTriplesPerBlock_,
+                          localVocab_.getLifetimeExtender(),
+                          locatedTriples_->index_, getCounts()})};
 }
 
 // ____________________________________________________________________________

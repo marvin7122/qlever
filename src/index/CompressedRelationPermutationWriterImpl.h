@@ -45,7 +45,7 @@ struct CompressedRelationWriter::AddBlockOfSmallRelationsToSwitched {
         blockOfSmallRelations.at(blockOfSmallRelations.numRows() - 1, 0);
     writer_.compressAndWriteBlock(firstCol0, lastCol0,
                                   std::move(blockOfSmallRelations), false);
-  };
+  }
 };
 
 // Helper that handles the queue of callbacks to be called for every block
@@ -128,6 +128,9 @@ struct CompressedRelationWriter::PermutationWriter {
   size_t numTriplesProcessed_ = 0;
   ad_utility::ProgressBar progressBar_{numTriplesProcessed_,
                                        "Triples sorted: "};
+  // Whether the progress bar above is displayed, see the constructor for a
+  // single permutation below.
+  bool showProgressBar_ = true;
 
   // Constructor for a `PermutationWriter` which writes pair of permutations.
   CPP_template(bool doWritePair = WritePair)(requires doWritePair)
@@ -157,24 +160,29 @@ struct CompressedRelationWriter::PermutationWriter {
 
     writer1_->smallBlocksCallback_ =
         AddBlockOfSmallRelationsToSwitched{*writer2_};
-  };
+  }
 
   // Constructor for a `PermutationWriter` which writes a single permutation.
+  // With `showProgressBar` set to `false`, the progress of this writer is not
+  // displayed, which is for callers that display the progress themselves (see
+  // `CompressedRelationWriter::createPermutation`).
   CPP_template(bool doWritePair = WritePair)(requires(!doWritePair))
       PermutationWriter(WriterAndCallback writerAndCallback1,
                         qlever::KeyOrder permutation,
-                        PerBlockCallbacks perBlockCallbacks)
+                        PerBlockCallbacks perBlockCallbacks,
+                        bool showProgressBar = true)
       : permutation_{std::move(permutation)},
         writer1_{std::move(writerAndCallback1.writer_)},
         writeMetadata_{std::move(writerAndCallback1.callback_),
                        writer1_->blocksize()},
-        blockCallbackManager_{std::move(perBlockCallbacks)} {
+        blockCallbackManager_{std::move(perBlockCallbacks)},
+        showProgressBar_{showProgressBar} {
     static_assert(!WritePair);
     // This logic only works for permutations that have the graph as the fourth
     // column.
     AD_CORRECTNESS_CHECK(permutation_.keys().at(3) == 3);
     AD_CORRECTNESS_CHECK(blocksize_ > 0);
-  };
+  }
 
   // Write a block of a large relation with `writer1` and also push the block
   // into the twin sorter for `writer2`.
@@ -195,7 +203,7 @@ struct CompressedRelationWriter::PermutationWriter {
     relation_.clear();
     relation_.reserve(blocksize_);
     ++numBlocksCurrentRel_;
-  };
+  }
 
   // We have encountered the last occurrence of the current relation (value for
   // column 0). Thus we need to write the remaining buffered rows and metadata.
@@ -230,7 +238,7 @@ struct CompressedRelationWriter::PermutationWriter {
     }
     relation_.clear();
     numBlocksCurrentRel_ = 0;
-  };
+  }
 
   // ___________________________________________________________________________
   void logTimers() const {
@@ -281,7 +289,7 @@ struct CompressedRelationWriter::PermutationWriter {
   // ___________________________________________________________________________
   void increaseTripleCounter() {
     ++numTriplesProcessed_;
-    if (progressBar_.update()) {
+    if (showProgressBar_ && progressBar_.update()) {
       AD_LOG_INFO << progressBar_.getProgressString() << std::flush;
     }
   }
@@ -344,7 +352,9 @@ struct CompressedRelationWriter::PermutationWriter {
       blockCallbackManager_.passToBlockCallbacks(std::move(block));
       inputWaitTimer_.cont();
     }
-    AD_LOG_INFO << progressBar_.getFinalProgressString() << std::flush;
+    if (showProgressBar_) {
+      AD_LOG_INFO << progressBar_.getFinalProgressString() << std::flush;
+    }
     inputWaitTimer_.stop();
     if (!relation_.empty() || numBlocksCurrentRel_ > 0) {
       finishRelation();
