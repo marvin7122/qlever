@@ -119,6 +119,7 @@ TEST(ScatterGatherArenaStreamerTest, ShortStringsCopiedToHeader) {
 
   auto summary = std::move(streamer).finalize();
   ASSERT_EQ(chunks.size(), 1);
+  EXPECT_EQ(summary.chunksEmitted_, 1);
 
   const auto& chunk = chunks[0];
   EXPECT_EQ(chunk.zeroCopySpansCount(), 0);
