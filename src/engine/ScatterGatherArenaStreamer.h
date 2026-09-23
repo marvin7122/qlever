@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -153,6 +154,11 @@ class ScatterGatherChunk {
           continue;
         }
         AD_THROW(absl::StrCat("writev failed (errno: ", strerror(errno), ")"));
+      }
+      if (bytes == 0) {
+        // Defensive: `writev` with a nonzero total length cannot return 0 on
+        // regular files or sockets, but never spin forever if it does.
+        break;
       }
       totalWritten += bytes;
       size_t remainingToAdvance = static_cast<size_t>(bytes);
