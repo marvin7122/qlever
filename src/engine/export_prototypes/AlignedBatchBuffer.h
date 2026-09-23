@@ -37,9 +37,9 @@ class AlignedBatchBuffer {
   static_assert(Alignment >= alignof(T),
                 "Alignment must be at least alignof(T)");
   static_assert(sizeof(T) <= Alignment, "T size must not exceed alignment");
-  // `reserve` relocates elements with `std::memcpy` and `push_back` writes
-  // into raw `::operator new[]` storage, both of which are only valid for
-  // trivially copyable types.
+  // `reserve` relocates elements via placement-new copy construction and
+  // `push_back` constructs into raw `::operator new[]` storage, both of
+  // which are only valid for trivially copyable types.
   static_assert(std::is_trivially_copyable_v<T>,
                 "AlignedBatchBuffer requires trivially copyable types");
 
@@ -75,8 +75,13 @@ class AlignedBatchBuffer {
                                               std::align_val_t{Alignment}));
     std::unique_ptr<T[], AlignedDeleter> newData(raw);
 
-    if (data_ && size_ > 0) {
-      std::memcpy(newData.get(), data_.get(), size_ * sizeof(T));
+    // Copy-construct into the fresh storage with placement new. `T` is
+    // statically constrained to trivially copyable types (see above), so
+    // this compiles to a `memcpy` while also starting the lifetime of each
+    // element, which plain `std::memcpy` into raw storage does not do in
+    // C++17 (implicit object creation is C++20-only).
+    for (size_t i = 0; i < size_; ++i) {
+      ::new (static_cast<void*>(newData.get() + i)) T(data_.get()[i]);
     }
     data_ = std::move(newData);
     capacity_ = alignedCapacity;
@@ -86,7 +91,11 @@ class AlignedBatchBuffer {
 
   void push_back(const T& val) noexcept {
     AD_CORRECTNESS_CHECK(size_ < capacity_);
-    data_[size_++] = val;
+    // Placement new starts the element lifetime in the raw storage (see
+    // `reserve`); assignment through `T*` would not in C++17. This cannot
+    // throw because `T` is trivially copyable (see `static_assert` above).
+    ::new (static_cast<void*>(data_.get() + size_)) T(val);
+    ++size_;
   }
 
   [[nodiscard]] ql::span<const T> span() const noexcept {
