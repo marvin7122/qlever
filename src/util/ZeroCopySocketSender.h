@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -89,6 +90,11 @@ class ZeroCopyBufferPool {
     AD_CONTRACT_CHECK(numBuffers > 0);
     AD_CONTRACT_CHECK(bufferSizeBytes > 0);
     AD_CONTRACT_CHECK((bufferSizeBytes % kZeroCopyPageAlignment) == 0);
+    // Slot IDs are stored as `uint32_t`, and the product below must not wrap
+    // around `size_t`.
+    AD_CONTRACT_CHECK(numBuffers <= std::numeric_limits<uint32_t>::max());
+    AD_CONTRACT_CHECK(numBuffers <=
+                      std::numeric_limits<size_t>::max() / bufferSizeBytes);
 
     numBuffers_ = numBuffers;
     bufferSizeBytes_ = bufferSizeBytes;

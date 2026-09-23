@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -166,6 +167,9 @@ class PinnedArena {
     AD_CONTRACT_CHECK(numSlots > 0);
     AD_CONTRACT_CHECK(slotSizeBytes > 0);
     AD_CONTRACT_CHECK(isBlockAligned(slotSizeBytes));
+    // The product below must not wrap around `size_t`.
+    AD_CONTRACT_CHECK(numSlots <=
+                      std::numeric_limits<size_t>::max() / slotSizeBytes);
 
     slotSize_ = slotSizeBytes;
     numSlots_ = numSlots;
@@ -518,6 +522,16 @@ class RegisteredIoUringReader {
 
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
         AD_CONTRACT_CHECK(req.bufferIndex < registeredIovecs_.size());
+        // The kernel requires the destination range to lie inside the
+        // selected registered buffer; reject out-of-range requests with a
+        // contract message instead of a raw `-EFAULT` completion.
+        const char* base = static_cast<const char*>(
+            registeredIovecs_[req.bufferIndex].iov_base);
+        const size_t extent = registeredIovecs_[req.bufferIndex].iov_len;
+        AD_CONTRACT_CHECK(req.destination >= base);
+        AD_CONTRACT_CHECK(req.numBytes <= extent);
+        AD_CONTRACT_CHECK(static_cast<size_t>(req.destination - base) <=
+                          extent - req.numBytes);
         // Fixed buffer read with kernel page-pinning
         io_uring_prep_read_fixed(sqe, targetFd, req.destination, req.numBytes,
                                  req.fileOffset, req.bufferIndex);
