@@ -81,7 +81,12 @@ void* operator new(std::size_t size) {
 #endif
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+// Forward to the unsized overload above: calling `std::free` directly here
+// trips GCC's `-Wmismatched-new-delete`, which a local `#pragma` cannot
+// suppress on all GCC versions.
+void operator delete(void* ptr, std::size_t) noexcept {
+  ::operator delete(ptr);
+}
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
