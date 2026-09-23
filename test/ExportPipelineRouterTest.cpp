@@ -9,6 +9,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <optional>
+#include <string>
+
 #include "engine/ExportPipelineRouter.h"
 #include "parser/SparqlParser.h"
 
@@ -251,6 +254,19 @@ TEST(ExportPipelineRouterTest, IneligibleQueryExplainsFallback) {
   std::string desc = ExportPipelineRouter::describeDecision(query, params);
   EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
   EXPECT_THAT(desc, testing::HasSubstr("ineligible for V2 streaming"));
+}
+
+TEST(ExportPipelineRouterTest, ServerDefaultV2WithIneligibleQueryFallback) {
+  auto query = parse(
+      "SELECT * WHERE { SERVICE <http://example.org/sparql> "
+      "{ ?s ?p ?o } }");
+  ExportPipelineRouter::ParamValueMap params;
+  std::string desc = ExportPipelineRouter::describeDecision(
+      query, params, std::nullopt, ExportEngineMode::FastStreamingV2);
+  EXPECT_THAT(desc, testing::HasSubstr("LegacyV1"));
+  EXPECT_THAT(desc, testing::HasSubstr(
+                        "server default is V2 but query is ineligible for V2 "
+                        "streaming"));
 }
 
 TEST(ExportPipelineRouterTest, SelectSendModeHeader) {
