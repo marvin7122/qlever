@@ -126,6 +126,9 @@ class InPlaceHttpChunk {
   std::optional<AlignedBuffer> ownedBuffer_{std::nullopt};
 
  public:
+  // Largest payload whose hex length fits the reserved header (14 digits).
+  static constexpr size_t kMaxSupportedPayloadBytes = (size_t{1} << 56) - 1;
+
   // ___________________________________________________________________________
   // Construct an owning chunk with 64-byte aligned internal memory.
   explicit InPlaceHttpChunk(
@@ -136,6 +139,11 @@ class InPlaceHttpChunk {
         isFinalized_{false},
         framedStart_{nullptr},
         framedLength_{0} {
+    // Fail at construction, not at the first write: larger payloads cannot
+    // be framed into the reserved header (see `finalizeChunk`).
+    AD_CONTRACT_CHECK(maxPayloadCapacity <= kMaxSupportedPayloadBytes);
+    AD_CONTRACT_CHECK(maxPayloadCapacity + TOTAL_OVERHEAD_BYTES >=
+                      maxPayloadCapacity);
     ownedBuffer_.emplace(totalCapacity_);
     buffer_ = ownedBuffer_->data();
   }
@@ -346,6 +354,9 @@ class InPlaceHttpChunkStreamer {
         currentPayloadBytes_(0),
         emitTerminatingChunkOnFinalize_(emitTerminatingChunkOnFinalize) {
     AD_CONTRACT_CHECK(sink_ != nullptr);
+    // A zero-capacity chunker can never accept a byte: `write` would spin on
+    // `flushCurrentChunk`, whose payload check requires a positive payload.
+    AD_CONTRACT_CHECK(chunkPayloadCapacity > 0);
   }
 
   // Move-only semantics

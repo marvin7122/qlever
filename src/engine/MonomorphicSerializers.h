@@ -549,8 +549,11 @@ decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
       return visitor.template operator()<ColumnType::Boolean>(
           std::forward<Args>(args)...);
     case ColumnType::String:
-    default:
       return visitor.template operator()<ColumnType::String>(
+          std::forward<Args>(args)...);
+    case ColumnType::Undefined:
+    default:
+      return visitor.template operator()<ColumnType::Undefined>(
           std::forward<Args>(args)...);
   }
 }
@@ -586,9 +589,13 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
             .template operator()<decltype(t0)::value, ColumnType::Boolean>(
                 std::forward<Args>(args)...);
       case ColumnType::String:
-      default:
         return visitor
             .template operator()<decltype(t0)::value, ColumnType::String>(
+                std::forward<Args>(args)...);
+      case ColumnType::Undefined:
+      default:
+        return visitor
+            .template operator()<decltype(t0)::value, ColumnType::Undefined>(
                 std::forward<Args>(args)...);
     }
   };
@@ -607,8 +614,10 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
     case ColumnType::Boolean:
       return inner(std::integral_constant<ColumnType, ColumnType::Boolean>{});
     case ColumnType::String:
-    default:
       return inner(std::integral_constant<ColumnType, ColumnType::String>{});
+    case ColumnType::Undefined:
+    default:
+      return inner(std::integral_constant<ColumnType, ColumnType::Undefined>{});
   }
 }
 

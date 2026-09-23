@@ -141,9 +141,18 @@ struct RleFormatterConfig {
 // 3. Seamlessly switches back to dynamic formatting when the run ends.
 class RlePrefixFormatter {
  private:
-  RlePrefixSlice<2048> slice_{};
+  static constexpr size_t kSliceCapacity = 2048;
+  RlePrefixSlice<kSliceCapacity> slice_{};
   RleFormatterConfig config_{};
   RleStats stats_{};
+
+  // Total staged bytes for prefix + term + suffix + delimiter. Checked
+  // against the staging buffer below before the first copy.
+  [[nodiscard]] static size_t stagedLength(const RleFormatterConfig& config,
+                                           std::string_view rawTerm) noexcept {
+    return config.prefix_.size() + rawTerm.size() + config.suffix_.size() +
+           config.delimiter_.size();
+  }
 
  public:
   explicit RlePrefixFormatter(RleFormatterConfig config = RleFormatterConfig{})
@@ -178,7 +187,10 @@ class RlePrefixFormatter {
 
     // Cache miss: format new prefix slice
     ++stats_.cacheMisses_;
-    std::array<char, 2048> tempBuf{};
+    // Validate the complete staged length before the first copy: the copies
+    // below would otherwise write past `tempBuf` for oversized inputs.
+    AD_CONTRACT_CHECK(stagedLength(config_, rawTerm) <= kSliceCapacity);
+    std::array<char, kSliceCapacity> tempBuf{};
     char* curr = tempBuf.data();
 
     // Opening delimiter (e.g. "<")
@@ -227,7 +239,9 @@ class RlePrefixFormatter {
     ++stats_.cacheMisses_;
     std::string_view rawTerm = lookupFunc(id);
 
-    std::array<char, 2048> tempBuf{};
+    // See above: validate before the first copy.
+    AD_CONTRACT_CHECK(stagedLength(config_, rawTerm) <= kSliceCapacity);
+    std::array<char, kSliceCapacity> tempBuf{};
     char* curr = tempBuf.data();
 
     if (!config_.prefix_.empty()) {

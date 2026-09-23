@@ -120,7 +120,9 @@ class AdaptiveChunkSizer {
     AD_CONTRACT_CHECK(config_.initialChunkBytes_ > 0);
     AD_CONTRACT_CHECK(config_.maxChunkBytes_ >= config_.initialChunkBytes_);
     AD_CONTRACT_CHECK(config_.growthFactor_ >= 1.0);
+    AD_CONTRACT_CHECK(std::isfinite(config_.growthFactor_));
     AD_CONTRACT_CHECK(config_.initialEstimatedRowBytes_ > 0.0);
+    AD_CONTRACT_CHECK(std::isfinite(config_.initialEstimatedRowBytes_));
     AD_CONTRACT_CHECK(config_.minChunkRows_ >= 1);
     AD_CONTRACT_CHECK(config_.maxChunkRows_ >= config_.minChunkRows_);
   }
@@ -286,10 +288,14 @@ class AdaptiveChunkBuffer {
     if (sv.empty()) {
       return;
     }
+    // Guard the addition against wraparound before sizing the buffer.
+    AD_CONTRACT_CHECK(sv.size() <=
+                      std::numeric_limits<size_t>::max() - writePos_);
     if (writePos_ + sv.size() > buffer_.size()) {
       buffer_.resize(std::max(buffer_.size() * 2, writePos_ + sv.size()));
     }
-    std::memcpy(buffer_.data() + writePos_, sv.data(), sv.size());
+    // `memmove`: the slice may alias this buffer (e.g. `currentView()`).
+    std::memmove(buffer_.data() + writePos_, sv.data(), sv.size());
     writePos_ += sv.size();
   }
 

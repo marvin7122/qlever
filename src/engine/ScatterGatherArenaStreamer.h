@@ -154,6 +154,9 @@ class ScatterGatherChunk {
         }
         AD_THROW(absl::StrCat("writev failed (errno: ", strerror(errno), ")"));
       }
+      // A zero result for a non-empty chunk advances nothing; retrying would
+      // spin forever, so treat it as an error.
+      AD_CONTRACT_CHECK(bytes > 0);
       totalWritten += bytes;
       size_t remainingToAdvance = static_cast<size_t>(bytes);
       while (offset < remainingIov.size() && remainingToAdvance > 0) {
@@ -344,6 +347,9 @@ class ScatterGatherChunkStreamer {
 
   // ___________________________________________________________________________
   // Write an RDF literal with optional datatype or language tag.
+  // Precondition: `content` is already escaped for the target format
+  // (escaping lives in `FastExportStreamFormatter::writeEscapedTurtleLiteral`;
+  // this zero-copy fast path emits the span verbatim between quotes).
   void writeLiteral(ql::span<const char> content,
                     std::string_view datatype = "",
                     std::string_view langTag = "") {

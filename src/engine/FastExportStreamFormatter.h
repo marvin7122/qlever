@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -187,14 +188,16 @@ class FastExportStreamFormatter {
 
   // ___________________________________________________________________________
   // Directly append a raw character.
-  void writeChar(char c) noexcept {
+  // Note: no `noexcept` — `ensureAvailable` throws on fixed-span overflow
+  // and propagates sink errors in streaming mode.
+  void writeChar(char c) {
     ensureAvailable(1);
     bufferPtr_[writePos_++] = c;
   }
 
   // ___________________________________________________________________________
   // Directly append a raw string slice without escaping.
-  void writeRaw(std::string_view sv) noexcept {
+  void writeRaw(std::string_view sv) {
     if (sv.empty()) {
       return;
     }
@@ -207,12 +210,14 @@ class FastExportStreamFormatter {
   // Write an integer directly without heap allocation.
   template <typename IntegerType>
   requires std::is_integral_v<IntegerType>
-  void writeInteger(IntegerType value) noexcept {
-    ensureAvailable(32);
-    auto [ptr, ec] = std::to_chars(bufferPtr_ + writePos_,
-                                   bufferPtr_ + bufferCapacity_, value);
+  void writeInteger(IntegerType value) {
+    // Format into a bounded stack buffer first: it holds the longest
+    // representation of any integer type, so fixed-span writes only reserve
+    // what they actually emit.
+    std::array<char, std::numeric_limits<IntegerType>::digits10 + 3> tmp{};
+    auto [ptr, ec] = std::to_chars(tmp.data(), tmp.data() + tmp.size(), value);
     AD_CORRECTNESS_CHECK(ec == std::errc{});
-    writePos_ = static_cast<size_t>(ptr - bufferPtr_);
+    writeRaw(std::string_view(tmp.data(), ptr));
   }
 
   // ___________________________________________________________________________

@@ -336,6 +336,11 @@ class ZeroCopySocketSender {
     AD_CONTRACT_CHECK(bufferIndex < config_.numBuffers);
     AD_CONTRACT_CHECK(numBytes > 0);
     AD_CONTRACT_CHECK(numBytes <= config_.bufferSizeBytes);
+    // Match the synchronous fallback below: never let a closed peer kill the
+    // exporter with SIGPIPE; report the error through the CQE instead.
+#ifdef MSG_NOSIGNAL
+    flags |= MSG_NOSIGNAL;
+#endif
 
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
@@ -512,8 +517,15 @@ class ZeroCopySocketSender {
           break;
         }
         io_uring_cqe_seen(&ring_, cqe);
+        // Best-effort quiescence: a SEND_ZC request produces two CQEs
+        // (transmission + buffer-release notification), so counting only
+        // requests can leave `numInFlightBuffers_ > 0` forever and hang the
+        // destructor. Drain both counters per CQE instead.
         if (numInFlightRequests_ > 0) {
           --numInFlightRequests_;
+        }
+        if (numInFlightBuffers_ > 0) {
+          --numInFlightBuffers_;
         }
       }
 

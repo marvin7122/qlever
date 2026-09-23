@@ -24,6 +24,8 @@
 #define QLEVER_SIMD_X86 1
 #endif
 
+#include "engine/SimdCpuFeatures.h"
+
 #if defined(__GNUC__) || defined(__clang__)
 #define QLEVER_AVX2_TARGET __attribute__((target("avx2")))
 #define QLEVER_SSE2_TARGET __attribute__((target("sse2")))
@@ -325,12 +327,16 @@ class SimdValidityScanner {
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
       const ValueId* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
+    // `ValueId` is a standard-layout class whose first (and only) member is
+    // the underlying `uint64_t`, so it is pointer-interconvertible with it
+    // and this access is well-defined.
     const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
-    return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
-#else
-    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
+    if (cpuSupportsAvx2()) {
+      return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
+    }
 #endif
+    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
   }
 
   // ___________________________________________________________________________
@@ -339,10 +345,11 @@ class SimdValidityScanner {
       const uint64_t* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return ValidityBitmask64{detail::scanBatch64Avx2(data)};
-#else
-    return ValidityBitmask64{detail::scanBatch64Scalar(data)};
+    if (cpuSupportsAvx2()) {
+      return ValidityBitmask64{detail::scanBatch64Avx2(data)};
+    }
 #endif
+    return ValidityBitmask64{detail::scanBatch64Scalar(data)};
   }
 
   // ___________________________________________________________________________
@@ -352,8 +359,10 @@ class SimdValidityScanner {
     AD_CONTRACT_CHECK(data != nullptr);
     const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
-    return detail::isAllUnbound64Avx2(raw);
-#else
+    if (cpuSupportsAvx2()) {
+      return detail::isAllUnbound64Avx2(raw);
+    }
+#endif
     for (size_t i = 0; i < 64; ++i) {
       if (raw[i] != 0) {
         return false;
@@ -429,10 +438,11 @@ class SimdValidityScanner {
                                            char delimiter = ',') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimitersAvx2(dest, delimiter);
-#else
-    return detail::write64DelimitersScalar(dest, delimiter);
+    if (cpuSupportsAvx2()) {
+      return detail::write64DelimitersAvx2(dest, delimiter);
+    }
 #endif
+    return detail::write64DelimitersScalar(dest, delimiter);
   }
 
   // ___________________________________________________________________________
@@ -442,10 +452,11 @@ class SimdValidityScanner {
                                            char delimiter = '\t') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimitersAvx2(dest, delimiter);
-#else
-    return detail::write64DelimitersScalar(dest, delimiter);
+    if (cpuSupportsAvx2()) {
+      return detail::write64DelimitersAvx2(dest, delimiter);
+    }
 #endif
+    return detail::write64DelimitersScalar(dest, delimiter);
   }
 
   // ___________________________________________________________________________
@@ -455,10 +466,11 @@ class SimdValidityScanner {
                                           char rowSeparator = '\n') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
-#else
-    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
+    if (cpuSupportsAvx2()) {
+      return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
+    }
 #endif
+    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
   }
 
   // ___________________________________________________________________________
@@ -468,10 +480,11 @@ class SimdValidityScanner {
                                           char rowSeparator = '\n') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
-#else
-    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
+    if (cpuSupportsAvx2()) {
+      return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
+    }
 #endif
+    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
   }
 };
 

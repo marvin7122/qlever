@@ -25,6 +25,8 @@
 #define QLEVER_SIMD_X86 1
 #endif
 
+#include "engine/SimdCpuFeatures.h"
+
 #if defined(__GNUC__) || defined(__clang__)
 #define QLEVER_AVX2_TARGET __attribute__((target("avx2")))
 #define QLEVER_SSE2_TARGET __attribute__((target("sse2")))
@@ -314,10 +316,13 @@ class SimdEscapeClassifier {
   [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32(
       const char* data) noexcept {
 #if defined(QLEVER_SIMD_X86)
-    return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
-#else
-    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
+    // The AVX2 kernel is compiled for any x86 host; only run it where the
+    // CPU supports it (see `cpuSupportsAvx2`).
+    if (cpuSupportsAvx2()) {
+      return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    }
 #endif
+    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
   }
 
   // ___________________________________________________________________________
@@ -532,10 +537,13 @@ class SimdEscapeClassifier {
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
 
-    // If there are only two quotes and no internal special characters, pass
-    // through
+    // If there are only two quotes and the content between them holds no
+    // special characters, pass through. Note: the check runs over the
+    // content only — `normLiteral` itself always contains the delimiting
+    // quotes, which unconditionally count as escape characters.
     if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
+        !hasEscapes<EscapeFormat::Turtle>(
+            normLiteral.substr(1, posLastQuote - 1))) [[likely]] {
       return std::string{normLiteral};
     }
 

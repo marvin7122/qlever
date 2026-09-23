@@ -339,6 +339,12 @@ class BranchlessTypeDispatcher {
     AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
     AD_CONTRACT_CHECK(out != nullptr || ids.empty());
 
+    // An empty batch with a null buffer writes nothing; return early so the
+    // pointer difference below is never formed from two null pointers.
+    if (ids.empty()) {
+      return 0;
+    }
+
     char* curr = out;
     const size_t numTerms = ids.size();
     for (size_t i = 0; i < numTerms; ++i) {
