@@ -52,7 +52,10 @@ struct DummyDecoder {
   }
 
   static std::string decompress(std::string_view compressed) {
-    std::string result{compressed.size(), '\0'};
+    // Parenthesized init: braced init would select the
+    // `initializer_list<char>` constructor and fail to compile (narrowing
+    // `size_t` to `char`) on libc++.
+    std::string result(compressed.size(), '\0');
     decompressInto(compressed, ql::span<char>{result.data(), result.size()});
     return result;
   }
