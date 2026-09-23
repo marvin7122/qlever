@@ -235,6 +235,21 @@ class HardwarePerformanceMonitor {
 };
 
 // _____________________________________________________________________________
+// Checksum over looked-up bytes. Returned (not discarded) by every measured
+// lambda so the optimizer cannot eliminate the looked-up data (same idiom as
+// `VocabBatchLookupBenchmark::checksumViews`).
+size_t checksumViews(const std::vector<std::string_view>& views) {
+  size_t hash = 0;
+  for (std::string_view view : views) {
+    hash += view.size();
+    for (char c : view) {
+      hash = hash * 1315423911u + static_cast<unsigned char>(c);
+    }
+  }
+  return hash;
+}
+
+// _____________________________________________________________________________
 // Benchmark suite measuring Software Cache Prefetching vs Baseline lookup.
 class PrefetchingBenchmark : public BenchmarkInterface {
  private:
@@ -313,7 +328,7 @@ class PrefetchingBenchmark : public BenchmarkInterface {
             }
 
             sample = perfMonitor.stop();
-            return resolved.size();
+            return checksumViews(resolved);
           });
 
       const double mResolutionsPerSec =
@@ -367,7 +382,7 @@ class PrefetchingBenchmark : public BenchmarkInterface {
             });
 
         sample = perfMonitor.stop();
-        return resolved.size();
+        return checksumViews(resolved);
       });
 
       const double mResolutionsPerSec =
