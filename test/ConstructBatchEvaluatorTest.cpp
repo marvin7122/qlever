@@ -240,8 +240,9 @@ TEST_F(ConstructBatchEvaluatorTest, blankNodeIriFromVocabIsMaterialized) {
   LocalVocab localVocab;
   const BatchEvaluationContext ctx{idTable.asStaticView<0>(), 0,
                                    idTable.numRows()};
-  auto result = ConstructBatchEvaluator::evaluateBatch({0}, ctx, localVocab,
-                                                       blankIndex, idCache);
+  const std::vector<ColumnIndex> variableColumns{0};
+  auto result = ConstructBatchEvaluator::evaluateBatch(
+      variableColumns, ctx, localVocab, blankIndex, idCache);
 
   ASSERT_EQ(result.numRows_, 1);
   ASSERT_TRUE(getColumn(result, 0).at(0).has_value());
