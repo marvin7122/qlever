@@ -187,9 +187,14 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   };
 
   // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
-  // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
-  std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          ql::span<const size_t> indices) const;
+  // (16 bytes) from the `.offsets` file with synchronous `pread` ranges.
+  // Consecutive ids in one batch collapse into a single range read instead
+  // of one ring read each (the export path sends sorted, deduplicated ids,
+  // which maximizes run length), and the per-batch offsets wait disappears.
+  // Grouping is order-agnostic, so unsorted callers stay correct. The
+  // `.offsets` file is always a regular file (never a passthrough device),
+  // so plain reads are correct here on every rig.
+  std::vector<OffsetPair> readOffsetPairs(ql::span<const size_t> indices) const;
 
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched

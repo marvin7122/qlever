@@ -382,6 +382,26 @@ TEST(VocabularyOnDisk, AccessOperatorWithCoalescingEnabledMatchesWords) {
   }
 }
 
+// `lookupBatch` resolves mixed index orders exactly: consecutive ids share
+// one offsets range read, singletons and duplicates read alone, and every
+// word lands at its input position. Guards the synchronous phase-1 offsets
+// path (one range `pread` per consecutive run instead of a ring wait).
+TEST(VocabularyOnDisk, LookupBatchMixedConsecutiveRuns) {
+  auto vocab = createExampleVocabulary();
+  // Example words: {"alpha", "delta", "beta", "42", "gamma"}.
+  std::vector<size_t> indices{0, 1, 3, 2, 2, 4, 0};
+  auto result = vocab->lookupBatch(indices);
+  EXPECT_THAT(*result, ::testing::ElementsAre("alpha", "delta", "42", "beta",
+                                              "beta", "gamma", "alpha"));
+  // Fully consecutive and fully reversed batches bracket the grouping.
+  std::vector<size_t> consecutive{0, 1, 2, 3, 4};
+  EXPECT_THAT(*vocab->lookupBatch(consecutive),
+              ::testing::ElementsAre("alpha", "delta", "beta", "42", "gamma"));
+  std::vector<size_t> reversed{4, 3, 2, 1, 0};
+  EXPECT_THAT(*vocab->lookupBatch(reversed),
+              ::testing::ElementsAre("gamma", "42", "beta", "delta", "alpha"));
+}
+
 // A truncated words file must fail loudly: `operator[]` used to ignore the
 // short read and return zero-filled memory, which silently emptied whole
 // query plans on devices where `pread` cannot serve the read at all.
