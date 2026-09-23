@@ -197,7 +197,6 @@ class CompactVectorOfStrings {
   }
 
  private:
-
   // Access the owned vector alternatives. Throws (via `std::get`) if this
   // object is currently a non-owning view, which is a programming error (a
   // zero-copy view is read-only, so `build()` must not be called on it).

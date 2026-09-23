@@ -267,7 +267,7 @@ class ZeroCopySenderBenchmarkRunner {
       bytesSent += chunkSize_;
     }
 
-    auto [wallSec, [[maybe_unused]] cpuSec, cpuPercent] = timer.elapsed();
+    [[maybe_unused]] auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 
@@ -311,7 +311,7 @@ class ZeroCopySenderBenchmarkRunner {
     }
 
     sender.flushAndDrainAll();
-    auto [wallSec, [[maybe_unused]] cpuSec, cpuPercent] = timer.elapsed();
+    [[maybe_unused]] auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 
@@ -355,7 +355,7 @@ class ZeroCopySenderBenchmarkRunner {
     }
 
     sender.flushAndDrainAll();
-    auto [wallSec, [[maybe_unused]] cpuSec, cpuPercent] = timer.elapsed();
+    [[maybe_unused]] auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 

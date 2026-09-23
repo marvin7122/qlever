@@ -241,7 +241,7 @@ class AdaptiveChunkSizer {
   }
 
   // ___________________________________________________________________________
-  // Reset sizer back to initial 64 KB state (e.g. for re-using across queries).
+  // Reset sizer back to initial 64 KB state (e.g. for reusing across queries).
   void reset() noexcept {
     currentChunkBytesTarget_ = config_.initialChunkBytes_;
     totalBytesObserved_ = 0;
