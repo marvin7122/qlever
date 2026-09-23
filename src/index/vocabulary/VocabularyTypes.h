@@ -15,6 +15,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -233,11 +234,13 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
       : alloc_{std::move(alloc)} {}
 
  protected:
-  // The alignment argument is intentionally ignored: this resource only serves
-  // `char` allocations from the arena builders, for which any alignment
-  // suffices, and the underlying `AllocatorWithLimit` has no alignment
-  // concept (it counts bytes).
-  void* do_allocate(std::size_t bytes, std::size_t) override {
+  // The underlying limit allocator is `::operator new`-backed and therefore
+  // returns fundamentally aligned storage. Reject (loudly) any alignment
+  // request beyond that instead of silently returning under-aligned memory.
+  // The arena builders only allocate `char` storage, so requests stay within
+  // this bound in practice.
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+    AD_CORRECTNESS_CHECK(alignment <= alignof(std::max_align_t));
     return alloc_.allocate(bytes);
   }
   void do_deallocate(void* p, std::size_t bytes, std::size_t) override {
