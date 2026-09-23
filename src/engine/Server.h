@@ -30,8 +30,8 @@
 #include "engine/export_v2/ElasticExportScheduler.h"
 // `ScatterGatherHttpBody.h` defines coroutine bodies over
 // `cppcoro::generator`, which does not exist in
-// `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`), mirroring
-// the `Server.cpp` V2 guards.
+// `QLEVER_REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`),
+// mirroring the `Server.cpp` V2 guards.
 #if defined(QLEVER_ENABLE_EXPORT_V2) && \
     !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
 #include "engine/export_v2/ScatterGatherHttpBody.h"
@@ -165,30 +165,46 @@ class Server {
       boost::beast::http::request<boost::beast::http::string_body>;
 
   // A `send` callable for `process`/`handleHttpRequest` that captures
-  // whatever response it is invoked with into `response_` instead of
-  // actually sending it. Used by friend test code (`ServerForTesting` and the
-  // `FRIEND_TEST`s above) to call `process`/`handleHttpRequest` directly and
-  // inspect the response that would have been sent. A named type is required
-  // here (rather than an ad-hoc lambda) because `process`/`handleHttpRequest`
-  // are only defined in `Server.cpp`, so callers in other translation units
-  // can only invoke them through an explicit template instantiation, which in
-  // turn requires a type with linkage.
+  // the response it is invoked with instead of actually sending it. Regular
+  // responses land in `response_`; scatter-gather (export-send=iovec)
+  // responses land in `scatterGatherResponse_` (see below) because
+  // `ResponseT` cannot hold their body type. Used by friend test code
+  // (`ServerForTesting` and the `FRIEND_TEST`s above) to call
+  // `process`/`handleHttpRequest` directly and inspect the response that
+  // would have been sent. A named type is required here (rather than an
+  // ad-hoc lambda) because `process`/`handleHttpRequest` are only defined in
+  // `Server.cpp`, so callers in other translation units can only invoke them
+  // through an explicit template instantiation, which in turn requires a
+  // type with linkage.
   class MockSend {
    public:
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
+    using ScatterGatherResponseT = boost::beast::http::response<
+        ql::engine::export_v2::scatter_gather_body>;
+#endif
+
+    // Capture a regular response, completing once it has been stored.
     Awaitable<void> operator()(ResponseT response) {
       response_ = std::move(response);
       co_return;
     }
 #if defined(QLEVER_ENABLE_EXPORT_V2) && \
     !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
-    // Overload resolution dispatches on the body type: scatter-gather
-    // (export-send=iovec) responses land in their own slot because
-    // `ResponseT` cannot hold them.
-    Awaitable<void> operator()(
-        boost::beast::http::response<ql::engine::export_v2::scatter_gather_body>
-            response) {
+    // Capture a scatter-gather (export-send=iovec) response in its own slot,
+    // completing once it has been stored. Overload resolution dispatches on
+    // the body type because `ResponseT` cannot hold these responses.
+    Awaitable<void> operator()(ScatterGatherResponseT response) {
       scatterGatherResponse_ = std::move(response);
       co_return;
+    }
+
+    // The captured scatter-gather response, if `operator()` was invoked with
+    // one. This is the read path of the iovec test seam: friend test code
+    // invokes `process`/`handleHttpRequest` with a `MockSend` and inspects
+    // the captured response here.
+    const std::optional<ScatterGatherResponseT>& scatterGatherResponse() const {
+      return scatterGatherResponse_;
     }
 #endif
 
@@ -196,11 +212,10 @@ class Server {
 #if defined(QLEVER_ENABLE_EXPORT_V2) && \
     !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
     // Scatter-gather (export-send=iovec) responses use a different body
-    // type that `ResponseT` cannot hold; capture them separately so the
-    // iovec path stays testable through this seam.
-    std::optional<boost::beast::http::response<
-        ql::engine::export_v2::scatter_gather_body>>
-        scatterGatherResponse_;
+    // type that `ResponseT` cannot hold; they are captured separately so the
+    // iovec path stays testable through this seam (see
+    // `scatterGatherResponse()`).
+    std::optional<ScatterGatherResponseT> scatterGatherResponse_;
 #endif
   };
 
