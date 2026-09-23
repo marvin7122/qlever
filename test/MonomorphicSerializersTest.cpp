@@ -120,7 +120,7 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
 // templates are not allowed in local classes.
 struct MonomorphicDispatchTestVisitor {
   FastExportStreamFormatter& fmt;
-  const std::array<CellValue, 3>& row;
+  const ql::span<const CellValue> row;
   template <ColumnType... Types>
   void operator()() const {
     using S = MonomorphicRowSerializer<Types...>;
@@ -132,6 +132,37 @@ struct MonomorphicDispatchTestVisitor {
         fmt, ql::span<const CellValue>(row));
   }
 };
+
+TEST(MonomorphicSerializersTest, UndefinedColumnDispatchesToUndefWriter) {
+  // `ColumnType::Undefined` must reach the `Undefined` cell writer (which
+  // emits `UNDEF`), not the `String` writer. Guards the `Undefined` cases in
+  // `dispatch1Col`/`dispatch2Col`.
+  const std::vector<ColumnType> schema = {ColumnType::Undefined};
+  std::array<CellValue, 1> row = {CellValue{}};
+
+  std::string dispatchedOut =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        dispatchMonomorphicSerializer(schema,
+                                      MonomorphicDispatchTestVisitor{fmt, row});
+      });
+
+  EXPECT_EQ(dispatchedOut, "UNDEF .\n");
+}
+
+TEST(MonomorphicSerializersTest, UndefinedSecondColumnDispatch) {
+  const std::vector<ColumnType> schema = {ColumnType::Iri,
+                                          ColumnType::Undefined};
+  std::array<CellValue, 2> row = {CellValue::makeIri("<http://s>"),
+                                  CellValue{}};
+
+  std::string dispatchedOut =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        dispatchMonomorphicSerializer(schema,
+                                      MonomorphicDispatchTestVisitor{fmt, row});
+      });
+
+  EXPECT_EQ(dispatchedOut, "<http://s> UNDEF .\n");
+}
 
 TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
   const std::vector<ColumnType> schema = {ColumnType::Iri, ColumnType::Iri,

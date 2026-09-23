@@ -13,11 +13,13 @@
 #include <re2/re2.h>
 
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <sstream>
 
 #include "backports/concepts.h"
 #include "backports/three_way_comparison.h"
+#include "util/Exception.h"
 #include "util/Log.h"
 #include "util/SourceLocation.h"
 #include "util/TypeTraits.h"
@@ -96,6 +98,71 @@ https://github.com/google/googletest/blob/main/docs/reference/matchers.md#matche
     ad_utility::source_location l,
     std::string_view errorMessage = "Actual location of the test failure") {
   return {l.file_name(), static_cast<int>(l.line()), errorMessage};
+}
+
+// _____________________________________________________________________________
+// Name of the currently running test suite (e.g. `"GTestHelpersTest"`).
+// Slashes from parameterized instantiations are replaced with underscores
+// unless `replaceSlashes` is false.
+inline std::string gtestCurrentTestSuiteName(bool replaceSlashes = true) {
+  const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+  std::string name = info != nullptr ? info->test_suite_name() : "";
+  if (replaceSlashes) {
+    absl::StrReplaceAll({{"/", "_"}}, &name);
+  }
+  return name;
+}
+
+// Name of the currently running test (e.g.
+// `"GTestHelpersTest_CurrentTestSuiteAndTestName"`), with the same slash
+// handling as above.
+inline std::string gtestCurrentTestName(bool replaceSlashes = true) {
+  const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+  std::string name = info != nullptr ? info->name() : "";
+  if (replaceSlashes) {
+    absl::StrReplaceAll({{"/", "_"}}, &name);
+  }
+  return name;
+}
+
+// _____________________________________________________________________________
+// Largest N such that `std::pmr::string(N, 'x')` stores its characters inside
+// the string object (small-string optimization) on this standard library.
+inline size_t pmrStringSsoCapacity() {
+  size_t capacity = 0;
+  for (size_t size = 0; size <= 64; ++size) {
+    std::pmr::string s(size, 'x');
+    const auto* begin = reinterpret_cast<const char*>(&s);
+    if (s.data() < begin || s.data() >= begin + sizeof(s)) {
+      break;
+    }
+    capacity = size;
+  }
+  return capacity;
+}
+
+// Check that a `std::pmr::string` of `size` characters uses inline storage
+// inside the string object rather than allocator-provided memory.
+inline void requirePmrStringInlineStorage(size_t size) {
+  AD_CONTRACT_CHECK(size > 0);
+  std::pmr::string s(size, 'x');
+  const auto* begin = reinterpret_cast<const char*>(&s);
+  AD_CONTRACT_CHECK(s.data() >= begin && s.data() < begin + sizeof(s));
+}
+
+// _____________________________________________________________________________
+// Overwrite `N` bytes of stack with `sentinel` and return the last byte read
+// back through a `volatile` access, so the writes are observable and cannot
+// be optimized away. Used to dirty the stack before tests that must not pass
+// by accident on zeroed memory.
+template <size_t N>
+char clobberStack(char sentinel) {
+  static_assert(N > 0);
+  volatile char buffer[N];
+  for (size_t i = 0; i < N; ++i) {
+    buffer[i] = sentinel;
+  }
+  return buffer[N - 1];
 }
 
 // _____________________________________________________________________________
