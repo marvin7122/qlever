@@ -239,6 +239,22 @@ class GroupByImpl : public Operation {
   // (implicit) group.
   std::optional<IdTable> computeCountStar() const;
 
+  // Check if the query represented by this GROUP BY is of the following form:
+  //
+  //   SELECT (COUNT(?x) AS ?count) WHERE {
+  //     ?s ?p ?o FILTER(ISLITERAL(?o))
+  //   }
+  //
+  // The `FILTER` must be a single `ISLITERAL(?v)` or `ISBLANK(?v)` on a
+  // variable of a full three-variable scan, and the aggregate a non-distinct
+  // `COUNT(?x)` or `COUNT(*)`. The result is computed from the distinct IDs
+  // of the leading column of the matching permutation (which stores the
+  // filtered variable first) by summing the multiplicities of the IDs with a
+  // matching datatype. A vocabulary lookup is only needed for `VocabIndex`
+  // IDs; the other datatypes are classified directly. If no such case
+  // applies, an empty optional is returned.
+  std::optional<IdTable> computeTypedCountFromMetadata() const;
+
   // Stores information required for substitution of an expression in an
   // expression tree.
   struct ParentAndChildIndex {

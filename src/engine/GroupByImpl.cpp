@@ -12,6 +12,7 @@
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
 #include "engine/ExistsJoin.h"
+#include "engine/Filter.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
 #include "engine/LazyGroupBy.h"
@@ -22,6 +23,7 @@
 #include "engine/sparqlExpressions/ExistsExpression.h"
 #include "engine/sparqlExpressions/GroupConcatExpression.h"
 #include "engine/sparqlExpressions/LiteralExpression.h"
+#include "engine/sparqlExpressions/PrefilterExpressionIndex.h"
 #include "engine/sparqlExpressions/SampleExpression.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
@@ -1187,6 +1189,9 @@ std::optional<IdTable> GroupByImpl::computeOptimizedGroupByIfPossible() const {
     if (auto result = computeGroupByForFullIndexScan()) {
       return result;
     }
+    if (auto result = computeTypedCountFromMetadata()) {
+      return result;
+    }
   }
   if (auto result = computeGroupByForJoinWithFullScan()) {
     return result;
@@ -1968,6 +1973,158 @@ bool GroupByImpl::isVariableBoundInSubtree(const Variable& variable) const {
 std::unique_ptr<Operation> GroupByImpl::cloneImpl() const {
   return std::make_unique<GroupByImpl>(_executionContext, _groupByVariables,
                                        _aliases, _subtree->clone());
+}
+
+// _____________________________________________________________________________
+namespace {
+// An `Id` with one of these datatypes is always a literal, see the
+// implementation of `isLiteral` in `SparqlExpressionValueGetters.cpp`.
+bool idIsAlwaysLiteral(Id id) {
+  switch (id.getDatatype()) {
+    case Datatype::Bool:
+    case Datatype::Int:
+    case Datatype::Double:
+    case Datatype::Date:
+    case Datatype::GeoPoint:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// An `Id` with one of these datatypes is never a literal, see the
+// implementation of `isLiteral` in `SparqlExpressionValueGetters.cpp`. Note
+// that `LocalVocabIndex` and `SecondaryVocabIndex` are deliberately missing:
+// deciding them requires a string lookup, and they cannot occur in the stored
+// triples of a base permutation, so `computeTypedCountFromMetadata` falls
+// back to the regular evaluation if such an `Id` is encountered.
+bool idIsNeverLiteral(Id id) {
+  switch (id.getDatatype()) {
+    case Datatype::EncodedVal:
+    case Datatype::BlankNodeIndex:
+    case Datatype::Undefined:
+    case Datatype::TextRecordIndex:
+    case Datatype::WordVocabIndex:
+      return true;
+    default:
+      return false;
+  }
+}
+}  // namespace
+
+// _____________________________________________________________________________
+std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
+  if (!_groupByVariables.empty() || _aliases.size() != 1) {
+    return std::nullopt;
+  }
+  // A non-distinct `COUNT(*)` or `COUNT(?variable)`.
+  bool countStar = false;
+  if (auto* countStarExpression =
+          dynamic_cast<const sparqlExpression::CountStarExpression*>(
+              _aliases[0]._expression.getPimpl())) {
+    countStar = !countStarExpression->isDistinct();
+  }
+  auto counted = getVariableForNonDistinctCountOfSingleAlias();
+  if (!countStar && !counted.has_value()) {
+    return std::nullopt;
+  }
+
+  auto* filter = dynamic_cast<Filter*>(_subtree->getRootOperation().get());
+  if (!filter) {
+    return std::nullopt;
+  }
+  // A single `FILTER ISLITERAL(?v)` or `FILTER ISBLANK(?v)`. Anything else
+  // (conjunctions, filters on other expressions) falls back to the regular
+  // evaluation. A negated `isLiteral` or `isBlank` yields a `NotExpression`
+  // prefilter, never a bare `IsLiteralExpression` or `IsBlankExpression`, so
+  // it falls back as well.
+  auto prefilters = filter->getExpression().getPrefilterExpressionForMetadata(
+      getLocalVocabContext());
+  if (prefilters.size() != 1) {
+    return std::nullopt;
+  }
+  const bool wantLiteral =
+      dynamic_cast<const prefilterExpressions::IsLiteralExpression*>(
+          prefilters[0].first.get()) != nullptr;
+  const bool wantBlank =
+      dynamic_cast<const prefilterExpressions::IsBlankExpression*>(
+          prefilters[0].first.get()) != nullptr;
+  if (!wantLiteral && !wantBlank) {
+    return std::nullopt;
+  }
+  const Variable filterVar = prefilters[0].second;
+
+  // The filtered variable must lead a permutation, so that
+  // `getDistinctCol0IdsAndCounts` yields its per-value multiplicities. This
+  // reuses the eligibility checks of the other metadata paths (three
+  // variables, all graphs allowed, no materialized views).
+  auto permutation = getPermutationForThreeVariableTriple(*filter->getSubtree(),
+                                                          filterVar, filterVar);
+  if (!permutation.has_value()) {
+    return std::nullopt;
+  }
+  const auto& operation = filter->getSubtree()->getRootOperation();
+  auto* scan = dynamic_cast<const IndexScan*>(operation.get());
+  AD_CORRECTNESS_CHECK(scan != nullptr);
+  if (!scan->additionalVariables().empty()) {
+    return std::nullopt;
+  }
+  // A LIMIT or OFFSET on the scan is defined w.r.t. the order of a different
+  // permutation, so it cannot be applied to the per-value counts. The same
+  // holds for a LIMIT or OFFSET on the filter itself.
+  if (!scan->getLimitOffset().isUnconstrained() ||
+      !filter->getLimitOffset().isUnconstrained()) {
+    return std::nullopt;
+  }
+  if (!permutation.value()
+           .getLocatedTriplesForPermutation(locatedTriplesState())
+           .isEmpty()) {
+    return std::nullopt;
+  }
+
+  auto distinctIds = permutation.value().getDistinctCol0IdsAndCounts(
+      cancellationHandle_, locatedTriplesState(), scan->getLimitOffset());
+
+  // `COUNT(?unbound)` is 0 when the counted variable is not bound by the
+  // subtree.
+  const bool countedIsBound =
+      countStar ||
+      (counted.has_value() && isVariableBoundInSubtree(counted.value()));
+  if (!countedIsBound) {
+    filter->updateRuntimeInformationWhenOptimizedOut();
+    IdTable table{1, getExecutionContext()->getAllocator()};
+    table.push_back(std::array{Id::makeFromInt(0)});
+    return table;
+  }
+
+  const auto& vocab = getIndex().getVocab();
+  size_t total = 0;
+  for (size_t i = 0; i < distinctIds.numRows(); ++i) {
+    const Id id = distinctIds(i, 0);
+    const size_t multiplicity = static_cast<size_t>(distinctIds(i, 1).getInt());
+    bool match = false;
+    if (wantBlank) {
+      match = id.getDatatype() == Datatype::BlankNodeIndex;
+    } else if (idIsAlwaysLiteral(id)) {
+      match = true;
+    } else if (idIsNeverLiteral(id)) {
+      match = false;
+    } else if (id.getDatatype() == Datatype::VocabIndex) {
+      match = vocab.isLiteral(id.getVocabIndex());
+    } else {
+      // `LocalVocabIndex` and `SecondaryVocabIndex` need a string lookup;
+      // fall back to the regular evaluation for exactness.
+      return std::nullopt;
+    }
+    if (match) {
+      total += multiplicity;
+    }
+  }
+
+  filter->updateRuntimeInformationWhenOptimizedOut();
+  IdTable table{1, getExecutionContext()->getAllocator()};
+  table.push_back(std::array{Id::makeFromInt(total)});
+  return table;
 }
 
 // _____________________________________________________________________________
