@@ -261,8 +261,7 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     // words merge into shared runs (software readahead), so scattered
     // words cost commands like a stream instead of one command per word.
     const auto plan = ad_utility::nvmePassthrough::planBlockReads(
-        fileOffsets, sizes,
-        ad_utility::nvmePassthrough::kCoalesceMaxGapBlocks);
+        fileOffsets, sizes, maxGapBlocks_);
     std::vector<char> staging(plan.stagingBytes);
     std::vector<size_t> runSizes;
     std::vector<uint64_t> runOffsets;
@@ -392,6 +391,18 @@ void VocabularyOnDisk::open(const std::string& filename) {
     nvmeOptions = {true, namespaceId, blockSize};
   }
   coalesceForPassthrough_ = nvmeOptions.enabled;
+  // Benchmark gap sweep without rebuilding: malformed values throw, so a
+  // misconfigured run fails fast instead of silently measuring a default.
+  if (const char* gapEnv = std::getenv("QLEVER_NVME_MAX_GAP_BLOCKS")) {
+    char* end = nullptr;
+    const unsigned long gap = std::strtoul(gapEnv, &end, 10);
+    if (end == gapEnv || *end != '\0') {
+      AD_THROW(
+          "Malformed QLEVER_NVME_MAX_GAP_BLOCKS, expected a nonnegative "
+          "integer block count");
+    }
+    maxGapBlocks_ = gap;
+  }
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
     ioManagers_->push(ad_utility::makeBatchManager(preferIoUring, nvmeOptions));

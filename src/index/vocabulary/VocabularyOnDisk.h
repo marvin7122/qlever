@@ -49,6 +49,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // `QLEVER_NVME_PASSTHROUGH` in `open`; disabled by default, which keeps
   // the exact per-word read pattern bit-identical to the unmodified path.
   bool coalesceForPassthrough_ = false;
+  // Largest gap of uncovered blocks the planner swallows inside a run.
+  // Set from `QLEVER_NVME_MAX_GAP_BLOCKS` in `open` (a benchmark tuning
+  // knob, so gap sizes sweep without rebuilding); defaults to
+  // `kCoalesceMaxGapBlocks`.
+  uint64_t maxGapBlocks_ = ad_utility::nvmePassthrough::kCoalesceMaxGapBlocks;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
