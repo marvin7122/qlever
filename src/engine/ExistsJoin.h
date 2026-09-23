@@ -76,6 +76,10 @@ class ExistsJoin : public Operation {
     return {left_.get(), right_.get()};
   }
 
+  // The variable of the additional Boolean result column. Needed to recognize
+  // a `FILTER EXISTS` that only checks this variable (a semijoin).
+  const Variable& getExistsVariable() const { return existsVariable_; }
+
   bool columnOriginatesFromGraphOrUndef(
       const Variable& variable) const override;
 
