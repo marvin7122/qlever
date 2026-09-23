@@ -11,6 +11,7 @@
 #define QLEVER_COMPRESSION_H
 
 #include <cstddef>
+#include <string_view>
 
 #include "backports/span.h"
 #include "util/Exception.h"

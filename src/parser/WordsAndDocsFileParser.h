@@ -16,6 +16,7 @@
 #include <cctype>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "global/Id.h"
 #include "index/vocabulary/StringSortComparator.h"
@@ -140,8 +141,9 @@ struct LiteralsTokenizationDelimiter {
 
 /**
  * @brief A function that can be used to tokenize and normalize a given text.
- * @warning Both params are const refs where the original objects have to be
- * kept alive during the usage of the returned object.
+ * @warning The `localeManager` has to stay alive for the duration of the call
+ * (it is used during normalization). The returned vector owns its strings, so
+ * neither parameter has to outlive the returned object.
  * @param text The text to be tokenized and normalized.
  * @param localeManager The localeManager to be used for normalization.
  * @details This function can be used in the following way:

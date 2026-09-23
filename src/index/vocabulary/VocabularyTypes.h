@@ -13,6 +13,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>

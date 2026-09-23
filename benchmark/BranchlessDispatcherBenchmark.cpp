@@ -26,6 +26,7 @@
 #include "engine/BranchlessTypeDispatcher.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
+#include "util/FloatToChars.h"
 
 using namespace ql::engine;
 

@@ -114,6 +114,10 @@ template <const std::array<bool, 256>& Table>
 // Invariant Law: Never constructs temporary std::string objects during
 // formatting. All escaping, URI quoting, and datatype suffixes are written
 // directly into the active chunk buffer.
+//
+// Threading: Instances are not thread-safe. Use one formatter per thread or
+// external synchronization; concurrent access from multiple threads without
+// synchronization is undefined behavior.
 class FastExportStreamFormatter {
  public:
   using ChunkSink = std::function<void(std::string_view)>;
