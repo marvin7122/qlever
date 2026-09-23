@@ -6,9 +6,11 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <cctype>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
