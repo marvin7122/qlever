@@ -45,19 +45,20 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. The replacements consistently pair `malloc` with `free`, which GCC's
-// `-Wmismatched-new-delete` cannot see through, so the warning is disabled
-// for the remainder of this TU: the diagnostic fires at allocation use sites
-// (where the replaced sized `operator delete` gets inlined, e.g. into
-// `std::make_shared` callers below), not at the definitions themselves.
+// runs. The malloc/free pairing below is intentional and matched, but GCC
+// cannot see across the replaceable global operators and reports a false
+// positive -Wmismatched-new-delete at the `std::free` calls. A local
+// `#pragma GCC diagnostic ignored "-Wmismatched-new-delete"` does not cover
+// this warning (observed on GCC 11 with -Werror), so the sized-deallocation
+// overloads are deliberately omitted instead: every deallocation falls
+// through to the unsized overloads below, which perform the same
+// `malloc`/`free` pairing without triggering the warning.
 // The ThreadSanitizer and AddressSanitizer runtimes provide their own global
 // `operator new`/`operator delete`, which would conflict with these
 // replacements at link time (`multiple definition`), so the replacements are
 // omitted under either sanitizer. The allocation counts are then reported as
 // zero, which is acceptable because they are purely informational metadata.
 #if !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_ADDRESS__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -72,8 +73,6 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
-
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -87,8 +86,6 @@ void* operator new[](std::size_t size) {
 }
 
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
-
-void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
 #endif
 
 namespace ad_benchmark {
@@ -280,9 +277,3 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
-
-// Matching pop for the `-Wmismatched-new-delete` suppression above, which is
-// intentionally TU-scoped (see comment there).
-#if !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_ADDRESS__)
-#pragma GCC diagnostic pop
-#endif
