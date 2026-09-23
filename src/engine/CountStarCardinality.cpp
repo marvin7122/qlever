@@ -244,7 +244,7 @@ std::optional<Variable> sharedChainVar(const IndexScan& left,
 struct ChainContext {
   const Index& index;
   const LocatedTriplesState& locatedTriplesState;
-  const SharedCancellationHandle& cancellationHandle;
+  const ad_utility::SharedCancellationHandle& cancellationHandle;
   const ad_utility::AllocatorWithLimit<Id>& alloc;
 };
 
