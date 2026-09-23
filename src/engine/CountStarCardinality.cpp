@@ -23,6 +23,7 @@
 #include "index/Permutation.h"
 #include "index/ScanSpecification.h"
 #include "index/TripleComponentConversions.h"
+#include "util/CancellationHandle.h"
 #include "util/HashMap.h"
 
 namespace {
