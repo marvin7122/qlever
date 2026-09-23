@@ -134,6 +134,11 @@ std::string unescapePrefixedIri(std::string_view literal);
  *
  * See https://www.ietf.org/rfc/rfc4180.txt for more information.
  */
+// Append variants of the CSV / TSV escapers. SELECT/CSV export formatting
+// writes into a caller-owned buffer; the `std::string` APIs below call these.
+void appendEscapedForCsv(std::string& out, std::string_view input);
+void appendEscapedForTsv(std::string& out, std::string_view input);
+
 std::string escapeForCsv(std::string input);
 
 /**

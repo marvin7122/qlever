@@ -13,6 +13,7 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/shift.h"
+#include "backports/span.h"
 #include "util/Exception.h"
 #include "util/HashSet.h"
 #include "util/Log.h"
@@ -291,20 +292,65 @@ std::string unescapePrefixedIri(std::string_view literal) {
   return res;
 }
 
+// ____________________________________________________________________________
+namespace {
+// Append `input`, replacing each listed source character with `repl` in one
+// pass over the original bytes. Same semantics as a simultaneous
+// `absl::StrReplaceAll` on those pairs.
+void appendWithCharReplacements(
+    std::string& out, std::string_view input,
+    ql::span<const std::pair<char, std::string_view>> replacements) {
+  size_t start = 0;
+  for (size_t i = 0; i < input.size(); ++i) {
+    for (const auto& [from, to] : replacements) {
+      if (input[i] == from) {
+        out.append(input.data() + start, i - start);
+        out.append(to);
+        start = i + 1;
+        break;
+      }
+    }
+  }
+  out.append(input.data() + start, input.size() - start);
+}
+}  // namespace
+
+// __________________________________________________________________________
+void appendEscapedForCsv(std::string& out, std::string_view input) {
+  if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
+    out.append(input);
+    return;
+  }
+  static constexpr std::pair<char, std::string_view> kEscapes[] = {
+      {'"', "\"\""}};
+  out.push_back('"');
+  appendWithCharReplacements(out, input, kEscapes);
+  out.push_back('"');
+}
+
 // __________________________________________________________________________
 std::string escapeForCsv(std::string input) {
-  if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
-    return input;
+  std::string out;
+  appendEscapedForCsv(out, input);
+  return out;
+}
+
+// __________________________________________________________________________
+void appendEscapedForTsv(std::string& out, std::string_view input) {
+  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
+    out.append(input);
+    return;
   }
-  return absl::StrCat("\"", absl::StrReplaceAll(input, {{"\"", "\"\""}}), "\"");
+  static constexpr std::pair<char, std::string_view> kEscapes[] = {
+      {'\t', " "}, {'\n', "\\n"}};
+  appendWithCharReplacements(out, input, kEscapes);
 }
 
 // __________________________________________________________________________
 std::string escapeForTsv(std::string input) {
-  if (ctre::search<detail::tsvSpecialCharsRegex>(input)) [[unlikely]] {
-    absl::StrReplaceAll({{"\t", " "}, {"\n", "\\n"}}, &input);
-  }
-  return input;
+  std::string out;
+  appendEscapedForTsv(out, input);
+  return out;
 }
 
 // __________________________________________________________________________

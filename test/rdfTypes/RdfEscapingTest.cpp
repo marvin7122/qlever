@@ -45,6 +45,20 @@ TEST(RdfEscapingTest, escapeForTsv) {
 }
 
 // ___________________________________________________________________________
+TEST(RdfEscapingTest, appendEscapedForCsvTsv) {
+  // Append sinks match the allocating APIs and preserve caller-owned prefixes.
+  for (const auto& input :
+       {"abc", "a\nb\rc,d", "\"", "a\"b", "a\"\"c", "a\nb\tc"}) {
+    std::string csvOut{"prefix:"};
+    appendEscapedForCsv(csvOut, input);
+    ASSERT_EQ(csvOut, "prefix:" + escapeForCsv(std::string{input}));
+    std::string tsvOut{"prefix:"};
+    appendEscapedForTsv(tsvOut, input);
+    ASSERT_EQ(tsvOut, "prefix:" + escapeForTsv(std::string{input}));
+  }
+}
+
+// ___________________________________________________________________________
 TEST(RdfEscapingTest, validRDFLiteralFromNormalized) {
   ASSERT_EQ(validRDFLiteralFromNormalized(R"(""\a\"")"), R"("\"\\a\\\"")");
   ASSERT_EQ(validRDFLiteralFromNormalized(R"("\b\"@en)"), R"("\\b\\"@en)");
