@@ -3395,3 +3395,42 @@ TEST_F(GroupByOptimizations, minMaxNegativeIntegers) {
   EXPECT_THAT(maxBy.computeResultOnlyForTesting(false).idTableView(),
               matchesIdTableFromVector({{I(1)}}));
 }
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxMixedTypesMatchesGeneralPath) {
+  // Ints sort before vocab IDs in index order. Incompatible datatypes are
+  // ordered by datatype (like the general `MIN`/`MAX` path), so `MIN` is the
+  // smallest Int and `MAX` is the IRI. The second half pins the general path
+  // (index-scan optimizations disabled) to the same results.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <m> <b> . <x> <m> 1 . <x> <m> 2 ."))};
+  auto qec = ctx.makeQec();
+  auto getId = makeGetId(*ctx.index_);
+  auto makeGroupBy = [&](SparqlExpressionPimpl expr) {
+    auto scan = makeExecutionTree<IndexScan>(
+        &qec, Permutation::Enum::PSO,
+        SparqlTripleSimple{Variable{"?s"}, iri("<m>"), Variable{"?o"}});
+    std::vector<Alias> aliases{Alias{std::move(expr), Variable{"?out"}}};
+    return GroupByImpl{&qec, {}, std::move(aliases), std::move(scan)};
+  };
+
+  EXPECT_THAT(makeGroupBy(makeMinPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{I(1)}}));
+  EXPECT_THAT(makeGroupBy(makeMaxPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{getId("<b>")}}));
+
+  auto disableOptimizations = setRuntimeParameterForTest<
+      &RuntimeParameters::groupByDisableIndexScanOptimizations_>(true);
+  EXPECT_THAT(makeGroupBy(makeMinPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{I(1)}}));
+  EXPECT_THAT(makeGroupBy(makeMaxPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{getId("<b>")}}));
+}
