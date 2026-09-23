@@ -110,7 +110,10 @@ class Server {
   bool noAccessCheck_;
 #if defined(QLEVER_ENABLE_EXPORT_V2)
   // Declared before `queryRegistry_` so the registry (and its start/end
-  // callbacks) is destroyed first.
+  // callbacks) is destroyed first. Declared before `queryThreadPool_` below
+  // for the same reason in reverse: the pool joins (draining posted V2
+  // morsels) before the scheduler is destroyed, so posted callbacks never
+  // outlive the scheduler.
   std::unique_ptr<ad_utility::export_v2::ElasticExportScheduler>
       exportScheduler_;
 #endif

@@ -255,6 +255,27 @@ TEST(VocabularyTest, LookupBatch) {
   EXPECT_THAT(dupResult, ::testing::ElementsAre("ab", "ab", "a"));
 }
 
+// The builder-taking `lookupBatch` overload must also work when the underlying
+// vocabulary has no native builder support (here: on-disk uncompressed). In
+// that case the single-shot words are copied into the caller's builder per
+// the documented contract (`Vocabulary.h`: the builder is always populated
+// on return because callers finalize it unconditionally), and the finalized
+// builder content is returned.
+TEST(VocabularyTest, LookupBatchWithBuilderOnDisk) {
+  // On-disk uncompressed has no native builder support, so this exercises the
+  // documented fallback path that previously finalized an empty builder.
+  RdfsVocabularyHandle v{
+      absl::StrCat(gtestCurrentTestName(), ".dat"),
+      {"a", "ab", "ba", "car"},
+      VocabularyType{VocabularyType::Enum::OnDiskUncompressed}};
+  std::vector<size_t> indices{2, 0, 3, 1};
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(indices.size());
+  auto result = v->lookupBatch(indices, builder);
+  EXPECT_THAT(result, ::testing::ElementsAre("ba", "a", "car", "ab"));
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*v, result,
+                                                                indices);
+}
+
 // Each streamed result must equal the eager `lookupBatch` for that batch's
 // indices, and the batches must be yielded in input order.
 TEST(VocabularyTest, LookupBatchesStreamed) {

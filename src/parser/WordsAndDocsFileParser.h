@@ -140,14 +140,14 @@ struct LiteralsTokenizationDelimiter {
 
 /**
  * @brief A function that can be used to tokenize and normalize a given text.
- * @warning Both params are const refs where the original objects have to be
- * kept alive during the usage of the returned object.
  * @param text The text to be tokenized and normalized.
  * @param localeManager The localeManager to be used for normalization.
  * @details This function can be used in the following way:
  * for (auto normalizedWord : tokenizeAndNormalizeText(text, localeManager)) {
  *  code;
  * }
+ * NOTE: the returned `std::vector<std::string>` owns its words, so neither
+ * `text` nor `localeManager` has to outlive the result.
  */
 inline std::vector<std::string> tokenizeAndNormalizeText(
     std::string_view text,

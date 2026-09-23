@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "index/vocabulary/EncodedIriManager.h"
 #include "parser/ParsedQuery.h"
 #include "util/BlankNodeManager.h"
 

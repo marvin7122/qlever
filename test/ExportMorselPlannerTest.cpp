@@ -119,6 +119,25 @@ TEST(ExportMorselPlanner, LimitStopsPulling) {
   EXPECT_EQ(*pulls, 1u);
 }
 
+TEST(ExportMorselPlanner, LimitExactlyAtBlockBoundary) {
+  auto input =
+      makeInput({{{1}, {2}, {3}, {4}, {5}}, {{6}, {7}, {8}, {9}, {10}}});
+  auto pulls = input.pulls_;
+  std::vector<ExportMorsel> morsels;
+  const uint64_t rows =
+      plannedRows(std::move(input).generator(), LimitOffsetClause{._limit = 5},
+                  8192, &morsels);
+  EXPECT_EQ(rows, 5u);
+  ASSERT_EQ(morsels.size(), 1u);
+  EXPECT_EQ(morsels[0].numRows_, 5u);
+  ASSERT_EQ(morsels[0].segments_.size(), 1u);
+  EXPECT_EQ(morsels[0].segments_[0].begin_, 0u);
+  EXPECT_EQ(morsels[0].segments_[0].end_, 5u);
+  // The limit lands exactly on the first block edge: the second block must
+  // never be pulled.
+  EXPECT_EQ(*pulls, 1u);
+}
+
 TEST(ExportMorselPlanner, OffsetSkipsRowsAcrossBlocks) {
   auto input =
       makeInput({{{1}, {2}, {3}, {4}, {5}}, {{6}, {7}, {8}, {9}, {10}}});

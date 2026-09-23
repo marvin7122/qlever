@@ -24,12 +24,22 @@ jobs:
        (github.event.comment.author_association == 'MEMBER' ||
         github.event.comment.author_association == 'OWNER' ||
         github.event.comment.author_association == 'COLLABORATOR') &&
-       (startsWith(github.event.comment.body, '/open-code-review') ||
-        startsWith(github.event.comment.body, '@open-code-review')))
-    runs-on: [self-hosted, linux, x64, ocr-local]
+       ((startsWith(github.event.comment.body, '/open-code-review') &&
+         !startsWith(github.event.comment.body, '/open-code-review-fanout')) ||
+        (startsWith(github.event.comment.body, '@open-code-review') &&
+         !startsWith(github.event.comment.body, '@open-code-review-fanout'))))
+    runs-on: [self-hosted, linux, x64, wolga]
     timeout-minutes: 240
     env:
-      PATH: /home/userNoPriv/.local/bin:/home/userNoPriv/.local/share/npm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # ocr-stable is a fallback for the per-run npm prefix: if the
+      # freshly installed binary ever goes missing mid-job, review steps
+      # still resolve a pinned v1.11.7 copy from local SSD.
+      PATH: /home/stoetzem/.local/bin:/local/data-ssd/stoetzem/node22/bin:/local/data-ssd/stoetzem/ocr-stable/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # The review tool self-upgrades in the background when the registry
+      # `latest` is newer than the pinned install; the upgrade replaces the
+      # running tree mid-job and the review spawn then fails with ENOENT.
+      # Pinned 1.11.7 must stay put, so updates stay off in CI.
+      OCR_NO_UPDATE: '1'
     steps:
       - name: Resolve PR context for comment-triggered reviews
         id: pr-context
@@ -45,18 +55,35 @@ jobs:
             core.setOutput('base_ref', pr.base.ref);
             core.setOutput('head_sha', pr.head.sha);
       - name: Isolate npm prefix for this run
+        shell: bash
         run: |
           # Concurrent OCR jobs on the same self-hosted host share HOME *and*
           # RUNNER_TEMP (_work/_temp is per runner, not per job), so the npm
           # prefix must additionally be unique per run: one job's
           # `npm install -g` would otherwise delete the `ocr` binary out from
           # under another job's `ocr config` step (node MODULE_NOT_FOUND).
-          # The shared npm cache stays as-is (content-addressed).
+          # The npm cache must be per-run too: the shared ~/.npm/_cacache
+          # lives on NFS home and concurrent jobs fail there with
+          # "Unknown system error -122" on Wolga.
           prefix="${RUNNER_TEMP}/ocr-npm-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "${prefix}"
           echo "NPM_CONFIG_PREFIX=${prefix}" >> "$GITHUB_ENV"
           echo "OCR_NPM_PREFIX=${prefix}" >> "$GITHUB_ENV"
           echo "${prefix}/bin" >> "$GITHUB_PATH"
+          # The job-level PATH override masks GITHUB_PATH additions, so
+          # export the prefix bin explicitly for subsequent steps.
+          echo "PATH=${prefix}/bin:${PATH}" >> "$GITHUB_ENV"
+          npmcache="${RUNNER_TEMP}/ocr-npm-cache-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${npmcache}"
+          echo "NPM_CONFIG_CACHE=${npmcache}" >> "$GITHUB_ENV"
+          echo "OCR_NPM_CACHE=${npmcache}" >> "$GITHUB_ENV"
+          # HOME itself must be per-run too: the review tool creates
+          # ~/.opencodereview, and NFS home rejects new writes with
+          # "disk quota exceeded" on Wolga. RUNNER_TEMP is local SSD.
+          ocrhome="${RUNNER_TEMP}/ocr-home-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${ocrhome}"
+          echo "HOME=${ocrhome}" >> "$GITHUB_ENV"
+          echo "OCR_HOME=${ocrhome}" >> "$GITHUB_ENV"
       - name: Review pull request
         uses: alibaba/open-code-review@810aeb5dc2e2b9485f5a1981485e65b25250f609 # v1.11.7
         with:
@@ -110,6 +137,6 @@ jobs:
                 body: `${stamp}\n${body}`,
               });
             }
-      - name: Remove isolated npm prefix
+      - name: Remove isolated npm prefix, cache, and home
         if: always()
-        run: rm -rf "${OCR_NPM_PREFIX:?}"
+        run: rm -rf "${OCR_NPM_PREFIX:?}" "${OCR_NPM_CACHE:?}" "${OCR_HOME:?}"
