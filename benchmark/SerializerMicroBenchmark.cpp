@@ -44,12 +44,14 @@ struct AllocationTracker {
   static size_t getBytes() { return bytes_.load(std::memory_order_seq_cst); }
 };
 
-// Global new/delete instrumentation for allocation counting during benchmark
-// runs. The pairing of `malloc`-based `operator new` with `free`-based
-// `operator delete` is intentional; suppress the mismatched-allocation
-// heuristic, which cannot see through the global replacement.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+// Global `operator new` instrumentation for allocation counting during
+// benchmark runs. It allocates with `std::malloc`, which pairs exactly with
+// the default `::operator delete` (it releases with `std::free`), so no
+// replacement deallocation function is defined. Defining a `free`-based
+// replacement `operator delete` here is not only redundant, it also trips
+// GCC 11's `-Wmismatched-new-delete` heuristic under `-Werror`: the warning
+// is attributed to inlined static initializers outside any file-scope
+// `#pragma GCC diagnostic` region, so local suppression cannot cover it.
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -61,13 +63,6 @@ void* operator new(std::size_t size) {
   }
   return ptr;
 }
-
-void operator delete(void* ptr) noexcept { std::free(ptr); }
-
-void operator delete(void* ptr, std::size_t) noexcept {
-  ::operator delete(ptr);
-}
-#pragma GCC diagnostic pop
 
 namespace ad_benchmark {
 namespace {
