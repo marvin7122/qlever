@@ -653,3 +653,47 @@ TEST(ConcurrentCache, computeButDontStore) {
       42, []() { return "blubb"; }, true, alwaysSuitable);
   EXPECT_EQ(res._resultPointer, nullptr);
 }
+
+// _____________________________________________________________________________
+// The cumulative hit/miss counters report one miss per computation and one
+// hit per lookup that finds a complete cached entry. They survive `clearAll`
+// so that hit rates can be measured across `clear-cache` boundaries.
+TEST(ConcurrentCache, hitRateCounters) {
+  SimpleConcurrentLruCache cache{};
+  ASSERT_EQ(cache.numCacheHits(), 0u);
+  ASSERT_EQ(cache.numCacheMisses(), 0u);
+
+  // First computation: miss.
+  auto res = cache.computeOnce(3, []() { return "3"s; }, false, returnTrue);
+  ASSERT_EQ(res._cacheStatus, ad_utility::CacheStatus::computed);
+  EXPECT_EQ(cache.numCacheMisses(), 1u);
+  EXPECT_EQ(cache.numCacheHits(), 0u);
+
+  // Served from the cache: hit.
+  res = cache.computeOnce(3, []() { return "3"s; }, false, returnTrue);
+  ASSERT_EQ(res._cacheStatus, ad_utility::CacheStatus::cachedNotPinned);
+  EXPECT_EQ(cache.numCacheHits(), 1u);
+  EXPECT_EQ(cache.numCacheMisses(), 1u);
+
+  // `getIfContained`: one hit and one miss.
+  ASSERT_TRUE(cache.getIfContained(3).has_value());
+  EXPECT_EQ(cache.numCacheHits(), 2u);
+  ASSERT_FALSE(cache.getIfContained(4).has_value());
+  EXPECT_EQ(cache.numCacheMisses(), 2u);
+
+  // `computeButDontStore` reads the cached entry: hit.
+  res = cache.computeButDontStore(
+      3, []() { return "other"s; }, false, returnTrue);
+  EXPECT_EQ(*res._resultPointer, "3"s);
+  EXPECT_EQ(cache.numCacheHits(), 3u);
+
+  // Only-if-cached lookup of a missing key: miss.
+  res = cache.computeOnce(9, []() { return "9"s; }, true, returnTrue);
+  EXPECT_EQ(res._resultPointer, nullptr);
+  EXPECT_EQ(cache.numCacheMisses(), 3u);
+
+  // Counters are cumulative and survive `clearAll`.
+  cache.clearAll();
+  EXPECT_EQ(cache.numCacheHits(), 3u);
+  EXPECT_EQ(cache.numCacheMisses(), 3u);
+}

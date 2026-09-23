@@ -58,6 +58,12 @@ json composeCacheStats(const QueryResultCache& cache,
   // converter.
   result["cache-size-unpinned"] = cache.nonPinnedSize().getBytes();
   result["cache-size-pinned"] = cache.pinnedSize().getBytes();
+  // Cumulative lookup statistics for hit-rate measurement, see
+  // `ConcurrentCache::numCacheHits()`. The counters live for the process
+  // lifetime and survive `clear-cache`, so a client can diff them around an
+  // export suite to obtain its hit rate.
+  result["num-cache-hits"] = cache.numCacheHits();
+  result["num-cache-misses"] = cache.numCacheMisses();
   return result;
 }
 

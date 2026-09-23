@@ -4,6 +4,7 @@
 
 #ifndef QLEVER_CONCURRENTCACHE_H
 #define QLEVER_CONCURRENTCACHE_H
+#include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -223,13 +224,16 @@ class ConcurrentCache {
     {
       auto resultPtr = _cacheAndInProgressMap.wlock()->_cache[key];
       if (resultPtr != nullptr) {
+        recordHit();
         return {std::move(resultPtr), CacheStatus::cachedNotPinned};
       }
     }
     if (onlyReadFromCache) {
+      recordMiss();
       return {nullptr, CacheStatus::notInCacheAndNotComputed};
     }
     auto value = std::make_shared<Value>(computeFunction());
+    recordMiss();
     return {std::move(value), CacheStatus::computed};
   }
 
@@ -295,10 +299,27 @@ class ConcurrentCache {
     auto& cache = lockPtr->_cache;
     const auto cacheStatus = getCacheStatus(cache, key);
     if (cacheStatus == CacheStatus::computed) {
+      recordMiss();
       return std::nullopt;
     }
     // The result is in the cache, simply return it.
+    recordHit();
     return ResultAndCacheStatus{cache[key], cacheStatus};
+  }
+
+  // Cumulative lookup statistics for hit-rate measurement (for example to
+  // decide whether large export queries benefit from the result cache at
+  // all). A "hit" is a lookup that found a complete cached entry; a "miss"
+  // is any lookup that did not (triggering a computation, joining an
+  // in-progress computation, or an only-if-cached lookup miss). The
+  // counters are cumulative for the process lifetime and are deliberately
+  // NOT reset by `clearAll()` or `clearUnpinnedOnly()`, so that hit rates
+  // can be measured across `clear-cache` boundaries.
+  uint64_t numCacheHits() const {
+    return numHits_.load(std::memory_order_relaxed);
+  }
+  uint64_t numCacheMisses() const {
+    return numMisses_.load(std::memory_order_relaxed);
   }
 
   // These functions set the different capacity/size settings of the cache
@@ -408,8 +429,10 @@ class ConcurrentCache {
       bool contained = cacheStatus != CacheStatus::computed;
       if (contained) {
         // the result is in the cache, simply return it.
+        recordHit();
         return {cache[key], cacheStatus};
       } else if (onlyReadFromCache) {
+        recordMiss();
         return {nullptr, CacheStatus::notInCacheAndNotComputed};
       } else if (lockPtr->_inProgress.contains(key)) {
         // the result is not cached, but someone else is computing it.
@@ -445,6 +468,7 @@ class ConcurrentCache {
           resultInProgress->finish(nullptr);
         }
         // result was not cached
+        recordMiss();
         return {std::move(result), CacheStatus::computed};
       } catch (...) {
         // Other threads may try this computation again in the future
@@ -468,12 +492,21 @@ class ConcurrentCache {
         }
         resultPointer = std::move(mutablePointer);
       }
+      recordMiss();
       return {std::move(resultPointer), CacheStatus::computed};
     }
   }
 
+  void recordHit() const { numHits_.fetch_add(1u, std::memory_order_relaxed); }
+  void recordMiss() const {
+    numMisses_.fetch_add(1u, std::memory_order_relaxed);
+  }
+
   // Data members
   SyncCache _cacheAndInProgressMap;  // the data storage
+  // Cumulative hit/miss counters, see `numCacheHits()` for semantics.
+  mutable std::atomic<uint64_t> numHits_{0};
+  mutable std::atomic<uint64_t> numMisses_{0};
 };
 }  // namespace ad_utility
 
