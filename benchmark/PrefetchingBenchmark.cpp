@@ -243,7 +243,6 @@ class PrefetchingBenchmark : public BenchmarkInterface {
 
   CompactVectorOfStrings<char> vocabWords_;
   std::vector<Id> lookupIds_;
-  std::vector<size_t> lookupPositions_;
 
  public:
   PrefetchingBenchmark() { setupSyntheticVocabulary(); }
@@ -279,13 +278,11 @@ class PrefetchingBenchmark : public BenchmarkInterface {
     std::uniform_int_distribution<uint64_t> dist(0, NUM_VOCAB_ENTRIES - 1);
 
     lookupIds_.reserve(NUM_LOOKUP_IDS);
-    lookupPositions_.reserve(NUM_LOOKUP_IDS);
 
     for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
       uint64_t vocabIndex = dist(rng);
       lookupIds_.push_back(
           Id::makeFromVocabIndex(VocabIndex::make(vocabIndex)));
-      lookupPositions_.push_back(i);
     }
   }
 
@@ -301,8 +298,8 @@ class PrefetchingBenchmark : public BenchmarkInterface {
       std::vector<std::string_view> resolved(NUM_LOOKUP_IDS);
       HardwarePerformanceMonitor::CounterSample sample;
 
-      auto& m = group.addMeasurement(
-          "Baseline (Standard Sequential Lookup, No Prefetch)", [&]() {
+      auto& m =
+          group.addMeasurement("Baseline (Random Lookup, No Prefetch)", [&]() {
             perfMonitor.start();
             const auto offsets = vocabWords_.offsetsSpan();
             const auto data = vocabWords_.dataSpan();

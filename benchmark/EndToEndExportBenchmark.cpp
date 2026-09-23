@@ -203,8 +203,10 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
       if (i % 3 == 0) {
         *ptr++ = '<';
         ptr = ad_utility::formatQid(i, ptr);
+        // The closing `>` of the subject IRI: `formatQid` emits the bare
+        // `.../entity/Q<id>` text, so the prefix starts with `>`.
         ptr = ad_utility::formatPrefixedInt(
-            " <http://www.wikidata.org/prop/direct/P1082> ", i * 100, ptr);
+            "> <http://www.wikidata.org/prop/direct/P1082> ", i * 100, ptr);
         *ptr++ = ' ';
         *ptr++ = '.';
         *ptr++ = '\n';

@@ -278,9 +278,15 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
         auto& m = group.addMeasurement("memcpy prefix + std::to_chars", [&]() {
           size_t bytes = 0;
           for (uint64_t id : qids) {
-            std::memcpy(buffer, "http://www.wikidata.org/entity/Q", 31);
-            auto [ptr, ec] =
-                std::to_chars(buffer + 31, buffer + sizeof(buffer), id);
+            // The prefix is 32 bytes; copy all of it so the digits start
+            // after the trailing `Q` instead of overwriting it.
+            constexpr size_t kPrefixLength =
+                sizeof("http://www.wikidata.org/entity/Q") - 1;
+            static_assert(kPrefixLength == 32);
+            std::memcpy(buffer, "http://www.wikidata.org/entity/Q",
+                        kPrefixLength);
+            auto [ptr, ec] = std::to_chars(buffer + kPrefixLength,
+                                           buffer + sizeof(buffer), id);
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;

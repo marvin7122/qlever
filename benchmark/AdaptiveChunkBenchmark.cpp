@@ -53,7 +53,7 @@ struct ChunkBenchmarkResult {
   size_t totalTriples{0};
   size_t totalBytes{0};
   size_t chunksEmitted{0};
-  double ttfbMs{0.0};
+  double timeToFirstChunkMs{0.0};
   double durationSeconds{0.0};
   double throughputMBPerSec{0.0};
   double throughputTriplesPerSec{0.0};
@@ -78,9 +78,9 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
     const size_t numChunks = (totalTriples_ + chunkSize - 1) / chunkSize;
 
     ad_utility::timer::Timer totalTimer(ad_utility::timer::Timer::Started);
-    ad_utility::timer::Timer ttfbTimer(ad_utility::timer::Timer::Started);
+    ad_utility::timer::Timer firstChunkTimer(ad_utility::timer::Timer::Started);
 
-    double ttfbMs = 0.0;
+    double timeToFirstChunkMs = 0.0;
     size_t totalBytes = 0;
     size_t chunksEmitted = 0;
 
@@ -99,11 +99,13 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
       totalBytes += currentChunk.size();
       ++chunksEmitted;
 
-      // First chunk completed: record Time-To-First-Byte
+      // First chunk formatted: record time to first formatted chunk (not
+      // network TTFB)
       if (chunksEmitted == 1) {
-        ttfbTimer.stop();
-        ttfbMs =
-            ad_utility::timer::Timer::toSeconds(ttfbTimer.value()) * 1000.0;
+        firstChunkTimer.stop();
+        timeToFirstChunkMs =
+            ad_utility::timer::Timer::toSeconds(firstChunkTimer.value()) *
+            1000.0;
       }
     }
 
@@ -117,7 +119,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
         .totalTriples = totalTriples_,
         .totalBytes = totalBytes,
         .chunksEmitted = chunksEmitted,
-        .ttfbMs = ttfbMs,
+        .timeToFirstChunkMs = timeToFirstChunkMs,
         .durationSeconds = duration,
         .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
         .throughputTriplesPerSec =
@@ -140,9 +142,9 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
     });
 
     ad_utility::timer::Timer totalTimer(ad_utility::timer::Timer::Started);
-    ad_utility::timer::Timer ttfbTimer(ad_utility::timer::Timer::Started);
+    ad_utility::timer::Timer firstChunkTimer(ad_utility::timer::Timer::Started);
 
-    double ttfbMs = 0.0;
+    double timeToFirstChunkMs = 0.0;
     size_t totalBytes = 0;
     size_t chunksEmitted = 0;
     size_t triplesProcessed = 0;
@@ -164,9 +166,10 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
       ++chunksEmitted;
 
       if (chunksEmitted == 1) {
-        ttfbTimer.stop();
-        ttfbMs =
-            ad_utility::timer::Timer::toSeconds(ttfbTimer.value()) * 1000.0;
+        firstChunkTimer.stop();
+        timeToFirstChunkMs =
+            ad_utility::timer::Timer::toSeconds(firstChunkTimer.value()) *
+            1000.0;
       }
 
       sizer.recordChunk(currentChunk.size(), batchRows);
@@ -183,7 +186,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
         .totalTriples = totalTriples_,
         .totalBytes = totalBytes,
         .chunksEmitted = chunksEmitted,
-        .ttfbMs = ttfbMs,
+        .timeToFirstChunkMs = timeToFirstChunkMs,
         .durationSeconds = duration,
         .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
         .throughputTriplesPerSec =
@@ -206,9 +209,9 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
     });
 
     ad_utility::timer::Timer totalTimer(ad_utility::timer::Timer::Started);
-    ad_utility::timer::Timer ttfbTimer(ad_utility::timer::Timer::Started);
+    ad_utility::timer::Timer firstChunkTimer(ad_utility::timer::Timer::Started);
 
-    double ttfbMs = 0.0;
+    double timeToFirstChunkMs = 0.0;
     size_t totalBytes = 0;
     size_t chunksEmitted = 0;
 
@@ -227,9 +230,10 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
         ++chunksEmitted;
 
         if (chunksEmitted == 1) {
-          ttfbTimer.stop();
-          ttfbMs =
-              ad_utility::timer::Timer::toSeconds(ttfbTimer.value()) * 1000.0;
+          firstChunkTimer.stop();
+          timeToFirstChunkMs =
+              ad_utility::timer::Timer::toSeconds(firstChunkTimer.value()) *
+              1000.0;
         }
       }
     }
@@ -239,9 +243,10 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
       totalBytes += finalChunk.size();
       ++chunksEmitted;
       if (chunksEmitted == 1) {
-        ttfbTimer.stop();
-        ttfbMs =
-            ad_utility::timer::Timer::toSeconds(ttfbTimer.value()) * 1000.0;
+        firstChunkTimer.stop();
+        timeToFirstChunkMs =
+            ad_utility::timer::Timer::toSeconds(firstChunkTimer.value()) *
+            1000.0;
       }
     }
 
@@ -255,7 +260,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
         .totalTriples = totalTriples_,
         .totalBytes = totalBytes,
         .chunksEmitted = chunksEmitted,
-        .ttfbMs = ttfbMs,
+        .timeToFirstChunkMs = timeToFirstChunkMs,
         .durationSeconds = duration,
         .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
         .throughputTriplesPerSec =
@@ -280,9 +285,10 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
                  "===========================================\n";
 
     std::cout << std::left << std::setw(26) << "Mode" << std::setw(14)
-              << "TTFB (ms)" << std::setw(14) << "Total (s)" << std::setw(18)
-              << "Throughput(MB/s)" << std::setw(18) << "Triples/sec"
-              << std::setw(10) << "Chunks" << std::setw(14) << "Avg Chunk(KB)"
+              << "1st chunk (ms)" << std::setw(14) << "Total (s)"
+              << std::setw(18) << "Throughput(MB/s)" << std::setw(18)
+              << "Triples/sec" << std::setw(10) << "Chunks" << std::setw(14)
+              << "Avg Chunk(KB)"
               << "\n"
               << std::string(104, '-') << "\n";
 
@@ -306,12 +312,12 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
 
     auto printRow = [](const ChunkBenchmarkResult& res) {
       std::cout << std::left << std::setw(26) << res.mode << std::fixed
-                << std::setprecision(3) << std::setw(14) << res.ttfbMs
-                << std::fixed << std::setprecision(4) << std::setw(14)
-                << res.durationSeconds << std::fixed << std::setprecision(2)
-                << std::setw(18) << res.throughputMBPerSec << std::fixed
-                << std::setprecision(0) << std::setw(18)
-                << res.throughputTriplesPerSec << std::setw(10)
+                << std::setprecision(3) << std::setw(14)
+                << res.timeToFirstChunkMs << std::fixed << std::setprecision(4)
+                << std::setw(14) << res.durationSeconds << std::fixed
+                << std::setprecision(2) << std::setw(18)
+                << res.throughputMBPerSec << std::fixed << std::setprecision(0)
+                << std::setw(18) << res.throughputTriplesPerSec << std::setw(10)
                 << res.chunksEmitted << std::fixed << std::setprecision(1)
                 << std::setw(14) << res.avgChunkSizeKb << "\n";
     };
@@ -320,13 +326,16 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
     printRow(adaptiveRes);
     printRow(bufferRes);
 
-    const double ttfbImprovement =
-        adaptiveRes.ttfbMs > 0 ? (fixedRes.ttfbMs / adaptiveRes.ttfbMs) : 1.0;
+    const double firstChunkImprovement =
+        adaptiveRes.timeToFirstChunkMs > 0
+            ? (fixedRes.timeToFirstChunkMs / adaptiveRes.timeToFirstChunkMs)
+            : 1.0;
 
     std::cout << std::string(104, '-') << "\n";
-    std::cout << ">> TTFB Latency Improvement: " << std::fixed
-              << std::setprecision(1) << ttfbImprovement
-              << "x faster time to first byte with Adaptive Chunk Sizing!\n";
+    std::cout << ">> First-Chunk Latency Improvement: " << std::fixed
+              << std::setprecision(1) << firstChunkImprovement
+              << "x faster time to first formatted chunk with Adaptive Chunk "
+                 "Sizing!\n";
     std::cout << "============================================================="
                  "===========================================\n\n";
 

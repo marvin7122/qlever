@@ -171,12 +171,22 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
         });
 
     // Consumer loop: transmits chunks over simulated network socket.
+    // `pop()` rethrows a producer exception recorded via `setException`; join
+    // the worker before propagating it — destroying a joinable thread would
+    // call `std::terminate`.
     size_t totalBytes = 0;
-    while (auto chunkOpt = pipeline->pop()) {
-      std::string chunk = std::move(*chunkOpt);
-      totalBytes += chunk.size();
-      // Socket transmits chunk while worker concurrently prepares next chunk
-      simulateNetworkTransmission(chunk.size(), latency);
+    try {
+      while (auto chunkOpt = pipeline->pop()) {
+        std::string chunk = std::move(*chunkOpt);
+        totalBytes += chunk.size();
+        // Socket transmits chunk while worker concurrently prepares next chunk
+        simulateNetworkTransmission(chunk.size(), latency);
+      }
+    } catch (...) {
+      if (producerThread.joinable()) {
+        producerThread.join();
+      }
+      throw;
     }
 
     if (producerThread.joinable()) {

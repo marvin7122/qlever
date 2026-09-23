@@ -165,6 +165,8 @@ class ZeroCopySenderBenchmarkRunner {
       size_t totalBytes = kTotalSendSizeBytes,
       size_t chunkSize = kChunkSizeBytes)
       : totalBytes_{totalBytes}, chunkSize_{chunkSize} {
+    // The chunk loops divide by `chunkSize_`.
+    AD_CONTRACT_CHECK(chunkSize_ > 0);
     testPayload_.resize(chunkSize_);
     std::mt19937 rng(42);
     for (size_t i = 0; i < chunkSize_; ++i) {
@@ -175,7 +177,8 @@ class ZeroCopySenderBenchmarkRunner {
   // 1. Baseline: Synchronous send() syscall in loop
   BenchmarkMetric runStandardSend() {
     SocketPairConnection conn;
-    const size_t numChunks = totalBytes_ / chunkSize_;
+    // Ceiling division: the final chunk carries the remainder.
+    const size_t numChunks = (totalBytes_ + chunkSize_ - 1) / chunkSize_;
 
     // Background receiver thread
     std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
@@ -192,17 +195,18 @@ class ZeroCopySenderBenchmarkRunner {
     size_t bytesSent = 0;
 
     for (size_t i = 0; i < numChunks; ++i) {
+      const size_t chunkSize = std::min(chunkSize_, totalBytes_ - bytesSent);
       size_t chunkSent = 0;
-      while (chunkSent < chunkSize_) {
+      while (chunkSent < chunkSize) {
         ssize_t n = ::send(conn.sendFd(), testPayload_.data() + chunkSent,
-                           chunkSize_ - chunkSent, MSG_NOSIGNAL);
+                           chunkSize - chunkSent, MSG_NOSIGNAL);
         if (n < 0) {
           if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
           AD_THROW("send() failed");
         }
         chunkSent += static_cast<size_t>(n);
       }
-      bytesSent += chunkSize_;
+      bytesSent += chunkSize;
     }
 
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
@@ -216,7 +220,8 @@ class ZeroCopySenderBenchmarkRunner {
   // 2. io_uring Standard Send (Unpinned buffers)
   BenchmarkMetric runIoUringStandardSend() {
     SocketPairConnection conn;
-    const size_t numChunks = totalBytes_ / chunkSize_;
+    // Ceiling division: the final chunk carries the remainder.
+    const size_t numChunks = (totalBytes_ + chunkSize_ - 1) / chunkSize_;
 
     ZeroCopySenderConfig config;
     config.ringEntries = 256;
@@ -240,11 +245,14 @@ class ZeroCopySenderBenchmarkRunner {
 
     CpuTimeTimer timer;
 
+    size_t bytesSent = 0;
     for (size_t i = 0; i < numChunks; ++i) {
+      const size_t chunkSize = std::min(chunkSize_, totalBytes_ - bytesSent);
       uint32_t slot = sender.acquireBuffer();
       auto span = sender.getSlotSpan(slot);
-      std::memcpy(span.data(), testPayload_.data(), chunkSize_);
-      sender.sendChunk(conn.sendFd(), slot, chunkSize_);
+      std::memcpy(span.data(), testPayload_.data(), chunkSize);
+      sender.sendChunk(conn.sendFd(), slot, chunkSize);
+      bytesSent += chunkSize;
     }
 
     sender.flushAndDrainAll();
@@ -259,7 +267,8 @@ class ZeroCopySenderBenchmarkRunner {
   // 3. io_uring Zero-Copy Send (IORING_OP_SEND_ZC with Registered Buffers)
   BenchmarkMetric runIoUringZeroCopySend() {
     SocketPairConnection conn;
-    const size_t numChunks = totalBytes_ / chunkSize_;
+    // Ceiling division: the final chunk carries the remainder.
+    const size_t numChunks = (totalBytes_ + chunkSize_ - 1) / chunkSize_;
 
     ZeroCopySenderConfig config;
     config.ringEntries = 256;
@@ -283,11 +292,14 @@ class ZeroCopySenderBenchmarkRunner {
 
     CpuTimeTimer timer;
 
+    size_t bytesSent = 0;
     for (size_t i = 0; i < numChunks; ++i) {
+      const size_t chunkSize = std::min(chunkSize_, totalBytes_ - bytesSent);
       uint32_t slot = sender.acquireBuffer();
       auto span = sender.getSlotSpan(slot);
-      std::memcpy(span.data(), testPayload_.data(), chunkSize_);
-      sender.sendChunk(conn.sendFd(), slot, chunkSize_);
+      std::memcpy(span.data(), testPayload_.data(), chunkSize);
+      sender.sendChunk(conn.sendFd(), slot, chunkSize);
+      bytesSent += chunkSize;
     }
 
     sender.flushAndDrainAll();
