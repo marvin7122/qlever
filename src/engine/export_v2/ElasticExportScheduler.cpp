@@ -273,7 +273,7 @@ void ElasticExportScheduler::accountOutstandingUnsafe(uint64_t jobId) {
 void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
   // Never holds `queueMutex_` here (see `enqueueMorsel`): `poster_` may run
   // the closure inline, and its completion path takes `queueMutex_` again.
-  const uint64_t jobId = morsel.jobId_;
+  const uint64_t jobId = morsel.jobId();
   try {
     poster_(makePostedWork(std::move(morsel)));
   } catch (...) {
