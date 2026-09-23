@@ -161,7 +161,10 @@ struct CheckpointMorselRunner {
             *latticePtr_);
         pos = windowEnd;
         if (pos < seg.end_ || s + 1 < numSegments) {
-          if (state_->isCancelled()) {
+          // Consult both the job state and the request's cancellation
+          // handle, so an in-flight morsel promptly abandons its remainder
+          // when the client disconnects or the query is cancelled.
+          if (state_->isCancelled() || cancellationHandle_->isCancelled()) {
             return builder;
           }
           if (checkpoints_ && state_->currentEpoch() != epoch) {
