@@ -265,11 +265,16 @@ void ElasticExportScheduler::workerLoop() {
                (!queue_.empty() && isHelperAdmissionEligibleUnsafe());
       });
 
-      if (stopping_.load(std::memory_order_relaxed) && queue_.empty()) {
+      // On shutdown, drain the queue regardless of helper admission: with
+      // `stopping_` set the wait predicate above is permanently true, so
+      // waiting for admission here would spin forever and `shutdown()` would
+      // block in `join()`.
+      const bool stopping = stopping_.load(std::memory_order_relaxed);
+      if (stopping && queue_.empty()) {
         break;
       }
 
-      if (queue_.empty() || !isHelperAdmissionEligibleUnsafe()) {
+      if (queue_.empty() || (!isHelperAdmissionEligibleUnsafe() && !stopping)) {
         continue;
       }
 
