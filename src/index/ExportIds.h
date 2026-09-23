@@ -14,9 +14,12 @@
 #define QLEVER_SRC_INDEX_EXPORTIDS_H
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
@@ -322,6 +325,80 @@ idsToStringAndType(const Index& index, ql::span<const Id> ids,
   resolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
       index, ids, positions.vocabIndexIndices_, results, escapeFunction);
 
+  return results;
+}
+
+// A vocabulary term resolved from a batch lookup that keeps its bytes in the
+// shared lookup storage instead of copying them. `value_` points into storage
+// owned by `owner_` (the `VocabBatchLookupResult` the word came from), so no
+// string bytes are copied for terms that borrow.
+struct BorrowedStringAndType {
+  std::string_view value_;
+  const char* type_;
+  std::shared_ptr<const void> owner_;
+};
+
+// One resolved term on the borrowing export path: either a view into the
+// shared batch-lookup storage (`BorrowedStringAndType`, only for `VocabIndex`
+// terms whose serialized form is byte-identical to the vocabulary word), or an
+// owning `(string, type)` pair for every term that cannot borrow (encoded and
+// local-vocabulary values, whose bytes are generated rather than read, and
+// blank-node IRIs, whose serialized form is a fresh conversion rather than a
+// substring of the vocabulary word). Keeping the two representations distinct
+// avoids an extra heap allocation and ownership bookkeeping for owned terms.
+using BorrowedOrOwnedStringAndType =
+    std::variant<std::pair<std::string, const char*>, BorrowedStringAndType>;
+
+// Batch-resolve `ids` like `idsToStringAndType`, but let the terms that come
+// from the on-disk vocabulary borrow their bytes from the batch result instead
+// of copying them into a fresh `std::string`. Borrowing is only sound for the
+// identity escape function with quotes and angle brackets kept, because every
+// other configuration rewrites the bytes and therefore has to own them;
+// this function therefore takes no formatting parameters.
+//
+// Only `VocabIndex` terms borrow. `LocalVocabIndex` terms would have to share
+// ownership of the block's `LocalVocab`, which they cannot yet, so both they
+// and encoded values keep materializing.
+inline std::vector<std::optional<BorrowedOrOwnedStringAndType>>
+idsToBorrowedStringAndType(const Index& index, ql::span<const Id> ids,
+                           const LocalVocab& localVocab) {
+  std::vector<std::optional<BorrowedOrOwnedStringAndType>> results(ids.size());
+
+  PartitionedIdPositions positions = partitionIdPositions(ids);
+
+  for (size_t i : positions.nonVocabIndexIndices_) {
+    if (auto stringAndType =
+            idToStringAndType<false, false>(index, ids[i], localVocab)) {
+      results[i] = std::move(stringAndType.value());
+    }
+  }
+
+  const auto& vocabPositions = positions.vocabIndexIndices_;
+  if (vocabPositions.empty()) {
+    return results;
+  }
+  auto rawIndices = ::ranges::to_vector(
+      vocabPositions | ql::views::transform([&ids](size_t i) {
+        return static_cast<size_t>(ids[i].getVocabIndex().get());
+      }));
+  auto vocabStrings = index.getImpl().getVocab().lookupBatch(rawIndices);
+
+  // Every borrowed view below points into `vocabStrings`, which each result
+  // keeps alive by holding a copy of the `shared_ptr`. No word bytes are
+  // copied for borrowed terms.
+  for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, vocabPositions)) {
+    const auto word = LiteralOrIriView::fromStringRepresentation(sv);
+    if (word.isIri() && blankNodeIriToString(word.getIri()).has_value()) {
+      // A blank-node IRI serializes to a freshly converted string, not to
+      // bytes stored in the vocabulary word, so it cannot borrow: materialize
+      // it in owned storage (borrowing the conversion temporary would dangle).
+      results[i] = literalOrIriToStringAndType<false, false>(word).value();
+    } else {
+      // For all other words the serialized form is the whole vocabulary word,
+      // so borrow `sv` (which points into the lookup storage) directly.
+      results[i] = BorrowedStringAndType{sv, nullptr, vocabStrings};
+    }
+  }
   return results;
 }
 
