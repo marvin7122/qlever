@@ -485,6 +485,23 @@ class ArenaVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// Whether `Vocab` has a builder-taking `lookupBatch(indices, builder)`
+// overload (called on a const object, as the wrappers only hold const
+// access). Written with `std::void_t` instead of a C++20
+// `requires`-expression so the vocabulary wrappers keep compiling under
+// `QLEVER_REDUCED_FEATURE_SET_FOR_CPP17` (GCC 8, C++17).
+template <typename Vocab, typename = void>
+struct HasArenaVocabBatchLookup : std::false_type {};
+template <typename Vocab>
+struct HasArenaVocabBatchLookup<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>&>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+template <typename Vocab>
+inline constexpr bool HasArenaVocabBatchLookup_v =
+    HasArenaVocabBatchLookup<Vocab>::value;
+
+// _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
@@ -527,11 +544,10 @@ class MultiSourceVocabBatchAssembler {
   void assignWordAtPosition(size_t resultPosition, std::string_view word) {
     AD_CORRECTNESS_CHECK(resultPosition < assembledWordViews_.size());
     AD_CORRECTNESS_CHECK(!slotFilledTracking_[resultPosition]);
-    slotFilledTracking_[resultPosition] = true;
-    // Use the bounds-checked `at()` for the store: the check above already
-    // throws on out-of-bounds positions, but GCC's `-Warray-bounds` (promoted
-    // by `-Werror`) still flags `operator[]` once a constant out-of-bounds
-    // index from a test is inlined here.
+    // Checked access: the checks above make out-of-bounds stores unreachable,
+    // but GCC proves the constant index of the out-of-bounds unit test at
+    // compile time and fails `operator[]` under `-Werror=array-bounds`.
+    slotFilledTracking_.at(resultPosition) = true;
     assembledWordViews_.at(resultPosition) = word;
   }
 

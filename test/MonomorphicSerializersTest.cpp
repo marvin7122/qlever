@@ -109,14 +109,12 @@ TEST(MonomorphicSerializersTest, HandlesEmptyAndBoundaryValues) {
 // onto CellWriter: every byte must match first.
 TEST(MonomorphicSerializersTest, DoubleMatchesLegacyEncodedCsv) {
   using Serializer = MonomorphicRowSerializer<ColumnType::Double>;
-  for (const auto& pair :
+  for (const auto& [value, legacy] :
        {std::pair{1.0, "1.0\n"}, std::pair{-0.0, "-0.0\n"},
         std::pair{0.5, "0.5\n"}, std::pair{153.07, "153.07\n"},
         std::pair{std::numeric_limits<double>::quiet_NaN(), "NaN\n"},
         std::pair{std::numeric_limits<double>::infinity(), "INF\n"},
         std::pair{-std::numeric_limits<double>::infinity(), "-INF\n"}}) {
-    const double value = pair.first;
-    const std::string& legacy = pair.second;
     RecordingWriter writer;
     Serializer::serializeRow<RowFormat::Csv>(writer, value);
     EXPECT_EQ(writer.output(), legacy);

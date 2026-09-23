@@ -9,6 +9,7 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 
+#include <string_view>
 #include <type_traits>
 
 #include "engine/CallFixedSize.h"
@@ -73,7 +74,9 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
         // `builder` must be finalized exactly once, see
         // `UnicodeVocabulary::lookupBatch`.
-        if constexpr (requires { vocab.lookupBatch(indices, builder); }) {
+        AD_CONTRACT_CHECK(!indices.empty());
+        if constexpr (HasArenaVocabBatchLookup_v<
+                          std::decay_t<decltype(vocab)>>) {
           using InnerResult = decltype(vocab.lookupBatch(indices, builder));
           if constexpr (std::is_void_v<InnerResult>) {
             // Fill-only leaf: it appended to `builder`, finalize once below.
