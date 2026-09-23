@@ -3525,3 +3525,93 @@ TEST_F(GroupByOptimizations, countStarOptionalEmptyRight) {
   EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
               matchesIdTableFromVector({{I(2)}}));
 }
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarThreePredicateChain) {
+  // ?a p1 ?b . ?b p2 ?c . ?c p3 ?d
+  // Two subjects share b1; b1 has one c; c1 has two objects. Total 2*1*2 = 4.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<a1> <p1> <b1> . <a2> <p1> <b1> . "
+                    "<b1> <p2> <c1> . "
+                    "<c1> <p3> <d1> . <c1> <p3> <d2> ."))};
+  auto qec = ctx.makeQec();
+  auto s1 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?a"}, iri("<p1>"), Variable{"?b"}});
+  auto s2 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?b"}, iri("<p2>"), Variable{"?c"}});
+  auto s3 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?c"}, iri("<p3>"), Variable{"?d"}});
+  auto join12 = makeExecutionTree<Join>(&qec, s1, s2, 1, 0);
+  auto cCol = join12->getVariableColumn(Variable{"?c"});
+  auto join123 = makeExecutionTree<Join>(&qec, join12, s3, cCol, 0);
+  std::vector<Alias> aliases{
+      Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+            Variable{"?c"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, join123};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(4)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarChainEmptyHop) {
+  // The middle hop `<p2>` is empty, so the answer is zero without scanning
+  // the later hops.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<a1> <p1> <b1> . <c1> <p3> <d1> ."))};
+  auto qec = ctx.makeQec();
+  auto s1 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?a"}, iri("<p1>"), Variable{"?b"}});
+  auto s2 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?b"}, iri("<p2>"), Variable{"?c"}});
+  auto s3 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?c"}, iri("<p3>"), Variable{"?d"}});
+  auto join12 = makeExecutionTree<Join>(&qec, s1, s2, 1, 0);
+  auto cCol = join12->getVariableColumn(Variable{"?c"});
+  auto join123 = makeExecutionTree<Join>(&qec, join12, s3, cCol, 0);
+  std::vector<Alias> aliases{
+      Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+            Variable{"?c"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, join123};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(0)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarFourPredicateChain) {
+  // 1 * 2 * 1 * 2 = 4.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<a1> <p1> <b1> . "
+                    "<b1> <p2> <c1> . <b1> <p2> <c2> . "
+                    "<c1> <p3> <d1> . <c2> <p3> <d1> . "
+                    "<d1> <p4> <e1> . <d1> <p4> <e2> ."))};
+  auto qec = ctx.makeQec();
+  auto s1 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?a"}, iri("<p1>"), Variable{"?b"}});
+  auto s2 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?b"}, iri("<p2>"), Variable{"?c"}});
+  auto s3 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?c"}, iri("<p3>"), Variable{"?d"}});
+  auto s4 = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?d"}, iri("<p4>"), Variable{"?e"}});
+  auto join12 = makeExecutionTree<Join>(&qec, s1, s2, 1, 0);
+  auto cCol = join12->getVariableColumn(Variable{"?c"});
+  auto join123 = makeExecutionTree<Join>(&qec, join12, s3, cCol, 0);
+  auto dCol = join123->getVariableColumn(Variable{"?d"});
+  auto join1234 = makeExecutionTree<Join>(&qec, join123, s4, dCol, 0);
+  std::vector<Alias> aliases{
+      Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+            Variable{"?c"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, join1234};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(4)}}));
+}
