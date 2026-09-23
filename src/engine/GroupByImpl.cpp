@@ -902,20 +902,34 @@ std::optional<IdTable> GroupByImpl::computeGroupByForSingleIndexScan() const {
       indexScan->permutation().numTriples()));
 }
 
-// ____________________________________________________________________________
-std::optional<IdTable> GroupByImpl::computeGroupByObjectWithCount() const {
-  // The child must be an `IndexScan` with exactly two variables.
+// _____________________________________________________________________________
+std::optional<std::pair<std::shared_ptr<const IndexScan>, Id>>
+GroupByImpl::getTwoVariableScanWithBoundCol0() const {
+  // The child must be an `IndexScan` with exactly two variables and no graph
+  // filtering.
   auto indexScan =
-      std::dynamic_pointer_cast<IndexScan>(_subtree->getRootOperation());
+      std::dynamic_pointer_cast<const IndexScan>(_subtree->getRootOperation());
   if (!indexScan || !indexScan->graphsToFilter().areAllGraphsAllowed() ||
       indexScan->numVariables() != 2) {
     return std::nullopt;
   }
+  // The first column of the scan must be bound to a concrete ID.
   const auto& permutedTriple = indexScan->getPermutedTriple();
   std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
   if (!col0Id.has_value()) {
     return std::nullopt;
   }
+  return std::pair{std::move(indexScan), col0Id.value()};
+}
+
+// ____________________________________________________________________________
+std::optional<IdTable> GroupByImpl::computeGroupByObjectWithCount() const {
+  auto scanAndCol0 = getTwoVariableScanWithBoundCol0();
+  if (!scanAndCol0.has_value()) {
+    return std::nullopt;
+  }
+  const auto& [indexScan, col0Id] = scanAndCol0.value();
+  const auto& permutedTriple = indexScan->getPermutedTriple();
 
   // There must be exactly one GROUP BY variable and the result of the index
   // scan must be sorted by it.
@@ -943,7 +957,7 @@ std::optional<IdTable> GroupByImpl::computeGroupByObjectWithCount() const {
   // do the index scan, but something smarter).
   const auto& permutation = indexScan->permutation();
   auto result = permutation.getDistinctCol1IdsAndCounts(
-      col0Id.value(), cancellationHandle_, locatedTriplesState(),
+      col0Id, cancellationHandle_, locatedTriplesState(),
       indexScan->getLimitOffset());
 
   indexScan->updateRuntimeInformationWhenOptimizedOut({});
@@ -2028,11 +2042,12 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
     return std::nullopt;
   }
 
-  auto indexScan =
-      std::dynamic_pointer_cast<const IndexScan>(_subtree->getRootOperation());
-  if (!indexScan || indexScan->numVariables() != 2 ||
-      !indexScan->graphsToFilter().areAllGraphsAllowed() ||
-      !indexScan->additionalVariables().empty() ||
+  auto scanAndCol0 = getTwoVariableScanWithBoundCol0();
+  if (!scanAndCol0.has_value()) {
+    return std::nullopt;
+  }
+  const auto& [indexScan, col0Id] = scanAndCol0.value();
+  if (!indexScan->additionalVariables().empty() ||
       !indexScan->getLimitOffset().isUnconstrained()) {
     return std::nullopt;
   }
@@ -2045,12 +2060,6 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
     return std::nullopt;
   }
 
-  const auto& permutedTriple = indexScan->getPermutedTriple();
-  std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
-  if (!col0Id.has_value()) {
-    return std::nullopt;
-  }
-
   auto targetPermutation =
       permutationWithWantedCol1(*indexScan, wantedVar.value());
   if (!targetPermutation.has_value()) {
@@ -2060,7 +2069,7 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
   const auto& permutation =
       getIndex().getImpl().getPermutation(targetPermutation.value());
   auto distinctIds = permutation.getDistinctCol1IdsAndCounts(
-      col0Id.value(), cancellationHandle_, locatedTriplesState(),
+      col0Id, cancellationHandle_, locatedTriplesState(),
       indexScan->getLimitOffset());
 
   indexScan->updateRuntimeInformationWhenOptimizedOut({});
@@ -2072,9 +2081,17 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
     Id value = distinctIds(0, 0);
     const auto cmp = isMin ? valueIdComparators::Comparison::LT
                            : valueIdComparators::Comparison::GT;
+    // Incompatible datatypes are ordered by their datatype, exactly like the
+    // general `MIN`/`MAX` aggregate path (`compareIdsOrStrings` with
+    // `CompareByType`). This also makes the fold independent of the input
+    // order. The default `AlwaysUndef` would instead keep the first value
+    // whenever the datatypes are incompatible, which diverges from the
+    // general path as soon as the values have mixed datatypes.
+    using enum valueIdComparators::ComparisonForIncompatibleTypes;
     for (size_t row = 1; row < distinctIds.numRows(); ++row) {
       const Id candidate = distinctIds(row, 0);
-      if (valueIdComparators::compareIds(candidate, value, cmp) ==
+      if (valueIdComparators::compareIds<CompareByType>(candidate, value,
+                                                        cmp) ==
           valueIdComparators::ComparisonResult::True) {
         value = candidate;
       }

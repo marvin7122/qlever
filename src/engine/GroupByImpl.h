@@ -34,6 +34,8 @@ template <size_t IN_WIDTH, size_t OUT_WIDTH>
 class LazyGroupByRange;
 }
 
+class IndexScan;
+
 class GroupByImpl : public Operation {
  public:
   using GroupBlock = std::vector<std::pair<size_t, Id>>;
@@ -243,6 +245,16 @@ class GroupByImpl : public Operation {
   // index scan with one bound column. Uses the sorted distinct col1 IDs of
   // the permutation that stores `?v` in column 1. Empty input yields UNDEF.
   std::optional<IdTable> computeMinMaxForSingleIndexScan() const;
+
+  // Shared eligibility shape ("shape catalog" entry) for the optimizations
+  // that answer an aggregate over a two-variable index scan with a bound
+  // first column and no graph filtering: `computeGroupByObjectWithCount` and
+  // `computeMinMaxForSingleIndexScan`. Returns the scan together with the
+  // bound `col0` ID, or `nullopt` when the child has a different shape.
+  // Aggregate-specific checks (e.g. the form of the aliases or `LIMIT`
+  // handling) stay with the individual callers.
+  std::optional<std::pair<std::shared_ptr<const IndexScan>, Id>>
+  getTwoVariableScanWithBoundCol0() const;
 
   // Stores information required for substitution of an expression in an
   // expression tree.
