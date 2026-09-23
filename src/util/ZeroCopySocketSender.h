@@ -361,20 +361,24 @@ class ZeroCopySocketSender {
 
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
 
+    // `MSG_NOSIGNAL` (also added by the synchronous fallback below): without
+    // it a send on a peer-closed socket delivers SIGPIPE and terminates the
+    // process instead of returning a handled completion error.
+    const int sendFlags = flags | MSG_NOSIGNAL;
     if (config_.useZeroCopy) {
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
         // Zero-Copy Send with Registered Fixed Buffer (Opcode:
         // IORING_OP_SEND_ZC)
         io_uring_prep_send_zc_fixed(sqe, sockfd, slotSpan.data(), numBytes,
-                                    flags, zcFlags, bufferIndex);
+                                    sendFlags, zcFlags, bufferIndex);
       } else {
         // Zero-Copy Send with Unpinned Buffer
-        io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, flags,
+        io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, sendFlags,
                               zcFlags);
       }
     } else {
       // Standard asynchronous io_uring send
-      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, flags);
+      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, sendFlags);
     }
 
     const uint64_t reqId = nextRequestId_++;
@@ -511,6 +515,14 @@ class ZeroCopySocketSender {
   void teardown() noexcept {
 #ifdef QLEVER_HAS_LIBURING
     if (ringInitialized_) {
+      // Submit still-queued SQEs first: without this, the drain loop below
+      // would wait forever on completions the kernel never sees. Submission
+      // failure degrades to draining whatever was submitted before (this
+      // function must not throw).
+      try {
+        submit();
+      } catch (...) {
+      }
       while (numInFlightRequests_ > 0 || numInFlightBuffers_ > 0) {
         io_uring_cqe* cqe = nullptr;
         if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
@@ -585,6 +597,20 @@ class ZeroCopySocketSender {
       // Kernel is holding the buffer for zero-copy DMA; wait for CQE 2 (NOTIF)
       entry.waitingForNotification = true;
     } else {
+      // Standard completion or synchronous copy; the full range must have
+      // been transmitted (same policy as the short-read check in
+      // `RegisteredIoUringReader::drainOneCqe`). Silently releasing the slot
+      // on a short write would lose the unsent suffix.
+      if (static_cast<size_t>(res) != entry.expectedBytes) {
+        bufferPool_.releaseSlot(entry.bufferIndex);
+        AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
+        AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
+        --numInFlightBuffers_;
+        --numInFlightRequests_;
+        entry.active = false;
+        AD_THROW(absl::StrCat("io_uring short send: expected ",
+                              entry.expectedBytes, " got ", res));
+      }
       // Standard completion or synchronous copy; release buffer immediately
       bufferPool_.releaseSlot(entry.bufferIndex);
       AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
@@ -596,18 +622,35 @@ class ZeroCopySocketSender {
   }
 #endif
 
-  // Synchronous send fallback.
+  // Synchronous send fallback. Loops until the full range is transmitted:
+  // `send` may return short counts, and a slot released after a partial write
+  // would silently discard the unsent suffix.
   void sendChunkSync(int sockfd, uint32_t bufferIndex, size_t numBytes,
                      int flags) {
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
-    ssize_t bytesSent =
-        ::send(sockfd, slotSpan.data(), numBytes, flags | MSG_NOSIGNAL);
-    if (bytesSent < 0) {
-      bufferPool_.releaseSlot(bufferIndex);
-      AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+    size_t offset = 0;
+    while (offset < numBytes) {
+      ssize_t bytesSent = ::send(sockfd, slotSpan.data() + offset,
+                                 numBytes - offset, flags | MSG_NOSIGNAL);
+      if (bytesSent < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        const int sendErrno = errno;
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW(
+            absl::StrCat("send failed (errno: ", strerror(sendErrno), ")"));
+      }
+      if (bytesSent == 0) {
+        // Cannot happen on a blocking socket with a nonzero length; fail
+        // loudly instead of spinning forever.
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW("send returned 0 for a nonzero length");
+      }
+      offset += static_cast<size_t>(bytesSent);
     }
 
-    totalBytesSent_ += static_cast<size_t>(bytesSent);
+    totalBytesSent_ += offset;
     ++totalPacketsSent_;
     bufferPool_.releaseSlot(bufferIndex);
   }
