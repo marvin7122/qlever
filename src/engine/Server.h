@@ -169,9 +169,12 @@ class Server {
    public:
     Awaitable<void> operator()(auto response) {
       using Sent = std::decay_t<decltype(response)>;
-      if constexpr (std::is_same_v<Sent, ResponseT>) {
-        response_ = std::move(response);
-      }
+      // Strict: only `ResponseT` is retained. Any other response type (for
+      // example a scatter-gather body) would otherwise be silently dropped,
+      // letting a test assert against a default-constructed `response_`.
+      static_assert(std::is_same_v<Sent, ResponseT>,
+                    "MockSend received an unexpected response type");
+      response_ = std::move(response);
       co_return;
     }
 
