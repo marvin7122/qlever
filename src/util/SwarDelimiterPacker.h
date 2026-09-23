@@ -73,7 +73,11 @@ struct PackedDelimiter {
   constexpr PackedDelimiter() noexcept = default;
 
   constexpr PackedDelimiter(uint64_t pattern, uint8_t len) noexcept
-      : pattern_(pattern), len_(len) {}
+      : pattern_(pattern), len_(len) {
+    // `toString()` shifts by `i * 8` for `i < len_`; lengths above 8 would
+    // cause undefined 64-bit shifts, so they are rejected at construction.
+    AD_CONTRACT_CHECK(len <= 8);
+  }
 
   constexpr explicit PackedDelimiter(std::string_view sv) noexcept
       : pattern_(packDelimPattern(sv)),
