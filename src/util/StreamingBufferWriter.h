@@ -10,6 +10,7 @@
 #ifndef QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 #define QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
@@ -37,6 +39,20 @@ namespace ad_utility {
 // Bypasses the CPU cache hierarchy (L1/L2/L3) directly to DRAM via CPU
 // write-combining (WC) buffers. This prevents multi-gigabyte export streaming
 // chunks from evicting hot vocabulary tries, index metadata, and query caches.
+//
+// Destination buffers of arbitrary alignment are accepted: a cache-friendly
+// head copy aligns the write position to a 64-byte cache-line boundary before
+// the streaming loop, so unaligned starts provably cannot reach a
+// `_mm_stream_si128` store.
+//
+// The class is NOT thread-safe: concurrent `write()`, `flush()`, or `reset()`
+// calls from multiple threads race on `bytesWritten_` and on the buffer
+// contents. Shared instances require external synchronization.
+//
+// Data written via `write()` sits in CPU write-combining buffers and becomes
+// visible to other threads and devices only after `flush()`. Every write
+// sequence must therefore end with `flush()` (or use `writeAndFlush()` for
+// immediate visibility).
 //
 // Conforms to the Software Architecture Standard (~/ARCHITECTURE.md):
 // - Deep Module: Hides vector intrinsics, alignment math, and memory barriers.
@@ -73,6 +89,11 @@ class StreamingBufferWriter {
   // Static Helper: Non-temporal streaming memory copy without trailing fence.
   // Copies `count` bytes from `src` to `dest` using 64-byte non-temporal stores
   // on aligned blocks, with standard cache-friendly head and tail handling.
+  // WARNING: The caller must ensure that `dest` points to a buffer of at
+  // least `count` bytes. No bounds checking is performed here. Destinations
+  // of arbitrary alignment are accepted: Phase 1 aligns the write position
+  // to a 64-byte cache-line boundary, so every streaming store in Phase 2 is
+  // fully cache-line aligned for optimal write-combining behavior.
   static void streamCopyNoFence(void* dest, const void* src, size_t count) {
     AD_CONTRACT_CHECK(dest != nullptr || count == 0);
     AD_CONTRACT_CHECK(src != nullptr || count == 0);
@@ -85,11 +106,12 @@ class StreamingBufferWriter {
     const auto* srcPtr = static_cast<const char*>(src);
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
-    // Phase 1: Align destination pointer to 16-byte vector boundary.
+    // Phase 1: Align destination pointer to a 64-byte cache-line boundary
+    // so that all 64-byte streaming blocks in Phase 2 are cache-line
+    // aligned and never cross a cache-line boundary.
     const auto destAddr = reinterpret_cast<uintptr_t>(destPtr);
     const size_t unalignedHead =
-        (VectorStoreSize - (destAddr & (VectorStoreSize - 1))) &
-        (VectorStoreSize - 1);
+        (BlockSize - (destAddr & (BlockSize - 1))) & (BlockSize - 1);
     const size_t headBytes = std::min(unalignedHead, count);
 
     if (headBytes > 0) {
@@ -138,7 +160,12 @@ class StreamingBufferWriter {
       std::memcpy(destPtr, srcPtr, count);
     }
 #else
-    // Fallback for non-x86 architectures.
+    // Fallback for non-x86 architectures: plain `memcpy`. There is
+    // deliberately no non-temporal equivalent here (e.g. `DC ZVA` on ARM):
+    // x86-64 is QLever's primary target and the scalar fallback preserves
+    // correctness everywhere, matching the convention of the other export-v2
+    // SIMD helpers. Platforms without streaming stores get cache-friendly
+    // copies instead of cache-bypassing ones.
     std::memcpy(destPtr, srcPtr, count);
 #endif
   }
@@ -157,8 +184,7 @@ class StreamingBufferWriter {
       : buffer_{destinationBuffer.data()},
         capacity_{destinationBuffer.size()},
         bytesWritten_{0},
-        ownedBuffer_{std::nullopt} {
-  }
+        ownedBuffer_{std::nullopt} {}
 
   // ___________________________________________________________________________
   // Construct a writer wrapping a caller-provided memory pointer and capacity.
@@ -211,10 +237,16 @@ class StreamingBufferWriter {
   ~StreamingBufferWriter() = default;
 
   // ___________________________________________________________________________
-  // Write raw bytes using non-temporal streaming stores.
+  // Write raw bytes using non-temporal streaming stores. The data lands in
+  // CPU write-combining buffers and is NOT visible to other threads or
+  // devices until `flush()` is called, so every write sequence must end with
+  // `flush()`. Use `writeAndFlush()` when the data must be visible
+  // immediately. Deliberately fence-free per call: fencing on every write
+  // would defeat the streaming purpose.
   void write(const void* src, size_t numBytes) {
     AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
-    AD_CONTRACT_CHECK(bytesWritten_ + numBytes <= capacity_);
+    AD_CONTRACT_CHECK(bytesWritten_ <= capacity_ &&
+                      numBytes <= capacity_ - bytesWritten_);
 
     if (numBytes == 0) {
       return;
@@ -222,6 +254,20 @@ class StreamingBufferWriter {
 
     streamCopyNoFence(buffer_ + bytesWritten_, src, numBytes);
     bytesWritten_ += numBytes;
+  }
+
+  // ___________________________________________________________________________
+  // Write raw bytes and immediately drain the write-combining buffers, so
+  // the data is visible to other threads and devices on return.
+  void writeAndFlush(const void* src, size_t numBytes) {
+    write(src, numBytes);
+    flush();
+  }
+
+  // ___________________________________________________________________________
+  // Write string_view data and immediately drain the write-combining buffers.
+  void writeAndFlush(std::string_view data) {
+    writeAndFlush(data.data(), data.size());
   }
 
   // ___________________________________________________________________________
@@ -234,22 +280,19 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Complete the current streaming chunk and drain CPU write-combining buffers.
-  void flush() {
-    sfence();
-  }
+  void flush() { sfence(); }
 
   // ___________________________________________________________________________
   // Reset write position to the beginning of the existing buffer.
-  void reset() noexcept {
-    bytesWritten_ = 0;
-  }
+  void reset() noexcept { bytesWritten_ = 0; }
 
   // ___________________________________________________________________________
-  // Retarget the writer to a new caller-provided buffer span.
+  // Retarget the writer to a new caller-provided buffer span. Buffers of
+  // arbitrary alignment are accepted (see the class documentation).
   void reset(std::span<char> newBuffer) noexcept {
-    ownedBuffer_.reset();
     buffer_ = newBuffer.data();
     capacity_ = newBuffer.size();
+    ownedBuffer_.reset();
     bytesWritten_ = 0;
   }
 
