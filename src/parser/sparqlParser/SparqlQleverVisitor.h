@@ -15,6 +15,7 @@
 #include "engine/sparqlExpressions/AggregateExpression.h"
 #include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/sparqlExpressions/StdevExpression.h"
+#include "index/vocabulary/EncodedIriManager.h"
 #include "parser/data/GraphRef.h"
 #include "parser/sparqlParser/DatasetClause.h"
 #include "util/HashSet.h"

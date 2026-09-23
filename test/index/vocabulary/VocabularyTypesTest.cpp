@@ -203,6 +203,15 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
 // per-test filenames so the suites are independent.
 class VocabBatchLookupDataVocabTest : public ::testing::Test {
  protected:
+  // Remove the vocabulary files after each test, so no artifacts linger after
+  // the run and a failed run leaves no stale files for subsequent runs. The
+  // vocabulary itself is a test-local object, hence already destroyed here.
+  void TearDown() override {
+    const auto filename = gtestCurrentTestName();
+    ad_utility::deleteFile(filename, false);
+    ad_utility::deleteFile(filename + ".ids", false);
+  }
+
   // Build a vocabulary containing exactly `word` at index 0 and open it.
   ad_utility::vocabulary::VocabularyInMemoryBinSearch buildVocab(
       std::string_view word) {
@@ -389,8 +398,14 @@ TEST(VocabBatchLookupData,
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
+  // NOTE: the out-of-bounds position is deliberately passed via a `volatile`
+  // variable. A literal `2` lets GCC prove the out-of-bounds access at compile
+  // time and error out under `-Werror=array-bounds`, even though the
+  // `AD_CORRECTNESS_CHECK` in `assignWordAtPosition` throws before any memory
+  // is touched.
+  volatile size_t outOfBoundsPosition = 2;
   AD_EXPECT_THROW_WITH_MESSAGE(
-      assembler.assignWordAtPosition(2, "out-of-bounds"),
+      assembler.assignWordAtPosition(outOfBoundsPosition, "out-of-bounds"),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
 
   auto subBatch =

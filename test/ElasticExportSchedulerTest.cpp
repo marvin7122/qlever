@@ -8,6 +8,7 @@
 #include <chrono>
 #include <future>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -274,6 +275,37 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
   EXPECT_THROW(session.consumeNextResult(), ad_utility::Exception);
 
   scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 6b: Throwing Morsel Surfaces Instead Of Hanging The Consumer
+// -----------------------------------------------------------------------------
+// A task exception must reach `consumeNextResult` as that same exception
+// (via the terminal `Cancelled` slot state), whether the morsel ran on a
+// helper worker or was stolen by the primary fallback path. The profile must
+// also reach a terminal status instead of dangling in `Running`.
+TEST(ElasticExportSchedulerTest, ThrowingMorselPropagatesToConsumer) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+
+  auto session = scheduler.createSession<std::string>();
+  session.submitMorsel(
+      []() -> std::string { throw std::runtime_error{"morsel failed"}; });
+
+  EXPECT_THROW(
+      {
+        try {
+          session.consumeNextResult();
+        } catch (const std::runtime_error& e) {
+          EXPECT_STREQ(e.what(), "morsel failed");
+          throw;
+        }
+      },
+      std::runtime_error);
+
+  auto profiles = session.inspectMorselProfiles();
+  ASSERT_EQ(profiles.size(), 1u);
+  EXPECT_EQ(profiles[0].finalStatus_, MorselStatus::Cancelled);
 }
 
 // -----------------------------------------------------------------------------
