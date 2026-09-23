@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -51,8 +52,13 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
     std::vector<int64_t> randomInts;
     randomInts.reserve(NUM_INTEGERS);
     std::mt19937_64 rng(1337);
+    // Draw signed values directly: narrowing an out-of-range `uint64_t` to
+    // `int64_t` is implementation-defined before C++20.
+    std::uniform_int_distribution<int64_t> intDist(
+        std::numeric_limits<int64_t>::min(),
+        std::numeric_limits<int64_t>::max());
     for (size_t i = 0; i < NUM_INTEGERS; ++i) {
-      randomInts.push_back(static_cast<int64_t>(rng()));
+      randomInts.push_back(intDist(rng));
     }
 
     std::vector<uint64_t> qids;
