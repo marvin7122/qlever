@@ -45,6 +45,7 @@ RuntimeParameters::RuntimeParameters() {
   add(smallIndexScanSizeEstimateDivisor_);
   add(zeroCostEstimateForCachedSubtree_);
   add(requestBodyLimit_);
+  add(useSendZC_);
   add(cacheServiceResults_);
   add(syntaxTestMode_);
   add(divisionByZeroIsUndef_);

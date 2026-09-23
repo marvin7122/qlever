@@ -130,6 +130,11 @@ struct RuntimeParameters {
   // Maximum size for the body of requests that the server will process.
   MemorySizeParameter requestBodyLimit_{ad_utility::MemorySize::gigabytes(1),
                                         "request-body-limit"};
+  // If set to `true`, chunked `streamable_body` HTTP responses (the export
+  // path for SELECT/CONSTRUCT results) are transmitted via Linux io_uring
+  // `IORING_OP_SEND_ZC` zero-copy socket sends instead of the default
+  // Boost.Beast write path. Off by default; enable for A/B experiments.
+  Bool useSendZC_{false, "use-send-zc"};
   // SERVICE operations are not cached by default, but can be enabled
   // which has the downside that the sibling optimization where VALUES are
   // dynamically pushed into `SERVICE` is no longer used.

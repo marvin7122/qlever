@@ -214,10 +214,20 @@ void Server::run() {
   // `HttpServer`'s constructor binds the socket synchronously; keep this as
   // the first statement in `run()` so a port already in use fails fast,
   // before any other startup work.
+  // Read once at startup: toggles the `IORING_OP_SEND_ZC` zero-copy path for
+  // chunked export responses (runtime parameter `use-send-zc`, default off).
+  bool useSendZC = getRuntimeParameter<&RuntimeParameters::useSendZC_>();
+  AD_LOG_INFO << "Zero-copy socket sends (IORING_OP_SEND_ZC) for export "
+              << "responses are " << (useSendZC ? "ENABLED" : "disabled")
+              << std::endl;
   auto httpServer =
-      HttpServer{port_, "0.0.0.0", static_cast<int>(numThreads_),
+      HttpServer{port_,
+                 "0.0.0.0",
+                 static_cast<int>(numThreads_),
                  std::move(httpSessionHandler),
-                 absl::bind_front(&Server::makeWebSocketSessionSupplier, this)};
+                 absl::bind_front(&Server::makeWebSocketSessionSupplier, this),
+                 ad_utility::MemorySize::megabytes(1),
+                 useSendZC};
 
   AD_LOG_INFO << "The server is ready, listening for requests on port "
               << std::to_string(httpServer.getPort()) << " ..." << std::endl;

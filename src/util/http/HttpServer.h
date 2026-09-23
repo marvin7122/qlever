@@ -11,12 +11,15 @@
 #include <chrono>
 #include <cstdlib>
 #include <future>
+#include <optional>
 #include <thread>
+#include <type_traits>
 
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/Log.h"
 #include "util/http/HttpUtils.h"
+#include "util/http/ZeroCopyHttpSender.h"
 #include "util/http/beast.h"
 #include "util/http/websocket/WebSocketSession.h"
 #include "util/jthread.h"
@@ -89,6 +92,10 @@ CPP_template(BodyReadMode bodyReadMode, typename HttpHandler,
   // `websocketHandler_` depends on `executor_`.
   WebSocketHandler webSocketHandler_;
   ad_utility::MemorySize lazyBodyChunkSize_;
+  // If true, chunked `streamable_body` responses (the HTTP export path) are
+  // transmitted via `ZeroCopySocketSender` (Linux `IORING_OP_SEND_ZC`) instead
+  // of the default Boost.Beast write path. Default false (Beast behavior).
+  bool useSendZC_ = false;
   // All code that uses the `acceptor_` must run within this strand.
   // Note that the `acceptor_` might be concurrently accessed by the `listener`
   // and the `shutdown` function, the latter of which is currently only used in
@@ -136,7 +143,8 @@ CPP_template(BodyReadMode bodyReadMode, typename HttpHandler,
                                                 ad_utility::MemorySize
                                                     lazyBodyChunkSize =
                                                         ad_utility::MemorySize::
-                                                            megabytes(1))
+                                                            megabytes(1),
+                                                bool useSendZC = false)
       : httpHandler_{std::move(handler)},
         // We need at least two threads to avoid blocking.
         // TODO<joka921> why is that?
@@ -146,7 +154,8 @@ CPP_template(BodyReadMode bodyReadMode, typename HttpHandler,
         executor_{instrumentedExec_},
         webSocketHandler_{
             std::invoke(std::move(webSocketHandlerSupplier), executor_)},
-        lazyBodyChunkSize_{lazyBodyChunkSize} {
+        lazyBodyChunkSize_{lazyBodyChunkSize},
+        useSendZC_{useSendZC} {
     ioContextMetrics_->maxHandlers_->Record(numServerThreads_);
     try {
       tcp::endpoint endpoint{net::ip::make_address(ipAddress), port};
@@ -518,11 +527,35 @@ CPP_template(BodyReadMode bodyReadMode, typename HttpHandler,
     // request/response pair.
     std::atomic<bool> streamNeedsClosing = false;
 
+    // Lazily created on the first zero-copy response of this session, then
+    // reused for subsequent responses on the same connection.
+    std::optional<ad_utility::ZeroCopySocketSender> zeroCopySender;
+
     // This lambda sends an http message to the `stream` and sets
     // `streamNeedsClosing` if the closing of the session is requested by the
     // session.
-    auto sendMessage = [&stream, &streamNeedsClosing](
+    auto sendMessage = [&stream, &streamNeedsClosing, this, &zeroCopySender](
                            auto message) -> boost::asio::awaitable<void> {
+      // Zero-copy fast path for the HTTP export path: chunked
+      // `streamable_body` responses are transmitted via `ZeroCopySocketSender`
+      // (Linux `IORING_OP_SEND_ZC`) when enabled. Everything else, including
+      // non-chunked responses, keeps the default Beast write path.
+      if constexpr (ad_utility::httpUtils::IsStreamableBodyResponse<
+                        std::decay_t<decltype(message)>>::value) {
+        if (useSendZC_ && message.chunked()) {
+          if (!zeroCopySender.has_value()) {
+            zeroCopySender.emplace(
+                ad_utility::httpUtils::ZeroCopyHttpSenderConfig{}
+                    .toSenderConfig());
+          }
+          co_await ad_utility::httpUtils::asyncWriteStreamableBodyZeroCopy(
+              stream, message, zeroCopySender.value());
+          if (message.need_eof()) {
+            streamNeedsClosing = true;
+          }
+          co_return;
+        }
+      }
       // Write the response
       co_await http::async_write(stream, message, boost::asio::use_awaitable);
 
