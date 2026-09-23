@@ -600,3 +600,21 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+# Tests for the zero-copy export streaming stack (PR 97). Each compiles its
+# translation unit standalone, so previously missing direct includes and
+# similar issues surface here instead of only in downstream includers.
+addLinkAndDiscoverTest(AdaptiveChunkSizerTest)
+addLinkAndDiscoverTest(FastIntToStringTest qlever_util)
+addLinkAndDiscoverTest(GTestHelpersTest)
+addLinkAndDiscoverTest(InPlaceHttpChunkFramingTest)
+addLinkAndDiscoverTest(MonomorphicSerializersTest engine)
+addLinkAndDiscoverTest(PrefetchingBatchResolverTest engine)
+addLinkAndDiscoverTest(RlePrefixCompressorTest qlever_util)
+addLinkAndDiscoverTest(ScatterGatherArenaStreamerTest engine)
+addLinkAndDiscoverTest(SimdEscapeClassifierTest qlever_util)
+addLinkAndDiscoverTest(SimdValidityBitmaskTest qlever_util)
+addLinkAndDiscoverTest(StreamingBufferWriterTest qlever_util)
+addLinkAndDiscoverTest(SwarDelimiterPackerTest qlever_util)
+addLinkAndDiscoverTest(ZeroCopySocketSenderTest qlever_util)
+addLinkAndDiscoverTest(MaterializedViewsStarRewriteTest qlever engine)

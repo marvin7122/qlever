@@ -13,8 +13,10 @@
 #include <re2/re2.h>
 
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <sstream>
+#include <string>
 
 #include "backports/concepts.h"
 #include "backports/three_way_comparison.h"
@@ -326,6 +328,66 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   return absl::StrReplaceAll(
       absl::StrCat(testInfo->test_suite_name(), "_", testInfo->name()),
       {{"/", "_"}});
+}
+
+// _____________________________________________________________________________
+// Returns the `<TestSuiteName>` of the currently running gtest, with any '/'
+// replaced by '_' (parameterized suites embed '/' in their names). Same
+// `assertInGtestEnvironment` contract as `gtestCurrentTestName` above.
+inline std::string gtestCurrentTestSuiteName(
+    bool assertInGtestEnvironment = true) {
+  const auto* testInfo =
+      ::testing::UnitTest::GetInstance()->current_test_info();
+  if (assertInGtestEnvironment) {
+    AD_CORRECTNESS_CHECK(testInfo != nullptr);
+  }
+  if (testInfo == nullptr) {
+    return "";
+  }
+  return absl::StrReplaceAll(testInfo->test_suite_name(), {{"/", "_"}});
+}
+
+// _____________________________________________________________________________
+// Returns the largest `std::pmr::string` size that is stored inside the string
+// object itself (short-string optimization) on this standard library, found by
+// probing. Sizes are capped at 256 to bound the probing cost.
+inline size_t pmrStringSsoCapacity() {
+  for (size_t size = 0; size <= 256; ++size) {
+    const std::pmr::string probe(size, 'x');
+    const auto* objectBegin = reinterpret_cast<const char*>(&probe);
+    const auto* data = probe.data();
+    if (data < objectBegin || data >= objectBegin + sizeof(std::pmr::string)) {
+      return size == 0 ? 0 : size - 1;
+    }
+  }
+  return 256;
+}
+
+// _____________________________________________________________________________
+// Skip the current test unless `std::pmr::string` stores `size` characters
+// inline on this standard library (SSO capacities differ between
+// implementations). A size of zero is rejected: inline storage of an empty
+// string is implementation-defined and must not be relied upon.
+inline void requirePmrStringInlineStorage(size_t size) {
+  static const size_t capacity = pmrStringSsoCapacity();
+  if (size == 0 || size > capacity) {
+    GTEST_SKIP() << "std::pmr::string of size " << size
+                 << " is not stored inline on this standard library (capacity "
+                 << capacity << ")";
+  }
+}
+
+// _____________________________________________________________________________
+// Overwrite `N` bytes of stack memory with `sentinel` and return the last
+// byte, read back `volatile` so the writes cannot be optimized away. Useful
+// for stack-reuse tests that must observe a dirty stack.
+template <size_t N>
+char clobberStack(char sentinel) {
+  volatile char buffer[N];
+  for (size_t i = 0; i < N; ++i) {
+    buffer[i] = sentinel;
+  }
+  return buffer[N - 1];
 }
 
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H
