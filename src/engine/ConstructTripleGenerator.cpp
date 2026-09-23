@@ -13,6 +13,7 @@
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "util/FiberIoScheduler.h"
 
 namespace qlever::constructExport {
 
@@ -93,12 +94,41 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
+  // Double chunks whose halves evaluate as cooperating fibers on this
+  // thread: both halves share the idCache and the I/O manager pool, and
+  // interleave only at I/O waits, so one half's vocabulary stalls hide
+  // behind the other's. Results publish in order, so downstream
+  // serialization (including blank-node ids) is unchanged. A lone trailing
+  // half skips fibers, mirroring the single-column fast path in phase B.
+  constexpr size_t halves = 2;
   return ranges::views::chunk(std::move(rowView),
-                              ConstructTripleGenerator::BATCH_SIZE) |
+                              halves * ConstructTripleGenerator::BATCH_SIZE) |
          ql::views::transform([tableWithVocab, context = std::move(context),
-                               tableRowOffset](auto chunkView) {
-           return computeBatch(tableWithVocab, chunkView, context,
-                               tableRowOffset);
+                               tableRowOffset](auto doubleChunk) {
+           constexpr size_t halfRows = ConstructTripleGenerator::BATCH_SIZE;
+           auto firstHalf = doubleChunk | ::ranges::views::take(halfRows);
+           auto secondHalf = doubleChunk | ::ranges::views::drop(halfRows);
+           if (::ranges::empty(secondHalf)) {
+             return computeBatch(tableWithVocab, firstHalf, context,
+                                 tableRowOffset);
+           }
+           std::vector<EvaluatedTriple> firstResult;
+           std::vector<EvaluatedTriple> secondResult;
+           std::vector<std::function<void()>> bodies;
+           bodies.reserve(halves);
+           bodies.emplace_back([&] {
+             firstResult = computeBatch(tableWithVocab, firstHalf, context,
+                                        tableRowOffset);
+           });
+           bodies.emplace_back([&] {
+             secondResult = computeBatch(tableWithVocab, secondHalf, context,
+                                         tableRowOffset);
+           });
+           ad_utility::FiberIoScheduler::runAsFibers(std::move(bodies));
+           firstResult.insert(firstResult.end(),
+                              std::make_move_iterator(secondResult.begin()),
+                              std::make_move_iterator(secondResult.end()));
+           return firstResult;
          }) |
          ql::views::join;
 }
