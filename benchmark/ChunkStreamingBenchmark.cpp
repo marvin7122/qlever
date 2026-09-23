@@ -7,6 +7,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -168,12 +169,23 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
         });
 
     // Consumer loop: transmits chunks over simulated network socket.
+    // If `pop()` rethrows a producer exception, the producer is cancelled
+    // and joined during unwinding: destroying the still-joinable thread
+    // would call `std::terminate` and hide the producer error.
     size_t totalBytes = 0;
-    while (auto chunkOpt = pipeline->pop()) {
-      std::string chunk = std::move(*chunkOpt);
-      totalBytes += chunk.size();
-      // Socket transmits chunk while worker concurrently prepares next chunk
-      simulateNetworkTransmission(chunk.size(), latency);
+    try {
+      while (auto chunkOpt = pipeline->pop()) {
+        std::string chunk = std::move(*chunkOpt);
+        totalBytes += chunk.size();
+        // Socket transmits chunk while worker concurrently prepares next chunk
+        simulateNetworkTransmission(chunk.size(), latency);
+      }
+    } catch (...) {
+      pipeline->cancel();
+      if (producerThread.joinable()) {
+        producerThread.join();
+      }
+      throw;
     }
 
     if (producerThread.joinable()) {
