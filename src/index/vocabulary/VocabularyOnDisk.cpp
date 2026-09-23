@@ -203,34 +203,23 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 
 // _____________________________________________________________________________
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
+    ad_utility::BatchManagerBase& manager,
     ql::span<const size_t> indices) const {
-  // For each requested index `i`, read its offset together with the next
-  // offset (which bounds the string) as one 16-byte pair from `.offsets`.
-  // Runs of consecutive ids share a single range `pread`, so a sorted batch
-  // costs range reads instead of one ring read per index.
+  // For each requested index `i`, read its offset together with the next offset
+  // (which bounds the string) as one 16-byte pair from `.offsets`.
   const size_t numIndices = indices.size();
   std::vector<OffsetPair> offsetPairs(numIndices);
-  size_t runBegin = 0;
-  for (size_t i = 1; i <= numIndices; ++i) {
-    if (i < numIndices && indices[i] == indices[i - 1] + 1) {
-      continue;
-    }
-    const size_t firstId = indices[runBegin];
-    const size_t runLength = i - runBegin;
-    AD_CONTRACT_CHECK(firstId < size() && runLength <= size() - firstId);
-    // One extra offset closes the last pair of the run.
-    std::vector<uint64_t> buffer(runLength + 1);
-    const ssize_t numRead =
-        offsetsFile_.read(buffer.data(), buffer.size() * sizeof(uint64_t),
-                          static_cast<off_t>(firstId * sizeof(uint64_t)));
-    if (numRead != static_cast<ssize_t>(buffer.size() * sizeof(uint64_t))) {
-      AD_THROW("failed to read word offsets in `VocabularyOnDisk`");
-    }
-    for (size_t k = 0; k < runLength; ++k) {
-      offsetPairs[runBegin + k] = {buffer[k], buffer[k + 1]};
-    }
-    runBegin = i;
+  std::vector<size_t> sizes(numIndices, sizeof(OffsetPair));
+  std::vector<uint64_t> fileOffsets(numIndices);
+  std::vector<char*> targets(numIndices);
+  for (auto&& [fileOffset, index, target, offsetPair] :
+       ::ranges::views::zip(fileOffsets, indices, targets, offsetPairs)) {
+    AD_CONTRACT_CHECK(index < size());
+    fileOffset = index * sizeof(uint64_t);
+    target = reinterpret_cast<char*>(&offsetPair);
   }
+  manager.wait(
+      manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
   return offsetPairs;
 }
 
@@ -316,9 +305,7 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "`VocabularyOnDisk::lookupBatch`");
   }};
 
-  // Phase 1 needs no ring wait (synchronous range reads); the manager only
-  // serves phase 2 string reads now.
-  auto offsetPairs = readOffsetPairs(indices);
+  auto offsetPairs = readOffsetPairs(*manager, indices);
   return readStrings(*manager, offsetPairs);
 }
 
