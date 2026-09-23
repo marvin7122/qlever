@@ -46,7 +46,10 @@ struct AllocationTracker {
 
 // Global new/delete instrumentation for allocation counting during benchmark
 // runs. The replacements consistently pair `malloc` with `free`, which GCC's
-// `-Wmismatched-new-delete` cannot see through, so it is disabled here.
+// `-Wmismatched-new-delete` cannot see through, so the warning is disabled
+// for the remainder of this TU: the diagnostic fires at allocation use sites
+// (where the replaced sized `operator delete` gets inlined, e.g. into
+// `std::make_shared` callers below), not at the definitions themselves.
 // The ThreadSanitizer and AddressSanitizer runtimes provide their own global
 // `operator new`/`operator delete`, which would conflict with these
 // replacements at link time (`multiple definition`), so the replacements are
@@ -86,7 +89,6 @@ void* operator new[](std::size_t size) {
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
 
 void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
-#pragma GCC diagnostic pop
 #endif
 
 namespace ad_benchmark {
@@ -278,3 +280,9 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
+
+// Matching pop for the `-Wmismatched-new-delete` suppression above, which is
+// intentionally TU-scoped (see comment there).
+#if !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_ADDRESS__)
+#pragma GCC diagnostic pop
+#endif
