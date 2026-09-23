@@ -259,7 +259,10 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
   // The alignment argument is intentionally ignored: this resource only serves
   // `char` allocations from the arena builders, for which any alignment
   // suffices, and the underlying `AllocatorWithLimit` has no alignment
-  // concept (it counts bytes).
+  // concept (it counts bytes). This relies on the backing storage being at
+  // least `max_align_t`-aligned (true for the `::operator new`- and
+  // malloc-backed allocators in use); a future backing store with weaker
+  // alignment must add an aligned allocation path here.
   void* do_allocate(std::size_t bytes, std::size_t alignment) override {
     (void)alignment;
     return alloc_.allocate(bytes);
@@ -483,6 +486,25 @@ class ArenaVocabBatchBuilder {
     return PmrVocabBatchLookupData::asResult(std::move(data));
   }
 };
+
+namespace detail {
+// C++17-compatible detection of the two-argument
+// `lookupBatch(indices, builder)` overload that decodes into a
+// caller-provided `ArenaVocabBatchBuilder` (a C++20 `requires`-expression
+// cannot be used here: this header is also compiled in the C++17
+// configuration for GCC 8).
+template <typename Vocabulary, typename = void>
+struct HasLookupBatchWithBuilder : std::false_type {};
+template <typename Vocabulary>
+struct HasLookupBatchWithBuilder<
+    Vocabulary,
+    std::void_t<decltype(std::declval<const Vocabulary&>().lookupBatch(
+        std::declval<ql::span<const size_t>>(),
+        std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+template <typename Vocabulary>
+constexpr bool HasLookupBatchWithBuilder_v =
+    HasLookupBatchWithBuilder<Vocabulary>::value;
+}  // namespace detail
 
 // _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a

@@ -145,11 +145,11 @@ TEST(ElasticExportSchedulerTest, DynamicScaleOutWhenServerBecomesIdle) {
 // -----------------------------------------------------------------------------
 
 TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
-  // NOTE: exactly one helper worker. With two workers the second worker
-  // would dequeue morsel 1 and execute it before the foreground pressure
-  // below is applied, so `profiles[1].executedByHelper_` would be
-  // nondeterministically true. A single worker is blocked inside morsel 0,
-  // which keeps morsel 1 pending until the session reaches `PrimaryOnly`.
+  // Exactly one helper: it blocks inside morsel 0 while holding the lease,
+  // so morsel 1 stays queued until revocation hands it to the coordinator.
+  // With two helpers the idle worker would legitimately execute morsel 1
+  // before the foreground query arrives, and `profiles[1].executedByHelper_`
+  // would be `true`.
   ElasticExportScheduler scheduler(1, 64);
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
@@ -281,6 +281,37 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
   EXPECT_THROW(session.consumeNextResult(), ad_utility::Exception);
 
   scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 6b: Throwing Morsel Surfaces Instead Of Hanging The Consumer
+// -----------------------------------------------------------------------------
+// A task exception must reach `consumeNextResult` as that same exception
+// (via the terminal `Cancelled` slot state), whether the morsel ran on a
+// helper worker or was stolen by the primary fallback path. The profile must
+// also reach a terminal status instead of dangling in `Running`.
+TEST(ElasticExportSchedulerTest, ThrowingMorselPropagatesToConsumer) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+
+  auto session = scheduler.createSession<std::string>();
+  session.submitMorsel(
+      []() -> std::string { throw std::runtime_error{"morsel failed"}; });
+
+  EXPECT_THROW(
+      {
+        try {
+          session.consumeNextResult();
+        } catch (const std::runtime_error& e) {
+          EXPECT_STREQ(e.what(), "morsel failed");
+          throw;
+        }
+      },
+      std::runtime_error);
+
+  auto profiles = session.inspectMorselProfiles();
+  ASSERT_EQ(profiles.size(), 1u);
+  EXPECT_EQ(profiles[0].finalStatus_, MorselStatus::Cancelled);
 }
 
 // -----------------------------------------------------------------------------

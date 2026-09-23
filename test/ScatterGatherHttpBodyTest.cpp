@@ -44,18 +44,22 @@ std::string concatBuffers(
 
 // NOTE: These generators are namespace-scope coroutine functions rather than
 // immediately-invoked lambdas. GCC 11 crashes with an internal compiler error
-// (`build_special_member_call` in `morph_fn_to_coro`) when an
-// immediately-invoked lambda coroutine `co_yield`s a prvalue in this
-// translation unit; plain coroutine functions are unaffected.
+// (`build_special_member_call`) when a coroutine in this translation unit
+// `co_yield`s a prvalue, so every yielded chunk is first materialized into a
+// named local (the lvalue overload of `yield_value` just stores its address,
+// which stays valid: the local lives in the coroutine frame).
 scatter_gather_body::value_type emptyGenerator() { co_return; }
 
 scatter_gather_body::value_type singleChunkGenerator() {
-  co_yield makeChunk({"ab", "cde"});
+  auto chunk = makeChunk({"ab", "cde"});
+  co_yield chunk;
 }
 
 scatter_gather_body::value_type emptyThenDataChunkGenerator() {
-  co_yield makeChunk({});
-  co_yield makeChunk({"xy"});
+  auto empty = makeChunk({});
+  co_yield empty;
+  auto chunk = makeChunk({"xy"});
+  co_yield chunk;
 }
 
 scatter_gather_body::value_type throwingGenerator() {
@@ -64,7 +68,8 @@ scatter_gather_body::value_type throwingGenerator() {
 }
 
 scatter_gather_body::value_type chunkThenThrowingGenerator() {
-  co_yield makeChunk({"ok"});
+  auto chunk = makeChunk({"ok"});
+  co_yield chunk;
   throw std::runtime_error("Test Exception");
   co_return;
 }

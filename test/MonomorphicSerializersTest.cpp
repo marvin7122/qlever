@@ -12,6 +12,7 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -59,11 +60,27 @@ class RecordingWriter {
  private:
   template <typename Value>
   void appendNumber(Value value) {
+    if constexpr (std::floating_point<Value>) {
+      // No floating-point `std::to_chars` on macOS before 13.3; the
+      // ostringstream default formatting matches the expected output.
+      std::ostringstream stream;
+      stream << value;
+      output_ += stream.str();
+      return;
+    }
+#if defined(__APPLE__)
+    // Integer `std::to_chars` is likewise unavailable when targeting macOS
+    // before 13.3; ostringstream matches the expected output for integers.
+    std::ostringstream stream;
+    stream << value;
+    output_ += stream.str();
+#else
     char buffer[64];
     const auto [end, error] =
         std::to_chars(std::begin(buffer), std::end(buffer), value);
     ASSERT_EQ(error, std::errc{});
     output_.append(buffer, end);
+#endif
   }
 
   std::string output_;

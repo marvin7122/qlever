@@ -207,12 +207,26 @@ class SimdEscapeClassifier {
   template <EscapeFormat Format>
   [[nodiscard]] static ql::span<char> copyAndEscape(
       std::string_view input, ql::span<char> outputBuffer) {
-    AD_CONTRACT_CHECK(input.size() <= outputBuffer.size() / 2);
     if (input.empty()) {
       return {outputBuffer.data(), 0};
     }
     char* output = outputBuffer.data();
     char* const begin = output;
+    if constexpr (Format == EscapeFormat::Csv) {
+      // RFC 4180: a field containing a comma, quote, CR, or LF must be
+      // wrapped in double quotes (with inner quotes doubled); copying such a
+      // field unquoted would corrupt the column/row structure.
+      if (findFirstEscapeScalar<Format>(input) != std::string_view::npos) {
+        AD_CONTRACT_CHECK(outputBuffer.size() >= 2 * input.size() + 2);
+        *output++ = '"';
+        for (char character : input) {
+          output = detail::emitEscaped<Format>(character, output);
+        }
+        *output++ = '"';
+        return {begin, static_cast<size_t>(output - begin)};
+      }
+    }
+    AD_CONTRACT_CHECK(input.size() <= outputBuffer.size() / 2);
     size_t offset = 0;
     while (input.size() - offset >= 32) {
       uint32_t mask = classify32<Format>({input.data() + offset, 32}).raw();
