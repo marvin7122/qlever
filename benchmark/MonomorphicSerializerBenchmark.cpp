@@ -78,21 +78,14 @@ void* operator new(std::size_t size) {
 }
 
 // The global operator new above allocates with malloc, so the matching
-// operator delete must release with free. Compilers cannot prove this pairing
-// (GCC 11 and 13 diagnose the `free` even when it appears in exactly one
-// place via the forwarded sized overload), so suppress the diagnostic around
-// both deallocation functions. Forward the sized overload to the unsized one,
-// so `free` appears in exactly one place.
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
-#endif
+// operator delete must release with free. The pairing is correct, but GCC's
+// `-Wmismatched-new-delete` cannot see it (and cannot be silenced with an
+// in-source pragma); it is disabled for this file in benchmark/CMakeLists.txt.
+// Forward the sized overload to the unsized one, so `free` appears in exactly
+// one place.
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { operator delete(ptr); }
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
 #endif  // !defined(__SANITIZE_THREAD__)
 
 namespace ad_benchmark {

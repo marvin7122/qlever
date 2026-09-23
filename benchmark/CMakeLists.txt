@@ -59,6 +59,18 @@ if (NOT _NO_BENCHMARK)
     add_executable(MonomorphicSerializerBenchmark MonomorphicSerializerBenchmark.cpp)
     linkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser qlever_util)
 
+    # The allocation-counting shims in these two benchmarks pair a
+    # malloc-based global `operator new` with a free-based `operator delete`.
+    # The pairing is correct, but GCC's `-Wmismatched-new-delete` cannot see
+    # it, and the warning is issued for the whole translation unit, so it
+    # cannot be silenced with an in-source pragma. Disable it for these two
+    # files when compiling with GCC.
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        set_source_files_properties(SerializerMicroBenchmark.cpp
+                                    MonomorphicSerializerBenchmark.cpp
+            PROPERTIES COMPILE_OPTIONS -Wno-mismatched-new-delete)
+    endif()
+
     add_executable(BranchlessDispatcherBenchmark BranchlessDispatcherBenchmark.cpp)
     qlever_target_link_libraries(BranchlessDispatcherBenchmark benchmark engine sparqlParser qlever_util)
 
