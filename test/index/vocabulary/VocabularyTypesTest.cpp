@@ -20,6 +20,7 @@
 #include "../../util/GTestHelpers.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyTypes.h"
+#include "util/CompilerWarnings.h"
 #include "util/File.h"
 #include "util/MemorySize/MemorySize.h"
 
@@ -350,9 +351,14 @@ TEST(VocabBatchLookupData,
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
   MultiSourceVocabBatchAssembler assembler(2);
+  // Deliberately out of bounds: the contract check must fire before the
+  // subscript is reached, but GCC proves the violation at compile time and
+  // warns under `-Werror=array-bounds`.
+  DISABLE_ARRAY_BOUNDS_WARNINGS
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.assignWordAtPosition(2, "out-of-bounds"),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
+  GCC_REENABLE_WARNINGS
 
   auto subBatch = makeStringVectorVocabBatchLookupResult({"out-of-bounds"});
   const std::array<size_t, 1> invalidPos{5};
