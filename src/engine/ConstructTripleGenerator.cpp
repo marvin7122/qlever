@@ -94,41 +94,45 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
-  // Double chunks whose halves evaluate as cooperating fibers on this
-  // thread: both halves share the idCache and the I/O manager pool, and
-  // interleave only at I/O waits, so one half's vocabulary stalls hide
-  // behind the other's. Results publish in order, so downstream
-  // serialization (including blank-node ids) is unchanged. A lone trailing
-  // half skips fibers, mirroring the single-column fast path in phase B.
-  constexpr size_t halves = 2;
+  // Multi-chunks whose parts evaluate as cooperating fibers on this thread:
+  // all parts share the idCache and the I/O manager pool, and interleave
+  // only at I/O waits, so parts' vocabulary stalls hide behind each other.
+  // Results publish in order, so downstream serialization (including
+  // blank-node ids) is unchanged. A lone trailing part skips fibers,
+  // mirroring the single-column fast path in phase B.
+  constexpr size_t numParts = 4;
   return ranges::views::chunk(std::move(rowView),
-                              halves * ConstructTripleGenerator::BATCH_SIZE) |
+                              numParts * ConstructTripleGenerator::BATCH_SIZE) |
          ql::views::transform([tableWithVocab, context = std::move(context),
-                               tableRowOffset](auto doubleChunk) {
-           constexpr size_t halfRows = ConstructTripleGenerator::BATCH_SIZE;
-           auto firstHalf = doubleChunk | ::ranges::views::take(halfRows);
-           auto secondHalf = doubleChunk | ::ranges::views::drop(halfRows);
-           if (::ranges::empty(secondHalf)) {
-             return computeBatch(tableWithVocab, firstHalf, context,
+                               tableRowOffset](auto multiChunk) {
+           constexpr size_t partRows = ConstructTripleGenerator::BATCH_SIZE;
+           std::vector<decltype(multiChunk | ::ranges::views::take(partRows))>
+               parts;
+           for (size_t begin = 0; begin < ::ranges::size(multiChunk);
+                begin += partRows) {
+             parts.push_back(multiChunk | ::ranges::views::drop(begin) |
+                             ::ranges::views::take(partRows));
+           }
+           if (parts.size() == 1) {
+             return computeBatch(tableWithVocab, parts.front(), context,
                                  tableRowOffset);
            }
-           std::vector<EvaluatedTriple> firstResult;
-           std::vector<EvaluatedTriple> secondResult;
+           std::vector<std::vector<EvaluatedTriple>> results(parts.size());
            std::vector<std::function<void()>> bodies;
-           bodies.reserve(halves);
-           bodies.emplace_back([&] {
-             firstResult = computeBatch(tableWithVocab, firstHalf, context,
-                                        tableRowOffset);
-           });
-           bodies.emplace_back([&] {
-             secondResult = computeBatch(tableWithVocab, secondHalf, context,
+           bodies.reserve(parts.size());
+           for (size_t i = 0; i < parts.size(); ++i) {
+             bodies.emplace_back([&, i] {
+               results[i] = computeBatch(tableWithVocab, parts[i], context,
                                          tableRowOffset);
-           });
+             });
+           }
            ad_utility::FiberIoScheduler::runAsFibers(std::move(bodies));
-           firstResult.insert(firstResult.end(),
-                              std::make_move_iterator(secondResult.begin()),
-                              std::make_move_iterator(secondResult.end()));
-           return firstResult;
+           std::vector<EvaluatedTriple> joined;
+           for (auto& part : results) {
+             joined.insert(joined.end(), std::make_move_iterator(part.begin()),
+                           std::make_move_iterator(part.end()));
+           }
+           return joined;
          }) |
          ql::views::join;
 }
