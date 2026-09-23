@@ -70,17 +70,22 @@ class PrefixCompressor {
   [[nodiscard]] std::string compress(std::string_view word) const {
     for (const auto& p : codeToPrefix_) {
       if (ql::starts_with(word, p.prefix_)) {
-        return p.code_ + std::string_view(word).substr(p.prefix_.size());
+        std::string result = p.code_;
+        result.append(word.substr(p.prefix_.size()));
+        return result;
       }
     }
-    return static_cast<char>(NO_PREFIX_CHAR) + word;
+    std::string result(1, static_cast<char>(NO_PREFIX_CHAR));
+    result.append(word);
+    return result;
   }
 
   // Decompress the given `compressedWord`.
   [[nodiscard]] std::string decompress(std::string_view compressedWord) const {
     AD_CONTRACT_CHECK(!compressedWord.empty());
-    return std::string(prefixForCode(compressedWord[0])) +
-           compressedWord.substr(1);
+    std::string result{prefixForCode(compressedWord[0])};
+    result.append(compressedWord.substr(1));
+    return result;
   }
 
   // Return the exact decompressed size of `compressedWord`: the leading code

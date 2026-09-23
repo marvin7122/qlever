@@ -13,6 +13,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -671,6 +672,9 @@ VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
   for (const auto& markerIndices : markerIndicesAndPositions) {
     AD_CONTRACT_CHECK(markerIndices.size() <= SIZE_MAX - totalPositions);
     totalPositions += markerIndices.size();
+  }
+  if (totalPositions == 0) {
+    return VocabBatchLookupResult{};
   }
   MultiSourceVocabBatchAssembler assembler(totalPositions);
 
