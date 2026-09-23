@@ -251,7 +251,7 @@ TEST(VocabBatchLookupData, ScatterSubBatchSizeMismatchThrows) {
   // Test a mismatch between two target positions and one batch word.
   AD_EXPECT_THROW_WITH_MESSAGE(
       assembler.scatterSubBatchResultAtPositions(std::move(batch), positions),
-      ::testing::HasSubstr("subBatchResult.size() == targetPositions.size()"));
+      ::testing::HasSubstr("subBatchResult.size() == resultPositions.size()"));
 }
 
 // _____________________________________________________________________________
