@@ -14,6 +14,7 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <numeric>
 #include <random>
@@ -421,6 +422,8 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
   BenchmarkResults runAllBenchmarks() override {
     BenchmarkResults results{};
 
+    AD_CONTRACT_CHECK(configVariables_.bufferSizeMB_ <=
+                      std::numeric_limits<size_t>::max() / (1024 * 1024));
     const size_t bufferSizeBytes = configVariables_.bufferSizeMB_ * 1024 * 1024;
     if (bufferSizeBytes == 0) {
       AD_THROW("buffer-size-mb must be positive");
