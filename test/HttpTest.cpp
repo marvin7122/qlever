@@ -105,7 +105,7 @@ auto makeStreamableServer(std::vector<std::string> chunks, bool useSendZC,
     // of an immediately-invoked lambda (which would dangle).
     auto generator =
         [](std::vector<std::string> chunks) -> cppcoro::generator<std::string> {
-      for (const auto& chunk : chunks) {
+      for (auto& chunk : chunks) {
         co_yield chunk;
       }
     }(chunks);
