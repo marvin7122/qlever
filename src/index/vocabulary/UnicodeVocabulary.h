@@ -48,10 +48,10 @@ class UnicodeVocabulary {
     }
     if constexpr (VocabSupportsBuilderLookupBatch<
                       UnderlyingVocabulary>::value) {
-      // The builder-based overload returns `void` and appends into `builder`;
-      // finalize the builder exactly like `PolymorphicVocabulary` does.
-      _underlyingVocabulary.lookupBatch(indices, builder);
-      return std::move(builder).finalize();
+      // The underlying lookup consumes `builder` (appending and finalizing
+      // it) and returns the result; forward it directly. Finalizing again
+      // here would fail on the moved-from builder.
+      return _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
       // The underlying vocabulary has no builder-based lookup: copy the
       // words from a regular batch lookup into `builder` and finalize it,
