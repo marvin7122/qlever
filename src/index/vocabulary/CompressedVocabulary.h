@@ -600,15 +600,29 @@ CPP_template(typename UnderlyingVocabulary,
     VocabBatchLookupResult finish() override {
       auto compressed = underlyingHandle_->finish();
       auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-      data->buffer() = ::ranges::to_vector(
-          ::ranges::views::zip(indices_, *compressed) |
-          ql::views::transform([this](const auto& idxAndWord) {
-            const auto& [idx, word] = idxAndWord;
-            return vocab_->compressionWrapper_.decompress(
-                word, vocab_->getDecoderIdx(idx));
-          }));
+      auto& buffer = data->buffer();
+      buffer.reserve(indices_.size());
+      for (const auto& [idx, word] :
+           ::ranges::views::zip(indices_, *compressed)) {
+        // Mirror `operator[]`: an index that is a hole of the underlying
+        // vocabulary has no word to decompress, so report the placeholder
+        // directly instead of decompressing the underlying batch entry.
+        if constexpr (CompressedVocabulary::underlyingHasHoles) {
+          auto position = vocab_->underlyingVocabulary_.positionOfIndex(idx);
+          if (!position.has_value()) {
+            buffer.push_back(
+                ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+            continue;
+          }
+          buffer.push_back(vocab_->compressionWrapper_.decompress(
+              word, vocab_->getDecoderIdxFromPosition(position.value())));
+        } else {
+          buffer.push_back(vocab_->compressionWrapper_.decompress(
+              word, vocab_->getDecoderIdx(idx)));
+        }
+      }
       data->views() = ::ranges::to_vector(
-          data->buffer() |
+          buffer |
           ql::views::transform(ad_utility::staticCast<std::string_view>));
       return StringVectorVocabBatchLookupData::asResult(std::move(data));
     }
