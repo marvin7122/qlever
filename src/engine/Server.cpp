@@ -999,7 +999,9 @@ CPP_template_def(typename RequestT, typename SendT)(
   using ql::engine::ExportEngineMode;
   using ql::engine::ExportPipelineRouter;
   using ql::engine::ExportSendMode;
+#if defined(QLEVER_ENABLE_EXPORT_V2)
   using ql::engine::export_v2::ExportEngineV2;
+#endif
 
   std::optional<std::string_view> exportHeader;
   const auto headerValue = request.base()["X-QLever-Export-Engine"];
