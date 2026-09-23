@@ -47,8 +47,11 @@ class ConstructTripleGenerator {
   friend class ConstructTripleGeneratorTest;
 
  public:
-  // the number of `IdTable` rows that one batch consists of.
-  static constexpr size_t BATCH_SIZE = 1024;
+  // The number of `IdTable` rows that one batch consists of. Benchmark
+  // setting: 8192 rows amortize the per-batch vocabulary I/O stalls (two
+  // serialized waits per batch) over eight times as many words. Master
+  // keeps 1024; re-tune there with multi-workload data before adopting.
+  static constexpr size_t BATCH_SIZE = 8192;
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
