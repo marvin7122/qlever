@@ -332,6 +332,9 @@ class RegisteredIoUringReader {
   ad_utility::HashMap<uint64_t, InFlightMeta> inFlightByReqId_;
   ad_utility::HashMap<BatchId, size_t> inFlightByBatchId_;
   uint64_t nextReqId_ = 0;
+  // Results of batches completed via the synchronous fallback (no liburing or
+  // uninitialized ring), consumed once by `waitBatch`.
+  ad_utility::HashMap<BatchId, BatchResult> completedSyncBatches_;
 
  public:
   explicit RegisteredIoUringReader(
@@ -359,7 +362,8 @@ class RegisteredIoUringReader {
         nextBatchId_{other.nextBatchId_},
         inFlightByReqId_{std::move(other.inFlightByReqId_)},
         inFlightByBatchId_{std::move(other.inFlightByBatchId_)},
-        nextReqId_{other.nextReqId_} {
+        nextReqId_{other.nextReqId_},
+        completedSyncBatches_{std::move(other.completedSyncBatches_)} {
 #ifdef QLEVER_HAS_LIBURING
     other.ringInitialized_ = false;
 #endif
@@ -386,6 +390,7 @@ class RegisteredIoUringReader {
       inFlightByReqId_ = std::move(other.inFlightByReqId_);
       inFlightByBatchId_ = std::move(other.inFlightByBatchId_);
       nextReqId_ = other.nextReqId_;
+      completedSyncBatches_ = std::move(other.completedSyncBatches_);
 
       other.filesRegistered_ = false;
       other.buffersRegistered_ = false;
@@ -495,11 +500,14 @@ class RegisteredIoUringReader {
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
       // Synchronous fallback if ring is not available
-      submitBatchSync(requests);
+      const size_t totalBytes = submitBatchSync(requests);
+      completedSyncBatches_[batchId] =
+          BatchResult{requests.size(), totalBytes, true};
       return batchId;
     }
 
     inFlightByBatchId_[batchId] = requests.size();
+    const uint64_t firstReqId = nextReqId_;
 
     for (const auto& req : requests) {
       // If submission queue is saturated, flush and drain completions to free
@@ -551,9 +559,25 @@ class RegisteredIoUringReader {
       ++numInFlightRequests_;
     }
 
-    io_uring_submit(&ring_);
+    const int submitted = io_uring_submit(&ring_);
+    if (submitted < 0 && submitted != -EAGAIN && submitted != -EBUSY) {
+      // No completion will ever arrive for this batch: drop its tracking so
+      // that a later `waitBatch(batchId)` returns immediately instead of
+      // waiting forever, then report the failure. (Transient `-EAGAIN` /
+      // `-EBUSY` and partial submits keep valid tracking: the remaining SQEs
+      // stay queued and complete after a later `submit`.)
+      inFlightByBatchId_.erase(batchId);
+      for (uint64_t reqId = firstReqId; reqId != nextReqId_; ++reqId) {
+        inFlightByReqId_.erase(reqId);
+      }
+      numInFlightRequests_ -= requests.size();
+      AD_THROW(
+          absl::StrCat("io_uring_submit failed (errno: ", -submitted, ")"));
+    }
 #else
-    submitBatchSync(requests);
+    const size_t totalBytes = submitBatchSync(requests);
+    completedSyncBatches_[batchId] =
+        BatchResult{requests.size(), totalBytes, true};
 #endif
 
     return batchId;
@@ -564,6 +588,15 @@ class RegisteredIoUringReader {
   BatchResult waitBatch(BatchId batchId) {
     if (batchId == 0) {
       return BatchResult{0, 0, true};
+    }
+
+    // Batches completed via the synchronous fallback report their stored
+    // metrics instead of zeros.
+    auto syncIt = completedSyncBatches_.find(batchId);
+    if (syncIt != completedSyncBatches_.end()) {
+      BatchResult result = syncIt->second;
+      completedSyncBatches_.erase(syncIt);
+      return result;
     }
 
 #ifdef QLEVER_HAS_LIBURING
@@ -694,7 +727,8 @@ class RegisteredIoUringReader {
   }
 #endif
 
-  void submitBatchSync(ql::span<const BlockReadRequest> requests) {
+  size_t submitBatchSync(ql::span<const BlockReadRequest> requests) {
+    size_t totalBytes = 0;
     for (const auto& req : requests) {
       int targetFd = static_cast<int>(req.fileIndex);
       if (filesRegistered_ && req.fileIndex < registeredFds_.size()) {
@@ -702,7 +736,9 @@ class RegisteredIoUringReader {
       }
       readSync(targetFd, req.fileOffset, {req.destination, req.numBytes},
                config_.useDirectIo);
+      totalBytes += req.numBytes;
     }
+    return totalBytes;
   }
 };
 
