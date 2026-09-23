@@ -52,10 +52,19 @@ struct AllocationTracker {
 // which is a false positive for replaceable global allocation functions, so
 // the warning is suppressed for this block (GCC only, it is the only compiler
 // that emits it).
+// NOTE: ThreadSanitizer ships its own global `operator new`/`operator delete`
+// replacements, so ours would cause multiple-definition link errors under
+// `-fsanitize=thread`. Allocation counting is therefore compiled out in TSan
+// builds; the benchmark itself still runs and reports (with zero counts).
+#if defined(__SANITIZE_THREAD__) || \
+    (defined(__has_feature) && __has_feature(thread_sanitizer))
+#define SERIALIZER_MICRO_BENCHMARK_NO_ALLOCATION_TRACKING
+#endif
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 #endif
+#ifndef SERIALIZER_MICRO_BENCHMARK_NO_ALLOCATION_TRACKING
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -87,6 +96,7 @@ void* operator new[](std::size_t size) {
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
 
 void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+#endif  // SERIALIZER_MICRO_BENCHMARK_NO_ALLOCATION_TRACKING
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
