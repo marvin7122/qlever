@@ -485,6 +485,23 @@ class ArenaVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// Whether `Vocab` has a builder-taking `lookupBatch(indices, builder)`
+// overload (called on a const object, as the wrappers only hold const
+// access). Written with `std::void_t` instead of a C++20
+// `requires`-expression so the vocabulary wrappers keep compiling under
+// `QLEVER_REDUCED_FEATURE_SET_FOR_CPP17` (GCC 8, C++17).
+template <typename Vocab, typename = void>
+struct HasArenaVocabBatchLookup : std::false_type {};
+template <typename Vocab>
+struct HasArenaVocabBatchLookup<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>&>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+template <typename Vocab>
+inline constexpr bool HasArenaVocabBatchLookup_v =
+    HasArenaVocabBatchLookup<Vocab>::value;
+
+// _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
@@ -985,26 +1002,6 @@ class WordWriterBase {
   // The base classes have to implement the actual logic for `finish` here.
   virtual void finishImpl() = 0;
 };
-
-// _____________________________________________________________________________
-// C++17-compatible detection of a builder-taking `lookupBatch` overload: true
-// when `vocab.lookupBatch(indices, builder)` is well-formed for a const
-// vocabulary and a mutable `ArenaVocabBatchBuilder`. This is the replacement
-// for `if constexpr (requires { ... })`, which the C++17 CI legs reject
-// (`requires` is C++20-only).
-namespace vocabDetail {
-template <typename Vocab, typename = void>
-struct HasBuilderLookupBatchImpl : std::false_type {};
-template <typename Vocab>
-struct HasBuilderLookupBatchImpl<
-    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
-               std::declval<ql::span<const size_t>>(),
-               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
-}  // namespace vocabDetail
-
-template <typename Vocab>
-constexpr static bool HasBuilderLookupBatch_v =
-    vocabDetail::HasBuilderLookupBatchImpl<Vocab>::value;
 
 }  // namespace ad_utility::vocabulary
 
