@@ -10,6 +10,7 @@
 
 #include <array>
 #include <string_view>
+#include <utility>
 
 #include "engine/export_prototypes/VectorizedPrefixSlicer.h"
 
