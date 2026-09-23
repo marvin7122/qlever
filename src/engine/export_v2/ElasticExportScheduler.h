@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "util/Exception.h"
+#include "util/Log.h"
 #include "util/http/websocket/QueryId.h"
 
 namespace ad_utility::export_v2 {
@@ -417,20 +418,55 @@ class ExportJobState final
       task = std::move(slots_[morselIndex].task_);
     }
 
-    auto startCpu = getCpuDuration();
-    ResultType result = task();
-    auto endCpu = getCpuDuration();
-    auto endWall = std::chrono::steady_clock::now();
+    // A throwing task must neither escape to the worker thread (which would
+    // terminate the process) nor leave the slot `Running` (which would hang
+    // result consumers in `consumeNextResult`). Fail the job instead: the
+    // cancelled job makes all waiters throw, and the `ExportWorkLease`
+    // objects in the scheduler loops still balance the helper counters.
+    try {
+      auto startCpu = getCpuDuration();
+      ResultType result = task();
+      auto endCpu = getCpuDuration();
+      auto endWall = std::chrono::steady_clock::now();
 
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      slots_[morselIndex].result_ = std::move(result);
-      slots_[morselIndex].status_ = MorselStatus::Completed;
-      slots_[morselIndex].profile_.completedAt_ = endWall;
-      slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
-      slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
-      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
-      cv_.notify_all();
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        slots_[morselIndex].result_ = std::move(result);
+        slots_[morselIndex].status_ = MorselStatus::Completed;
+        slots_[morselIndex].profile_.completedAt_ = endWall;
+        slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
+        slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
+        slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
+        cv_.notify_all();
+      }
+    } catch (const std::exception& e) {
+      AD_LOG_ERROR << "Export helper task for morsel " << morselIndex
+                   << " threw (" << e.what() << "); cancelling export job."
+                   << std::endl;
+      failMorselAndCancelJob(morselIndex);
+    } catch (...) {
+      AD_LOG_ERROR << "Export helper task for morsel " << morselIndex
+                   << " threw an unknown exception; cancelling export job."
+                   << std::endl;
+      failMorselAndCancelJob(morselIndex);
+    }
+  }
+
+  // Mark `slots_[morselIndex]` cancelled and cancel the whole job after a
+  // helper task has thrown (see `executeHelperTask`). Never throws.
+  void failMorselAndCancelJob(size_t morselIndex) noexcept {
+    try {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (morselIndex < slots_.size()) {
+          slots_[morselIndex].status_ = MorselStatus::Cancelled;
+          slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Cancelled;
+        }
+      }
+      cancel();
+    } catch (...) {
+      // `cancel()` only locks and assigns; unreachable, but a `noexcept`
+      // failure path must not throw under any circumstance.
     }
   }
 
