@@ -18,18 +18,6 @@ class UnicodeVocabulary {
   using SortLevel = typename UnicodeComparator::Level;
 
  private:
-#ifdef QLEVER_CPP_17
-  // `if constexpr (requires ...)` is C++20-only; the C++17 backport build
-  // detects the optional two-argument `lookupBatch` overload with the
-  // equivalent `void_t` detection idiom instead.
-  template <typename T, typename = void>
-  struct HasArenaVocabBatchLookup : std::false_type {};
-  template <typename T>
-  struct HasArenaVocabBatchLookup<
-      T, std::void_t<decltype(std::declval<const T&>().lookupBatch(
-             std::declval<ql::span<const size_t>>(),
-             std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
-#endif
   UnicodeComparator _comparator;
   UnderlyingVocabulary _underlyingVocabulary;
 
@@ -53,13 +41,7 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-#ifdef QLEVER_CPP_17
     if constexpr (HasArenaVocabBatchLookup<UnderlyingVocabulary>::value) {
-#else
-    if constexpr (requires {
-                    _underlyingVocabulary.lookupBatch(indices, builder);
-                  }) {
-#endif
       return _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
       return _underlyingVocabulary.lookupBatch(indices);

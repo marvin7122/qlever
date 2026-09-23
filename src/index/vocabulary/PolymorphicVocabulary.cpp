@@ -9,6 +9,8 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 
+#include <type_traits>
+
 #include "engine/CallFixedSize.h"
 
 // _____________________________________________________________________________
@@ -66,7 +68,8 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   return std::visit(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
-        if constexpr (requires { vocab.lookupBatch(indices, builder); }) {
+        if constexpr (HasArenaVocabBatchLookup<
+                          std::decay_t<decltype(vocab)>>::value) {
           vocab.lookupBatch(indices, builder);
           return std::move(builder).finalize();
         } else {

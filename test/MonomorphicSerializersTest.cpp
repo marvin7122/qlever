@@ -25,7 +25,7 @@ std::string captureOutput(Fn&& fn) {
   auto sink = [&](std::string_view chunk) { out.append(chunk); };
   FastExportStreamFormatter formatter(sink);
   fn(formatter);
-  std::move(formatter).finalize();
+  static_cast<void>(std::move(formatter).finalize());
   return out;
 }
 
