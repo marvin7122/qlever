@@ -117,8 +117,10 @@ class BatchManager final : public BatchManagerBase {
     policy_.wait(handle);
     // Periodically report passthrough usage while serving: the owning server
     // dies on SIGTERM without running destructors, so teardown-only logging
-    // would never surface on a benchmark rig.
-    if (++batchesCompleted_ % 4096 == 0) {
+    // would never surface on a benchmark rig. A cold vocabulary export issues
+    // tens to low hundreds of waits per manager, so the period must be small
+    // enough to fire at least once per measured query.
+    if (++batchesCompleted_ % 64 == 0) {
       policy_.dumpStats();
     }
   }
