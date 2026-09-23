@@ -96,8 +96,9 @@ class BatchManager final : public BatchManagerBase {
   BatchManager(const BatchManager&) = delete;
   BatchManager& operator=(const BatchManager&) = delete;
   // Report the policy's lifetime statistics (a no-op unless the policy took
-  // the passthrough path at least once).
-  ~BatchManager() { policy_.dumpStats(); }
+  // the passthrough path at least once). The manager address tells repeated
+  // per-manager lines apart in a benchmark server log.
+  ~BatchManager() { policy_.dumpStats(this); }
 
   [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
                                      ql::span<const uint64_t> offsets,
@@ -121,7 +122,7 @@ class BatchManager final : public BatchManagerBase {
     // tens to low hundreds of waits per manager, so the period must be small
     // enough to fire at least once per measured query.
     if (++batchesCompleted_ % 64 == 0) {
-      policy_.dumpStats();
+      policy_.dumpStats(this);
     }
   }
 
@@ -174,8 +175,8 @@ struct SyncIoPolicy {
 
   // No-op: the synchronous policy never takes the passthrough path, so there
   // is nothing to report. Exists only so `BatchManager` can call it
-  // uniformly.
-  void dumpStats() const {}
+  // uniformly (the argument is the owning manager's identity).
+  void dumpStats(const void*) const {}
 
   // Read exactly `numBytes` bytes from file descriptor `fd` at `fileOffset`
   // (from the start of the file) into `targetBuffer`. Throws exception if the
@@ -309,10 +310,12 @@ class IoUringPolicy {
   bool isNvmePassthroughEnabled() const { return nvmePassthroughEnabled_; }
 
   // Log lifetime passthrough counters (submitted reads, bytes, capable-fd
-  // fallbacks). Called from the owning `BatchManager` destructor so a server
-  // stop reports what the path served. Silent unless passthrough is enabled
-  // and served or refused at least one capable request.
-  void dumpStats() const;
+  // fallbacks), tagged with the owning manager's address so repeated
+  // per-manager lines stay attributable in a benchmark server log. Called
+  // from the owning `BatchManager` destructor so a server stop reports what
+  // the path served. Silent unless passthrough is enabled and served or
+  // refused at least one capable request.
+  void dumpStats(const void* managerId) const;
   // True iff this ring was created with 128-byte SQEs.
   bool uses128ByteSqes() const { return sqe128_; }
   // True iff `fd` passed the passthrough capability probe (cached per fd; the

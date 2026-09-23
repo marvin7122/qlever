@@ -193,13 +193,14 @@ bool IoUringPolicy::tryPrepareNvmePassthrough(io_uring_sqe* sqe, int fd,
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::dumpStats() const {
+void IoUringPolicy::dumpStats(const void* managerId) const {
   if (!nvmePassthroughEnabled_ ||
       (nvmeReadsSubmitted_ == 0 && nvmeCapableFallbacks_ == 0)) {
     return;
   }
-  AD_LOG_INFO << "NVMe passthrough lifetime stats: " << nvmeReadsSubmitted_
-              << " native reads (" << nvmeReadBytesSubmitted_ << " bytes), "
+  AD_LOG_INFO << "NVMe passthrough lifetime stats [manager " << managerId
+              << "]: " << nvmeReadsSubmitted_ << " native reads ("
+              << nvmeReadBytesSubmitted_ << " bytes), "
               << nvmeCapableFallbacks_
               << " capable-fd fallbacks to plain reads." << std::endl;
 }
