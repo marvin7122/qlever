@@ -29,7 +29,10 @@ inline char* doubleToChars(char* begin, char* end, double value) noexcept {
 #ifdef __APPLE__
   const auto capacity = static_cast<size_t>(end - begin);
   const int len = std::snprintf(begin, capacity, "%.17g", value);
-  return len > 0 ? begin + len : begin;
+  // `snprintf` returns the required length when the buffer is too small; that
+  // length must not be treated as written (the returned pointer would point
+  // past `end`). Truncation counts as "cannot be formatted", like above.
+  return len > 0 && static_cast<size_t>(len) < capacity ? begin + len : begin;
 #else
   const auto [ptr, ec] = std::to_chars(begin, end, value);
   return ec == std::errc{} ? ptr : begin;
