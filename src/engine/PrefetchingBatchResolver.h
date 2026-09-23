@@ -18,7 +18,8 @@
 #include <utility>
 #include <vector>
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
+    defined(_M_IX86)
 #include <xmmintrin.h>
 #endif
 
@@ -65,10 +66,9 @@ inline void prefetchAddress(const T* address) noexcept {
 // Configuration options for software prefetching batch resolution.
 struct PrefetchConfig {
   // Number of rows/iterations to prefetch ahead of the current serialization
-  // cursor. Typically 4 to 16 iterations hide DRAM/L3 cache miss latency (~60ns)
-  // while keeping L1 cache lines active.
+  // cursor. Typically 4 to 16 iterations hide DRAM/L3 cache miss latency
+  // (~60ns) while keeping L1 cache lines active.
   size_t prefetchDistance{8};
-
 };
 
 // _____________________________________________________________________________
@@ -78,10 +78,12 @@ struct PrefetchConfig {
 // Invariant & Design Standard (ARCHITECTURE.md):
 // - Hides all pipeline iteration state, prefetch distance mechanics, and
 //   boundary draining.
-// - Zero bookkeeping leakage: returns complete, verified result vectors or fills
+// - Zero bookkeeping leakage: returns complete, verified result vectors or
+// fills
 //   pre-sized caller result spans.
 // - Defines edge cases away: gracefully handles empty inputs, inputs smaller
-//   than the prefetch distance, and mixed datatypes without branching anomalies.
+//   than the prefetch distance, and mixed datatypes without branching
+//   anomalies.
 class PrefetchingBatchResolver {
  public:
   static constexpr size_t DEFAULT_PREFETCH_DISTANCE = 8;
@@ -92,10 +94,9 @@ class PrefetchingBatchResolver {
  public:
   // Default constructor with standard tuned prefetch distance of 8 rows.
   explicit PrefetchingBatchResolver(
-      PrefetchConfig config = PrefetchConfig{.prefetchDistance =
-                                                 DEFAULT_PREFETCH_DISTANCE})
-      : config_{config} {
-  }
+      PrefetchConfig config =
+          PrefetchConfig{.prefetchDistance = DEFAULT_PREFETCH_DISTANCE})
+      : config_{config} {}
 
   // ___________________________________________________________________________
   [[nodiscard]] size_t prefetchDistance() const noexcept {
@@ -122,8 +123,8 @@ class PrefetchingBatchResolver {
     }
 
     AD_CONTRACT_CHECK(results.size() >= ids.size());
-    AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t i) {
-      return ids[i].getDatatype() == Datatype::VocabIndex;
+    AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t pos) {
+      return pos < ids.size() && ids[pos].getDatatype() == Datatype::VocabIndex;
     }));
 
     const size_t n = positions.size();
@@ -133,16 +134,14 @@ class PrefetchingBatchResolver {
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t pfPos = positions[k];
       prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-      prefetchVocabEntry(&positions[k], static_cast<int>(distance));
     }
 
-    // Main pipelined loop: prefetch row (i + distance) ahead while serializing row i
+    // Main pipelined loop: prefetch row (i + distance) ahead while serializing
+    // row i
     for (size_t i = 0; i < n; ++i) {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        prefetchVocabEntry(&positions[i + distance],
-                           static_cast<int>(distance));
         const Id pfId = ids[pfPos];
         if (pfId.getDatatype() == Datatype::VocabIndex) {
           // Prefetch the underlying index entry if possible
@@ -157,11 +156,11 @@ class PrefetchingBatchResolver {
       const auto vocabIndex = id.getVocabIndex();
       std::string_view word = index.indexToString(vocabIndex);
 
-      results[pos] =
-          ql::exportIds::literalOrIriToStringAndType<
-              removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-              ad_utility::triple_component::LiteralOrIriView::fromStringRepresentation(word),
-              escapeFunction);
+      results[pos] = ql::exportIds::literalOrIriToStringAndType<
+          removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+          ad_utility::triple_component::LiteralOrIriView::
+              fromStringRepresentation(word),
+          escapeFunction);
     }
   }
 
@@ -172,8 +171,7 @@ class PrefetchingBatchResolver {
   template <typename CharType, typename MappingFunc>
   void resolveCompactVectorPipelined(
       const CompactVectorOfStrings<CharType>& words,
-      ql::span<const size_t> indices,
-      MappingFunc&& mappingFunc) const {
+      ql::span<const size_t> indices, MappingFunc&& mappingFunc) const {
     // Note: `ready()` only guarantees a non-empty offset span, but an empty
     // vector still carries one sentinel offset (`size() == 0`). Without the
     // size check, any non-empty `indices` would fail the bounds check below
@@ -187,7 +185,8 @@ class PrefetchingBatchResolver {
     const auto offsets = words.offsetsSpan();
     const auto data = words.dataSpan();
 
-    // Stage 1 warmup: prefetch offset table lines for the first `distance` items
+    // Stage 1 warmup: prefetch offset table lines for the first `distance`
+    // items
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t idx = indices[k];
       if (idx < offsets.size()) {
@@ -219,7 +218,7 @@ class PrefetchingBatchResolver {
 
       // 3. Resolve current item i
       const size_t curIdx = indices[i];
-      AD_CORRECTNESS_CHECK(curIdx + 1 < offsets.size());
+      AD_CORRECTNESS_CHECK(idx < offsets.size());
       const auto curOffset = offsets[curIdx];
       const auto nextOffset = offsets[curIdx + 1];
       const size_t strLen = nextOffset - curOffset;
@@ -240,8 +239,7 @@ class PrefetchingBatchResolver {
             typename EscapeFunction = ql::identity>
   [[nodiscard]] std::vector<std::optional<std::pair<std::string, const char*>>>
   idsToStringAndType(
-      const Index& index, ql::span<const Id> ids,
-      const LocalVocab& localVocab,
+      const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
       const EscapeFunction& escapeFunction = EscapeFunction{}) const {
     std::vector<std::optional<std::pair<std::string, const char*>>> results(
         ids.size());
@@ -255,7 +253,7 @@ class PrefetchingBatchResolver {
 
     // 1. Resolve non-VocabIndex IDs (encoded numeric values, LocalVocab, etc.)
     ql::exportIds::resolveNonVocabIndexIds<removeQuotesAndAngleBrackets,
-                                          returnOnlyLiterals>(
+                                           returnOnlyLiterals>(
         index, ids, localVocab, positions.nonVocabIndexIndices_, results,
         escapeFunction);
 
@@ -273,7 +271,8 @@ class PrefetchingBatchResolver {
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
           typename EscapeFunction = ql::identity,
-          size_t PrefetchDistance = PrefetchingBatchResolver::DEFAULT_PREFETCH_DISTANCE>
+          size_t PrefetchDistance =
+              PrefetchingBatchResolver::DEFAULT_PREFETCH_DISTANCE>
 inline void resolveVocabIndexIdsPrefetched(
     const Index& index, ql::span<const Id> ids,
     ql::span<const size_t> positions,
@@ -281,27 +280,27 @@ inline void resolveVocabIndexIdsPrefetched(
     const EscapeFunction& escapeFunction = EscapeFunction{}) {
   PrefetchingBatchResolver resolver{
       PrefetchConfig{.prefetchDistance = PrefetchDistance}};
-  resolver.resolveVocabIndexIds<removeQuotesAndAngleBrackets,
-                                returnOnlyLiterals>(
-      index, ids, positions, results, escapeFunction);
+  resolver
+      .resolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+          index, ids, positions, results, escapeFunction);
 }
 
 // _____________________________________________________________________________
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
           typename EscapeFunction = ql::identity,
-          size_t PrefetchDistance = PrefetchingBatchResolver::DEFAULT_PREFETCH_DISTANCE>
+          size_t PrefetchDistance =
+              PrefetchingBatchResolver::DEFAULT_PREFETCH_DISTANCE>
 [[nodiscard]] inline std::vector<
     std::optional<std::pair<std::string, const char*>>>
 idsToStringAndTypePrefetched(
-    const Index& index, ql::span<const Id> ids,
-    const LocalVocab& localVocab,
+    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
     const EscapeFunction& escapeFunction = EscapeFunction{}) {
   PrefetchingBatchResolver resolver{
       PrefetchConfig{.prefetchDistance = PrefetchDistance}};
-  return resolver.idsToStringAndType<removeQuotesAndAngleBrackets,
-                                     returnOnlyLiterals>(
-      index, ids, localVocab, escapeFunction);
+  return resolver
+      .idsToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+          index, ids, localVocab, escapeFunction);
 }
 
 }  // namespace ql::engine::prefetch

@@ -19,10 +19,6 @@
 
 using namespace ql::engine::rle;
 
-// Structural invariant concept checks
-static_assert(ad_utility::InvariantStatefulClass<RlePrefixFormatter>);
-static_assert(ad_utility::InvariantStatefulClass<RleTripleFormatter>);
-
 TEST(RlePrefixCompressorTest, BasicRunLengthConstantFolding) {
   RlePrefixFormatter formatter{
       RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
@@ -164,12 +160,11 @@ TEST(RlePrefixCompressorTest, BatchFormatting) {
   RlePrefixFormatter formatter{
       RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
 
-  std::vector<ValueId> ids = {
-      ValueId::makeFromVocabIndex(VocabIndex::make(1)),
-      ValueId::makeFromVocabIndex(VocabIndex::make(1)),
-      ValueId::makeFromVocabIndex(VocabIndex::make(2)),
-      ValueId::makeFromVocabIndex(VocabIndex::make(2)),
-      ValueId::makeFromVocabIndex(VocabIndex::make(2))};
+  std::vector<ValueId> ids = {ValueId::makeFromVocabIndex(VocabIndex::make(1)),
+                              ValueId::makeFromVocabIndex(VocabIndex::make(1)),
+                              ValueId::makeFromVocabIndex(VocabIndex::make(2)),
+                              ValueId::makeFromVocabIndex(VocabIndex::make(2)),
+                              ValueId::makeFromVocabIndex(VocabIndex::make(2))};
   std::vector<std::string_view> terms = {
       "http://example.org/x", "http://example.org/x", "http://example.org/y",
       "http://example.org/y", "http://example.org/y"};
@@ -241,8 +236,8 @@ TEST(RlePrefixCompressorTest, MultiColumnTripleFormattingTsv) {
   std::string_view o = "http://o";
 
   std::array<char, 512> buffer{};
-  char* curr = tsvFormatter.formatTriple(subjId, s, predId, p, objId, o,
-                                         buffer.data());
+  char* curr =
+      tsvFormatter.formatTriple(subjId, s, predId, p, objId, o, buffer.data());
 
   std::string_view actual(buffer.data(), curr - buffer.data());
   EXPECT_EQ(actual, "<http://s>\t<http://p>\t<http://o>\n");

@@ -19,6 +19,15 @@
 #include "backports/memory_resource.h"
 #include "util/Log.h"
 
+// There is no `ql::pmr::string`: under the C++17 backports `ql::pmr` aliases
+// `boost::container::pmr`, which provides no `string` member. Spelling the
+// type via `ql::pmr::polymorphic_allocator` (which exists in both modes) keeps
+// this helper compilable with and without the backports. The SSO behavior is
+// the STL's in both modes, only the allocator type differs.
+using PmrSsoProbeString =
+    std::basic_string<char, std::char_traits<char>,
+                      ql::pmr::polymorphic_allocator<char>>;
+
 // _____________________________________________________________________________
 // String type whose SSO capacity is probed below. Spelled out explicitly
 // because `boost::container::pmr` (used as `ql::pmr` under `QLEVER_CPP_17`)

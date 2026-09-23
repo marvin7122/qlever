@@ -14,10 +14,12 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 
 #include "backports/span.h"
+#include "engine/PortableDoubleToChars.h"
 #include "global/Constants.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
@@ -29,8 +31,8 @@ namespace ql::engine {
 struct TypeFormatDescriptor;
 
 // Function pointer signature for single-pass term formatting.
-using TermFormatterFn = char* (*)(ValueId id, std::string_view rawTerm, char* out,
-                                  std::string_view prefix,
+using TermFormatterFn = char* (*)(ValueId id, std::string_view rawTerm,
+                                  char* out, std::string_view prefix,
                                   std::string_view suffix) noexcept;
 
 // _____________________________________________________________________________
@@ -53,8 +55,8 @@ namespace detail {
 
 // Fast branchless copy for terms with opening and closing delimiters.
 inline char* formatTermWithDelimiters(ValueId, std::string_view rawTerm,
-                                     char* out, std::string_view prefix,
-                                     std::string_view suffix) noexcept {
+                                      char* out, std::string_view prefix,
+                                      std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   std::memcpy(out, rawTerm.data(), rawTerm.size());
@@ -78,12 +80,16 @@ inline char* formatInteger(ValueId id, std::string_view, char* out,
 }
 
 // Fast branchless formatter for double values.
+// `std::to_chars` for floating-point types is only available on macOS 13.3
+// and later (the CI deployment target is older), so Apple builds fall back to
+// `snprintf`. `%.17g` preserves round-trip fidelity; only the shortest-digit
+// spelling of `to_chars` differs.
 inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view prefix,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 32, id.getDouble());
+  auto [ptr, ec] = doubleToChars(out, out + 32, id.getDouble());
   out = ptr;
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
@@ -217,7 +223,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   return lut;
 }
 
-// Builds the 16-entry lookup table for Turtle export (compact literals/numbers).
+// Builds the 16-entry lookup table for Turtle export (compact
+// literals/numbers).
 constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   std::array<TypeFormatDescriptor, 16> lut{};
   for (size_t i = 0; i < 16; ++i) {
@@ -255,7 +262,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   return lut;
 }
 
-// Builds the 16-entry lookup table for raw vocabulary entries (where terms already contain quotes/delimiters).
+// Builds the 16-entry lookup table for raw vocabulary entries (where terms
+// already contain quotes/delimiters).
 constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   std::array<TypeFormatDescriptor, 16> lut{};
   for (size_t i = 0; i < 16; ++i) {

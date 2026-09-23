@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -50,10 +52,10 @@ class ScatterGatherChunkStreamer;
 // _____________________________________________________________________________
 // Configuration options for ScatterGatherChunkStreamer.
 struct ScatterGatherConfig {
-  size_t maxChunkBytes = 1024 * 1024;        // Target chunk size: 1 MB
-  size_t maxIovecs = 1024;                  // Max iovecs per chunk (<= UIO_MAXIOV)
-  size_t zeroCopyThresholdBytes = 64;       // Spans >= threshold are zero-copy
-  size_t initialHeaderCapacity = 64 * 1024; // 64 KB initial header buffer
+  size_t maxChunkBytes = 1024 * 1024;  // Target chunk size: 1 MB
+  size_t maxIovecs = 1024;             // Max iovecs per chunk (<= UIO_MAXIOV)
+  size_t zeroCopyThresholdBytes = 64;  // Spans >= threshold are zero-copy
+  size_t initialHeaderCapacity = 64 * 1024;  // 64 KB initial header buffer
 };
 
 // _____________________________________________________________________________
@@ -90,8 +92,7 @@ class ScatterGatherChunk {
         totalBytes_{totalBytes},
         numTriples_{numTriples},
         zeroCopySpansCount_{zeroCopySpansCount},
-        zeroCopyBytes_{zeroCopyBytes} {
-  }
+        zeroCopyBytes_{zeroCopyBytes} {}
 
   ~ScatterGatherChunk() = default;
 
@@ -133,12 +134,24 @@ class ScatterGatherChunk {
   [[nodiscard]] bool empty() const noexcept { return totalBytes_ == 0; }
 
   // ___________________________________________________________________________
-  // Transmit chunk directly via POSIX writev(2) in a loop until all bytes are sent.
+  // Transmit chunk directly via POSIX writev(2) in a loop until all bytes are
+  // sent.
   [[nodiscard]] ssize_t writeToFd(int fd) const {
     if (empty()) {
       return 0;
     }
     AD_CONTRACT_CHECK(fd >= 0);
+
+    // The compile-time UIO_MAXIOV (default 1024 above) can exceed the
+    // runtime sysconf(_SC_IOV_MAX) on some platforms, where an oversized
+    // writev fails with EINVAL. Clamp each call to the runtime limit.
+    static const size_t maxIovecsPerWritev = []() -> size_t {
+      const long sysMax = ::sysconf(_SC_IOV_MAX);
+      if (sysMax <= 0) {
+        return 16;  // POSIX _XOPEN_IOV_MAX minimum guarantee.
+      }
+      return static_cast<size_t>(sysMax);
+    }();
 
     std::vector<struct iovec> remainingIov = iovecs_;
     size_t offset = 0;
@@ -146,7 +159,8 @@ class ScatterGatherChunk {
 
     while (offset < remainingIov.size()) {
       int count = static_cast<int>(
-          std::min<size_t>(remainingIov.size() - offset, UIO_MAXIOV));
+          std::min({remainingIov.size() - offset,
+                    static_cast<size_t>(UIO_MAXIOV), maxIovecsPerWritev}));
       ssize_t bytes = ::writev(fd, remainingIov.data() + offset, count);
       if (bytes < 0) {
         if (errno == EINTR) {
@@ -154,6 +168,9 @@ class ScatterGatherChunk {
         }
         AD_THROW(absl::StrCat("writev failed (errno: ", strerror(errno), ")"));
       }
+      // A 0 return for a nonzero request is unreachable on blocking fds;
+      // fail loudly instead of spinning forever (e.g. on a non-blocking fd).
+      AD_CORRECTNESS_CHECK(bytes != 0);
       totalWritten += bytes;
       size_t remainingToAdvance = static_cast<size_t>(bytes);
       while (offset < remainingIov.size() && remainingToAdvance > 0) {
@@ -198,9 +215,10 @@ class ScatterGatherChunk {
 // Deep Module: ScatterGatherChunkStreamer
 //
 // Assembles export chunks as a combination of fixed-size formatting headers and
-// direct zero-copy `ql::span<const char>` pointers to existing arena memory pages.
-// Automatically coalesces adjacent formatting tokens into unified header iovecs,
-// manages chunk limits (bytes & max iovecs), and emits `ScatterGatherChunk`s.
+// direct zero-copy `ql::span<const char>` pointers to existing arena memory
+// pages. Automatically coalesces adjacent formatting tokens into unified header
+// iovecs, manages chunk limits (bytes & max iovecs), and emits
+// `ScatterGatherChunk`s.
 class ScatterGatherChunkStreamer {
  public:
   using ChunkSink = std::function<void(ScatterGatherChunk)>;
@@ -242,7 +260,8 @@ class ScatterGatherChunkStreamer {
   }
 
   // ___________________________________________________________________________
-  // Construct in accumulating batch mode (where chunks are returned via flush()).
+  // Construct in accumulating batch mode (where chunks are returned via
+  // flush()).
   explicit ScatterGatherChunkStreamer(ScatterGatherConfig config = {})
       : config_{config}, sink_{nullptr}, isStreaming_{false} {
     currentHeaderBuffer_.reserve(config_.initialHeaderCapacity);
@@ -271,10 +290,7 @@ class ScatterGatherChunkStreamer {
       size_t offset = currentHeaderBuffer_.size();
       currentHeaderBuffer_.insert(currentHeaderBuffer_.end(), sv.begin(),
                                   sv.end());
-      currentSlices_.push_back(SliceRecord{.isArena = false,
-                                           .arenaPtr = nullptr,
-                                           .headerOffset = offset,
-                                           .len = sv.size()});
+      currentSlices_.push_back(SliceRecord{false, nullptr, offset, sv.size()});
     }
     currentChunkBytes_ += sv.size();
   }
@@ -301,7 +317,8 @@ class ScatterGatherChunkStreamer {
       return;
     }
 
-    // Short strings are copied directly into the header buffer to avoid iovec explosion
+    // Short strings are copied directly into the header buffer to avoid iovec
+    // explosion
     if (span.size() < config_.zeroCopyThresholdBytes) {
       writeRawHeader(std::string_view(span.data(), span.size()));
       return;
@@ -313,10 +330,7 @@ class ScatterGatherChunkStreamer {
       flush();
     }
 
-    currentSlices_.push_back(SliceRecord{.isArena = true,
-                                         .arenaPtr = span.data(),
-                                         .headerOffset = 0,
-                                         .len = span.size()});
+    currentSlices_.push_back(SliceRecord{true, span.data(), 0, span.size()});
     currentChunkBytes_ += span.size();
     currentZeroCopyBytes_ += span.size();
     ++currentZeroCopySpans_;
@@ -340,7 +354,9 @@ class ScatterGatherChunkStreamer {
   }
 
   // ___________________________________________________________________________
-  // Write an RDF literal with optional datatype or language tag.
+  // Write an RDF literal with optional datatype or language tag. `content`
+  // is transported verbatim (zero-copy); format-specific escaping is the
+  // caller's responsibility, see `FastExportStreamFormatter::writeEscaped*`.
   void writeLiteral(ql::span<const char> content,
                     std::string_view datatype = "",
                     std::string_view langTag = "") {
@@ -393,13 +409,13 @@ class ScatterGatherChunkStreamer {
   }
 
   // ___________________________________________________________________________
-  // Write a complete RDF triple from raw spans with zero-copy literal streaming.
+  // Write a complete RDF triple from raw spans with zero-copy literal
+  // streaming.
   void writeTriple(ExportFormat format, ql::span<const char> subject,
                    ql::span<const char> predicate,
                    ql::span<const char> objectLiteral,
                    std::string_view datatype = "",
                    std::string_view langTag = "") {
-
     if (format == ExportFormat::Turtle || format == ExportFormat::NTriples) {
       writeIri(subject);
       writeChar(' ');
@@ -433,7 +449,6 @@ class ScatterGatherChunkStreamer {
                    const qlever::constructExport::EvaluatedTermData& s,
                    const qlever::constructExport::EvaluatedTermData& p,
                    const qlever::constructExport::EvaluatedTermData& o) {
-
     const char delim = (format == ExportFormat::Csv)
                            ? ','
                            : ((format == ExportFormat::Tsv) ? '\t' : ' ');
@@ -479,19 +494,17 @@ class ScatterGatherChunkStreamer {
 
     for (const auto& slice : currentSlices_) {
       const void* ptr =
-          slice.isArena
-              ? static_cast<const void*>(slice.arenaPtr)
-              : static_cast<const void*>(currentHeaderBuffer_.data() +
-                                         slice.headerOffset);
+          slice.isArena ? static_cast<const void*>(slice.arenaPtr)
+                        : static_cast<const void*>(currentHeaderBuffer_.data() +
+                                                   slice.headerOffset);
       iovecs.push_back(
-          iovec{.iov_base = const_cast<void*>(ptr),
-                .iov_len = slice.len});
+          iovec{.iov_base = const_cast<void*>(ptr), .iov_len = slice.len});
     }
 
-    ScatterGatherChunk chunk(
-        ScatterGatherChunk::Passkey{}, std::move(iovecs),
-        std::move(currentHeaderBuffer_), currentChunkBytes_,
-        currentChunkTriples_, currentZeroCopySpans_, currentZeroCopyBytes_);
+    ScatterGatherChunk chunk(ScatterGatherChunk::Passkey{}, std::move(iovecs),
+                             std::move(currentHeaderBuffer_),
+                             currentChunkBytes_, currentChunkTriples_,
+                             currentZeroCopySpans_, currentZeroCopyBytes_);
 
     totalBytesWritten_ += currentChunkBytes_;
     totalZeroCopySpans_ += currentZeroCopySpans_;
@@ -515,8 +528,9 @@ class ScatterGatherChunkStreamer {
   }
 
   // ___________________________________________________________________________
-  // Finalizing typestate transition (Law 2 / Law 3 & Architecture Standard § 3).
-  // Consumes the streamer, flushes remaining chunk, and returns summary metrics.
+  // Finalizing typestate transition (Law 2 / Law 3 & Architecture Standard §
+  // 3). Consumes the streamer, flushes remaining chunk, and returns summary
+  // metrics.
   [[nodiscard]] ExportStreamSummary finalize() && {
     flush();
     ExportStreamSummary summary{totalTriples_, totalBytesWritten_,

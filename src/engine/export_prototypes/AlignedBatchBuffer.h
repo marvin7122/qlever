@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -25,12 +24,24 @@ namespace qlever::export_pipeline {
 // _____________________________________________________________________________
 // 64-byte Cache-Line Aligned Batch Buffer.
 // Enforces strict 64-byte alignment on ID vectors so sequential batch lookups
-// cleanly trigger CPU hardware L2 stream prefetchers and avoid split-cache-line penalties.
+// cleanly trigger CPU hardware L2 stream prefetchers and avoid split-cache-line
+// penalties.
 //
 // `T` must be trivially copyable: elements are relocated with `memcpy` and
 // assigned into raw `operator new[]` storage without construction.
 template <typename T, size_t Alignment = 64>
 class AlignedBatchBuffer {
+  static_assert((Alignment & (Alignment - 1)) == 0,
+                "Alignment must be a power of two");
+  static_assert(Alignment >= alignof(T),
+                "Alignment must be at least alignof(T)");
+  static_assert(sizeof(T) <= Alignment, "T size must not exceed alignment");
+  // `reserve` relocates elements with `std::memcpy` and `push_back` writes
+  // into raw `::operator new[]` storage, both of which are only valid for
+  // trivially copyable types.
+  static_assert(std::is_trivially_copyable_v<T>,
+                "AlignedBatchBuffer requires trivially copyable types");
+
  public:
   static_assert(std::is_trivially_copyable_v<T>,
                 "AlignedBatchBuffer relocates elements with memcpy and "
@@ -53,17 +64,17 @@ class AlignedBatchBuffer {
  public:
   AlignedBatchBuffer() noexcept = default;
 
-  explicit AlignedBatchBuffer(size_t capacity) {
-    reserve(capacity);
-  }
+  explicit AlignedBatchBuffer(size_t capacity) { reserve(capacity); }
 
   void reserve(size_t newCapacity) {
     if (newCapacity <= capacity_) {
       return;
     }
     // Round capacity to multiple of alignment
-    size_t alignedCapacity = (newCapacity + (Alignment / sizeof(T)) - 1) & ~((Alignment / sizeof(T)) - 1);
-    T* raw = static_cast<T*>(::operator new[](alignedCapacity * sizeof(T), std::align_val_t{Alignment}));
+    size_t alignedCapacity = (newCapacity + (Alignment / sizeof(T)) - 1) &
+                             ~((Alignment / sizeof(T)) - 1);
+    T* raw = static_cast<T*>(::operator new[](alignedCapacity * sizeof(T),
+                                              std::align_val_t{Alignment}));
     std::unique_ptr<T[], AlignedDeleter> newData(raw);
 
     if (data_ && size_ > 0) {
@@ -73,9 +84,7 @@ class AlignedBatchBuffer {
     capacity_ = alignedCapacity;
   }
 
-  void clear() noexcept {
-    size_ = 0;
-  }
+  void clear() noexcept { size_ = 0; }
 
   void push_back(const T& val) noexcept {
     AD_CORRECTNESS_CHECK(size_ < capacity_);
@@ -99,9 +108,7 @@ class AlignedBatchBuffer {
     return data_[idx];
   }
 
-  [[nodiscard]] T& operator[](size_t idx) noexcept {
-    return data_[idx];
-  }
+  [[nodiscard]] T& operator[](size_t idx) noexcept { return data_[idx]; }
 };
 
 }  // namespace qlever::export_pipeline

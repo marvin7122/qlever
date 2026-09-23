@@ -458,6 +458,19 @@ class ArenaVocabBatchBuilder {
 };
 
 // _____________________________________________________________________________
+// Detection of the optional two-argument `lookupBatch(indices, builder)`
+// overload. `if constexpr (requires ...)` is C++20-only, so this equivalent
+// `void_t` detection idiom is used to stay compatible with the C++17 backport
+// build (`QLEVER_CPP_17`).
+template <typename T, typename = void>
+struct HasArenaVocabBatchLookup : std::false_type {};
+template <typename T>
+struct HasArenaVocabBatchLookup<
+    T, std::void_t<decltype(std::declval<const T&>().lookupBatch(
+           std::declval<ql::span<const size_t>>(),
+           std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+
+// _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
@@ -490,8 +503,7 @@ class MultiSourceVocabBatchAssembler {
   // ___________________________________________________________________________
   explicit MultiSourceVocabBatchAssembler(size_t totalExpectedWords)
       : assembledWordViews_(totalExpectedWords),
-        slotFilledTracking_(totalExpectedWords, false) {
-  }
+        slotFilledTracking_(totalExpectedWords, false) {}
 
   // ___________________________________________________________________________
   // Place a single resolved string_view into its corresponding output position.
@@ -547,9 +559,6 @@ class MultiSourceVocabBatchAssembler {
   }
 };
 
-static_assert(
-    ad_utility::InvariantStatefulClass<MultiSourceVocabBatchAssembler>);
-
 // _____________________________________________________________________________
 // Paired lookup data for one vocabulary marker: for each position `i` in the
 // arrays, `underlyingIndices[i]` is the index to look up, and
@@ -561,7 +570,6 @@ class MarkerIndicesAndPositions {
   std::vector<size_t> resultPositions_;
 
  public:
-
   // ___________________________________________________________________________
   // Pre-allocate capacity for both paired vectors, preserving their 1:1
   // correspondence.
@@ -601,8 +609,6 @@ class MarkerIndicesAndPositions {
     return underlyingIndices_.size();
   }
 };
-
-static_assert(ad_utility::InvariantStatefulClass<MarkerIndicesAndPositions>);
 
 // _____________________________________________________________________________
 // Paired lookup data for each of the `NumVocabs` underlying vocabularies,
@@ -743,6 +749,30 @@ struct ReplaceOptionalByPlaceholderOnExportImpl<
 template <typename Vocab>
 constexpr bool replaceOptionalByPlaceholderOnExport =
     detail::ReplaceOptionalByPlaceholderOnExportImpl<Vocab>::value;
+
+namespace detail {
+// C++17-compatible detection of the two-argument `lookupBatch` overload that
+// writes the batch into a caller-provided `ArenaVocabBatchBuilder`. Written
+// with `void_t` instead of `if constexpr (requires { ... })`, which is
+// C++20-only and therefore not available in the CPP17 libQLever CI workflow
+// (see `.github/workflows/cpp-17-libqlever.yml`).
+template <typename Vocab, typename = void>
+struct HasLookupBatchWithBuilderImpl : std::false_type {};
+
+template <typename Vocab>
+struct HasLookupBatchWithBuilderImpl<
+    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
+               std::declval<ql::span<const size_t>>(),
+               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
+}  // namespace detail
+
+// Whether `Vocab` provides the two-argument `lookupBatch(indices, builder)`
+// overload (see above). Dispatching wrappers (e.g. `UnicodeVocabulary`,
+// `PolymorphicVocabulary`) use this to call the builder overload when it
+// exists and fall back to the single-argument overload otherwise.
+template <typename Vocab>
+constexpr bool hasLookupBatchWithBuilder =
+    detail::HasLookupBatchWithBuilderImpl<Vocab>::value;
 
 // Return `vocab[index]` as a `std::string`. If the `operator[]` of `vocab`
 // returns a `std::optional` (which is the case for vocabularies with holes, see

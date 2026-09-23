@@ -11,6 +11,9 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSIONWRAPPERS_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSIONWRAPPERS_H
 
+#include <string>
+#include <string_view>
+
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
 #include "backports/span.h"
@@ -18,8 +21,6 @@
 #include "index/vocabulary/PrefixHeuristic.h"
 #include "util/CompilerWarnings.h"
 #include "util/FsstCompressor.h"
-#include <string>
-#include <string_view>
 
 namespace ad_utility::vocabulary {
 
@@ -113,8 +114,10 @@ struct DecoderMultiplexer {
   // `compressed` with `decoderIndex`.
   [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed,
                                            size_t decoderIndex) const {
-    AD_CORRECTNESS_CHECK(decoderIndex < decoders_.size());
-    const size_t bound = decoders_[decoderIndex].maxDecompressedSize(compressed);
+    // `at` reports an invalid decoder index via `std::out_of_range`, like
+    // `decompress` already does.
+    const size_t bound =
+        decoders_.at(decoderIndex).maxDecompressedSize(compressed);
     return bound;
   }
 
@@ -126,10 +129,11 @@ struct DecoderMultiplexer {
   [[nodiscard]] size_t decompressInto(std::string_view compressed,
                                       size_t decoderIndex, ql::span<char> out,
                                       std::string& scratch) const {
-    AD_CORRECTNESS_CHECK(decoderIndex < decoders_.size());
     AD_CORRECTNESS_CHECK(!out.empty() || compressed.empty());
     DISABLE_CLANG_UNUSED_RESULT_WARNING
-    auto& decoder = decoders_[decoderIndex];
+    // `at` reports an invalid decoder index via `std::out_of_range`, like
+    // `decompress` already does.
+    auto& decoder = decoders_.at(decoderIndex);
     size_t decompressedSize;
     if constexpr (RequiresScratchDecompressInto<Decoder>) {
       decompressedSize = decoder.decompressInto(compressed, out, scratch);

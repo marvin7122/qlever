@@ -174,7 +174,7 @@ class FsstRepeatedDecoder {
   // Return an upper bound on the size after all `N` decoding stages.
   [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
     size_t bound = str.size();
-    for (size_t stage = 0; stage < N; ++stage) {
+    for ([[maybe_unused]] size_t stage : ::ranges::views::iota(size_t{0}, N)) {
       AD_CONTRACT_CHECK(bound <= std::numeric_limits<size_t>::max() /
                                      FsstDecoder::maxExpansionFactor);
       bound *= FsstDecoder::maxExpansionFactor;

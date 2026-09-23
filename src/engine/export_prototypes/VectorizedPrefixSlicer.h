@@ -8,8 +8,11 @@
 
 #pragma once
 
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
+    defined(_M_IX86)
 #include <emmintrin.h>
-#include <smmintrin.h>
+#define QLEVER_SLICER_X86 1
+#endif
 
 #include <array>
 #include <cstddef>
@@ -23,15 +26,16 @@
 namespace qlever::export_pipeline {
 
 // _____________________________________________________________________________
-// Standard known IRI prefix IDs for high-throughput single-instruction emission.
+// Standard known IRI prefix IDs for high-throughput single-instruction
+// emission.
 enum class WellKnownPrefixId : uint8_t {
-  WikidataEntity = 0,    // http://www.wikidata.org/entity/
-  WikidataDirectProp,    // http://www.wikidata.org/prop/direct/
-  RdfSyntax,             // http://www.w3.org/1999/02/22-rdf-syntax-ns#
-  RdfsSchema,            // http://www.w3.org/2000/01/rdf-schema#
-  OwlOntology,           // http://www.w3.org/2002/07/owl#
-  SchemaOrg,             // http://schema.org/
-  XmlSchema,             // http://www.w3.org/2001/XMLSchema#
+  WikidataEntity = 0,  // http://www.wikidata.org/entity/
+  WikidataDirectProp,  // http://www.wikidata.org/prop/direct/
+  RdfSyntax,           // http://www.w3.org/1999/02/22-rdf-syntax-ns#
+  RdfsSchema,          // http://www.w3.org/2000/01/rdf-schema#
+  OwlOntology,         // http://www.w3.org/2002/07/owl#
+  SchemaOrg,           // http://schema.org/
+  XmlSchema,           // http://www.w3.org/2001/XMLSchema#
   Count
 };
 
@@ -46,17 +50,23 @@ class VectorizedPrefixTable {
   };
 
  private:
-  std::array<PrefixEntry, static_cast<size_t>(WellKnownPrefixId::Count)> entries_{};
+  std::array<PrefixEntry, static_cast<size_t>(WellKnownPrefixId::Count)>
+      entries_{};
 
  public:
-  VectorizedPrefixTable() noexcept {
-    initEntry(WellKnownPrefixId::WikidataEntity, "http://www.wikidata.org/entity/");
-    initEntry(WellKnownPrefixId::WikidataDirectProp, "http://www.wikidata.org/prop/direct/");
-    initEntry(WellKnownPrefixId::RdfSyntax, "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-    initEntry(WellKnownPrefixId::RdfsSchema, "http://www.w3.org/2000/01/rdf-schema#");
+  VectorizedPrefixTable() {
+    initEntry(WellKnownPrefixId::WikidataEntity,
+              "http://www.wikidata.org/entity/");
+    initEntry(WellKnownPrefixId::WikidataDirectProp,
+              "http://www.wikidata.org/prop/direct/");
+    initEntry(WellKnownPrefixId::RdfSyntax,
+              "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+    initEntry(WellKnownPrefixId::RdfsSchema,
+              "http://www.w3.org/2000/01/rdf-schema#");
     initEntry(WellKnownPrefixId::OwlOntology, "http://www.w3.org/2002/07/owl#");
     initEntry(WellKnownPrefixId::SchemaOrg, "http://schema.org/");
-    initEntry(WellKnownPrefixId::XmlSchema, "http://www.w3.org/2001/XMLSchema#");
+    initEntry(WellKnownPrefixId::XmlSchema,
+              "http://www.w3.org/2001/XMLSchema#");
   }
 
   // ___________________________________________________________________________
@@ -64,8 +74,10 @@ class VectorizedPrefixTable {
   // full 16-byte vectors plus a `memcpy` tail, so exactly `entry.length`
   // bytes are written (a whole-vector store would overwrite up to 15 bytes
   // past the prefix). Returns the number of bytes written.
-  [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id, char* out) const noexcept {
+  [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id,
+                                              char* out) const noexcept {
     const auto& entry = entries_[static_cast<size_t>(id)];
+#ifdef QLEVER_SLICER_X86
     const __m128i* src = reinterpret_cast<const __m128i*>(entry.data);
     __m128i* dst = reinterpret_cast<__m128i*>(out);
 
@@ -78,19 +90,23 @@ class VectorizedPrefixTable {
       std::memcpy(out + fullVectors * 16, entry.data + fullVectors * 16,
                   tailBytes);
     }
+#else
+    std::memcpy(out, entry.data, entry.length);
+#endif
     return entry.length;
   }
 
   // ___________________________________________________________________________
   // Returns the static singleton instance.
-  static const VectorizedPrefixTable& instance() noexcept {
+  static const VectorizedPrefixTable& instance() {
     static const VectorizedPrefixTable table;
     return table;
   }
 
  private:
-  void initEntry(WellKnownPrefixId id, std::string_view prefix) noexcept {
+  void initEntry(WellKnownPrefixId id, std::string_view prefix) {
     auto& e = entries_[static_cast<size_t>(id)];
+    AD_CONTRACT_CHECK(prefix.size() <= sizeof(e.data));
     std::memset(e.data, 0, sizeof(e.data));
     std::memcpy(e.data, prefix.data(), prefix.size());
     e.length = prefix.size();
