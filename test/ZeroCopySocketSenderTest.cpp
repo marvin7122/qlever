@@ -63,8 +63,17 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   // IORING_OP_SEND_ZC requires TCP loopback: AF_UNIX socketpairs reject
   // zero-copy sends, so connect a TCP loopback pair (same pattern as
   // `ZeroCopySenderBenchmark::SocketPairConnection`).
-  int listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
-  ASSERT_GE(listenFd, 0);
+  struct FdGuard {
+    int fd = -1;
+    ~FdGuard() {
+      if (fd >= 0) {
+        ::close(fd);
+      }
+    }
+  };
+  FdGuard listenGuard{::socket(AF_INET, SOCK_STREAM, 0)};
+  ASSERT_GE(listenGuard.fd, 0);
+  int listenFd = listenGuard.fd;
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -75,12 +84,15 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   ASSERT_EQ(
       ::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr), &addrLen), 0);
   ASSERT_EQ(::listen(listenFd, 1), 0);
-  int sendFd = ::socket(AF_INET, SOCK_STREAM, 0);
-  ASSERT_GE(sendFd, 0);
+  FdGuard sendGuard{::socket(AF_INET, SOCK_STREAM, 0)};
+  ASSERT_GE(sendGuard.fd, 0);
+  int sendFd = sendGuard.fd;
   ASSERT_EQ(::connect(sendFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)),
             0);
-  int recvFd = ::accept(listenFd, nullptr, nullptr);
-  ASSERT_GE(recvFd, 0);
+  FdGuard recvGuard{::accept(listenFd, nullptr, nullptr)};
+  ASSERT_GE(recvGuard.fd, 0);
+  int recvFd = recvGuard.fd;
+  listenGuard.fd = -1;
   ::close(listenFd);
 
   ZeroCopySenderConfig config;
@@ -130,9 +142,6 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   EXPECT_EQ(sender.bufferPool().availableSlots(), config.numBuffers);
 
   receiverThread.join();
-
-  ::close(sendFd);
-  ::close(recvFd);
 
   EXPECT_EQ(receivedData, expectedData);
 }
