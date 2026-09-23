@@ -74,22 +74,25 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
           results.addGroup("Sequential Integer Formatting (1..1,000,000)");
 
       // 1. std::to_string (baseline: dynamic allocation + standard division
-      // loop)
+      // loop). Every block below times inside its callback: `addMeasurement`
+      // runs (and times) the callback itself, so an outer timer would include
+      // framework overhead in the reported metadata.
       {
         size_t totalBytes = 0;
-        auto start = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         auto& m = group.addMeasurement("std::to_string", [&]() {
+          auto start = std::chrono::high_resolution_clock::now();
           size_t bytes = 0;
           for (int64_t val : sequentialInts) {
             std::string s = std::to_string(val);
             bytes += s.size();
           }
           totalBytes = bytes;
+          elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::high_resolution_clock::now() - start)
+                          .count();
           return bytes;
         });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
@@ -103,9 +106,10 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 2. std::to_chars (stack buffer, standard library fast path)
       {
         size_t totalBytes = 0;
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         char buffer[INT_BUFFER_SIZE];
-        auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("std::to_chars", [&]() {
+          auto start = std::chrono::high_resolution_clock::now();
           size_t bytes = 0;
           for (int64_t val : sequentialInts) {
             auto [ptr, ec] =
@@ -114,11 +118,11 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
+          elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::high_resolution_clock::now() - start)
+                          .count();
           return bytes;
         });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
@@ -132,20 +136,21 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 3. formatIntBranchless (Fast SIMD / lookup table zero-allocation)
       {
         size_t totalBytes = 0;
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         char buffer[INT_BUFFER_SIZE];
-        auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("formatIntBranchless (SIMD/LUT)", [&]() {
+          auto start = std::chrono::high_resolution_clock::now();
           size_t bytes = 0;
           for (int64_t val : sequentialInts) {
             char* end = formatIntBranchless(val, buffer);
             bytes += static_cast<size_t>(end - buffer);
           }
           totalBytes = bytes;
+          elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::high_resolution_clock::now() - start)
+                          .count();
           return bytes;
         });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
@@ -165,19 +170,20 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 1. std::to_string
       {
         size_t totalBytes = 0;
-        auto start = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         auto& m = group.addMeasurement("std::to_string (random 64-bit)", [&]() {
+          auto start = std::chrono::high_resolution_clock::now();
           size_t bytes = 0;
           for (int64_t val : randomInts) {
             std::string s = std::to_string(val);
             bytes += s.size();
           }
           totalBytes = bytes;
+          elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::high_resolution_clock::now() - start)
+                          .count();
           return bytes;
         });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
@@ -191,9 +197,10 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 2. std::to_chars
       {
         size_t totalBytes = 0;
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         char buffer[INT_BUFFER_SIZE];
-        auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("std::to_chars (random 64-bit)", [&]() {
+          auto start = std::chrono::high_resolution_clock::now();
           size_t bytes = 0;
           for (int64_t val : randomInts) {
             auto [ptr, ec] =
@@ -202,11 +209,11 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
+          elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::high_resolution_clock::now() - start)
+                          .count();
           return bytes;
         });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
@@ -220,21 +227,22 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 3. formatIntBranchless
       {
         size_t totalBytes = 0;
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         char buffer[INT_BUFFER_SIZE];
-        auto start = std::chrono::high_resolution_clock::now();
         auto& m =
             group.addMeasurement("formatIntBranchless (random 64-bit)", [&]() {
+              auto start = std::chrono::high_resolution_clock::now();
               size_t bytes = 0;
               for (int64_t val : randomInts) {
                 char* end = formatIntBranchless(val, buffer);
                 bytes += static_cast<size_t>(end - buffer);
               }
               totalBytes = bytes;
+              elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::high_resolution_clock::now() - start)
+                              .count();
               return bytes;
             });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
@@ -255,9 +263,10 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 1. std::string concatenation
       {
         size_t totalBytes = 0;
-        auto start = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         auto& m = group.addMeasurement(
             "std::string concat (prefix + to_string)", [&]() {
+              auto start = std::chrono::high_resolution_clock::now();
               size_t bytes = 0;
               for (uint64_t id : qids) {
                 std::string s =
@@ -265,11 +274,11 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
                 bytes += s.size();
               }
               totalBytes = bytes;
+              elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::high_resolution_clock::now() - start)
+                              .count();
               return bytes;
             });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
@@ -283,9 +292,10 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 2. std::to_chars with manual prefix copy
       {
         size_t totalBytes = 0;
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         char buffer[QID_BUFFER_SIZE];
-        auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement("memcpy prefix + std::to_chars", [&]() {
+          auto start = std::chrono::high_resolution_clock::now();
           size_t bytes = 0;
           for (uint64_t id : qids) {
             std::memcpy(buffer, WIKIDATA_ENTITY_PREFIX.data(),
@@ -297,11 +307,11 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
             bytes += static_cast<size_t>(ptr - buffer);
           }
           totalBytes = bytes;
+          elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::high_resolution_clock::now() - start)
+                          .count();
           return bytes;
         });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
@@ -315,21 +325,22 @@ class FastNumberFormatterBenchmark : public BenchmarkInterface {
       // 3. formatQid (single-pass SIMD/branchless formatting)
       {
         size_t totalBytes = 0;
+        std::chrono::nanoseconds::rep elapsedNs = 0;
         char buffer[QID_BUFFER_SIZE];
-        auto start = std::chrono::high_resolution_clock::now();
         auto& m =
             group.addMeasurement("formatQid (Single-pass SIMD/LUT)", [&]() {
+              auto start = std::chrono::high_resolution_clock::now();
               size_t bytes = 0;
               for (uint64_t id : qids) {
                 char* end = formatQid(id, buffer);
                 bytes += static_cast<size_t>(end - buffer);
               }
               totalBytes = bytes;
+              elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::high_resolution_clock::now() - start)
+                              .count();
               return bytes;
             });
-        auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::high_resolution_clock::now() - start)
-                             .count();
         double throughputMPerSec = (static_cast<double>(NUM_INTEGERS) /
                                     (static_cast<double>(elapsedNs) / 1e9)) /
                                    1e6;
