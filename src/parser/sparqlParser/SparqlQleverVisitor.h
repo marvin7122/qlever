@@ -77,7 +77,7 @@ class SparqlQleverVisitor {
   ad_utility::BlankNodeManager* blankNodeManager_;
 
   // Needed to efficiently encode common IRIs directly into the ID.
-  const EncodedIriManager* encodedIriManager_;
+  const ad_utility::vocabulary::EncodedIriManager* encodedIriManager_;
 
   // Convert a GraphTerm to TripleComponent with IRI encoding support
   TripleComponent graphTermToTripleComponentWithEncoding(
@@ -192,7 +192,8 @@ class SparqlQleverVisitor {
   // url parameters which override those in the operation.
   explicit SparqlQleverVisitor(
       ad_utility::BlankNodeManager* bnodeManager,
-      const EncodedIriManager* encodedIriManager, PrefixMap prefixMap,
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      PrefixMap prefixMap,
       std::optional<ParsedQuery::DatasetClauses> datasetOverride,
       DisableSomeChecksOnlyForTesting disableSomeChecksOnlyForTesting =
           DisableSomeChecksOnlyForTesting::False)

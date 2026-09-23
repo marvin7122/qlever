@@ -46,6 +46,12 @@ CPP_concept BulkResultForDecoder =
 template <typename T>
 CPP_requires(
     CompressionWrapper_,
+    // Semantic contract beyond the signatures below: `maxDecompressedSize(w,
+    // i) == 0` must imply that decoding `w` yields the empty word. Callers
+    // skip the decoder entirely for a zero bound (`decompressIntoSpan` and
+    // `ArenaVocabBatchBuilder::appendDecompressedWord` report `""` without
+    // invoking `decompressInto`), so a wrapper whose decoder returns 0 bytes
+    // for a non-empty input would silently drop words.
     requires(const T& t, std::string& scratch, ql::span<char> out)(
         // Return the number of decoders that are stored.
         concepts::same_as<decltype(t.numDecoders()), size_t>,
@@ -114,8 +120,6 @@ struct DecoderMultiplexer {
   // `compressed` with `decoderIndex`.
   [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed,
                                            size_t decoderIndex) const {
-    // `at` reports an invalid decoder index via `std::out_of_range`, like
-    // `decompress` already does.
     const size_t bound =
         decoders_.at(decoderIndex).maxDecompressedSize(compressed);
     return bound;
@@ -131,8 +135,6 @@ struct DecoderMultiplexer {
                                       std::string& scratch) const {
     AD_CORRECTNESS_CHECK(!out.empty() || compressed.empty());
     DISABLE_CLANG_UNUSED_RESULT_WARNING
-    // `at` reports an invalid decoder index via `std::out_of_range`, like
-    // `decompress` already does.
     auto& decoder = decoders_.at(decoderIndex);
     size_t decompressedSize;
     if constexpr (RequiresScratchDecompressInto<Decoder>) {
