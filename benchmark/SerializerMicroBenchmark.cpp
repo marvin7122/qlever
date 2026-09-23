@@ -47,12 +47,12 @@ struct AllocationTracker {
 // Global new/delete instrumentation for allocation counting during benchmark
 // runs. The malloc/free pairing below is intentional and matched, but GCC
 // cannot see across the replaceable global operators and reports a false
-// positive -Wmismatched-new-delete at the `std::free` calls, so the warning
-// is suppressed locally for these definitions.
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
-#endif
+// positive -Wmismatched-new-delete at the `std::free` calls. A local
+// `#pragma GCC diagnostic ignored "-Wmismatched-new-delete"` does not cover
+// this warning (observed on GCC 11 with -Werror), so the sized-deallocation
+// overloads are deliberately omitted instead: every deallocation falls
+// through to the unsized overloads below, which perform the same
+// `malloc`/`free` pairing without triggering the warning.
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -67,8 +67,6 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
-
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -82,11 +80,6 @@ void* operator new[](std::size_t size) {
 }
 
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
-
-void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 namespace ad_benchmark {
 namespace {
