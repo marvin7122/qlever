@@ -14,6 +14,7 @@
 
 #include <array>
 #include <memory_resource>
+#include <new>
 
 #include "../../util/GTestHelpers.h"
 #include "VocabularyTestHelpers.h"
@@ -304,12 +305,22 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 }
 
 // _____________________________________________________________________________
-// Assert that `std::pmr::string` stores `n` characters inline (small-string
-// optimization) without allocating: construction against the null memory
-// resource throws `std::bad_alloc` as soon as a heap allocation is attempted.
-inline void requirePmrStringInlineStorage(size_t n) {
-  std::pmr::string s(n, 'x', std::pmr::null_memory_resource());
-  ASSERT_EQ(s.size(), n);
+// Determine how many characters `std::pmr::string` stores inline (small-string
+// optimization) without allocating on this standard library: construction
+// against the null memory resource throws `std::bad_alloc` as soon as a heap
+// allocation is attempted. The capacity is implementation-defined; an
+// implementation without small-string optimization yields 0.
+inline size_t pmrStringInlineCapacity() {
+  for (size_t n = 64; n > 0; --n) {
+    try {
+      std::pmr::string s(n, 'x', std::pmr::null_memory_resource());
+      if (s.size() == n) {
+        return n;
+      }
+    } catch (const std::bad_alloc&) {
+    }
+  }
+  return 0;
 }
 
 // Overwrite a chunk of the current stack frame with sentinel bytes, so that a
@@ -338,23 +349,29 @@ inline void clobberStack() {
 //    verify content byte-for-byte, which makes corruption overwhelmingly
 //    likely but not formally guaranteed.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
-  // Verify that this platform uses inline storage for `std::pmr::string`;
-  // short words therefore use the Small String Optimization (SSO) and would
-  // otherwise end up inside a destroyed stack object rather than the arena.
-  requirePmrStringInlineStorage(15);
-
-  // All words deliberately short (<= 15 chars): every one takes the SSO
-  // path in a `pmr::string`-based implementation, and none would end up in
-  // the monotonic buffer that owns the result's storage.
+  // All words deliberately short: every one takes the SSO path in a
+  // `pmr::string`-based implementation, and none would end up in the
+  // monotonic buffer that owns the result's storage.
   std::vector<std::string> words;
   words.reserve(64);
   for (int i = 0; i < 64; ++i) {
     words.push_back(absl::StrCat("s", i));
   }
-  // Enforce the test premise: all words must fit within standard library SSO
-  // capacity (<= 15 bytes on 64-bit platforms).
-  ASSERT_TRUE(ql::ranges::all_of(
-      words, [](const auto& word) { return word.size() <= 15; }));
+  size_t maxWordSize = 0;
+  for (const auto& word : words) {
+    if (word.size() > maxWordSize) {
+      maxWordSize = word.size();
+    }
+  }
+  // Enforce the test premise against this standard library's actual inline
+  // capacity (which is implementation-defined, not 15 everywhere). Without
+  // enough inline storage the dangling-SSO-view regression cannot manifest,
+  // so there is nothing to detect.
+  const size_t inlineCapacity = pmrStringInlineCapacity();
+  if (inlineCapacity < maxWordSize) {
+    GTEST_SKIP() << "std::pmr::string stores fewer than " << maxWordSize
+                 << " characters inline on this platform";
+  }
   auto vocab = this->createCompressedVocabulary()(words);
 
   const auto indices =
