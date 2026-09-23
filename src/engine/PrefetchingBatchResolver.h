@@ -123,6 +123,10 @@ class PrefetchingBatchResolver {
     }
 
     AD_CONTRACT_CHECK(results.size() >= ids.size());
+    // `positions` indexes `ids`: validate in release builds, not only under
+    // `AD_EXPENSIVE_CHECK` (which is compiled out in release).
+    AD_CONTRACT_CHECK(ql::ranges::all_of(
+        positions, [&ids](size_t pos) { return pos < ids.size(); }));
     AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t pos) {
       return pos < ids.size() && ids[pos].getDatatype() == Datatype::VocabIndex;
     }));
@@ -142,13 +146,10 @@ class PrefetchingBatchResolver {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        const Id pfId = ids[pfPos];
-        if (pfId.getDatatype() == Datatype::VocabIndex) {
-          // Prefetch the underlying index entry if possible
-          const auto* vocabPtr =
-              reinterpret_cast<const void*>(&index.getImpl());
-          prefetchVocabEntry(vocabPtr, static_cast<int>(distance));
-        }
+        // Note: the vocabulary entry itself cannot be prefetched here (its
+        // address is only computed inside `indexToString`); the `IndexImpl`
+        // object address is already cache-hot from every previous row, so
+        // prefetching it would add overhead without benefit.
       }
 
       const size_t pos = positions[i];
@@ -216,9 +217,12 @@ class PrefetchingBatchResolver {
         }
       }
 
-      // 3. Resolve current item i
+      // 3. Resolve current item i. Both `offsets[curIdx]` and
+      // `offsets[curIdx + 1]` are read, so the check must cover the `+ 1`
+      // without wrapping when `curIdx == SIZE_MAX`.
       const size_t curIdx = indices[i];
-      AD_CORRECTNESS_CHECK(idx < offsets.size());
+      AD_CORRECTNESS_CHECK(curIdx + 1 > curIdx);
+      AD_CORRECTNESS_CHECK(curIdx + 1 < offsets.size());
       const auto curOffset = offsets[curIdx];
       const auto nextOffset = offsets[curIdx + 1];
       const size_t strLen = nextOffset - curOffset;

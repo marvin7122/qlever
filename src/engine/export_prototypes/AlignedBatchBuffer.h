@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <type_traits>
 #include <vector>
@@ -70,11 +71,21 @@ class AlignedBatchBuffer {
     if (newCapacity <= capacity_) {
       return;
     }
-    // Round capacity to multiple of alignment
-    size_t alignedCapacity = (newCapacity + (Alignment / sizeof(T)) - 1) &
-                             ~((Alignment / sizeof(T)) - 1);
+    // Round capacity up to a multiple of the slot count. Guard the
+    // arithmetic: a wrapped `alignedCapacity` would under-allocate and let
+    // `memcpy`/`push_back` write past the allocation.
+    constexpr size_t slots = Alignment / sizeof(T);
+    AD_CONTRACT_CHECK(newCapacity <=
+                      (std::numeric_limits<size_t>::max() - (slots - 1)) /
+                          sizeof(T));
+    size_t alignedCapacity = (newCapacity + (slots - 1)) & ~(slots - 1);
+    AD_CONTRACT_CHECK(alignedCapacity <=
+                      std::numeric_limits<size_t>::max() / sizeof(T));
     T* raw = static_cast<T*>(::operator new[](alignedCapacity * sizeof(T),
                                               std::align_val_t{Alignment}));
+    // Start the element lifetimes before any assignment: assignment into raw
+    // storage without construction is undefined behavior.
+    std::uninitialized_default_construct_n(raw, alignedCapacity);
     std::unique_ptr<T[], AlignedDeleter> newData(raw);
 
     if (data_ && size_ > 0) {

@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -26,10 +27,10 @@
 #include <iostream>
 #include <memory>
 #include <random>
-#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "backports/span.h"
@@ -51,7 +52,6 @@ using namespace ad_utility;
 // Benchmark payload constants (100 MB transmission)
 constexpr size_t kTotalSendSizeBytes = 100ULL * 1024ULL * 1024ULL;  // 100 MB
 constexpr size_t kChunkSizeBytes = 64 * 1024;                       // 64 KB
-constexpr size_t kTotalChunks = kTotalSendSizeBytes / kChunkSizeBytes;
 
 // _____________________________________________________________________________
 // Helper to measure thread/process CPU time using POSIX clock_gettime.
@@ -77,9 +77,9 @@ class CpuTimeTimer {
     std::chrono::duration<double> wallDur = endWall - startWall_;
     double wallSec = wallDur.count();
 
-    double cpuSec = static_cast<double>(endCpu.tv_sec - startCpu_.tv_sec) +
-                    static_cast<double>(endCpu.tv_nsec - startCpu_.tv_nsec) /
-                        1e9;
+    double cpuSec =
+        static_cast<double>(endCpu.tv_sec - startCpu_.tv_sec) +
+        static_cast<double>(endCpu.tv_nsec - startCpu_.tv_nsec) / 1e9;
 
     double cpuPercent = wallSec > 0.0 ? (cpuSec / wallSec) * 100.0 : 0.0;
     return {wallSec, cpuSec, cpuPercent};
@@ -107,13 +107,15 @@ class SocketPairConnection {
 
     int enable = 1;
     ::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
-    if (::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    if (::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) !=
+        0) {
       ::close(listenFd);
       AD_THROW("bind failed");
     }
 
     socklen_t addrLen = sizeof(addr);
-    if (::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr), &addrLen) != 0) {
+    if (::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr), &addrLen) !=
+        0) {
       ::close(listenFd);
       AD_THROW("getsockname failed");
     }
@@ -129,7 +131,8 @@ class SocketPairConnection {
       AD_THROW("client socket failed");
     }
 
-    if (::connect(sendFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    if (::connect(sendFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) !=
+        0) {
       ::close(listenFd);
       ::close(sendFd_);
       AD_THROW("connect failed");
@@ -180,6 +183,24 @@ class SocketPairConnection {
 };
 
 // _____________________________________________________________________________
+// Closes the sender side (unblocking the receiver's `recv`) and joins the
+// receiver thread on scope exit. Normal paths join explicitly and render this
+// a no-op; on an exception path it prevents `std::terminate` from destroying
+// a joinable thread.
+struct RecvThreadGuard {
+  SocketPairConnection& conn;
+  std::thread& thread;
+  RecvThreadGuard(SocketPairConnection& c, std::thread& t)
+      : conn(c), thread(t) {}
+  ~RecvThreadGuard() {
+    conn.closeSender();
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+};
+
+// _____________________________________________________________________________
 // Benchmark result metrics struct.
 struct BenchmarkMetric {
   std::string name;
@@ -227,6 +248,7 @@ class ZeroCopySenderBenchmarkRunner {
         totalReceived += static_cast<size_t>(n);
       }
     });
+    RecvThreadGuard recvGuard(conn, receiverThread);
 
     CpuTimeTimer timer;
     size_t bytesSent = 0;
@@ -245,7 +267,7 @@ class ZeroCopySenderBenchmarkRunner {
       bytesSent += chunkSize_;
     }
 
-    auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
+    auto [wallSec, [[maybe_unused]] cpuSec, cpuPercent] = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 
@@ -277,6 +299,7 @@ class ZeroCopySenderBenchmarkRunner {
         totalReceived += static_cast<size_t>(n);
       }
     });
+    RecvThreadGuard recvGuard(conn, receiverThread);
 
     CpuTimeTimer timer;
 
@@ -288,7 +311,7 @@ class ZeroCopySenderBenchmarkRunner {
     }
 
     sender.flushAndDrainAll();
-    auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
+    auto [wallSec, [[maybe_unused]] cpuSec, cpuPercent] = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 
@@ -320,6 +343,7 @@ class ZeroCopySenderBenchmarkRunner {
         totalReceived += static_cast<size_t>(n);
       }
     });
+    RecvThreadGuard recvGuard(conn, receiverThread);
 
     CpuTimeTimer timer;
 
@@ -331,7 +355,7 @@ class ZeroCopySenderBenchmarkRunner {
     }
 
     sender.flushAndDrainAll();
-    auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
+    auto [wallSec, [[maybe_unused]] cpuSec, cpuPercent] = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 
@@ -352,7 +376,8 @@ class ZeroCopySenderBenchmarkRunner {
     m.throughputMBs = elapsedSec > 0.0 ? mbSent / elapsedSec : 0.0;
     m.throughputGbps = elapsedSec > 0.0 ? gbSent / elapsedSec : 0.0;
     m.cpuPercentage = cpuPercent;
-    m.iops = elapsedSec > 0.0 ? static_cast<double>(numChunks) / elapsedSec : 0.0;
+    m.iops =
+        elapsedSec > 0.0 ? static_cast<double>(numChunks) / elapsedSec : 0.0;
     return m;
   }
 };
@@ -373,32 +398,34 @@ void printResultsTable(std::vector<BenchmarkMetric>& results) {
                           : 0.0;
   }
 
-  std::cout << "\n========================================================================================================\n";
-  std::cout << "  BENCHMARK: 100MB Socket Transmission (Zero-Copy Send vs io_uring vs Synchronous Send)\n";
-  std::cout << "  Payload: 104,857,600 bytes | Chunk Size: 64 KB | Total Operations: "
-            << (kTotalSendSizeBytes / kChunkSizeBytes) << "\n";
-  std::cout << "========================================================================================================\n";
+  std::cout << "\n============================================================="
+               "===========================================\n";
+  std::cout << "  BENCHMARK: 100MB Socket Transmission (Zero-Copy Send vs "
+               "io_uring vs Synchronous Send)\n";
+  std::cout
+      << "  Payload: 104,857,600 bytes | Chunk Size: 64 KB | Total Operations: "
+      << (kTotalSendSizeBytes / kChunkSizeBytes) << "\n";
+  std::cout << "==============================================================="
+               "=========================================\n";
   std::cout << std::left << std::setw(48) << "Socket Transmission Paradigm"
-            << std::right << std::setw(10) << "Time (s)"
-            << std::setw(14) << "MB/s"
-            << std::setw(14) << "Gbps"
-            << std::setw(12) << "CPU %"
+            << std::right << std::setw(10) << "Time (s)" << std::setw(14)
+            << "MB/s" << std::setw(14) << "Gbps" << std::setw(12) << "CPU %"
             << std::setw(12) << "Speedup" << "\n";
-  std::cout << "--------------------------------------------------------------------------------------------------------\n";
+  std::cout << "---------------------------------------------------------------"
+               "-----------------------------------------\n";
 
   for (const auto& r : results) {
-    std::cout << std::left << std::setw(48) << r.name
-              << std::right << std::fixed << std::setprecision(4)
-              << std::setw(10) << r.elapsedSeconds
-              << std::fixed << std::setprecision(2)
-              << std::setw(14) << r.throughputMBs
-              << std::setw(14) << r.throughputGbps
-              << std::fixed << std::setprecision(1)
-              << std::setw(11) << r.cpuPercentage << "%"
-              << std::fixed << std::setprecision(2)
-              << std::setw(11) << r.speedupVsBaseline << "x\n";
+    std::cout << std::left << std::setw(48) << r.name << std::right
+              << std::fixed << std::setprecision(4) << std::setw(10)
+              << r.elapsedSeconds << std::fixed << std::setprecision(2)
+              << std::setw(14) << r.throughputMBs << std::setw(14)
+              << r.throughputGbps << std::fixed << std::setprecision(1)
+              << std::setw(11) << r.cpuPercentage << "%" << std::fixed
+              << std::setprecision(2) << std::setw(11) << r.speedupVsBaseline
+              << "x\n";
   }
-  std::cout << "========================================================================================================\n\n";
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 }
 
 }  // namespace
@@ -417,12 +444,15 @@ class ZeroCopySenderBenchmark : public BenchmarkInterface {
 
     ZeroCopySenderBenchmarkRunner runner;
 
-    group.addMeasurement("1. Standard send()",
-                         [&]() { return runner.runStandardSend().elapsedSeconds; });
-    group.addMeasurement("2. io_uring Standard Send",
-                         [&]() { return runner.runIoUringStandardSend().elapsedSeconds; });
-    group.addMeasurement("3. io_uring SEND_ZC Fixed Buffers",
-                         [&]() { return runner.runIoUringZeroCopySend().elapsedSeconds; });
+    group.addMeasurement("1. Standard send()", [&]() {
+      return runner.runStandardSend().elapsedSeconds;
+    });
+    group.addMeasurement("2. io_uring Standard Send", [&]() {
+      return runner.runIoUringStandardSend().elapsedSeconds;
+    });
+    group.addMeasurement("3. io_uring SEND_ZC Fixed Buffers", [&]() {
+      return runner.runIoUringZeroCopySend().elapsedSeconds;
+    });
 
     return results;
   }
@@ -435,10 +465,13 @@ AD_REGISTER_BENCHMARK(ZeroCopySenderBenchmark);
 
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 // Standalone executable entry point
-int main(int argc, char** argv) {
-  std::cout << "==========================================================================\n";
-  std::cout << " QLever Export Optimization: Zero-Copy Network Socket Sender Benchmark\n";
-  std::cout << "==========================================================================\n";
+int main() {
+  std::cout << "==============================================================="
+               "===========\n";
+  std::cout << " QLever Export Optimization: Zero-Copy Network Socket Sender "
+               "Benchmark\n";
+  std::cout << "==============================================================="
+               "===========\n";
 
   try {
     ad_benchmark::ZeroCopySenderBenchmarkRunner runner;
@@ -452,7 +485,8 @@ int main(int argc, char** argv) {
     results.push_back(runner.runIoUringStandardSend());
     std::cout << "Done.\n";
 
-    std::cout << ">>> Running 3. io_uring Zero-Copy Send (SEND_ZC) ... " << std::flush;
+    std::cout << ">>> Running 3. io_uring Zero-Copy Send (SEND_ZC) ... "
+              << std::flush;
     results.push_back(runner.runIoUringZeroCopySend());
     std::cout << "Done.\n";
 

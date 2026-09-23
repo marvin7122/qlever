@@ -9,6 +9,7 @@
 #ifndef QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H
 #define QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -37,8 +38,9 @@ inline constexpr char HEX_DIGITS[17] = "0123456789abcdef";
 // _____________________________________________________________________________
 // Branchless calculation of exact number of hex digits needed for uint64_t.
 // Returns 1 for val == 0 ('0').
-// For val > 0: ceil((64 - countl_zero(val)) / 4) = (67 - countl_zero(val)) >> 2.
-// Note: (val | 1ULL) ensures val == 0 has countl_zero == 63 -> (67 - 63) >> 2 = 1.
+// For val > 0: ceil((64 - countl_zero(val)) / 4) = (67 - countl_zero(val))
+// >> 2. Note: (val | 1ULL) ensures val == 0 has countl_zero == 63 -> (67 - 63)
+// >> 2 = 1.
 [[nodiscard]] inline constexpr uint32_t numHexDigits(uint64_t val) noexcept {
   return (67 - std::countl_zero(val | 1ULL)) >> 2;
 }
@@ -95,7 +97,8 @@ struct HttpStreamSummary {
 //    socket transmission (e.g. write(2), writev(2), send(2), Boost.Beast).
 //
 // Complies with ~/ARCHITECTURE.md (7 Universal Software Architecture Laws):
-// - Law 1: Deep Module (hides buffer math, hex conversions, and framing offsets)
+// - Law 1: Deep Module (hides buffer math, hex conversions, and framing
+// offsets)
 // - Law 2: Information Hiding & Zero Accounting Leakage
 // - Law 3: Complexity Gravity (pulls framing down from callers)
 // - Law 4: Define Errors Away & Fail-Fast Preconditions
@@ -106,7 +109,7 @@ class InPlaceHttpChunk {
   static constexpr size_t HEADER_RESERVE_BYTES = 16;
   static constexpr size_t TAIL_RESERVE_BYTES = 2;
   static constexpr size_t TOTAL_OVERHEAD_BYTES =
-      HEADER_RESERVE_BYTES + TAIL_RESERVE_BYTES;  // 18 bytes
+      HEADER_RESERVE_BYTES + TAIL_RESERVE_BYTES;                   // 18 bytes
   static constexpr size_t DEFAULT_PAYLOAD_CAPACITY = 1024 * 1024;  // 1 MB
 
   // 64-byte aligned buffer type for CPU cache-line & vector streaming stores
@@ -126,13 +129,17 @@ class InPlaceHttpChunk {
  public:
   // ___________________________________________________________________________
   // Construct an owning chunk with 64-byte aligned internal memory.
-  explicit InPlaceHttpChunk(size_t maxPayloadCapacity = DEFAULT_PAYLOAD_CAPACITY)
+  explicit InPlaceHttpChunk(
+      size_t maxPayloadCapacity = DEFAULT_PAYLOAD_CAPACITY)
       : totalCapacity_{maxPayloadCapacity + TOTAL_OVERHEAD_BYTES},
         maxPayloadCapacity_{maxPayloadCapacity},
         lastPayloadBytes_{0},
         isFinalized_{false},
         framedStart_{nullptr},
         framedLength_{0} {
+    // A wrapped addition would allocate a smaller buffer than the payload
+    // needs and let later writes escape it.
+    AD_CONTRACT_CHECK(totalCapacity_ >= maxPayloadCapacity);
     ownedBuffer_.emplace(totalCapacity_);
     buffer_ = ownedBuffer_->data();
   }
@@ -144,7 +151,8 @@ class InPlaceHttpChunk {
       : buffer_{destinationBuffer.data()},
         totalCapacity_{destinationBuffer.size()},
         maxPayloadCapacity_{destinationBuffer.size() >= TOTAL_OVERHEAD_BYTES
-                                ? destinationBuffer.size() - TOTAL_OVERHEAD_BYTES
+                                ? destinationBuffer.size() -
+                                      TOTAL_OVERHEAD_BYTES
                                 : 0},
         lastPayloadBytes_{0},
         isFinalized_{false},
@@ -243,8 +251,8 @@ class InPlaceHttpChunk {
     // Branchless hex length formatting backwards
     const uint32_t digits = detail::numHexDigits(payloadBytes);
     AD_CORRECTNESS_CHECK(digits <= 14);  // 14 hex digits + 2 CRLF <= 16 bytes
-    char* framedStart = detail::writeHexDigitsBackwards(headerEnd - 2,
-                                                       payloadBytes, digits);
+    char* framedStart =
+        detail::writeHexDigitsBackwards(headerEnd - 2, payloadBytes, digits);
 
     // Trailing CRLF
     char* tailPtr = headerEnd + payloadBytes;
@@ -357,7 +365,8 @@ class InPlaceHttpChunkStreamer {
   ~InPlaceHttpChunkStreamer() = default;
 
   // ___________________________________________________________________________
-  // Write arbitrary raw bytes into the streaming chunk buffer with auto-framing.
+  // Write arbitrary raw bytes into the streaming chunk buffer with
+  // auto-framing.
   void write(const void* src, size_t numBytes) {
     AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
 
@@ -409,9 +418,9 @@ class InPlaceHttpChunkStreamer {
   }
 
   // ___________________________________________________________________________
-  // Finalizing typestate transition (Law 2 / Law 3 & Architecture Standard § 3).
-  // Flushes any remaining bytes, optionally emits the "0\r\n\r\n" terminating
-  // chunk, and returns the aggregate HTTP stream summary metrics.
+  // Finalizing typestate transition (Law 2 / Law 3 & Architecture Standard §
+  // 3). Flushes any remaining bytes, optionally emits the "0\r\n\r\n"
+  // terminating chunk, and returns the aggregate HTTP stream summary metrics.
   [[nodiscard]] HttpStreamSummary finalize() && {
     flush();
     if (emitTerminatingChunkOnFinalize_) {
@@ -462,9 +471,9 @@ class InPlaceHttpChunkStreamer {
 }  // namespace ad_utility::http
 
 namespace ql::http {
+using ad_utility::http::HttpStreamSummary;
 using ad_utility::http::InPlaceHttpChunk;
 using ad_utility::http::InPlaceHttpChunkStreamer;
-using ad_utility::http::HttpStreamSummary;
 }  // namespace ql::http
 
 #endif  // QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H

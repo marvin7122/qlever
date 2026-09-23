@@ -76,7 +76,8 @@ class VectorizedPrefixTable {
   // past the prefix). Returns the number of bytes written.
   [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id,
                                               char* out) const noexcept {
-    const auto& entry = entries_[static_cast<size_t>(id)];
+    AD_CONTRACT_CHECK(static_cast<size_t>(id) < entries_.size());
+    const auto& entry = entries_.at(static_cast<size_t>(id));
 #ifdef QLEVER_SLICER_X86
     const __m128i* src = reinterpret_cast<const __m128i*>(entry.data);
     __m128i* dst = reinterpret_cast<__m128i*>(out);

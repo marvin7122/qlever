@@ -210,11 +210,15 @@ class FastExportStreamFormatter {
   template <typename IntegerType>
   requires std::is_integral_v<IntegerType>
   void writeInteger(IntegerType value) {
-    ensureAvailable(32);
-    auto [ptr, ec] = std::to_chars(bufferPtr_ + writePos_,
-                                   bufferPtr_ + bufferCapacity_, value);
+    // Format into a scratch buffer first: an integer needs at most 20
+    // characters, so reserving a fixed 32 bytes up front would wrongly reject
+    // fixed-span writes that have enough space for the digits but not for 32.
+    std::array<char, 32> temporary{};
+    auto [end, ec] = std::to_chars(temporary.data(),
+                                   temporary.data() + temporary.size(), value);
     AD_CORRECTNESS_CHECK(ec == std::errc{});
-    writePos_ = static_cast<size_t>(ptr - bufferPtr_);
+    writeRaw(std::string_view{temporary.data(),
+                              static_cast<size_t>(end - temporary.data())});
   }
 
   // ___________________________________________________________________________
@@ -306,6 +310,24 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
+  // Escape Turtle/N-Triples literal content (backslash, quote, CR, LF).
+  void writeTurtleLiteralContent(std::string_view content) {
+    for (char c : content) {
+      if (c == '\\') {
+        writeRaw("\\\\");
+      } else if (c == '"') {
+        writeRaw("\\\"");
+      } else if (c == '\n') {
+        writeRaw("\\n");
+      } else if (c == '\r') {
+        writeRaw("\\r");
+      } else {
+        writeChar(c);
+      }
+    }
+  }
+
+  // ___________________________________________________________________________
   // Fast Turtle / NTriples normalized literal serializer.
   // Escapes backslashes, quotes, and newlines inside the literal content.
   void writeEscapedTurtleLiteral(std::string_view normLiteral) {
@@ -324,20 +346,7 @@ class FastExportStreamFormatter {
 
     // Write opening quote
     writeChar('"');
-    std::string_view content = normLiteral.substr(1, posLastQuote - 1);
-    for (char c : content) {
-      if (c == '\\') {
-        writeRaw("\\\\");
-      } else if (c == '"') {
-        writeRaw("\\\"");
-      } else if (c == '\n') {
-        writeRaw("\\n");
-      } else if (c == '\r') {
-        writeRaw("\\r");
-      } else {
-        writeChar(c);
-      }
-    }
+    writeTurtleLiteralContent(normLiteral.substr(1, posLastQuote - 1));
     // Write closing quote and any trailing lang/datatype suffix
     writeRaw(normLiteral.substr(posLastQuote));
   }
@@ -383,9 +392,19 @@ class FastExportStreamFormatter {
         writeRaw(term.rdfTermString_);
       }
     } else {
-      // Fully-qualified form: "value"^^<datatype>
+      // Fully-qualified form: "value"^^<datatype>. The lexical value is
+      // escaped per format: a verbatim copy would let quotes, commas, or
+      // line breaks forge extra fields or break the literal.
+      if (format == ExportFormat::Csv) {
+        writeEscapedCsv(term.rdfTermString_);
+        return;
+      }
+      if (format == ExportFormat::Tsv) {
+        writeEscapedTsv(term.rdfTermString_);
+        return;
+      }
       writeChar('"');
-      writeRaw(term.rdfTermString_);
+      writeTurtleLiteralContent(term.rdfTermString_);
       writeRaw("\"^^<");
       writeRaw(term.rdfTermDataType_);
       writeChar('>');

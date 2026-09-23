@@ -127,6 +127,12 @@ class PrefixCompressor {
   [[nodiscard]] size_t decompressInto(std::string_view compressedWord,
                                       ql::span<char> out) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(compressedWord));
+    // `out` must not overlap `compressedWord`: the prefix is written to
+    // `out` before `rest` (which aliases `compressedWord`) is read, so an
+    // overlap would clobber the input and then copy the clobbered bytes.
+    AD_CONTRACT_CHECK(out.data() + out.size() <= compressedWord.data() ||
+                      compressedWord.data() + compressedWord.size() <=
+                          out.data());
 
     const auto idx = prefixIndex(compressedWord);
     const std::string_view rest = compressedWord.substr(1);

@@ -80,7 +80,9 @@ class RlePrefixSlice {
   constexpr RlePrefixSlice() noexcept = default;
 
   [[nodiscard]] constexpr bool isValid() const noexcept { return valid_; }
-  [[nodiscard]] constexpr ValueId cachedId() const noexcept { return cachedId_; }
+  [[nodiscard]] constexpr ValueId cachedId() const noexcept {
+    return cachedId_;
+  }
   [[nodiscard]] constexpr size_t length() const noexcept { return length_; }
   [[nodiscard]] const char* data() const noexcept { return buffer_.data(); }
 
@@ -118,23 +120,23 @@ struct RleFormatterConfig {
   std::string_view prefix_{"<"};
   std::string_view suffix_{">"};
   std::string_view delimiter_{" "};
-
 };
 
 // _____________________________________________________________________________
 // Deep Module: RlePrefixFormatter
 //
-// In sorted query result tables (e.g. SPO or PSO permutation scans), the subject
-// or predicate is identical across thousands of consecutive triples.
-// Standard serializers repeatedly resolve and format the exact same IRI string on
-// every row.
+// In sorted query result tables (e.g. SPO or PSO permutation scans), the
+// subject or predicate is identical across thousands of consecutive triples.
+// Standard serializers repeatedly resolve and format the exact same IRI string
+// on every row.
 //
 // DuckDB uses Run-Length Encoded (RLE) constant folding to format repeated
 // column prefixes once.
 //
 // RlePrefixFormatter:
 // 1. Detects consecutive runs of identical ValueIds in sorted columns.
-// 2. Formats the constant IRI once into a thread-local prefix slice, and splices
+// 2. Formats the constant IRI once into a thread-local prefix slice, and
+// splices
 //    it into subsequent output rows with a single 64-bit/128-bit word copy.
 // 3. Seamlessly switches back to dynamic formatting when the run ends.
 class RlePrefixFormatter {
@@ -142,39 +144,52 @@ class RlePrefixFormatter {
   RlePrefixSlice<2048> slice_{};
   RleFormatterConfig config_{};
   RleStats stats_{};
+  // The raw term of the cached run: the same `ValueId` may legally pair with
+  // a different term string across calls, so the ID alone is not a valid
+  // cache key.
+  std::string lastRawTerm_{};
 
  public:
   explicit RlePrefixFormatter(RleFormatterConfig config = RleFormatterConfig{})
-      : config_{config} {
-  }
+      : config_{config} {}
 
   // ___________________________________________________________________________
   [[nodiscard]] const RleStats& stats() const noexcept { return stats_; }
-  [[nodiscard]] const RleFormatterConfig& config() const noexcept { return config_; }
+  [[nodiscard]] const RleFormatterConfig& config() const noexcept {
+    return config_;
+  }
 
   void resetStats() noexcept { stats_.reset(); }
 
   void reset() noexcept {
     slice_.invalidate();
     stats_.reset();
+    lastRawTerm_.clear();
   }
 
   // ___________________________________________________________________________
   // Format a column prefix when raw term string_view is provided.
   // If `id` matches the active cached run, skips formatting and splices slice.
   // When run ends (`id != cachedId`), re-formats into slice and updates cache.
-  inline char* formatPrefix(ValueId id, std::string_view rawTerm,
-                            char* out) noexcept {
+  inline char* formatPrefix(ValueId id, std::string_view rawTerm, char* out) {
     AD_CONTRACT_CHECK(out != nullptr);
     ++stats_.totalTerms_;
 
-    if (slice_.isValid() && id == slice_.cachedId()) {
+    if (slice_.isValid() && id == slice_.cachedId() &&
+        rawTerm == lastRawTerm_) {
       ++stats_.cacheHits_;
       return slice_.spliceInto(out);
     }
 
-    // Cache miss: format new prefix slice
+    // Cache miss: format new prefix slice. The combined length is checked
+    // before any copy: writing first and relying on `assign`'s check would
+    // overflow `tempBuf` before the check runs.
     ++stats_.cacheMisses_;
+    const size_t formattedLen = config_.prefix_.size() + rawTerm.size() +
+                                config_.suffix_.size() +
+                                config_.delimiter_.size();
+    AD_CONTRACT_CHECK(formattedLen <= 2048);
+    lastRawTerm_.assign(rawTerm.data(), rawTerm.size());
     std::array<char, 2048> tempBuf{};
     char* curr = tempBuf.data();
 
@@ -206,14 +221,19 @@ class RlePrefixFormatter {
 
   // ___________________________________________________________________________
   // Format a column prefix with lazy ID-to-string lookup.
-  // If `id` matches the active run, `lookupFunc` is NOT called (100% lookup savings).
-  // When run ends, `lookupFunc(id)` is invoked exactly once for the new run.
+  // If `id` matches the active run, `lookupFunc` is NOT called (100% lookup
+  // savings). When run ends, `lookupFunc(id)` is invoked exactly once for the
+  // new run.
   template <typename LookupFunc>
   inline char* formatPrefixWithLookup(ValueId id, LookupFunc&& lookupFunc,
                                       char* out) {
     AD_CONTRACT_CHECK(out != nullptr);
     ++stats_.totalTerms_;
 
+    // The ID alone is a valid key here (unlike in `formatPrefix`): the term
+    // comes from `lookupFunc(id)`, which must be a pure function of the ID,
+    // so an identical ID always yields an identical term and the lookup stays
+    // lazy on cache hits.
     if (slice_.isValid() && id == slice_.cachedId()) {
       ++stats_.cacheHits_;
       return slice_.spliceInto(out);
@@ -222,6 +242,10 @@ class RlePrefixFormatter {
     // Cache miss: invoke lookup once
     ++stats_.cacheMisses_;
     std::string_view rawTerm = lookupFunc(id);
+    const size_t formattedLen = config_.prefix_.size() + rawTerm.size() +
+                                config_.suffix_.size() +
+                                config_.delimiter_.size();
+    AD_CONTRACT_CHECK(formattedLen <= 2048);
 
     std::array<char, 2048> tempBuf{};
     char* curr = tempBuf.data();
@@ -254,7 +278,7 @@ class RlePrefixFormatter {
   // Returns: Pointer past the last byte written.
   inline char* formatBatch(ql::span<const ValueId> ids,
                            ql::span<const std::string_view> rawTerms,
-                           char* out) noexcept {
+                           char* out) {
     AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
     AD_CONTRACT_CHECK(out != nullptr || ids.empty());
 
@@ -285,10 +309,10 @@ class RlePrefixFormatter {
 // _____________________________________________________________________________
 // Deep Module: RleTripleFormatter
 //
-// Specializes RLE constant folding for sorted RDF triple streams (SPO / PSO scans).
-// Folds repeated Subject and Predicate column runs into cached prefix slices,
-// formatting the full triple `<s> <p> <o> .\n` (or TSV/CSV format) with single-pass
-// word copies for the repeated columns.
+// Specializes RLE constant folding for sorted RDF triple streams (SPO / PSO
+// scans). Folds repeated Subject and Predicate column runs into cached prefix
+// slices, formatting the full triple `<s> <p> <o> .\n` (or TSV/CSV format) with
+// single-pass word copies for the repeated columns.
 class RleTripleFormatter {
  private:
   RlePrefixFormatter subjectFormatter_;
@@ -299,10 +323,8 @@ class RleTripleFormatter {
 
  public:
   explicit RleTripleFormatter(
-      RleFormatterConfig subjectConfig =
-          RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
-      RleFormatterConfig predicateConfig =
-          RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
+      RleFormatterConfig subjectConfig = RleFormatterConfig{"<", ">", " "},
+      RleFormatterConfig predicateConfig = RleFormatterConfig{"<", ">", " "},
       std::string_view objectPrefix = "<", std::string_view objectSuffix = ">",
       std::string_view rowTerminator = " .\n")
       : subjectFormatter_{subjectConfig},
@@ -314,24 +336,24 @@ class RleTripleFormatter {
   // ___________________________________________________________________________
   // Factory methods for standard export formats.
   [[nodiscard]] static RleTripleFormatter makeNTriplesFormatter() {
-    return RleTripleFormatter(
-        RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
-        RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "},
-        "<", ">", " .\n");
+    return RleTripleFormatter(RleFormatterConfig{"<", ">", " "},
+                              RleFormatterConfig{"<", ">", " "}, "<", ">",
+                              " .\n");
   }
 
   [[nodiscard]] static RleTripleFormatter makeTsvFormatter() {
-    return RleTripleFormatter(
-        RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = "\t"},
-        RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = "\t"},
-        "<", ">", "\n");
+    return RleTripleFormatter(RleFormatterConfig{"<", ">", "\t"},
+                              RleFormatterConfig{"<", ">", "\t"}, "<", ">",
+                              "\n");
   }
 
+  // CSV terms must arrive pre-escaped (embedded `"` doubled) by the caller:
+  // doubling quotes inline would expand the output unpredictably, which the
+  // fixed-size branchless splicing cannot express.
   [[nodiscard]] static RleTripleFormatter makeCsvFormatter() {
-    return RleTripleFormatter(
-        RleFormatterConfig{.prefix_ = "\"", .suffix_ = "\"", .delimiter_ = ","},
-        RleFormatterConfig{.prefix_ = "\"", .suffix_ = "\"", .delimiter_ = ","},
-        "\"", "\"", "\n");
+    return RleTripleFormatter(RleFormatterConfig{"\"", "\"", ","},
+                              RleFormatterConfig{"\"", "\"", ","}, "\"", "\"",
+                              "\n");
   }
 
   // ___________________________________________________________________________
@@ -352,7 +374,7 @@ class RleTripleFormatter {
   inline char* formatTriple(ValueId subjId, std::string_view subjTerm,
                             ValueId predId, std::string_view predTerm,
                             ValueId objId, std::string_view objTerm,
-                            char* out) noexcept {
+                            char* out) {
     (void)objId;
     AD_CONTRACT_CHECK(out != nullptr);
 
@@ -398,8 +420,7 @@ class RleTripleFormatter {
         subjectFormatter_.formatPrefixWithLookup(subjId, lookupFunc, out);
 
     // 2. Spliced Predicate prefix with lazy lookup
-    curr =
-        predicateFormatter_.formatPrefixWithLookup(predId, lookupFunc, curr);
+    curr = predicateFormatter_.formatPrefixWithLookup(predId, lookupFunc, curr);
 
     // 3. Object term lookup & write
     std::string_view objTerm = lookupFunc(objId);

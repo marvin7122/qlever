@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <charconv>
+#include <cstring>
 #include <numeric>
 #include <string>
 #include <string_view>

@@ -91,13 +91,14 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
         "Three-stage FSST scratch-buffer strategies (5,000 words)");
     const char* selectedStrategyEnv = std::getenv("FSST_SCRATCH_ONLY");
     const size_t selectedStrategy =
-        selectedStrategyEnv == nullptr
-            ? 3
-            : std::strtoul(selectedStrategyEnv, nullptr, 10);
+        selectedStrategyEnv == nullptr ? 3
+                                       : static_cast<size_t>(std::strtoul(
+                                             selectedStrategyEnv, nullptr, 10));
     const char* repetitionsEnv = std::getenv("FSST_SCRATCH_INNER_REPETITIONS");
-    const size_t repetitions = repetitionsEnv == nullptr
-                                   ? 1
-                                   : std::strtoul(repetitionsEnv, nullptr, 10);
+    const size_t repetitions =
+        repetitionsEnv == nullptr
+            ? 1
+            : static_cast<size_t>(std::strtoul(repetitionsEnv, nullptr, 10));
     AD_CONTRACT_CHECK(selectedStrategy <= 3);
     AD_CONTRACT_CHECK(repetitions > 0);
 

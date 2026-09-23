@@ -167,6 +167,7 @@ class PinnedArena {
     AD_CONTRACT_CHECK(numSlots > 0);
     AD_CONTRACT_CHECK(slotSizeBytes > 0);
     AD_CONTRACT_CHECK(isBlockAligned(slotSizeBytes));
+    AD_CONTRACT_CHECK(numSlots <= SIZE_MAX / slotSizeBytes);
 
     slotSize_ = slotSizeBytes;
     numSlots_ = numSlots;
@@ -331,6 +332,9 @@ class RegisteredIoUringReader {
   // Results of batches completed by the synchronous fallback (`readSync`
   // always reads the full request, so the result is known at submit time).
   ad_utility::HashMap<BatchId, BatchResult> completedSyncBatches_;
+  // Completions of other batches drained while waiting for one batch:
+  // `waitBatch` must preserve them instead of dropping their results.
+  ad_utility::HashMap<BatchId, BatchResult> completedAsyncBatches_;
   uint64_t nextReqId_ = 0;
 
  public:
@@ -360,6 +364,7 @@ class RegisteredIoUringReader {
         inFlightByReqId_{std::move(other.inFlightByReqId_)},
         inFlightByBatchId_{std::move(other.inFlightByBatchId_)},
         completedSyncBatches_{std::move(other.completedSyncBatches_)},
+        completedAsyncBatches_{std::move(other.completedAsyncBatches_)},
         nextReqId_{other.nextReqId_} {
 #ifdef QLEVER_HAS_LIBURING
     other.ringInitialized_ = false;
@@ -387,6 +392,7 @@ class RegisteredIoUringReader {
       inFlightByReqId_ = std::move(other.inFlightByReqId_);
       inFlightByBatchId_ = std::move(other.inFlightByBatchId_);
       completedSyncBatches_ = std::move(other.completedSyncBatches_);
+      completedAsyncBatches_ = std::move(other.completedAsyncBatches_);
       nextReqId_ = other.nextReqId_;
 
       other.filesRegistered_ = false;
@@ -534,6 +540,14 @@ class RegisteredIoUringReader {
 
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
         AD_CONTRACT_CHECK(req.bufferIndex < registeredIovecs_.size());
+        const auto& buffer = registeredIovecs_[req.bufferIndex];
+        // `destination` must be the registered base plus `bufferOffset`, and
+        // the range must lie inside the registered iovec.
+        AD_CONTRACT_CHECK(req.bufferOffset <= buffer.iov_len);
+        AD_CONTRACT_CHECK(req.numBytes <= buffer.iov_len - req.bufferOffset);
+        AD_CONTRACT_CHECK(req.destination ==
+                          static_cast<char*>(buffer.iov_base) +
+                              req.bufferOffset);
         // Fixed buffer read with kernel page-pinning
         io_uring_prep_read_fixed(sqe, targetFd, req.destination, req.numBytes,
                                  req.fileOffset, req.bufferIndex);
@@ -553,10 +567,21 @@ class RegisteredIoUringReader {
       ++numInFlightRequests_;
     }
 
-    const int submitRet = io_uring_submit(&ring_);
-    if (submitRet < 0 && submitRet != -EAGAIN && submitRet != -EBUSY) {
-      AD_THROW(
-          absl::StrCat("io_uring_submit failed (errno: ", -submitRet, ")"));
+    // `io_uring_submit` may submit fewer SQEs than prepared (or none with
+    // `-EAGAIN`/`-EBUSY`): every prepared request is already tracked, so
+    // retry until the whole batch reached the kernel instead of hanging in
+    // `waitBatch` on completions that were never submitted.
+    size_t submitted = 0;
+    while (submitted < requests.size()) {
+      const int submitRet = io_uring_submit(&ring_);
+      if (submitRet < 0) {
+        if (submitRet == -EAGAIN || submitRet == -EBUSY) {
+          continue;
+        }
+        AD_THROW(
+            absl::StrCat("io_uring_submit failed (errno: ", -submitRet, ")"));
+      }
+      submitted += static_cast<size_t>(submitRet);
     }
 #else
     submitBatchSync(requests);
@@ -593,11 +618,24 @@ class RegisteredIoUringReader {
     size_t completed = 0;
     size_t totalBytes = 0;
 
+    // A previous wait for another batch may already have drained (part of)
+    // this batch; start from the preserved totals.
+    auto doneIt = completedAsyncBatches_.find(batchId);
+    if (doneIt != completedAsyncBatches_.end()) {
+      completed = doneIt->second.requestsCompleted;
+      totalBytes = doneIt->second.totalBytesRead;
+      completedAsyncBatches_.erase(doneIt);
+    }
+
     while (inFlightByBatchId_.find(batchId) != inFlightByBatchId_.end()) {
       auto [bytesRead, bId] = drainOneCqe();
       if (bId == batchId) {
         ++completed;
         totalBytes += bytesRead;
+      } else {
+        auto& stored = completedAsyncBatches_[bId];
+        ++stored.requestsCompleted;
+        stored.totalBytesRead += bytesRead;
       }
     }
 

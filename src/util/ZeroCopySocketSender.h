@@ -89,15 +89,17 @@ class ZeroCopyBufferPool {
     AD_CONTRACT_CHECK(numBuffers > 0);
     AD_CONTRACT_CHECK(bufferSizeBytes > 0);
     AD_CONTRACT_CHECK((bufferSizeBytes % kZeroCopyPageAlignment) == 0);
+    AD_CONTRACT_CHECK(numBuffers <= UINT32_MAX);
+    AD_CONTRACT_CHECK(numBuffers <= SIZE_MAX / bufferSizeBytes);
 
     numBuffers_ = numBuffers;
     bufferSizeBytes_ = bufferSizeBytes;
     totalBytes_ = numBuffers_ * bufferSizeBytes_;
 
-    int ret =
-        posix_memalign(&rawBuffer_, kZeroCopyPageAlignment, totalBytes_);
+    int ret = posix_memalign(&rawBuffer_, kZeroCopyPageAlignment, totalBytes_);
     if (ret != 0 || rawBuffer_ == nullptr) {
-      AD_THROW("posix_memalign failed to allocate zero-copy pinned buffer pool");
+      AD_THROW(
+          "posix_memalign failed to allocate zero-copy pinned buffer pool");
     }
 
     // Pre-fault memory pages before registration to avoid soft page faults
@@ -114,7 +116,6 @@ class ZeroCopyBufferPool {
                               .iov_len = bufferSizeBytes_});
       freeSlots_.push_back(static_cast<uint32_t>(numBuffers_ - 1 - i));
     }
-
   }
 
   ~ZeroCopyBufferPool() {
@@ -303,7 +304,6 @@ class ZeroCopySocketSender {
   // flushes pending SQEs to the kernel and reaps CQEs until a slot is released.
   // Guaranteed zero heap allocation.
   [[nodiscard]] uint32_t acquireBuffer() {
-
     while (true) {
       auto slotOpt = bufferPool_.acquireSlot();
       if (slotOpt.has_value()) {
@@ -357,19 +357,23 @@ class ZeroCopySocketSender {
 
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
 
+    // Like the synchronous fallback, suppress SIGPIPE here: a broken peer must
+    // surface as an error CQE, not terminate the process.
+    const int sendFlags = flags | MSG_NOSIGNAL;
     if (config_.useZeroCopy) {
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
-        // Zero-Copy Send with Registered Fixed Buffer (Opcode: IORING_OP_SEND_ZC)
+        // Zero-Copy Send with Registered Fixed Buffer (Opcode:
+        // IORING_OP_SEND_ZC)
         io_uring_prep_send_zc_fixed(sqe, sockfd, slotSpan.data(), numBytes,
-                                    flags, zcFlags, bufferIndex);
+                                    sendFlags, zcFlags, bufferIndex);
       } else {
         // Zero-Copy Send with Unpinned Buffer
-        io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, flags,
+        io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, sendFlags,
                               zcFlags);
       }
     } else {
       // Standard asynchronous io_uring send
-      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, flags);
+      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, sendFlags);
     }
 
     const uint64_t reqId = nextRequestId_++;
@@ -443,7 +447,9 @@ class ZeroCopySocketSender {
   [[nodiscard]] const ZeroCopyBufferPool& bufferPool() const noexcept {
     return bufferPool_;
   }
-  [[nodiscard]] ZeroCopyBufferPool& bufferPool() noexcept { return bufferPool_; }
+  [[nodiscard]] ZeroCopyBufferPool& bufferPool() noexcept {
+    return bufferPool_;
+  }
 
   [[nodiscard]] size_t inFlightRequests() const noexcept {
     return numInFlightRequests_;
@@ -475,9 +481,9 @@ class ZeroCopySocketSender {
  private:
   void initRing() {
 #ifdef QLEVER_HAS_LIBURING
-    int ret = io_uring_queue_init(
-        static_cast<unsigned int>(config_.ringEntries), &ring_,
-        config_.additionalFlags);
+    int ret =
+        io_uring_queue_init(static_cast<unsigned int>(config_.ringEntries),
+                            &ring_, config_.additionalFlags);
     if (ret < 0) {
       ringInitialized_ = false;
       AD_LOG_WARN << "io_uring_queue_init failed (errno: " << -ret
@@ -576,6 +582,9 @@ class ZeroCopySocketSender {
     ++totalPacketsSent_;
 
     if (flags & IORING_CQE_F_MORE) {
+      // A short first completion would silently truncate the chunk: the
+      // remaining bytes are never retried, so require the full count here.
+      AD_CORRECTNESS_CHECK(static_cast<size_t>(res) == entry.expectedBytes);
       // Kernel is holding the buffer for zero-copy DMA; wait for CQE 2 (NOTIF)
       entry.waitingForNotification = true;
     } else {
@@ -608,6 +617,12 @@ class ZeroCopySocketSender {
         }
         bufferPool_.releaseSlot(bufferIndex);
         AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+      }
+      if (bytesSent == 0) {
+        // No progress on a non-empty request: retrying would spin forever
+        // while retaining the slot.
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW("send returned zero bytes for a non-empty request");
       }
       totalSent += static_cast<size_t>(bytesSent);
     }

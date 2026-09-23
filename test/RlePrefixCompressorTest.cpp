@@ -20,8 +20,7 @@
 using namespace ql::engine::rle;
 
 TEST(RlePrefixCompressorTest, BasicRunLengthConstantFolding) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   auto id = ValueId::makeFromVocabIndex(VocabIndex::make(100));
   std::string_view rawTerm = "http://example.org/entity/Q42";
@@ -93,8 +92,7 @@ TEST(RlePrefixCompressorTest, DynamicSwitchingWhenRunEnds) {
 }
 
 TEST(RlePrefixCompressorTest, UnsortedAlternatingIds) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   auto idA = ValueId::makeFromVocabIndex(VocabIndex::make(1));
   auto idB = ValueId::makeFromVocabIndex(VocabIndex::make(2));
@@ -123,8 +121,7 @@ TEST(RlePrefixCompressorTest, UnsortedAlternatingIds) {
 }
 
 TEST(RlePrefixCompressorTest, LookupFunctorAvoidance) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   auto idA = ValueId::makeFromVocabIndex(VocabIndex::make(10));
   auto idB = ValueId::makeFromVocabIndex(VocabIndex::make(20));
@@ -157,8 +154,7 @@ TEST(RlePrefixCompressorTest, LookupFunctorAvoidance) {
 }
 
 TEST(RlePrefixCompressorTest, BatchFormatting) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   std::vector<ValueId> ids = {ValueId::makeFromVocabIndex(VocabIndex::make(1)),
                               ValueId::makeFromVocabIndex(VocabIndex::make(1)),
@@ -244,8 +240,7 @@ TEST(RlePrefixCompressorTest, MultiColumnTripleFormattingTsv) {
 }
 
 TEST(RlePrefixCompressorTest, ResetAndInvalidate) {
-  RlePrefixFormatter formatter{
-      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  RlePrefixFormatter formatter{RleFormatterConfig{"<", ">", " "}};
 
   auto id = ValueId::makeFromVocabIndex(VocabIndex::make(1));
   std::string_view term = "http://test";

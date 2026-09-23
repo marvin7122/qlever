@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -54,6 +55,10 @@ struct TypeFormatDescriptor {
 namespace detail {
 
 // Fast branchless copy for terms with opening and closing delimiters.
+// Contract: `rawTerm` must already carry format-correct escaping (quotes,
+// backslashes, line breaks). Escaping expands the output unpredictably and
+// therefore stays with the caller (as in `ExportIds`), keeping this path
+// branchless over pre-allocated memory.
 inline char* formatTermWithDelimiters(ValueId, std::string_view rawTerm,
                                       char* out, std::string_view prefix,
                                       std::string_view suffix) noexcept {
@@ -89,8 +94,18 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = doubleToChars(out, out + 32, id.getDouble());
-  out = ptr;
+  // `to_chars`/`snprintf` spell special values lowercase (`nan`, `inf`),
+  // which are not valid RDF lexical forms; map them explicitly.
+  const double value = id.getDouble();
+  if (std::isnan(value)) {
+    out = std::copy_n("NaN", 3, out);
+  } else if (std::isinf(value)) {
+    const std::string_view text = value > 0 ? "INF" : "-INF";
+    out = std::copy(text.begin(), text.end(), out);
+  } else {
+    auto [ptr, ec] = doubleToChars(out, out + 32, value);
+    out = ptr;
+  }
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;
@@ -132,9 +147,23 @@ inline char* formatDate(ValueId id, std::string_view, char* out,
                         std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
+  // `toStringAndType` returns the value-dependent datatype IRI (`xsd:date`,
+  // `xsd:gYear`, ...): a fixed `#dateTime` suffix would mistype partial
+  // dates, so the `"^^<IRI>` suffix is composed here (the LUT suffix for
+  // dates is empty). An empty `prefix` selects the raw-vocabulary LUT, which
+  // wants the bare lexical form without any quoting or datatype suffix.
   auto [str, type] = id.getDate().toStringAndType();
   std::memcpy(out, str.data(), str.size());
   out += str.size();
+  if (!prefix.empty() && type != nullptr) {
+    *out++ = '"';
+    std::memcpy(out, "^^<", 3);
+    out += 3;
+    const size_t typeLen = std::strlen(type);
+    std::memcpy(out, type, typeLen);
+    out += typeLen;
+    *out++ = '>';
+  }
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;
@@ -175,9 +204,9 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::Bool)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", &formatBoolean};
 
-  // 2: Int
+  // 2: Int (`xsd:int`, matching `ExportIds` and `XSD_INT_TYPE`).
   lut[static_cast<size_t>(Datatype::Int)] = TypeFormatDescriptor{
-      "\"", "\"^^<http://www.w3.org/2001/XMLSchema#integer>", &formatInteger};
+      "\"", "\"^^<http://www.w3.org/2001/XMLSchema#int>", &formatInteger};
 
   // 3: Double
   lut[static_cast<size_t>(Datatype::Double)] = TypeFormatDescriptor{
@@ -199,9 +228,10 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 8: Date
-  lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
-      "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
+  // 8: Date (the datatype suffix is composed by `formatDate` because the
+  // type depends on the value: `xsd:date`, `xsd:gYear`, ...).
+  lut[static_cast<size_t>(Datatype::Date)] =
+      TypeFormatDescriptor{"\"", "", &formatDate};
 
   // 9: GeoPoint
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
@@ -247,8 +277,9 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
-  lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
-      "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
+  // Date composes its value-dependent datatype suffix in `formatDate`.
+  lut[static_cast<size_t>(Datatype::Date)] =
+      TypeFormatDescriptor{"\"", "", &formatDate};
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
@@ -326,6 +357,9 @@ class BranchlessTypeDispatcher {
     AD_CONTRACT_CHECK(out != nullptr);
     const uint8_t typeTag =
         static_cast<uint8_t>(id.getBits() >> ValueId::numDataBits) & 0x0F;
+    // Tags past `Datatype::MaxValue` have no LUT entry: fail loudly instead
+    // of silently emitting zero bytes via `formatUndefined`.
+    AD_CORRECTNESS_CHECK(typeTag <= static_cast<uint8_t>(Datatype::MaxValue));
     const auto& desc = lut[typeTag];
     return desc.formatFn_(id, rawTerm, out, desc.prefix_, desc.suffix_);
   }

@@ -14,6 +14,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -232,11 +233,14 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
       : alloc_{std::move(alloc)} {}
 
  protected:
-  // The alignment argument is intentionally ignored: this resource only serves
-  // `char` allocations from the arena builders, for which any alignment
-  // suffices, and the underlying `AllocatorWithLimit` has no alignment
-  // concept (it counts bytes).
-  void* do_allocate(std::size_t bytes, std::size_t) override {
+  // This resource only serves `char` allocations from the arena builders,
+  // and the underlying `AllocatorWithLimit` has no alignment concept (it
+  // counts bytes, backed by `::operator new` with fundamental alignment).
+  // Anything beyond fundamental alignment cannot be honored here: fail
+  // loudly instead of returning an under-aligned pointer (unlike
+  // `LimitedMemoryResource`, there is no upstream to forward to).
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+    AD_CONTRACT_CHECK(alignment <= alignof(std::max_align_t));
     return alloc_.allocate(bytes);
   }
   void do_deallocate(void* p, std::size_t bytes, std::size_t) override {

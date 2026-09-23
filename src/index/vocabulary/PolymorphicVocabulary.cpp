@@ -73,8 +73,18 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
         // workflow cannot compile (see `hasLookupBatchWithBuilder`).
         if constexpr (ad_utility::vocabulary::hasLookupBatchWithBuilder<
                           decltype(vocab)>) {
-          vocab.lookupBatch(indices, builder);
-          return std::move(builder).finalize();
+          // A `void` overload populates `builder` (e.g. compressed
+          // vocabularies): finalize it. An overload that returns a result
+          // keeps its own storage (e.g. wrappers around vocabularies without
+          // builder support): return that result instead of finalizing a
+          // builder it never populated.
+          if constexpr (std::is_void_v<decltype(vocab.lookupBatch(indices,
+                                                                  builder))>) {
+            vocab.lookupBatch(indices, builder);
+            return std::move(builder).finalize();
+          } else {
+            return vocab.lookupBatch(indices, builder);
+          }
         } else {
           return vocab.lookupBatch(indices);
         }

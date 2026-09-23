@@ -188,7 +188,7 @@ namespace detail {
 // `snprintf`. `%.17g` preserves round-trip fidelity; only the shortest-digit
 // spelling of `to_chars` differs.
 template <typename Writer>
-inline void writeFormattedDouble(Writer& writer, double val) noexcept {
+inline void writeFormattedDouble(Writer& writer, double val) {
   std::array<char, 32> buffer;
   auto [ptr, ec] = ql::engine::detail::doubleToChars(
       buffer.data(), buffer.data() + buffer.size(), val);
@@ -596,6 +596,14 @@ decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
                             Args&&... args) {
+  // `Undefined` columns must keep `UNDEF` semantics (notably for
+  // Turtle/N-Triples): the monomorphic serializers below have no `Undefined`
+  // instantiation, so route such schemas to the dynamic fallback instead of
+  // mis-instantiating them as `String`.
+  if (c0 == ColumnType::Undefined || c1 == ColumnType::Undefined) {
+    DynamicRowSerializer dynamicSerializer({c0, c1});
+    return visitor(dynamicSerializer, std::forward<Args>(args)...);
+  }
   auto inner = [&](auto t0) {
     switch (c1) {
       case ColumnType::Iri:

@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <cstring>
@@ -61,8 +62,28 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
   int sv[2];
   ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
 
+  // RAII cleanup: without this, an `AD_THROW` below would leak the
+  // descriptors (and terminate on the still-joinable receiver thread).
+  struct FdGuard {
+    int fd = -1;
+    ~FdGuard() {
+      if (fd >= 0) {
+        ::close(fd);
+      }
+    }
+  };
+  FdGuard sendGuard{sv[0]};
+  FdGuard recvGuard{sv[1]};
   int sendFd = sv[0];
   int recvFd = sv[1];
+
+  // Bound the receiver's blocking `recv`: without a timeout a sender-side
+  // failure hangs the test forever instead of failing it.
+  struct timeval recvTimeout {};
+  recvTimeout.tv_sec = 10;
+  ASSERT_EQ(::setsockopt(recvFd, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout,
+                         sizeof(recvTimeout)),
+            0);
 
   ZeroCopySenderConfig config;
   config.ringEntries = 16;
@@ -105,15 +126,24 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
     sender.sendChunk(sendFd, slot, chunkSize);
   }
 
+  // Join on all paths: `flushAndDrainAll` and the `EXPECT`s above can throw
+  // (`AD_THROW`), which would otherwise terminate on the joinable thread.
+  struct ThreadJoinGuard {
+    std::thread& thread;
+    ~ThreadJoinGuard() {
+      if (thread.joinable()) {
+        thread.join();
+      }
+    }
+  };
+  ThreadJoinGuard joinGuard{receiverThread};
+
   sender.flushAndDrainAll();
   EXPECT_EQ(sender.inFlightRequests(), 0u);
   EXPECT_EQ(sender.inFlightBuffers(), 0u);
   EXPECT_EQ(sender.bufferPool().availableSlots(), config.numBuffers);
 
   receiverThread.join();
-
-  ::close(sendFd);
-  ::close(recvFd);
 
   EXPECT_EQ(receivedData, expectedData);
 }

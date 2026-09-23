@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <numeric>
 #include <random>
@@ -105,6 +106,20 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
 }
 
 // Baseline scalar character-by-character scanner for Turtle.
+[[nodiscard]] std::string_view turtleLiteralContent(
+    std::string_view normLiteral) noexcept {
+  // Scan the literal *content*, not the delimiters: every normalized literal
+  // starts with `"`, which is itself in the escape set, so scanning the full
+  // literal reports a hit at index 0 and measures nothing about the content.
+  if (normLiteral.size() >= 2 && normLiteral.front() == '"') {
+    const size_t last = normLiteral.rfind('"');
+    if (last > 0) {
+      return normLiteral.substr(1, last - 1);
+    }
+  }
+  return normLiteral;
+}
+
 [[nodiscard]] size_t scalarFindFirstEscapeTurtle(
     std::string_view text) noexcept {
   for (size_t i = 0; i < text.size(); ++i) {
@@ -201,7 +216,7 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
             "Scalar character-by-character scan (Turtle)", [&]() {
               size_t count = 0;
               for (const auto& lit : dataset_.literals) {
-                if (scalarFindFirstEscapeTurtle(lit) !=
+                if (scalarFindFirstEscapeTurtle(turtleLiteralContent(lit)) !=
                     std::string_view::npos) {
                   ++count;
                 }
@@ -229,7 +244,7 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
               size_t count = 0;
               for (const auto& lit : dataset_.literals) {
                 if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Turtle>(
-                        lit)) {
+                        turtleLiteralContent(lit))) {
                   ++count;
                 }
               }
@@ -255,7 +270,8 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
             "Scalar character-by-character scan (CSV)", [&]() {
               size_t count = 0;
               for (const auto& lit : dataset_.literals) {
-                if (scalarFindFirstEscapeCsv(lit) != std::string_view::npos) {
+                if (scalarFindFirstEscapeCsv(turtleLiteralContent(lit)) !=
+                    std::string_view::npos) {
                   ++count;
                 }
               }
@@ -281,7 +297,7 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
               size_t count = 0;
               for (const auto& lit : dataset_.literals) {
                 if (SimdEscapeClassifier::hasEscapes<EscapeFormat::CsvSpecial>(
-                        lit)) {
+                        turtleLiteralContent(lit))) {
                   ++count;
                 }
               }
@@ -306,7 +322,8 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
             "Scalar character-by-character scan (TSV)", [&]() {
               size_t count = 0;
               for (const auto& lit : dataset_.literals) {
-                if (scalarFindFirstEscapeTsv(lit) != std::string_view::npos) {
+                if (scalarFindFirstEscapeTsv(turtleLiteralContent(lit)) !=
+                    std::string_view::npos) {
                   ++count;
                 }
               }
@@ -331,7 +348,8 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
             "SimdEscapeClassifier::findFirstEscape (TSV AVX2)", [&]() {
               size_t count = 0;
               for (const auto& lit : dataset_.literals) {
-                if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Tsv>(lit)) {
+                if (SimdEscapeClassifier::hasEscapes<EscapeFormat::Tsv>(
+                        turtleLiteralContent(lit))) {
                   ++count;
                 }
               }
@@ -421,9 +439,23 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
             [&]() {
               char* outPtr = outputBuffer.data();
               for (const auto& lit : dataset_.literals) {
+                // Escape the literal *content* like the scalar baseline and
+                // `validRDFLiteralFromNormalized` do: escaping the full
+                // literal (delimiters included) produces `\"...\"` and
+                // measures a different, incorrect transformation.
+                const std::string_view content = turtleLiteralContent(lit);
+                const size_t posLastQuote = lit.rfind('"');
+                const std::string_view suffix =
+                    (posLastQuote == std::string_view::npos)
+                        ? std::string_view{}
+                        : lit.substr(posLastQuote + 1);
+                *outPtr++ = '"';
                 outPtr =
                     SimdEscapeClassifier::copyAndEscape<EscapeFormat::Turtle>(
-                        lit, outPtr);
+                        content, outPtr);
+                *outPtr++ = '"';
+                std::memcpy(outPtr, suffix.data(), suffix.size());
+                outPtr += suffix.size();
               }
               totalOutputBytes =
                   static_cast<size_t>(outPtr - outputBuffer.data());
