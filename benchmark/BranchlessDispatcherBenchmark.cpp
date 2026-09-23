@@ -408,9 +408,13 @@ BenchmarkResult runBenchmark(const std::string& name,
   }
 
   // Fold every written byte into the sink so the timed formatting loops
-  // stay observable to the optimizer.
+  // stay observable to the optimizer. Plain assignment (not `+=`): compound
+  // assignment on a volatile operand is deprecated in C++20 and fails
+  // `-Werror=volatile` builds.
   for (size_t i = 0; i < bytesWritten; ++i) {
-    gFormattedBytesSink += static_cast<unsigned char>(outputBuffer[i]);
+    gFormattedBytesSink =
+        gFormattedBytesSink +
+        static_cast<size_t>(static_cast<unsigned char>(outputBuffer[i]));
   }
 
   double avgMs = totalMs / static_cast<double>(iterations);

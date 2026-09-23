@@ -10,6 +10,7 @@
 #ifndef QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 #define QLEVER_SRC_UTIL_STREAMINGBUFFERWRITER_H
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
@@ -243,7 +245,8 @@ class StreamingBufferWriter {
   // would defeat the streaming purpose.
   void write(const void* src, size_t numBytes) {
     AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
-    AD_CONTRACT_CHECK(bytesWritten_ + numBytes <= capacity_);
+    AD_CONTRACT_CHECK(bytesWritten_ <= capacity_ &&
+                      numBytes <= capacity_ - bytesWritten_);
 
     if (numBytes == 0) {
       return;

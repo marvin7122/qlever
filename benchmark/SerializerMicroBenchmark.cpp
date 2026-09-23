@@ -59,6 +59,20 @@ struct AllocationTracker {
 #define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
 #endif
 
+// NOTE: the global `operator new`/`operator delete` pairs below are
+// intentionally implemented via `malloc`/`free`. GCC sees through to the
+// mismatched allocation functions and reports `-Wmismatched-new-delete`,
+// which is a false positive for replaceable global allocation functions.
+// GCC raises the warning while compiling the allocation call sites (via
+// inlining), so a pragma around the `operator delete` definitions alone does
+// not suppress it (observed failing on the gcc-11 `-Werror` leg); the warning
+// is therefore suppressed file-wide (GCC only, it is the only compiler that
+// emits it).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
+
 #ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
@@ -73,12 +87,8 @@ void* operator new(std::size_t size) {
 }
 
 // The `operator delete` overloads intentionally pair with the `std::malloc`
-// based `operator new` overloads above, which GCC's -Wmismatched-new-delete
-// cannot see through, so the warning is disabled locally for GCC only.
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
-#endif
+// based `operator new` overloads above; the file-wide `-Wmismatched-new-delete`
+// suppression above covers them.
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
@@ -98,10 +108,7 @@ void* operator new[](std::size_t size) {
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
 
 void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
-#endif
+#endif  // SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 
 namespace ad_benchmark {
 namespace {
@@ -292,3 +299,9 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
+
+// Closes the file-wide `-Wmismatched-new-delete` suppression opened above
+// (GCC only).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
