@@ -658,4 +658,14 @@ HttpServer(unsigned short, const std::string&, int, HttpHandler,
         BodyReadMode::Eager, HttpHandler,
         std::invoke_result_t<WebSocketHandlerSupplier, net::any_io_executor&>>;
 
+/// Overload of the guide above for the full argument list including the
+/// `lazyBodyChunkSize` and the `useSendZC` flag (class template argument
+/// deduction does not cover trailing constructor parameters on its own).
+template <typename HttpHandler, typename WebSocketHandlerSupplier>
+HttpServer(unsigned short, const std::string&, int, HttpHandler,
+           WebSocketHandlerSupplier, ad_utility::MemorySize, bool)
+    -> HttpServer<
+        BodyReadMode::Eager, HttpHandler,
+        std::invoke_result_t<WebSocketHandlerSupplier, net::any_io_executor&>>;
+
 #endif  // QLEVER_HTTPSERVER_H
