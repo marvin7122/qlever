@@ -70,6 +70,12 @@ class HardwarePerfCounter {
 #endif
   }
 
+  // The destructor owns the file descriptors; copies would double-close them.
+  HardwarePerfCounter(const HardwarePerfCounter&) = delete;
+  HardwarePerfCounter& operator=(const HardwarePerfCounter&) = delete;
+  HardwarePerfCounter(HardwarePerfCounter&&) = delete;
+  HardwarePerfCounter& operator=(HardwarePerfCounter&&) = delete;
+
   [[nodiscard]] bool isSupported() const noexcept {
 #if defined(__linux__)
     return isSupported_;
@@ -445,7 +451,23 @@ void printResults(const std::vector<BenchmarkResult>& results) {
 int main(int argc, char** argv) {
   size_t numTerms = 5'000'000;
   if (argc > 1) {
-    numTerms = std::stoull(argv[1]);
+    try {
+      numTerms = std::stoull(argv[1]);
+    } catch (const std::exception& e) {
+      std::cerr << "Invalid term count '" << argv[1] << "': " << e.what()
+                << '\n';
+      return 1;
+    }
+    // Bound the benchmark size (and with it the `numTerms * 128` allocation
+    // below) to something runnable; uncaught huge inputs would OOM.
+    if (numTerms == 0 || numTerms > 50'000'000) {
+      std::cerr << "Term count out of range (1..50000000 expected)\n";
+      return 1;
+    }
+  }
+  if (numTerms > SIZE_MAX / 128) {
+    std::cerr << "Term count overflows the output buffer size\n";
+    return 1;
   }
 
   std::cout << "Generating synthetic mixed RDF dataset with " << numTerms
