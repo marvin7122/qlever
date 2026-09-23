@@ -93,11 +93,19 @@ bool ConstructDeduplicator::isNew(size_t templateTripleIdx,
       tmpl.preprocessedTriples_[templateTripleIdx], rowIdxInIdTable, ctx));
 }
 
-// Approximate size of a single full-triple dedup key: three `ValueId`s. Used to
-// relate the `dedupVocab_` budget to the number of keys the filter itself
-// holds.
+// Approximate string bytes carried by one deduplicated triple key. Each of the
+// three positions may contribute a freshly canonicalized term to `dedupVocab_`
+// (see `canonicalize`), estimated at `kEstimatedBytesPerTerm` string bytes.
+// Used to relate the `dedupVocab_` budget to the number of keys the filter
+// itself holds: the vocab must retain the terms of roughly `capacity` keys.
+// Sizing the budget by `sizeof(ValueId)` instead (the in-memory key width)
+// trips `resetIfVocabTooLarge` long before the LRU itself fills on ordinary
+// string-heavy exports, dropping the whole dedup state and collapsing the
+// effective dedup window (thrash). Candidate value, validated by the
+// `perf/export-dedup-lru-sizing` capacity sweep.
+static constexpr size_t kEstimatedBytesPerTerm = 64;
 static constexpr size_t bytesPerDedupKey =
-    NUM_TRIPLE_POSITIONS * sizeof(ValueId);
+    NUM_TRIPLE_POSITIONS * kEstimatedBytesPerTerm;
 
 // The byte threshold for `dedupVocab_`: the explicit `maxDedupVocabSize` if
 // given, else default value dependent on `DeduplicationMode`.

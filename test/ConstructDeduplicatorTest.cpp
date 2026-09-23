@@ -8,6 +8,9 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <vector>
+
 #include "engine/ConstructDeduplicator.h"
 #include "index/LocalVocab.h"
 #include "index/LocalVocabEntry.h"
@@ -333,6 +336,33 @@ TEST_F(ConstructDeduplicatorTest, fullIgnoresVocabThreshold) {
   // The tiny threshold is ignored for `full`: no reset, so the identical
   // triple is still a duplicate.
   EXPECT_FALSE(deduplicator.isNew(0, 0, tmpl, c));
+}
+
+//______________________________________________________________________________
+// The default `dedupVocab_` budget in `lru` mode must cover roughly `capacity`
+// keys worth of term strings: 8 distinct ~50-byte literals (~400 bytes total)
+// fit the `lru(10)` window without tripping `resetIfVocabTooLarge`, so the
+// first triple is still recognized as a duplicate afterwards. Under the old
+// budget (`capacity * 3 * sizeof(ValueId)` = 240 bytes) the same sequence
+// reset the filter mid-window and the repeat was wrongly reported "new".
+TEST_F(ConstructDeduplicatorTest, lruDefaultVocabBudgetRetainsFullWindow) {
+  ConstructDeduplicator deduplicator{DeduplicationMode::lru(10), *qec_};
+  auto tmpl = makeSingleTripleTemplate();
+
+  std::vector<LocalVocabRow> rows;
+  rows.reserve(8);
+  for (int i = 0; i < 8; ++i) {
+    const std::string term(48, static_cast<char>('a' + i));
+    rows.push_back(makeLocalVocabRow(term));
+  }
+  for (const auto& row : rows) {
+    const auto ctx = row.ctx();
+    EXPECT_TRUE(deduplicator.isNew(0, 0, tmpl, ctx));
+  }
+  // No vocab-size reset may have fired inside the 10-key window, so the first
+  // triple is still remembered as a duplicate.
+  const auto firstCtx = rows.front().ctx();
+  EXPECT_FALSE(deduplicator.isNew(0, 0, tmpl, firstCtx));
 }
 
 //______________________________________________________________________________
