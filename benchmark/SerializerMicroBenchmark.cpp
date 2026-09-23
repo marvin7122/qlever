@@ -58,12 +58,20 @@ struct AllocationTracker {
 // they would otherwise fail to link with "multiple definition" errors. The
 // allocation counts are then only reported as benchmark metadata (zero under
 // sanitizers), which no test depends on.
+// `__has_feature` only exists on Clang (and recent GCC); on other compilers
+// the identifier would not expand and invoking it inside `#if` fails with
+// "missing binary operator before token '('" (observed on GCC with
+// `-U__has_feature`, i.e. GCC 11/13 in CI). Probe it only where it exists.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+    __has_feature(memory_sanitizer) ||                                      \
+    __has_feature(undefined_behavior_sanitizer)
+#define QLEVER_SERIALIZER_BENCHMARK_SANITIZED 1
+#endif
+#endif
 #if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) &&        \
     !defined(__SANITIZE_MEMORY__) && !defined(__SANITIZE_UNDEFINED__) &&      \
-    !(defined(__has_feature) &&                                               \
-      (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
-       __has_feature(memory_sanitizer) ||                                     \
-       __has_feature(undefined_behavior_sanitizer)))
+    !defined(QLEVER_SERIALIZER_BENCHMARK_SANITIZED)
 #define QLEVER_SERIALIZER_BENCHMARK_COUNT_ALLOCATIONS 1
 #endif
 #ifdef QLEVER_SERIALIZER_BENCHMARK_COUNT_ALLOCATIONS
