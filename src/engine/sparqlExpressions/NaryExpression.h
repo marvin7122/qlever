@@ -115,6 +115,10 @@ SparqlExpression::Ptr makeStrExpression(SparqlExpression::Ptr child);
 SparqlExpression::Ptr makeIriOrUriExpression(SparqlExpression::Ptr child,
                                              SparqlExpression::Ptr baseIri);
 SparqlExpression::Ptr makeStrlenExpression(SparqlExpression::Ptr child);
+// True iff `expr` is a `STRLEN(...)` expression. Used by the
+// `SUM(STRLEN(GROUP_CONCAT(...)))` fast path, which must not accept any other
+// single-variable child (e.g. a bare variable or `YEAR(...)`).
+bool isStrlenExpression(const SparqlExpression* expr);
 SparqlExpression::Ptr makeSubstrExpression(SparqlExpression::Ptr string,
                                            SparqlExpression::Ptr start,
                                            SparqlExpression::Ptr length);

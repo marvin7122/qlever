@@ -3460,3 +3460,74 @@ TEST(GroupBy, BlankNodeInGroupBy) {
   EXPECT_EQ(table(1, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_NE(table(0, 1), table(1, 1));
 }
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumStrlenOfGroupConcat) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <n> \"ab\" . <x> <n> \"c\" . <y> <n> \"de\" ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<n>"), Variable{"?o"}});
+  auto groupConcat = SparqlExpressionPimpl{
+      std::make_unique<GroupConcatExpression>(
+          false, makeVariableExpression(Variable{"?o"}), " "),
+      "GROUP_CONCAT(?o)"};
+  std::vector<Alias> innerAliases{
+      Alias{std::move(groupConcat), Variable{"?cat"}}};
+  auto inner = makeExecutionTree<GroupBy>(
+      &qec, std::vector<Variable>{Variable{"?s"}}, innerAliases, scan);
+  auto sumStrlen = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false,
+          makeStrlenExpression(makeVariableExpression(Variable{"?cat"}))),
+      "SUM(STRLEN(?cat))"};
+  std::vector<Alias> outerAliases{
+      Alias{std::move(sumStrlen), Variable{"?sum"}}};
+  GroupByImpl outer{&qec, {}, outerAliases, inner};
+  auto result = outer.computeResultOnlyForTesting(false);
+  EXPECT_THAT(result.idTableView(), matchesIdTableFromVector({{I(6)}}));
+  // The fast path must have run: if the optimizer had returned `nullopt`,
+  // the generic path would produce the same table and the test would pass
+  // without covering the new code.
+  const auto& runtimeInfo =
+      outer.getChildren().at(0)->getRootOperation()->runtimeInfo();
+  EXPECT_EQ(runtimeInfo.status_, RuntimeInformation::Status::optimizedOut);
+}
+
+// _____________________________________________________________________________
+// A non-xsd:string typed literal is rejected by GROUP_CONCAT's
+// `LiteralValueGetterWithoutStrFunction`, so its group concatenates to UNDEF,
+// which then poisons the outer SUM. STRLEN would still count the value, so the
+// fast path must bail out and defer to the generic path (result: UNDEF).
+TEST_F(GroupByOptimizations, sumStrlenOfGroupConcatTypedLiteralBailsOut) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <n> \"ab\" . <x> <n> \"c\" . <y> <n> "
+                    "\"42\"^^<http://www.w3.org/2001/XMLSchema#integer> ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<n>"), Variable{"?o"}});
+  auto groupConcat = SparqlExpressionPimpl{
+      std::make_unique<GroupConcatExpression>(
+          false, makeVariableExpression(Variable{"?o"}), " "),
+      "GROUP_CONCAT(?o)"};
+  std::vector<Alias> innerAliases{
+      Alias{std::move(groupConcat), Variable{"?cat"}}};
+  auto inner = makeExecutionTree<GroupBy>(
+      &qec, std::vector<Variable>{Variable{"?s"}}, innerAliases, scan);
+  auto sumStrlen = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false,
+          makeStrlenExpression(makeVariableExpression(Variable{"?cat"}))),
+      "SUM(STRLEN(?cat))"};
+  std::vector<Alias> outerAliases{
+      Alias{std::move(sumStrlen), Variable{"?sum"}}};
+  GroupByImpl outer{&qec, {}, outerAliases, inner};
+  auto result = outer.computeResultOnlyForTesting(false);
+  EXPECT_THAT(result.idTableView(),
+              matchesIdTableFromVector({{Id::makeUndefined()}}));
+  const auto& runtimeInfo =
+      outer.getChildren().at(0)->getRootOperation()->runtimeInfo();
+  EXPECT_NE(runtimeInfo.status_, RuntimeInformation::Status::optimizedOut);
+}

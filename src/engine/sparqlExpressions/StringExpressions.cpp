@@ -669,6 +669,10 @@ Expr makeIriOrUriExpression(Expr child, SparqlExpression::Ptr baseIri) {
 
 Expr makeStrlenExpression(Expr child) { return make<StrlenExpression>(child); }
 
+bool isStrlenExpression(const SparqlExpression* expr) {
+  return dynamic_cast<const StrlenExpression*>(expr) != nullptr;
+}
+
 Expr makeSubstrExpression(Expr string, Expr start, Expr length) {
   return make<SubstrExpression>(string, start, length);
 }
