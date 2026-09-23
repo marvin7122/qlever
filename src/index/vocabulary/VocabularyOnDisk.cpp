@@ -257,9 +257,12 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     // Read whole blocks covering the words, then scatter the words out of
     // the staging buffer into their packed positions. Every run is
     // block-aligned by construction, so the backend can serve it via NVMe
-    // passthrough; unaligned remainders cannot occur.
-    const auto plan =
-        ad_utility::nvmePassthrough::planBlockReads(fileOffsets, sizes);
+    // passthrough; unaligned remainders cannot occur. Small gaps between
+    // words merge into shared runs (software readahead), so scattered
+    // words cost commands like a stream instead of one command per word.
+    const auto plan = ad_utility::nvmePassthrough::planBlockReads(
+        fileOffsets, sizes,
+        ad_utility::nvmePassthrough::kCoalesceMaxGapBlocks);
     std::vector<char> staging(plan.stagingBytes);
     std::vector<size_t> runSizes;
     std::vector<uint64_t> runOffsets;

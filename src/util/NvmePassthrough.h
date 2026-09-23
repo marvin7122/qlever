@@ -122,11 +122,22 @@ inline std::optional<ReadParams> translateToReadParams(
 // blocks needs its own granularity here.
 inline constexpr uint64_t kCoalesceBlockSize = 512;
 
+// Maximum gap of uncovered blocks that `planBlockReads` swallows inside a
+// run: 32 blocks (16 KiB). Reads near each other merge into one command, so
+// scattered words cost commands like a readahead stream instead of one
+// command per word. Gaps above this stay separate runs.
+inline constexpr uint64_t kCoalesceMaxGapBlocks = 32;
+// Maximum run length for `planBlockReads`: 256 blocks (128 KiB, the classic
+// readahead size). Bounds the staging buffer per run and keeps every run far
+// below `kMaxBlocksPerRead`, so merged runs always translate to one command.
+inline constexpr uint64_t kCoalesceMaxRunBlocks = 256;
+
 // A block-aligned read plan for a batch of byte ranges. The `runs` cover
-// every input range with whole blocks (merged, sorted, disjoint), one
-// batched read each, and `slices[i]` locates input word `i` inside the
-// staging buffer that the runs fill in order. Zero-length words cover no
-// block and slice to `{0, 0}`; the caller skips their copy.
+// every input range with whole blocks (merged, sorted, disjoint; runs may
+// include swallowed gap blocks), one batched read each, and `slices[i]`
+// locates input word `i` inside the staging buffer that the runs fill in
+// order. Zero-length words cover no block and slice to `{0, 0}`; the caller
+// skips their copy.
 struct BlockReadPlan {
   struct Run {
     uint64_t fileOffset;
@@ -142,8 +153,16 @@ struct BlockReadPlan {
   size_t stagingBytes = 0;
 };
 
+// Plan whole-block reads for `fileOffsets[i]`/`sizes[i]`. Blocks that are
+// contiguous merge into one run; additionally, gaps of at most
+// `maxGapBlocks` uncovered blocks between needed blocks are swallowed into
+// the run (software readahead: one command covers near-neighbor words).
+// Runs stop before exceeding `kCoalesceMaxRunBlocks`, so staging stays
+// bounded and every run translates to a single NVMe command. The default
+// gap of zero keeps the exact-contiguity behavior for single-word plans.
 inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
-                                    const std::vector<size_t>& sizes) {
+                                    const std::vector<size_t>& sizes,
+                                    uint64_t maxGapBlocks = 0) {
   AD_CONTRACT_CHECK(fileOffsets.size() == sizes.size());
   BlockReadPlan plan;
   std::vector<uint64_t> firstBlocks(sizes.size());
@@ -169,20 +188,30 @@ inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
   }
   std::sort(blocks.begin(), blocks.end());
   blocks.erase(std::unique(blocks.begin(), blocks.end()), blocks.end());
-  // Merge contiguous blocks into runs and assign staging offsets.
+  // Merge blocks into runs and assign staging offsets. A run extends over
+  // contiguous needed blocks and swallows gaps of at most `maxGapBlocks`
+  // uncovered blocks, stopping before it would exceed
+  // `kCoalesceMaxRunBlocks`. Runs stay sorted and disjoint: the gap after a
+  // run always exceeds the allowance (or the length cap fired).
   std::vector<uint64_t> runFirstBlocks;
   std::vector<size_t> runStagingOffsets;
   size_t stagingBytes = 0;
   for (size_t i = 0; i < blocks.size();) {
+    const uint64_t runFirst = blocks[i];
+    uint64_t runLast = runFirst;
     size_t j = i;
-    while (j + 1 < blocks.size() && blocks[j + 1] == blocks[j] + 1) {
+    while (j + 1 < blocks.size() &&
+           blocks[j + 1] - runLast - 1 <= maxGapBlocks &&
+           blocks[j + 1] - runFirst + 1 <= kCoalesceMaxRunBlocks) {
       ++j;
+      runLast = blocks[j];
     }
-    runFirstBlocks.push_back(blocks[i]);
+    runFirstBlocks.push_back(runFirst);
     runStagingOffsets.push_back(stagingBytes);
-    const size_t runBytes = (j - i + 1) * kCoalesceBlockSize;
+    const size_t runBytes =
+        static_cast<size_t>(runLast - runFirst + 1) * kCoalesceBlockSize;
     plan.runs.push_back(
-        {blocks[i] * kCoalesceBlockSize, runBytes, stagingBytes});
+        {runFirst * kCoalesceBlockSize, runBytes, stagingBytes});
     stagingBytes += runBytes;
     i = j + 1;
   }

@@ -942,6 +942,74 @@ TEST(NvmeBlockCoalescing, duplicatesAndEmptyWords) {
   EXPECT_EQ(empty.stagingBytes, 0u);
 }
 
+// Gap-tolerant coalescing merges near-neighbor words into one run: with a
+// gap allowance of 32 blocks, words on blocks 0 and 5 share a single
+// 6-block run, and every slice still locates its word exactly within the
+// run that covers it.
+TEST(NvmeBlockCoalescing, mergesSmallGaps) {
+  using ad_utility::nvmePassthrough::planBlockReads;
+  const auto plan = planBlockReads({0, 5 * 512}, {10, 10}, 32);
+  ASSERT_EQ(plan.runs.size(), 1u);
+  EXPECT_EQ(plan.runs[0].fileOffset, 0u);
+  EXPECT_EQ(plan.runs[0].numBytes, 6 * 512u);
+  EXPECT_EQ(plan.stagingBytes, 6 * 512u);
+  ASSERT_EQ(plan.slices.size(), 2u);
+  EXPECT_EQ(plan.slices[0].stagingOffset, 0u);
+  EXPECT_EQ(plan.slices[0].numBytes, 10u);
+  EXPECT_EQ(plan.slices[1].stagingOffset, 5 * 512u);
+  EXPECT_EQ(plan.slices[1].numBytes, 10u);
+}
+
+// Gaps above the allowance stay separate runs, and a zero allowance keeps
+// the exact-contiguity behavior.
+TEST(NvmeBlockCoalescing, splitsLargeGaps) {
+  using ad_utility::nvmePassthrough::planBlockReads;
+  const auto gapped = planBlockReads({0, 100 * 512}, {10, 10}, 32);
+  ASSERT_EQ(gapped.runs.size(), 2u);
+  EXPECT_EQ(gapped.runs[0].numBytes, 512u);
+  EXPECT_EQ(gapped.runs[1].fileOffset, 100 * 512u);
+  const auto strict = planBlockReads({0, 5 * 512}, {10, 10}, 0);
+  EXPECT_EQ(strict.runs.size(), 2u);
+}
+
+// Runs stop before exceeding 256 blocks even when every gap would merge:
+// ten words spaced 32 blocks apart (gap 31 each) span 289 blocks and split
+// into a 225-block run plus a 33-block run, with every slice landing inside
+// its covering run.
+TEST(NvmeBlockCoalescing, capsRunLength) {
+  using ad_utility::nvmePassthrough::kCoalesceMaxRunBlocks;
+  using ad_utility::nvmePassthrough::planBlockReads;
+  std::vector<uint64_t> offsets;
+  std::vector<size_t> sizes;
+  for (size_t w = 0; w < 10; ++w) {
+    offsets.push_back(w * 32 * 512);
+    sizes.push_back(10);
+  }
+  const auto plan = planBlockReads(offsets, sizes, 32);
+  ASSERT_EQ(plan.runs.size(), 2u);
+  EXPECT_EQ(plan.runs[0].numBytes, 225 * 512u);
+  EXPECT_EQ(plan.runs[1].numBytes, 33 * 512u);
+  for (const auto& run : plan.runs) {
+    EXPECT_LE(run.numBytes, kCoalesceMaxRunBlocks * 512u);
+  }
+  ASSERT_EQ(plan.slices.size(), 10u);
+  for (size_t i = 0; i < 10; ++i) {
+    const auto& slice = plan.slices[i];
+    EXPECT_EQ(slice.numBytes, 10u);
+    // The slice must sit inside exactly one run at the word's file offset.
+    bool covered = false;
+    for (const auto& run : plan.runs) {
+      if (offsets[i] >= run.fileOffset &&
+          offsets[i] + 10 <= run.fileOffset + run.numBytes) {
+        EXPECT_EQ(slice.stagingOffset - run.stagingOffset,
+                  static_cast<size_t>(offsets[i] - run.fileOffset));
+        covered = true;
+      }
+    }
+    EXPECT_TRUE(covered);
+  }
+}
+
 // The capability probe fails closed without throwing: an invalid fd, a
 // regular file, and a non-NVMe character device (such as `/dev/null`) are
 // all "not capable", so enabling passthrough can never divert them to the
