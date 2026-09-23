@@ -13,6 +13,7 @@
 #include "engine/sparqlExpressions/ExistsExpression.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "util/ChunkedForLoop.h"
+#include "util/HashSet.h"
 #include "util/JoinAlgorithms/IndexNestedLoopJoin.h"
 #include "util/JoinAlgorithms/JoinAlgorithms.h"
 #include "util/VectorWithMemoryLimit.h"
@@ -182,6 +183,18 @@ Result ExistsJoin::computeResult(bool requestLaziness) {
                                    &Id::isUndefined));
       });
 
+  // If the join is cheap (no UNDEF values) and there is a single join column,
+  // answer the EXISTS test with a hash set instead of the sort-merge zipper:
+  // build a set of the right side's join keys once, then probe each left row.
+  // This avoids sorting both inputs and only materializes the (typically
+  // smaller) right side.
+  if (isCheap && numJoinColumns == 1) {
+    if (auto result = tryHashSetExistsJoin(left, right)) {
+      return Result{std::move(result).value(), resultSortedOn(),
+                    leftRes->getSharedLocalVocab()};
+    }
+  }
+
   // Nothing to do for the actual matches.
   auto noopRowAdder = ad_utility::noop;
 
@@ -233,6 +246,41 @@ Result ExistsJoin::computeResult(bool requestLaziness) {
   // The added column only contains Boolean values, and adds no new words to the
   // local vocabulary, so we can use the local vocab from `leftRes`.
   return {std::move(result), resultSortedOn(), leftRes->getSharedLocalVocab()};
+}
+
+// _____________________________________________________________________________
+std::optional<IdTable> ExistsJoin::tryHashSetExistsJoin(
+    const IdTableView<0>& left, const IdTableView<0>& right) {
+  AD_CORRECTNESS_CHECK(joinColumns_.size() == 1);
+  AD_CORRECTNESS_CHECK(left.numColumns() > 0 && right.numColumns() > 0);
+
+  // Correct only because the caller verified no UNDEF in the join columns:
+  // a row "exists" iff its join key is in the set.
+  ad_utility::JoinColumnMapping joinColumnData{joinColumns_, left.numColumns(),
+                                               right.numColumns()};
+  ColumnIndex leftJoinCol = joinColumnData.jcsLeft().front();
+  ColumnIndex rightJoinCol = joinColumnData.jcsRight().front();
+
+  ad_utility::HashSet<Id> rightKeys;
+  rightKeys.reserve(right.size());
+  auto cancel = [this] { checkCancellation(); };
+  ad_utility::chunkedForLoop<1000>(
+      0, right.size(),
+      [&](size_t i) { rightKeys.insert(right[i][rightJoinCol]); }, cancel);
+
+  IdTable result = left.clone();
+  result.addEmptyColumn();
+  decltype(auto) existsCol = result.getColumn(getResultWidth() - 1);
+  ql::ranges::fill(existsCol, Id::makeFromBool(true));
+  ad_utility::chunkedForLoop<1000>(
+      0, left.size(),
+      [&](size_t i) {
+        if (!rightKeys.contains(left[i][leftJoinCol])) {
+          existsCol[i] = Id::makeFromBool(false);
+        }
+      },
+      cancel);
+  return result;
 }
 
 // _____________________________________________________________________________

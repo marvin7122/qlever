@@ -109,6 +109,13 @@ class ExistsJoin : public Operation {
   // `tryLeftIndexNestedLoopJoinIfSuitable`.
   std::optional<Result> tryIndexNestedLoopJoinIfSuitable(bool requestLaziness);
 
+  // Semijoin for the fully materialized single-join-column case with no UNDEF:
+  // build a hash set of the right side's join keys once and probe each left
+  // row, filling the boolean EXISTS column without sorting either input.
+  // Caller wraps the returned table in a `Result` with the left local vocab.
+  std::optional<IdTable> tryHashSetExistsJoin(const IdTableView<0>& left,
+                                              const IdTableView<0>& right);
+
   Result computeResult(bool requestLaziness) override;
 
   VariableToColumnMap computeVariableToColumnMap() const override;
