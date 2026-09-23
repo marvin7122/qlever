@@ -39,9 +39,11 @@ TEST(MonomorphicSerializersTest, MonomorphicTripleCsvSerialization) {
         "\"Hello, World!\"");
   });
 
+  // The literal contains a comma, so RFC 4180 requires quoting with doubled
+  // delimiters (like `FastExportStreamFormatter::writeTerm` produces).
   EXPECT_EQ(result,
-            "<http://example.org/subj>,<http://example.org/pred>,\"Hello, "
-            "World!\"\n");
+            "<http://example.org/subj>,<http://example.org/pred>,\"\"\"Hello, "
+            "World!\"\"\"\n");
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicTripleTurtleSerialization) {
@@ -114,7 +116,7 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
       });
 
   EXPECT_EQ(dynamicOut, monomorphicOut);
-  EXPECT_EQ(dynamicOut, "<http://example.org/x>,\"test\",42\n");
+  EXPECT_EQ(dynamicOut, "<http://example.org/x>,\"\"\"test\"\"\",42\n");
 }
 
 TEST(MonomorphicSerializersTest, RareSchemaFallbackMatchesDynamic) {
@@ -165,4 +167,67 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
       });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
+}
+
+TEST(MonomorphicSerializersTest, CsvLiteralMatchesProductionWriteTerm) {
+  // Normalized literal with an embedded quote and a comma: CSV must quote
+  // the complete term with doubled quotes, exactly like
+  // `FastExportStreamFormatter::writeTerm` (RFC 4180 round-trip).
+  const std::string literal = "\"a\\\"b, c\"";
+  const qlever::constructExport::EvaluatedTermData term{literal, nullptr};
+
+  std::string productionOut =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        fmt.writeTerm(term, ExportFormat::Csv);
+      });
+  std::string monomorphicOut =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        detail::MonomorphicCellWriter<ColumnType::Literal, ExportFormat::Csv>::
+            write(fmt, CellValue::makeLiteral(literal));
+      });
+
+  EXPECT_EQ(monomorphicOut, productionOut);
+  // `"` + doubled delimiters + `"` : `"a\"b, c"` -> `"""a\""b, c"""`.
+  EXPECT_EQ(monomorphicOut, "\"\"\"a\\\"\"b, c\"\"\"");
+}
+
+TEST(MonomorphicSerializersTest, UndefinedDispatchSelectsUndefPlaceholder) {
+  // One-column schema: `Undefined` must dispatch to its own specialization
+  // (writing `UNDEF`), not to `String` via the `default` arm.
+  const std::vector<ColumnType> schema1 = {ColumnType::Undefined};
+  const std::array<CellValue, 1> row1 = {CellValue()};
+  DynamicRowSerializer dynamic1(schema1);
+  std::string dynamicOut1 = captureOutput([&](FastExportStreamFormatter& fmt) {
+    dynamic1.serializeRow<ExportFormat::Csv>(fmt,
+                                             ql::span<const CellValue>(row1));
+  });
+  std::string dispatchedOut1 =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        dispatchMonomorphicSerializer(schema1, [&](auto& serializer) {
+          serializer.template serializeRow<ExportFormat::Csv>(
+              fmt, ql::span<const CellValue>(row1));
+        });
+      });
+  EXPECT_EQ(dispatchedOut1, dynamicOut1);
+  EXPECT_EQ(dispatchedOut1, "UNDEF\n");
+
+  // Two-column schema with `Undefined` in both positions (covers the outer
+  // switch on `c0` and the inner switch on `c1` of `dispatch2Col`).
+  const std::vector<ColumnType> schema2 = {ColumnType::Undefined,
+                                           ColumnType::Undefined};
+  const std::array<CellValue, 2> row2 = {CellValue(), CellValue()};
+  DynamicRowSerializer dynamic2(schema2);
+  std::string dynamicOut2 = captureOutput([&](FastExportStreamFormatter& fmt) {
+    dynamic2.serializeRow<ExportFormat::Csv>(fmt,
+                                             ql::span<const CellValue>(row2));
+  });
+  std::string dispatchedOut2 =
+      captureOutput([&](FastExportStreamFormatter& fmt) {
+        dispatchMonomorphicSerializer(schema2, [&](auto& serializer) {
+          serializer.template serializeRow<ExportFormat::Csv>(
+              fmt, ql::span<const CellValue>(row2));
+        });
+      });
+  EXPECT_EQ(dispatchedOut2, dynamicOut2);
+  EXPECT_EQ(dispatchedOut2, "UNDEF,UNDEF\n");
 }

@@ -21,7 +21,6 @@
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
-#include "util/CompilerWarnings.h"
 #include "util/Exception.h"
 #include "util/http/MediaTypes.h"
 
@@ -46,14 +45,21 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. Disabled under ThreadSanitizer, whose runtime provides its own
-// definitions of these operators (multiple definition link error otherwise).
-// The unsized deallocation function calls `std::free` directly on memory from
-// the matching malloc-based `operator new` above. This is a legal pairing,
-// but GCC cannot prove it for pointers allocated outside this translation
-// unit (e.g. `std::locale` facets) and rejects it with
-// `-Werror=mismatched-new-delete`, hence the suppression below.
-#ifndef __SANITIZE_THREAD__
+// runs. Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
+// already provide these replaceable allocation functions, so defining them
+// here causes multiple-definition link errors. Under sanitizers the
+// `heap-allocations` metadata below reads 0. Clang signals sanitizers via
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; neither mechanism works
+// on the other compiler, so both are checked.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+
+#ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -66,13 +72,24 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
-DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
+// The `operator delete` overloads intentionally pair with the `std::malloc`
+// based `operator new` overload above, which GCC's -Wmismatched-new-delete
+// cannot see through, so the warning is disabled locally for GCC only.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* ptr) noexcept { std::free(ptr); }
-GCC_REENABLE_WARNINGS
 
+// Forward to the unsized overload above: calling `std::free` directly here
+// trips GCC's `-Wmismatched-new-delete`, which a local `#pragma` cannot
+// suppress on all GCC versions.
 void operator delete(void* ptr, std::size_t) noexcept {
   ::operator delete(ptr);
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #endif
 
 namespace ad_benchmark {

@@ -8,8 +8,10 @@
 
 #pragma once
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
-    defined(_M_IX86)
+// SSE2 is implied by x86-64, but on 32-bit x86 it must be queried explicitly:
+// `__i386__`/`_M_IX86` alone do not guarantee it (same gating as in
+// `util/FastIntToString.h`).
+#if defined(__x86_64__) || defined(_M_X64) || defined(__SSE2__)
 #include <emmintrin.h>
 #define QLEVER_SLICER_X86 1
 #endif
@@ -77,7 +79,9 @@ class VectorizedPrefixTable {
   // sizing `out` for exactly `entry.length` bytes would overflow.
   [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id,
                                               char* out) const noexcept {
-    const auto& entry = entries_[static_cast<size_t>(id)];
+    const auto index = static_cast<size_t>(id);
+    AD_CONTRACT_CHECK(index < entries_.size());
+    const auto& entry = entries_[index];
 #ifdef QLEVER_SLICER_X86
     const __m128i* src = reinterpret_cast<const __m128i*>(entry.data);
     __m128i* dst = reinterpret_cast<__m128i*>(out);
