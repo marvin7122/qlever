@@ -275,7 +275,12 @@ void printResults(const std::vector<BenchmarkResult>& results) {
 int main(int argc, char** argv) {
   size_t numTriples = 2'000'000;
   if (argc > 1) {
-    numTriples = std::stoull(argv[1]);
+    try {
+      numTriples = std::stoull(argv[1]);
+    } catch (const std::exception& e) {
+      std::cerr << "Invalid argument '" << argv[1] << "': " << e.what()
+                << ", using default " << numTriples << ".\n";
+    }
   }
 
   std::cout << "Generating sorted Wikidata SPO stream with " << numTriples

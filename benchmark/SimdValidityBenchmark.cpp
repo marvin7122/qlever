@@ -93,10 +93,16 @@ class HardwarePerfCounter {
     if (isSupported_) {
       ioctl(branchFd_, PERF_EVENT_IOC_DISABLE, 0);
       ioctl(missFd_, PERF_EVENT_IOC_DISABLE, 0);
-      ssize_t r1 = read(branchFd_, &branchCount, sizeof(uint64_t));
-      ssize_t r2 = read(missFd_, &missCount, sizeof(uint64_t));
-      (void)r1;
-      (void)r2;
+      const ssize_t r1 = read(branchFd_, &branchCount, sizeof(uint64_t));
+      const ssize_t r2 = read(missFd_, &missCount, sizeof(uint64_t));
+      // On a short or failed read the counters are unavailable; report zero
+      // instead of a partially written value.
+      if (r1 != static_cast<ssize_t>(sizeof(uint64_t))) {
+        branchCount = 0;
+      }
+      if (r2 != static_cast<ssize_t>(sizeof(uint64_t))) {
+        missCount = 0;
+      }
     } else {
       branchCount = 0;
       missCount = 0;
@@ -355,7 +361,12 @@ void printResults(const std::vector<BenchmarkResult>& results) {
 int main(int argc, char** argv) {
   size_t numRows = 2'000'000;
   if (argc > 1) {
-    numRows = std::stoull(argv[1]);
+    try {
+      numRows = std::stoull(argv[1]);
+    } catch (const std::exception& e) {
+      std::cerr << "Invalid argument '" << argv[1] << "': " << e.what()
+                << ", using default " << numRows << ".\n";
+    }
   }
 
   std::cout << "Generating synthetic OPTIONAL column dataset with " << numRows

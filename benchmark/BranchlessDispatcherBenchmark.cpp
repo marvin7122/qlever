@@ -461,7 +461,12 @@ void printResults(const std::vector<BenchmarkResult>& results) {
 int main(int argc, char** argv) {
   size_t numTerms = 5'000'000;
   if (argc > 1) {
-    numTerms = std::stoull(argv[1]);
+    try {
+      numTerms = std::stoull(argv[1]);
+    } catch (const std::exception& e) {
+      std::cerr << "Invalid argument '" << argv[1] << "': " << e.what()
+                << ", using default " << numTerms << ".\n";
+    }
   }
 
   std::cout << "Generating synthetic mixed RDF dataset with " << numTerms
