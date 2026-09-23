@@ -10,6 +10,7 @@
 #define QLEVER_SRC_UTIL_ZEROCOPYSOCKETSENDER_H
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -281,6 +282,8 @@ class ZeroCopySocketSender {
   ZeroCopySocketSender(const ZeroCopySocketSender&) = delete;
   ZeroCopySocketSender& operator=(const ZeroCopySocketSender&) = delete;
 
+  // The moved-from object must not be used until it is move-assigned a new
+  // value: its kernel ring (if any) now belongs to the destination.
   ZeroCopySocketSender(ZeroCopySocketSender&& other) noexcept
       : config_{other.config_},
         bufferPool_{std::move(other.bufferPool_)},
@@ -295,6 +298,9 @@ class ZeroCopySocketSender {
         nextRequestId_{std::exchange(other.nextRequestId_, 0)},
         totalBytesSent_{std::exchange(other.totalBytesSent_, 0)},
         totalPacketsSent_{std::exchange(other.totalPacketsSent_, 0)} {
+#ifdef QLEVER_HAS_LIBURING
+    std::memset(&other.ring_, 0, sizeof(other.ring_));
+#endif
   }
 
   ZeroCopySocketSender& operator=(ZeroCopySocketSender&& other) noexcept {
@@ -304,6 +310,7 @@ class ZeroCopySocketSender {
       bufferPool_ = std::move(other.bufferPool_);
 #ifdef QLEVER_HAS_LIBURING
       ring_ = other.ring_;
+      std::memset(&other.ring_, 0, sizeof(other.ring_));
       ringInitialized_ = std::exchange(other.ringInitialized_, false);
       buffersRegistered_ = std::exchange(other.buffersRegistered_, false);
 #endif
@@ -532,14 +539,19 @@ class ZeroCopySocketSender {
   void teardown() noexcept {
 #ifdef QLEVER_HAS_LIBURING
     if (ringInitialized_) {
+      // Best-effort: submit queued SQEs, then reuse `drainOneCqe()` so the
+      // MORE/NOTIF lifecycle and buffer release stay consistent. Drain
+      // errors cannot propagate from the destructor, and a stall (e.g.
+      // CQEs already consumed) must not hang destruction.
+      io_uring_submit(&ring_);
       while (numInFlightRequests_ > 0 || numInFlightBuffers_ > 0) {
-        io_uring_cqe* cqe = nullptr;
-        if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+        if (io_uring_cq_ready(&ring_) == 0) {
           break;
         }
-        io_uring_cqe_seen(&ring_, cqe);
-        if (numInFlightRequests_ > 0) {
-          --numInFlightRequests_;
+        try {
+          drainOneCqe();
+        } catch (...) {
+          break;
         }
       }
 
@@ -587,12 +599,19 @@ class ZeroCopySocketSender {
     }
 
     if (res < 0) {
-      bufferPool_.releaseSlot(entry.bufferIndex);
-      AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
-      AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
-      --numInFlightBuffers_;
-      --numInFlightRequests_;
-      entry.active = false;
+      if (flags & IORING_CQE_F_MORE) {
+        // The kernel still holds the buffer and will deliver a NOTIF CQE
+        // that recycles it; keep the entry alive for that CQE and only
+        // report the error.
+        entry.waitingForNotification = true;
+      } else {
+        bufferPool_.releaseSlot(entry.bufferIndex);
+        AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
+        AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
+        --numInFlightBuffers_;
+        --numInFlightRequests_;
+        entry.active = false;
+      }
       AD_THROW(absl::StrCat("io_uring send error (res: ", res,
                             ", errno: ", -res, ": ", std::strerror(-res), ")"));
     }
@@ -604,6 +623,16 @@ class ZeroCopySocketSender {
       // Kernel is holding the buffer for zero-copy DMA; wait for CQE 2 (NOTIF)
       entry.waitingForNotification = true;
     } else {
+      if (static_cast<size_t>(res) != entry.expectedBytes) {
+        bufferPool_.releaseSlot(entry.bufferIndex);
+        AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
+        AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
+        --numInFlightBuffers_;
+        --numInFlightRequests_;
+        entry.active = false;
+        AD_THROW(absl::StrCat("io_uring short send (res: ", res,
+                              ", expected: ", entry.expectedBytes, ")"));
+      }
       // Standard completion or synchronous copy; release buffer immediately
       bufferPool_.releaseSlot(entry.bufferIndex);
       AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
@@ -615,18 +644,48 @@ class ZeroCopySocketSender {
   }
 #endif
 
-  // Synchronous send fallback.
+  // Synchronous send fallback. Guarantees full delivery or throws: loops
+  // over short sends, retries `EINTR`, and polls for writability on
+  // `EAGAIN`/`EWOULDBLOCK` (callers run on non-blocking Beast sockets).
   void sendChunkSync(int sockfd, uint32_t bufferIndex, size_t numBytes,
                      int flags) {
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
-    ssize_t bytesSent =
-        ::send(sockfd, slotSpan.data(), numBytes, flags | MSG_NOSIGNAL);
-    if (bytesSent < 0) {
-      bufferPool_.releaseSlot(bufferIndex);
-      AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+    size_t sent = 0;
+    while (sent < numBytes) {
+      ssize_t bytesSent = ::send(sockfd, slotSpan.data() + sent,
+                                 numBytes - sent, flags | MSG_NOSIGNAL);
+      if (bytesSent < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+          pollfd pfd{sockfd, POLLOUT, 0};
+          int ret = ::poll(&pfd, 1, -1);
+          if (ret < 0) {
+            if (errno == EINTR) {
+              continue;
+            }
+            bufferPool_.releaseSlot(bufferIndex);
+            AD_THROW(
+                absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+          }
+          if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            bufferPool_.releaseSlot(bufferIndex);
+            AD_THROW("send failed (peer closed)");
+          }
+          continue;
+        }
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+      }
+      if (bytesSent == 0) {
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW("send returned 0 (peer closed)");
+      }
+      sent += static_cast<size_t>(bytesSent);
     }
 
-    totalBytesSent_ += static_cast<size_t>(bytesSent);
+    totalBytesSent_ += sent;
     ++totalPacketsSent_;
     bufferPool_.releaseSlot(bufferIndex);
   }
