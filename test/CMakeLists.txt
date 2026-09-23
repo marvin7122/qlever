@@ -253,8 +253,9 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
 if (QLEVER_ENABLE_EXPORT_V2)
-    # The `server` library is not built on Emscripten, matching the pattern used
-    # for MaterializedViewsTest below.
+    # The `server` library is not built for Emscripten (see
+    # `src/engine/CMakeLists.txt`); the scheduler test needs no `server`
+    # symbols, so link it only where the target exists.
     if (TARGET server)
         addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
     else ()
@@ -658,8 +659,10 @@ if (QLEVER_ENABLE_EXPORT_V2)
         target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     endif()
 endif ()
-# Only meaningful when the V2 engine is compiled out (the test asserts the
-# compiled-in switch is off); otherwise the static_assert cannot hold.
+# The disabled-pipeline test asserts the compile-time switch is off, which is
+# impossible when `QLEVER_ENABLE_EXPORT_V2` is enabled (in particular, the
+# `SINGLE_TEST_BINARY` build defines it on the shared test main for all
+# tests). Only build it in the disabled configuration.
 if (NOT QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
 endif ()

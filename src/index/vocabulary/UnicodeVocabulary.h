@@ -5,10 +5,12 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
+#include <string_view>
 #include <type_traits>
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
+#include "util/Exception.h"
 
 namespace ad_utility::vocabulary {
 
@@ -45,29 +47,37 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    // `builder` must be finalized exactly once. A fill-only leaf (returns
-    // `void`, e.g. `CompressedVocabulary`) appends to `builder` and we
-    // finalize below. An inner wrapper already finalized exactly once, so
-    // forward its result instead of finalizing the moved-from `builder` a
-    // second time (same pattern as `Vocabulary` and
-    // `PolymorphicVocabulary`). When the underlying vocabulary has no
-    // builder-taking overload, copy its single-shot words into the builder
-    // first, so the `finalize()` below sees a populated builder.
-    if constexpr (HasArenaVocabBatchLookup_v<
+    // NOTE: C++17-compatible overload detection via
+    // `detail::HasLookupBatchWithBuilder_v` (a C++20 `requires`-expression
+    // cannot be used here: this header is also compiled in the C++17
+    // configuration for GCC 8).
+    if constexpr (detail::HasLookupBatchWithBuilder_v<
                       std::decay_t<decltype(_underlyingVocabulary)>>) {
-      using InnerResult =
-          decltype(_underlyingVocabulary.lookupBatch(indices, builder));
-      if constexpr (std::is_void_v<InnerResult>) {
+      if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
+                        indices, builder))>) {
+        // Fill-only protocol (e.g. `CompressedVocabulary`): the words were
+        // decoded into the caller's `builder`, finalize it here.
         _underlyingVocabulary.lookupBatch(indices, builder);
       } else {
+        // Use the returned result: the underlying vocabulary populates
+        // `builder` on its own fallback path (see `Vocabulary` and
+        // `PolymorphicVocabulary`, whose callers finalize it
+        // unconditionally), so just forward the result here.
         return _underlyingVocabulary.lookupBatch(indices, builder);
       }
     } else {
+      // The underlying vocabulary has no batched leaf: reuse its single-shot
+      // batch path and copy the words into the caller's builder, so the
+      // unconditional `finalize()` below sees a populated builder (same
+      // pattern as `Vocabulary` and `PolymorphicVocabulary`; returning the
+      // single-shot result directly would leave the builder empty and trip
+      // the `finalize` precondition).
       auto singleShot = _underlyingVocabulary.lookupBatch(indices);
       AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
       for (std::string_view word : singleShot) {
         builder.appendWord(word);
       }
+      return std::move(builder).finalize();
     }
     return std::move(builder).finalize();
   }

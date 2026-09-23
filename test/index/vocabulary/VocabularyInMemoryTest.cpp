@@ -124,7 +124,7 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
   v.open(filename);
   { auto writerPtr = v.makeDiskWriterPtr(filename); };
   {
-    ad_utility::vocabulary::VocabularyInMemory vocab;
+    Vocab vocab;
     {
       auto wwPtr = vocab.makeDiskWriterPtr(filename);
       auto& ww = *wwPtr;
@@ -135,7 +135,7 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
   }
   ad_utility::deleteFile(filename);
   {
-    ad_utility::vocabulary::VocabularyInMemory vocab;
+    Vocab vocab;
     auto wwPtr = vocab.makeDiskWriterPtr(filename);
     auto& ww = *wwPtr;
     ww("beta", false);

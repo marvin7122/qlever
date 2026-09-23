@@ -314,19 +314,17 @@ template <typename S, typename C, typename I>
 VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  // `builder` must be finalized exactly once, see
-  // `UnicodeVocabulary::lookupBatch`.
-  if constexpr (HasArenaVocabBatchLookup_v<
+  // NOTE: C++17-compatible overload detection via
+  // `detail::HasLookupBatchWithBuilder_v` (a C++20 `requires`-expression
+  // cannot be used here: this file is also compiled in the C++17
+  // configuration for GCC 8).
+  if constexpr (detail::HasLookupBatchWithBuilder_v<
                     std::decay_t<decltype(vocabulary_)>>) {
-    using InnerResult = decltype(vocabulary_.lookupBatch(indices, builder));
-    if constexpr (std::is_void_v<InnerResult>) {
-      // Fill-only leaf: it appended to `builder`, finalize once below.
-      vocabulary_.lookupBatch(indices, builder);
-    } else {
-      // Inner wrapper already finalized exactly once: forward its result
-      // instead of finalizing the moved-from `builder` a second time.
-      return vocabulary_.lookupBatch(indices, builder);
-    }
+    // Use the returned result: the underlying vocabulary may take its
+    // documented fallback path without touching `builder` (e.g. a
+    // polymorphic vocabulary resolving to an on-disk implementation), in
+    // which case finalizing `builder` here would fail on an empty batch.
+    return vocabulary_.lookupBatch(indices, builder);
   } else {
     // The underlying vocabulary has no batched leaf: reuse its single-shot
     // batch path and copy the words into the caller's builder, so the
