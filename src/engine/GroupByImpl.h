@@ -239,9 +239,9 @@ class GroupByImpl : public Operation {
   // (implicit) group.
   std::optional<IdTable> computeCountStar() const;
 
-  // `COUNT(*)` answered from index metadata without building the child:
-  // bag `UNION` of two index scans, or an inner join of two bound-predicate
-  // scans on one variable (sum of multiplicity products).
+  // `COUNT(*)` answered from index metadata without building the child.
+  // Thin adapter around `computeCountStarCardinality` (see
+  // `engine/CountStarCardinality.h` for the handled shapes).
   std::optional<IdTable> computeCountStarFromMetadata() const;
 
   // Stores information required for substitution of an expression in an
