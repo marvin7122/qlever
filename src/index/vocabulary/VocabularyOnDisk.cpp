@@ -283,10 +283,10 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     manager.wait(
         manager.addBatch(file_.fd(), runSizes, runOffsets, runTargets));
     AD_CORRECTNESS_CHECK(plan.slices.size() == numIndices);
-    for (size_t i = 0; i < numIndices; ++i) {
-      if (plan.slices[i].numBytes > 0) {
-        std::memcpy(targets[i], staging.data() + plan.slices[i].stagingOffset,
-                    plan.slices[i].numBytes);
+    for (auto&& [target, slice] : ::ranges::views::zip(targets, plan.slices)) {
+      if (slice.numBytes > 0) {
+        std::memcpy(target, staging.data() + slice.stagingOffset,
+                    slice.numBytes);
       }
     }
   } else {
