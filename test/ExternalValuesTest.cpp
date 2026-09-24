@@ -83,7 +83,7 @@ TEST(ExternalValues, computeResult) {
   // `ExternalValues` only works with caching disabled.
   auto testQecOrig = ad_utility::testing::getQec("<x> <x> <x> .");
   auto testQecCopy = *testQecOrig;
-  testQecCopy.setDisableCachingOnlyForTesting(true);
+  testQecCopy.setDisableCaching(true);
   auto* testQec = &testQecCopy;
 
   ValuesComponents values{{TC{12}, TC{iri("<x>")}},
@@ -110,7 +110,7 @@ TEST(ExternalValues, updateValues) {
     auto testQec = ad_utility::testing::getQec();
     auto qecCopy = *testQec;
     if (cachingDisabled) {
-      qecCopy.setDisableCachingOnlyForTesting(true);
+      qecCopy.setDisableCaching(true);
       testQec = &qecCopy;
     }
     ValuesComponents initialValues{{TC{1}, TC{2}}, {TC{3}, TC{4}}};
@@ -183,7 +183,7 @@ TEST(ExternalValues, clone) {
   // `ExternalValues` only work with caching disabled.
   auto testQecOrig = ad_utility::testing::getQec("<x> <x> <x> .");
   auto testQecCopy = *testQecOrig;
-  testQecCopy.setDisableCachingOnlyForTesting(true);
+  testQecCopy.setDisableCaching(true);
   auto* testQec = &testQecCopy;
   ValuesComponents values{{TC{12}, TC{iri("<x>")}},
                           {TC::UNDEF{}, TC{iri("<y>")}}};

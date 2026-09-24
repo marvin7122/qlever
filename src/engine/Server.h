@@ -334,6 +334,23 @@ class Server {
       const ParsedQuery& parsedQuery);
   FRIEND_TEST(ServerTest, chooseBestFittingMediaType);
 
+  // True iff `mediaType` is an export format. This mirrors the definition
+  // used in `processQuery`: the interactive JSON formats are served from
+  // possibly cached results with live updates, everything else is an export.
+  static bool isExportMediaType(ad_utility::MediaType mediaType);
+  FRIEND_TEST(ServerTest, isExportMediaType);
+
+  // If the `bypass-result-cache-for-export` runtime parameter is set and the
+  // request described by `params`, the `Accept` header, and `query` is an
+  // export (see `isExportMediaType`), disable caching on `qec`, so that the
+  // subsequent planning and execution neither compute cache keys nor touch
+  // the result cache. Must be called after the context was created and
+  // before query planning. Requests that explicitly pin results are exempt.
+  static void maybeBypassResultCacheForExport(const ParamValueMap& params,
+                                              std::string_view acceptHeader,
+                                              const ParsedQuery& query,
+                                              QueryExecutionContext& qec);
+
   // Do the actual execution of a query.
   CPP_template(typename RequestT, typename SendT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)

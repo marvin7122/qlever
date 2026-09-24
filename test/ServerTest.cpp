@@ -92,6 +92,25 @@ TEST(ServerTest, chooseBestFittingMediaType) {
 }
 
 // _____________________________________________________________________________
+// Only the interactive JSON formats are served with live updates from
+// possibly cached results; every other media type is an export.
+TEST(ServerTest, isExportMediaType) {
+  using enum ad_utility::MediaType;
+  EXPECT_FALSE(Server::isExportMediaType(sparqlJson));
+  EXPECT_FALSE(Server::isExportMediaType(qleverJson));
+  EXPECT_TRUE(Server::isExportMediaType(textPlain));
+  EXPECT_TRUE(Server::isExportMediaType(json));
+  EXPECT_TRUE(Server::isExportMediaType(sparqlXml));
+  EXPECT_TRUE(Server::isExportMediaType(tsv));
+  EXPECT_TRUE(Server::isExportMediaType(csv));
+  EXPECT_TRUE(Server::isExportMediaType(turtle));
+  EXPECT_TRUE(Server::isExportMediaType(ntriples));
+  EXPECT_TRUE(Server::isExportMediaType(nquads));
+  EXPECT_TRUE(Server::isExportMediaType(octetStream));
+  EXPECT_TRUE(Server::isExportMediaType(binaryQleverExport));
+}
+
+// _____________________________________________________________________________
 TEST(ServerTest, getQueryId) {
   using namespace ad_utility::websocket;
 

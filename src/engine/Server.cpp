@@ -810,6 +810,11 @@ CPP_template_def(typename RequestT, typename SendT)(
         // Queries run against a consistent snapshot taken at the start of the
         // request, so build the execution context from that snapshot here.
         auto qecPtr = makeQec(indexAndViews);
+        // For export requests, optionally bypass the result cache (no cache
+        // keys, no cache access). This happens before planning, which is
+        // where cache keys would otherwise be computed.
+        maybeBypassResultCacheForExport(
+            parameters, request.base()[http::field::accept], query, *qecPtr);
         co_await processQuery(parameters, std::move(query), requestTimer,
                               cancellationHandle, *qecPtr, std::move(request),
                               send, timeLimit, plannedQuery);
@@ -1048,6 +1053,39 @@ ad_utility::MediaType Server::chooseBestFittingMediaType(
 
   return parsedQuery.hasConstructClause() ? MediaType::turtle
                                           : MediaType::sparqlJson;
+}
+
+// _____________________________________________________________________________
+bool Server::isExportMediaType(ad_utility::MediaType mediaType) {
+  using enum ad_utility::MediaType;
+  return mediaType != qleverJson && mediaType != sparqlJson;
+}
+
+// _____________________________________________________________________________
+void Server::maybeBypassResultCacheForExport(const ParamValueMap& params,
+                                             std::string_view acceptHeader,
+                                             const ParsedQuery& query,
+                                             QueryExecutionContext& qec) {
+  if (!getRuntimeParameter<&RuntimeParameters::bypassResultCacheForExport_>()) {
+    return;
+  }
+  auto mediaTypes =
+      qlever::http_api_helpers::determineMediaTypes(params, acceptHeader);
+  if (!isExportMediaType(chooseBestFittingMediaType(mediaTypes, query))) {
+    return;
+  }
+  // Explicit pinning requests take precedence over the bypass.
+  if (qec._pinSubtrees || qec._pinResult ||
+      qec.pinResultWithName().has_value()) {
+    AD_LOG_INFO << "Not bypassing the result cache for this export request, "
+                   "because pinning of (sub)results was requested."
+                << std::endl;
+    return;
+  }
+  AD_LOG_INFO << "Bypassing the result cache for this export request "
+                 "(`bypass-result-cache-for-export` is set)."
+              << std::endl;
+  qec.setDisableCaching(true);
 }
 
 // ____________________________________________________________________________

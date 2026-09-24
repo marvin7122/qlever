@@ -175,7 +175,11 @@ class QueryExecutionContext
   // cache keys for operations.
   bool disableCaching() const { return disableCaching_; }
 
-  void setDisableCachingOnlyForTesting(bool disableCaching) {
+  // Disable (or re-enable) caching for operations using this context. Used
+  // for tests, and by the server to bypass the result cache for export
+  // requests (see `bypass-result-cache-for-export`). Must be called before
+  // query planning: cache keys are computed during planning.
+  void setDisableCaching(bool disableCaching) {
     disableCaching_ = disableCaching;
   }
 

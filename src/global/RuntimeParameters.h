@@ -221,6 +221,14 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // If set to true, then export requests (any response format other than the
+  // interactive JSON formats) bypass QLever's subtree result cache: their
+  // operations neither read from nor write to the cache, and no cache keys
+  // are computed. Measured cold-cache hit rates of large export queries are
+  // near zero, so the cache only adds overhead there. Requests that
+  // explicitly pin results are exempt and still use the cache.
+  Bool bypassResultCacheForExport_{false, "bypass-result-cache-for-export"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

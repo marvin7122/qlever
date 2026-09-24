@@ -66,6 +66,17 @@ TEST(RuntimeParameters, lazyIndexScanNumThreadsIsStrictlyPositive) {
   EXPECT_EQ(params.lazyIndexScanNumThreads_.get(), 1u);
 }
 
+// Test the default and the assignment of `bypass-result-cache-for-export`:
+// exports bypass the result cache only when explicitly enabled.
+TEST(RuntimeParameters, bypassResultCacheForExportDefaultsToFalse) {
+  RuntimeParameters params;
+  EXPECT_FALSE(params.bypassResultCacheForExport_.get());
+  params.setFromAssignment("bypass-result-cache-for-export=true");
+  EXPECT_TRUE(params.bypassResultCacheForExport_.get());
+  params.setFromAssignment("bypass-result-cache-for-export=false");
+  EXPECT_FALSE(params.bypassResultCacheForExport_.get());
+}
+
 // Test that `getKeys` and `toMap` (the building blocks of
 // `--set-runtime-parameter help`) are consistent with each other.
 TEST(RuntimeParameters, getKeysAndToMapAreConsistent) {

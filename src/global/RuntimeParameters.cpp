@@ -66,6 +66,7 @@ RuntimeParameters::RuntimeParameters() {
   add(permutationWriterNumThreads_);
   add(vacuumMinimumBlockSize_);
   add(disableCaching_);
+  add(bypassResultCacheForExport_);
   add(logLevel_);
   add(constructDeduplication_);
 
