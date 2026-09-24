@@ -54,7 +54,7 @@
 // to regular async sends below. The version macros are absent before 2.2,
 // hence the defined() guard.
 #if defined(QLEVER_HAS_LIBURING) && defined(IO_URING_VERSION_MAJOR) && \
-    (IO_URING_VERSION_MAJOR > 2 ||                                      \
+    (IO_URING_VERSION_MAJOR > 2 ||                                     \
      (IO_URING_VERSION_MAJOR == 2 && IO_URING_VERSION_MINOR >= 5))
 #define QLEVER_HAS_LIBURING_SEND_ZC 1
 #endif
