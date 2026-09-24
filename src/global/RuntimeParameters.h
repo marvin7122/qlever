@@ -248,8 +248,11 @@ struct RuntimeParameters {
   // runs one vocabulary `lookupBatch` (offset reads, then string reads) and
   // then formats triples. Larger values amortize `io_uring_enter`; smaller
   // values can yield the first HTTP body bytes sooner. Must be >= 1. Default
-  // 1024 matches `ConstructTripleGenerator::BATCH_SIZE`.
-  SizeT constructExportRowBatchSize_{1024, "construct-export-row-batch-size"};
+  // 8192: sweep `construct-row-batch-sweep-1` (#64) measured -4.4% elapsed
+  // vs 1024 at a +0.7s time-to-first-byte cost on Wikidata German-label
+  // CONSTRUCT. `ConstructTripleGenerator::BATCH_SIZE` (1024) remains only
+  // as the test constant.
+  SizeT constructExportRowBatchSize_{8192, "construct-export-row-batch-size"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE

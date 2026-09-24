@@ -47,8 +47,9 @@ class ConstructTripleGenerator {
   friend class ConstructTripleGeneratorTest;
 
  public:
-  // Default number of `IdTable` rows in one CONSTRUCT export chunk. Overridden
-  // at runtime by `construct-export-row-batch-size` (same default).
+  // Test constant for the number of `IdTable` rows in one CONSTRUCT export
+  // chunk. The active chunk size is the `construct-export-row-batch-size`
+  // runtime parameter (default 8192, see #64).
   static constexpr size_t BATCH_SIZE = 1024;
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
