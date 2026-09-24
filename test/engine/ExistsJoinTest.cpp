@@ -972,23 +972,63 @@ TEST(ExistsJoin, resultSortedOn) {
 
 // _____________________________________________________________________________
 TEST(ExistsJoin, hashSetExistsJoinSingleColumn) {
-  // Single join column, no UNDEF: exercises the hash-set semijoin path.
-  // Left join keys {3,4,5}; right join keys {3,5}. Expected EXISTS:
-  // row0 (3) -> true, row1 (4) -> false, row2 (5) -> true.
-  testExists({{3, 6}, {4, 7}, {5, 8}}, {{3, 15}, {5, 37}}, {true, false, true},
-             1);
-
-  // Right side empty -> every EXISTS is false.
+  // Single join column, no UNDEF. All inputs are sorted on the join column,
+  // as declared to the test operation via `sortedCols`: the lazy result
+  // machinery verifies this declaration when expensive checks are enabled.
+  // Looping over `forceFullyMaterialized` covers both the lazy EXISTS path
+  // (right child served lazily) and the materialized hash-set semijoin (both
+  // children materialized), which is the path added for PR 43.
+  auto qec = getQec();
+  using V = Variable;
   auto alloc = ad_utility::testing::makeAllocator();
-  testExistsFromIdTable(makeIdTableFromVector({{3, 6}, {4, 7}}),
-                        IdTable{2, alloc}, {false, false}, 1);
+  struct TestCase {
+    VectorTable leftInput;
+    VectorTable rightInput;
+    std::vector<bool> expectedAsBool;
+  };
+  std::vector<TestCase> cases{
+      // Left join keys {3,4,5}; right join keys {3,5}.
+      {{{3, 6}, {4, 7}, {5, 8}}, {{3, 15}, {5, 37}}, {true, false, true}},
+      // Right side empty -> every EXISTS is false.
+      {{{3, 6}, {4, 7}}, {}, {false, false}},
+      // All left keys match, right side has duplicates.
+      {{{3, 6}, {4, 7}}, {{3, 15}, {3, 19}, {4, 37}}, {true, true}},
+      // Duplicates on the left each get the same boolean.
+      {{{3, 6}, {3, 7}, {4, 8}}, {{3, 15}, {3, 19}}, {true, true, false}},
+  };
 
-  // All left keys match.
-  testExists({{3, 6}, {4, 7}}, {{3, 15}, {4, 37}, {3, 19}}, {true, true}, 1);
+  auto makeChild = [&](const IdTable& input, const V& joinVar,
+                       const V& otherVar, bool forceFullyMaterialized) {
+    return ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, input.clone(),
+        std::vector<std::optional<Variable>>{joinVar, otherVar}, false,
+        std::vector<ColumnIndex>{0}, LocalVocab{}, std::nullopt,
+        forceFullyMaterialized);
+  };
 
-  // Duplicates on both sides: EXISTS is set-theoretic, so duplicates on the
-  // right do not change the result, and duplicates on the left each get the
-  // same boolean.
-  testExists({{3, 6}, {3, 7}, {4, 8}}, {{3, 15}, {3, 19}}, {true, true, false},
-             1);
+  for (bool forceFullyMaterialized : {false, true}) {
+    qec->getQueryTreeCache().clearAll();
+    for (const auto& [leftInput, rightInput, expectedAsBool] : cases) {
+      IdTable left = makeIdTableFromVector(leftInput);
+      // An empty `VectorTable` has no columns; the empty right side needs an
+      // explicit two-column table.
+      IdTable right = rightInput.empty() ? IdTable{2, alloc}
+                                         : makeIdTableFromVector(rightInput);
+      ExistsJoin exists{
+          qec,
+          makeChild(left, V{"?joinCol"}, V{"?leftCol"}, forceFullyMaterialized),
+          makeChild(right, V{"?joinCol"}, V{"?rightCol"},
+                    forceFullyMaterialized),
+          V{"?exists"}};
+      EXPECT_EQ(exists.getResultWidth(), left.numColumns() + 1);
+      auto res = exists.computeResultOnlyForTesting();
+      const auto& table = res.idTableView();
+      ASSERT_EQ(table.numRows(), expectedAsBool.size());
+      IdTable expected = left.clone();
+      expected.addEmptyColumn();
+      ql::ranges::transform(expectedAsBool, expected.getColumn(2).begin(),
+                            &Id::makeFromBool);
+      EXPECT_THAT(table, matchesIdTable(expected));
+    }
+  }
 }
