@@ -11,8 +11,12 @@ permissions:
   pull-requests: write
   issues: write
 
+# A comment that is not a review command still starts a run (the job-level
+# `if` skips it), and that run joins the workflow-level concurrency group
+# before the `if` is evaluated. Give such runs their own group so that an
+# ordinary PR comment does not cancel the review that is in progress.
 concurrency:
-  group: ocr-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  group: ocr-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}${{ github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, '/open-code-review') && !startsWith(github.event.comment.body, '@open-code-review') && format('-comment-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
