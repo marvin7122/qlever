@@ -302,6 +302,45 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
 }
 
 // _____________________________________________________________________________
+// The SELECT export cache returns the same values as direct lookups and
+// serves repeats from the cache (visible in the hit statistics).
+TEST(ExportIds, cachedIdToStringAndTypeMatchesDirectAndHits) {
+  std::string kg =
+      "<s> <p> <o> . "
+      "<s> <q> \"hello\" . "
+      "<s> <p> 42 . "
+      "<s> <p> 3.14 .";
+  auto qec = ad_utility::testing::getQec(kg);
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  auto getId = ad_utility::testing::makeGetId(index);
+  std::vector<Id> ids{
+      getId("<s>"),
+      getId("<p>"),
+      getId("<o>"),
+      getId("<q>"),
+      getId("\"hello\""),
+      Id::makeFromInt(42),
+      Id::makeFromDouble(3.14),
+      Id::makeUndefined(),
+  };
+
+  ql::exportIds::IdToStringAndTypeCache cache{
+      ql::exportIds::ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES};
+  // First pass populates the cache, second pass must hit on every id.
+  for (int pass = 0; pass < 2; ++pass) {
+    for (const Id& id : ids) {
+      const auto& cached =
+          ql::exportIds::cachedIdToStringAndType(cache, index, id, localVocab);
+      EXPECT_EQ(cached, ql::exportIds::idToStringAndType(index, id, localVocab))
+          << "Mismatch, pass " << pass;
+    }
+  }
+  EXPECT_EQ(cache.stats().totalLookups(), 2 * ids.size());
+  EXPECT_EQ(cache.stats().hits_, ids.size());
+}
+
+// _____________________________________________________________________________
 // Empty span returns an empty vector.
 TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");

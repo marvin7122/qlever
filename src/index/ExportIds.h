@@ -30,6 +30,7 @@
 #include "util/Algorithm.h"
 #include "util/CompilerExtensions.h"
 #include "util/Exception.h"
+#include "util/LruCacheWithStatistics.h"
 #include "util/ValueIdentity.h"
 
 namespace ql::exportIds {
@@ -227,6 +228,63 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
     default:
       return idToStringAndTypeForEncodedValue(id);
   }
+}
+
+// Key for the SELECT export cache (thesis section 4.10): the `Id` plus, for
+// `LocalVocabIndex` IDs only, the identity of the `LocalVocab` the index
+// refers to. All other datatypes resolve identically for every vocabulary:
+// the on-disk vocabulary is static during an export and the remaining
+// datatypes are encoded in the `Id` bits, so they share one cache entry
+// across the whole export. `LocalVocabIndex` IDs are block-local, hence the
+// vocabulary pointer disambiguates them. Callers must guarantee that no
+// `LocalVocab` is destroyed while the cache lives; in practice the cache
+// never outlives the exported `Result`, which owns all vocabularies.
+struct IdToStringAndTypeCacheKey {
+  Id id_;
+  const LocalVocab* localVocab_;
+  bool operator==(const IdToStringAndTypeCacheKey&) const = default;
+  template <typename H>
+  friend H AbslHashValue(H h, const IdToStringAndTypeCacheKey& key) {
+    return H::combine(std::move(h), key.id_, key.localVocab_);
+  }
+};
+
+inline IdToStringAndTypeCacheKey makeIdToStringAndTypeCacheKey(
+    Id id, const LocalVocab& localVocab) {
+  return {id, id.getDatatype() == Datatype::LocalVocabIndex ? &localVocab
+                                                            : nullptr};
+}
+
+using IdToStringAndTypeCacheValue =
+    std::optional<std::pair<std::string, const char*>>;
+using IdToStringAndTypeCache =
+    ad_utility::util::LRUCacheWithStatistics<IdToStringAndTypeCacheKey,
+                                             IdToStringAndTypeCacheValue>;
+
+// Default capacity: one shared cache per export generator (all columns share
+// one bound, see thesis section 4.10). Bounds memory on distinct-heavy
+// results while keeping hot entities resident; the `LRUCacheStats` tell
+// whether an export would profit from tuning.
+static constexpr size_t ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES = 1 << 16;
+
+// Cached variant of `idToStringAndType` for the SELECT export path. The
+// cached string is post-`escapeFunction`, so one cache instance serves a
+// single call site (fixed template arguments and escape function). Returns a
+// reference into the cache; the cache must outlive the use.
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false,
+          typename EscapeFunction = ql::identity>
+const IdToStringAndTypeCacheValue& cachedIdToStringAndType(
+    IdToStringAndTypeCache& cache, const Index& index, Id id,
+    const LocalVocab& localVocab,
+    const EscapeFunction& escapeFunction = EscapeFunction{}) {
+  return cache.getOrCompute(
+      makeIdToStringAndTypeCacheKey(id, localVocab),
+      [&](const IdToStringAndTypeCacheKey& key) {
+        return idToStringAndType<removeQuotesAndAngleBrackets,
+                                 returnOnlyLiterals>(index, key.id_, localVocab,
+                                                     escapeFunction);
+      });
 }
 
 // Positions (indices into the `ids` span) split by datatype: `VocabIndex` ids
