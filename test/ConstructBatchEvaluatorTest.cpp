@@ -6,9 +6,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <gmock/gmock.h>
-
 #include <absl/strings/str_cat.h>
+#include <gmock/gmock.h>
 
 #include <string_view>
 
