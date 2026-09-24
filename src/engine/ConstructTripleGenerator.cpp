@@ -147,9 +147,14 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
   auto chunks = ranges::views::chunk(std::move(rowView),
                                      ConstructTripleGenerator::BATCH_SIZE);
-  auto computeOne = [tableWithVocab, context = std::move(context),
-                     tableRowOffset](auto chunkView) mutable {
-    return computeBatch(tableWithVocab, chunkView, context, tableRowOffset);
+  // Shared (not moved twice): both lambdas below read the same context,
+  // including the deduplicator. Moving `context` into each lambda would
+  // leave the second with a disengaged `shared_ptr` deduplicator.
+  auto sharedContext = std::make_shared<BatchEvalContext>(std::move(context));
+  auto computeOne = [tableWithVocab, sharedContext,
+                     tableRowOffset](auto chunkView) {
+    return computeBatch(tableWithVocab, chunkView, *sharedContext,
+                        tableRowOffset);
   };
   if (!getRuntimeParameter<&RuntimeParameters::exportFiberOverlap_>()) {
     return InputRangeTypeErased<EvaluatedTriple>(
@@ -161,15 +166,16 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // fiber wave while instantiation stays serial and ordered. A lone
   // trailing chunk evaluates alone. `view_` is an `iota_view`, so holding
   // both chunk views while the pair evaluates is safe.
-  auto computePair = [tableWithVocab, context = std::move(context),
-                      tableRowOffset](auto chunkPair) mutable {
+  auto computePair = [tableWithVocab, sharedContext,
+                      tableRowOffset](auto chunkPair) {
     auto pairIt = ql::ranges::begin(chunkPair);
     auto first = *pairIt;
     ++pairIt;
     if (pairIt == ql::ranges::end(chunkPair)) {
-      return computeBatch(tableWithVocab, first, context, tableRowOffset);
+      return computeBatch(tableWithVocab, first, *sharedContext,
+                          tableRowOffset);
     }
-    return computeBatchPair(tableWithVocab, first, *pairIt, context,
+    return computeBatchPair(tableWithVocab, first, *pairIt, *sharedContext,
                             tableRowOffset);
   };
   return InputRangeTypeErased<EvaluatedTriple>(
