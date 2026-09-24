@@ -91,6 +91,7 @@ TEST(VocabBatchLookupData, AsResultEmpty) {
   EXPECT_TRUE(result->empty());
 }
 
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
   auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
 
@@ -99,6 +100,7 @@ TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
   EXPECT_EQ((*result)[1], "beta");
 }
 
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
   auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
@@ -121,6 +123,7 @@ TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
   EXPECT_EQ((*result)[1].data(), gammaData);
 }
 
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
   auto firstOwner = std::make_shared<StringVectorVocabBatchLookupData>();
   firstOwner->buffer() = {"alpha", "beta"};
@@ -148,6 +151,7 @@ TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
   EXPECT_EQ((*result)[1].data(), gammaData);
 }
 
+// _____________________________________________________________________________
 TEST(VocabBatchLookupData, KeepAliveRequiresAnOwner) {
   std::vector<std::string_view> views{"orphan"};
   AD_EXPECT_THROW_WITH_MESSAGE(keepAliveVocabBatch({}, std::move(views)),

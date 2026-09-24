@@ -211,12 +211,10 @@ class IoUringPolicy {
   void drainAllReadyCqes();
 
   // Apply one completion to the in-flight bookkeeping. Always updates the
-  // counts. Stores the first I/O error message in `pendingErrorMessage_`.
-  void processCqe(int numBytesRead, uint64_t requestId);
-
-  // First I/O error seen while reaping a wave. Thrown after the wave is
-  // advanced so no CQE is processed twice.
-  const char* pendingErrorMessage_ = nullptr;
+  // counts, even for a failed read. Return a static error message if the read
+  // failed or was short, and `nullptr` otherwise. The caller throws only after
+  // the whole wave is advanced, so no CQE is processed twice.
+  [[nodiscard]] const char* processCqe(int numBytesRead, uint64_t requestId);
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;

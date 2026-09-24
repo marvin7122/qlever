@@ -217,17 +217,22 @@ void IoUringPolicy::drainAllReadyCqes() {
   if (raw.empty()) {
     return;
   }
-  pendingErrorMessage_ = nullptr;
+  // Process every CQE of the wave before throwing, so the in-flight
+  // bookkeeping stays consistent. Report the first error of the wave.
+  const char* firstErrorMessage = nullptr;
   for (const RawCqe& cqe : raw) {
-    processCqe(cqe.res, cqe.id);
+    const char* errorMessage = processCqe(cqe.res, cqe.id);
+    if (firstErrorMessage == nullptr) {
+      firstErrorMessage = errorMessage;
+    }
   }
-  if (pendingErrorMessage_ != nullptr) {
-    AD_THROW(pendingErrorMessage_);
+  if (firstErrorMessage != nullptr) {
+    AD_THROW(firstErrorMessage);
   }
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
+const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
   --numInFlightReadRequests_;
 
   auto reqIt = inFlightReadsByRequestId_.find(requestId);
@@ -241,17 +246,13 @@ void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
     numInFlightReadRequestsPerBatch_.erase(it);
   }
 
-  if (pendingErrorMessage_ != nullptr) {
-    return;
-  }
   if (numBytesRead < 0) {
-    pendingErrorMessage_ = "I/O error in IoUringPolicy read operation";
-    return;
+    return "I/O error in IoUringPolicy read operation";
   }
   if (static_cast<size_t>(numBytesRead) != inFlightRead.expectedNumBytes) {
-    pendingErrorMessage_ = "read fewer bytes than requested in IoUringPolicy";
-    return;
+    return "read fewer bytes than requested in IoUringPolicy";
   }
+  return nullptr;
 }
 
 #endif  // QLEVER_HAS_IO_URING
