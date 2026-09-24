@@ -127,7 +127,7 @@ TEST(VocabularyInternalExternal, AccessOperator) {
 TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
                                        "epsilon"};
-  auto vocab = createVocabulary("LookupBatch")(words);
+  auto vocab = createVocabulary(gtestCurrentTestName())(words);
   const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
   auto result = vocab.lookupBatch(indices);
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
