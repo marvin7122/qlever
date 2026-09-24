@@ -209,10 +209,18 @@ class SplitVocabulary {
 
     std::array<std::vector<size_t>, numberOfVocabs>
         underlyingVocabIndicesByMarker;
+    // Each index's result position is recorded in the same pass: a second
+    // enumeration would repeat the marker extraction and branch per element.
+    // Only used when more than one marker is present (see below).
+    std::array<std::vector<size_t>, numberOfVocabs> resultPositionByMarker;
 
-    for (auto markedIndex : indices) {
-      underlyingVocabIndicesByMarker[getMarker(markedIndex)].push_back(
+    for (auto [resultPosition, markedIndex] :
+         ::ranges::views::enumerate(indices)) {
+      auto marker = getMarker(markedIndex);
+      underlyingVocabIndicesByMarker[marker].push_back(
           getVocabIndex(markedIndex));
+      resultPositionByMarker[marker].push_back(
+          static_cast<size_t>(resultPosition));
     }
 
     std::array<VocabBatchLookupResult, numberOfVocabs> lookupResultByMarker;
@@ -239,13 +247,6 @@ class SplitVocabulary {
     // One marker: return that batch. Mixed markers cannot share one buffer.
     if (numNonemptyMarkers == 1) {
       return std::move(lookupResultByMarker[lastNonemptyMarker]);
-    }
-
-    std::array<std::vector<size_t>, numberOfVocabs> resultPositionByMarker;
-    for (auto [resultPosition, markedIndex] :
-         ::ranges::views::enumerate(indices)) {
-      resultPositionByMarker[getMarker(markedIndex)].push_back(
-          static_cast<size_t>(resultPosition));
     }
 
     std::vector<std::string_view> viewsInInputOrder(indices.size());
