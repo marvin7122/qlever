@@ -9,6 +9,8 @@
 
 #include "engine/ConstructTripleGenerator.h"
 
+#include <cstdlib>
+
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
@@ -20,10 +22,21 @@ using ad_utility::InputRangeTypeErased;
 using StringTriple = QueryExecutionTree::StringTriple;
 
 //______________________________________________________________________________
+// Scratch sweep vehicle (not for merge): `QLEVER_CONSTRUCT_IDCACHE_PER_VAR`
+// overrides the per-variable entry bound so one binary covers all sweep arms.
+// Unset or unparsable values keep the default. Must be > 0 when parsed.
 IdCache ConstructTripleGenerator::makeIdCache(
     const PreprocessedConstructTemplate& tmpl) {
+  size_t perVariable = CACHE_ENTRIES_PER_VARIABLE;
+  if (const char* env = std::getenv("QLEVER_CONSTRUCT_IDCACHE_PER_VAR")) {
+    char* end = nullptr;
+    unsigned long parsed = std::strtoul(env, &end, 10);
+    if (end != env && parsed > 0) {
+      perVariable = static_cast<size_t>(parsed);
+    }
+  }
   return IdCache{std::max(tmpl.uniqueVariableColumns_.size(), size_t{1}) *
-                 CACHE_ENTRIES_PER_VARIABLE};
+                 perVariable};
 }
 
 namespace {
