@@ -228,6 +228,7 @@ jobs:
             localhost/qlever-ci:${{ matrix.image }} bash -c '
               set -e
               [ -f /work/.git/shallow ] && git -C /work fetch --tags --unshallow || true
+              mkdir -p ~/.conan2
               printf "compiler:\n  emcc:\n    version: [\"6.0.5\"]\n" > ~/.conan2/settings_user.yml
               cd /work && rm -rf /work/build
               conan install . -pr:b default -pr:h conanprofiles/emscripten.profile \
