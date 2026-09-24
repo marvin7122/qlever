@@ -13,13 +13,23 @@
 #include <algorithm>
 #include <numeric>
 #include <random>
+#include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "util/StreamingBufferWriter.h"
 
 using ad_utility::StreamingBufferWriter;
 
+// The invariant-framework concept was removed from the tree, so verify the
+// stateful-writer properties directly: the writer is nothrow-movable but
+// never copied, so buffer ownership cannot alias, and the fence never throws.
+static_assert(std::is_nothrow_move_constructible_v<StreamingBufferWriter>);
+static_assert(std::is_nothrow_move_assignable_v<StreamingBufferWriter>);
+static_assert(!std::is_copy_constructible_v<StreamingBufferWriter>);
+static_assert(!std::is_copy_assignable_v<StreamingBufferWriter>);
+static_assert(noexcept(StreamingBufferWriter::sfence()));
 // _____________________________________________________________________________
 TEST(StreamingBufferWriterTest, BasicStreamingWriteAndFlush) {
   constexpr size_t bufferSize = 1024;
@@ -96,6 +106,58 @@ TEST(StreamingBufferWriterTest, VariousSizesAndUnalignedOffsets) {
                              destMemory.begin() + offset));
     }
   }
+}
+
+// _____________________________________________________________________________
+// Unaligned destinations with lengths that reach the 64-byte streaming loop
+// must be copied correctly: the head copy aligns the write position to a
+// cache-line boundary before any non-temporal store runs.
+TEST(StreamingBufferWriterTest, UnalignedLargeCopyReachesStreamingLoop) {
+  constexpr size_t totalBuffer = 4096;
+  std::vector<char> destMemory(totalBuffer, 0);
+  std::vector<char> srcMemory(totalBuffer);
+  std::iota(srcMemory.begin(), srcMemory.end(), 1);
+
+  // Offsets that are not even 16-byte aligned, with lengths that exceed one
+  // 64-byte streaming block after the head alignment.
+  for (size_t offset : {1u, 3u, 7u, 17u, 33u}) {
+    for (size_t len : {64u, 65u, 127u, 512u, 2048u}) {
+      ASSERT_LT(offset + len, totalBuffer);
+      std::fill(destMemory.begin(), destMemory.end(), 0);
+
+      StreamingBufferWriter::streamCopy(destMemory.data() + offset,
+                                        srcMemory.data(), len);
+
+      EXPECT_TRUE(std::equal(srcMemory.begin(), srcMemory.begin() + len,
+                             destMemory.begin() + offset))
+          << "offset " << offset << ", len " << len;
+    }
+  }
+}
+
+// _____________________________________________________________________________
+TEST(StreamingBufferWriterTest, WriteAndFlush) {
+  constexpr size_t bufferSize = 256;
+  std::vector<char> rawBuffer(bufferSize, 0);
+  StreamingBufferWriter writer(
+      std::span<char>{rawBuffer.data(), rawBuffer.size()});
+
+  std::string payload(128, 'Y');
+  writer.writeAndFlush(payload.data(), payload.size());
+  EXPECT_EQ(writer.bytesWritten(), payload.size());
+  EXPECT_EQ(std::string_view(rawBuffer.data(), writer.bytesWritten()), payload);
+
+  // Boundary inputs: empty writes are accepted and change nothing.
+  writer.writeAndFlush("", 0);
+  EXPECT_EQ(writer.bytesWritten(), payload.size());
+  writer.writeAndFlush(std::string_view{});
+  EXPECT_EQ(writer.bytesWritten(), payload.size());
+
+  std::string tail(64, 'Z');
+  writer.writeAndFlush(tail);
+  EXPECT_EQ(writer.bytesWritten(), payload.size() + tail.size());
+  EXPECT_EQ(std::string_view(rawBuffer.data(), writer.bytesWritten()),
+            payload + tail);
 }
 
 // _____________________________________________________________________________

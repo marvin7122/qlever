@@ -42,11 +42,47 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ChunkStreamingBenchmark engine testUtil)
 
-    addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
+    addAndLinkBenchmark(SimdEscapeBenchmark qlever_util)
+
+    # io_uring, O_DIRECT, and `fdatasync` are Linux-only: the benchmark does
+    # not compile on macOS.
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
+    endif()
 
     addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
 
     addAndLinkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser
         qlever_util)
 
+    addAndLinkBenchmark(FastNumberFormatterBenchmark qlever_util)
+
+    # Standalone main(), so not via addAndLinkBenchmark (which links
+    # benchmarkWithMain).
+    add_executable(BranchlessDispatcherBenchmark
+        BranchlessDispatcherBenchmark.cpp)
+    qlever_target_link_libraries(BranchlessDispatcherBenchmark engine
+        qlever_util)
+
+    addAndLinkBenchmark(PrefixCompressorBenchmark)
+
+    addAndLinkBenchmark(VocabBatchLookupBenchmark vocabulary)
+
+    addAndLinkBenchmark(VocabularyBatchLookupMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(VocabularyBatchLookupEndToEndBenchmark vocabulary)
+
+    addAndLinkBenchmark(CompressedVocabLookupBatchMicroBenchmark vocabulary
+        fsst)
+
+    addAndLinkBenchmark(CompressedVocabLookupBatchEndToEndBenchmark vocabulary
+        fsst)
+
+    addAndLinkBenchmark(SplitVocabLookupBatchMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(SplitVocabLookupBatchEndToEndBenchmark vocabulary)
+
+    addAndLinkBenchmark(PolymorphicVocabLookupBatchMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(PolymorphicVocabLookupBatchEndToEndBenchmark vocabulary)
 endif()

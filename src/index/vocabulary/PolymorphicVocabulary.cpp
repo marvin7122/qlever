@@ -9,7 +9,13 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 
+#include <string_view>
+#include <type_traits>
+
 #include "engine/CallFixedSize.h"
+#include "util/Exception.h"
+
+namespace ad_utility::vocabulary {
 
 // _____________________________________________________________________________
 void PolymorphicVocabulary::open(const std::string& filename) {
@@ -62,15 +68,24 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
 }
 
 // _____________________________________________________________________________
-VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
-    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
-  return std::visit(
-      [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
-        if constexpr (requires { vocab.lookupBatch(indices, builder); }) {
+// Fill-only: decode into `builder` without finalizing it. Finalization is the
+// responsibility of the caller (see `Vocabulary::lookupBatch`), because this
+// overload is itself called by delegating wrappers that finalize exactly once
+// after delegation. Finalizing here as well would consume the builder twice:
+// the second `finalize()` observes an empty (moved-from) builder and fails its
+// `!views_.empty()` contract check.
+void PolymorphicVocabulary::lookupBatch(ql::span<const size_t> indices,
+                                        ArenaVocabBatchBuilder& builder) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  std::visit(
+      [&indices, &builder](const auto& vocab) {
+        if constexpr (SupportsBuilderLookupBatch<
+                          std::decay_t<decltype(vocab)>>) {
           vocab.lookupBatch(indices, builder);
-          return std::move(builder).finalize();
         } else {
-          return vocab.lookupBatch(indices);
+          for (std::string_view word : vocab.lookupBatch(indices)) {
+            builder.appendWord(word);
+          }
         }
       },
       vocab_);
@@ -127,3 +142,4 @@ void PolymorphicVocabulary::resetToType(VocabularyType type) {
       AD_FAIL();
   }
 }
+}  // namespace ad_utility::vocabulary

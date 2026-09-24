@@ -7,11 +7,11 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,11 +21,11 @@
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
-#include "util/Exception.h"
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________
-// Memory allocation tracker for measuring exact heap allocation counts.
+// Memory allocation tracker for measuring heap allocation counts via the
+// scalar and array `operator new` overloads.
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
@@ -59,6 +59,20 @@ struct AllocationTracker {
 #define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
 #endif
 
+// NOTE: the global `operator new`/`operator delete` pairs below are
+// intentionally implemented via `malloc`/`free`. GCC sees through to the
+// mismatched allocation functions and reports `-Wmismatched-new-delete`,
+// which is a false positive for replaceable global allocation functions.
+// GCC raises the warning while compiling the allocation call sites (via
+// inlining), so a pragma around the `operator delete` definitions alone does
+// not suppress it (observed failing on the gcc-11 `-Werror` leg); the warning
+// is therefore suppressed file-wide (GCC only, it is the only compiler that
+// emits it).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
+
 #ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
@@ -73,24 +87,28 @@ void* operator new(std::size_t size) {
 }
 
 // The `operator delete` overloads intentionally pair with the `std::malloc`
-// based `operator new` overload above, which GCC's -Wmismatched-new-delete
-// cannot see through, so the warning is disabled locally for GCC only.
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
-#endif
+// based `operator new` overloads above; the file-wide `-Wmismatched-new-delete`
+// suppression above covers them.
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
-// Forward to the unsized overload above: calling `std::free` directly here
-// trips GCC's `-Wmismatched-new-delete`, which a local `#pragma` cannot
-// suppress on all GCC versions.
-void operator delete(void* ptr, std::size_t) noexcept {
-  ::operator delete(ptr);
+void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+
+void* operator new[](std::size_t size) {
+  if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
+    AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
+    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
+  }
+  void* ptr = std::malloc(size);
+  if (!ptr) {
+    throw std::bad_alloc();
+  }
+  return ptr;
 }
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
-#endif
+
+void operator delete[](void* ptr) noexcept { std::free(ptr); }
+
+void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+#endif  // SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 
 namespace ad_benchmark {
 namespace {
@@ -98,6 +116,7 @@ namespace {
 using namespace qlever::constructExport;
 using namespace ql::export_formatting;
 
+// _____________________________________________________________________________
 // Generates 1,000,000 synthetic triples representing realistic SPARQL exports.
 std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
   std::vector<EvaluatedTriple> triples;
@@ -143,9 +162,13 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
             "\"Simple Label " + std::to_string(i) + "\"@en", nullptr);
         break;
       case 2:
-        // Literal requiring escaping (quotes, newlines, tabs)
+        // Literal requiring escaping (quotes, newlines, tabs). In a
+        // normalized literal an embedded quote is a real `"` character
+        // (only escaped at the C++ source level); a backslash-quote
+        // sequence would denote a literal backslash and would measure
+        // double-escaping instead of the real export path.
         obj = std::make_shared<EvaluatedTermData>(
-            "\"Title with \\\"quotes\\\" and \nnewline and \ttab " +
+            "\"Title with \"quotes\" and \nnewline and \ttab " +
                 std::to_string(i) + "\"",
             nullptr);
         break;
@@ -169,6 +192,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
   return triples;
 }
 
+// _____________________________________________________________________________
 class SerializerMicroBenchmark : public BenchmarkInterface {
  private:
   static constexpr size_t NUM_TRIPLES = 1'000'000;
@@ -275,3 +299,9 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
+
+// Closes the file-wide `-Wmismatched-new-delete` suppression opened above
+// (GCC only).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif

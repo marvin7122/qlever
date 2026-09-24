@@ -5,11 +5,11 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
-#include <type_traits>
-#include <utility>
-
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
+#include "util/Exception.h"
+
+namespace ad_utility::vocabulary {
 
 /// Vocabulary with multi-level `UnicodeComparator` that allows comparison
 /// according to different Levels. Groups of words that are adjacent on a
@@ -23,18 +23,6 @@ class UnicodeVocabulary {
  private:
   UnicodeComparator _comparator;
   UnderlyingVocabulary _underlyingVocabulary;
-
-  // Whether `V` offers the two-argument `lookupBatch` overload that decodes
-  // into an `ArenaVocabBatchBuilder`. Formulated with `std::void_t` instead
-  // of a requires-expression so this header also compiles in the C++17
-  // backport builds (`requires` needs C++20).
-  template <typename V, typename = void>
-  static constexpr bool hasBuilderLookupBatch = false;
-  template <typename V>
-  static constexpr bool hasBuilderLookupBatch<
-      V, std::void_t<decltype(std::declval<const V&>().lookupBatch(
-             std::declval<ql::span<const size_t>>(),
-             std::declval<ArenaVocabBatchBuilder&>()))>> = true;
 
  public:
   /// The additional `Args...` are used to construct the `UnderlyingVocabulary`
@@ -54,12 +42,21 @@ class UnicodeVocabulary {
     return _underlyingVocabulary.lookupBatch(indices);
   }
 
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
-                                     ArenaVocabBatchBuilder& builder) const {
-    if constexpr (hasBuilderLookupBatch<UnderlyingVocabulary>) {
-      return _underlyingVocabulary.lookupBatch(indices, builder);
+  // Same as `lookupBatch(indices)`, but decode into `builder` when the
+  // underlying vocabulary supports it; otherwise materialize the underlying
+  // result into `builder` word by word. Fill-only: the caller owns `builder`
+  // and finalizes it exactly once after this call returns (see
+  // `Vocabulary::lookupBatch`). This overload must never finalize itself (see
+  // `PolymorphicVocabulary::lookupBatch`).
+  void lookupBatch(ql::span<const size_t> indices,
+                   ArenaVocabBatchBuilder& builder) const {
+    AD_CONTRACT_CHECK(!indices.empty());
+    if constexpr (SupportsBuilderLookupBatch<UnderlyingVocabulary>) {
+      _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
-      return _underlyingVocabulary.lookupBatch(indices);
+      for (std::string_view word : _underlyingVocabulary.lookupBatch(indices)) {
+        builder.appendWord(word);
+      }
     }
   }
 
@@ -167,5 +164,7 @@ class UnicodeVocabulary {
     // Note: _comparator is not serialized as it's stateless or reconstructed.
   }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H

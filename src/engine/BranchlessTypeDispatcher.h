@@ -14,11 +14,11 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 
 #include "backports/span.h"
-#include "engine/PortableDoubleToChars.h"
 #include "global/Constants.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
@@ -52,6 +52,22 @@ struct TypeFormatDescriptor {
 
 namespace detail {
 
+// Format a double into `[out, last)`, returning the one-past-the-end pointer.
+// Floating-point `std::to_chars` is only available on macOS 13.3 and later,
+// but QLever still targets macOS 11.0, so fall back to `snprintf` on Apple
+// platforms.
+inline char* formatDoubleValue(char* out, char* last, double value) noexcept {
+#if defined(__APPLE__)
+  const int numChars =
+      std::snprintf(out, static_cast<size_t>(last - out), "%.17g", value);
+  return numChars > 0 ? out + numChars : out;
+#else
+  auto [ptr, ec] = std::to_chars(out, last, value);
+  (void)ec;
+  return ptr;
+#endif
+}
+
 // Fast branchless copy for terms with opening and closing delimiters.
 inline char* formatTermWithDelimiters(ValueId, std::string_view rawTerm,
                                       char* out, std::string_view prefix,
@@ -72,6 +88,7 @@ inline char* formatInteger(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [ptr, ec] = std::to_chars(out, out + 24, id.getInt());
+  (void)ec;
   out = ptr;
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
@@ -84,8 +101,7 @@ inline char* formatDouble(ValueId id, std::string_view, char* out,
                           std::string_view suffix) noexcept {
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
-  auto [ptr, ec] = doubleToChars(out, out + 32, id.getDouble());
-  out = ptr;
+  out = formatDoubleValue(out, out + 32, id.getDouble());
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
   return out;
@@ -115,6 +131,7 @@ inline char* formatBlankNode(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [ptr, ec] = std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
+  (void)ec;
   out = ptr;
   std::memcpy(out, suffix.data(), suffix.size());
   out += suffix.size();
@@ -128,6 +145,7 @@ inline char* formatDate(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [str, type] = id.getDate().toStringAndType();
+  (void)type;
   std::memcpy(out, str.data(), str.size());
   out += str.size();
   std::memcpy(out, suffix.data(), suffix.size());
@@ -142,6 +160,7 @@ inline char* formatGeoPoint(ValueId id, std::string_view, char* out,
   std::memcpy(out, prefix.data(), prefix.size());
   out += prefix.size();
   auto [str, type] = id.getGeoPoint().toStringAndType();
+  (void)type;
   std::memcpy(out, str.data(), str.size());
   out += str.size();
   std::memcpy(out, suffix.data(), suffix.size());
@@ -178,36 +197,41 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   lut[static_cast<size_t>(Datatype::Double)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#double>", &formatDouble};
 
-  // 4: VocabIndex (IRI by default when formatting raw names)
+  // VocabIndex (IRI by default when formatting raw names)
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 5: LocalVocabIndex
+  // LocalVocabIndex
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 6: TextRecordIndex
+  // SecondaryVocabIndex: same vocabulary-term treatment as the main
+  // vocabularies (an unmapped slot would silently emit nothing).
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+
+  // TextRecordIndex
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 7: Date
+  // Date
   lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
 
-  // 8: GeoPoint
+  // GeoPoint
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
 
-  // 9: WordVocabIndex
+  // WordVocabIndex
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 10: BlankNodeIndex
+  // BlankNodeIndex
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
       TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
 
-  // 11: EncodedVal
+  // EncodedVal
   lut[static_cast<size_t>(Datatype::EncodedVal)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
@@ -233,6 +257,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
@@ -270,6 +296,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
@@ -309,11 +337,12 @@ class BranchlessTypeDispatcher {
   // Returns: Pointer past the last byte written.
   static inline char* dispatchTermFormat(
       ValueId id, std::string_view rawTerm, char* out,
-      const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
+      const LookupTable& lut = kDefaultTypeFormatLut) {
     AD_CONTRACT_CHECK(out != nullptr);
     const uint8_t typeTag =
         static_cast<uint8_t>(id.getBits() >> ValueId::numDataBits) & 0x0F;
     const auto& desc = lut[typeTag];
+    AD_CONTRACT_CHECK(desc.formatFn_ != nullptr);
     return desc.formatFn_(id, rawTerm, out, desc.prefix_, desc.suffix_);
   }
 
@@ -324,9 +353,12 @@ class BranchlessTypeDispatcher {
   // Returns: Total number of bytes written.
   static inline size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
-      char* out, const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
+      char* out, const LookupTable& lut = kDefaultTypeFormatLut) {
     AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
     AD_CONTRACT_CHECK(out != nullptr || ids.empty());
+    if (ids.empty()) {
+      return 0;
+    }
 
     char* curr = out;
     const size_t numTerms = ids.size();

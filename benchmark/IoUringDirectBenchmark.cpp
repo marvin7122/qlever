@@ -100,7 +100,8 @@ class SimulatedVocabularyFile {
     }
 
 #ifdef __APPLE__
-    // macOS libc has no `fdatasync`; plain `fsync` is the portable fallback.
+    // macOS has no `fdatasync`; `fsync` is the portable equivalent here (the
+    // file is only a benchmark fixture, full-drive durability is not needed).
     ::fsync(fd);
 #else
     ::fdatasync(fd);

@@ -266,6 +266,10 @@ addLinkAndDiscoverTest(ParsedUriTest)
 
 addLinkAndDiscoverTestNoLibs(StringSortComparatorTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(FastIntToStringTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(LocaleManagerTest stringUtils)
 
 addLinkAndDiscoverTestNoLibs(GenericCharTraitsTest)
@@ -586,9 +590,12 @@ addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
 addLinkAndDiscoverTest(ExternalValuesQueryTest engine)
 addLinkAndDiscoverTest(ExternalValuesTest engine)
 
+addLinkAndDiscoverTest(AsyncChunkPipelineTest engine)
+
 addLinkAndDiscoverTest(ConstructBatchEvaluatorTest engine)
 
 addLinkAndDiscoverTest(MonomorphicSerializersTest engine)
+addLinkAndDiscoverTest(FastExportStreamFormatterTest engine rdfEscaping)
 
 addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
