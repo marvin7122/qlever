@@ -49,6 +49,16 @@
 #include <liburing.h>
 #endif
 
+// IORING_OP_SEND_ZC plus the sqe/cqe 64-bit data helpers need liburing
+// >= 2.5 (Ubuntu 22.04 ships 2.1). Older toolchains transparently fall back
+// to regular async sends below. The version macros are absent before 2.2,
+// hence the defined() guard.
+#if defined(QLEVER_HAS_LIBURING) && defined(IO_URING_VERSION_MAJOR) && \
+    (IO_URING_VERSION_MAJOR > 2 ||                                      \
+     (IO_URING_VERSION_MAJOR == 2 && IO_URING_VERSION_MINOR >= 5))
+#define QLEVER_HAS_LIBURING_SEND_ZC 1
+#endif
+
 namespace ad_utility {
 
 // 4KB memory page alignment constant for DMA and zero-copy kernel pinning.
@@ -388,6 +398,7 @@ class ZeroCopySocketSender {
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
 
     if (config_.useZeroCopy) {
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
         // Zero-Copy Send with Registered Fixed Buffer (Opcode:
         // IORING_OP_SEND_ZC)
@@ -398,6 +409,10 @@ class ZeroCopySocketSender {
         io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, flags,
                               zcFlags);
       }
+#else
+      // liburing predates SEND_ZC: regular async send (no zero-copy).
+      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, flags);
+#endif
     } else {
       // Standard asynchronous io_uring send
       io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, flags);
@@ -416,7 +431,11 @@ class ZeroCopySocketSender {
     request.active = true;
     inFlightTable_[tableIdx] = request;
 
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     io_uring_sqe_set_data64(sqe, reqId);
+#else
+    io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(reqId));
+#endif
     ++numInFlightRequests_;
     ++numInFlightBuffers_;
 #else
@@ -578,7 +597,12 @@ class ZeroCopySocketSender {
 
     const int res = cqe->res;
     const unsigned int flags = cqe->flags;
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     const uint64_t reqId = io_uring_cqe_get_data64(cqe);
+#else
+    const uint64_t reqId =
+        reinterpret_cast<uint64_t>(io_uring_cqe_get_data(cqe));
+#endif
     io_uring_cqe_seen(&ring_, cqe);
 
     const size_t tableIdx = reqId % inFlightTable_.size();
