@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -45,10 +46,11 @@ namespace ad_utility::ioWait {
 //
 // COST. Two `clock_gettime(CLOCK_MONOTONIC)` calls per measured call, which
 // are vDSO calls (~25 ns) as long as the system clocksource is `tsc`, plus a
-// non-atomic add. Counters are `thread_local`, so no cache line is written by
-// more than one core and the cost does not grow with thread count. Disabled by
-// default; the enable flag is a relaxed atomic load of a value that does not
-// change during a query, so the branch predicts perfectly.
+// relaxed load and store per counter (no read-modify-write). Counters are
+// `thread_local`, so no cache line is written by more than one core and the
+// cost does not grow with thread count. Disabled by default; the enable flag is
+// a relaxed atomic load of a value that does not change during a query, so the
+// branch predicts perfectly.
 //
 // Environment override for enabling the instrumentation independently of
 // the runtime parameter.
@@ -72,23 +74,68 @@ inline void setEnabled(bool value) {
   enabledFlag().store(value || envOverride(), std::memory_order_relaxed);
 }
 
-// One call site's totals.
+// A snapshot of one call site's totals.
 struct Counters {
   uint64_t nanos_ = 0;
   uint64_t calls_ = 0;
 };
 
-// Per-thread totals for the three blocking call sites.
+// A snapshot of the totals for the three blocking call sites.
 struct ThreadCounters {
   Counters pread_;
   Counters ioUringWait_;
   // `io_uring_submit` is a blocking call site too. With `flags = 0` on a
   // buffered file, a read that the kernel can service without punting is
   // performed inside `io_uring_enter`, so the thread blocks in submit and the
-  // matching completion is already present when it is reaped. Run
-  // io-wait-crossarm-3 measured 60.9 million completion waits totalling only
-  // 1.87 s, which is what that looks like when submit is not instrumented.
+  // matching completion is already present when it is reaped. Without this
+  // call site, that blocking time would be attributed to neither `pread` nor
+  // the completion wait.
   Counters ioUringSubmit_;
+};
+
+// Add the totals in `part` to `sum`.
+inline void addTo(ThreadCounters& sum, const ThreadCounters& part) {
+  auto add = [](Counters& to, const Counters& from) {
+    to.nanos_ += from.nanos_;
+    to.calls_ += from.calls_;
+  };
+  add(sum.pread_, part.pread_);
+  add(sum.ioUringWait_, part.ioUringWait_);
+  add(sum.ioUringSubmit_, part.ioUringSubmit_);
+}
+
+// One call site's live counters. Only the owning thread writes them, so a
+// relaxed load followed by a relaxed store suffices (no read-modify-write, and
+// on x86-64 the same plain `mov` instructions as a non-atomic add). The atomics
+// make the concurrent read in `total()` well-defined.
+struct LiveCounters {
+  std::atomic<uint64_t> nanos_{0};
+  std::atomic<uint64_t> calls_{0};
+
+  // Record one call that blocked for `nanos`. Must only be called by the
+  // owning thread.
+  void add(uint64_t nanos) {
+    nanos_.store(nanos_.load(std::memory_order_relaxed) + nanos,
+                 std::memory_order_relaxed);
+    calls_.store(calls_.load(std::memory_order_relaxed) + 1,
+                 std::memory_order_relaxed);
+  }
+  Counters snapshot() const {
+    return {nanos_.load(std::memory_order_relaxed),
+            calls_.load(std::memory_order_relaxed)};
+  }
+};
+
+// One thread's live counters for the three blocking call sites.
+struct LiveThreadCounters {
+  LiveCounters pread_;
+  LiveCounters ioUringWait_;
+  LiveCounters ioUringSubmit_;
+
+  ThreadCounters snapshot() const {
+    return {pread_.snapshot(), ioUringWait_.snapshot(),
+            ioUringSubmit_.snapshot()};
+  }
 };
 
 namespace detail {
@@ -96,18 +143,21 @@ namespace detail {
 // already exited. The mutex is taken once per thread, never per call.
 struct Registry {
   std::mutex mutex_;
-  std::vector<ThreadCounters*> live_;
+  std::vector<const LiveThreadCounters*> live_;
   ThreadCounters finished_;
 };
+// Intentionally leaked: the detached reporter thread and the exit reporter may
+// still read the registry during static destruction.
 inline Registry& registry() {
-  static Registry registry;
-  return registry;
+  static Registry* registry = new Registry;
+  return *registry;
 }
 
-// Adds this thread's counters to the registry on first use and folds them into
+// Add this thread's counters to the registry on first use and fold them into
 // `finished_` when the thread exits, so no sample is lost.
 struct ThreadRegistration {
-  ThreadCounters counters_;
+  LiveThreadCounters counters_;
+
   ThreadRegistration() {
     auto& reg = registry();
     std::lock_guard lock{reg.mutex_};
@@ -116,20 +166,15 @@ struct ThreadRegistration {
   ~ThreadRegistration() {
     auto& reg = registry();
     std::lock_guard lock{reg.mutex_};
-    reg.finished_.pread_.nanos_ += counters_.pread_.nanos_;
-    reg.finished_.pread_.calls_ += counters_.pread_.calls_;
-    reg.finished_.ioUringWait_.nanos_ += counters_.ioUringWait_.nanos_;
-    reg.finished_.ioUringWait_.calls_ += counters_.ioUringWait_.calls_;
-    reg.finished_.ioUringSubmit_.nanos_ += counters_.ioUringSubmit_.nanos_;
-    reg.finished_.ioUringSubmit_.calls_ += counters_.ioUringSubmit_.calls_;
+    addTo(reg.finished_, counters_.snapshot());
     reg.live_.erase(std::remove(reg.live_.begin(), reg.live_.end(), &counters_),
                     reg.live_.end());
   }
 };
 
-// This thread's counters. `thread_local`, so the cache line is private to the
-// owning core and the add needs no atomic.
-inline ThreadCounters& threadCounters() {
+// Return this thread's counters. `thread_local`, so the cache line is written
+// only by the owning core.
+inline LiveThreadCounters& threadCounters() {
   thread_local ThreadRegistration registration;
   return registration.counters_;
 }
@@ -142,9 +187,9 @@ inline uint64_t nowNanos() {
 }
 }  // namespace detail
 
-// Times the blocking call `callable` into `counters` when the instrumentation
-// is enabled, and calls it directly otherwise. Returns whatever `callable`
-// returns.
+// Time the blocking call `callable` into the counters chosen by `selector` when
+// the instrumentation is enabled, and call it directly otherwise. Return
+// whatever `callable` returns.
 template <typename Selector, typename Callable>
 decltype(auto) timed(Selector selector, Callable&& callable) {
   if (!enabled()) {
@@ -152,28 +197,26 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
   }
   // Resolved before the clock starts so one-time thread registration is not
   // counted as storage wait.
-  Counters& counters = selector(detail::threadCounters());
+  LiveCounters& counters = selector(detail::threadCounters());
   const uint64_t start = detail::nowNanos();
   if constexpr (std::is_void_v<decltype(callable())>) {
     callable();
-    counters.nanos_ += detail::nowNanos() - start;
-    ++counters.calls_;
+    counters.add(detail::nowNanos() - start);
   } else {
     auto result = callable();
-    counters.nanos_ += detail::nowNanos() - start;
-    ++counters.calls_;
+    counters.add(detail::nowNanos() - start);
     return result;
   }
 }
 
 // Selectors for the three instrumented call sites.
-inline Counters& preadCounters(ThreadCounters& counters) {
+inline LiveCounters& preadCounters(LiveThreadCounters& counters) {
   return counters.pread_;
 }
-inline Counters& ioUringWaitCounters(ThreadCounters& counters) {
+inline LiveCounters& ioUringWaitCounters(LiveThreadCounters& counters) {
   return counters.ioUringWait_;
 }
-inline Counters& ioUringSubmitCounters(ThreadCounters& counters) {
+inline LiveCounters& ioUringSubmitCounters(LiveThreadCounters& counters) {
   return counters.ioUringSubmit_;
 }
 
@@ -182,13 +225,8 @@ inline ThreadCounters total() {
   auto& reg = detail::registry();
   std::lock_guard lock{reg.mutex_};
   ThreadCounters total = reg.finished_;
-  for (const ThreadCounters* counters : reg.live_) {
-    total.pread_.nanos_ += counters->pread_.nanos_;
-    total.pread_.calls_ += counters->pread_.calls_;
-    total.ioUringWait_.nanos_ += counters->ioUringWait_.nanos_;
-    total.ioUringWait_.calls_ += counters->ioUringWait_.calls_;
-    total.ioUringSubmit_.nanos_ += counters->ioUringSubmit_.nanos_;
-    total.ioUringSubmit_.calls_ += counters->ioUringSubmit_.calls_;
+  for (const LiveThreadCounters* counters : reg.live_) {
+    addTo(total, counters->snapshot());
   }
   return total;
 }
@@ -216,34 +254,34 @@ struct WorkerSample {
 };
 
 namespace detail {
+// Intentionally leaked, like `registry()`.
 inline WorkerSample& workerSample() {
-  static WorkerSample sample;
-  return sample;
+  static WorkerSample* sample = new WorkerSample;
+  return *sample;
 }
 
-// Reads `utime + stime` from a `/proc/.../stat` line. Both follow the comm
-// field, which may itself contain spaces, so parse after the final ')'.
+// Read `utime + stime` from a `/proc/.../stat` line. Both follow the comm
+// field, which may itself contain spaces, so parse after the final ')'. Return
+// 0 if the line is malformed.
 inline uint64_t ticksFromStat(const std::string& stat) {
   const auto close = stat.rfind(')');
   if (close == std::string::npos) {
     return 0;
   }
   std::istringstream rest{stat.substr(close + 1)};
-  std::string field;
-  // Fields after comm: state(3) ppid(4) ... utime is 14, stime is 15.
-  uint64_t utime = 0;
-  uint64_t stime = 0;
-  for (int index = 3; index <= 15; ++index) {
-    if (!(rest >> field)) {
-      return 0;
-    }
-    if (index == 14) {
-      utime = std::strtoull(field.c_str(), nullptr, 10);
-    } else if (index == 15) {
-      stime = std::strtoull(field.c_str(), nullptr, 10);
-    }
+  const std::vector<std::string> fields(
+      std::istream_iterator<std::string>{rest},
+      std::istream_iterator<std::string>{});
+  // The first field after comm is field 3 (state); utime is field 14 and
+  // stime is field 15 (see `man 5 proc`).
+  constexpr size_t firstFieldAfterComm = 3;
+  constexpr size_t utimeOffset = 14 - firstFieldAfterComm;
+  constexpr size_t stimeOffset = 15 - firstFieldAfterComm;
+  if (fields.size() <= stimeOffset) {
+    return 0;
   }
-  return utime + stime;
+  return std::strtoull(fields[utimeOffset].c_str(), nullptr, 10) +
+         std::strtoull(fields[stimeOffset].c_str(), nullptr, 10);
 }
 
 // Linux-only: reads `/proc/self/task`, returning early where it is absent.
@@ -291,7 +329,7 @@ inline void sampleWorkers() {
 }
 }  // namespace detail
 
-// Formats the current totals as one line.
+// Format the current totals as one line.
 inline std::string report() {
   const ThreadCounters counters = total();
   const WorkerSample& sample = detail::workerSample();
@@ -316,8 +354,9 @@ inline std::string report() {
   return out.str();
 }
 
-// Periodically samples the io_uring worker pool and rewrites the report to the
-// file named by `QLEVER_IO_WAIT_REPORT`, plus stderr at process exit.
+// Periodically sample the io_uring worker pool and rewrite the report to the
+// file named by `QLEVER_IO_WAIT_REPORT`. Does nothing if that variable is
+// unset.
 //
 // WHY A FILE AND A POLLER, NOT AN EXIT HOOK. The server can stop with a
 // signal, so static destructors do not necessarily run. Writing from a signal
@@ -348,10 +387,12 @@ inline void startReporter() {
   });
 }
 
-// Also reports on a normal exit, for interactive use.
+// Print the report to stderr on a normal exit, for interactive use.
 struct ExitReporter {
   ~ExitReporter() { std::fprintf(stderr, "%s\n", report().c_str()); }
 };
+// Register the exit reporter and start the periodic file reporter, both at most
+// once per process.
 inline const ExitReporter& exitReporter() {
   static ExitReporter reporter;
   startReporter();
