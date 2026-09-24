@@ -628,8 +628,14 @@ void Operation::createRuntimeInfoFromEstimates(
   }
   _runtimeInfo->multiplicityEstimates_ = multiplicityEstimates;
 
-  auto cachedResult = _executionContext->getQueryTreeCache().getIfContained(
-      {getCacheKey(), locatedTriplesState().index_});
+  // With caching disabled there can never be a cached result, so skip the
+  // probe entirely (this also avoids counting estimate probes as cache
+  // misses in the hit-rate statistics).
+  auto cachedResult =
+      _executionContext->disableCaching()
+          ? std::nullopt
+          : _executionContext->getQueryTreeCache().getIfContained(
+                {getCacheKey(), locatedTriplesState().index_});
   if (cachedResult.has_value()) {
     const auto& [resultPointer, cacheStatus] = cachedResult.value();
     _runtimeInfo->cacheStatus_ = cacheStatus;
