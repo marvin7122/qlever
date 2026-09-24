@@ -106,7 +106,11 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
          ql::views::transform([tableWithVocab, context = std::move(context),
                                tableRowOffset](auto multiChunk) {
            constexpr size_t partRows = ConstructTripleGenerator::BATCH_SIZE;
-           std::vector<decltype(multiChunk | ::ranges::views::take(partRows))>
+           // Note: the element type must match the pushed expression
+           // exactly (drop_view<...> is a different type than the bare
+           // take_view).
+           std::vector<decltype(multiChunk | ::ranges::views::drop(partRows) |
+                                ::ranges::views::take(partRows))>
                parts;
            for (size_t begin = 0; begin < ::ranges::size(multiChunk);
                 begin += partRows) {
