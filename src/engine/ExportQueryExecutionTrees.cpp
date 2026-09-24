@@ -864,11 +864,13 @@ ExportQueryExecutionTrees::computeResult(
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
   // Arm the storage-wait accounting for this query, and register the
   // process-exit reporter and start the periodic file reporter (both at most
-  // once per process). The accounting is a no-op while the parameter is off,
-  // which is the default.
+  // once per process). Compiled out entirely without QLEVER_MEASURE_IO_WAIT;
+  // otherwise a no-op while the parameter is off, which is the default.
+#ifdef QLEVER_MEASURE_IO_WAIT
   ad_utility::ioWait::setEnabled(
       getRuntimeParameter<&RuntimeParameters::measureIoWait_>());
   ad_utility::ioWait::exitReporter();
+#endif
 
   auto limit = parsedQuery._limitOffset;
   compensateForLimitOffsetClause(limit, qet);

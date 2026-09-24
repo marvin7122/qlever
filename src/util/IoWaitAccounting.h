@@ -190,11 +190,21 @@ inline uint64_t nowNanos() {
 // Time the blocking call `callable` into the counters chosen by `selector` when
 // the instrumentation is enabled, and call it directly otherwise. Return
 // whatever `callable` returns.
+//
+// Without `QLEVER_MEASURE_IO_WAIT` (the default) this compiles to the direct
+// call: the lambda inlines into the raw `pread`/`io_uring_submit`/CQE wait and
+// no counter, clock, atomic, or branch instruction remains in the hot path.
 template <typename Selector, typename Callable>
 decltype(auto) timed(Selector selector, Callable&& callable) {
+#ifdef QLEVER_MEASURE_IO_WAIT
   if (!enabled()) {
     return callable();
   }
+#else
+  (void)selector;
+  return callable();
+#endif
+#ifdef QLEVER_MEASURE_IO_WAIT
   // Resolved before the clock starts so one-time thread registration is not
   // counted as storage wait.
   LiveCounters& counters = selector(detail::threadCounters());
@@ -207,6 +217,7 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
     counters.add(detail::nowNanos() - start);
     return result;
   }
+#endif
 }
 
 // Selectors for the three instrumented call sites.

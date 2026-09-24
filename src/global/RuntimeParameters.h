@@ -148,7 +148,8 @@ struct RuntimeParameters {
   // Time the calls on which a query thread blocks waiting for storage (the
   // positioned `pread` in `File::read` and the io_uring submission and
   // completion waits) and report the process totals. Off by default: it is
-  // a diagnostic aid, not a production feature.
+  // a diagnostic aid, not a production feature. Only effective in builds with
+  // `QLEVER_MEASURE_IO_WAIT`; otherwise setting it is silently ignored.
   Bool measureIoWait_{false, "measure-io-wait"};
   // If set to `true`, then a division by zero in an expression will lead
   // to an

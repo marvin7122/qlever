@@ -469,7 +469,10 @@ addLinkAndDiscoverTest(GeneratorTest)
 
 addLinkAndDiscoverTest(MemorySizeTest memorySize)
 
-addLinkAndDiscoverTest(IoWaitAccountingTest qlever_util)
+# Only meaningful with the instrumentation compiled in.
+if (QLEVER_MEASURE_IO_WAIT)
+  addLinkAndDiscoverTest(IoWaitAccountingTest qlever_util)
+endif ()
 
 addLinkAndDiscoverTest(JsonUtilTest)
 
