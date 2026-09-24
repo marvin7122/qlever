@@ -73,12 +73,9 @@ class BatchManagerBase {
 // submission, so the application thread pays no `io_uring_enter` syscall per
 // submitted batch while the poller stays awake. `sqThreadIdleMs` bounds how
 // long the poller stays awake across submission gaps within one query (it
-// sleeps between queries). The two opt-in flags below are evaluated, not
-// enabled, by this change: both stay `false` unless a benchmark on the
-// Wikidata truthy index shows a win. `singleIssuer` is additionally only
-// sound while exactly one thread ever submits to a ring, which holds because
-// `IoUringPolicy` is single-threaded use only; revisit this once per-thread
-// rings land.
+// sleeps between queries). The two opt-in flags below default to `false`.
+// `singleIssuer` is only sound while exactly one thread ever submits to a
+// ring, which holds because `IoUringPolicy` is single-threaded use only.
 struct IoUringSetupOptions {
   bool useSqPoll = false;
   unsigned sqThreadCpu = 0;
