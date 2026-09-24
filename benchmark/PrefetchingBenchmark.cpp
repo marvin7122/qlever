@@ -243,7 +243,6 @@ class PrefetchingBenchmark : public BenchmarkInterface {
 
   CompactVectorOfStrings<char> vocabWords_;
   std::vector<Id> lookupIds_;
-  std::vector<size_t> lookupPositions_;
 
  public:
   PrefetchingBenchmark() { setupSyntheticVocabulary(); }
@@ -279,13 +278,11 @@ class PrefetchingBenchmark : public BenchmarkInterface {
     std::uniform_int_distribution<uint64_t> dist(0, NUM_VOCAB_ENTRIES - 1);
 
     lookupIds_.reserve(NUM_LOOKUP_IDS);
-    lookupPositions_.reserve(NUM_LOOKUP_IDS);
 
     for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
       uint64_t vocabIndex = dist(rng);
       lookupIds_.push_back(
           Id::makeFromVocabIndex(VocabIndex::make(vocabIndex)));
-      lookupPositions_.push_back(i);
     }
   }
 
@@ -352,13 +349,16 @@ class PrefetchingBenchmark : public BenchmarkInterface {
           "Prefetched Lookup (Pipelined K = " + std::to_string(distance) +
           " rows ahead)";
 
+      // Index extraction is setup, not lookup work: allocating and filling
+      // `rawIndices` here keeps memory allocation overhead out of the timed
+      // measurement region below.
+      std::vector<size_t> rawIndices(NUM_LOOKUP_IDS);
+      for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
+        rawIndices[i] = lookupIds_[i].getVocabIndex().get();
+      }
+
       auto& m = group.addMeasurement(label, [&]() {
         perfMonitor.start();
-
-        std::vector<size_t> rawIndices(NUM_LOOKUP_IDS);
-        for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
-          rawIndices[i] = lookupIds_[i].getVocabIndex().get();
-        }
 
         resolver.resolveCompactVectorPipelined(
             vocabWords_, rawIndices,

@@ -51,4 +51,17 @@ if (NOT _NO_BENCHMARK)
     addAndLinkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser
         qlever_util)
 
+    # The allocation-counting `operator new`/`delete` overloads in
+    # `SerializerMicroBenchmark.cpp` and `MonomorphicSerializerBenchmark.cpp`
+    # deliberately pair a malloc-based `operator new` with a `std::free`-based
+    # `operator delete`. GCC's `-Wmismatched-new-delete` also fires at inline
+    # call sites of these overloads, where a local `#pragma` cannot suppress
+    # it, so disable the warning for these targets when building with GCC.
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(SerializerMicroBenchmark PRIVATE
+            -Wno-mismatched-new-delete)
+        target_compile_options(MonomorphicSerializerBenchmark PRIVATE
+            -Wno-mismatched-new-delete)
+    endif()
+
 endif()

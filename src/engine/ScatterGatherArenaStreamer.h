@@ -497,8 +497,8 @@ class ScatterGatherChunkStreamer {
           slice.isArena ? static_cast<const void*>(slice.arenaPtr)
                         : static_cast<const void*>(currentHeaderBuffer_.data() +
                                                    slice.headerOffset);
-      iovecs.push_back(
-          iovec{.iov_base = const_cast<void*>(ptr), .iov_len = slice.len});
+      // Positional construction: designated initializers are C++20-only.
+      iovecs.push_back(iovec{const_cast<void*>(ptr), slice.len});
     }
 
     ScatterGatherChunk chunk(ScatterGatherChunk::Passkey{}, std::move(iovecs),
