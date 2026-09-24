@@ -672,7 +672,7 @@ endif ()
 # Requires the enabled pipeline (`PipelineMorselIntegration` pushes with
 # `runtimeEnabled_ = true` and expects `Accepted`).
 if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
+    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global localVocab)
     if (NOT SINGLE_TEST_BINARY)
         target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     endif()
