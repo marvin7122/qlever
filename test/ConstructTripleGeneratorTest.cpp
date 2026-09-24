@@ -537,7 +537,7 @@ auto triplesToStrings = [](const std::vector<EvaluatedTriple>& triples) {
 // give one overlapped pair plus a lone trailing chunk of 452 rows. Every
 // third row drops its triple, the rest emit `?sub <p> <o>`.
 TEST_F(ConstructTripleGeneratorTest, fiberOverlapMatchesSerial) {
-  std::vector<std::vector<Id>> rows;
+  std::vector<std::vector<IntOrId>> rows;
   rows.reserve(2500);
   const std::array<Id, 3> cycle{idS_, idO_, U};
   for (size_t i = 0; i < 2500; ++i) {
@@ -569,7 +569,7 @@ TEST_F(ConstructTripleGeneratorTest, fiberOverlapMatchesSerial) {
 // first chunk's triples, so only the first occurrences (in serial order)
 // may be emitted.
 TEST_F(ConstructTripleGeneratorTest, fiberOverlapMatchesSerialWithFullDedup) {
-  std::vector<std::vector<Id>> rows;
+  std::vector<std::vector<IntOrId>> rows;
   rows.reserve(2500);
   const std::array<Id, 3> cycle{idS_, idO_, U};
   for (size_t i = 0; i < 2500; ++i) {
