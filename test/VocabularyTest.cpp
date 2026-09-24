@@ -257,13 +257,10 @@ TEST(VocabularyTest, LookupBatch) {
 
 // The builder-taking `lookupBatch` overload must also work when the underlying
 // vocabulary has no native builder support (here: on-disk uncompressed). In
-// that case the single-shot words are copied into the caller's builder and
-// the builder is finalized exactly once (never finalized empty, and never
-// finalized twice when wrappers are nested).
-//
-// Regression test: nested wrappers used to finalize the same builder twice
-// (inner wrapper moves the views out, outer wrapper then hits
-// `AD_CONTRACT_CHECK(!views_.empty())` in `finalize()`).
+// that case the single-shot words are copied into the caller's builder per
+// the documented contract (`Vocabulary.h`: the builder is always populated
+// on return because callers finalize it unconditionally), and the finalized
+// builder content is returned.
 TEST(VocabularyTest, LookupBatchWithBuilderOnDisk) {
   // On-disk uncompressed has no native builder support, so this exercises the
   // documented fallback path that previously finalized an empty builder.

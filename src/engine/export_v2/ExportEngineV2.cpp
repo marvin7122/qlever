@@ -418,10 +418,10 @@ void ExportEngineV2::appendSerializedRows(
   }
 
   // Assemble the whole window into one string with a single coalesced append.
-  // Per-cell appends would create one builder segment per cell, making
-  // assembly quadratic in the window size (~600 s for 1M H-size rows,
-  // measured). One append per window keeps segments per morsel in the single
-  // digits.
+  // Per-cell appends would create one builder segment per cell (millions of
+  // segments per morsel, ~600 s for 1M H-size rows, measured). One append
+  // per window keeps segments per morsel in the single digits; the extra
+  // coalescing copy is linear and far cheaper than that segment overhead.
   const char separator = format == RowFormat::Csv ? ',' : '\t';
   std::string out;
   for (size_t i = 0; i < n; ++i) {

@@ -253,8 +253,9 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
 if (QLEVER_ENABLE_EXPORT_V2)
-    # The `server` library is not built on Emscripten, matching the pattern used
-    # for MaterializedViewsTest below.
+    # The `server` library is not built for Emscripten (see
+    # `src/engine/CMakeLists.txt`); the scheduler test needs no `server`
+    # symbols, so link it only where the target exists.
     if (TARGET server)
         addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
     else ()
@@ -274,6 +275,28 @@ addLinkAndDiscoverTest(VectorStreamSourceTest engine)
 # stays ON there, so the exclusion must name the reduced set explicitly.
 if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
     addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+endif ()
+
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(AsyncChunkPipelineTest)
+    if (NOT SINGLE_TEST_BINARY)
+    else ()
+        target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif ()
+endif ()
+
+# Not in `SINGLE_TEST_BINARY`: the test `#undef`s `QLEVER_ENABLE_EXPORT_V2`,
+# but `kExportV2CompiledIn` is an inline variable, so mixing this translation
+# unit (macro off) with the others (macro on) in one binary is an ODR
+# violation and the linker keeps the `true` definition.
+if (QLEVER_ENABLE_EXPORT_V2 AND NOT SINGLE_TEST_BINARY)
+    addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+endif ()
+
+# Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
+# range-v3 fails in IndexImpl / CompressedExternalIdTable).
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global localVocab)
 endif ()
 
 addLinkAndDiscoverTest(IdTableTest qlever_util)
@@ -653,13 +676,13 @@ addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
 if (QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTest(AsyncChunkPipelineTest)
     if (NOT SINGLE_TEST_BINARY)
-        target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     else ()
         target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
-    endif()
 endif ()
-# Only meaningful when the V2 engine is compiled out (the test asserts the
-# compiled-in switch is off); otherwise the static_assert cannot hold.
+# The disabled-pipeline test asserts the compile-time switch is off, which is
+# impossible when `QLEVER_ENABLE_EXPORT_V2` is enabled (in particular, the
+# `SINGLE_TEST_BINARY` build defines it on the shared test main for all
+# tests). Only build it in the disabled configuration.
 if (NOT QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
 endif ()
@@ -671,6 +694,4 @@ endif ()
 if (QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
     if (NOT SINGLE_TEST_BINARY)
-        target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
-    endif()
 endif ()

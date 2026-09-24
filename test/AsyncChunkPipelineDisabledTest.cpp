@@ -20,13 +20,18 @@
 
 namespace {
 
-TEST(AsyncChunkPipelineDisabledTest, CompileTimeSwitchOverridesRuntimeOptIn) {
+TEST(AsyncChunkPipelineDisabledTest,
+     CompileTimeDisabledPipelineIgnoresRuntimeOptIn) {
   static_assert(!qlever::export_v2::kExportV2CompiledIn);
+  // The compile-time switch is the kill switch: it takes precedence over the
+  // runtime opt-in, so the pipeline stays disabled even with
+  // `runtimeEnabled_ = true`.
   qlever::export_v2::AsyncChunkPipeline<std::string> pipeline{
       {.capacity_ = 2, .runtimeEnabled_ = true}};
 
   EXPECT_FALSE(pipeline.isEnabled());
-  EXPECT_EQ(pipeline.push("ignored"), qlever::export_v2::PushResult::Closed);
+  EXPECT_EQ(pipeline.push(std::string{}),
+            qlever::export_v2::PushResult::Closed);
   EXPECT_FALSE(pipeline.pop().has_value());
 }
 
