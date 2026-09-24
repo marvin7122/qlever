@@ -200,8 +200,7 @@ void IoUringPolicy::dumpStats(const void* managerId) const {
   }
   AD_LOG_INFO << "NVMe passthrough lifetime stats [manager " << managerId
               << "]: " << nvmeReadsSubmitted_ << " native reads ("
-              << nvmeReadBytesSubmitted_ << " bytes), "
-              << nvmeCapableFallbacks_
+              << nvmeReadBytesSubmitted_ << " bytes), " << nvmeCapableFallbacks_
               << " capable-fd fallbacks to plain reads." << std::endl;
 }
 
