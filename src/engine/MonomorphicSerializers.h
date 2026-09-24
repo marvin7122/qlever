@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -120,7 +121,13 @@ struct CellValue {
       : type_(ColumnType::Int), intVal_(v) {}
 
   /* implicit */ constexpr CellValue(uint64_t v) noexcept
-      : type_(ColumnType::Int), intVal_(static_cast<int64_t>(v)) {}
+      : type_(ColumnType::Int), intVal_(0) {
+    // Silent truncation past `INT64_MAX` would emit wrong export data, so
+    // reject out-of-range inputs loudly at the conversion boundary.
+    AD_CONTRACT_CHECK(
+        v <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+    intVal_ = static_cast<int64_t>(v);
+  }
 
   /* implicit */ constexpr CellValue(double v) noexcept
       : type_(ColumnType::Double), doubleVal_(v) {}
