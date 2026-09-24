@@ -2033,8 +2033,11 @@ std::optional<IdTable> GroupByImpl::computeSumOverDistinctValues() const {
   }
   const Variable& wantedVar = innerVars.front();
 
+  // Note: deliberately `IndexScan`, not `const IndexScan`: the calls to
+  // `updateRuntimeInformationWhenOptimizedOut` below mutate the runtime
+  // info (same pattern as `computeGroupByObjectWithCount`).
   auto indexScan =
-      std::dynamic_pointer_cast<const IndexScan>(_subtree->getRootOperation());
+      std::dynamic_pointer_cast<IndexScan>(_subtree->getRootOperation());
   if (!indexScan || indexScan->numVariables() != 2 ||
       !indexScan->graphsToFilter().areAllGraphsAllowed() ||
       !indexScan->additionalVariables().empty() ||
