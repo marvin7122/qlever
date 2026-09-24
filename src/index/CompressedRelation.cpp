@@ -1170,6 +1170,11 @@ std::optional<size_t> CompressedRelationReader::getDistinctCol1Count(
         blockMetadata.lastTriple_.col0Id_ != col0Id) {
       return std::nullopt;
     }
+    // Empty blocks contribute no groups and are transparent to the stitching
+    // below (blocks are never empty in practice; this is only defensive).
+    if (blockMetadata.numDistinctCol1_ == 0) {
+      continue;
+    }
     segments.push_back(Segment{blockMetadata.firstTriple_.col1Id_,
                                blockMetadata.lastTriple_.col1Id_,
                                blockMetadata.numDistinctCol1_});
