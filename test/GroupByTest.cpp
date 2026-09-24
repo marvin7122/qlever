@@ -1698,9 +1698,11 @@ TEST_F(GroupByOptimizations, computeGroupByForSingleIndexScan) {
   testFailure(variablesOnlyX, aliasesCountX, xyzScanSortedByX);
 
   // Must (currently) have exactly one alias that is a count.
-  // A distinct count is only supported if the triple has three variables.
+  // A distinct count requires three variables, or two variables with the
+  // counted variable in column 1 (answered from the per-block distinct
+  // metadata). `yxScan` counts `?x`, which is in column 2 of POS.
   testFailure(emptyVariables, emptyAliases, xyzScanSortedByX);
-  testFailure(emptyVariables, aliasesCountDistinctX, xyScan);
+  testFailure(emptyVariables, aliasesCountDistinctX, yxScan);
   testFailure(emptyVariables, aliasesXAsV, xyzScanSortedByX);
 
   // `chooseInterface == true` means "use the dedicated
@@ -1744,6 +1746,23 @@ TEST_F(GroupByOptimizations, computeGroupByForSingleIndexScan) {
     // The test index currently consists of six distinct subjects:
     // <x>, <y>, <z>, <a>, <b> and <c>.
     ASSERT_THAT(optional, optionalHasTable({{I(6)}}));
+  }
+  {
+    // `COUNT(DISTINCT ?x)` over `?x <label> ?y` (PSO, `?x` in column 1)
+    // comes from the per-block distinct metadata. `<label>` triples have
+    // the subjects `<x>` and `<z>`.
+    auto groupBy =
+        GroupByImpl{qec, emptyVariables, aliasesCountDistinctX, xyScan};
+    auto optional = groupBy.computeGroupByForSingleIndexScan();
+    ASSERT_THAT(optional, optionalHasTable({{I(2)}}));
+  }
+  {
+    // Same query via `computeOptimizedGroupByIfPossible`, which routes to
+    // the same optimization.
+    auto groupBy =
+        GroupByImpl{qec, emptyVariables, aliasesCountDistinctX, xyScan};
+    auto optional = groupBy.computeOptimizedGroupByIfPossible();
+    ASSERT_THAT(optional, optionalHasTable({{I(2)}}));
   }
 }
 

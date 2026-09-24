@@ -74,6 +74,13 @@ struct CompressedBlockMetadataNoBlockIndex {
   // underlying file.
   std::optional<std::vector<OffsetAndCompressedSize>> offsetsAndCompressedSize_;
   size_t numRows_;
+  // The number of distinct values in column 0 and column 1 of this block.
+  // Used to answer scalar `COUNT DISTINCT` per relation and to skip blocks
+  // without reading them. Computed by the writer in a single pass over the
+  // (sorted) columns; exact, unlike the `float` multiplicities in
+  // `CompressedRelationMetadata`.
+  size_t numDistinctCol0_ = 0;
+  size_t numDistinctCol1_ = 0;
 
   // Store the first and the last triple of the block. First and last are meant
   // inclusively, that is, they are both part of the block. The order of the
@@ -144,7 +151,7 @@ struct CompressedBlockMetadataNoBlockIndex {
   // Two of these are equal if all members are equal.
   QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR_LOCAL(
       CompressedBlockMetadataNoBlockIndex, offsetsAndCompressedSize_, numRows_,
-      firstTriple_, lastTriple_, graphInfo_,
+      numDistinctCol0_, numDistinctCol1_, firstTriple_, lastTriple_, graphInfo_,
       containsDuplicatesWithDifferentGraphs_)
 
   // Format CompressedBlockMetadata contents for debugging.
@@ -222,6 +229,8 @@ AD_SERIALIZE_FUNCTION(CompressedBlockMetadata) {
   }
   serializer | arg.offsetsAndCompressedSize_.value();
   serializer | arg.numRows_;
+  serializer | arg.numDistinctCol0_;
+  serializer | arg.numDistinctCol1_;
   serializer | arg.firstTriple_;
   serializer | arg.lastTriple_;
   serializer | arg.graphInfo_;
@@ -857,6 +866,22 @@ class CompressedRelationReader {
       const CancellationHandle& cancellationHandle,
       const LocatedTriplesPerBlock& locatedTriplesPerBlock,
       const LimitOffsetClause& limitOffset) const;
+
+  // Return the number of distinct values in column 1 over all blocks of the
+  // scan (which must constrain column 0 to `col0Id` and leave the other
+  // columns unconstrained) without decompressing the interior blocks: those
+  // contribute their precomputed `numDistinctCol1_`, corrected for groups
+  // shared across block boundaries (detected via the stored first/last
+  // triples). At most the first and the last block are read (they may
+  // contain rows of neighboring relations). Return `std::nullopt` if any
+  // block carries delta triples, in which case the caller falls back to the
+  // general computation. Correct only if all graphs are allowed (the stored
+  // counts are unfiltered); the caller must guarantee this, like for the
+  // metadata shortcut in `getDistinctColIdsAndCounts`.
+  std::optional<size_t> getDistinctCol1Count(
+      Id col0Id, const ScanSpecAndBlocks& scanSpecAndBlocks,
+      const CancellationHandle& cancellationHandle,
+      const LocatedTriplesPerBlock& locatedTriplesPerBlock) const;
 
   std::optional<CompressedRelationMetadata> getMetadataForSmallRelation(
       const ScanSpecAndBlocks& scanSpecAndBlocks, Id col0Id,

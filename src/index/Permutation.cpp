@@ -146,6 +146,18 @@ IdTable Permutation::getDistinctCol0IdsAndCounts(
       limitOffset);
 }
 
+// ____________________________________________________________________________
+std::optional<size_t> Permutation::getDistinctCol1Count(
+    Id col0Id, const CancellationHandle& cancellationHandle,
+    const LocatedTriplesState& locatedTriplesState) const {
+  return reader().getDistinctCol1Count(
+      col0Id,
+      getScanSpecAndBlocks(
+          ScanSpecification{col0Id, std::nullopt, std::nullopt},
+          locatedTriplesState),
+      cancellationHandle, getLocatedTriplesForPermutation(locatedTriplesState));
+}
+
 // _____________________________________________________________________
 auto Permutation::toKeyOrder(Permutation::Enum permutation) -> KeyOrder {
   using enum Permutation::Enum;

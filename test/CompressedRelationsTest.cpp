@@ -511,6 +511,64 @@ TEST(CompressedRelationWriter, getFirstAndLastTriple) {
 }
 
 // _____________________________________________________________________________
+// The writer stores the per-block distinct counts for columns 0 and 1, and
+// `getDistinctCol1Count` answers the scalar `COUNT DISTINCT` of a relation
+// from them, reading at most the first and the last block.
+TEST(CompressedRelationWriter, perBlockDistinctCounts) {
+  using namespace ::testing;
+  // A large relation with repeated col1 values (spans many blocks at a tiny
+  // blocksize), flanked by small relations that force the first and the last
+  // block to also contain rows of neighboring relations.
+  std::vector<RelationInput> inputs;
+  inputs.push_back(RelationInput{1, {{7, 7}}});
+  std::vector<RowInput> rows;
+  for (int i = 0; i < 300; ++i) {
+    rows.push_back({i % 13, i});
+  }
+  ql::ranges::sort(rows);
+  inputs.push_back(RelationInput{2, std::move(rows)});
+  inputs.push_back(RelationInput{3, {{7, 8}, {7, 9}}});
+
+  auto filename = "perBlockDistinctCounts.dat";
+  auto [blocks, metaData, readerPtr] =
+      writeAndOpenRelations(inputs, filename, 40_B);
+  ASSERT_FALSE(blocks.empty());
+  auto blockMetadata = getBlockMetadataRangesfromVec(blocks);
+
+  // The columns inside each block are sorted, so uniformity (first and last
+  // triple agreeing on a column) is equivalent to a distinct count of one.
+  for (const auto& block : blocks) {
+    EXPECT_GE(block.numDistinctCol0_, 1);
+    EXPECT_LE(block.numDistinctCol0_, block.numRows_);
+    EXPECT_GE(block.numDistinctCol1_, 1);
+    EXPECT_LE(block.numDistinctCol1_, block.numRows_);
+    if (block.firstTriple_.col0Id_ == block.lastTriple_.col0Id_) {
+      EXPECT_EQ(block.numDistinctCol0_, 1);
+    } else {
+      EXPECT_GE(block.numDistinctCol0_, 2);
+    }
+    if (block.firstTriple_.col1Id_ == block.lastTriple_.col1Id_) {
+      EXPECT_EQ(block.numDistinctCol1_, 1);
+    } else {
+      EXPECT_GE(block.numDistinctCol1_, 2);
+    }
+  }
+
+  auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
+  auto distinctCount = [&](int col0) {
+    CompressedRelationReader::ScanSpecAndBlocks specAndBlocks{
+        {V(col0), std::nullopt, std::nullopt}, blockMetadata};
+    return readerPtr->getDistinctCol1Count(V(col0), specAndBlocks, handle,
+                                           emptyLocatedTriples);
+  };
+  EXPECT_THAT(distinctCount(1), Optional(1));
+  EXPECT_THAT(distinctCount(2), Optional(13));
+  EXPECT_THAT(distinctCount(3), Optional(1));
+  // A relation without metadata has no distinct values.
+  EXPECT_THAT(distinctCount(999), Optional(0));
+}
+
+// _____________________________________________________________________________
 TEST(CompressedRelationWriter, getFirstAndLastTripleWithUpdates) {
   // A dummy graph ID.
 

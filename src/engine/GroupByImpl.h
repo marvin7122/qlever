@@ -199,6 +199,16 @@ class GroupByImpl : public Operation {
   // is computed and returned. If not, an empty optional is returned.
   std::optional<IdTable> computeGroupByForSingleIndexScan() const;
 
+  // Scalar `COUNT(DISTINCT ?v)` over a two-variable index scan whose first
+  // permuted entry is bound and whose second entry is `countedVariable`
+  // (column 1), answered from the per-block `numDistinctCol1_` metadata (at
+  // most the first and the last block are read). Returns `std::nullopt` for
+  // any other shape, for delta triples, and for materialized views; the
+  // caller then falls back to the general computation.
+  std::optional<size_t> computeDistinctCol1CountForTwoVariableScan(
+      const std::shared_ptr<const IndexScan>& indexScan,
+      const Variable& countedVariable) const;
+
   // Check if the query represented by this GROUP BY is of the following form:
   //
   //   SELECT ?y (COUNT(?y) as ?count) WHERE {

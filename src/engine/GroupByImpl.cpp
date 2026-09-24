@@ -829,11 +829,15 @@ std::optional<IdTable> GroupByImpl::computeGroupByForSingleIndexScan() const {
   }
 
   // Distinct counts are only supported for triples with three variables without
-  // a GRAPH variable and if no `LIMIT`/`OFFSET` clauses are present.
+  // a GRAPH variable and if no `LIMIT`/`OFFSET` clauses are present. Two
+  // variable scans are additionally supported when the counted variable is in
+  // column 1 (answered from the per-block distinct metadata, see
+  // `computeDistinctCol1CountForTwoVariableScan` below).
   bool countIsDistinct = varAndDistinctness.value().isDistinct_;
-  if (countIsDistinct && (indexScan->numVariables() != 3 ||
-                          !indexScan->additionalVariables().empty() ||
-                          !indexScan->getLimitOffset().isUnconstrained())) {
+  if (countIsDistinct &&
+      (indexScan->numVariables() < 2 || indexScan->numVariables() > 3 ||
+       !indexScan->additionalVariables().empty() ||
+       !indexScan->getLimitOffset().isUnconstrained())) {
     return std::nullopt;
   }
 
@@ -853,6 +857,18 @@ std::optional<IdTable> GroupByImpl::computeGroupByForSingleIndexScan() const {
   if (!isVariableBoundInSubtree(var)) {
     // The variable is never bound, so its count is zero.
     return idTableFromInt(0);
+  }
+
+  // Scalar `COUNT(DISTINCT ?v)` over a two-variable scan with the counted
+  // variable in column 1 comes from the per-block distinct metadata (at most
+  // two blocks are read). Any other two-variable shape falls back to the
+  // general computation.
+  if (countIsDistinct && indexScan->numVariables() == 2) {
+    auto count = computeDistinctCol1CountForTwoVariableScan(indexScan, var);
+    if (!count.has_value()) {
+      return std::nullopt;
+    }
+    return idTableFromInt(count.value());
   }
 
   if (indexScan->numVariables() != 3) {
@@ -905,6 +921,38 @@ std::optional<IdTable> GroupByImpl::computeGroupByForSingleIndexScan() const {
   }
   return idTableFromInt(indexScan->getLimitOffset().actualSize(
       indexScan->permutation().numTriples()));
+}
+
+// ____________________________________________________________________________
+std::optional<size_t> GroupByImpl::computeDistinctCol1CountForTwoVariableScan(
+    const std::shared_ptr<const IndexScan>& indexScan,
+    const Variable& countedVariable) const {
+  AD_CORRECTNESS_CHECK(indexScan->numVariables() == 2);
+  // The scan has exactly one bound column, which must be the first entry of
+  // the permuted triple (column 0); the counted variable must be the second
+  // entry (column 1, the column `getDistinctCol1Count` counts). Any other
+  // shape falls back to the general computation.
+  const auto& permutedTriple = indexScan->getPermutedTriple();
+  if (!permutedTriple[1]->isVariable() ||
+      *permutedTriple[1] != countedVariable) {
+    return std::nullopt;
+  }
+  std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
+  if (!col0Id.has_value()) {
+    return std::nullopt;
+  }
+  // The stored counts are precomputed at index build time and ignore delta
+  // triples from SPARQL updates, so fall back when there are any (same guard
+  // as the other metadata-based paths above).
+  const auto& locTriples =
+      indexScan->permutation().getLocatedTriplesForPermutation(
+          locatedTriplesState());
+  if (!locTriples.isEmpty() || indexScan->permutation().permutationType() ==
+                                   Permutation::Type::MATERIALIZED_VIEW) {
+    return std::nullopt;
+  }
+  return indexScan->permutation().getDistinctCol1Count(
+      col0Id.value(), cancellationHandle_, locatedTriplesState());
 }
 
 // ____________________________________________________________________________

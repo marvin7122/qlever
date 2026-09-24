@@ -46,8 +46,12 @@ struct IndexFormatVersion {
 // the index format, so it has to be either extended by your change or updated
 // to the new pair of versions; else an index of the previous version can no
 // longer be converted, but only be rebuilt.
+// TODO(distinctmeta): set the PR number and the date when the PR for the
+// per-block distinct counts is opened (the number below is a placeholder;
+// the converter in `IndexFormatConverter.h` intentionally still serves the
+// 1572 -> 3159 pair, so indexes at 3159 must be rebuilt, not converted).
 inline const IndexFormatVersion& indexFormatVersion{
-    3159, DateYearOrDuration{Date{2026, 9, 1}}};
+    9999, DateYearOrDuration{Date{2026, 9, 24}}};
 
 // The index version that directly precedes `indexFormatVersion` above. An index
 // with exactly this version can be converted to the current version by the

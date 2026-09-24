@@ -133,6 +133,16 @@ class Permutation {
       const LocatedTriplesState& locatedTriplesState,
       const LimitOffsetClause& limitOffset) const;
 
+  // For a given relation, determine the number of distinct `col1Id`s from
+  // the per-block metadata, reading at most the first and the last block.
+  // Used for scalar `COUNT DISTINCT`. The `col0Id` must have metadata in
+  // `meta_` (an unknown `col0Id` yields 0). Returns `std::nullopt` if delta
+  // triples are present; the caller then falls back to the general
+  // computation.
+  std::optional<size_t> getDistinctCol1Count(
+      Id col0Id, const CancellationHandle& cancellationHandle,
+      const LocatedTriplesState& locatedTriplesState) const;
+
   // Typedef to propagate the `MetadataAndblocks` and `IdTableGenerator` type.
   using MetadataAndBlocks =
       CompressedRelationReader::ScanSpecAndBlocksAndBounds;

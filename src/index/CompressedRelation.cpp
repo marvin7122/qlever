@@ -1106,6 +1106,98 @@ IdTable CompressedRelationReader::getDistinctColIdsAndCounts(
 }
 
 // ____________________________________________________________________________
+std::optional<size_t> CompressedRelationReader::getDistinctCol1Count(
+    Id col0Id, const ScanSpecAndBlocks& scanSpecAndBlocks,
+    const CancellationHandle& cancellationHandle,
+    const LocatedTriplesPerBlock& locatedTriplesPerBlock) const {
+  auto blocks =
+      convertBlockMetadataRangesToVector(scanSpecAndBlocks.blockMetadata_);
+  if (blocks.empty()) {
+    return 0;
+  }
+  for (const auto& blockMetadata : blocks) {
+    if (locatedTriplesPerBlock.containsTriples(blockMetadata.blockIndex_)) {
+      return std::nullopt;
+    }
+  }
+
+  const auto& scanSpec = scanSpecAndBlocks.scanSpec_;
+  auto scanConfig = getScanConfig(scanSpec, {}, locatedTriplesPerBlock);
+
+  // The col1 statistics of one contiguous segment of rows of the relation:
+  // its first and last col1 value and its number of distinct col1 values.
+  struct Segment {
+    Id firstCol1_;
+    Id lastCol1_;
+    size_t numDistinct_;
+  };
+  std::vector<Segment> segments;
+  segments.reserve(blocks.size());
+
+  // Read a block and return the col1 statistics of its rows with
+  // `col0 == col0Id`. `readPossiblyIncompleteBlock` with the bound scan
+  // filters to exactly those rows (and drops the constant col0).
+  auto readSegment = [&](const CompressedBlockMetadata& blockMetadata)
+      -> std::optional<Segment> {
+    DecompressedBlock block =
+        readPossiblyIncompleteBlock(scanSpec, scanConfig, blockMetadata,
+                                    std::nullopt, locatedTriplesPerBlock);
+    cancellationHandle->throwIfCancelled();
+    if (block.numRows() == 0) {
+      return std::nullopt;
+    }
+    size_t numDistinct = 1;
+    for (size_t j = 1; j < block.numRows(); ++j) {
+      if (block(j, 0) != block(j - 1, 0)) {
+        ++numDistinct;
+      }
+    }
+    return Segment{block(0, 0), block(block.numRows() - 1, 0), numDistinct};
+  };
+
+  // The first and the last block may contain rows of neighboring relations,
+  // so they are read. All strictly interior blocks of a relation span lie
+  // completely inside the relation (relations occupy contiguous spans of
+  // blocks); they contribute their precomputed counts, corrected for groups
+  // shared with the neighboring segment below. A block that is unexpectedly
+  // not confined to `col0Id` falls back to the general computation.
+  if (auto segment = readSegment(blocks.front())) {
+    segments.push_back(*segment);
+  }
+  for (size_t i = 1; i + 1 < blocks.size(); ++i) {
+    const auto& blockMetadata = blocks[i];
+    if (blockMetadata.firstTriple_.col0Id_ != col0Id ||
+        blockMetadata.lastTriple_.col0Id_ != col0Id) {
+      return std::nullopt;
+    }
+    segments.push_back(Segment{blockMetadata.firstTriple_.col1Id_,
+                               blockMetadata.lastTriple_.col1Id_,
+                               blockMetadata.numDistinctCol1_});
+  }
+  if (blocks.size() > 1) {
+    if (auto segment = readSegment(blocks.back())) {
+      segments.push_back(*segment);
+    }
+  }
+
+  // Stitch the segments: a group shared across a segment boundary (detected
+  // via equal border values, which sorted order makes exact) was counted in
+  // both segments, so subtract one per shared boundary.
+  size_t total = 0;
+  std::optional<Id> previousLast;
+  for (const auto& segment : segments) {
+    total += segment.numDistinct_;
+    if (previousLast.has_value() &&
+        previousLast.value() == segment.firstCol1_) {
+      AD_CORRECTNESS_CHECK(total > 0);
+      --total;
+    }
+    previousLast = segment.lastCol1_;
+  }
+  return total;
+}
+
+// ____________________________________________________________________________
 float CompressedRelationWriter::computeMultiplicity(
     size_t numElements, size_t numDistinctElements) {
   bool functional = numElements == numDistinctElements;
@@ -1232,6 +1324,22 @@ CompressedRelationWriter::compressAndWriteColumn(ql::span<const Id> column) {
 }
 
 // _____________________________________________________________________________
+// Count the distinct values in a sorted column by counting the transitions.
+// The block columns handed to `compressAndWriteBlock` are sorted, so a single
+// linear pass is exact.
+static size_t countDistinctInSortedColumn(auto column) {
+  size_t distinct = 0;
+  std::optional<Id> previous;
+  for (Id id : column) {
+    if (id != previous) {
+      previous = id;
+      ++distinct;
+    }
+  }
+  return distinct;
+}
+
+// _____________________________________________________________________________
 void CompressedRelationWriter::compressAndWriteBlock(Id firstCol0Id,
                                                      Id lastCol0Id,
                                                      IdTable block,
@@ -1254,6 +1362,8 @@ void CompressedRelationWriter::compressAndWriteBlock(Id firstCol0Id,
     blockBuffer_.wlock()->emplace_back(CompressedBlockMetadataNoBlockIndex{
         std::move(offsets),
         numRows,
+        countDistinctInSortedColumn(block.getColumn(0)),
+        countDistinctInSortedColumn(block.getColumn(1)),
         {first[0], first[1], first[2], first[3]},
         {last[0], last[1], last[2], last[3]},
         std::move(graphInfo),
