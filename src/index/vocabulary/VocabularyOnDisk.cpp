@@ -1,6 +1,12 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -371,13 +377,13 @@ void VocabularyOnDisk::open(const std::string& filename) {
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
-  // NVMe passthrough rig for the engaged benchmark (see
-  // `NvmePassthrough.h`): `QLEVER_NVME_PASSTHROUGH=<nsid>:<blocksize>`
+  // NVMe passthrough configuration (see `NvmePassthrough.h`):
+  // `QLEVER_NVME_PASSTHROUGH=<nsid>:<blocksize>`
   // (e.g. `1:512`) enables the passthrough path for NVMe character devices
   // opened by this vocabulary. Regular files keep the plain path through
   // the per-fd capability probe, so setting this is safe for all
-  // vocabularies. Malformed values throw: a misconfigured engaged run must
-  // fail fast instead of silently measuring the fallback path.
+  // vocabularies. Malformed values throw: a misconfiguration must fail fast
+  // instead of silently taking the fallback path.
   ad_utility::nvmePassthrough::Options nvmeOptions;
   if (const char* env = std::getenv("QLEVER_NVME_PASSTHROUGH")) {
     unsigned int namespaceId = 0;
@@ -391,8 +397,8 @@ void VocabularyOnDisk::open(const std::string& filename) {
     nvmeOptions = {true, namespaceId, blockSize};
   }
   coalesceForPassthrough_ = nvmeOptions.enabled;
-  // Benchmark gap sweep without rebuilding: malformed values throw, so a
-  // misconfigured run fails fast instead of silently measuring a default.
+  // Gap size override without rebuilding: malformed values throw, so a
+  // misconfiguration fails fast instead of silently using the default.
   if (const char* gapEnv = std::getenv("QLEVER_NVME_MAX_GAP_BLOCKS")) {
     char* end = nullptr;
     const unsigned long gap = std::strtoul(gapEnv, &end, 10);

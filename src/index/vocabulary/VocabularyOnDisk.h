@@ -1,6 +1,12 @@
-// Copyright 2016, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2016 - 2026 The QLever Authors, in particular:
+//
+// 2016 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
@@ -50,8 +56,8 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // the exact per-word read pattern bit-identical to the unmodified path.
   bool coalesceForPassthrough_ = false;
   // Largest gap of uncovered blocks the planner swallows inside a run.
-  // Set from `QLEVER_NVME_MAX_GAP_BLOCKS` in `open` (a benchmark tuning
-  // knob, so gap sizes sweep without rebuilding); defaults to
+  // Set from `QLEVER_NVME_MAX_GAP_BLOCKS` in `open` (a tuning knob, so the
+  // gap size can change without rebuilding); defaults to
   // `kCoalesceMaxGapBlocks`.
   uint64_t maxGapBlocks_ = ad_utility::nvmePassthrough::kCoalesceMaxGapBlocks;
 

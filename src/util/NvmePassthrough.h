@@ -1,5 +1,9 @@
-// Copyright 2026, The QLever Authors
+// Copyright 2026, The QLever Authors, in particular:
 //
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
@@ -84,8 +88,8 @@ inline constexpr uint64_t kMaxBlocksPerRead = 0x10000;
 // Translate (`fileOffset`, `numBytes`) into NVMe addressing for a namespace
 // whose logical blocks are `logicalBlockSize` bytes wide and whose LBA
 // `lbaBase` corresponds to file offset 0 (the file image sits linearly in the
-// namespace, as on a rig where the vocabulary image was written contiguously
-// to a raw namespace). Returns `std::nullopt` when the read cannot be
+// namespace, as when the vocabulary image was written contiguously to a raw
+// namespace). Returns `std::nullopt` when the read cannot be
 // expressed as whole blocks (unaligned offset or length, empty read, more
 // than 2^16 blocks, a transfer length that does not fit 32 bits, or an LBA
 // translation that would overflow), in which case the caller must use the

@@ -97,7 +97,7 @@ class BatchManager final : public BatchManagerBase {
   BatchManager& operator=(const BatchManager&) = delete;
   // Report the policy's lifetime statistics (a no-op unless the policy took
   // the passthrough path at least once). The manager address tells repeated
-  // per-manager lines apart in a benchmark server log.
+  // per-manager lines apart in the server log.
   ~BatchManager() { policy_.dumpStats(this); }
 
   [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
@@ -118,9 +118,9 @@ class BatchManager final : public BatchManagerBase {
     policy_.wait(handle);
     // Periodically report passthrough usage while serving: the owning server
     // dies on SIGTERM without running destructors, so teardown-only logging
-    // would never surface on a benchmark rig. A cold vocabulary export issues
-    // tens to low hundreds of waits per manager, so the period must be small
-    // enough to fire at least once per measured query.
+    // would never surface for a running server. A cold vocabulary export
+    // issues tens to low hundreds of waits per manager, so the period must be
+    // small enough to fire at least once per query.
     if (++batchesCompleted_ % 64 == 0) {
       policy_.dumpStats(this);
     }
@@ -311,7 +311,7 @@ class IoUringPolicy {
 
   // Log lifetime passthrough counters (submitted reads, bytes, capable-fd
   // fallbacks), tagged with the owning manager's address so repeated
-  // per-manager lines stay attributable in a benchmark server log. Called
+  // per-manager lines stay attributable in the server log. Called
   // from the owning `BatchManager` destructor so a server stop reports what
   // the path served. Silent unless passthrough is enabled and served or
   // refused at least one capable request.
@@ -390,7 +390,8 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, nvmePassthrough::Options nvmeOptions = {},
+    bool& preferIoUring,
+    [[maybe_unused]] nvmePassthrough::Options nvmeOptions = {},
     unsigned ringSize = 256) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
