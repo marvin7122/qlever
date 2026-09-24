@@ -424,21 +424,22 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
 
     FsstRepeatedDecoder<N> repeated{std::move(decoders)};
     std::string scratch;
-    for (size_t i = 0; i < words.size(); ++i) {
-      const std::string viaString = repeated.decompress(compressed[i]);
-      std::string intoBuf(repeated.maxDecompressedSize(compressed[i]), '\0');
+    for (const auto& [expectedWord, compressedWord] :
+         ::ranges::views::zip(words, compressed)) {
+      const std::string viaString = repeated.decompress(compressedWord);
+      std::string intoBuf(repeated.maxDecompressedSize(compressedWord), '\0');
       const size_t n = repeated.decompressInto(
-          compressed[i], ql::span<char>{intoBuf.data(), intoBuf.size()},
+          compressedWord, ql::span<char>{intoBuf.data(), intoBuf.size()},
           scratch);
       EXPECT_THAT(n, ::testing::Eq(viaString.size()));
       EXPECT_THAT(std::string_view(intoBuf.data(), n),
                   ::testing::Eq(viaString));
-      EXPECT_THAT(viaString, ::testing::Eq(words[i]));
+      EXPECT_THAT(viaString, ::testing::Eq(expectedWord));
 
       // Also verify the 2-argument overload without scratch parameter:
-      std::string intoBuf2(repeated.maxDecompressedSize(compressed[i]), '\0');
+      std::string intoBuf2(repeated.maxDecompressedSize(compressedWord), '\0');
       const size_t n2 = repeated.decompressInto(
-          compressed[i], ql::span<char>{intoBuf2.data(), intoBuf2.size()});
+          compressedWord, ql::span<char>{intoBuf2.data(), intoBuf2.size()});
       EXPECT_THAT(n2, ::testing::Eq(viaString.size()));
       EXPECT_THAT(std::string_view(intoBuf2.data(), n2),
                   ::testing::Eq(viaString));

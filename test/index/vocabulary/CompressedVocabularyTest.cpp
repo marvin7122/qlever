@@ -385,8 +385,9 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
   churn();
   churn();
 
-  for (size_t i = 0; i < indices.size(); ++i) {
-    ASSERT_EQ(result[i], words[i]);
+  for (const auto& [resultWord, expectedWord] :
+       ::ranges::views::zip(result, words)) {
+    ASSERT_EQ(resultWord, expectedWord);
   }
 }
 
@@ -758,9 +759,8 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   unrelatedAllocation.append(64, 'x');
   ASSERT_EQ(unrelatedAllocation.size(), 64u);
   EXPECT_EQ(unrelatedAllocation, std::string(64, 'x'));
-  for (size_t i = 0; i < indices.size(); ++i) {
-    const size_t idx = indices[i];
-    EXPECT_EQ(result[i], vocab[idx]) << "at vocabulary index " << idx;
+  for (const auto& [resultWord, idx] : ::ranges::views::zip(result, indices)) {
+    EXPECT_EQ(resultWord, vocab[idx]) << "at vocabulary index " << idx;
   }
 
   ad_utility::deleteFile(filename);

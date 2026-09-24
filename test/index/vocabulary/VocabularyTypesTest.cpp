@@ -113,8 +113,8 @@ TEST(VocabBatchLookupData, ContiguousBuilderZeroSizedWordsAndMixed) {
 
   VocabBatchLookupResult result = std::move(builder).finalize();
   EXPECT_THAT(result, ::testing::ElementsAre("", "cat", "", "bird"));
-  for (size_t i = 0; i < result.size(); ++i) {
-    EXPECT_NE(result[i].data(), nullptr);
+  for (std::string_view word : result) {
+    EXPECT_NE(word.data(), nullptr);
   }
 }
 
