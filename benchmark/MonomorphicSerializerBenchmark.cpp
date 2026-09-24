@@ -61,12 +61,24 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. Disabled under ThreadSanitizer, whose runtime provides its own
-// definitions of these operators (multiple definition link error otherwise).
+// runs. Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
+// already provide these replaceable allocation functions, so defining them
+// here causes multiple-definition link errors. Under sanitizers the
+// allocation metadata below reads 0. Clang signals sanitizers via
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; neither mechanism works
+// on the other compiler, so both are checked (mirrors
+// `SerializerMicroBenchmark.cpp`).
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define MONOMORPHIC_SERIALIZER_BENCHMARK_UNDER_SANITIZER 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define MONOMORPHIC_SERIALIZER_BENCHMARK_UNDER_SANITIZER 1
+#endif
 // The sized deallocation functions forward to the unsized ones instead of
 // calling `std::free` directly, which GCC rejects with
 // `-Werror=mismatched-new-delete`.
-#ifndef __SANITIZE_THREAD__
+#ifndef MONOMORPHIC_SERIALIZER_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -102,7 +114,7 @@ void operator delete[](void* ptr) noexcept { std::free(ptr); }
 void operator delete[](void* ptr, std::size_t) noexcept {
   ::operator delete[](ptr);
 }
-#endif
+#endif  // MONOMORPHIC_SERIALIZER_BENCHMARK_UNDER_SANITIZER
 
 namespace ad_benchmark {
 namespace {
