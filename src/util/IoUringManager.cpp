@@ -200,10 +200,14 @@ void IoUringPolicy::drainAllReadyCqes() {
   while (true) {
     std::array<io_uring_cqe*, 64> cqes{};
     // `io_uring_peek_batch_cqe` returns the number of ready CQEs, or a
-    // negative error code; a negative value must not become a huge unsigned
-    // loop bound.
+    // negative `-errno` code on failure; a negative value must neither become
+    // a huge unsigned loop bound nor be silently swallowed like "no CQEs
+    // ready" (that would hide kernel/liburing failures and lose completions).
     const int n = io_uring_peek_batch_cqe(&ring_, cqes.data(), cqes.size());
-    if (n <= 0) {
+    if (n < 0) {
+      AD_THROW("io_uring_peek_batch_cqe failed in IoUringPolicy");
+    }
+    if (n == 0) {
       break;
     }
     for (int i = 0; i < n; ++i) {
