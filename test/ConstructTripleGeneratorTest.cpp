@@ -108,12 +108,30 @@ class ConstructTripleGeneratorTest : public ::testing::Test {
   // `TableWithRange` and collect `EvaluatedTriple`s.
   std::vector<EvaluatedTriple> run(
       Triples triples, VariableToColumnMap varMap, TableWithRange table,
+      ad_utility::DeduplicationMode mode =
+          ad_utility::DeduplicationMode::none(),
       ad_utility::SharedCancellationHandle handle = makeHandle()) {
     auto stringTriples = ConstructTripleGenerator::evaluateTables(
         triples, varMap, singleTableRange(std::move(table)), 0,
-        makeConfig(std::move(handle)));
+        EvaluationConfig{index_, std::move(handle), *qec_, mode});
 
     return ::ranges::to_vector(stringTriples);
+  }
+
+  // Run `run` over a fresh single-column `IdTable` built from `rows`, with
+  // the `export-fiber-overlap` parameter set to `overlap` (restored
+  // afterwards). A member function (not a lambda) so the private generator
+  // API stays accessible through the fixture's friendship.
+  std::vector<EvaluatedTriple> runWithOverlap(
+      Triples triples, VariableToColumnMap varMap,
+      const std::vector<std::vector<IntOrId>>& rows, bool overlap,
+      ad_utility::DeduplicationMode mode =
+          ad_utility::DeduplicationMode::none()) {
+    auto guard = setRuntimeParameterForTest<
+        &RuntimeParameters::exportFiberOverlap_>(overlap);
+    auto result = makeResult(makeIdTableFromVector(rows));
+    auto table = makeTableWithRange(*result, 0, rows.size());
+    return run(std::move(triples), std::move(varMap), std::move(table), mode);
   }
 
   // Build a single-triple CONSTRUCT template.
@@ -547,18 +565,8 @@ TEST_F(ConstructTripleGeneratorTest, fiberOverlapMatchesSerial) {
   VariableToColumnMap varMap;
   varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
 
-  auto runOnce = [&](bool overlap) {
-    auto guard = setRuntimeParameterForTest<
-        &RuntimeParameters::exportFiberOverlap_>(overlap);
-    auto result = makeResult(makeIdTableFromVector(rows));
-    auto table = makeTableWithRange(*result, 0, rows.size());
-    return ::ranges::to_vector(ConstructTripleGenerator::evaluateTables(
-        triples, varMap, singleTableRange(std::move(table)), 0,
-        makeConfig()));
-  };
-
-  auto serial = runOnce(false);
-  auto paired = runOnce(true);
+  auto serial = runWithOverlap(triples, varMap, rows, false);
+  auto paired = runWithOverlap(triples, varMap, rows, true);
   // 2500 rows minus the 833 UNDEF rows.
   ASSERT_EQ(serial.size(), 1667u);
   EXPECT_THAT(triplesToStrings(paired),
@@ -579,19 +587,10 @@ TEST_F(ConstructTripleGeneratorTest, fiberOverlapMatchesSerialWithFullDedup) {
   VariableToColumnMap varMap;
   varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
 
-  auto runOnce = [&](bool overlap) {
-    auto guard = setRuntimeParameterForTest<
-        &RuntimeParameters::exportFiberOverlap_>(overlap);
-    auto result = makeResult(makeIdTableFromVector(rows));
-    auto table = makeTableWithRange(*result, 0, rows.size());
-    EvaluationConfig config{index_, makeHandle(), *qec_,
-                            ad_utility::DeduplicationMode::full()};
-    return ::ranges::to_vector(ConstructTripleGenerator::evaluateTables(
-        triples, varMap, singleTableRange(std::move(table)), 0, config));
-  };
-
-  auto serial = runOnce(false);
-  auto paired = runOnce(true);
+  auto serial = runWithOverlap(triples, varMap, rows, false,
+                               ad_utility::DeduplicationMode::full());
+  auto paired = runWithOverlap(triples, varMap, rows, true,
+                               ad_utility::DeduplicationMode::full());
   // Only `<s> <p> <o>` (row 0) and `<o> <p> <o>` (row 1) survive.
   ASSERT_EQ(serial.size(), 2u);
   EXPECT_THAT(triplesToStrings(paired),
