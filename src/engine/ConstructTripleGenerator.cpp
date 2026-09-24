@@ -174,8 +174,7 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   };
   return InputRangeTypeErased<EvaluatedTriple>(
       std::move(chunks) | ranges::views::chunk(2) |
-      ql::views::transform(std::move(computePair)) | ql::views::join |
-      ql::views::join);
+      ql::views::transform(std::move(computePair)) | ql::views::join);
 }
 }  // namespace
 
