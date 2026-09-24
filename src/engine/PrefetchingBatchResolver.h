@@ -137,36 +137,34 @@ class PrefetchingBatchResolver {
     }
 
     // Main pipelined loop: prefetch row (i + distance) ahead while serializing
-    // row i
+    // row i. Only the `Id` array element itself is prefetched: the vocabulary
+    // string data lives in separate heap structures that are not reachable
+    // through `index` here, so prefetching `&index.getImpl()` would only touch
+    // the `IndexImpl` object and provide no caching benefit.
     for (size_t i = 0; i < n; ++i) {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        const Id pfId = ids[pfPos];
-        if (pfId.getDatatype() == Datatype::VocabIndex) {
-          const auto wordVocabIndex = pfId.getVocabIndex();
-          // Prefetch the underlying index entry if possible
-          const auto* vocabPtr =
-              reinterpret_cast<const void*>(&index.getImpl());
-          prefetchVocabEntry(vocabPtr, static_cast<int>(distance));
-        }
       }
 
       const size_t pos = positions[i];
       const Id id = ids[pos];
       const auto vocabIndex = id.getVocabIndex();
-      std::string_view word = index.indexToString(vocabIndex);
+      // Bind by value: `indexToString` may return an owning `std::string`,
+      // so a `string_view` would dangle at the end of the full expression.
+      const auto word = index.indexToString(vocabIndex);
 
       results[pos] = ql::exportIds::literalOrIriToStringAndType<
           removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-          LiteralOrIriView::fromStringRepresentation(word), escapeFunction);
+          ql::exportIds::LiteralOrIriView::fromStringRepresentation(word),
+          escapeFunction);
     }
   }
 
   // ___________________________________________________________________________
   // Pipelined batch lookup directly over CompactVectorOfStrings storage,
-  // issuing multi-stage prefetch intrinsics for offset table lines and
-  // string payload cache lines K iterations ahead.
+  // issuing prefetch intrinsics for string payload cache lines K iterations
+  // ahead.
   template <typename CharType, typename MappingFunc>
   void resolveCompactVectorPipelined(
       const CompactVectorOfStrings<CharType>& words,
@@ -177,48 +175,40 @@ class PrefetchingBatchResolver {
 
     const size_t n = indices.size();
     const size_t distance = config_.prefetchDistance;
-    const auto offsets = words.offsetsSpan();
-    const auto data = words.dataSpan();
+    const size_t numWords = words.size();
 
-    // Stage 1 warmup: prefetch offset table lines for the first `distance`
-    // items
-    for (size_t k = 0; k < std::min(distance, n); ++k) {
-      const size_t idx = indices[k];
-      if (idx < offsets.size()) {
-        prefetchVocabEntry(&offsets[idx], static_cast<int>(distance));
+    // Prefetch the payload cache line of entry `idx`. `operator[]` is
+    // unchecked, so the bounds guard is load-bearing: prefetching must never
+    // fault on an out-of-range index.
+    auto prefetchEntry = [&words, numWords, distance](size_t idx) {
+      if (idx < numWords) {
+        prefetchVocabEntry(words[idx].data(), static_cast<int>(distance));
       }
+    };
+
+    // Stage 1 warmup: prefetch payload lines for the first `distance` items
+    for (size_t k = 0; k < std::min(distance, n); ++k) {
+      prefetchEntry(indices[k]);
     }
 
     // Main pipelined loop
     for (size_t i = 0; i < n; ++i) {
-      // 1. Prefetch offset table line for (i + distance)
+      // 1. Prefetch payload line for (i + distance)
       if (i + distance < n) {
-        const size_t pfIdx = indices[i + distance];
-        if (pfIdx < offsets.size()) {
-          prefetchVocabEntry(&offsets[pfIdx], static_cast<int>(distance));
-        }
+        prefetchEntry(indices[i + distance]);
       }
 
-      // 2. Prefetch string character data line for (i + distance / 2)
+      // 2. Prefetch payload line for (i + distance / 2)
       if (i + (distance / 2) < n) {
-        const size_t midIdx = indices[i + (distance / 2)];
-        if (midIdx + 1 < offsets.size()) {
-          const auto strOffset = offsets[midIdx];
-          if (strOffset < data.size()) {
-            prefetchVocabEntry(data.data() + strOffset,
-                               static_cast<int>(distance / 2));
-          }
-        }
+        prefetchEntry(indices[i + (distance / 2)]);
       }
 
-      // 3. Resolve current item i
+      // 3. Resolve current item i. The `+ 1` covers the `offsets[curIdx + 1]`
+      // access below: `curIdx` must not be the final (sentinel) offset.
       const size_t curIdx = indices[i];
-      AD_CORRECTNESS_CHECK(idx < offsets.size());
-      const auto curOffset = offsets[curIdx];
-      const auto nextOffset = offsets[curIdx + 1];
-      const size_t strLen = nextOffset - curOffset;
-      const CharType* strPtr = data.data() + curOffset;
-      std::basic_string_view<CharType> view(strPtr, strLen);
+      AD_CORRECTNESS_CHECK(curIdx < numWords);
+      const auto entry = words[curIdx];
+      std::basic_string_view<CharType> view(entry.data(), entry.size());
 
       mappingFunc(i, curIdx, view);
     }

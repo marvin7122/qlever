@@ -5,6 +5,9 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
+#include <type_traits>
+#include <utility>
+
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
 
@@ -20,6 +23,18 @@ class UnicodeVocabulary {
  private:
   UnicodeComparator _comparator;
   UnderlyingVocabulary _underlyingVocabulary;
+
+  // Whether `V` offers the two-argument `lookupBatch` overload that decodes
+  // into an `ArenaVocabBatchBuilder`. Formulated with `std::void_t` instead
+  // of a requires-expression so this header also compiles in the C++17
+  // backport builds (`requires` needs C++20).
+  template <typename V, typename = void>
+  static constexpr bool hasBuilderLookupBatch = false;
+  template <typename V>
+  static constexpr bool hasBuilderLookupBatch<
+      V, std::void_t<decltype(std::declval<const V&>().lookupBatch(
+             std::declval<ql::span<const size_t>>(),
+             std::declval<ArenaVocabBatchBuilder&>()))>> = true;
 
  public:
   /// The additional `Args...` are used to construct the `UnderlyingVocabulary`
@@ -41,11 +56,7 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    // NOTE: the detection uses the C++17-compatible trait instead of
-    // `if constexpr (requires { ... })`, which the CPP17 libQLever CI
-    // workflow cannot compile (see `hasLookupBatchWithBuilder`).
-    if constexpr (ad_utility::vocabulary::hasLookupBatchWithBuilder<
-                      UnderlyingVocabulary>) {
+    if constexpr (hasBuilderLookupBatch<UnderlyingVocabulary>) {
       return _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
       return _underlyingVocabulary.lookupBatch(indices);

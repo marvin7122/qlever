@@ -124,7 +124,9 @@ jobs:
       run:
         shell: bash
     strategy:
-      fail-fast: true
+      # Never cancel the sibling leg: both configurations must always report
+      # (consistent with the fail-fast:false sweep on the other matrices).
+      fail-fast: false
       matrix:
         # The two entries only differ in the compiler and in the C++ standard.
         # `USE_CPP_17_BACKPORTS` (and with it `boost::filesystem` instead of

@@ -93,8 +93,9 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 // String data is held as non-owning views (like `std::string_view` itself):
 // the producer owns the referenced memory and must keep it alive through
 // serialization. `Literal` cells carry normalized, pre-quoted lexical forms
-// (e.g. `"Freiburg"@en`) that are passed through verbatim in CSV and TSV
-// and re-escaped only for Turtle; the `String` type means pre-formatted
+// (e.g. `"Freiburg"@en`) that are RFC 4180-escaped as complete terms in CSV
+// (like `FastExportStreamFormatter::writeTerm`), TSV-escaped in TSV, and
+// re-escaped only for Turtle; the `String` type means pre-formatted
 // content that is passed through verbatim in every format.
 struct CellValue {
   ColumnType type_ = ColumnType::Undefined;
@@ -217,11 +218,13 @@ struct MonomorphicCellWriter {
       }
     } else if constexpr (Type == ColumnType::Literal) {
       // Literals arrive as normalized, pre-quoted lexical forms (the same
-      // representation the Turtle path contract-checks). Passing them
-      // through verbatim keeps CSV consistent with TSV and Turtle; RFC 4180
-      // escaping here would double-quote the delimiters (`"""..."""`).
+      // representation the Turtle path contract-checks). CSV applies RFC 4180
+      // escaping to the complete term, exactly like
+      // `FastExportStreamFormatter::writeTerm`: fields without specials pass
+      // through untouched, fields with quotes/commas/newlines are quoted with
+      // doubled quotes, so the output round-trips through a CSV parser.
       if constexpr (Format == ExportFormat::Csv) {
-        writer.writeRaw(cell.stringVal_);
+        writer.writeEscapedCsv(cell.stringVal_);
       } else if constexpr (Format == ExportFormat::Tsv) {
         writer.writeEscapedTsv(cell.stringVal_);
       } else {
@@ -270,10 +273,10 @@ struct MonomorphicCellWriter {
         writer.writeIri(sv);
       }
     } else if constexpr (Type == ColumnType::Literal) {
-      // Same normalized-literal passthrough as the `CellValue` overload
-      // above: tuple elements carry pre-quoted lexical forms.
+      // Same complete-term CSV escaping as the `CellValue` overload above:
+      // tuple elements carry pre-quoted lexical forms.
       if constexpr (Format == ExportFormat::Csv) {
-        writer.writeRaw(sv);
+        writer.writeEscapedCsv(sv);
       } else if constexpr (Format == ExportFormat::Tsv) {
         writer.writeEscapedTsv(sv);
       } else {
@@ -584,8 +587,13 @@ decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
       return invokeWithMonomorphicSerializer<ColumnType::Boolean>(
           visitor, std::forward<Args>(args)...);
     case ColumnType::String:
-    default:
       return invokeWithMonomorphicSerializer<ColumnType::String>(
+          visitor, std::forward<Args>(args)...);
+    // `Undefined` is a valid schema value with its own `UNDEF` placeholder
+    // specialization; it must not fall into the `String` arm via `default`.
+    case ColumnType::Undefined:
+    default:
+      return invokeWithMonomorphicSerializer<ColumnType::Undefined>(
           visitor, std::forward<Args>(args)...);
   }
 }
@@ -621,9 +629,14 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
                                                ColumnType::Boolean>(
             visitor, std::forward<Args>(args)...);
       case ColumnType::String:
-      default:
         return invokeWithMonomorphicSerializer<decltype(t0)::value,
                                                ColumnType::String>(
+            visitor, std::forward<Args>(args)...);
+      // See `dispatch1Col`: `Undefined` has its own specialization.
+      case ColumnType::Undefined:
+      default:
+        return invokeWithMonomorphicSerializer<decltype(t0)::value,
+                                               ColumnType::Undefined>(
             visitor, std::forward<Args>(args)...);
     }
   };
@@ -642,8 +655,11 @@ decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
     case ColumnType::Boolean:
       return inner(std::integral_constant<ColumnType, ColumnType::Boolean>{});
     case ColumnType::String:
-    default:
       return inner(std::integral_constant<ColumnType, ColumnType::String>{});
+    // See `dispatch1Col`: `Undefined` has its own specialization.
+    case ColumnType::Undefined:
+    default:
+      return inner(std::integral_constant<ColumnType, ColumnType::Undefined>{});
   }
 }
 
