@@ -203,6 +203,14 @@ class IoUringPolicy {
   // read is prepared in `addBatch` and erased when its completion is reaped.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
+  // Undo the bookkeeping for the trailing `numRequests` prepared reads of
+  // `handle` (the most recently minted request ids) after an `io_uring_submit`
+  // failure left them unsubmitted: erase their metadata, decrement the
+  // in-flight counts, and drop the batch entry if nothing of it remains in
+  // flight. `nextRequestIdToAssign_` is intentionally not rewound, so the
+  // rolled-back ids stay unique.
+  void rollbackUnsubmittedRequests(BatchHandle handle, size_t numRequests);
+
   // Wait until at least `minComplete` CQEs are ready, then reap every ready
   // CQE. `minComplete` must be in `[1, numInFlightReadRequests_]`.
   void drainAtLeast(unsigned minComplete);

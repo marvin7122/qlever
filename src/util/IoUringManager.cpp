@@ -153,11 +153,40 @@ void IoUringPolicy::addBatch(int fd,
     while (stillToSubmit > 0) {
       const int submitted = io_uring_submit(&ring_);
       if (submitted <= 0) {
+        // The trailing `stillToSubmit` SQEs of this wave were prepared (their
+        // ids are registered and counted as in flight) but never reached the
+        // kernel, so their completions will never arrive. Roll their
+        // bookkeeping back before throwing, otherwise `wait()` and the
+        // destructor would block forever on phantom completions. NOTE: the
+        // unsubmitted SQEs stay queued in the submission queue, so the policy
+        // must not be reused after this throw (a later submit would flush
+        // them and their completions would hit unknown request ids).
+        rollbackUnsubmittedRequests(handle, stillToSubmit);
         AD_THROW("io_uring_submit failed in IoUringPolicy");
       }
       AD_CORRECTNESS_CHECK(static_cast<size_t>(submitted) <= stillToSubmit);
       stillToSubmit -= static_cast<size_t>(submitted);
     }
+  }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::rollbackUnsubmittedRequests(BatchHandle handle,
+                                                size_t numRequests) {
+  // `prepareOne` mints request ids consecutively and `io_uring_submit`
+  // submits SQEs in FIFO order, so the unsubmitted tail of the wave holds
+  // exactly the trailing `numRequests` ids below `nextRequestIdToAssign_`.
+  for (size_t k = 0; k < numRequests; ++k) {
+    inFlightReadsByRequestId_.erase(nextRequestIdToAssign_ - 1 - k);
+  }
+  numInFlightReadRequests_ -= numRequests;
+  auto it = numInFlightReadRequestsPerBatch_.find(handle);
+  AD_CORRECTNESS_CHECK(it != numInFlightReadRequestsPerBatch_.end());
+  AD_CORRECTNESS_CHECK(it->second >= numRequests);
+  if (it->second == numRequests) {
+    numInFlightReadRequestsPerBatch_.erase(it);
+  } else {
+    it->second -= numRequests;
   }
 }
 
