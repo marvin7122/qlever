@@ -29,6 +29,9 @@ namespace ql::engine::detail {
 inline std::to_chars_result doubleToChars(char* first, char* last,
                                           double value) noexcept {
 #ifdef __APPLE__
+  if (last <= first) {
+    return {first, std::errc::value_too_large};
+  }
   const auto capacity = static_cast<size_t>(last - first);
   // Find the shortest `%g` precision that parses back to the exact value.
   for (int precision = 1; precision <= 17; ++precision) {
