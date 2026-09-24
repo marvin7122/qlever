@@ -277,30 +277,6 @@ if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
     addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
 endif ()
 
-<<<<<<< HEAD
-=======
-if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTest(AsyncChunkPipelineTest)
-    if (NOT SINGLE_TEST_BINARY)
-    else ()
-        target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
-endif ()
-
-# Not in `SINGLE_TEST_BINARY`: the test `#undef`s `QLEVER_ENABLE_EXPORT_V2`,
-# but `kExportV2CompiledIn` is an inline variable, so mixing this translation
-# unit (macro off) with the others (macro on) in one binary is an ODR
-# violation and the linker keeps the `true` definition.
-if (NOT SINGLE_TEST_BINARY)
-    addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
-endif ()
-
-# Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
-# range-v3 fails in IndexImpl / CompressedExternalIdTable).
-if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global localVocab)
-    if (NOT SINGLE_TEST_BINARY)
-endif ()
-
 addLinkAndDiscoverTest(IdTableTest qlever_util)
 
 addLinkAndDiscoverTest(TransitivePathTest engine)
@@ -678,8 +654,10 @@ addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
 if (QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTest(AsyncChunkPipelineTest)
     if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     else ()
         target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
 endif ()
 # The disabled-pipeline test asserts the compile-time switch is off, which is
 # impossible when `QLEVER_ENABLE_EXPORT_V2` is enabled (in particular, the
@@ -694,6 +672,8 @@ endif ()
 # Requires the enabled pipeline (`PipelineMorselIntegration` pushes with
 # `runtimeEnabled_ = true` and expects `Accepted`).
 if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
+    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global localVocab)
     if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
 endif ()
