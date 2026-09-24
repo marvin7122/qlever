@@ -9,6 +9,7 @@
 #include <gmock/gmock.h>
 
 #include "./util/IdTableHelpers.h"
+#include "./util/RuntimeParametersTestHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
@@ -509,6 +510,110 @@ TEST_F(ConstructTripleGeneratorTest,
       EXPECT_ANY_THROW(range.get());
     }
   }
+}
+
+// =============================================================================
+// Fiber overlap (`export-fiber-overlap`): paired evaluation must emit
+// byte-identical triples to the serial schedule, with and without
+// deduplication, including the lone-trailing-chunk and empty inputs.
+// =============================================================================
+
+// Render every triple of the vector as "subject predicate object" strings.
+auto triplesToStrings = [](const std::vector<EvaluatedTriple>& triples) {
+  auto termStr = [](const EvaluatedTerm& t) {
+    return formatTerm(*t, /*includeDataType=*/false);
+  };
+  std::vector<std::string> strings;
+  strings.reserve(triples.size());
+  for (const auto& triple : triples) {
+    strings.push_back(absl::StrCat(termStr(triple.subject_), " ",
+                                   termStr(triple.predicate_), " ",
+                                   termStr(triple.object_)));
+  }
+  return strings;
+};
+
+// 2500 single-column rows cycling `<s>`, `<o>`, UNDEF: chunks of 1024 rows
+// give one overlapped pair plus a lone trailing chunk of 452 rows. Every
+// third row drops its triple, the rest emit `?sub <p> <o>`.
+TEST_F(ConstructTripleGeneratorTest, fiberOverlapMatchesSerial) {
+  std::vector<std::vector<Id>> rows;
+  rows.reserve(2500);
+  const std::array<Id, 3> cycle{idS_, idO_, U};
+  for (size_t i = 0; i < 2500; ++i) {
+    rows.push_back({cycle[i % cycle.size()]});
+  }
+  auto triples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+
+  auto runOnce = [&](bool overlap) {
+    auto guard = setRuntimeParameterForTest<
+        &RuntimeParameters::exportFiberOverlap_>(overlap);
+    auto result = makeResult(makeIdTableFromVector(rows));
+    auto table = makeTableWithRange(*result, 0, rows.size());
+    return ::ranges::to_vector(ConstructTripleGenerator::evaluateTables(
+        triples, varMap, singleTableRange(std::move(table)), 0,
+        makeConfig()));
+  };
+
+  auto serial = runOnce(false);
+  auto paired = runOnce(true);
+  // 2500 rows minus the 833 UNDEF rows.
+  ASSERT_EQ(serial.size(), 1667u);
+  EXPECT_THAT(triplesToStrings(paired),
+              ::testing::ElementsAreArray(triplesToStrings(serial)));
+}
+
+// Full deduplication across a pair boundary: the second chunk repeats the
+// first chunk's triples, so only the first occurrences (in serial order)
+// may be emitted.
+TEST_F(ConstructTripleGeneratorTest, fiberOverlapMatchesSerialWithFullDedup) {
+  std::vector<std::vector<Id>> rows;
+  rows.reserve(2500);
+  const std::array<Id, 3> cycle{idS_, idO_, U};
+  for (size_t i = 0; i < 2500; ++i) {
+    rows.push_back({cycle[i % cycle.size()]});
+  }
+  auto triples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+
+  auto runOnce = [&](bool overlap) {
+    auto guard = setRuntimeParameterForTest<
+        &RuntimeParameters::exportFiberOverlap_>(overlap);
+    auto result = makeResult(makeIdTableFromVector(rows));
+    auto table = makeTableWithRange(*result, 0, rows.size());
+    EvaluationConfig config{index_, makeHandle(), *qec_,
+                            ad_utility::DeduplicationMode::full()};
+    return ::ranges::to_vector(ConstructTripleGenerator::evaluateTables(
+        triples, varMap, singleTableRange(std::move(table)), 0, config));
+  };
+
+  auto serial = runOnce(false);
+  auto paired = runOnce(true);
+  // Only `<s> <p> <o>` (row 0) and `<o> <p> <o>` (row 1) survive.
+  ASSERT_EQ(serial.size(), 2u);
+  EXPECT_THAT(triplesToStrings(paired),
+              ::testing::ElementsAreArray(triplesToStrings(serial)));
+}
+
+// Boundary inputs under overlap: a single row (no pair possible) and an
+// empty table behave exactly like the serial schedule.
+TEST_F(ConstructTripleGeneratorTest, fiberOverlapBoundaries) {
+  auto guard = setRuntimeParameterForTest<
+      &RuntimeParameters::exportFiberOverlap_>(true);
+  auto triples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+
+  auto single = makeResult(makeIdTableFromVector({{idS_}}));
+  EXPECT_THAT(run(triples, varMap, makeTableWithRange(*single, 0, 1)),
+              ElementsAre(matchTriple("<s>", "<p>", "<o>")));
+
+  auto empty = makeResult(makeIdTableFromVector({}));
+  EXPECT_TRUE(
+      run(triples, varMap, makeTableWithRange(*empty, 0, 0)).empty());
 }
 
 }  // namespace qlever::constructExport

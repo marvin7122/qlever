@@ -244,6 +244,14 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // Overlap the vocabulary miss resolution of consecutive CONSTRUCT export
+  // row batches as cooperating fibers on one thread. "false" (default):
+  // batches evaluate strictly one after another. "true": pairs of
+  // consecutive batches share one fiber wave for their I/O waits, while
+  // cache insertion and triple instantiation stay serial and ordered, so
+  // the emitted bytes are identical either way.
+  Bool exportFiberOverlap_{false, "export-fiber-overlap"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

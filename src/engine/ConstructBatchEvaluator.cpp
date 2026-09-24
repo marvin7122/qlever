@@ -131,6 +131,80 @@ void scatterColumnResolved(ColumnWork& work, IdCache& idCache) {
 
 }  // namespace
 
+// Phase A for every column of one batch, sequentially.
+void collectBatchMisses(ql::span<const ColumnIndex> variableColumnIndices,
+                        const BatchEvaluationContext& evaluationContext,
+                        IdCache& idCache, std::vector<ColumnWork>& columns) {
+  columns.reserve(columns.size() + variableColumnIndices.size());
+  for (size_t variableColumnIdx : variableColumnIndices) {
+    ColumnWork& work = columns.emplace_back();
+    work.columnIdx_ = variableColumnIdx;
+    collectColumnMisses(variableColumnIdx, evaluationContext, idCache, work);
+  }
+}
+
+// Phase B over an arbitrary set of columns (possibly from two batches) in
+// waves of concurrent fibers, so one thread keeps several lookup batches in
+// flight (design step 1). Each in-flight column pops one I/O manager from
+// the pool, and `pop()` blocks once the pool is empty, so a wave holds at
+// most `NUM_VOCAB_BATCH_IO_MANAGERS` columns: more concurrent fibers than
+// managers would deadlock the thread. A lone resolvable column skips fibers
+// (no overlap possible, avoid the setup). The pointees must outlive the
+// call; phase B only reads `index`/`localVocab` (plus a pooled I/O manager),
+// so concurrent bodies share no mutable state.
+void resolveColumnsInWaves(const Index& index, const LocalVocab& localVocab,
+                           const std::vector<ColumnWork*>& columns) {
+  constexpr size_t kMaxConcurrentColumns = NUM_VOCAB_BATCH_IO_MANAGERS;
+  for (size_t begin = 0; begin < columns.size();
+       begin += kMaxConcurrentColumns) {
+    const size_t end = std::min(begin + kMaxConcurrentColumns, columns.size());
+    std::vector<ColumnWork*> resolvable;
+    for (size_t i = begin; i < end; ++i) {
+      if (!columns[i]->missIds_.empty()) {
+        resolvable.push_back(columns[i]);
+      }
+    }
+    if (resolvable.empty()) {
+      continue;
+    }
+    if (resolvable.size() == 1) {
+      resolveColumnMisses(index, localVocab, *resolvable[0]);
+      continue;
+    }
+    std::vector<std::function<void()>> bodies;
+    bodies.reserve(resolvable.size());
+    for (ColumnWork* work : resolvable) {
+      bodies.emplace_back([&index, &localVocab, work]() {
+        resolveColumnMisses(index, localVocab, *work);
+      });
+    }
+    ad_utility::FiberIoScheduler::runAsFibers(std::move(bodies));
+  }
+}
+
+// Phase C for every column of one batch in order, then publish. Identical
+// to the sequential evaluation, including the duplicate-column contract
+// check.
+void scatterBatchResolved(std::vector<ColumnWork>& columns, IdCache& idCache,
+                          BatchEvaluationResult& batchResult) {
+  for (ColumnWork& work : columns) {
+    scatterColumnResolved(work, idCache);
+    auto [it, wasNew] = batchResult.variablesByColumn_.emplace(
+        work.columnIdx_, std::move(work.result_));
+    AD_CORRECTNESS_CHECK(wasNew);
+  }
+}
+
+// Pointers into `columns`, in order. Valid until `columns` is mutated.
+std::vector<ColumnWork*> columnPointers(std::vector<ColumnWork>& columns) {
+  std::vector<ColumnWork*> pointers;
+  pointers.reserve(columns.size());
+  for (ColumnWork& work : columns) {
+    pointers.push_back(&work);
+  }
+  return pointers;
+}
+
 // _____________________________________________________________________________
 BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
     ql::span<const ColumnIndex> variableColumnIndices,
@@ -139,58 +213,55 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
   BatchEvaluationResult batchResult;
   batchResult.numRows_ = evaluationContext.numRows();
 
-  // Phase A for every column, sequentially.
   std::vector<ColumnWork> columns;
-  columns.reserve(variableColumnIndices.size());
-  for (size_t variableColumnIdx : variableColumnIndices) {
-    ColumnWork& work = columns.emplace_back();
-    work.columnIdx_ = variableColumnIdx;
-    collectColumnMisses(variableColumnIdx, evaluationContext, idCache, work);
-  }
-
-  // Phase B in waves of concurrent fibers, so one thread keeps several
-  // lookup batches in flight (design step 1). Each in-flight column pops one
-  // I/O manager from the pool, and `pop()` blocks once the pool is empty, so
-  // a wave holds at most `NUM_VOCAB_BATCH_IO_MANAGERS` columns: more
-  // concurrent fibers than managers would deadlock the thread. A lone
-  // resolvable column skips fibers (no overlap possible, avoid the setup).
-  constexpr size_t kMaxConcurrentColumns = NUM_VOCAB_BATCH_IO_MANAGERS;
-  for (size_t begin = 0; begin < columns.size();
-       begin += kMaxConcurrentColumns) {
-    const size_t end = std::min(begin + kMaxConcurrentColumns, columns.size());
-    std::vector<size_t> resolvable;
-    for (size_t i = begin; i < end; ++i) {
-      if (!columns[i].missIds_.empty()) {
-        resolvable.push_back(i);
-      }
-    }
-    if (resolvable.empty()) {
-      continue;
-    }
-    if (resolvable.size() == 1) {
-      resolveColumnMisses(index, localVocab, columns[resolvable[0]]);
-      continue;
-    }
-    std::vector<std::function<void()>> bodies;
-    bodies.reserve(resolvable.size());
-    for (size_t i : resolvable) {
-      bodies.emplace_back([&index, &localVocab, &columns, i]() {
-        resolveColumnMisses(index, localVocab, columns[i]);
-      });
-    }
-    ad_utility::FiberIoScheduler::runAsFibers(std::move(bodies));
-  }
-
-  // Phase C for every column in order, then publish. Identical to the
-  // sequential evaluation, including the duplicate-column contract check.
-  for (ColumnWork& work : columns) {
-    scatterColumnResolved(work, idCache);
-    auto [it, wasNew] = batchResult.variablesByColumn_.emplace(
-        work.columnIdx_, std::move(work.result_));
-    AD_CORRECTNESS_CHECK(wasNew);
-  }
+  collectBatchMisses(variableColumnIndices, evaluationContext, idCache,
+                     columns);
+  resolveColumnsInWaves(index, localVocab, columnPointers(columns));
+  scatterBatchResolved(columns, idCache, batchResult);
 
   return batchResult;
+}
+
+// _____________________________________________________________________________
+std::pair<BatchEvaluationResult, BatchEvaluationResult>
+ConstructBatchEvaluator::evaluateBatchPair(
+    ql::span<const ColumnIndex> variableColumnIndices,
+    const BatchEvaluationContext& firstContext,
+    const BatchEvaluationContext& secondContext,
+    const LocalVocab& localVocab, const Index& index, IdCache& idCache) {
+  // Phase A for both batches, sequentially. No I/O happens here, so no
+  // fiber can yield between the two batches' cache checks.
+  std::vector<ColumnWork> firstColumns;
+  std::vector<ColumnWork> secondColumns;
+  collectBatchMisses(variableColumnIndices, firstContext, idCache,
+                     firstColumns);
+  collectBatchMisses(variableColumnIndices, secondContext, idCache,
+                     secondColumns);
+
+  // Phase B for both batches' columns in shared waves, so the second
+  // batch's I/O waits overlap the first batch's. Phase B bodies share no
+  // mutable state (see `resolveColumnMisses`).
+  auto firstPointers = columnPointers(firstColumns);
+  auto secondPointers = columnPointers(secondColumns);
+  std::vector<ColumnWork*> bothPointers;
+  bothPointers.reserve(firstPointers.size() + secondPointers.size());
+  bothPointers.insert(bothPointers.end(), firstPointers.begin(),
+                      firstPointers.end());
+  bothPointers.insert(bothPointers.end(), secondPointers.begin(),
+                      secondPointers.end());
+  resolveColumnsInWaves(index, localVocab, bothPointers);
+
+  // Phase C per batch in order, exactly as the sequential evaluation would
+  // run it, so cache insertion order (and hence LRU eviction) matches the
+  // serial schedule batch for batch.
+  BatchEvaluationResult firstResult;
+  firstResult.numRows_ = firstContext.numRows();
+  BatchEvaluationResult secondResult;
+  secondResult.numRows_ = secondContext.numRows();
+  scatterBatchResolved(firstColumns, idCache, firstResult);
+  scatterBatchResolved(secondColumns, idCache, secondResult);
+
+  return {std::move(firstResult), std::move(secondResult)};
 }
 
 // _____________________________________________________________________________
