@@ -2,6 +2,7 @@
 //
 // 2019 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2025 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
@@ -311,20 +312,10 @@ class LocaleManagerICU : public LocaleManagerBase {
   // (e.g. in en_US lowercase sorts before uppercase, see
   // `StringSortComparatorTest`), so a memcmp-based ordering would change
   // results.
-  static bool asciiByteEqual(std::string_view a, std::string_view b) {
-    if (a.size() != b.size()) {
-      return false;
-    }
-    bool allAscii = true;
-    for (size_t i = 0; i < a.size(); ++i) {
-      auto ca = static_cast<unsigned char>(a[i]);
-      auto cb = static_cast<unsigned char>(b[i]);
-      if (ca != cb) {
-        return false;
-      }
-      allAscii &= ca < 0x80;
-    }
-    return allAscii;
+  static bool asciiByteEqual(std::string_view a, std::string_view b) noexcept {
+    return a == b && ql::ranges::all_of(a, [](char c) {
+             return static_cast<unsigned char>(c) < 0x80;
+           });
   }
 
   // raise an exception if the error code holds an error.

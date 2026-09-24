@@ -2,6 +2,7 @@
 //
 // 2019 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2025 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
@@ -161,6 +162,40 @@ TEST(LocaleManagerTest, RaiseThrowsOnIcuError) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       (void)loc.compare(nullView, "a", LocaleManager::Level::PRIMARY),
       ::testing::HasSubstr("U_ILLEGAL_ARGUMENT_ERROR"));
+}
+
+// _____________________________________________________________________________
+TEST(LocaleManagerTest, AsciiFastPathKeepsIcuSemantics) {
+  // `compare` answers byte-identical pure-ASCII words without calling ICU.
+  // These checks pin down that the shortcut only decides equality and leaves
+  // every other result to ICU.
+  using L = LocaleManager::Level;
+  LocaleManagerICU loc;
+  // Identical words in separate buffers, as for a query constant compared
+  // against a vocabulary word. The trailing byte 0x7F is the largest ASCII
+  // value.
+  std::string word = "Some ASCII word, with punctuation! \x7F";
+  std::string copy = word;
+  std::string nonAscii = "Straße";
+  std::string nonAsciiCopy = nonAscii;
+  for (L level : {L::PRIMARY, L::SECONDARY, L::TERTIARY, L::QUARTERNARY,
+                  L::IDENTICAL, L::TOTAL}) {
+    EXPECT_EQ(loc.compare(word, copy, level), 0);
+    EXPECT_EQ(loc.compare("", "", level), 0);
+    // Identical non-ASCII words take the ICU path and still compare equal.
+    EXPECT_EQ(loc.compare(nonAscii, nonAsciiCopy, level), 0);
+    // Distinct words of the same length keep the ICU order.
+    EXPECT_LT(loc.compare("ab", "ba", level), 0);
+    EXPECT_GT(loc.compare("ba", "ab", level), 0);
+  }
+  // ICU order differs from byte order for distinct ASCII words: lowercase
+  // sorts before uppercase in en_US, while 'A' (65) < 'a' (97) bytewise.
+  EXPECT_LT(loc.compare("alpha", "ALPHA", L::TERTIARY), 0);
+  EXPECT_EQ(loc.compare("alpha", "ALPHA", L::SECONDARY), 0);
+  // With punctuation ignored, distinct ASCII words can still compare equal via
+  // ICU.
+  LocaleManagerICU ignorePunct("en", "US", true);
+  EXPECT_EQ(ignorePunct.compare(".a", "a", L::PRIMARY), 0);
 }
 #endif  // QLEVER_NO_UNICODE
 
