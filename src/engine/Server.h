@@ -28,6 +28,7 @@
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
 #include "engine/export_v2/ElasticExportScheduler.h"
+#include "engine/export_v2/ScatterGatherHttpBody.h"
 #include "index/IdTableUtils.h"
 #include "index/Index.h"
 #include "libqlever/Qlever.h"
@@ -165,16 +166,22 @@ class Server {
   // are only defined in `Server.cpp`, so callers in other translation units
   // can only invoke them through an explicit template instantiation, which in
   // turn requires a type with linkage.
+  // The export-v2 scatter-gather body is production-only: no test sends it
+  // through `MockSend`, so it is accepted but not retained. Anything else
+  // still fails the `static_assert` below instead of letting a test assert
+  // against a default-constructed `response_`.
+  using SgResponseForTesting =
+      boost::beast::http::response<ql::engine::export_v2::scatter_gather_body>;
   class MockSend {
    public:
     Awaitable<void> operator()(auto response) {
       using Sent = std::decay_t<decltype(response)>;
-      // Strict: only `ResponseT` is retained. Any other response type (for
-      // example a scatter-gather body) would otherwise be silently dropped,
-      // letting a test assert against a default-constructed `response_`.
-      static_assert(std::is_same_v<Sent, ResponseT>,
+      static_assert(std::is_same_v<Sent, ResponseT> ||
+                        std::is_same_v<Sent, SgResponseForTesting>,
                     "MockSend received an unexpected response type");
-      response_ = std::move(response);
+      if constexpr (std::is_same_v<Sent, ResponseT>) {
+        response_ = std::move(response);
+      }
       co_return;
     }
 
