@@ -1,6 +1,12 @@
-// Copyright 2021, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2021 - 2026 The QLever Authors, in particular:
+//
+// 2021 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_RDFESCAPING_H
 #define QLEVER_RDFESCAPING_H
@@ -134,11 +140,6 @@ std::string unescapePrefixedIri(std::string_view literal);
  *
  * See https://www.ietf.org/rfc/rfc4180.txt for more information.
  */
-// Append variants of the CSV / TSV escapers. SELECT/CSV export formatting
-// writes into a caller-owned buffer; the `std::string` APIs below call these.
-void appendEscapedForCsv(std::string& out, std::string_view input);
-void appendEscapedForTsv(std::string& out, std::string_view input);
-
 std::string escapeForCsv(std::string input);
 
 /**
@@ -149,6 +150,12 @@ std::string escapeForCsv(std::string input);
  * for more information.
  */
 std::string escapeForTsv(std::string input);
+
+// Append `input`, escaped like `escapeForCsv` / `escapeForTsv`, to `out`
+// without allocating a temporary per field. The existing content of `out` is
+// preserved.
+void appendEscapedForCsv(std::string& out, std::string_view input);
+void appendEscapedForTsv(std::string& out, std::string_view input);
 
 // Escape a string to be compatible with XML.
 std::string escapeForXml(std::string input);
