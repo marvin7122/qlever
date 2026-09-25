@@ -211,12 +211,15 @@ void Server::run() {
     return handleHttpRequest(std::move(request), AD_FWD(send));
   };
 
-  // `HttpServer`'s constructor binds the socket synchronously; keep this as
-  // the first statement in `run()` so a port already in use fails fast,
-  // before any other startup work.
-  // Read once at startup: toggles the `IORING_OP_SEND_ZC` zero-copy path for
-  // chunked export responses (runtime parameter `use-send-zc`, default off).
-  bool useSendZC = getRuntimeParameter<&RuntimeParameters::useSendZC_>();
+  // `HttpServer`'s constructor binds the socket synchronously; keep the bind
+  // as early as possible in `run()` so a port already in use fails fast,
+  // before any heavy startup work. The lightweight flag read and log line
+  // below intentionally precede it.
+  // Read once at startup (fixed for the lifetime of `HttpServer`; changing
+  // `use-send-zc` at runtime has no effect): enable the `IORING_OP_SEND_ZC`
+  // zero-copy path for chunked `streamable_body` export responses.
+  const bool useSendZC =
+      getRuntimeParameter<&RuntimeParameters::useSendZC_>();
   AD_LOG_INFO << "Zero-copy socket sends (IORING_OP_SEND_ZC) for export "
               << "responses are " << (useSendZC ? "ENABLED" : "disabled")
               << std::endl;
