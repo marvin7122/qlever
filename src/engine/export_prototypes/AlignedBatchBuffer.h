@@ -9,14 +9,11 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
-#include <cstring>
 #include <memory>
 #include <new>
 #include <type_traits>
 
 #include "backports/span.h"
-#include "global/Id.h"
 #include "util/Exception.h"
 
 namespace qlever::export_pipeline {
@@ -69,21 +66,21 @@ class AlignedBatchBuffer {
     if (newCapacity <= capacity_) {
       return;
     }
-    // Round capacity to multiple of alignment
-    size_t alignedCapacity = (newCapacity + (Alignment / sizeof(T)) - 1) &
-                             ~((Alignment / sizeof(T)) - 1);
+    // Round the capacity up to whole cache lines. The bit-mask form is only
+    // correct when `sizeof(T)` divides `Alignment`, so use division.
+    constexpr size_t elementsPerLine = Alignment / sizeof(T);
+    const size_t alignedCapacity =
+        (newCapacity + elementsPerLine - 1) / elementsPerLine * elementsPerLine;
     T* raw = static_cast<T*>(::operator new[](alignedCapacity * sizeof(T),
                                               std::align_val_t{Alignment}));
     std::unique_ptr<T[], AlignedDeleter> newData(raw);
 
-    // Copy-construct into the fresh storage with placement new. `T` is
-    // statically constrained to trivially copyable types (see above), so
-    // this compiles to a `memcpy` while also starting the lifetime of each
-    // element, which plain `std::memcpy` into raw storage does not do in
-    // C++17 (implicit object creation is C++20-only).
-    for (size_t i = 0; i < size_; ++i) {
-      ::new (static_cast<void*>(newData.get() + i)) T(data_.get()[i]);
-    }
+    // Copy-construct into the fresh storage. `T` is statically constrained to
+    // trivially copyable types (see above), so this compiles to a `memcpy`
+    // while also starting the lifetime of each element, which plain
+    // `std::memcpy` into raw storage does not do in C++17 (implicit object
+    // creation is C++20-only).
+    std::uninitialized_copy_n(data_.get(), size_, newData.get());
     data_ = std::move(newData);
     capacity_ = alignedCapacity;
   }
