@@ -120,7 +120,8 @@ struct CellValue {
   /* implicit */ constexpr CellValue(int v) noexcept
       : type_(ColumnType::Int), intVal_(v) {}
 
-  /* implicit */ constexpr CellValue(uint64_t v) noexcept
+  // Not `noexcept`: the range check below throws.
+  /* implicit */ constexpr CellValue(uint64_t v)
       : type_(ColumnType::Int), intVal_(0) {
     // Silent truncation past `INT64_MAX` would emit wrong export data, so
     // reject out-of-range inputs loudly at the conversion boundary.
