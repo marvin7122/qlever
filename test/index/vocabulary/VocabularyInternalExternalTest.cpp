@@ -1,8 +1,18 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gtest/gtest.h>
+
+#include <array>
+#include <string>
+#include <vector>
 
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
@@ -111,6 +121,34 @@ TEST(VocabularyInternalExternal, AccessOperator) {
       createVocabularyFromDisk("AccessOperator2"));
 }
 
+// `lookupBatch` must match `operator[]` in request order, including cache
+// hits (even `i` in the writer: stored in RAM) and misses (odd `i`: disk
+// only), plus reordered and duplicated indices.
+TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto vocab = createVocabulary("LookupBatch")(words);
+  const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
+  auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
+}
+
+TEST(VocabularyInternalExternal, BeginFinishLookupMatchesLookupBatch) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto vocab = createVocabulary("BeginFinishLookup")(words);
+  const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
+  auto eager = vocab.lookupBatch(indices);
+  auto split = vocab.finishLookup(vocab.beginLookup(indices));
+  ASSERT_EQ(eager->size(), split->size());
+  for (auto [i, expectedAndActual] :
+       ::ranges::views::enumerate(::ranges::views::zip(*eager, *split))) {
+    const auto& [expected, actual] = expectedAndActual;
+    EXPECT_EQ(expected, actual) << " at requested slot " << i;
+  }
+}
+
 TEST(VocabularyInternalExternal, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary("EmptyVocabulary"));
 }
@@ -129,4 +167,21 @@ TEST(VocabularyInternalExternal, ScanAll) {
 TEST(VocabularyInternalExternal, ScanAllEmptyVocabulary) {
   auto vocab = createVocabulary("ScanAllEmpty")(std::vector<std::string>{});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
+}
+
+// _____________________________________________________________________________
+TEST(VocabularyInternalExternal, LookupBatch) {
+  // Shuffled indices with duplicates, mixing internal-vocabulary hits (odd
+  // indices are cached in RAM, see `VocabularyCreator`) and external-vocabulary
+  // misses (even indices). The batch result must match the sequential single
+  // lookups in input order.
+  const std::vector<std::string> words{"alpha", "beta",    "gamma",
+                                       "delta", "epsilon", "zeta"};
+  auto vocab = createVocabulary("LookupBatch")(words);
+  std::vector<size_t> indices{3, 0, 3, 5, 1, 4, 0, 5, 2, 1};
+  auto result = vocab.lookupBatch(indices);
+  EXPECT_THAT((*result), ::testing::ElementsAre(
+                             "delta", "alpha", "delta", "zeta", "beta",
+                             "epsilon", "alpha", "zeta", "gamma", "beta"));
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
