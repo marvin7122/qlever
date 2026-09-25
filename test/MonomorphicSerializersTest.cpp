@@ -146,6 +146,29 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
 }
 
 // _____________________________________________________________________________
+// The span and tuple paths must use the writer of each column's own type.
+TEST(MonomorphicSerializersTest, SpanAndTuplePathsUsePerColumnTypes) {
+  using Serializer =
+      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Literal,
+                               ColumnType::Int>;
+  std::array<CellValue, 3> row = {CellValue::makeIri("http://x"),
+                                  CellValue::makeLiteral("\"a\""),
+                                  CellValue::makeInt(7)};
+
+  std::string spanOut = captureOutput([&](FastExportStreamFormatter& fmt) {
+    Serializer::serializeRow<ExportFormat::Turtle>(
+        fmt, ql::span<const CellValue>(row));
+  });
+  std::string tupleOut = captureOutput([&](FastExportStreamFormatter& fmt) {
+    Serializer::serializeRowTuple<ExportFormat::Turtle>(
+        fmt, std::make_tuple(row[0], row[1], row[2]));
+  });
+
+  EXPECT_EQ(spanOut, "<http://x> \"a\" 7 .\n");
+  EXPECT_EQ(tupleOut, spanOut);
+}
+
+// _____________________________________________________________________________
 // Writing past the end of a caller-provided span throws instead of
 // terminating (the write functions are not `noexcept`).
 TEST(MonomorphicSerializersTest, FixedSpanFormatterOverflowThrows) {
