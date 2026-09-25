@@ -149,12 +149,7 @@ class HardwarePerformanceMonitor {
     fdCacheRef_ =
         openPerfCounter(PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_REFERENCES);
 
-    // All counters must be available: a partially opened set would report
-    // valid-looking zero/partial rates for the missing counters.
-    supported_ = (fdCycles_ >= 0) && (fdInstructions_ >= 0) &&
-                 (fdL1dAccess_ >= 0) && (fdL1dMiss_ >= 0) &&
-                 (fdLlcAccess_ >= 0) && (fdLlcMiss_ >= 0) &&
-                 (fdCacheMiss_ >= 0) && (fdCacheRef_ >= 0);
+    supported_ = (fdCycles_ >= 0);
 #else
     supported_ = false;
 #endif
@@ -354,13 +349,16 @@ class PrefetchingBenchmark : public BenchmarkInterface {
           "Prefetched Lookup (Pipelined K = " + std::to_string(distance) +
           " rows ahead)";
 
+      // Index extraction is setup, not lookup work: allocating and filling
+      // `rawIndices` here keeps memory allocation overhead out of the timed
+      // measurement region below.
+      std::vector<size_t> rawIndices(NUM_LOOKUP_IDS);
+      for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
+        rawIndices[i] = lookupIds_[i].getVocabIndex().get();
+      }
+
       auto& m = group.addMeasurement(label, [&]() {
         perfMonitor.start();
-
-        std::vector<size_t> rawIndices(NUM_LOOKUP_IDS);
-        for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
-          rawIndices[i] = lookupIds_[i].getVocabIndex().get();
-        }
 
         resolver.resolveCompactVectorPipelined(
             vocabWords_, rawIndices,

@@ -76,28 +76,6 @@ GCC_REENABLE_WARNINGS
 void operator delete(void* ptr, std::size_t) noexcept {
   ::operator delete(ptr);
 }
-
-// Array forms: `new std::string[N]` and similar array allocations otherwise
-// bypass the tracker above and would silently undercount.
-void* operator new[](std::size_t size) {
-  if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
-    AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
-    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
-  }
-  void* ptr = std::malloc(size);
-  if (!ptr) {
-    throw std::bad_alloc();
-  }
-  return ptr;
-}
-
-DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
-void operator delete[](void* ptr) noexcept { std::free(ptr); }
-GCC_REENABLE_WARNINGS
-
-void operator delete[](void* ptr, std::size_t) noexcept {
-  ::operator delete[](ptr);
-}
 #endif  // QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 
 namespace ad_benchmark {

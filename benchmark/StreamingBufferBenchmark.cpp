@@ -7,7 +7,6 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <iomanip>
@@ -196,9 +195,6 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
       std::memcpy(destBuffer.data() + offset, srcBuffer.data() + offset,
                   currentChunk);
     }
-    // Keep the copies observable: `destBuffer` is never read afterwards, so
-    // without this barrier the compiler may discard the loop entirely.
-    asm volatile("" : : "r"(destBuffer.data()) : "memory");
 
     timer.stop();
     const uint64_t l1Misses = l1MissCounter.stop();

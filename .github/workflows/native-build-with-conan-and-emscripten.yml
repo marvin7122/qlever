@@ -37,7 +37,6 @@ jobs:
   build:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v7

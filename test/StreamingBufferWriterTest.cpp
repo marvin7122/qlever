@@ -14,7 +14,6 @@
 #include <numeric>
 #include <random>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "util/StreamingBufferWriter.h"

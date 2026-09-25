@@ -11,7 +11,6 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
-#include <memory_resource>
 #include <string>
 
 #include "util/DanglingViewTestHelpers.h"

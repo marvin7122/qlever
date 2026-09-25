@@ -9,9 +9,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "engine/PrefetchingBatchResolver.h"
@@ -112,7 +110,9 @@ TEST(PrefetchingBatchResolver, EmptyAndBoundaryInputs) {
       resolver.idsToStringAndType(index, ql::span<const Id>{}, localVocab);
   EXPECT_TRUE(emptyResults.empty());
 
-  // Empty positions
+  // Empty positions: the resolver intentionally returns early and resolves
+  // nothing, so this must not throw even though `results` is smaller than
+  // `ids` (the size contract only applies to non-empty position spans).
   std::vector<std::optional<std::pair<std::string, const char*>>> results(1);
   std::vector<Id> ids = {ad_utility::testing::IntId(1)};
   EXPECT_NO_THROW(resolver.resolveVocabIndexIds(

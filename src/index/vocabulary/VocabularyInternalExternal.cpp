@@ -58,12 +58,7 @@ static IndexPartition partitionIndicesBySource(
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
-  // An empty request is a valid no-op (e.g. a batch whose rows were all
-  // filtered upstream): return an empty result instead of aborting the
-  // process, so the behavior no longer differs from the single-index path.
-  if (indices.empty()) {
-    return VocabBatchLookupResult{};
-  }
+  AD_CONTRACT_CHECK(!indices.empty());
 
   auto partition = partitionIndicesBySource(indices, internalVocab_);
 

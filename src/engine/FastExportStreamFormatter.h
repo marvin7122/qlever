@@ -186,17 +186,15 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Directly append a raw character. Can throw (via `ensureAvailable`) on
-  // fixed-span overflow, so this is intentionally not `noexcept`.
-  void writeChar(char c) {
+  // Directly append a raw character.
+  void writeChar(char c) noexcept {
     ensureAvailable(1);
     bufferPtr_[writePos_++] = c;
   }
 
   // ___________________________________________________________________________
-  // Directly append a raw string slice without escaping. Can throw (via
-  // `ensureAvailable`) on fixed-span overflow, so not `noexcept`.
-  void writeRaw(std::string_view sv) {
+  // Directly append a raw string slice without escaping.
+  void writeRaw(std::string_view sv) noexcept {
     if (sv.empty()) {
       return;
     }
@@ -209,16 +207,12 @@ class FastExportStreamFormatter {
   // Write an integer directly without heap allocation.
   template <typename IntegerType>
   requires std::is_integral_v<IntegerType>
-  void writeInteger(IntegerType value) {
-    // Format into a scratch buffer first: an integer needs at most 20
-    // characters, so reserving a fixed 32 bytes up front would wrongly reject
-    // fixed-span writes that have enough space for the digits but not for 32.
-    std::array<char, 32> temporary{};
-    auto [end, ec] = std::to_chars(temporary.data(),
-                                   temporary.data() + temporary.size(), value);
+  void writeInteger(IntegerType value) noexcept {
+    ensureAvailable(32);
+    auto [ptr, ec] = std::to_chars(bufferPtr_ + writePos_,
+                                   bufferPtr_ + bufferCapacity_, value);
     AD_CORRECTNESS_CHECK(ec == std::errc{});
-    writeRaw(std::string_view{temporary.data(),
-                              static_cast<size_t>(end - temporary.data())});
+    writePos_ = static_cast<size_t>(ptr - bufferPtr_);
   }
 
   // ___________________________________________________________________________
@@ -310,24 +304,6 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Escape Turtle/N-Triples literal content (backslash, quote, CR, LF).
-  void writeTurtleLiteralContent(std::string_view content) {
-    for (char c : content) {
-      if (c == '\\') {
-        writeRaw("\\\\");
-      } else if (c == '"') {
-        writeRaw("\\\"");
-      } else if (c == '\n') {
-        writeRaw("\\n");
-      } else if (c == '\r') {
-        writeRaw("\\r");
-      } else {
-        writeChar(c);
-      }
-    }
-  }
-
-  // ___________________________________________________________________________
   // Fast Turtle / NTriples normalized literal serializer.
   // Escapes backslashes, quotes, and newlines inside the literal content.
   void writeEscapedTurtleLiteral(std::string_view normLiteral) {
@@ -346,7 +322,20 @@ class FastExportStreamFormatter {
 
     // Write opening quote
     writeChar('"');
-    writeTurtleLiteralContent(normLiteral.substr(1, posLastQuote - 1));
+    std::string_view content = normLiteral.substr(1, posLastQuote - 1);
+    for (char c : content) {
+      if (c == '\\') {
+        writeRaw("\\\\");
+      } else if (c == '"') {
+        writeRaw("\\\"");
+      } else if (c == '\n') {
+        writeRaw("\\n");
+      } else if (c == '\r') {
+        writeRaw("\\r");
+      } else {
+        writeChar(c);
+      }
+    }
     // Write closing quote and any trailing lang/datatype suffix
     writeRaw(normLiteral.substr(posLastQuote));
   }
@@ -392,19 +381,9 @@ class FastExportStreamFormatter {
         writeRaw(term.rdfTermString_);
       }
     } else {
-      // Fully-qualified form: "value"^^<datatype>. The lexical value is
-      // escaped per format: a verbatim copy would let quotes, commas, or
-      // line breaks forge extra fields or break the literal.
-      if (format == ExportFormat::Csv) {
-        writeEscapedCsv(term.rdfTermString_);
-        return;
-      }
-      if (format == ExportFormat::Tsv) {
-        writeEscapedTsv(term.rdfTermString_);
-        return;
-      }
+      // Fully-qualified form: "value"^^<datatype>
       writeChar('"');
-      writeTurtleLiteralContent(term.rdfTermString_);
+      writeRaw(term.rdfTermString_);
       writeRaw("\"^^<");
       writeRaw(term.rdfTermDataType_);
       writeChar('>');

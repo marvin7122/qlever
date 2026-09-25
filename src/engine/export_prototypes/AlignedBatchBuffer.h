@@ -9,15 +9,11 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
-#include <cstring>
-#include <limits>
 #include <memory>
+#include <new>
 #include <type_traits>
-#include <vector>
 
 #include "backports/span.h"
-#include "global/Id.h"
 #include "util/Exception.h"
 
 namespace qlever::export_pipeline {
@@ -28,8 +24,10 @@ namespace qlever::export_pipeline {
 // cleanly trigger CPU hardware L2 stream prefetchers and avoid split-cache-line
 // penalties.
 //
-// `T` must be trivially copyable: elements are relocated with `memcpy` and
-// assigned into raw `operator new[]` storage without construction.
+// Not thread-safe: all methods must be called from a single thread unless
+// externally synchronized. Call `reserve` before `push_back`; the template
+// parameters are checked by `static_assert` (`Alignment` is a power of two
+// with `alignof(T) <= sizeof(T) <= Alignment`, `T` is trivially copyable).
 template <typename T, size_t Alignment = 64>
 class AlignedBatchBuffer {
   static_assert((Alignment & (Alignment - 1)) == 0,
@@ -37,16 +35,13 @@ class AlignedBatchBuffer {
   static_assert(Alignment >= alignof(T),
                 "Alignment must be at least alignof(T)");
   static_assert(sizeof(T) <= Alignment, "T size must not exceed alignment");
-  // `reserve` relocates elements with `std::memcpy` and `push_back` writes
-  // into raw `::operator new[]` storage, both of which are only valid for
-  // trivially copyable types.
+  // `reserve` relocates elements via placement-new copy construction and
+  // `push_back` constructs into raw `::operator new[]` storage, both of
+  // which are only valid for trivially copyable types.
   static_assert(std::is_trivially_copyable_v<T>,
                 "AlignedBatchBuffer requires trivially copyable types");
 
  public:
-  static_assert(std::is_trivially_copyable_v<T>,
-                "AlignedBatchBuffer relocates elements with memcpy and "
-                "therefore requires a trivially copyable T");
   static constexpr size_t kAlignment = Alignment;
 
  private:
@@ -71,35 +66,34 @@ class AlignedBatchBuffer {
     if (newCapacity <= capacity_) {
       return;
     }
-    // Round capacity up to a multiple of the slot count. Guard the
-    // arithmetic: a wrapped `alignedCapacity` would under-allocate and let
-    // `memcpy`/`push_back` write past the allocation.
-    constexpr size_t slots = Alignment / sizeof(T);
-    AD_CONTRACT_CHECK(newCapacity <=
-                      (std::numeric_limits<size_t>::max() - (slots - 1)) /
-                          sizeof(T));
-    size_t alignedCapacity = (newCapacity + (slots - 1)) & ~(slots - 1);
-    AD_CONTRACT_CHECK(alignedCapacity <=
-                      std::numeric_limits<size_t>::max() / sizeof(T));
+    // Round the capacity up to whole cache lines. The bit-mask form is only
+    // correct when `sizeof(T)` divides `Alignment`, so use division.
+    constexpr size_t elementsPerLine = Alignment / sizeof(T);
+    const size_t alignedCapacity =
+        (newCapacity + elementsPerLine - 1) / elementsPerLine * elementsPerLine;
     T* raw = static_cast<T*>(::operator new[](alignedCapacity * sizeof(T),
                                               std::align_val_t{Alignment}));
-    // Start the element lifetimes before any assignment: assignment into raw
-    // storage without construction is undefined behavior.
-    std::uninitialized_default_construct_n(raw, alignedCapacity);
     std::unique_ptr<T[], AlignedDeleter> newData(raw);
 
-    if (data_ && size_ > 0) {
-      std::memcpy(newData.get(), data_.get(), size_ * sizeof(T));
-    }
+    // Copy-construct into the fresh storage. `T` is statically constrained to
+    // trivially copyable types (see above), so this compiles to a `memcpy`
+    // while also starting the lifetime of each element, which plain
+    // `std::memcpy` into raw storage does not do in C++17 (implicit object
+    // creation is C++20-only).
+    std::uninitialized_copy_n(data_.get(), size_, newData.get());
     data_ = std::move(newData);
     capacity_ = alignedCapacity;
   }
 
   void clear() noexcept { size_ = 0; }
 
-  void push_back(const T& val) noexcept {
+  void push_back(const T& val) {
     AD_CORRECTNESS_CHECK(size_ < capacity_);
-    data_[size_++] = val;
+    // Placement new starts the element lifetime in the raw storage (see
+    // `reserve`); assignment through `T*` would not in C++17. This cannot
+    // throw because `T` is trivially copyable (see `static_assert` above).
+    ::new (static_cast<void*>(data_.get() + size_)) T(val);
+    ++size_;
   }
 
   [[nodiscard]] ql::span<const T> span() const noexcept {

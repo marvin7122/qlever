@@ -29,18 +29,7 @@ using PmrSsoProbeString =
                       ql::pmr::polymorphic_allocator<char>>;
 
 // _____________________________________________________________________________
-// String type whose SSO capacity is probed below. Spelled out explicitly
-// because `boost::container::pmr` (used as `ql::pmr` under `QLEVER_CPP_17`)
-// provides memory resources and `polymorphic_allocator`, but neither a
-// `string` alias nor a `basic_string` template (the latter lives in
-// `<boost/container/pmr/string.hpp>`, which the backport header does not
-// include). Under C++20 this is exactly `std::pmr::string`.
-using PmrStringForSsoProbe =
-    std::basic_string<char, std::char_traits<char>,
-                      ql::pmr::polymorphic_allocator<char>>;
-
-// _____________________________________________________________________________
-// Return the largest number of characters that a `PmrStringForSsoProbe` is
+// Return the largest number of characters that a `PmrSsoProbeString` is
 // guaranteed by this helper to store inside its own object storage (SSO).
 // NOTE: Used by test/GTestHelpersTest.cpp, test/index/vocabulary/
 // CompressedVocabularyTest.cpp (via requirePmrStringInlineStorage) and
@@ -72,10 +61,10 @@ inline size_t pmrStringSsoCapacity() {
    public:
     size_t numAllocations() const { return numAllocations_; }
   };
-  const std::string sample(sizeof(PmrStringForSsoProbe), 's');
+  const std::string sample(sizeof(PmrSsoProbeString), 's');
   for (size_t size = sample.size(); size > 0; --size) {
     CountingMemoryResource resource;
-    PmrStringForSsoProbe pmrSample{sample.data(), size, &resource};
+    PmrSsoProbeString pmrSample{sample.data(), size, &resource};
     if (resource.numAllocations() == 0) {
       return size;
     }
@@ -84,17 +73,17 @@ inline size_t pmrStringSsoCapacity() {
 }
 
 // _____________________________________________________________________________
-// Check the explicit platform premise that `PmrStringForSsoProbe` stores
-// strings of up to `maxSize` characters inside its own object storage (Small
-// String Optimization), i.e. that constructing such a string performs no
-// allocation through its allocator. Tests whose logic depends on short strings
-// keeping their content inline (e.g. dangling-view regression tests) should
-// state exactly the sizes they rely on by passing `maxSize`; the failure
-// message then points at the platform premise rather than at the test's own
-// logic. Preconditions:
+// Check the explicit platform premise that `PmrSsoProbeString` stores strings
+// of up to `maxSize` characters inside its own object storage (Small String
+// Optimization), i.e. that constructing such a string performs no allocation
+// through its allocator. Tests whose logic depends on short strings keeping
+// their content inline (e.g. dangling-view regression tests) should state
+// exactly the sizes they rely on by passing `maxSize`; the failure message
+// then points at the platform premise rather than at the test's own logic.
+// Preconditions:
 // - `maxSize > 0`: there are callers only for non-empty test words.
 // NOTE: There is deliberately no default for `maxSize`: the SSO capacity of
-// `PmrStringForSsoProbe` is implementation-defined (e.g. 15 characters for
+// `std::pmr::string` is implementation-defined (e.g. 15 characters for
 // libstdc++ and 22 for libc++), so every caller must state exactly the size
 // it relies on instead of silently depending on one STL's limit.
 inline void requirePmrStringInlineStorage(size_t maxSize) {
@@ -102,8 +91,8 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
   const size_t capacity = pmrStringSsoCapacity();
   AD_CORRECTNESS_CHECK(
       capacity >= maxSize,
-      absl::StrCat("Platform premise violated: the probed pmr string does "
-                   "not store ",
+      absl::StrCat("Platform premise violated: PmrSsoProbeString does not "
+                   "store ",
                    maxSize,
                    " characters on this platform (capacity: ", capacity, ")"));
 }

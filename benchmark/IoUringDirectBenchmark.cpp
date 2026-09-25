@@ -57,12 +57,9 @@ class SimulatedVocabularyFile {
  public:
   explicit SimulatedVocabularyFile(
       std::string_view pathTemplate = "/tmp/qlever_vocab_sim_XXXXXX.bin") {
-    // `pathTemplate` is a non-owning view (not NUL-terminated), so
-    // materialize it before handing a mutable C string to `mkstemps`.
-    std::string tempPathStr(pathTemplate);
-    AD_CONTRACT_CHECK(tempPathStr.size() + 1 <= 256);
     char tempPath[256];
-    std::memcpy(tempPath, tempPathStr.c_str(), tempPathStr.size() + 1);
+    std::strncpy(tempPath, pathTemplate.data(), sizeof(tempPath) - 1);
+    tempPath[sizeof(tempPath) - 1] = '\0';
 
     int fd = mkstemps(tempPath, 4);
     if (fd < 0) {
@@ -77,7 +74,6 @@ class SimulatedVocabularyFile {
     void* writeBuf = nullptr;
     constexpr size_t writeChunkSize = 1024 * 1024;  // 1 MB chunks
     if (posix_memalign(&writeBuf, kDirectIoAlignment, writeChunkSize) != 0) {
-      ::unlink(tempPath);
       ::close(fd);
       AD_THROW("posix_memalign failed");
     }
@@ -97,7 +93,6 @@ class SimulatedVocabularyFile {
       ssize_t written = ::write(fd, writeBuf, writeChunkSize);
       if (written != static_cast<ssize_t>(writeChunkSize)) {
         std::free(writeBuf);
-        ::unlink(tempPath);
         ::close(fd);
         AD_THROW("Failed to write full chunk to simulated vocabulary file");
       }
@@ -106,25 +101,11 @@ class SimulatedVocabularyFile {
 
 #ifdef __APPLE__
     // macOS libc has no `fdatasync`; plain `fsync` is the portable fallback.
-    if (::fsync(fd) != 0) {
-      std::free(writeBuf);
-      ::unlink(tempPath);
-      ::close(fd);
-      AD_THROW("fsync failed while persisting simulated vocabulary file");
-    }
+    ::fsync(fd);
 #else
-    if (::fdatasync(fd) != 0) {
-      std::free(writeBuf);
-      ::unlink(tempPath);
-      ::close(fd);
-      AD_THROW("fdatasync failed while persisting simulated vocabulary file");
-    }
+    ::fdatasync(fd);
 #endif
-    if (::close(fd) != 0) {
-      std::free(writeBuf);
-      ::unlink(tempPath);
-      AD_THROW("close failed for simulated vocabulary file");
-    }
+    ::close(fd);
     std::free(writeBuf);
     isCreated_ = true;
     std::cout << "Done (1,073,741,824 bytes written)." << std::endl;
@@ -549,7 +530,7 @@ AD_REGISTER_BENCHMARK(IoUringDirectBenchmark);
 
 #ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
 // Standalone executable entry point
-int main() {
+int main(int argc, char** argv) {
   std::cout
       << "=================================================================\n";
   std::cout << " QLever Export Prototype: Registered io_uring & Direct I/O "

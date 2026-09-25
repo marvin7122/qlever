@@ -14,7 +14,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
-#include <cstdint>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -49,15 +48,12 @@ class PipelineCancelledException : public std::runtime_error {
 // Diagnostic accounting and performance metrics for the double-buffering
 // pipeline. Encapsulates all bookkeeping so callers need not track state.
 struct PipelineStats {
-  // Fixed 64-bit counters: the pipeline runs for the whole export, and
-  // `size_t` narrows to 32 bits on LLP64/ILP32 targets (Windows, some
-  // embedded), where multi-GB exports would wrap these.
-  uint64_t totalChunksProduced{0};
-  uint64_t totalChunksConsumed{0};
-  uint64_t totalBytesProduced{0};
-  uint64_t totalBytesConsumed{0};
-  uint64_t backpressureStalls{0};
-  uint64_t consumerWaitStalls{0};
+  size_t totalChunksProduced{0};
+  size_t totalChunksConsumed{0};
+  size_t totalBytesProduced{0};
+  size_t totalBytesConsumed{0};
+  size_t backpressureStalls{0};
+  size_t consumerWaitStalls{0};
 };
 
 // Forward declaration of ChunkSink for high-level producer callbacks.
@@ -111,9 +107,8 @@ class AsyncChunkPipeline {
   // ___________________________________________________________________________
   // Producer API: Push a newly generated chunk into the pipeline.
   // Blocks if buffer is full (backpressure) until a slot is freed.
-  // Returns true on success; returns false if pipeline is cancelled (the
-  // chunk is dropped, so callers must not ignore the result).
-  [[nodiscard]] bool push(ChunkType chunk) {
+  // Returns true on success; returns false if pipeline is cancelled.
+  bool push(ChunkType chunk) {
     std::unique_lock<std::mutex> lock(mutex_);
 
     if (isCancelled_) {
@@ -165,10 +160,7 @@ class AsyncChunkPipeline {
   // Consumer API: Retrieve the next chunk.
   // Blocks if buffer is currently empty and production is still ongoing.
   // Returns `std::nullopt` when stream is finished and all chunks were
-  // consumed, and also after `cancel()`. Distinguish the two with
-  // `isCancelled()`: `nullopt` + cancelled means early shutdown, `nullopt`
-  // without cancellation means clean end-of-stream. Rethrows captured
-  // producer exception if one occurred.
+  // consumed. Rethrows captured producer exception if one occurred.
   std::optional<ChunkType> pop() {
     std::unique_lock<std::mutex> lock(mutex_);
 
@@ -366,9 +358,7 @@ class ChunkSink {
 
   // Push chunk into the pipeline, blocking on backpressure if full.
   // Returns true on success; false if cancelled.
-  [[nodiscard]] bool push(ChunkType chunk) {
-    return pipeline_->push(std::move(chunk));
-  }
+  bool push(ChunkType chunk) { return pipeline_->push(std::move(chunk)); }
 
   // Check whether consumer cancelled early.
   [[nodiscard]] bool isCancelled() const noexcept {

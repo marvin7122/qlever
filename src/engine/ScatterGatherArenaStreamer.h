@@ -20,8 +20,6 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -29,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/strings/str_cat.h"
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
@@ -297,7 +296,10 @@ class ScatterGatherChunkStreamer {
 
   // ___________________________________________________________________________
   // Append a single character to the formatting header.
-  void writeChar(char c) { writeRawHeader(std::string_view(&c, 1)); }
+  void writeChar(char c) {
+    const std::array<char, 1> buffer{c};
+    writeRawHeader(std::string_view(buffer.data(), buffer.size()));
+  }
 
   // ___________________________________________________________________________
   // Write an integer directly without intermediate heap allocations.
@@ -497,8 +499,8 @@ class ScatterGatherChunkStreamer {
           slice.isArena ? static_cast<const void*>(slice.arenaPtr)
                         : static_cast<const void*>(currentHeaderBuffer_.data() +
                                                    slice.headerOffset);
-      iovecs.push_back(
-          iovec{.iov_base = const_cast<void*>(ptr), .iov_len = slice.len});
+      // Positional construction: designated initializers are C++20-only.
+      iovecs.push_back(iovec{const_cast<void*>(ptr), slice.len});
     }
 
     ScatterGatherChunk chunk(ScatterGatherChunk::Passkey{}, std::move(iovecs),

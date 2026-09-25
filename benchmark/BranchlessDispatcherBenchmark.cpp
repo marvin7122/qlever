@@ -151,7 +151,6 @@ struct BranchingSwitchDispatcher {
       }
       case Datatype::VocabIndex:
       case Datatype::LocalVocabIndex:
-      case Datatype::SecondaryVocabIndex:
       case Datatype::EncodedVal: {
         std::memcpy(out, "<", 1);
         out += 1;
@@ -224,7 +223,7 @@ struct BranchingIfElseDispatcher {
                                   char* out) noexcept {
     const Datatype dt = id.getDatatype();
     if (dt == Datatype::VocabIndex || dt == Datatype::LocalVocabIndex ||
-        dt == Datatype::SecondaryVocabIndex || dt == Datatype::EncodedVal) {
+        dt == Datatype::EncodedVal) {
       std::memcpy(out, "<", 1);
       out += 1;
       std::memcpy(out, rawTerm.data(), rawTerm.size());
@@ -275,25 +274,6 @@ struct BranchingIfElseDispatcher {
       }
       std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", 45);
       out += 45;
-      return out;
-    } else if (dt == Datatype::Date) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
-      auto [str, type] = id.getDate().toStringAndType();
-      std::memcpy(out, str.data(), str.size());
-      out += str.size();
-      std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", 46);
-      out += 46;
-      return out;
-    } else if (dt == Datatype::GeoPoint) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
-      auto [str, type] = id.getGeoPoint().toStringAndType();
-      std::memcpy(out, str.data(), str.size());
-      out += str.size();
-      std::memcpy(out, "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
-                  52);
-      out += 52;
       return out;
     }
     return out;
@@ -457,23 +437,16 @@ void printResults(const std::vector<BenchmarkResult>& results) {
               << std::fixed << std::setprecision(2) << speedup << "x (+"
               << ((speedup - 1.0) * 100.0) << "% throughput)\n";
   }
+  std::cout << "==============================================================="
+               "=========================================\n\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
   size_t numTerms = 5'000'000;
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg != "-p" && !arg.empty() &&
-        std::isdigit(static_cast<unsigned char>(arg[0]))) {
-      try {
-        numTerms = std::stoull(arg);
-      } catch (const std::exception&) {
-        std::cerr << "Invalid term count: " << arg << '\n';
-        return 1;
-      }
-    }
+  if (argc > 1) {
+    numTerms = std::stoull(argv[1]);
   }
 
   std::cout << "Generating synthetic mixed RDF dataset with " << numTerms

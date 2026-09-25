@@ -126,10 +126,6 @@ using namespace ql::export_formatting;
 // Misses.
 class PerfCounterMonitor {
  public:
-  // Owns perf-event file descriptors; copying would double-close them.
-  PerfCounterMonitor(const PerfCounterMonitor&) = delete;
-  PerfCounterMonitor& operator=(const PerfCounterMonitor&) = delete;
-
   struct Metrics {
     uint64_t cycles = 0;
     uint64_t instructions = 0;
@@ -213,10 +209,8 @@ class PerfCounterMonitor {
         read(fdBranches_, &m.branches, sizeof(m.branches)) > 0) {
       m.available = true;
       if (fdBranchMisses_ >= 0) {
-        if (read(fdBranchMisses_, &m.branchMisses, sizeof(m.branchMisses)) !=
-            sizeof(m.branchMisses)) {
-          m.available = false;
-        }
+        [[maybe_unused]] auto res =
+            read(fdBranchMisses_, &m.branchMisses, sizeof(m.branchMisses));
       }
       if (m.cycles > 0) {
         m.ipc =
@@ -460,24 +454,12 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
               perfMonitor_.start();
 
               FastExportStreamFormatter formatter(nullSink);
-
-              auto visitor = [&]<ColumnType... Types>(auto&&... args) {
-                if constexpr (sizeof...(Types) > 0) {
-                  using Serializer = MonomorphicRowSerializer<Types...>;
-                  for (const auto& row : data_.tripleRows_) {
-                    Serializer::template serializeRow<ExportFormat::Csv>(
-                        formatter, ql::span<const CellValue>(row));
-                  }
-                } else if constexpr (sizeof...(args) > 0) {
-                  auto&& [dynSerializer] = std::forward_as_tuple(args...);
-                  for (const auto& row : data_.tripleRows_) {
-                    dynSerializer.template serializeRow<ExportFormat::Csv>(
-                        formatter, ql::span<const CellValue>(row));
-                  }
+              dispatchMonomorphicSerializer(schema, [&](auto& serializer) {
+                for (const auto& row : data_.tripleRows_) {
+                  serializer.template serializeRow<ExportFormat::Csv>(
+                      formatter, ql::span<const CellValue>(row));
                 }
-              };
-
-              dispatchMonomorphicSerializer(schema, visitor);
+              });
               auto summary = std::move(formatter).finalize();
 
               perf = perfMonitor_.stop();

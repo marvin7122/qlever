@@ -19,8 +19,6 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
-#include <memory>
-#include <numeric>
 #include <random>
 #include <string>
 #include <string_view>
@@ -95,9 +93,8 @@ class SimulatedDecompressionArena {
     static constexpr std::string_view alphabet =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-./:";
 
-    for (size_t i = 0; i < totalArenaBytes; ++i) {
-      storage_[i] = alphabet[rng() % alphabet.size()];
-    }
+    std::generate(storage_.begin(), storage_.end(),
+                  [&rng]() { return alphabet[rng() % alphabet.size()]; });
 
     literalSpans_.reserve(numTriples);
     subjects_.reserve(numTriples);
@@ -156,7 +153,8 @@ class ScatterGatherBenchmarkRunner {
 
     auto startTime = std::chrono::steady_clock::now();
 
-    // The sink only drives the formatter; byte totals come from `summary`.
+    // The metric below reads summary.totalBytesWritten_; no per-chunk
+    // accumulation is needed here.
     FastExportStreamFormatter formatter([&](std::string_view) {}, chunkSize);
 
     for (size_t i = 0; i < n; ++i) {
@@ -281,7 +279,9 @@ class ScatterGatherBenchmarkRunner {
     ScatterGatherChunkStreamer streamer(
         [&](ScatterGatherChunk chunk) {
           totalZeroCopyBytes += chunk.zeroCopyBytes();
-          [[maybe_unused]] auto bytes = chunk.writeToFd(nullFd);
+          ssize_t written = chunk.writeToFd(nullFd.get());
+          AD_CORRECTNESS_CHECK(written ==
+                               static_cast<ssize_t>(chunk.totalBytes()));
         },
         config);
 
@@ -330,7 +330,9 @@ class ScatterGatherBenchmarkRunner {
 void printBenchmarkTable(
     size_t literalSize,
     const std::vector<ScatterGatherBenchmarkMetric>& metrics) {
-  if (metrics.empty()) return;
+  // The header reads the zero-copy payload from the second (scatter-gather)
+  // measurement.
+  AD_CONTRACT_CHECK(metrics.size() >= 2);
 
   const double baselineThroughput = metrics[0].throughputGBs;
 

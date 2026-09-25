@@ -14,7 +14,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -233,14 +232,11 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
       : alloc_{std::move(alloc)} {}
 
  protected:
-  // This resource only serves `char` allocations from the arena builders,
-  // and the underlying `AllocatorWithLimit` has no alignment concept (it
-  // counts bytes, backed by `::operator new` with fundamental alignment).
-  // Anything beyond fundamental alignment cannot be honored here: fail
-  // loudly instead of returning an under-aligned pointer (unlike
-  // `LimitedMemoryResource`, there is no upstream to forward to).
-  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
-    AD_CONTRACT_CHECK(alignment <= alignof(std::max_align_t));
+  // The alignment argument is intentionally ignored: this resource only serves
+  // `char` allocations from the arena builders, for which any alignment
+  // suffices, and the underlying `AllocatorWithLimit` has no alignment
+  // concept (it counts bytes).
+  void* do_allocate(std::size_t bytes, std::size_t) override {
     return alloc_.allocate(bytes);
   }
   void do_deallocate(void* p, std::size_t bytes, std::size_t) override {
@@ -753,30 +749,6 @@ struct ReplaceOptionalByPlaceholderOnExportImpl<
 template <typename Vocab>
 constexpr bool replaceOptionalByPlaceholderOnExport =
     detail::ReplaceOptionalByPlaceholderOnExportImpl<Vocab>::value;
-
-namespace detail {
-// C++17-compatible detection of the two-argument `lookupBatch` overload that
-// writes the batch into a caller-provided `ArenaVocabBatchBuilder`. Written
-// with `void_t` instead of `if constexpr (requires { ... })`, which is
-// C++20-only and therefore not available in the CPP17 libQLever CI workflow
-// (see `.github/workflows/cpp-17-libqlever.yml`).
-template <typename Vocab, typename = void>
-struct HasLookupBatchWithBuilderImpl : std::false_type {};
-
-template <typename Vocab>
-struct HasLookupBatchWithBuilderImpl<
-    Vocab, std::void_t<decltype(std::declval<const Vocab&>().lookupBatch(
-               std::declval<ql::span<const size_t>>(),
-               std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
-}  // namespace detail
-
-// Whether `Vocab` provides the two-argument `lookupBatch(indices, builder)`
-// overload (see above). Dispatching wrappers (e.g. `UnicodeVocabulary`,
-// `PolymorphicVocabulary`) use this to call the builder overload when it
-// exists and fall back to the single-argument overload otherwise.
-template <typename Vocab>
-constexpr bool hasLookupBatchWithBuilder =
-    detail::HasLookupBatchWithBuilderImpl<Vocab>::value;
 
 // Return `vocab[index]` as a `std::string`. If the `operator[]` of `vocab`
 // returns a `std::optional` (which is the case for vocabularies with holes, see

@@ -8,8 +8,10 @@
 
 #pragma once
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
-    defined(_M_IX86)
+// SSE2 is implied by x86-64, but on 32-bit x86 it must be queried explicitly:
+// `__i386__`/`_M_IX86` alone do not guarantee it (same gating as in
+// `util/FastIntToString.h`).
+#if defined(__x86_64__) || defined(_M_X64) || defined(__SSE2__)
 #include <emmintrin.h>
 #define QLEVER_SLICER_X86 1
 #endif
@@ -70,26 +72,29 @@ class VectorizedPrefixTable {
   }
 
   // ___________________________________________________________________________
-  // Write a well-known prefix into `out` using 128-bit vector stores for the
-  // full 16-byte vectors plus a `memcpy` tail, so exactly `entry.length`
-  // bytes are written (a whole-vector store would overwrite up to 15 bytes
-  // past the prefix). Returns the number of bytes written.
+  // Write a well-known prefix into `out` using 128-bit vector stores.
+  // Returns the number of valid bytes (`entry.length`). The stores cover
+  // whole 16-byte blocks, so `out` must have room for the length rounded
+  // up to a multiple of 16 (16, 32, or 48 bytes for the prefixes below);
+  // sizing `out` for exactly `entry.length` bytes would overflow.
   [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id,
                                               char* out) const noexcept {
-    AD_CONTRACT_CHECK(static_cast<size_t>(id) < entries_.size());
-    const auto& entry = entries_.at(static_cast<size_t>(id));
+    const auto index = static_cast<size_t>(id);
+    AD_CONTRACT_CHECK(index < entries_.size());
+    const auto& entry = entries_[index];
 #ifdef QLEVER_SLICER_X86
     const __m128i* src = reinterpret_cast<const __m128i*>(entry.data);
     __m128i* dst = reinterpret_cast<__m128i*>(out);
 
-    const size_t fullVectors = entry.length / 16;
-    for (size_t i = 0; i < fullVectors; ++i) {
-      _mm_storeu_si128(dst + i, _mm_load_si128(src + i));
-    }
-    const size_t tailBytes = entry.length % 16;
-    if (tailBytes > 0) {
-      std::memcpy(out + fullVectors * 16, entry.data + fullVectors * 16,
-                  tailBytes);
+    if (entry.length <= 16) {
+      _mm_storeu_si128(dst, _mm_load_si128(src));
+    } else if (entry.length <= 32) {
+      _mm_storeu_si128(dst, _mm_load_si128(src));
+      _mm_storeu_si128(dst + 1, _mm_load_si128(src + 1));
+    } else {
+      _mm_storeu_si128(dst, _mm_load_si128(src));
+      _mm_storeu_si128(dst + 1, _mm_load_si128(src + 1));
+      _mm_storeu_si128(dst + 2, _mm_load_si128(src + 2));
     }
 #else
     std::memcpy(out, entry.data, entry.length);

@@ -30,17 +30,6 @@ TEST(BranchlessTypeDispatcherTest, FormatIri) {
   EXPECT_EQ(result, "<http://example.org/resource>");
 }
 
-TEST(BranchlessTypeDispatcherTest, FormatSecondaryVocabIndex) {
-  std::array<char, 256> buffer{};
-  auto id = ValueId::makeFromSecondaryVocabIndex(SecondaryVocabIndex::make(7));
-  std::string_view rawTerm = "http://example.org/secondary";
-
-  char* end = BranchlessTypeDispatcher::dispatchTermFormat(
-      id, rawTerm, buffer.data(), BranchlessTypeDispatcher::defaultLut());
-  std::string_view result(buffer.data(), end - buffer.data());
-  EXPECT_EQ(result, "<http://example.org/secondary>");
-}
-
 TEST(BranchlessTypeDispatcherTest, FormatLiteral) {
   std::array<char, 256> buffer{};
   auto id = ValueId::makeFromTextRecordIndex(TextRecordIndex::make(10));

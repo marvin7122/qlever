@@ -306,14 +306,6 @@ template <EscapeFormat Format>
 // _____________________________________________________________________________
 // SimdEscapeClassifier: Deep module for high-bandwidth SIMD literal scanning
 // and branchless escape formatting.
-//
-// Platform contract: on x86 the 32-byte paths execute AVX2 instructions
-// (via function-level `target("avx2")` attributes, so no global `-mavx2` is
-// needed) and the 16-byte paths use SSE2. There is deliberately no runtime
-// CPU dispatch: every CI runner is an AVX2-capable x86_64 machine, and the
-// project has no CPUID infrastructure to dispatch on. Running on a pre-AVX2
-// x86 CPU raises SIGILL; porting to such targets needs scalar/`ifunc`
-// dispatch, not silent fallback.
 class SimdEscapeClassifier {
  public:
   // ___________________________________________________________________________
@@ -541,16 +533,14 @@ class SimdEscapeClassifier {
     size_t posLastQuote = normLiteral.rfind('"');
 
     // If there are only two quotes and no internal special characters, pass
-    // through. Note: the check must run on the content between the delimiters:
-    // `"` itself is in the Turtle escape set, so scanning the full literal
-    // (including its quotes) would always report escapes and defeat this path.
-    const std::string_view normalizedContent =
-        normLiteral.substr(1, posLastQuote - 1);
+    // through
     if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normalizedContent)) [[likely]] {
+        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
       return std::string{normLiteral};
     }
 
+    std::string_view normalizedContent =
+        normLiteral.substr(1, posLastQuote - 1);
     std::string result;
     result.resize(normLiteral.size() * 2 + 2);
     char* out = result.data();
