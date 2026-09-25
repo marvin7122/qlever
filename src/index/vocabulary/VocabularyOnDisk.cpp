@@ -245,7 +245,7 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
       // `IoUringManager.cpp` is non-throwing by design.
       manager_.reset();
       if (auto budget = budget_.lock()) {
-        budget->numOwnedRings.fetch_sub(1, std::memory_order_release);
+        budget->numOwnedRings_.fetch_sub(1, std::memory_order_release);
       }
     }
   };
@@ -271,16 +271,16 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
   // `NUM_VOCAB_BATCH_IO_MANAGERS` threads hold one; a stale load at worst
   // sends a thread to the pool spuriously, which is always safe.
   size_t numOwnedRings =
-      threadRingBudget_->numOwnedRings.load(std::memory_order_acquire);
+      threadRingBudget_->numOwnedRings_.load(std::memory_order_acquire);
   while (numOwnedRings < NUM_VOCAB_BATCH_IO_MANAGERS) {
-    if (threadRingBudget_->numOwnedRings.compare_exchange_weak(
+    if (threadRingBudget_->numOwnedRings_.compare_exchange_weak(
             numOwnedRings, numOwnedRings + size_t{1},
             std::memory_order_acq_rel)) {
       // Release the claimed slot if anything below throws before `owned`
       // takes it over (e.g. allocation failure inside `makeBatchManager`), so
       // a failed claim never leaves a phantom slot behind.
       absl::Cleanup releaseSlot{[budget = threadRingBudget_]() {
-        budget->numOwnedRings.fetch_sub(1, std::memory_order_release);
+        budget->numOwnedRings_.fetch_sub(1, std::memory_order_release);
       }};
       // Drop rings of destroyed vocabularies before creating a new one, so a
       // thread that churns through short-lived vocabularies does not
@@ -295,7 +295,7 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
       // Per-thread probe-once: a failed `io_uring_queue_init` degrades only
       // this thread's ring to the synchronous fallback.
       bool preferIoUring =
-          threadRingBudget_->preferIoUring.load(std::memory_order_acquire);
+          threadRingBudget_->preferIoUring_.load(std::memory_order_acquire);
       ThreadOwnedRing owned{ad_utility::makeBatchManager(preferIoUring),
                             threadRingBudget_};
       // From here on, `owned` (or the map node it is moved into) is the single
@@ -349,7 +349,7 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatchVia(
 
 // _____________________________________________________________________________
 size_t VocabularyOnDisk::numOwnedRingsForTesting() const {
-  return threadRingBudget_->numOwnedRings.load(std::memory_order_acquire);
+  return threadRingBudget_->numOwnedRings_.load(std::memory_order_acquire);
 }
 
 // _____________________________________________________________________________
@@ -417,8 +417,8 @@ void VocabularyOnDisk::open(const std::string& filename, bool preferIoUring) {
   // create their owned ring later (see `threadLocalManager`); each thread
   // probes once, so a runtime failure degrades only that thread.
   threadRingBudget_ = std::make_shared<ThreadRingBudget>();
-  threadRingBudget_->preferIoUring.store(preferIoUring,
-                                         std::memory_order_release);
+  threadRingBudget_->preferIoUring_.store(preferIoUring,
+                                          std::memory_order_release);
 
   // Initialize the pool of persistent `BatchManagerBase`s. This is the
   // fallback for threads without an owned ring; the pooled managers also probe

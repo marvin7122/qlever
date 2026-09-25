@@ -61,16 +61,16 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // state alive. Never null, except in a moved-from vocabulary, which must
   // not be used for lookups anyway (its `ioManagers_` is null as well).
   struct ThreadRingBudget {
-    std::atomic<size_t> numOwnedRings{0};
+    std::atomic<size_t> numOwnedRings_{0};
     // Initial io_uring preference, set by `open()`. Each thread loads it once
     // when it creates its owned ring, so a failed `io_uring_queue_init`
     // degrades only that thread to the synchronous fallback and never affects
     // other threads. Atomic so the store in `open()` is correctly published
     // to threads that read it later.
-    std::atomic<bool> preferIoUring{true};
+    std::atomic<bool> preferIoUring_{true};
   };
-  mutable std::shared_ptr<ThreadRingBudget> threadRingBudget_ =
-      std::make_shared<ThreadRingBudget>();
+  mutable std::shared_ptr<ThreadRingBudget> threadRingBudget_{
+      std::make_shared<ThreadRingBudget>()};
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
