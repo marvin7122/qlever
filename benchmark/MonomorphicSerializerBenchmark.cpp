@@ -136,6 +136,13 @@ class PerfCounterMonitor {
 #endif
   }
 
+  // Owns the perf event file descriptors, so copying or moving would close
+  // them twice.
+  PerfCounterMonitor(const PerfCounterMonitor&) = delete;
+  PerfCounterMonitor& operator=(const PerfCounterMonitor&) = delete;
+  PerfCounterMonitor(PerfCounterMonitor&&) = delete;
+  PerfCounterMonitor& operator=(PerfCounterMonitor&&) = delete;
+
   ~PerfCounterMonitor() noexcept {
 #ifdef __linux__
     if (fdCycles_ >= 0) close(fdCycles_);
