@@ -19,8 +19,6 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
-#include <memory>
-#include <numeric>
 #include <random>
 #include <string>
 #include <string_view>
@@ -95,9 +93,8 @@ class SimulatedDecompressionArena {
     static constexpr std::string_view alphabet =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-./:";
 
-    for (size_t i = 0; i < totalArenaBytes; ++i) {
-      storage_[i] = alphabet[rng() % alphabet.size()];
-    }
+    std::generate(storage_.begin(), storage_.end(),
+                  [&rng]() { return alphabet[rng() % alphabet.size()]; });
 
     literalSpans_.reserve(numTriples);
     subjects_.reserve(numTriples);
@@ -333,7 +330,9 @@ class ScatterGatherBenchmarkRunner {
 void printBenchmarkTable(
     size_t literalSize,
     const std::vector<ScatterGatherBenchmarkMetric>& metrics) {
-  if (metrics.empty()) return;
+  // The header reads the zero-copy payload from the second (scatter-gather)
+  // measurement.
+  AD_CONTRACT_CHECK(metrics.size() >= 2);
 
   const double baselineThroughput = metrics[0].throughputGBs;
 
