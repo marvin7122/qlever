@@ -36,7 +36,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
-    add_executable(SoftwarePipelinedPrefetcherBenchmark SoftwarePipelinedPrefetcherBenchmark.cpp)
-    qlever_target_link_libraries(SoftwarePipelinedPrefetcherBenchmark engine qlever_util)
+    addAndLinkBenchmark(SoftwarePipelinedPrefetcherBenchmark)
 
 endif()
