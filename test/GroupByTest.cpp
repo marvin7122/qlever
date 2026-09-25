@@ -3,8 +3,11 @@
 // Authors: Florian Kramer (florian.kramer@mail.uni-freiburg.de)
 //          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
 
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
+
+#include <functional>
 
 #include "./util/GTestHelpers.h"
 #include "./util/IdTableHelpers.h"
@@ -515,34 +518,51 @@ TEST_F(GroupByOptimizations, countStarOptimizationWorksAsExpected) {
 namespace {
 // Build `SELECT (COUNT(<counted>) AS ?c) WHERE { ?s ?p ?o <filter> }` over a
 // fresh in-memory index for the `computeTypedCountFromMetadata` fast path.
-struct TypedCountSetup {
-  std::shared_ptr<QueryExecutionTree> filter_;
-  QueryExecutionContext* qec_;
-};
+// Returns a fresh `?s ?p ?o FILTER(<filter>)` tree on each call, because a
+// `GroupByImpl` takes ownership of its subtree.
+using FilterTreeFactory = std::function<std::shared_ptr<QueryExecutionTree>()>;
 
-TypedCountSetup makeTypedCountSetup(
+FilterTreeFactory makeTypedCountSetup(
     QueryExecutionContext* qec,
-    sparqlExpression::SparqlExpression::Ptr filterExpression,
-    const std::string& filterDescriptor) {
-  auto scan = makeExecutionTree<IndexScan>(
-      qec, Permutation::Enum::SPO,
-      SparqlTripleSimple{Variable{"?s"}, Variable{"?p"}, Variable{"?o"}});
-  auto filter = makeExecutionTree<Filter>(
-      qec, scan,
-      sparqlExpression::SparqlExpressionPimpl{std::move(filterExpression),
-                                              filterDescriptor});
-  return {std::move(filter), qec};
+    std::function<sparqlExpression::SparqlExpression::Ptr()> makeFilter,
+    std::string filterDescriptor) {
+  return [qec, makeFilter = std::move(makeFilter),
+          filterDescriptor = std::move(filterDescriptor)]() {
+    auto scan = makeExecutionTree<IndexScan>(
+        qec, Permutation::Enum::SPO,
+        SparqlTripleSimple{Variable{"?s"}, Variable{"?p"}, Variable{"?o"}});
+    return makeExecutionTree<Filter>(qec, scan,
+                                     sparqlExpression::SparqlExpressionPimpl{
+                                         makeFilter(), filterDescriptor});
+  };
 }
 
-void checkTypedCount(TypedCountSetup setup,
-                     sparqlExpression::SparqlExpressionPimpl countExpression,
-                     const VectorTable& expected) {
-  GroupByImpl groupBy{setup.qec_,
-                      {},
-                      {Alias{std::move(countExpression), Variable{"?c"}}},
-                      std::move(setup.filter_)};
-  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
-              matchesIdTableFromVector(expected));
+// Check the result of `SELECT (<countExpression> AS ?c) WHERE { <filter> }`
+// and whether `computeTypedCountFromMetadata` answers it (`expectFastPath`).
+// Both are checked with and without `strip-columns`: the server enables it
+// (see `ServerMain.cpp`), and then the `GroupByImpl` constructor wraps the
+// `Filter` in a `StripColumns`.
+void checkTypedCount(
+    QueryExecutionContext* qec, const FilterTreeFactory& makeFilterTree,
+    const sparqlExpression::SparqlExpressionPimpl& countExpression,
+    const VectorTable& expected, bool expectFastPath = true,
+    ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
+  auto trace = generateLocationTrace(l);
+  for (bool stripColumns : {false, true}) {
+    auto cleanup =
+        setRuntimeParameterForTest<&RuntimeParameters::stripColumns_>(
+            stripColumns);
+    auto makeGroupBy = [&]() {
+      return GroupByImpl{
+          qec, {}, {Alias{countExpression, Variable{"?c"}}}, makeFilterTree()};
+    };
+    EXPECT_EQ(makeGroupBy().computeTypedCountFromMetadata().has_value(),
+              expectFastPath)
+        << "stripColumns = " << stripColumns;
+    EXPECT_THAT(makeGroupBy().computeResultOnlyForTesting(false).idTableView(),
+                matchesIdTableFromVector(expected))
+        << "stripColumns = " << stripColumns;
+  }
 }
 
 sparqlExpression::SparqlExpression::Ptr makeIsLiteralOfO() {
@@ -555,9 +575,9 @@ sparqlExpression::SparqlExpression::Ptr makeIsLiteralOfO() {
 // _____________________________________________________________________________
 TEST_F(GroupByOptimizations, countFilterIsLiteral) {
   auto* qec = getQec("<s> <p> \"lit\" . <s> <p> <iri> . <s> <p> 1 .");
-  checkTypedCount(makeTypedCountSetup(qec, makeIsLiteralOfO(), "isLiteral(?o)"),
-                  makeCountPimpl(Variable{"?o"}, false),
-                  {{Id::makeFromInt(2)}});
+  checkTypedCount(
+      qec, makeTypedCountSetup(qec, makeIsLiteralOfO, "isLiteral(?o)"),
+      makeCountPimpl(Variable{"?o"}, false), {{Id::makeFromInt(2)}});
 }
 
 // _____________________________________________________________________________
@@ -565,11 +585,16 @@ TEST_F(GroupByOptimizations, countFilterIsBlank) {
   auto* qec = getQec("_:b1 <p> <o> . _:b2 <p> <o> . <s> <p> <o> .");
   using namespace sparqlExpression;
   // The blank nodes are the subjects, so count over `?s`.
-  checkTypedCount(
-      makeTypedCountSetup(
-          qec, makeIsBlankExpression(makeVariableExpression(Variable{"?s"})),
-          "isBlank(?s)"),
-      makeCountPimpl(Variable{"?s"}, false), {{Id::makeFromInt(2)}});
+  checkTypedCount(qec,
+                  makeTypedCountSetup(
+                      qec,
+                      [] {
+                        return makeIsBlankExpression(
+                            makeVariableExpression(Variable{"?s"}));
+                      },
+                      "isBlank(?s)"),
+                  makeCountPimpl(Variable{"?s"}, false),
+                  {{Id::makeFromInt(2)}});
 }
 
 // _____________________________________________________________________________
@@ -578,16 +603,17 @@ TEST_F(GroupByOptimizations, countFilterIsLiteralCountStar) {
   using namespace sparqlExpression;
   SparqlExpressionPimpl countStar{
       std::shared_ptr{makeCountStarExpression(false)}, "COUNT(*)"};
-  checkTypedCount(makeTypedCountSetup(qec, makeIsLiteralOfO(), "isLiteral(?o)"),
-                  std::move(countStar), {{Id::makeFromInt(2)}});
+  checkTypedCount(qec,
+                  makeTypedCountSetup(qec, makeIsLiteralOfO, "isLiteral(?o)"),
+                  countStar, {{Id::makeFromInt(2)}});
 }
 
 // _____________________________________________________________________________
 TEST_F(GroupByOptimizations, countFilterIsLiteralUnboundVariableIsZero) {
   auto* qec = getQec("<s> <p> \"lit\" . <s> <p> <iri> . <s> <p> 1 .");
-  checkTypedCount(makeTypedCountSetup(qec, makeIsLiteralOfO(), "isLiteral(?o)"),
-                  makeCountPimpl(Variable{"?unbound"}, false),
-                  {{Id::makeFromInt(0)}});
+  checkTypedCount(
+      qec, makeTypedCountSetup(qec, makeIsLiteralOfO, "isLiteral(?o)"),
+      makeCountPimpl(Variable{"?unbound"}, false), {{Id::makeFromInt(0)}});
 }
 
 // _____________________________________________________________________________
@@ -596,11 +622,16 @@ TEST_F(GroupByOptimizations, countFilterNegatedIsLiteralFallsBack) {
   using namespace sparqlExpression;
   // Only the IRI triple matches, computed by the regular evaluation.
   checkTypedCount(
-      makeTypedCountSetup(qec,
-                          makeUnaryNegateExpression(makeIsLiteralExpression(
-                              makeVariableExpression(Variable{"?o"}))),
-                          "!isLiteral(?o)"),
-      makeCountPimpl(Variable{"?o"}, false), {{Id::makeFromInt(1)}});
+      qec,
+      makeTypedCountSetup(
+          qec,
+          [] {
+            return makeUnaryNegateExpression(makeIsLiteralExpression(
+                makeVariableExpression(Variable{"?o"})));
+          },
+          "!isLiteral(?o)"),
+      makeCountPimpl(Variable{"?o"}, false), {{Id::makeFromInt(1)}},
+      /*expectFastPath=*/false);
 }
 
 // _____________________________________________________________________________

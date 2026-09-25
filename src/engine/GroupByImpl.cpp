@@ -2029,7 +2029,15 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
     return std::nullopt;
   }
 
-  auto* filter = dynamic_cast<Filter*>(_subtree->getRootOperation().get());
+  // With `strip-columns` enabled (the server default, see `ServerMain.cpp`),
+  // the constructor wraps the `Filter` in a `StripColumns` that hides the scan
+  // columns that the aggregate does not use. Stripping columns does not change
+  // the number of rows, so look through it.
+  Operation* root = _subtree->getRootOperation().get();
+  if (auto* strip = dynamic_cast<StripColumns*>(root)) {
+    root = strip->getChildren().at(0)->getRootOperation().get();
+  }
+  auto* filter = dynamic_cast<Filter*>(root);
   if (!filter) {
     return std::nullopt;
   }
@@ -2091,7 +2099,7 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
       countStar ||
       (counted.has_value() && isVariableBoundInSubtree(counted.value()));
   if (!countedIsBound) {
-    filter->updateRuntimeInformationWhenOptimizedOut();
+    _subtree->getRootOperation()->updateRuntimeInformationWhenOptimizedOut();
     IdTable table{1, getExecutionContext()->getAllocator()};
     table.push_back(std::array{Id::makeFromInt(0)});
     return table;
@@ -2121,7 +2129,7 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
     }
   }
 
-  filter->updateRuntimeInformationWhenOptimizedOut();
+  _subtree->getRootOperation()->updateRuntimeInformationWhenOptimizedOut();
   IdTable table{1, getExecutionContext()->getAllocator()};
   table.push_back(std::array{Id::makeFromInt(total)});
   return table;
