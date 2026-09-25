@@ -9,6 +9,7 @@
 #ifndef QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H
 #define QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
