@@ -163,6 +163,9 @@ class ZeroCopySenderBenchmarkRunner {
       size_t totalBytes = kTotalSendSizeBytes,
       size_t chunkSize = kChunkSizeBytes)
       : totalBytes_{totalBytes}, chunkSize_{chunkSize} {
+    // The send loops transmit `totalBytes_ / chunkSize_` full chunks, and the
+    // receiver waits for exactly `totalBytes_` bytes.
+    AD_CONTRACT_CHECK(chunkSize_ > 0 && totalBytes_ % chunkSize_ == 0);
     testPayload_.resize(chunkSize_);
     std::mt19937 rng(42);
     for (size_t i = 0; i < chunkSize_; ++i) {
