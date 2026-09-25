@@ -15,6 +15,7 @@
 
 using namespace ql::index::stats;
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, AccurateDistinctEstimation) {
   HyperLogLogSketch<10> hll;
 
@@ -33,6 +34,7 @@ TEST(HyperLogLogSketchTest, AccurateDistinctEstimation) {
   EXPECT_LE(relativeError, 0.05);  // within 5%
 }
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, SketchMergeCorrectness) {
   HyperLogLogSketch<10> hll1;
   HyperLogLogSketch<10> hll2;
@@ -57,4 +59,23 @@ TEST(HyperLogLogSketchTest, SketchMergeCorrectness) {
                          static_cast<double>(TOTAL_DISTINCT);
 
   EXPECT_LE(relativeError, 0.05);
+}
+
+// _____________________________________________________________________________
+TEST(HyperLogLogSketchTest, SmallAndLargePrecision) {
+  // Relative estimation error for `numDistinct` distinct values.
+  auto relativeError = [](auto sketch, uint64_t numDistinct) {
+    for (uint64_t i = 0; i < numDistinct; ++i) {
+      sketch.insert(Id::fromBits(i * 31 + 7));
+    }
+    return std::abs(static_cast<double>(sketch.estimateCardinality()) -
+                    static_cast<double>(numDistinct)) /
+           static_cast<double>(numDistinct);
+  };
+  // p = 4 (16 registers) uses the tabulated alpha; its standard error is
+  // 1.04 / sqrt(16) = 26%, so only a loose bound is meaningful.
+  EXPECT_LE(relativeError(HyperLogLogSketch<4>{}, 100'000), 0.75);
+  // p = 16 (65536 registers): m * m does not fit into 32 bits; standard error
+  // 0.4%.
+  EXPECT_LE(relativeError(HyperLogLogSketch<16>{}, 1'000'000), 0.05);
 }

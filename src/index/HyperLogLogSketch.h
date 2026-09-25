@@ -89,12 +89,14 @@ class HyperLogLogSketch {
       }
     }
 
-    // Alpha correction factor in its general form for m >= 128, with
-    // m = NUM_REGISTERS for this sketch.
-    constexpr double alpha =
-        0.7213 / (1.0 + 1.079 / static_cast<double>(NUM_REGISTERS));
-    double rawEstimate =
-        alpha * static_cast<double>(NUM_REGISTERS * NUM_REGISTERS) / sum;
+    // Bias correction alpha_m of Flajolet et al.: the general form holds for
+    // m >= 128, smaller m use the tabulated constants.
+    constexpr double m = static_cast<double>(NUM_REGISTERS);
+    constexpr double alpha = NUM_REGISTERS == 16   ? 0.673
+                             : NUM_REGISTERS == 32 ? 0.697
+                             : NUM_REGISTERS == 64 ? 0.709
+                                                   : 0.7213 / (1.0 + 1.079 / m);
+    double rawEstimate = alpha * m * m / sum;
 
     if (rawEstimate <= 2.5 * static_cast<double>(NUM_REGISTERS) &&
         zeroRegisters > 0) {
