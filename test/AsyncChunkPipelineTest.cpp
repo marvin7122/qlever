@@ -10,10 +10,15 @@
 
 #include <chrono>
 #include <future>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "./util/GTestHelpers.h"
 #include "engine/AsyncChunkPipeline.h"
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
+#include "util/Generator.h"
+#endif
 
 namespace {
 
@@ -60,5 +65,85 @@ TEST(AsyncChunkPipelineTest, ZeroCapacityThrows) {
   AD_EXPECT_THROW_WITH_MESSAGE(AsyncChunkPipeline<std::string>(0),
                                ::testing::HasSubstr("capacity_ >= 1"));
 }
+
+// Buffered chunks drain first; the producer exception is rethrown once the
+// buffer is empty.
+TEST(AsyncChunkPipelineTest, ProducerExceptionPropagatesAfterDrain) {
+  AsyncChunkPipeline<std::string> pipeline(2);
+  EXPECT_TRUE(pipeline.push("buffered"));
+  pipeline.setException(
+      std::make_exception_ptr(std::runtime_error("producer failed")));
+  EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"buffered"});
+  EXPECT_THROW(pipeline.pop(), std::runtime_error);
+}
+
+// Cancelling unblocks a producer waiting in push on a full buffer: the
+// blocked push returns false instead of hanging.
+TEST(AsyncChunkPipelineTest, CancelUnblocksProducerBlockedOnFullBuffer) {
+  AsyncChunkPipeline<std::string> pipeline(1);
+  EXPECT_TRUE(pipeline.push("fills the only slot"));
+  auto producer = std::async(std::launch::async,
+                             [&pipeline]() { return pipeline.push("late"); });
+  EXPECT_EQ(producer.wait_for(std::chrono::seconds(5)),
+            std::future_status::timeout);
+  pipeline.cancel();
+  ASSERT_EQ(producer.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+  EXPECT_FALSE(producer.get());
+}
+
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
+// The generator adapter streams all source chunks in order.
+TEST(AsyncChunkPipelineTest, MakeDoubleBufferedStreamsChunksInOrder) {
+  auto source = []() -> cppcoro::generator<std::string> {
+    co_yield "first";
+    co_yield "second";
+    co_yield "third";
+  };
+  auto buffered = AsyncChunkPipeline<std::string>::makeDoubleBuffered(source());
+  std::vector<std::string> chunks;
+  for (auto&& chunk : buffered) {
+    chunks.push_back(std::move(chunk));
+  }
+  ASSERT_EQ(chunks.size(), 3u);
+  EXPECT_EQ(chunks.at(0), "first");
+  EXPECT_EQ(chunks.at(1), "second");
+  EXPECT_EQ(chunks.at(2), "third");
+}
+
+// Destroying the adapter without draining cancels the worker and joins it
+// instead of hanging or terminating the process.
+TEST(AsyncChunkPipelineTest, MakeDoubleBufferedEarlyExitJoinsWorker) {
+  auto source = []() -> cppcoro::generator<std::string> {
+    for (int i = 0; i < 100; ++i) {
+      co_yield "chunk" + std::to_string(i);
+    }
+  };
+  auto buffered = AsyncChunkPipeline<std::string>::makeDoubleBuffered(source());
+  size_t count = 0;
+  for ([[maybe_unused]] auto&& chunk : buffered) {
+    if (++count == 2) {
+      break;
+    }
+  }
+  EXPECT_EQ(count, 2u);
+}
+
+// The producer-callable adapter delivers pushed chunks in order.
+TEST(AsyncChunkPipelineTest, PipelineStreamDeliversProducerChunks) {
+  auto stream = AsyncChunkPipeline<std::string>::pipelineStream(
+      [](qlever::export_pipeline::ChunkSink<std::string>& sink) {
+        EXPECT_TRUE(sink.push("first"));
+        EXPECT_TRUE(sink.push("second"));
+      });
+  std::vector<std::string> chunks;
+  for (auto&& chunk : stream) {
+    chunks.push_back(std::move(chunk));
+  }
+  ASSERT_EQ(chunks.size(), 2u);
+  EXPECT_EQ(chunks.at(0), "first");
+  EXPECT_EQ(chunks.at(1), "second");
+}
+#endif
 
 }  // namespace

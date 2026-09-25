@@ -33,6 +33,19 @@
 
 namespace qlever::export_pipeline {
 
+namespace detail {
+// C++17-compatible detection of a `.size()` member function. A raw
+// `requires`-expression is C++20-only, but this header is also compiled with
+// `CMAKE_CXX_STANDARD_MANUALLY_OVERRIDDEN=17`.
+template <typename T, typename = void>
+struct HasSize : std::false_type {};
+template <typename T>
+struct HasSize<T, std::void_t<decltype(std::declval<const T&>().size())>>
+    : std::true_type {};
+template <typename T>
+inline constexpr bool HasSize_v = HasSize<T>::value;
+}  // namespace detail
+
 // _____________________________________________________________________________
 // Exception thrown or propagated when a pipeline consumer cancels early
 // (e.g. HTTP client disconnected, query timed out, or client socket broke).
@@ -126,7 +139,7 @@ class AsyncChunkPipeline {
       }
     }
 
-    if constexpr (requires(const ChunkType& c) { c.size(); }) {
+    if constexpr (detail::HasSize_v<ChunkType>) {
       stats_.totalBytesProduced += chunk.size();
     }
     stats_.totalChunksProduced++;
@@ -187,7 +200,7 @@ class AsyncChunkPipeline {
     ChunkType chunk = std::move(buffer_.front());
     buffer_.pop();
 
-    if constexpr (requires(const ChunkType& c) { c.size(); }) {
+    if constexpr (detail::HasSize_v<ChunkType>) {
       stats_.totalBytesConsumed += chunk.size();
     }
     stats_.totalChunksConsumed++;
@@ -266,6 +279,10 @@ class AsyncChunkPipeline {
         });
 
     // RAII guard ensuring worker is cancelled and joined upon generator exit.
+    // NOTE: `WorkerGuard` has a user-declared destructor, so it has no
+    // implicit move constructor; it is therefore populated in place instead
+    // of being moved into the `shared_ptr` (moving would fall back to the
+    // deleted copy of the `std::thread` member).
     struct WorkerGuard {
       std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
       std::thread thread;
@@ -278,8 +295,9 @@ class AsyncChunkPipeline {
         }
       }
     };
-    auto guard =
-        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
+    auto guard = std::make_shared<WorkerGuard>();
+    guard->pipe = pipeline;
+    guard->thread = std::move(worker);
 
     while (true) {
       auto chunkOpt = pipeline->pop();
@@ -311,6 +329,8 @@ class AsyncChunkPipeline {
       }
     });
 
+    // NOTE: populated in place, see `makeDoubleBuffered` above: the
+    // user-declared destructor suppresses the implicit move constructor.
     struct WorkerGuard {
       std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
       std::thread thread;
@@ -323,8 +343,9 @@ class AsyncChunkPipeline {
         }
       }
     };
-    auto guard =
-        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
+    auto guard = std::make_shared<WorkerGuard>();
+    guard->pipe = pipeline;
+    guard->thread = std::move(worker);
 
     while (true) {
       auto chunkOpt = pipeline->pop();
