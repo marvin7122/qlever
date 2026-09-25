@@ -910,8 +910,8 @@ std::optional<IdTable> GroupByImpl::computeGroupByForSingleIndexScan() const {
 }
 
 // _____________________________________________________________________________
-std::optional<std::pair<std::shared_ptr<IndexScan>, Id>>
-GroupByImpl::getTwoVariableScanWithBoundCol0() const {
+auto GroupByImpl::getTwoVariableScanWithBoundCol0() const
+    -> std::optional<TwoVariableScanWithBoundCol0> {
   // Require an `IndexScan` with exactly two variables and no graph filtering.
   auto indexScan =
       std::dynamic_pointer_cast<IndexScan>(_subtree->getRootOperation());
@@ -927,7 +927,7 @@ GroupByImpl::getTwoVariableScanWithBoundCol0() const {
   if (!col0Id.has_value()) {
     return std::nullopt;
   }
-  return std::pair{std::move(indexScan), col0Id.value()};
+  return TwoVariableScanWithBoundCol0{std::move(indexScan), col0Id.value()};
 }
 
 // ____________________________________________________________________________
@@ -936,7 +936,8 @@ std::optional<IdTable> GroupByImpl::computeGroupByObjectWithCount() const {
   if (!scanAndCol0.has_value()) {
     return std::nullopt;
   }
-  const auto& [indexScan, col0Id] = scanAndCol0.value();
+  const auto& indexScan = scanAndCol0->scan_;
+  const Id col0Id = scanAndCol0->col0Id_;
   const auto& permutedTriple = indexScan->getPermutedTriple();
 
   // There must be exactly one GROUP BY variable and the result of the index
@@ -2081,7 +2082,8 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
   if (!scanAndCol0.has_value()) {
     return std::nullopt;
   }
-  const auto& [indexScan, col0Id] = scanAndCol0.value();
+  const auto& indexScan = scanAndCol0->scan_;
+  const Id col0Id = scanAndCol0->col0Id_;
   // Only handle the plain scan: `getDistinctCol1IdsAndCounts` would apply a
   // `LIMIT`/`OFFSET` to the distinct values instead of the scanned rows, and
   // additional columns (e.g. from a `GRAPH` clause) are not handled here.

@@ -250,15 +250,6 @@ class GroupByImpl : public Operation {
   // has a `LIMIT`/`OFFSET`, or there are delta triples.
   std::optional<IdTable> computeMinMaxForSingleIndexScan() const;
 
-  // Return the child `IndexScan` (shared with `_subtree`) together with the
-  // `Id` of its bound column 0 if the child is a two-variable `IndexScan`
-  // without graph filtering, and `std::nullopt` otherwise. This is the common
-  // precondition of `computeGroupByObjectWithCount` and
-  // `computeMinMaxForSingleIndexScan`; checks that depend on the aggregate
-  // (e.g. the aliases or `LIMIT` handling) stay with the callers.
-  std::optional<std::pair<std::shared_ptr<IndexScan>, Id>>
-  getTwoVariableScanWithBoundCol0() const;
-
   // Stores information required for substitution of an expression in an
   // expression tree.
   struct ParentAndChildIndex {
@@ -642,6 +633,22 @@ class GroupByImpl : public Operation {
   std::unique_ptr<Operation> cloneImpl() const override;
 
  private:
+  // A two-variable `IndexScan` child (shared with `_subtree`) and the `Id` of
+  // its bound column 0.
+  struct TwoVariableScanWithBoundCol0 {
+    std::shared_ptr<IndexScan> scan_;
+    Id col0Id_;
+  };
+
+  // Return the child as a `TwoVariableScanWithBoundCol0` if it is a
+  // two-variable `IndexScan` without graph filtering whose column 0 maps to an
+  // `Id`, and `std::nullopt` otherwise. This is the common precondition of
+  // `computeGroupByObjectWithCount` and `computeMinMaxForSingleIndexScan`;
+  // checks that depend on the aggregate (e.g. the aliases or `LIMIT` handling)
+  // stay with the callers.
+  std::optional<TwoVariableScanWithBoundCol0> getTwoVariableScanWithBoundCol0()
+      const;
+
   // Returns false if any alias expression is non-deterministic.
   [[nodiscard]] bool isDeterministicImpl() const override {
     return ql::ranges::all_of(_aliases, [](const Alias& alias) {
