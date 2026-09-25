@@ -99,7 +99,8 @@ class PolymorphicVocabulary {
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   // Same as `lookupBatch(indices)`, but decode into `builder` when the
-  // underlying vocabulary supports it (compressed). Otherwise `builder` is
+  // underlying vocabulary supports it (compressed). In that case `builder` is
+  // finalized (moved from) and must not be reused. Otherwise `builder` is
   // unused and the underlying result is returned.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const;
