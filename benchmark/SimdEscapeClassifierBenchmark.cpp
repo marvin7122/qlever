@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -34,12 +33,13 @@ inline void escapeSink(T&& val) {
 #endif
 }
 
+// Scan `inputs` repeatedly until about `targetBytesPerMeasurement` bytes
+// were processed; the framework records the wall time of this call.
 template <EscapeFormat Format, bool UseSimd>
-double measure(const std::vector<std::string>& inputs, size_t length) {
+void scanRepeatedly(const std::vector<std::string>& inputs, size_t length) {
   const size_t repetitions =
       std::max<size_t>(1, targetBytesPerMeasurement / (inputs.size() * length));
   size_t checksum = 0;
-  const auto start = std::chrono::steady_clock::now();
   for (size_t repetition = 0; repetition < repetitions; ++repetition) {
     for (const std::string& input : inputs) {
       if constexpr (UseSimd) {
@@ -49,19 +49,11 @@ double measure(const std::vector<std::string>& inputs, size_t length) {
       }
     }
   }
-  const auto elapsed = std::chrono::steady_clock::now() - start;
   escapeSink(checksum);
-  const double bytes =
-      static_cast<double>(repetitions * inputs.size() * length);
-  const double nanoseconds =
-      std::chrono::duration<double, std::nano>(elapsed).count();
-  return nanoseconds / bytes;
 }
 
-// Register one scalar and one SIMD entry per input length. Each entry times
-// a lambda that performs the actual measurement (the framework records the
-// lambda execution time, so registering precomputed values would record
-// ~0ns). Speedup is derived offline from the two entries.
+// Register one scalar and one SIMD entry per input length. Each entry is the
+// time to scan about 64 MiB; the speedup is the ratio of the two entries.
 template <EscapeFormat Format>
 void runLengths(BenchmarkResults& results, std::string_view name, char escape,
                 const std::array<size_t, 14>& lengths) {
@@ -72,14 +64,12 @@ void runLengths(BenchmarkResults& results, std::string_view name, char escape,
     }
     std::string measurementName =
         std::string{name} + "," + std::to_string(length);
-    results.addMeasurement(measurementName + "_scalar_ns_per_byte",
-                           [&inputs, length]() {
-                             escapeSink(measure<Format, false>(inputs, length));
-                           });
-    results.addMeasurement(measurementName + "_simd_ns_per_byte",
-                           [&inputs, length]() {
-                             escapeSink(measure<Format, true>(inputs, length));
-                           });
+    results.addMeasurement(
+        measurementName + "_scalar_64MiB",
+        [&inputs, length]() { scanRepeatedly<Format, false>(inputs, length); });
+    results.addMeasurement(
+        measurementName + "_simd_64MiB",
+        [&inputs, length]() { scanRepeatedly<Format, true>(inputs, length); });
   }
 }
 
