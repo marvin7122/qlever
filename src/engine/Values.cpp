@@ -27,10 +27,10 @@ Values::Values(QueryExecutionContext* qec, SparqlValues parsedValues)
 
 // ____________________________________________________________________________
 std::shared_ptr<QueryExecutionTree> makeValuesForSingleValue(
-    QueryExecutionContext* qec, const Variable& variable,
-    const TripleComponent& value) {
+    QueryExecutionContext* qec, Variable variable, TripleComponent value) {
   return ad_utility::makeExecutionTree<Values>(
-      qec, parsedQuery::SparqlValues{{variable}, {{value}}});
+      qec,
+      parsedQuery::SparqlValues{{std::move(variable)}, {{std::move(value)}}});
 }
 
 // ____________________________________________________________________________

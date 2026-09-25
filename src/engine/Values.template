@@ -1,3 +1,23 @@
+// Copyright 2026, The QLever Authors, in particular:
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
+
+// Definition of the member template `Values::writeValues`, included at the end
+// of `engine/Values.h`. The includes below make this file self-contained, so
+// that `Values.h` does not rely on the include order of its users.
+#include <absl/strings/str_join.h>
+
+#include "engine/idTable/IdTable.h"
+#include "index/LocalVocab.h"
+#include "index/TripleComponentConversions.h"
+#include "parser/TripleComponent.h"
+#include "util/Exception.h"
+#include "util/Log.h"
+
 // Write `parsedValues_` to the given result object.
 //
 // NOTE: this moves the values out of `parsedValues_` (to save a string copy
