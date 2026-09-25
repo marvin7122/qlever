@@ -3531,3 +3531,27 @@ TEST_F(GroupByOptimizations, sumStrlenOfGroupConcatTypedLiteralBailsOut) {
       outer.getChildren().at(0)->getRootOperation()->runtimeInfo();
   EXPECT_NE(runtimeInfo.status_, RuntimeInformation::Status::optimizedOut);
 }
+
+// _____________________________________________________________________________
+// The fast path must also match the tree that the query planner builds for the
+// SPARQL query, not only the hand-built tree above.
+TEST_F(GroupByOptimizations, sumStrlenOfGroupConcatViaQueryPlanner) {
+  auto* qec =
+      getQec("<x> <n> \"ab\" . <x> <n> \"c\" . <y> <n> \"de\" . <y> <m> <x> .");
+  auto query =
+      "SELECT (SUM(STRLEN(?cat)) AS ?sum) { { SELECT (GROUP_CONCAT(?o; "
+      "SEPARATOR=\" \") AS ?cat) { ?s <n> ?o } GROUP BY ?s } }";
+  auto pq =
+      SparqlParser::parseQuery(&qec->getIndex().encodedIriManager(), query);
+  QueryPlanner qp{qec, std::make_shared<ad_utility::CancellationHandle<>>()};
+  auto tree = qp.createExecutionTree(pq);
+  auto result = tree.getResult();
+  // "ab c" and "de": 4 + 2 code points.
+  EXPECT_THAT(result->idTableView(), matchesIdTableFromVector({{I(6)}}));
+  const auto& innerGroupBy =
+      tree.getRootOperation()->getChildren().at(0)->getRootOperation();
+  EXPECT_EQ(innerGroupBy->runtimeInfo().status_,
+            RuntimeInformation::Status::optimizedOut)
+      << tree.getRootOperation()->getDescriptor() << " / "
+      << innerGroupBy->getDescriptor();
+}
