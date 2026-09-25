@@ -326,7 +326,7 @@ TEST(ExportIds, cachedIdToStringAndTypeMatchesDirectAndHits) {
   };
 
   ql::exportIds::IdToStringAndTypeCache cache{
-      ql::exportIds::ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES};
+      ql::exportIds::IdToStringAndTypeCache::DEFAULT_CAPACITY};
   // First pass populates the cache, second pass must hit on every id.
   for (int pass = 0; pass < 2; ++pass) {
     for (const Id& id : ids) {
@@ -347,7 +347,7 @@ TEST(ExportIds, cachedIdToStringAndTypeBypassesLocalVocabIds) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");
   const Index& index = qec->getIndex();
   ql::exportIds::IdToStringAndTypeCache cache{
-      ql::exportIds::ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES};
+      ql::exportIds::IdToStringAndTypeCache::DEFAULT_CAPACITY};
 
   LocalVocab localVocab{};
   Id localVocabId =
@@ -364,6 +364,68 @@ TEST(ExportIds, cachedIdToStringAndTypeBypassesLocalVocabIds) {
     EXPECT_THAT(cached->first, ::testing::HasSubstr("localLit"));
   }
   EXPECT_EQ(cache.stats().totalLookups(), 0u);
+}
+
+// _____________________________________________________________________________
+// Capacity 0 disables the cache: every lookup is computed directly.
+TEST(ExportIds, cachedIdToStringAndTypeCapacityZeroBypasses) {
+  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  ql::exportIds::IdToStringAndTypeCache cache{
+      ql::exportIds::IdToStringAndTypeCache::Config{0, 0, 0.0}};
+  EXPECT_FALSE(cache.enabled());
+  for (int i = 0; i < 3; ++i) {
+    Id id = Id::makeFromInt(7);
+    EXPECT_EQ(
+        ql::exportIds::cachedIdToStringAndType(cache, index, id, localVocab),
+        ql::exportIds::idToStringAndType(index, id, localVocab));
+  }
+  EXPECT_EQ(cache.stats().totalLookups(), 0u);
+  EXPECT_EQ(cache.bypassed(), 3u);
+}
+
+// _____________________________________________________________________________
+// A window whose hit rate is below the minimum switches the cache off for the
+// rest of the export; the values stay correct.
+TEST(ExportIds, cachedIdToStringAndTypeSwitchesOffOnLowHitRate) {
+  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  ql::exportIds::IdToStringAndTypeCache cache{
+      ql::exportIds::IdToStringAndTypeCache::Config{100, 4, 0.5}};
+  // All distinct: the first window of 4 lookups has no hits.
+  for (int i = 0; i < 10; ++i) {
+    Id id = Id::makeFromInt(i);
+    EXPECT_EQ(
+        ql::exportIds::cachedIdToStringAndType(cache, index, id, localVocab),
+        ql::exportIds::idToStringAndType(index, id, localVocab));
+    EXPECT_EQ(cache.enabled(), i < 3) << i;
+  }
+  EXPECT_EQ(cache.stats().totalLookups(), 4u);
+  EXPECT_EQ(cache.stats().misses_, 4u);
+  EXPECT_EQ(cache.bypassed(), 6u);
+}
+
+// _____________________________________________________________________________
+// Windows with a hit rate at or above the minimum keep the cache on.
+TEST(ExportIds, cachedIdToStringAndTypeStaysOnOnHighHitRate) {
+  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  ql::exportIds::IdToStringAndTypeCache cache{
+      ql::exportIds::IdToStringAndTypeCache::Config{100, 4, 0.5}};
+  // Two distinct ids in 12 lookups: 2 misses in the first window, then hits.
+  for (int i = 0; i < 12; ++i) {
+    Id id = Id::makeFromInt(i % 2);
+    EXPECT_EQ(
+        ql::exportIds::cachedIdToStringAndType(cache, index, id, localVocab),
+        ql::exportIds::idToStringAndType(index, id, localVocab));
+  }
+  EXPECT_TRUE(cache.enabled());
+  EXPECT_EQ(cache.stats().hits_, 10u);
+  EXPECT_EQ(cache.stats().misses_, 2u);
+  EXPECT_EQ(cache.bypassed(), 0u);
 }
 
 // _____________________________________________________________________________
