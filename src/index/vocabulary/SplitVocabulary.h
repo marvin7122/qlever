@@ -11,7 +11,6 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 
-
 #include <array>
 #include <cstdint>
 #include <memory>
