@@ -68,6 +68,7 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   // `ZeroCopySenderBenchmark::SocketPairConnection`).
   struct FdGuard {
     int fd = -1;
+    explicit FdGuard(int fd_) : fd{fd_} {}
     FdGuard(const FdGuard&) = delete;
     FdGuard& operator=(const FdGuard&) = delete;
     FdGuard(FdGuard&& other) noexcept : fd{std::exchange(other.fd, -1)} {}
