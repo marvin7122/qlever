@@ -107,9 +107,9 @@ class PrefetchingBatchResolver {
   // Pipelined batch lookup loop issuing prefetch requests K rows ahead during
   // `resolveVocabIndexIds`.
   //
-  // Resolves the `VocabIndex` IDs at `positions` in `ids`, prefetching
-  // future ID structures and vocabulary memory lines K iterations ahead
-  // while converting and formatting the current row into `results[position]`.
+  // Resolves the `VocabIndex` IDs at `positions` in `ids`, prefetching the
+  // `Id` and position of the row K iterations ahead while converting and
+  // formatting the current row into `results[position]`.
   template <bool removeQuotesAndAngleBrackets = false,
             bool returnOnlyLiterals = false,
             typename EscapeFunction = ql::identity>
@@ -145,14 +145,9 @@ class PrefetchingBatchResolver {
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
         prefetchVocabEntry(&positions[i + distance],
                            static_cast<int>(distance));
-        const Id pfId = ids[pfPos];
-        if (pfId.getDatatype() == Datatype::VocabIndex) {
-          const auto wordVocabIndex = pfId.getVocabIndex();
-          // Prefetch the underlying index entry if possible
-          const auto* vocabPtr =
-              reinterpret_cast<const void*>(&index.getImpl());
-          prefetchVocabEntry(vocabPtr, static_cast<int>(distance));
-        }
+        // `Index` exposes no address of the vocabulary entry of an `Id`, so
+        // only the `Id` and position lines are prefetched here; see
+        // `resolveCompactVectorPipelined` for prefetching the words.
       }
 
       const size_t pos = positions[i];
