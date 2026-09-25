@@ -9,17 +9,11 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORTPIPELINEROUTER_H
 #define QLEVER_SRC_ENGINE_EXPORTPIPELINEROUTER_H
 
-#include <absl/strings/str_cat.h>
-
-#include <cctype>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <variant>
 
-#include "parser/GraphPatternOperation.h"
 #include "parser/ParsedQuery.h"
-#include "parser/SparqlTriple.h"
 #include "util/http/UrlParser.h"
 
 namespace ql::engine {
@@ -27,8 +21,8 @@ namespace ql::engine {
 // _____________________________________________________________________________
 // Execution engine mode for query results and data exports.
 enum class ExportEngineMode {
-  LegacyV1 = 0,        // Proven pull-based Volcano iterator using IdTable
-  FastStreamingV2 = 1  // Push-based zero-copy streaming engine
+  LegacyV1 = 0,        // Proven pull-based Volcano iterator using `IdTable`.
+  FastStreamingV2 = 1  // Push-based streaming export engine.
 };
 
 // Return a human-readable representation of `ExportEngineMode`.
@@ -44,323 +38,64 @@ enum class ExportEngineMode {
 }
 
 // An explicitly requested engine override, parsed from the request's URL
-// parameters and HTTP headers (see `parseExplicitRequest`).
+// parameters and HTTP headers (see `ExportPipelineRouter::selectEngine`).
 enum class ExplicitEngineRequest { None, WantV1, WantV2 };
 
 // _____________________________________________________________________________
-// Deep module routing incoming SPARQL requests between the standard relational
-// execution pipeline (Legacy V1) and the specialized push-based streaming
-// export engine (Fast-Path V2).
+// Route an incoming SPARQL request either to the standard relational export
+// pipeline (Legacy V1) or to the push-based streaming export engine (Fast-Path
+// V2). Queries that V2 cannot handle fall back to V1 instead of failing.
 //
 // Precedence of explicit overrides: the `X-QLever-Export-Engine` HTTP header
-// wins over URL parameters, which win over the server default.
+// wins over the URL parameter `fast-export`, which wins over the URL parameter
+// `export-engine`, which wins over the server default. A value that a source
+// does not recognize is ignored, so the next source in this order decides.
 //
-// Adheres to the 7 Universal Laws:
-// - Law 1: Deep Module (concise public interface, encapsulated plan analysis)
-// - Law 2: Zero Bookkeeping Leakage (caller never manages routing internals)
-// - Law 4: Defining Errors Out of Existence (unsupported shapes safely
-// fallback)
+// All functions are synchronous and do not retain `parameters` or
+// `exportHeader` beyond the call.
 class ExportPipelineRouter {
  public:
   using ParamValueMap = ad_utility::url_parser::ParamValueMap;
 
-  // ___________________________________________________________________________
-  // Determine the appropriate export engine mode based on request metadata,
-  // query AST eligibility, and server configuration defaults.
+  // Return the export engine mode for `query`, given the request's URL
+  // `parameters`, the value of the `X-QLever-Export-Engine` header (if any),
+  // and the server-wide `serverDefault`. A request for V2 returns V2 only if
+  // `isEligibleForFastStreaming(query)` holds.
   [[nodiscard]] static ExportEngineMode selectEngine(
       const ParsedQuery& query, const ParamValueMap& parameters,
       std::optional<std::string_view> exportHeader = std::nullopt,
-      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) {
-    switch (parseExplicitRequest(parameters, exportHeader)) {
-      case ExplicitEngineRequest::WantV2:
-        return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-      case ExplicitEngineRequest::WantV1:
-        return ExportEngineMode::LegacyV1;
-      case ExplicitEngineRequest::None:
-        break;
-    }
+      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1);
 
-    // Check server-wide default mode
-    if (serverDefault == ExportEngineMode::FastStreamingV2) {
-      return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-    }
-
-    return ExportEngineMode::LegacyV1;
-  }
-
-  // ___________________________________________________________________________
-  // Inspect the `ParsedQuery` AST to determine whether it is eligible for
-  // `FastStreamingV2`. Return true for standard scan, join, projection, and
-  // construct queries without unsupported constructs (see
-  // `hasUnsupportedConstructs`). Return false otherwise (e.g. ASK and
-  // DESCRIBE, which currently use standard evaluation).
+  // Return true if `query` is a SELECT or CONSTRUCT query without constructs
+  // that V2 cannot execute (see `hasUnsupportedConstructs`). Return false for
+  // all other queries, in particular ASK and DESCRIBE.
   [[nodiscard]] static bool isEligibleForFastStreaming(
-      const ParsedQuery& query) noexcept {
-    // CONSTRUCT and SELECT queries without unsupported constructs (see
-    // `hasUnsupportedConstructs`) are eligible.
-    if (query.hasConstructClause() || query.hasSelectClause()) {
-      if (hasUnsupportedConstructs(query)) {
-        return false;
-      }
-      return true;
-    }
+      const ParsedQuery& query);
 
-    // ASK and DESCRIBE currently use standard evaluation
-    return false;
-  }
+  // Return true if `query` contains constructs that V2 cannot execute yet.
+  // Fail closed: anything beyond conjunctive triple matching with FILTER, BIND,
+  // and VALUES is routed to Legacy V1, in particular DESCRIBE (which the parser
+  // turns into a CONSTRUCT query with a `parsedQuery::Describe` operation).
+  [[nodiscard]] static bool hasUnsupportedConstructs(const ParsedQuery& query);
 
-  // ___________________________________________________________________________
-  // Return a detailed diagnostic string explaining the routing decision.
+  // Return the routing decision of `selectEngine` for the same arguments
+  // together with a human-readable reason for logging.
   [[nodiscard]] static std::string describeDecision(
       const ParsedQuery& query, const ParamValueMap& parameters,
       std::optional<std::string_view> exportHeader = std::nullopt,
-      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) {
-    ExportEngineMode selected =
-        selectEngine(query, parameters, exportHeader, serverDefault);
-    bool eligible = isEligibleForFastStreaming(query);
-
-    std::string reason;
-    if (selected == ExportEngineMode::FastStreamingV2) {
-      reason =
-          "Fast-Path V2 selected (eligible export query with explicit or "
-          "default opt-in)";
-    } else {
-      const auto request = parseExplicitRequest(parameters, exportHeader);
-      const bool explicitlyRequestedV2 =
-          request == ExplicitEngineRequest::WantV2;
-      const bool explicitlyRequestedV1 =
-          request == ExplicitEngineRequest::WantV1;
-
-      if (explicitlyRequestedV2 && !eligible) {
-        reason =
-            "Fallback to Legacy V1 (fast-path requested but query is "
-            "ineligible for V2 streaming)";
-      } else if (explicitlyRequestedV1) {
-        reason =
-            "Legacy V1 selected (explicitly requested via query parameter or "
-            "header override)";
-      } else if (serverDefault == ExportEngineMode::FastStreamingV2 &&
-                 !eligible) {
-        reason =
-            "Fallback to Legacy V1 (server default is V2 but query is "
-            "ineligible for V2 streaming)";
-      } else {
-        reason = "Legacy V1 selected (default standard relational pipeline)";
-      }
-    }
-
-    return absl::StrCat("ExportEngine: ", toString(selected),
-                        " [Reason: ", reason, "]");
-  }
-
-  // ___________________________________________________________________________
-  // Return true if `query` contains constructs the V2 streaming engine
-  // cannot execute yet. Fail-closed: anything beyond conjunctive triple
-  // matching with FILTER, BIND, and VALUES is routed to Legacy V1. Each
-  // exclusion below maps to a capability the first V2 executor lacks, and
-  // is relaxed by the work package that implements it. Public so the
-  // eligibility envelope is directly unit-testable.
-  [[nodiscard]] static bool hasUnsupportedConstructs(
-      const ParsedQuery& query) noexcept {
-    // Solution modifiers that require blocking operators or aggregation.
-    if (!query._groupByVariables.empty() || !query._havingClauses.empty() ||
-        !query._orderBy.empty()) {
-      return true;
-    }
-    // The V2 engine reads the implicit default graph.
-    if (!query.datasetClauses_.isUnconstrainedOrWithClause()) {
-      return true;
-    }
-    if (query.hasSelectClause()) {
-      const auto& selectClause = query.selectClause();
-      // Aliases cover aggregate select expressions and GROUP BY queries for
-      // now; DISTINCT and REDUCED require post-hoc deduplication state.
-      if (selectClause.distinct_ || selectClause.reduced_ ||
-          !selectClause.getAliases().empty()) {
-        return true;
-      }
-      // Scalar `SELECT` aliases like `SELECT (?o AS ?x)` are rewritten to
-      // `BIND` during parsing (`ParsedQuery::addSolutionModifiers`), so the
-      // check above cannot see them. Projecting a computed binding needs V2
-      // projection support that does not exist yet, hence fail closed.
-      // Plain `SELECT * ... BIND ...` stays eligible.
-      if (!selectClause.isAsterisk() &&
-          graphPatternContainsBind(query._rootGraphPattern)) {
-        return true;
-      }
-    }
-    return graphPatternHasUnsupportedConstructs(query._rootGraphPattern);
-  }
-
-  // Return true if `pattern` (recursing into plain groups) contains a `BIND`
-  // operation. Used to detect scalar `SELECT` aliases, which the parser
-  // rewrites to `BIND` (see `hasUnsupportedConstructs`).
-  [[nodiscard]] static bool graphPatternContainsBind(
-      const parsedQuery::GraphPattern& pattern) noexcept {
-    namespace pq = parsedQuery;
-    for (const auto& operation : pattern._graphPatterns) {
-      if (std::holds_alternative<pq::Bind>(operation)) {
-        return true;
-      }
-      if (std::holds_alternative<pq::GroupGraphPattern>(operation) &&
-          graphPatternContainsBind(
-              std::get<pq::GroupGraphPattern>(operation)._child)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Recursively check `pattern` (including FILTER and BIND expressions) for
-  // operations beyond plain matching. Only `BasicGraphPattern` without
-  // property paths, `Bind`, `Values`, and plain (non-GRAPH) groups are
-  // eligible; `FILTER EXISTS` carries a nested query and fails closed like
-  // a subquery.
-  [[nodiscard]] static bool graphPatternHasUnsupportedConstructs(
-      const parsedQuery::GraphPattern& pattern) noexcept {
-    namespace pq = parsedQuery;
-    for (const auto& filter : pattern._filters) {
-      if (!filter.expression_.getExistsExpressions().empty()) {
-        return true;
-      }
-    }
-    for (const auto& operation : pattern._graphPatterns) {
-      if (std::holds_alternative<pq::GroupGraphPattern>(operation)) {
-        const auto& group = std::get<pq::GroupGraphPattern>(operation);
-        if (!std::holds_alternative<std::monostate>(group.graphSpec_)) {
-          return true;
-        }
-        if (graphPatternHasUnsupportedConstructs(group._child)) {
-          return true;
-        }
-        continue;
-      }
-      if (std::holds_alternative<pq::Bind>(operation)) {
-        const auto& bind = std::get<pq::Bind>(operation);
-        if (!bind._expression.getExistsExpressions().empty()) {
-          return true;
-        }
-        continue;
-      }
-      if (std::holds_alternative<pq::BasicGraphPattern>(operation)) {
-        // Property paths (e.g. `?s <p>+ ?o`) need the transitive-path
-        // machinery that the V2 engine does not implement yet. Plain IRIs
-        // and predicate variables stay eligible.
-        const auto& basicPattern = std::get<pq::BasicGraphPattern>(operation);
-        for (const auto& triple : basicPattern._triples) {
-          if (std::holds_alternative<PropertyPath>(triple.p_) &&
-              !std::get<PropertyPath>(triple.p_).isIri()) {
-            return true;
-          }
-        }
-        continue;
-      }
-      if (std::holds_alternative<pq::Values>(operation)) {
-        continue;
-      }
-      return true;
-    }
-    return false;
-  }
+      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1);
 
  private:
-  // ASCII case-insensitive equality without heap allocation, so the
-  // request-path helpers below can stay `noexcept`.
-  [[nodiscard]] static bool equalsAsciiCaseInsensitive(
-      std::string_view a, std::string_view b) noexcept {
-    if (a.size() != b.size()) {
-      return false;
-    }
-    for (size_t i = 0; i < a.size(); ++i) {
-      if (std::tolower(static_cast<unsigned char>(a[i])) !=
-          std::tolower(static_cast<unsigned char>(b[i]))) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   // Parse the explicit per-request override shared by `selectEngine` and
-  // `describeDecision`, so wording and action cannot diverge. The HTTP header
-  // wins over URL parameters when both are set.
+  // `describeDecision`, so that the logged reason and the decision cannot
+  // diverge.
   [[nodiscard]] static ExplicitEngineRequest parseExplicitRequest(
       const ParamValueMap& parameters,
-      std::optional<std::string_view> exportHeader) noexcept {
-    if (exportHeader.has_value()) {
-      const auto headerVal = exportHeader.value();
-      if (equalsAsciiCaseInsensitive(headerVal, "v2") ||
-          equalsAsciiCaseInsensitive(headerVal, "fast") ||
-          equalsAsciiCaseInsensitive(headerVal, "streaming")) {
-        return ExplicitEngineRequest::WantV2;
-      }
-      if (equalsAsciiCaseInsensitive(headerVal, "v1") ||
-          equalsAsciiCaseInsensitive(headerVal, "legacy")) {
-        return ExplicitEngineRequest::WantV1;
-      }
-    }
+      std::optional<std::string_view> exportHeader);
 
-    const auto optFastExport = getParameterValue(parameters, "fast-export");
-    if (optFastExport.has_value()) {
-      if (isTruthy(optFastExport.value())) {
-        return ExplicitEngineRequest::WantV2;
-      }
-      if (isFalsy(optFastExport.value())) {
-        return ExplicitEngineRequest::WantV1;
-      }
-    }
-
-    const auto optExportEngine = getParameterValue(parameters, "export-engine");
-    if (optExportEngine.has_value()) {
-      const auto engineVal = optExportEngine.value();
-      if (equalsAsciiCaseInsensitive(engineVal, "v2") ||
-          equalsAsciiCaseInsensitive(engineVal, "fast")) {
-        return ExplicitEngineRequest::WantV2;
-      }
-      if (equalsAsciiCaseInsensitive(engineVal, "v1") ||
-          equalsAsciiCaseInsensitive(engineVal, "legacy")) {
-        return ExplicitEngineRequest::WantV1;
-      }
-    }
-
-    return ExplicitEngineRequest::None;
-  }
-
-  // Heterogeneous, zero-allocation parameter lookup on ParamValueMap. When a
-  // key carries multiple values (e.g. `?fast-export=true&fast-export=false`),
-  // the first value wins; this is documented here and pinned by test (unlike
-  // `getParameterCheckAtMostOnce` in `UrlParser.h`, which throws).
-  [[nodiscard]] static std::optional<std::string_view> getParameterValue(
-      const ParamValueMap& parameters, std::string_view key) noexcept {
-    auto it = parameters.find(key);
-    if (it != parameters.end() && !it->second.empty()) {
-      return it->second.front();
-    }
-    return std::nullopt;
-  }
-
-  [[nodiscard]] static ExportEngineMode evaluateEligibility(
-      const ParsedQuery& query, ExportEngineMode targetMode) {
-    if (targetMode == ExportEngineMode::FastStreamingV2) {
-      if (isEligibleForFastStreaming(query)) {
-        return ExportEngineMode::FastStreamingV2;
-      }
-      // Transparent fallback to Legacy V1
-      return ExportEngineMode::LegacyV1;
-    }
-    return targetMode;
-  }
-
-  [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
-    return val == "1" || equalsAsciiCaseInsensitive(val, "true") ||
-           equalsAsciiCaseInsensitive(val, "yes") ||
-           equalsAsciiCaseInsensitive(val, "on");
-  }
-
-  [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
-    return val == "0" || equalsAsciiCaseInsensitive(val, "false") ||
-           equalsAsciiCaseInsensitive(val, "no") ||
-           equalsAsciiCaseInsensitive(val, "off");
-  }
+  // Return V2 if `query` is eligible for it, and V1 otherwise.
+  [[nodiscard]] static ExportEngineMode fastStreamingIfEligible(
+      const ParsedQuery& query);
 };
 
 }  // namespace ql::engine

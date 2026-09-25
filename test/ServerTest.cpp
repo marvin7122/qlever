@@ -1,6 +1,9 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Julian Mundhahs (mundhahj@tf.uni-freiburg.de)
+// Copyright 2024 - 2026 The QLever Authors, in particular:
+//
+// 2024 Julian Mundhahs <mundhahj@tf.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -700,9 +703,8 @@ TEST(ServerTest, handleHttpRequest) {
 }
 
 // _____________________________________________________________________________
-// WP1 wiring slice: the routing decision is live, but the V2 arm falls back
-// to the V1 implementation, so every selection channel must return
-// byte-identical results.
+// Every engine selection channel must return the same bytes as the default
+// export path.
 TEST(ServerTest, exportEngineV1V2Parity) {
   auto qec = getQec(TestIndexConfig{"<a> <b> <c> . <d> <e> <f> ."});
   auto server = makeServerForTesting(qec->getIndex().getOnDiskBase());

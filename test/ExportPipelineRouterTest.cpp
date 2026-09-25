@@ -9,6 +9,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <string>
+#include <vector>
+
 #include "engine/ExportPipelineRouter.h"
 #include "parser/SparqlParser.h"
 
@@ -17,16 +20,19 @@ using ad_utility::url_parser::ParamValueMap;
 
 namespace {
 
+// _____________________________________________________________________________
 ParsedQuery parse(std::string_view queryStr) {
   return SparqlParser::parseQuery(nullptr, std::string(queryStr));
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, ToStringFunction) {
   EXPECT_EQ(toString(ExportEngineMode::LegacyV1), "LegacyV1");
   EXPECT_EQ(toString(ExportEngineMode::FastStreamingV2), "FastStreamingV2");
   EXPECT_EQ(toString(static_cast<ExportEngineMode>(999)), "Unknown");
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, DefaultModeIsLegacyV1) {
   auto query = parse("SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
   ParamValueMap params;
@@ -35,6 +41,7 @@ TEST(ExportPipelineRouterTest, DefaultModeIsLegacyV1) {
   EXPECT_EQ(mode, ExportEngineMode::LegacyV1);
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, UrlParamFastExportTruthySelectsV2) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
 
@@ -49,6 +56,7 @@ TEST(ExportPipelineRouterTest, UrlParamFastExportTruthySelectsV2) {
   }
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, UrlParamFastExportFalsySelectsV1) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
 
@@ -63,6 +71,7 @@ TEST(ExportPipelineRouterTest, UrlParamFastExportFalsySelectsV1) {
   }
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, UrlParamExportEngineV2) {
   auto query = parse("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
 
@@ -84,6 +93,7 @@ TEST(ExportPipelineRouterTest, UrlParamExportEngineV2) {
             ExportEngineMode::LegacyV1);
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, HttpHeaderOverrides) {
   auto query = parse("SELECT ?s WHERE { ?s ?p ?o }");
   ParamValueMap params;
@@ -104,6 +114,7 @@ TEST(ExportPipelineRouterTest, HttpHeaderOverrides) {
             ExportEngineMode::LegacyV1);
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, ServerDefaultModeConfiguration) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
   ParamValueMap params;
@@ -117,6 +128,7 @@ TEST(ExportPipelineRouterTest, ServerDefaultModeConfiguration) {
             ExportEngineMode::FastStreamingV2);
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, AskQueryNotEligibleForFastStreaming) {
   auto query = parse("ASK WHERE { ?s ?p ?o }");
   ParamValueMap params;
@@ -127,6 +139,7 @@ TEST(ExportPipelineRouterTest, AskQueryNotEligibleForFastStreaming) {
             ExportEngineMode::LegacyV1);
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, HttpHeaderWinsOverUrlParam) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
 
@@ -147,6 +160,7 @@ TEST(ExportPipelineRouterTest, HttpHeaderWinsOverUrlParam) {
   }
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, MultiValueParamFirstWins) {
   auto query = parse("SELECT * WHERE { ?s ?p ?o }");
 
@@ -160,6 +174,7 @@ TEST(ExportPipelineRouterTest, MultiValueParamFirstWins) {
             ExportEngineMode::LegacyV1);
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, UnsupportedConstructsFallBackToV1) {
   ParamValueMap params;
   params["fast-export"] = {"1"};
@@ -182,6 +197,7 @@ TEST(ExportPipelineRouterTest, UnsupportedConstructsFallBackToV1) {
             ExportEngineMode::LegacyV1);
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
   auto selectQuery = parse("SELECT * WHERE { ?s ?p ?o }");
   auto askQuery = parse("ASK WHERE { ?s ?p ?o }");
@@ -226,6 +242,7 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
   }
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, EligibleShapesSelectV2) {
   auto expectV2 = [](std::string_view sparql) {
     auto query = parse(sparql);
@@ -244,6 +261,7 @@ TEST(ExportPipelineRouterTest, EligibleShapesSelectV2) {
   expectV2("SELECT * WHERE { { ?s ?p ?o } ?s ?p ?o }");
 }
 
+// _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, UnsupportedConstructsFailClosedToV1) {
   auto expectV1 = [](std::string_view sparql) {
     auto query = parse(sparql);
@@ -272,6 +290,83 @@ TEST(ExportPipelineRouterTest, UnsupportedConstructsFailClosedToV1) {
   expectV1("SELECT DISTINCT * WHERE { ?s ?p ?o }");
   expectV1("SELECT (?o AS ?x) WHERE { ?s ?p ?o }");
   expectV1("SELECT * FROM <http://example.org/g> WHERE { ?s ?p ?o }");
+  // DESCRIBE is parsed as CONSTRUCT with a `Describe` operation.
+  expectV1("DESCRIBE ?s WHERE { ?s ?p ?o }");
+}
+
+// _____________________________________________________________________________
+TEST(ExportPipelineRouterTest, DescribeQueryNotEligibleForFastStreaming) {
+  auto query = parse("DESCRIBE ?s WHERE { ?s ?p ?o }");
+  ParamValueMap params;
+  params["export-engine"] = {"v2"};
+
+  EXPECT_FALSE(ExportPipelineRouter::isEligibleForFastStreaming(query));
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::LegacyV1);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                query, {}, std::nullopt, ExportEngineMode::FastStreamingV2),
+            ExportEngineMode::LegacyV1);
+}
+
+// _____________________________________________________________________________
+TEST(ExportPipelineRouterTest, ServerDefaultV2FallsBackForIneligibleQuery) {
+  auto query = parse("ASK WHERE { ?s ?p ?o }");
+  ParamValueMap params;
+
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                query, params, std::nullopt, ExportEngineMode::FastStreamingV2),
+            ExportEngineMode::LegacyV1);
+  EXPECT_THAT(
+      ExportPipelineRouter::describeDecision(query, params, std::nullopt,
+                                             ExportEngineMode::FastStreamingV2),
+      testing::HasSubstr("server default is V2 but query is "
+                         "ineligible for V2 streaming"));
+}
+
+// _____________________________________________________________________________
+TEST(ExportPipelineRouterTest, UnrecognizedValuesAreIgnored) {
+  auto query = parse("SELECT * WHERE { ?s ?p ?o }");
+
+  // An unrecognized value decides nothing, so the server default applies.
+  {
+    ParamValueMap params;
+    params["fast-export"] = {"maybe"};
+    params["export-engine"] = {"unknown"};
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "unknown"),
+              ExportEngineMode::LegacyV1);
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                  query, params, "unknown", ExportEngineMode::FastStreamingV2),
+              ExportEngineMode::FastStreamingV2);
+  }
+
+  // An unrecognized value hands the decision to the next source.
+  {
+    ParamValueMap params;
+    params["fast-export"] = {"maybe"};
+    params["export-engine"] = {"v2"};
+    EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params, "unknown"),
+              ExportEngineMode::FastStreamingV2);
+  }
+}
+
+// _____________________________________________________________________________
+TEST(ExportPipelineRouterTest, FastExportWinsOverExportEngine) {
+  auto selectQuery = parse("SELECT * WHERE { ?s ?p ?o }");
+  auto askQuery = parse("ASK WHERE { ?s ?p ?o }");
+
+  ParamValueMap params;
+  params["fast-export"] = {"0"};
+  params["export-engine"] = {"v2"};
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(selectQuery, params),
+            ExportEngineMode::LegacyV1);
+  // The reason names the explicit V1 request, not the ineligibility.
+  EXPECT_THAT(ExportPipelineRouter::describeDecision(askQuery, params),
+              testing::HasSubstr("explicitly requested"));
+
+  params["fast-export"] = {"1"};
+  params["export-engine"] = {"v1"};
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(selectQuery, params),
+            ExportEngineMode::FastStreamingV2);
 }
 
 }  // namespace
