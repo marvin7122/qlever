@@ -1,8 +1,9 @@
-// Copyright 2023 - 2024, University of Freiburg
+// Copyright 2023 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
 // Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
 //          Robin Textor-Falconi <robintf@cs.uni-freiburg.de>
 //          Hannah Bast <bast@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>
 
 #include <gmock/gmock.h>
 
@@ -1936,7 +1937,7 @@ TEST(ExportQueryExecutionTrees, convertGeneratorForChunkedTransfer) {
   };
   AD_EXPECT_THROW_WITH_MESSAGE(call(throwEarly()), std::string_view("failed"));
   auto throwLate = [](bool throwProperException) -> S {
-    size_t largerThanBufferSize = S::BUFFER_SIZE_BYTES + 4;
+    constexpr size_t largerThanBufferSize = S::BUFFER_SIZE_BYTES + 4;
     std::string largerThanBuffer;
     largerThanBuffer.resize(largerThanBufferSize);
     co_yield largerThanBuffer;
