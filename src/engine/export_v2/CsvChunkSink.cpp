@@ -41,7 +41,7 @@ void CsvChunkSink::appendRows(const IdTableView<0>& table,
       if (!column.has_value()) {
         continue;
       }
-      auto cell = ql::exportIds::idToStringAndType<true>(
+      const auto cell = ql::exportIds::idToStringAndType<true>(
           index_, table(row, column.value().columnIndex_), vocab,
           RdfEscaping::escapeForCsv);
       if (cell.has_value()) [[likely]] {

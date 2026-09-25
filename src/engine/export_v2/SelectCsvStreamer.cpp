@@ -66,8 +66,8 @@ STREAMABLE_GENERATOR_TYPE streamChunks(
       cancellationHandle->throwIfCancelled();
     }
   }
-  AD_LOG_DEBUG << "Done creating V2 CSV result (" << resultSize
-               << " rows exported)." << std::endl;
+  AD_LOG_DEBUG << "Done creating V2 CSV result, result size is " << resultSize
+               << "." << std::endl;
   STREAMABLE_RETURN;
 }
 
@@ -91,18 +91,18 @@ ExportQueryExecutionTrees::ComputeResultReturnType SelectCsvStreamer::run(
   result->logResultSize();
 
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
-  auto inner = streamChunks(qet, parsedQuery.selectClause(), limitAndOffset,
-                            std::move(result), rowsPerChunk,
-                            std::move(cancellationHandle), streamableYielder);
+  auto csvChunks = streamChunks(
+      qet, parsedQuery.selectClause(), limitAndOffset, std::move(result),
+      rowsPerChunk, std::move(cancellationHandle), streamableYielder);
 
   // Same conversion as at the end of
   // `ExportQueryExecutionTrees::computeResult`.
   return [](auto range) -> cppcoro::generator<std::string> {
-    for (auto&& item : range) {
-      co_yield item;
+    for (auto&& csvChunk : range) {
+      co_yield csvChunk;
     }
   }(ExportQueryExecutionTrees::convertStreamGeneratorForChunkedTransfer(
-                            std::move(inner)));
+                            std::move(csvChunks)));
 #else
   streamChunks(qet, parsedQuery.selectClause(), limitAndOffset,
                std::move(result), rowsPerChunk, std::move(cancellationHandle),
