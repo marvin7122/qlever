@@ -17,6 +17,7 @@
 
 #include "engine/FastExportStreamFormatter.h"
 #include "engine/MonomorphicSerializers.h"
+#include "rdfTypes/RdfEscaping.h"
 
 using namespace ql::serialization;
 using namespace ql::export_formatting;
@@ -248,4 +249,26 @@ TEST(MonomorphicSerializersTest, FixedSpanOverflowPropagatesException) {
   EXPECT_ANY_THROW(Serializer::serializeRow<ExportFormat::Csv>(
       formatter, std::string_view{"<a>"}));
   EXPECT_EQ(formatter.currentChunk(), "<a>");
+}
+
+// _____________________________________________________________________________
+TEST(FastExportStreamFormatterTest, TurtleLiteralEscapingOfNormalizedForm) {
+  // The input is QLever's normalized literal form, whose content is stored
+  // unescaped (`normalizeRDFLiteral`). Every backslash and quote in it is
+  // therefore data and has to be escaped, exactly like
+  // `RdfEscaping::validRDFLiteralFromNormalized` does.
+  auto escape = [](std::string_view normalized) {
+    return captureOutput([&](FastExportStreamFormatter& fmt) {
+      fmt.writeEscapedTurtleLiteral(normalized);
+    });
+  };
+  for (std::string_view normalized :
+       {R"("plain")"sv, R"("a\"b")"sv, "\"line\nbreak\"@en"sv,
+        R"("q"uote"^^<http://x>)"sv}) {
+    EXPECT_EQ(escape(normalized),
+              RdfEscaping::validRDFLiteralFromNormalized(normalized));
+  }
+  // Normalized content `a\"b` (backslash and quote are data).
+  EXPECT_EQ(escape(R"("a\"b")"), R"("a\\\"b")");
+  EXPECT_EQ(escape(R"("plain"@en)"), R"("plain"@en)");
 }
