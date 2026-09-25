@@ -1,6 +1,12 @@
-// Copyright 2021, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2021 - 2026 The QLever Authors, in particular:
+//
+// 2021 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "rdfTypes/RdfEscaping.h"
 
@@ -330,7 +336,12 @@ void appendEscapedForCsv(std::string& out, std::string_view input) {
 
 // __________________________________________________________________________
 std::string escapeForCsv(std::string input) {
+  // Return the input unchanged (moved, no copy) in the common case.
+  if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
+    return input;
+  }
   std::string out;
+  out.reserve(input.size() + 2);
   appendEscapedForCsv(out, input);
   return out;
 }
@@ -348,7 +359,12 @@ void appendEscapedForTsv(std::string& out, std::string_view input) {
 
 // __________________________________________________________________________
 std::string escapeForTsv(std::string input) {
+  // Return the input unchanged (moved, no copy) in the common case.
+  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
+    return input;
+  }
   std::string out;
+  out.reserve(input.size());
   appendEscapedForTsv(out, input);
   return out;
 }
