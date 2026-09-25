@@ -211,8 +211,13 @@ class AdaptiveChunkSizer {
     if (currentChunkBytesTarget_ < config_.maxChunkBytes_) {
       const double nextBytes =
           static_cast<double>(currentChunkBytesTarget_) * config_.growthFactor_;
-      currentChunkBytesTarget_ = std::min(
-          config_.maxChunkBytes_, static_cast<size_t>(std::ceil(nextBytes)));
+      // Compare in the floating-point domain first: converting a value that
+      // does not fit into `size_t` (e.g. for a huge `growthFactor_`) is UB.
+      currentChunkBytesTarget_ =
+          nextBytes < static_cast<double>(config_.maxChunkBytes_)
+              ? std::min(config_.maxChunkBytes_,
+                         static_cast<size_t>(std::ceil(nextBytes)))
+              : config_.maxChunkBytes_;
     }
   }
 
