@@ -13,6 +13,10 @@
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <range/v3/range/conversion.hpp>
+#include <range/v3/view/iota.hpp>
+#include <range/v3/view/reverse.hpp>
+#include <range/v3/view/transform.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,9 +40,8 @@ size_t decodeRepeated(const std::array<FsstDecoder, N>& decoders,
   std::array<ql::span<char>, 2> buffers{output, scratch};
   std::string_view input = compressed;
   size_t bytesWritten = 0;
-  for (size_t stage = 0; stage < N; ++stage) {
-    bytesWritten =
-        decoders[N - 1 - stage].decompressInto(input, buffers[destination]);
+  for (const auto& decoder : decoders | ::ranges::views::reverse) {
+    bytesWritten = decoder.decompressInto(input, buffers[destination]);
     AD_CONTRACT_CHECK(bytesWritten <= buffers[destination].size());
     input = {buffers[destination].data(), bytesWritten};
     destination ^= 1;
@@ -68,24 +71,26 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
   FsstScratchBufferBenchmark() {
     constexpr std::string_view alphabet{
         "abcdefghijklmnopqrstuvwxyz0123456789_:/.-#"};
-    std::vector<std::string> words;
-    words.reserve(5'000);
-    for (size_t i = 0; i < 5'000; ++i) {
-      std::string suffix;
-      suffix.reserve(45);
-      for (size_t character = 0; character < 45; ++character) {
-        suffix += alphabet[(i * 17 + character * 31) % alphabet.size()];
-      }
-      words.push_back("http://www.wikidata.org/entity/Q" + suffix);
-    }
+    // Word `i` gets a deterministic 45-character suffix drawn from `alphabet`.
+    auto makeWord = [&alphabet](size_t i) {
+      return "http://www.wikidata.org/entity/Q" +
+             ::ranges::to<std::string>(
+                 ::ranges::views::iota(size_t{0}, size_t{45}) |
+                 ::ranges::views::transform([&alphabet, i](size_t character) {
+                   return alphabet[(i * 17 + character * 31) % alphabet.size()];
+                 }));
+    };
+    const auto words = ::ranges::to<std::vector<std::string>>(
+        ::ranges::views::iota(size_t{0}, size_t{5'000}) |
+        ::ranges::views::transform(makeWord));
 
     compressed_.assign(words.begin(), words.end());
     decoderStorage_.reserve(numberOfStages);
-    for (size_t stage = 0; stage < numberOfStages; ++stage) {
-      auto [storage, compressed, decoder] =
+    for (auto& decoder : decoders_) {
+      auto [storage, compressed, stageDecoder] =
           FsstEncoder::compressAll(compressed_);
       compressed_ = std::move(compressed);
-      decoders_[stage] = std::move(decoder);
+      decoder = std::move(stageDecoder);
       decoderStorage_.push_back(std::move(storage));
     }
 
@@ -126,7 +131,8 @@ class FsstScratchBufferBenchmark : public BenchmarkInterface {
     auto runDecodeMeasurement = [&](ql::span<char> output,
                                     ql::span<char> scratch) {
       size_t totalBytes = 0;
-      for (size_t repetition = 0; repetition < repetitions; ++repetition) {
+      for ([[maybe_unused]] size_t repetition :
+           ::ranges::views::iota(size_t{0}, repetitions)) {
         for (const auto& compressed : compressed_) {
           totalBytes += decodeRepeated(decoders_, compressed, output, scratch);
         }
