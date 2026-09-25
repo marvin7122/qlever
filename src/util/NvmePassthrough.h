@@ -52,10 +52,10 @@ namespace ad_utility::nvmePassthrough {
 struct Options {
   bool enabled = false;
   // NVMe namespace id that the data device exposes (must be nonzero when
-  // enabled).
+  // `enabled`).
   uint32_t namespaceId = 0;
   // Logical block size of the namespace in bytes, e.g. 512 or 4096 (must be
-  // nonzero when enabled).
+  // nonzero when `enabled`).
   uint32_t logicalBlockSize = 0;
 };
 

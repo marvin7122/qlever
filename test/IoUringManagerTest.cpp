@@ -874,10 +874,11 @@ TEST(NvmePassthroughTranslation, alignedRangeTranslates) {
   EXPECT_EQ(params->transferBytes, 8192u);
 }
 
-// Anything that cannot be expressed as whole blocks (unaligned offset or
-// length, empty read, zero namespace or block size, more than 2^16 blocks, or
-// an LBA translation that would overflow) translates to `std::nullopt`, so
-// the caller keeps the plain read path with identical bytes.
+// A read that is not whole-block aligned (unaligned offset or length), an
+// invalid request (empty read, zero namespace or block size), or one beyond
+// the command limits (more than 2^16 blocks, an LBA translation that would
+// overflow) translates to `std::nullopt`, so the caller keeps the plain read
+// path with identical bytes.
 TEST(NvmePassthroughTranslation, untranslatableRangesFallback) {
   using ad_utility::nvmePassthrough::translateToReadParams;
   EXPECT_FALSE(translateToReadParams(100, 4096, 1, 512).has_value());  // offset
