@@ -9,7 +9,8 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_SIMDESCAPECLASSIFIER_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_SIMDESCAPECLASSIFIER_H
 
-#include <bit>
+#include <absl/numeric/bits.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -31,8 +32,13 @@
 
 namespace ql::engine::export_v2 {
 
+// The output format whose special characters are detected and escaped:
+// CSV: `"`, `,`, `\r`, `\n`; TSV: TAB, `\n`, `\r`, `\\`;
+// Turtle literals: `"`, `\\`, `\n`, `\r`.
 enum class EscapeFormat { Csv, Tsv, Turtle };
 
+// The result of classifying one 32-byte chunk: bit `i` is set iff byte `i` of
+// the chunk is a special character of the format.
 class EscapeMask32 {
  public:
   constexpr explicit EscapeMask32(uint32_t mask = 0) : mask_{mask} {}
@@ -40,10 +46,11 @@ class EscapeMask32 {
   [[nodiscard]] constexpr bool hasEscape() const { return mask_ != 0; }
   [[nodiscard]] constexpr uint32_t raw() const { return mask_; }
   [[nodiscard]] constexpr uint32_t firstEscape() const {
-    return hasEscape() ? static_cast<uint32_t>(std::countr_zero(mask_)) : 32;
+    // `countr_zero(0)` is the bit width, i.e. 32 for an escape-free chunk.
+    return static_cast<uint32_t>(absl::countr_zero(mask_));
   }
   [[nodiscard]] constexpr uint32_t count() const {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 
  private:
@@ -160,17 +167,38 @@ template <EscapeFormat Format>
 
 }  // namespace detail
 
+// Find and escape the special characters of an `EscapeFormat`. The `Simd`
+// functions use AVX2 when the CPU supports it (checked at runtime) and
+// otherwise fall back to the equivalent scalar code; results are identical.
 class SimdEscapeClassifier {
+ private:
+  // Classify the 32 bytes at `data`; `avx2Available` must be `useAvx2()`, so
+  // loops query the CPU feature once instead of once per chunk.
+  template <EscapeFormat Format>
+  [[nodiscard]] static EscapeMask32 classifyChunk(
+      const char* data, [[maybe_unused]] bool avx2Available) {
+#ifdef QLEVER_EXPORT_V2_X86
+    if (avx2Available) {
+      return EscapeMask32{detail::scanChunkAvx2<Format>(data)};
+    }
+#endif
+    return EscapeMask32{detail::scanChunkScalar<Format>(data)};
+  }
+
+  [[nodiscard]] static bool useAvx2() {
+#ifdef QLEVER_EXPORT_V2_X86
+    return detail::supportsAvx2();
+#else
+    return false;
+#endif
+  }
+
  public:
+  // Classify the first 32 bytes of `input` (which must have at least 32).
   template <EscapeFormat Format>
   [[nodiscard]] static EscapeMask32 classify32(ql::span<const char> input) {
     AD_CONTRACT_CHECK(input.size() >= 32);
-#ifdef QLEVER_EXPORT_V2_X86
-    if (detail::supportsAvx2()) {
-      return EscapeMask32{detail::scanChunkAvx2<Format>(input.data())};
-    }
-#endif
-    return EscapeMask32{detail::scanChunkScalar<Format>(input.data())};
+    return classifyChunk<Format>(input.data(), useAvx2());
   }
 
   template <EscapeFormat Format>
@@ -178,6 +206,7 @@ class SimdEscapeClassifier {
     return detail::isEscapeCharacter<Format>(character);
   }
 
+  // Position of the first special character in `input`, or `npos`.
   template <EscapeFormat Format>
   [[nodiscard]] static size_t findFirstEscapeScalar(std::string_view input) {
     for (size_t index = 0; index < input.size(); ++index) {
@@ -188,6 +217,7 @@ class SimdEscapeClassifier {
     return std::string_view::npos;
   }
 
+  // Same result as `findFirstEscapeScalar`, scanning 32 bytes at a time.
   template <EscapeFormat Format>
   [[nodiscard]] static size_t findFirstEscapeSimd(std::string_view input) {
 #ifdef QLEVER_EXPORT_V2_X86
@@ -208,6 +238,8 @@ class SimdEscapeClassifier {
     return findFirstEscapeScalar<Format>(input);
   }
 
+  // Copy `input` to `outputBuffer`, escaping every special character (see
+  // `detail::emitEscaped`), and return the written prefix of `outputBuffer`.
   template <EscapeFormat Format>
   [[nodiscard]] static ql::span<char> copyAndEscape(
       std::string_view input, ql::span<char> outputBuffer) {
@@ -221,8 +253,9 @@ class SimdEscapeClassifier {
     char* output = outputBuffer.data();
     char* const begin = output;
     size_t offset = 0;
+    const bool avx2 = useAvx2();
     while (input.size() - offset >= 32) {
-      uint32_t mask = classify32<Format>({input.data() + offset, 32}).raw();
+      uint32_t mask = classifyChunk<Format>(input.data() + offset, avx2).raw();
       if (mask == 0) {
         std::memcpy(output, input.data() + offset, 32);
         output += 32;
@@ -232,7 +265,7 @@ class SimdEscapeClassifier {
 
       uint32_t copied = 0;
       while (mask != 0) {
-        const uint32_t escape = std::countr_zero(mask);
+        const uint32_t escape = absl::countr_zero(mask);
         std::memcpy(output, input.data() + offset + copied, escape - copied);
         output += escape - copied;
         output = detail::emitEscaped<Format>(input[offset + escape], output);
