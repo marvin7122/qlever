@@ -260,6 +260,7 @@ struct MonomorphicCellWriter {
   // (both need exactly one user-defined conversion).
   template <typename Writer>
   static void write(Writer& writer, const char* s) {
+    AD_CONTRACT_CHECK(s != nullptr);
     write(writer, std::string_view{s});
   }
 
