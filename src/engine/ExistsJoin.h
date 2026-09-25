@@ -1,6 +1,7 @@
-// Copyright 2025, University of Freiburg
+// Copyright 2025 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
-// Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #ifndef QLEVER_SRC_ENGINE_EXISTSJOIN_H
 #define QLEVER_SRC_ENGINE_EXISTSJOIN_H
@@ -109,12 +110,13 @@ class ExistsJoin : public Operation {
   // `tryLeftIndexNestedLoopJoinIfSuitable`.
   std::optional<Result> tryIndexNestedLoopJoinIfSuitable(bool requestLaziness);
 
-  // Semijoin for the fully materialized single-join-column case with no UNDEF:
-  // build a hash set of the right side's join keys once and probe each left
-  // row, filling the boolean EXISTS column without sorting either input.
-  // Caller wraps the returned table in a `Result` with the left local vocab.
-  std::optional<IdTable> tryHashSetExistsJoin(const IdTableView<0>& left,
-                                              const IdTableView<0>& right);
+  // Return a copy of the fully materialized `left` input with the `EXISTS`
+  // column appended: `true` iff the value of `leftJoinColumn` (the join column
+  // of `left`) occurs in `rightJoinColumn`. Require a single join column and
+  // no UNDEF values in either join column.
+  IdTable computeExistsJoinWithHashSet(
+      const IdTableView<0>& left, ql::span<const Id> leftJoinColumn,
+      ql::span<const Id> rightJoinColumn) const;
 
   Result computeResult(bool requestLaziness) override;
 

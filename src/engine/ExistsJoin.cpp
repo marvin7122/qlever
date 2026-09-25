@@ -1,6 +1,7 @@
-// Copyright 2025, University of Freiburg
+// Copyright 2025 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
-// Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #include "engine/ExistsJoin.h"
 
@@ -183,16 +184,14 @@ Result ExistsJoin::computeResult(bool requestLaziness) {
                                    &Id::isUndefined));
       });
 
-  // If the join is cheap (no UNDEF values) and there is a single join column,
-  // answer the EXISTS test with a hash set instead of the sort-merge zipper:
-  // build a set of the right side's join keys once, then probe each left row.
-  // This avoids sorting both inputs and only materializes the (typically
-  // smaller) right side.
+  // For a single join column without UNDEF values in either input, compute
+  // the `EXISTS` column with a hash set of the right join column instead of
+  // `zipperJoinWithUndef`. This replaces the merge by a lookup per left row
+  // and needs no index vector for the non-matching rows.
   if (isCheap && numJoinColumns == 1) {
-    if (auto result = tryHashSetExistsJoin(left, right)) {
-      return Result{std::move(result).value(), resultSortedOn(),
-                    leftRes->getSharedLocalVocab()};
-    }
+    return {computeExistsJoinWithHashSet(left, joinColumnsLeft.getColumn(0),
+                                         joinColumnsRight.getColumn(0)),
+            resultSortedOn(), leftRes->getSharedLocalVocab()};
   }
 
   // Nothing to do for the actual matches.
@@ -249,37 +248,28 @@ Result ExistsJoin::computeResult(bool requestLaziness) {
 }
 
 // _____________________________________________________________________________
-std::optional<IdTable> ExistsJoin::tryHashSetExistsJoin(
-    const IdTableView<0>& left, const IdTableView<0>& right) {
-  AD_CORRECTNESS_CHECK(joinColumns_.size() == 1);
-  AD_CORRECTNESS_CHECK(left.numColumns() > 0 && right.numColumns() > 0);
+IdTable ExistsJoin::computeExistsJoinWithHashSet(
+    const IdTableView<0>& left, ql::span<const Id> leftJoinColumn,
+    ql::span<const Id> rightJoinColumn) const {
+  AD_CORRECTNESS_CHECK(leftJoinColumn.size() == left.size());
+  // Without UNDEF values, a left row has a match iff its join value occurs in
+  // the right join column. An UNDEF value would match every value.
+  AD_EXPENSIVE_CHECK(ql::ranges::none_of(leftJoinColumn, &Id::isUndefined));
+  AD_EXPENSIVE_CHECK(ql::ranges::none_of(rightJoinColumn, &Id::isUndefined));
 
-  // Correct only because the caller verified no UNDEF in the join columns:
-  // a row "exists" iff its join key is in the set.
-  ad_utility::JoinColumnMapping joinColumnData{joinColumns_, left.numColumns(),
-                                               right.numColumns()};
-  ColumnIndex leftJoinCol = joinColumnData.jcsLeft().front();
-  ColumnIndex rightJoinCol = joinColumnData.jcsRight().front();
-
-  ad_utility::HashSet<Id> rightKeys;
-  rightKeys.reserve(right.size());
-  auto cancel = [this] { checkCancellation(); };
-  ad_utility::chunkedForLoop<1000>(
-      0, right.size(),
-      [&](size_t i) { rightKeys.insert(right[i][rightJoinCol]); }, cancel);
+  // The size of the set depends on the query data, so it is subject to the
+  // memory limit of the query.
+  ad_utility::HashSetWithMemoryLimit<Id> rightJoinValues{allocator()};
+  rightJoinValues.reserve(rightJoinColumn.size());
+  ad_utility::chunkedForLoop<qlever::joinHelpers::CHUNK_SIZE>(
+      0, rightJoinColumn.size(),
+      [&](size_t i) { rightJoinValues.insert(rightJoinColumn[i]); },
+      [this] { checkCancellation(); });
 
   IdTable result = left.clone();
-  result.addEmptyColumn();
-  decltype(auto) existsCol = result.getColumn(getResultWidth() - 1);
-  ql::ranges::fill(existsCol, Id::makeFromBool(true));
-  ad_utility::chunkedForLoop<1000>(
-      0, left.size(),
-      [&](size_t i) {
-        if (!rightKeys.contains(left[i][leftJoinCol])) {
-          existsCol[i] = Id::makeFromBool(false);
-        }
-      },
-      cancel);
+  addExistsColumn(result, ql::views::transform(leftJoinColumn, [&](Id id) {
+                    return rightJoinValues.contains(id);
+                  }));
   return result;
 }
 
