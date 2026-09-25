@@ -12,8 +12,10 @@ on:
 # secrets from them.
 permissions: {}
 
+# Separate groups per event type so that a maintainer command does not cancel
+# an automatic review that is still running for the same PR.
 concurrency:
-  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  group: pr-agent-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
