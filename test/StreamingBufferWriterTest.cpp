@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <limits>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -142,4 +143,16 @@ TEST(StreamingBufferWriterTest, MoveSemantics) {
   // writer1 was moved from
   EXPECT_EQ(writer1.capacity(), 0);
   EXPECT_EQ(writer1.bytesWritten(), 0);
+}
+
+// _____________________________________________________________________________
+TEST(StreamingBufferWriterTest, CapacityCheckDoesNotWrapAround) {
+  std::vector<char> buffer(64, 0);
+  StreamingBufferWriter writer(buffer.data(), buffer.size());
+  writer.write(std::string_view{"abc"});
+  // `bytesWritten_ + numBytes` would wrap to a small value for this size; the
+  // check must still reject it.
+  const size_t hugeSize = std::numeric_limits<size_t>::max() - 1;
+  EXPECT_THROW(writer.write(buffer.data(), hugeSize), ad_utility::Exception);
+  EXPECT_EQ(writer.bytesWritten(), 3u);
 }
