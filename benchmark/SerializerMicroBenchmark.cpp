@@ -29,19 +29,23 @@
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
-  static inline std::atomic<size_t> bytes_{0};
 
-  static void start() {
-    count_.store(0, std::memory_order_seq_cst);
-    bytes_.store(0, std::memory_order_seq_cst);
-    enabled_.store(true, std::memory_order_seq_cst);
-  }
+  // Counts allocations for its lifetime; the destructor stops counting on
+  // every exit path, including exceptions from the measured code.
+  class Scope {
+   public:
+    Scope() {
+      count_.store(0, std::memory_order_seq_cst);
+      enabled_.store(true, std::memory_order_seq_cst);
+    }
+    ~Scope() { enabled_.store(false, std::memory_order_seq_cst); }
+    Scope(const Scope&) = delete;
+    Scope& operator=(const Scope&) = delete;
 
-  static void stop() { enabled_.store(false, std::memory_order_seq_cst); }
-
-  static size_t getCount() { return count_.load(std::memory_order_seq_cst); }
-
-  static size_t getBytes() { return bytes_.load(std::memory_order_seq_cst); }
+    [[nodiscard]] size_t count() const {
+      return count_.load(std::memory_order_seq_cst);
+    }
+  };
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
@@ -63,7 +67,6 @@ struct AllocationTracker {
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
-    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
   }
   void* ptr = std::malloc(size);
   if (!ptr) {
@@ -79,7 +82,6 @@ void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
-    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
   }
   void* ptr = std::malloc(size);
   if (!ptr) {
@@ -213,14 +215,13 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "Baseline string-constructing (" + formatName + ")", [&]() {
-              AllocationTracker::start();
+              AllocationTracker::Scope allocationScope;
               size_t bytes = 0;
               for (const auto& triple : triples_) {
                 std::string formatted = formatTriple(triple, mediaType);
                 bytes += formatted.size();
               }
-              AllocationTracker::stop();
-              baselineAllocations = AllocationTracker::getCount();
+              baselineAllocations = allocationScope.count();
               totalBytesWritten = bytes;
               return bytes;
             });
@@ -241,7 +242,7 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
         auto& m = group.addMeasurement(
             "FastExportStreamFormatter zero-allocation (" + formatName + ")",
             [&]() {
-              AllocationTracker::start();
+              AllocationTracker::Scope allocationScope;
               size_t bytes = 0;
               size_t chunkCount = 0;
 
@@ -258,8 +259,7 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
               }
               auto summary = std::move(formatter).finalize();
 
-              AllocationTracker::stop();
-              fastAllocations = AllocationTracker::getCount();
+              fastAllocations = allocationScope.count();
               totalBytesWritten = summary.totalBytesWritten_;
               chunksEmitted = summary.chunksEmitted_;
               return totalBytesWritten;
