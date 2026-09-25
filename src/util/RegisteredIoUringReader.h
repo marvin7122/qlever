@@ -21,7 +21,6 @@
 #include <cstring>
 #include <memory>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -119,6 +118,15 @@ class DirectIoFile {
 #endif
 
     fd_ = ::open(path_.c_str(), flags);
+#ifdef O_NOATIME
+    // `O_NOATIME` fails with `EPERM`/`EACCES` when the caller neither owns
+    // the file nor holds `CAP_FOWNER`. Retry without the flag instead of
+    // rejecting a valid readable file.
+    if (fd_ < 0 && (errno == EPERM || errno == EACCES)) {
+      flags &= ~O_NOATIME;
+      fd_ = ::open(path_.c_str(), flags);
+    }
+#endif
     if (fd_ < 0) {
       AD_THROW(absl::StrCat("Failed to open file: ", path_,
                             " (errno: ", strerror(errno), ")"));
@@ -166,6 +174,7 @@ class PinnedArena {
     AD_CONTRACT_CHECK(numSlots > 0);
     AD_CONTRACT_CHECK(slotSizeBytes > 0);
     AD_CONTRACT_CHECK(isBlockAligned(slotSizeBytes));
+    AD_CONTRACT_CHECK(numSlots <= SIZE_MAX / slotSizeBytes);
 
     slotSize_ = slotSizeBytes;
     numSlots_ = numSlots;
@@ -182,8 +191,11 @@ class PinnedArena {
     iovecs_.reserve(numSlots_);
     auto* basePtr = static_cast<char*>(rawBuffer_);
     for (size_t i = 0; i < numSlots_; ++i) {
-      iovecs_.push_back(
-          iovec{.iov_base = basePtr + (i * slotSize_), .iov_len = slotSize_});
+      // `iovec` field order: iov_base, iov_len (positional init for C++17).
+      iovec vec;
+      vec.iov_base = basePtr + (i * slotSize_);
+      vec.iov_len = slotSize_;
+      iovecs_.push_back(vec);
     }
   }
 
@@ -328,6 +340,36 @@ class RegisteredIoUringReader {
   ad_utility::HashMap<uint64_t, InFlightMeta> inFlightByReqId_;
   ad_utility::HashMap<BatchId, size_t> inFlightByBatchId_;
   uint64_t nextReqId_ = 0;
+  // Completed results that `waitBatch` has not yet returned: batches that were
+  // executed synchronously (no-liburing build or ring-init fallback), and the
+  // completions recorded by `drainOneCqe` (which may drain completions of any
+  // in-flight batch). Consumed by `waitBatch`.
+  ad_utility::HashMap<BatchId, BatchResult> syncResults_;
+
+#ifdef QLEVER_HAS_LIBURING
+  // Submit all queued SQEs. A negative return means the kernel rejected the
+  // submission; throw instead of leaving `waitBatch` blocked on completions
+  // that will never arrive. (Partially submitted SQEs stay queued in the
+  // ring and go out with the next submit, so only hard errors need action.)
+  void submitChecked() {
+    const int submitted = io_uring_submit(&ring_);
+    if (submitted < 0) {
+      AD_THROW(
+          absl::StrCat("io_uring_submit failed (errno: ", -submitted, ")"));
+    }
+  }
+#endif
+
+  // Take (and remove) the stored synchronous result of `batchId`.
+  BatchResult takeSyncResult(BatchId batchId) {
+    auto it = syncResults_.find(batchId);
+    if (it == syncResults_.end()) {
+      return BatchResult{0, 0, true};
+    }
+    BatchResult result = it->second;
+    syncResults_.erase(it);
+    return result;
+  }
 
  public:
   explicit RegisteredIoUringReader(
@@ -355,7 +397,8 @@ class RegisteredIoUringReader {
         nextBatchId_{other.nextBatchId_},
         inFlightByReqId_{std::move(other.inFlightByReqId_)},
         inFlightByBatchId_{std::move(other.inFlightByBatchId_)},
-        nextReqId_{other.nextReqId_} {
+        nextReqId_{other.nextReqId_},
+        syncResults_{std::move(other.syncResults_)} {
 #ifdef QLEVER_HAS_LIBURING
     other.ringInitialized_ = false;
 #endif
@@ -382,6 +425,7 @@ class RegisteredIoUringReader {
       inFlightByReqId_ = std::move(other.inFlightByReqId_);
       inFlightByBatchId_ = std::move(other.inFlightByBatchId_);
       nextReqId_ = other.nextReqId_;
+      syncResults_ = std::move(other.syncResults_);
 
       other.filesRegistered_ = false;
       other.buffersRegistered_ = false;
@@ -491,7 +535,7 @@ class RegisteredIoUringReader {
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
       // Synchronous fallback if ring is not available
-      submitBatchSync(requests);
+      syncResults_[batchId] = submitBatchSync(requests);
       return batchId;
     }
 
@@ -501,7 +545,7 @@ class RegisteredIoUringReader {
       // If submission queue is saturated, flush and drain completions to free
       // slots
       if (numInFlightRequests_ >= config_.ringEntries) {
-        io_uring_submit(&ring_);
+        submitChecked();
         while (numInFlightRequests_ >= config_.ringEntries) {
           drainOneCqe();
         }
@@ -518,6 +562,16 @@ class RegisteredIoUringReader {
 
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
         AD_CONTRACT_CHECK(req.bufferIndex < registeredIovecs_.size());
+        // `destination` must point exactly at the registered slot selected by
+        // `bufferIndex`/`bufferOffset`; a fixed-buffer read from any other
+        // address fails with `-EFAULT`.
+        const iovec& selected = registeredIovecs_[req.bufferIndex];
+        AD_CONTRACT_CHECK(static_cast<uint64_t>(req.bufferOffset) +
+                              req.numBytes <=
+                          selected.iov_len);
+        AD_CONTRACT_CHECK(req.destination ==
+                          static_cast<const char*>(selected.iov_base) +
+                              req.bufferOffset);
         // Fixed buffer read with kernel page-pinning
         io_uring_prep_read_fixed(sqe, targetFd, req.destination, req.numBytes,
                                  req.fileOffset, req.bufferIndex);
@@ -537,9 +591,9 @@ class RegisteredIoUringReader {
       ++numInFlightRequests_;
     }
 
-    io_uring_submit(&ring_);
+    submitChecked();
 #else
-    submitBatchSync(requests);
+    syncResults_[batchId] = submitBatchSync(requests);
 #endif
 
     return batchId;
@@ -554,23 +608,18 @@ class RegisteredIoUringReader {
 
 #ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
-      return BatchResult{0, 0, true};
+      return takeSyncResult(batchId);
     }
 
-    size_t completed = 0;
-    size_t totalBytes = 0;
-
+    // `drainOneCqe` records every completion under its own batch, so
+    // completions of `batchId` that were drained earlier (while waiting for
+    // another batch or for a free ring slot) are not lost.
     while (inFlightByBatchId_.find(batchId) != inFlightByBatchId_.end()) {
-      auto [bytesRead, bId] = drainOneCqe();
-      if (bId == batchId) {
-        ++completed;
-        totalBytes += bytesRead;
-      }
+      drainOneCqe();
     }
-
-    return BatchResult{completed, totalBytes, true};
+    return takeSyncResult(batchId);
 #else
-    return BatchResult{0, 0, true};
+    return takeSyncResult(batchId);
 #endif
   }
 
@@ -670,6 +719,10 @@ class RegisteredIoUringReader {
                             meta.expectedBytes, " got ", res));
     }
 
+    BatchResult& batchResult = syncResults_[meta.batchId];
+    ++batchResult.requestsCompleted;
+    batchResult.totalBytesRead += static_cast<size_t>(res);
+
     auto batchIt = inFlightByBatchId_.find(meta.batchId);
     AD_CORRECTNESS_CHECK(batchIt != inFlightByBatchId_.end());
     if (--batchIt->second == 0) {
@@ -680,15 +733,20 @@ class RegisteredIoUringReader {
   }
 #endif
 
-  void submitBatchSync(ql::span<const BlockReadRequest> requests) {
+  BatchResult submitBatchSync(ql::span<const BlockReadRequest> requests) {
+    size_t totalBytes = 0;
     for (const auto& req : requests) {
       int targetFd = static_cast<int>(req.fileIndex);
       if (filesRegistered_ && req.fileIndex < registeredFds_.size()) {
         targetFd = registeredFds_[req.fileIndex];
       }
+      // `readSync` throws on short reads, so every request that returns here
+      // completed with exactly `numBytes`.
       readSync(targetFd, req.fileOffset, {req.destination, req.numBytes},
                config_.useDirectIo);
+      totalBytes += req.numBytes;
     }
+    return BatchResult{requests.size(), totalBytes, true};
   }
 };
 
