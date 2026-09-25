@@ -46,27 +46,27 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
 
-  // Pool of persistent `BatchManagerBase`s for `lookupBatch`. This is the
+  // Pool persistent `BatchManagerBase` instances for `lookupBatch` as the
   // fallback for threads that do not own a ring (see `threadRingBudget_`
-  // below): such a thread pops a manager, runs both read phases of one
+  // below). Such a thread pops a manager, runs both read phases of one
   // `lookupBatch` call through it, and returns it.
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
 
-  // Per-vocabulary state shared with thread-local rings (see
-  // `threadLocalManager`). Shared ownership keeps `VocabularyOnDisk` movable;
-  // thread-local rings hold only weak references, so entries of a destroyed
-  // (or reopened) vocabulary expire and are pruned instead of keeping dead
-  // state alive. Never null, except in a moved-from vocabulary, which must
-  // not be used for lookups anyway (its `ioManagers_` is null as well).
+  // Share per-vocabulary state with the thread-local rings (see
+  // `threadLocalManager`). Use shared ownership to keep `VocabularyOnDisk`
+  // movable, and let the thread-local rings hold only weak references, so
+  // entries of a destroyed (or reopened) vocabulary expire and are pruned.
+  // Keep this non-null; only a moved-from vocabulary has a null budget, and it
+  // must not be used for lookups anyway (its `ioManagers_` is null as well).
   struct ThreadRingBudget {
     std::atomic<size_t> numOwnedRings_{0};
-    // Initial io_uring preference, set by `open()`. Each thread loads it once
-    // when it creates its owned ring, so a failed `io_uring_queue_init`
-    // degrades only that thread to the synchronous fallback and never affects
-    // other threads. Atomic so the store in `open()` is correctly published
-    // to threads that read it later.
+    // Store the initial `io_uring` preference set by `open()`. Each thread
+    // loads it once when it creates its owned ring, so a failed
+    // `io_uring_queue_init` degrades only that thread to the synchronous
+    // fallback. Make it atomic, so a thread that reads the value stored by
+    // `open()` also sees the state initialized before it.
     std::atomic<bool> preferIoUring_{true};
   };
   mutable std::shared_ptr<ThreadRingBudget> threadRingBudget_{
@@ -214,13 +214,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     uint64_t nextOffset_;
   };
 
-  // The calling thread's exclusively owned ring for this vocabulary, created
-  // on first use via `makeBatchManager` and destroyed at thread teardown
-  // (draining in-flight batches first). At most `NUM_VOCAB_BATCH_IO_MANAGERS`
-  // threads concurrently own a ring; returns `nullptr` for threads that arrive
-  // after the budget is exhausted, and those threads use the shared
-  // `ioManagers_` pool instead. No lock is held on the returned ring's I/O
-  // path: the ring is only ever driven by its owning thread.
+  // Return the calling thread's exclusively owned ring for this vocabulary,
+  // or `nullptr` if `NUM_VOCAB_BATCH_IO_MANAGERS` other threads already own
+  // one (then use the shared `ioManagers_` pool). Create the ring on first use
+  // via `makeBatchManager` and destroy it at thread teardown. Drive it only
+  // from the calling thread, which needs no lock on its I/O path.
   ad_utility::BatchManagerBase* threadLocalManager() const;
 
   // Run both read phases of one `lookupBatch` call through `manager`.

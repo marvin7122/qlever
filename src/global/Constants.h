@@ -375,12 +375,11 @@ constexpr inline size_t MAX_LENGTH_OPERATION_ECHO = 5000;
 constexpr inline std::string_view GSP_DIRECT_GRAPH_IDENTIFICATION_PREFIX =
     "http-graph-store";
 
-// Dual bound for batched vocabulary lookups (`lookupBatch`) in
-// `VocabularyOnDisk`: at most this many threads concurrently own a
-// thread-local batch manager (thread-confined, no locking on the I/O path),
-// and the shared pool holds this many managers as the fallback for threads
-// without an owned manager. Each manager is `io_uring`-backed when available,
-// or a synchronous fallback.
+// Bound batched vocabulary lookups (`lookupBatch`) in `VocabularyOnDisk` in two
+// ways: let at most this many threads concurrently own a thread-local batch
+// manager (thread-confined, no locking on the I/O path), and keep this many
+// managers in the shared pool for threads without an owned manager. Note that
+// each manager is `io_uring`-backed when available, or a synchronous fallback.
 constexpr inline size_t NUM_VOCAB_BATCH_IO_MANAGERS = 8;
 
 #endif  // QLEVER_SRC_GLOBAL_CONSTANTS_H

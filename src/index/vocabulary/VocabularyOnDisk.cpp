@@ -219,16 +219,17 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
 
 // _____________________________________________________________________________
 ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
-  // One thread's exclusively owned ring for one vocabulary. Local to this
-  // member function so it can name the private `ThreadRingBudget`. Releasing
-  // the budget slot happens after the manager is destroyed, so the ring's
-  // destructor has reaped its in-flight requests (best effort, see
-  // `~IoUringPolicy`) before another thread may claim the slot.
+  // Hold one thread's exclusively owned ring for one vocabulary. Define it
+  // locally so it can name the private `ThreadRingBudget`. Release the budget
+  // slot only after destroying the manager, so the ring's destructor has
+  // reaped its in-flight requests (best effort, see `~IoUringPolicy`) before
+  // another thread can claim the slot.
   struct ThreadOwnedRing {
     std::unique_ptr<ad_utility::BatchManagerBase> manager_;
-    // Weak: the vocabulary owns the budget. If the vocabulary is destroyed
-    // first, the slot dies with it and no decrement is owed; the entry itself
-    // is pruned on the next claim (see below) or at thread exit.
+    // Reference the budget weakly, because the vocabulary owns it. If the
+    // vocabulary is destroyed first, its slots die with it and no decrement is
+    // owed; prune the entry itself on the next claim (see below) or at thread
+    // exit.
     std::weak_ptr<ThreadRingBudget> budget_;
 
     ThreadOwnedRing(std::unique_ptr<ad_utility::BatchManagerBase> manager,
@@ -240,36 +241,35 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
     ThreadOwnedRing& operator=(ThreadOwnedRing&&) noexcept = default;
 
     ~ThreadOwnedRing() {
-      // Destroy (and thereby drain) the ring first; only then hand the budget
-      // slot to another thread. Must not throw; the destructor drain in
-      // `IoUringManager.cpp` is non-throwing by design.
+      // Destroy (and thereby drain) the ring first, and only then hand the
+      // budget slot to another thread. Do not throw here; the destructor drain
+      // in `IoUringManager.cpp` is non-throwing by design.
       manager_.reset();
       if (auto budget = budget_.lock()) {
         budget->numOwnedRings_.fetch_sub(1, std::memory_order_release);
       }
     }
   };
-  // Rings owned by this thread, keyed by the owning vocabulary's budget. A
-  // `weak_ptr` key (pruned when expired, see below) keeps this map exact
-  // across vocabulary destruction, moves, and address reuse: entries of a
+  // Key the rings owned by this thread by the owning vocabulary's budget. Use
+  // a `weak_ptr` key (pruned when expired, see below) to keep this map exact
+  // across vocabulary destruction, moves, and address reuse, so entries of a
   // destroyed vocabulary neither leak nor collide with a new vocabulary.
   thread_local std::map<std::weak_ptr<ThreadRingBudget>, ThreadOwnedRing,
                         std::owner_less<std::weak_ptr<ThreadRingBudget>>>
       ownedRings;
 
-  // Fast path: this thread already owns a ring for this vocabulary. No lock,
-  // no atomic: the ring is only ever driven by this thread.
+  // Return the ring this thread already owns for this vocabulary, without a
+  // lock or an atomic, because only this thread ever drives it.
   auto it = ownedRings.find(threadRingBudget_);
   if (it != ownedRings.end()) {
     return it->second.manager_.get();
   }
 
-  // First `lookupBatch` on this thread: claim an owned-ring slot. Threads that
-  // arrive after the budget (`NUM_VOCAB_BATCH_IO_MANAGERS`) is exhausted get
-  // `nullptr` and use the shared pool instead. The compare-exchange cannot
-  // overshoot: each success consumes exactly one slot, so at most
-  // `NUM_VOCAB_BATCH_IO_MANAGERS` threads hold one; a stale load at worst
-  // sends a thread to the pool spuriously, which is always safe.
+  // Claim an owned-ring slot on the first `lookupBatch` of this thread. Return
+  // `nullptr` once the budget (`NUM_VOCAB_BATCH_IO_MANAGERS`) is exhausted, so
+  // the caller uses the shared pool instead. Note that the compare-exchange
+  // cannot overshoot: each success consumes exactly one slot, and a stale
+  // load at worst sends a thread to the pool spuriously, which is safe.
   size_t numOwnedRings =
       threadRingBudget_->numOwnedRings_.load(std::memory_order_acquire);
   while (numOwnedRings < NUM_VOCAB_BATCH_IO_MANAGERS) {
@@ -282,8 +282,8 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
       absl::Cleanup releaseSlot{[budget = threadRingBudget_]() {
         budget->numOwnedRings_.fetch_sub(1, std::memory_order_release);
       }};
-      // Drop rings of destroyed vocabularies before creating a new one, so a
-      // thread that churns through short-lived vocabularies does not
+      // Drop rings of destroyed vocabularies before creating a new one, so
+      // that a thread that churns through short-lived vocabularies does not
       // accumulate idle rings (and file descriptors) until thread exit.
       for (auto jt = ownedRings.begin(); jt != ownedRings.end();) {
         if (jt->first.expired()) {
@@ -292,19 +292,19 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
           ++jt;
         }
       }
-      // Per-thread probe-once: a failed `io_uring_queue_init` degrades only
-      // this thread's ring to the synchronous fallback.
+      // Probe once per thread, so that a failed `io_uring_queue_init` degrades
+      // only this thread's ring to the synchronous fallback.
       bool preferIoUring =
           threadRingBudget_->preferIoUring_.load(std::memory_order_acquire);
       ThreadOwnedRing owned{ad_utility::makeBatchManager(preferIoUring),
                             threadRingBudget_};
-      // From here on, `owned` (or the map node it is moved into) is the single
-      // owner of the slot: its destructor releases it if `emplace` throws, so
-      // the guard must not release it a second time.
+      // Make `owned` (or the map node it is moved into) the single owner of
+      // the slot. Its destructor releases the slot if `emplace` throws, so the
+      // guard must not release it a second time.
       std::move(releaseSlot).Cancel();
       auto [newIt, inserted] =
           ownedRings.emplace(threadRingBudget_, std::move(owned));
-      // The fast path above found no entry for this budget.
+      // Rely on the fast path above having found no entry for this budget.
       AD_CORRECTNESS_CHECK(inserted);
       return newIt->second.manager_.get();
     }
@@ -317,18 +317,17 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
 
-  // Fast path: the calling thread's owned ring. Both read phases of this call
-  // use the same ring, preserving the two-phase ordering, and no lock is held
-  // on the I/O path.
+  // Use the calling thread's owned ring for both read phases of this call,
+  // which preserves the two-phase ordering without a lock on the I/O path.
   if (ad_utility::BatchManagerBase* manager = threadLocalManager();
       manager != nullptr) {
     return lookupBatchVia(*manager, indices);
   }
 
-  // Fallback for threads without an owned ring: pop a pooled manager, run both
-  // read phases through it, and return it on every exit path (including
-  // exceptions, e.g. an out-of-range index in phase 1), so we never leak a
-  // manager (and its io_uring buffers) out of the pool.
+  // Otherwise pop a pooled manager, run both read phases through it, and
+  // return it on every exit path (including exceptions, e.g. an out-of-range
+  // index in phase 1), so we never leak a manager (and its io_uring buffers)
+  // out of the pool.
   auto manager = ioManagers_->pop().value();
   absl::Cleanup returnManager{[this, &manager]() {
     ad_utility::terminateIfThrows(
@@ -411,18 +410,17 @@ void VocabularyOnDisk::open(const std::string& filename, bool preferIoUring) {
   size_ = numOffsets - 1;
 
   // Start from a fresh budget, so that a reopened vocabulary never reuses rings
-  // that threads created before this call: their entries are keyed by the old
+  // that threads created before this call. Their entries are keyed by the old
   // budget, which expires here, so they are pruned on the next claim and no
-  // longer counted. Then remember the backend preference for threads that
-  // create their owned ring later (see `threadLocalManager`); each thread
-  // probes once, so a runtime failure degrades only that thread.
+  // longer counted. Then store the backend preference for threads that create
+  // their owned ring later (see `threadLocalManager`).
   threadRingBudget_ = std::make_shared<ThreadRingBudget>();
   threadRingBudget_->preferIoUring_.store(preferIoUring,
                                           std::memory_order_release);
 
-  // Initialize the pool of persistent `BatchManagerBase`s. This is the
-  // fallback for threads without an owned ring; the pooled managers also probe
-  // once via the shared `preferIoUring` flag, as before.
+  // Initialize the pool of persistent `BatchManagerBase` instances for
+  // `lookupBatch`, which serves threads without an owned ring. Let the pooled
+  // managers probe once via the shared `preferIoUring` flag, as before.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
