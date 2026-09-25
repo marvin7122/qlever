@@ -7,6 +7,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -67,7 +68,9 @@ static void simulateNetworkTransmission(size_t chunkBytes,
 }
 
 // _____________________________________________________________________________
-// Benchmark Result Record
+// Benchmark Result Record.
+// NOTE: initialized positionally below (no designated initializers), so this
+// file also compiles with `CMAKE_CXX_STANDARD_MANUALLY_OVERRIDDEN=17`.
 struct BenchmarkRunResult {
   std::string mode;
   size_t chunkSizeTriples;
@@ -121,16 +124,14 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     const double mb = static_cast<double>(totalBytes) / (1024.0 * 1024.0);
 
     return BenchmarkRunResult{
-        .mode = "Sync Lockstep",
-        .chunkSizeTriples = chunkSize,
-        .latencyMs = latencyMs,
-        .totalTriples = totalTriples_,
-        .totalBytes = totalBytes,
-        .durationSeconds = duration,
-        .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
-        .throughputTriplesPerSec =
-            duration > 0 ? (static_cast<double>(totalTriples_) / duration)
-                         : 0.0,
+        "Sync Lockstep",
+        chunkSize,
+        latencyMs,
+        totalTriples_,
+        totalBytes,
+        duration,
+        duration > 0 ? (mb / duration) : 0.0,
+        duration > 0 ? (static_cast<double>(totalTriples_) / duration) : 0.0,
     };
   }
 
@@ -168,12 +169,23 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
         });
 
     // Consumer loop: transmits chunks over simulated network socket.
+    // If `pop()` rethrows a producer exception, the producer is cancelled
+    // and joined during unwinding: destroying the still-joinable thread
+    // would call `std::terminate` and hide the producer error.
     size_t totalBytes = 0;
-    while (auto chunkOpt = pipeline->pop()) {
-      std::string chunk = std::move(*chunkOpt);
-      totalBytes += chunk.size();
-      // Socket transmits chunk while worker concurrently prepares next chunk
-      simulateNetworkTransmission(chunk.size(), latency);
+    try {
+      while (auto chunkOpt = pipeline->pop()) {
+        std::string chunk = std::move(*chunkOpt);
+        totalBytes += chunk.size();
+        // Socket transmits chunk while worker concurrently prepares next chunk
+        simulateNetworkTransmission(chunk.size(), latency);
+      }
+    } catch (...) {
+      pipeline->cancel();
+      if (producerThread.joinable()) {
+        producerThread.join();
+      }
+      throw;
     }
 
     if (producerThread.joinable()) {
@@ -186,18 +198,16 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     const PipelineStats stats = pipeline->stats();
 
     return BenchmarkRunResult{
-        .mode = "Async Double-Buffered",
-        .chunkSizeTriples = chunkSize,
-        .latencyMs = latencyMs,
-        .totalTriples = totalTriples_,
-        .totalBytes = totalBytes,
-        .durationSeconds = duration,
-        .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
-        .throughputTriplesPerSec =
-            duration > 0 ? (static_cast<double>(totalTriples_) / duration)
-                         : 0.0,
-        .backpressureStalls = stats.backpressureStalls,
-        .consumerWaitStalls = stats.consumerWaitStalls,
+        "Async Double-Buffered",
+        chunkSize,
+        latencyMs,
+        totalTriples_,
+        totalBytes,
+        duration,
+        duration > 0 ? (mb / duration) : 0.0,
+        duration > 0 ? (static_cast<double>(totalTriples_) / duration) : 0.0,
+        stats.backpressureStalls,
+        stats.consumerWaitStalls,
     };
   }
 
