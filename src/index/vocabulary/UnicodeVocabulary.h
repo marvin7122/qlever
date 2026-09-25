@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
@@ -10,6 +16,22 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
+
+namespace unicodeVocabularyDetail {
+// Whether `V` offers the two-argument `lookupBatch` overload that decodes
+// into an `ArenaVocabBatchBuilder`. Formulated with `std::void_t` instead
+// of a requires-expression so this header also compiles in the C++17
+// backport builds (`requires` needs C++20). Defined at namespace scope
+// because GCC 11 rejects partial specializations of static member variable
+// templates inside a class ("explicit template argument list not allowed").
+template <typename V, typename = void>
+constexpr bool hasBuilderLookupBatch = false;
+template <typename V>
+constexpr bool hasBuilderLookupBatch<
+    V, std::void_t<decltype(std::declval<const V&>().lookupBatch(
+           std::declval<ql::span<const size_t>>(),
+           std::declval<ArenaVocabBatchBuilder&>()))>> = true;
+}  // namespace unicodeVocabularyDetail
 
 /// Vocabulary with multi-level `UnicodeComparator` that allows comparison
 /// according to different Levels. Groups of words that are adjacent on a
@@ -23,18 +45,6 @@ class UnicodeVocabulary {
  private:
   UnicodeComparator _comparator;
   UnderlyingVocabulary _underlyingVocabulary;
-
-  // Whether `V` offers the two-argument `lookupBatch` overload that decodes
-  // into an `ArenaVocabBatchBuilder`. Formulated with `std::void_t` instead
-  // of a requires-expression so this header also compiles in the C++17
-  // backport builds (`requires` needs C++20).
-  template <typename V, typename = void>
-  static constexpr bool hasBuilderLookupBatch = false;
-  template <typename V>
-  static constexpr bool hasBuilderLookupBatch<
-      V, std::void_t<decltype(std::declval<const V&>().lookupBatch(
-             std::declval<ql::span<const size_t>>(),
-             std::declval<ArenaVocabBatchBuilder&>()))>> = true;
 
  public:
   /// The additional `Args...` are used to construct the `UnderlyingVocabulary`
@@ -56,7 +66,8 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    if constexpr (hasBuilderLookupBatch<UnderlyingVocabulary>) {
+    if constexpr (unicodeVocabularyDetail::hasBuilderLookupBatch<
+                      UnderlyingVocabulary>) {
       return _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
       return _underlyingVocabulary.lookupBatch(indices);
