@@ -358,8 +358,8 @@ auto ExportQueryExecutionTrees::idTableToQLeverJSONBindings(
   AD_CORRECTNESS_CHECK(result != nullptr);
 
   auto rowIndicies = getRowIndices(limitAndOffset, *result, resultSize);
-  // One shared cache for the whole export (all columns share one bound, see
-  // thesis section 4.10). Must outlive the lazily evaluated view below.
+  // One cache for the whole export, shared by all columns. It must outlive the
+  // lazily evaluated view below.
   auto cache = std::make_shared<ql::exportIds::IdToStringAndTypeCache>(
       ql::exportIds::ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES);
   return std::move(rowIndicies) |
@@ -521,8 +521,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
 
   constexpr auto& escapeFunction =
       format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
-  // One shared cache for the whole export (all columns share one bound, see
-  // thesis section 4.10).
+  // One cache for the whole export, shared by all columns.
   ql::exportIds::IdToStringAndTypeCache cache{
       ql::exportIds::ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES};
   uint64_t resultSize = 0;
@@ -661,8 +660,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
   auto selectedColumnIndices =
       qet.selectedVariablesToColumnIndices(selectClause, false);
   // TODO<joka921> we could prefilter for the nonexisting variables.
-  // One shared cache for the whole export (all columns share one bound, see
-  // thesis section 4.10).
+  // One cache for the whole export, shared by all columns.
   ql::exportIds::IdToStringAndTypeCache cache{
       ql::exportIds::ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES};
   uint64_t resultSize = 0;
@@ -714,8 +712,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
       qet.selectedVariablesToColumnIndices(selectClause, false);
   ql::erase(columns, std::nullopt);
 
-  // One shared cache for the whole export (all columns share one bound, see
-  // thesis section 4.10).
+  // One cache for the whole export, shared by all columns.
   ql::exportIds::IdToStringAndTypeCache cache{
       ql::exportIds::ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES};
   auto getBinding = [&](const TableConstRefWithVocab& pair, const uint64_t& i) {
