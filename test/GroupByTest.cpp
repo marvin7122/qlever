@@ -644,13 +644,13 @@ TEST_F(GroupByOptimizations, countFilterMatchesRegularEvaluationOnManyBlocks) {
   std::string turtle;
   for (size_t i = 0; i < 40; ++i) {
     auto s = absl::StrCat("<s", i, ">");
-    absl::StrAppend(&turtle, s, " <p> \"lit", i, "\" . ", s, " <p> <o", i,
-                    "> . ", s, " <q> ", i, " . ", s, " <q> _:b", i, " . ");
+    absl::StrAppend(&turtle, s, " <p> \"lit", i, "\" .\n", s, " <p> <o", i,
+                    "> .\n", s, " <q> ", i, " .\n", s, " <q> _:b", i, " .\n");
     if (i % 3 == 0) {
       absl::StrAppend(
-          &turtle, s, " <r> \"lang", i, "\"@en . ", s,
-          " <r> \"2020-01-01\"^^<http://www.w3.org/2001/XMLSchema#date> . ",
-          "_:c", i, " <p> <o", i, "> . ");
+          &turtle, s, " <r> \"lang", i, "\"@en .\n", s,
+          " <r> \"2020-01-01\"^^<http://www.w3.org/2001/XMLSchema#date> .\n",
+          "_:c", i, " <p> <o", i, "> .\n");
     }
   }
   auto* qec = getQec(turtle);
