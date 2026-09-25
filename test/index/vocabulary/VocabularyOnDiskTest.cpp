@@ -346,7 +346,7 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
 // never observe a leaked `QLEVER_NVME_PASSTHROUGH`.
 class EnvVarGuard {
  public:
-  EnvVarGuard(const char* name, const char* value) : name_{name} {
+  EnvVarGuard(const char* name, const char* value [[maybe_unused]]) : name_{name} {
     const char* old = ::getenv(name);
     if (old != nullptr) {
       old_ = old;
