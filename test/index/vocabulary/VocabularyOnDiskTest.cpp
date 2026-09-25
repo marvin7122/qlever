@@ -567,7 +567,10 @@ TEST(VocabularyOnDisk, LookupBatchOwnedRingBudgetIsExactAndReleased) {
         }
       }};
       for (size_t t : ql::views::iota(size_t{0}, numThreads)) {
-        threads.emplace_back([&, &threadSnapshots = results.snapshots_[t],
+        // Give each worker its own copy of `released`: concurrent calls on one
+        // `shared_future` object are a data race, calls on copies are not.
+        threads.emplace_back([&, released,
+                              &threadSnapshots = results.snapshots_[t],
                               &error = results.errors_[t]] {
           try {
             auto result = vocab->lookupBatch(indices);
