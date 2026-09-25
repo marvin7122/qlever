@@ -17,7 +17,6 @@ namespace {
 
 using namespace materializedViewsTestHelpers;
 using namespace ad_utility::testing;
-using V = Variable;
 
 }  // namespace
 
