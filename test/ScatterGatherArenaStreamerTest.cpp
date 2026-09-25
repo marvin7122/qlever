@@ -15,8 +15,9 @@
 
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "engine/ScatterGatherArenaStreamer.h"
-#include "engine/export_prototypes/FastExportStreamFormatter.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 
 using namespace ql::export_streaming;
 using ql::export_formatting::ExportFormat;
@@ -35,9 +36,14 @@ TEST(ScatterGatherArenaStreamerTest, BasicHeaderAndSpanCoalescing) {
       "This is a large literal string residing inside the memory arena.";
   ASSERT_GE(arenaLiteral.size(), 32);
 
-  streamer.writeIri(ql::span<const char>("<http://example.org/sub>"));
+  // Note: spans over string literals must exclude the NUL terminator, hence
+  // the explicit sizes via `string_view` (a bare
+  // `ql::span<const char>("<...>")` would include it and corrupt the output).
+  const std::string_view subj = "<http://example.org/sub>";
+  const std::string_view pred = "<http://example.org/pred>";
+  streamer.writeIri(ql::span<const char>(subj.data(), subj.size()));
   streamer.writeChar(' ');
-  streamer.writeIri(ql::span<const char>("<http://example.org/pred>"));
+  streamer.writeIri(ql::span<const char>(pred.data(), pred.size()));
   streamer.writeChar(' ');
   streamer.writeLiteral(
       ql::span<const char>(arenaLiteral.data(), arenaLiteral.size()),
@@ -87,6 +93,7 @@ TEST(ScatterGatherArenaStreamerTest, ShortStringsCopiedToHeader) {
       ql::span<const char>(shortLiteral.data(), shortLiteral.size()));
 
   auto summary = std::move(streamer).finalize();
+  EXPECT_EQ(summary.chunksEmitted_, 1);
   ASSERT_EQ(chunks.size(), 1);
 
   const auto& chunk = chunks[0];
@@ -195,6 +202,16 @@ TEST(ScatterGatherArenaStreamerTest, EvaluatedTermDataOverload) {
 TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
   int pipeFds[2];
   ASSERT_EQ(::pipe(pipeFds), 0);
+  // Close both ends on every exit path, including failed assertions.
+  auto closeFds =
+      ad_utility::makeOnDestructionDontThrowDuringStackUnwinding([&pipeFds]() {
+        for (int& fd : pipeFds) {
+          if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+          }
+        }
+      });
 
   ScatterGatherConfig config;
   config.zeroCopyThresholdBytes = 10;
@@ -214,11 +231,19 @@ TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
   ssize_t written = chunkOpt->writeToFd(pipeFds[1]);
   EXPECT_EQ(written, static_cast<ssize_t>(chunkOpt->totalBytes()));
   ::close(pipeFds[1]);
+  pipeFds[1] = -1;
 
   std::string readBuf(chunkOpt->totalBytes(), '\0');
-  ssize_t bytesRead = ::read(pipeFds[0], readBuf.data(), readBuf.size());
-  ::close(pipeFds[0]);
+  // `read()` may return fewer bytes than requested, so loop until the full
+  // chunk has arrived.
+  size_t totalRead = 0;
+  while (totalRead < readBuf.size()) {
+    ssize_t bytesRead = ::read(pipeFds[0], readBuf.data() + totalRead,
+                               readBuf.size() - totalRead);
+    ASSERT_GT(bytesRead, 0);
+    totalRead += static_cast<size_t>(bytesRead);
+  }
 
-  EXPECT_EQ(bytesRead, static_cast<ssize_t>(chunkOpt->totalBytes()));
+  EXPECT_EQ(totalRead, chunkOpt->totalBytes());
   EXPECT_EQ(readBuf, chunkOpt->toString());
 }
