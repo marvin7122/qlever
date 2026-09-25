@@ -20,6 +20,10 @@
 
 using namespace ql::serialization;
 using namespace ql::export_formatting;
+// Cells are passed as `std::string_view`: a string literal converts equally
+// well to `CellValue` and to `std::string_view`, which makes the
+// `MonomorphicCellWriter::write` call ambiguous.
+using namespace std::string_view_literals;
 
 // Helper to serialize with string sink
 template <typename Fn>
@@ -38,8 +42,8 @@ TEST(MonomorphicSerializersTest, MonomorphicTripleCsvSerialization) {
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Csv>(
-        fmt, "<http://example.org/subj>", "<http://example.org/pred>",
-        "\"Hello, World!\"");
+        fmt, "<http://example.org/subj>"sv, "<http://example.org/pred>"sv,
+        "\"Hello, World!\""sv);
   });
 
   // The literal contains `"` and `,`, so RFC 4180 quoting wraps it in quotes
@@ -55,7 +59,8 @@ TEST(MonomorphicSerializersTest, MonomorphicTripleTurtleSerialization) {
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Turtle>(
-        fmt, "<http://example.org/s>", "<http://example.org/p>", "\"val\"");
+        fmt, "<http://example.org/s>"sv, "<http://example.org/p>"sv,
+        "\"val\""sv);
   });
 
   EXPECT_EQ(result,
@@ -69,11 +74,10 @@ TEST(MonomorphicSerializersTest, MonomorphicMixedTypesTsvSerialization) {
 
   std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
     Serializer::serializeRow<ExportFormat::Tsv>(
-        fmt, "<http://example.org/city>", "\"Freiburg\"", 230000, 153.07);
+        fmt, "<http://example.org/city>"sv, "\"Freiburg\""sv, 230000, 153.5);
   });
 
-  EXPECT_EQ(result,
-            "<http://example.org/city>\t\"Freiburg\"\t230000\t153.07\n");
+  EXPECT_EQ(result, "<http://example.org/city>\t\"Freiburg\"\t230000\t153.5\n");
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicSpanAndBatchSerialization) {
