@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 
+#include "backports/three_way_comparison.h"
 #include "util/Exception.h"
 
 namespace ad_utility {
@@ -88,7 +89,8 @@ struct PackedDelimiter {
   [[nodiscard]] constexpr size_t size() const noexcept { return len_; }
   [[nodiscard]] constexpr bool empty() const noexcept { return len_ == 0; }
 
-  constexpr bool operator==(const PackedDelimiter&) const noexcept = default;
+  QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR_LOCAL_CONSTEXPR(PackedDelimiter,
+                                                        pattern_, len_)
 
   // Unpack delimiter sequence into an std::string
   [[nodiscard]] std::string toString() const {
