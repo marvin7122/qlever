@@ -10,6 +10,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -96,6 +98,88 @@ TEST(FastExportStreamFormatterTest, WriteRowCsvAndTsv) {
   tsvCollector.formatter_.writeRow(ExportFormat::Tsv, cells);
   static_cast<void>(std::move(tsvCollector.formatter_).finalize());
   EXPECT_EQ(tsvCollector.output_, "a,b\tc\n");
+}
+
+// TSV escaping matches `RdfEscaping::escapeForTsv` byte for byte: tabs become
+// spaces, newlines become `\n`, and a carriage return passes through.
+TEST(FastExportStreamFormatterTest, TsvEscapingMatchesBaseline) {
+  for (std::string_view field :
+       {"plain", "a\tb", "line1\nline2", "cr\rinside", "mixed\t\r\n", ""}) {
+    CollectingFormatter collector;
+    collector.formatter_.writeEscapedTsv(field);
+    static_cast<void>(std::move(collector.formatter_).finalize());
+    EXPECT_EQ(collector.output_, RdfEscaping::escapeForTsv(std::string{field}))
+        << "field: " << field;
+  }
+}
+
+// Encoded integers use the short form in Turtle and the fully-qualified form
+// in N-Triples, exactly like `ConstructTripleInstantiator::formatTerm`.
+TEST(FastExportStreamFormatterTest, EncodedIntegerShortAndQualifiedForm) {
+  EvaluatedTermData term{"42", XSD_INT_TYPE};
+  CollectingFormatter turtle;
+  turtle.formatter_.writeTerm(term, ExportFormat::Turtle);
+  static_cast<void>(std::move(turtle.formatter_).finalize());
+  EXPECT_EQ(turtle.output_, "42");
+
+  CollectingFormatter ntriples;
+  ntriples.formatter_.writeTerm(term, ExportFormat::NTriples);
+  static_cast<void>(std::move(ntriples.formatter_).finalize());
+  EXPECT_EQ(ntriples.output_, absl::StrCat("\"42\"^^<", XSD_INT_TYPE, ">"));
+}
+
+// IRIs are wrapped in angle brackets unless already enclosed or a blank node.
+// Blank nodes and the extreme 64-bit integers are written verbatim.
+TEST(FastExportStreamFormatterTest, IriBlankNodeAndIntegerExtremes) {
+  CollectingFormatter collector;
+  auto& f = collector.formatter_;
+  f.writeIri("http://a");
+  f.writeIri("<http://b>");
+  f.writeIri("_:c");
+  f.writeBlankNode("_:u", 7, "_x");
+  f.writeInteger(std::numeric_limits<int64_t>::min());
+  f.writeChar(' ');
+  f.writeInteger(std::numeric_limits<uint64_t>::max());
+  static_cast<void>(std::move(f).finalize());
+  EXPECT_EQ(collector.output_,
+            "<http://a><http://b>_:c_:u7_x-9223372036854775808 "
+            "18446744073709551615");
+}
+
+// Streaming mode flushes full chunks to the sink; the concatenated output and
+// the summary counters are independent of the chunk boundaries.
+TEST(FastExportStreamFormatterTest, StreamingFlushAcrossChunks) {
+  std::string output;
+  size_t numChunks = 0;
+  FastExportStreamFormatter formatter{
+      [&](std::string_view chunk) {
+        output.append(chunk);
+        ++numChunks;
+      },
+      FastExportStreamFormatter::SAFETY_WATERMARK * 2};
+  const std::string field(1000, 'x');
+  std::string expected;
+  for (size_t i = 0; i < 50; ++i) {
+    formatter.writeRaw(field);
+    expected += field;
+  }
+  const auto summary = std::move(formatter).finalize();
+  EXPECT_EQ(output, expected);
+  EXPECT_GT(numChunks, 1u);
+  EXPECT_EQ(summary.chunksEmitted_, numChunks);
+  EXPECT_EQ(summary.totalBytesWritten_, expected.size());
+}
+
+// `currentChunk` shows the buffered bytes and is empty after `finalize`.
+TEST(FastExportStreamFormatterTest, CurrentChunkEmptyAfterFinalize) {
+  std::array<char, 8> buffer{};
+  FastExportStreamFormatter formatter{
+      ql::span<char>{buffer.data(), buffer.size()}};
+  formatter.writeRaw("ab");
+  EXPECT_EQ(formatter.currentChunk(), "ab");
+  auto& ref = formatter;
+  static_cast<void>(std::move(formatter).finalize());
+  EXPECT_TRUE(ref.currentChunk().empty());
 }
 
 // `ensureAvailable` throws, so the write functions must not be `noexcept`:
