@@ -9,9 +9,12 @@
 #ifndef QLEVER_SRC_ENGINE_PORTABLEDOUBLETOCHARS_H
 #define QLEVER_SRC_ENGINE_PORTABLEDOUBLETOCHARS_H
 
+#include <array>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <optional>
 #include <system_error>
 
 namespace ql::engine::detail {
@@ -33,21 +36,37 @@ inline std::to_chars_result doubleToChars(char* first, char* last,
     return {first, std::errc::value_too_large};
   }
   const auto capacity = static_cast<size_t>(last - first);
+  // `snprintf` needs room for a terminating NUL that `std::to_chars` does
+  // not write, so format into a local buffer (large enough for any `%.17g`
+  // output) and copy only the characters. An exact-fit `[first, last)` then
+  // succeeds, as it does with `std::to_chars`.
+  std::array<char, 32> tmp{};
+  const auto copyOut = [&](int len) -> std::optional<std::to_chars_result> {
+    if (len <= 0 || static_cast<size_t>(len) >= tmp.size() ||
+        static_cast<size_t>(len) > capacity) {
+      return std::nullopt;
+    }
+    std::memcpy(first, tmp.data(), static_cast<size_t>(len));
+    return std::to_chars_result{first + len, std::errc{}};
+  };
   // Find the shortest `%g` precision that parses back to the exact value.
   for (int precision = 1; precision <= 17; ++precision) {
-    int len = std::snprintf(first, capacity, "%.*g", precision, value);
-    if (len <= 0 || static_cast<size_t>(len) >= capacity) {
+    int len = std::snprintf(tmp.data(), tmp.size(), "%.*g", precision, value);
+    if (len <= 0 || static_cast<size_t>(len) >= tmp.size()) {
       break;
     }
-    if (std::strtod(first, nullptr) == value) {
-      return {first + len, std::errc{}};
+    if (std::strtod(tmp.data(), nullptr) == value) {
+      if (auto result = copyOut(len)) {
+        return *result;
+      }
+      return {first, std::errc::value_too_large};
     }
   }
   // Full precision round-trips all finite values; non-finite values are
   // emitted directly.
-  int len = std::snprintf(first, capacity, "%.17g", value);
-  if (len > 0 && static_cast<size_t>(len) < capacity) {
-    return {first + len, std::errc{}};
+  if (auto result =
+          copyOut(std::snprintf(tmp.data(), tmp.size(), "%.17g", value))) {
+    return *result;
   }
   return {first, std::errc::value_too_large};
 #else

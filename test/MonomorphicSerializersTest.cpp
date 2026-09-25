@@ -9,11 +9,18 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstdint>
+#include <limits>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
 #include <vector>
 
 #include "engine/FastExportStreamFormatter.h"
 #include "engine/MonomorphicSerializers.h"
+#include "engine/PortableDoubleToChars.h"
 
 using namespace ql::serialization;
 using namespace ql::export_formatting;
@@ -229,4 +236,28 @@ TEST(MonomorphicSerializersTest, UndefinedDispatchSelectsUndefPlaceholder) {
       });
   EXPECT_EQ(dispatchedOut2, dynamicOut2);
   EXPECT_EQ(dispatchedOut2, "UNDEF,UNDEF\n");
+}
+
+// A `uint64_t` above `INT64_MAX` is rejected with an exception (the
+// constructor is not `noexcept`, so this does not terminate).
+TEST(MonomorphicSerializersTest, CellValueFromUint64RangeCheck) {
+  static_assert(!std::is_nothrow_constructible_v<CellValue, uint64_t>);
+  EXPECT_NO_THROW(CellValue{uint64_t{42}});
+  EXPECT_ANY_THROW(CellValue{std::numeric_limits<uint64_t>::max()});
+}
+
+// `doubleToChars` succeeds when `[first, last)` holds exactly the output
+// characters, like `std::to_chars`, and reports `value_too_large` when it
+// holds one character less.
+TEST(MonomorphicSerializersTest, DoubleToCharsExactFit) {
+  std::array<char, 4> exact{};
+  auto [end, ec] = ql::engine::detail::doubleToChars(
+      exact.data(), exact.data() + exact.size(), 1.25);
+  EXPECT_EQ(ec, std::errc{});
+  EXPECT_EQ(std::string_view(exact.data(), end), "1.25");
+
+  std::array<char, 3> tooSmall{};
+  auto result = ql::engine::detail::doubleToChars(
+      tooSmall.data(), tooSmall.data() + tooSmall.size(), 1.25);
+  EXPECT_EQ(result.ec, std::errc::value_too_large);
 }
