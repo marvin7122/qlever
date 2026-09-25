@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "util/ZeroCopySocketSender.h"
+#include "util/jthread.h"
 
 using namespace ad_utility;
 
@@ -63,6 +65,11 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
 
   int sendFd = sv[0];
   int recvFd = sv[1];
+  // Destroyed last: close both ends on every path.
+  absl::Cleanup closeFds{[sendFd, recvFd] {
+    ::close(sendFd);
+    ::close(recvFd);
+  }};
 
   ZeroCopySenderConfig config;
   config.ringEntries = 16;
@@ -85,7 +92,7 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
   std::vector<char> receivedData(numChunks * chunkSize, 0);
 
   // Background thread to receive data
-  std::thread receiverThread([&]() {
+  ad_utility::JThread receiverThread([&]() {
     size_t totalReceived = 0;
     while (totalReceived < expectedData.size()) {
       ssize_t bytes = ::recv(recvFd, receivedData.data() + totalReceived,
@@ -96,6 +103,9 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
       totalReceived += static_cast<size_t>(bytes);
     }
   });
+  // Destroyed first if an assertion or exception leaves the test early: ends
+  // the stream so that the receiver returns and can be joined.
+  absl::Cleanup endStream{[sendFd] { ::shutdown(sendFd, SHUT_WR); }};
 
   // Sender thread loop
   for (size_t i = 0; i < numChunks; ++i) {
@@ -111,9 +121,6 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
   EXPECT_EQ(sender.bufferPool().availableSlots(), config.numBuffers);
 
   receiverThread.join();
-
-  ::close(sendFd);
-  ::close(recvFd);
 
   EXPECT_EQ(receivedData, expectedData);
 }
