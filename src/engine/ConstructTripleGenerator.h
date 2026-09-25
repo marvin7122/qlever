@@ -79,9 +79,9 @@ class ConstructTripleGenerator {
   static IdCache makeIdCache(const PreprocessedConstructTemplate& tmpl);
 
   // Lazily evaluates all `TableWithRange` values from `rowIndices`, processes
-  // them in batches of `BATCH_SIZE` rows, and returns a flat range of
-  // `EvaluatedTriple`. Duplicate triples are handled according to
-  // `config.mode_`.
+  // them in batches of `construct-export-row-batch-size` rows (runtime
+  // parameter, default 8192), and returns a flat range of `EvaluatedTriple`.
+  // Duplicate triples are handled according to `config.mode_`.
   static InputRangeTypeErased<EvaluatedTriple> evaluateTables(
       const Triples& templateTriples,
       const VariableToColumnMap& variableColumns,
