@@ -347,8 +347,7 @@ class MonomorphicSerializerBenchmark : public BenchmarkInterface {
     BenchmarkResults results;
 
     // Output buffer sink
-    size_t bytesSink = 0;
-    auto nullSink = [&](std::string_view chunk) { bytesSink += chunk.size(); };
+    auto nullSink = [](std::string_view) {};
 
     // =========================================================================
     // SECTION 1: Standard RDF Triples Schema <IRI, IRI, LITERAL>
