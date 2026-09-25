@@ -71,7 +71,10 @@ struct AllocationTracker {
 #endif
 // The sized deallocation functions forward to the unsized ones instead of
 // calling `std::free` directly, which GCC rejects with
-// `-Werror=mismatched-new-delete`.
+// `-Werror=mismatched-new-delete`. The over-aligned (`std::align_val_t`)
+// overloads are deliberately not replaced: the standard library's aligned
+// `new` and `delete` stay a matching pair, and the measured serializer code
+// allocates no over-aligned types, so those allocations are not counted.
 #ifndef MONOMORPHIC_SERIALIZER_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
