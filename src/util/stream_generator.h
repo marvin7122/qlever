@@ -312,7 +312,10 @@ stream_generator_promise<BUFFER_SIZE>::get_return_object() noexcept {
 }  // namespace detail
 
 // The default buffer size of 8 MiB. Each generator coroutine allocates one
-// such buffer on the heap.
+// such buffer on the heap. A larger buffer means fewer coroutine suspensions
+// and fewer chunks per exported byte for large results, at the cost of up to
+// 8 MiB of memory per running export. Responses smaller than the buffer are
+// sent as a single chunk either way.
 inline constexpr size_t DEFAULT_STREAM_GENERATOR_BUFFER_SIZE = 8u << 20;
 using stream_generator =
     basic_stream_generator<DEFAULT_STREAM_GENERATOR_BUFFER_SIZE>;
