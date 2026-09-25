@@ -31,16 +31,16 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
       EvaluatedTermData{std::move(str), type});
 }
 
-// Matches an `EvaluatedTermRef` by checking the pointed-to term data.
+// Matches an `EvaluatedTermRef` by checking both fields of the term data it
+// points to. `type` uses pointer equality, matching the compile-time constants
+// (e.g. XSD_INT_TYPE) or nullptr.
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
-  return ::testing::AllOf(
-      ::testing::ResultOf(
-          [](const EvaluatedTermRef& r) { return r.data_->rdfTermString_; },
-          std::string(str)),
-      ::testing::ResultOf(
-          [](const EvaluatedTermRef& r) { return r.data_->rdfTermDataType_; },
-          ::testing::Eq(type)));
+  return AD_FIELD(
+      EvaluatedTermRef, data_,
+      ::testing::Pointee(::testing::AllOf(
+          AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
+          AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type)))));
 };
 
 // Matches an `EvaluatedTriple` by applying `matchesEvaluatedTerm` with
