@@ -164,7 +164,7 @@ class AdaptiveChunkSizer {
   // Calculate the recommended number of rows/triples to process in the next
   // batch based on current target chunk size and estimated row byte size.
   // Result is guaranteed to be clamped between [minChunkRows, maxChunkRows].
-  [[nodiscard]] size_t targetRowCount() const noexcept {
+  [[nodiscard]] size_t targetRowCount() const {
     AD_CORRECTNESS_CHECK(estimatedRowBytes_ > 0.0);
     const double rawTargetRows =
         static_cast<double>(currentChunkBytesTarget_) / estimatedRowBytes_;
@@ -174,7 +174,7 @@ class AdaptiveChunkSizer {
 
   // ___________________________________________________________________________
   // Overload: target row count clamped by the total remaining un-exported rows.
-  [[nodiscard]] size_t targetRowCount(size_t remainingRows) const noexcept {
+  [[nodiscard]] size_t targetRowCount(size_t remainingRows) const {
     return std::min(targetRowCount(), remainingRows);
   }
 
@@ -188,7 +188,7 @@ class AdaptiveChunkSizer {
   // ___________________________________________________________________________
   // Check if either the target byte capacity or target row count has been met.
   [[nodiscard]] bool isChunkFull(size_t bytesBuffered,
-                                 size_t rowsBuffered) const noexcept {
+                                 size_t rowsBuffered) const {
     return bytesBuffered >= currentChunkBytesTarget_ ||
            (rowsBuffered > 0 && rowsBuffered >= targetRowCount());
   }
