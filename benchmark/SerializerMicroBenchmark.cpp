@@ -45,26 +45,35 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs.
-// NOTE: the global `operator new`/`operator delete` pairs below are
-// intentionally implemented via `malloc`/`free`. GCC sees through to the
-// mismatched allocation functions and reports `-Wmismatched-new-delete`,
-// which is a false positive for replaceable global allocation functions, so
-// the warning is suppressed for this block (GCC only, it is the only compiler
-// that emits it).
-// NOTE: ThreadSanitizer ships its own global `operator new`/`operator delete`
-// replacements, so ours would cause multiple-definition link errors under
-// `-fsanitize=thread`. Allocation counting is therefore compiled out in TSan
-// builds; the benchmark itself still runs and reports (with zero counts).
-#if defined(__SANITIZE_THREAD__) || \
-    (defined(__has_feature) && __has_feature(thread_sanitizer))
-#define SERIALIZER_MICRO_BENCHMARK_NO_ALLOCATION_TRACKING
+// runs. The malloc/free pairing below is intentional and matched, but GCC
+// cannot see across the replaceable global operators and reports a false
+// positive -Wmismatched-new-delete. GCC raises it while compiling the
+// allocation call sites (via inlining), so a pragma around the `operator
+// delete` definitions alone does not cover it (observed on GCC 11 with
+// -Werror); the warning is therefore suppressed file-wide (GCC only). The
+// sized-deallocation overloads must stay: GCC's -Wsized-deallocation (part of
+// -Wextra) rejects an unsized `operator delete` without its sized partner.
+//
+// Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
+// already provide these replaceable allocation functions, so defining them
+// here causes multiple-definition link errors. Under sanitizers the
+// `heap-allocations` metadata below reads 0. Clang signals sanitizers via
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; `__has_feature` must
+// only be invoked where it is defined, so the checks are nested.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
 #endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 #endif
-#ifndef SERIALIZER_MICRO_BENCHMARK_NO_ALLOCATION_TRACKING
+
+#ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -96,10 +105,7 @@ void* operator new[](std::size_t size) {
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
 
 void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
-#endif  // SERIALIZER_MICRO_BENCHMARK_NO_ALLOCATION_TRACKING
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
+#endif  // SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 
 namespace ad_benchmark {
 namespace {
@@ -290,3 +296,7 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
