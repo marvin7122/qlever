@@ -12,8 +12,10 @@
 #include <absl/strings/str_cat.h>
 
 #include <initializer_list>
+#include <variant>
 
 #include "backports/algorithm.h"
+#include "parser/GraphPatternOperation.h"
 
 namespace ql::engine {
 
@@ -164,8 +166,14 @@ ExportEngineMode ExportPipelineRouter::fastStreamingIfEligible(
 
 // _____________________________________________________________________________
 bool ExportPipelineRouter::hasUnsupportedConstructs(const ParsedQuery& query) {
-  return query.isAggregatingQuery() || !query._havingClauses.empty() ||
-         !query._orderBy.empty();
+  // The parser turns a DESCRIBE query into a CONSTRUCT query whose root graph
+  // pattern contains a `parsedQuery::Describe` operation.
+  const bool isDescribe = ql::ranges::any_of(
+      query._rootGraphPattern._graphPatterns, [](const auto& operation) {
+        return std::holds_alternative<parsedQuery::Describe>(operation);
+      });
+  return isDescribe || query.isAggregatingQuery() ||
+         !query._havingClauses.empty() || !query._orderBy.empty();
 }
 
 }  // namespace ql::engine

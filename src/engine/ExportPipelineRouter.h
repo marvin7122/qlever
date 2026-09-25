@@ -91,8 +91,8 @@ class ExportPipelineRouter {
   [[nodiscard]] static ExportEngineMode fastStreamingIfEligible(
       const ParsedQuery& query);
 
-  // Return true if `query` uses aggregation, HAVING, or ORDER BY, which need
-  // the materialized grouping or sorting of Legacy V1.
+  // Return true if `query` is a DESCRIBE query or uses aggregation, HAVING, or
+  // ORDER BY, which need the materialized grouping or sorting of Legacy V1.
   // TODO<Marvin Stoetzel> Also exclude SERVICE clauses, subqueries, property
   // paths, and MINUS before `selectEngine` is called from the `Server`.
   [[nodiscard]] static bool hasUnsupportedConstructs(const ParsedQuery& query);
