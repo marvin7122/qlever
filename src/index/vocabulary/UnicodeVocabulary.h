@@ -41,6 +41,7 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
+    AD_CONTRACT_CHECK(!indices.empty());
     // NOTE: the detection uses the C++17-compatible trait instead of
     // `if constexpr (requires { ... })`, which the C++17 CI configurations
     // cannot compile (see `hasLookupBatchWithBuilder`).
