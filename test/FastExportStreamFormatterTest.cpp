@@ -53,7 +53,7 @@ TEST(FastExportStreamFormatterTest, TurtleEmbeddedQuotesEscapedOnce) {
   CollectingFormatter collector;
   EvaluatedTermData term{"\"Title with \"quotes\"\"", nullptr};
   collector.formatter_.writeTerm(term, ExportFormat::Turtle);
-  std::move(collector.formatter_).finalize();
+  static_cast<void>(std::move(collector.formatter_).finalize());
   EXPECT_EQ(collector.output_, "\"Title with \\\"quotes\\\"\"");
 }
 
@@ -65,7 +65,7 @@ TEST(FastExportStreamFormatterTest, CsvFullyQualifiedLiteralMatchesBaseline) {
   CollectingFormatter collector;
   EvaluatedTermData term{"NaN", XSD_DOUBLE_TYPE};
   collector.formatter_.writeTerm(term, ExportFormat::Csv);
-  std::move(collector.formatter_).finalize();
+  static_cast<void>(std::move(collector.formatter_).finalize());
   const std::string expected = RdfEscaping::escapeForCsv(
       absl::StrCat("\"NaN\"^^<", XSD_DOUBLE_TYPE, ">"));
   EXPECT_EQ(collector.output_, expected);
@@ -89,12 +89,12 @@ TEST(FastExportStreamFormatterTest, WriteRowCsvAndTsv) {
   CollectingFormatter csvCollector;
   const std::array<std::string_view, 2> cells{"a,b", "c"};
   csvCollector.formatter_.writeRow(ExportFormat::Csv, cells);
-  std::move(csvCollector.formatter_).finalize();
+  static_cast<void>(std::move(csvCollector.formatter_).finalize());
   EXPECT_EQ(csvCollector.output_, "\"a,b\",c\n");
 
   CollectingFormatter tsvCollector;
   tsvCollector.formatter_.writeRow(ExportFormat::Tsv, cells);
-  std::move(tsvCollector.formatter_).finalize();
+  static_cast<void>(std::move(tsvCollector.formatter_).finalize());
   EXPECT_EQ(tsvCollector.output_, "a,b\tc\n");
 }
 
