@@ -30,7 +30,7 @@ class ConstructDeduplicator;
 //   copy, no allocation). For variables: one shared_ptr copy from the
 //   batch/cache so the term outlives `batchResult`. For blank nodes:
 //   allocates a new term. Every returned ref owns its term, so triples may
-//   outlive the pipeline.
+//   outlive `batchResult` and the `ConstructTripleGenerator`.
 std::optional<EvaluatedTermRef> instantiateTerm(
     const PreprocessedTerm& term, const BatchEvaluationResult& batchResult,
     size_t rowIdxInBatch, size_t rowIdxTotal);
