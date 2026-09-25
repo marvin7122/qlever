@@ -139,6 +139,39 @@ class SocketPairConnection {
   [[nodiscard]] int recvFd() const noexcept { return recvFd_; }
 };
 
+// Background thread that drains `total` bytes from the receiving end of
+// `conn`. Joined on every exit path: the destructor closes the sending end
+// (which unblocks a pending `recv` with EOF) and joins, so an exception in a
+// send loop cannot destroy a joinable `std::thread` (`std::terminate`).
+class DrainingReceiver {
+ private:
+  SocketPairConnection& conn_;
+  std::thread thread_;
+
+ public:
+  DrainingReceiver(SocketPairConnection& conn, size_t total)
+      : conn_{conn}, thread_{[recvFd = conn.recvFd(), total]() {
+          std::vector<char> buf(64 * 1024);
+          size_t totalReceived = 0;
+          while (totalReceived < total) {
+            ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
+            if (n <= 0) break;
+            totalReceived += static_cast<size_t>(n);
+          }
+        }} {}
+  DrainingReceiver(const DrainingReceiver&) = delete;
+  DrainingReceiver& operator=(const DrainingReceiver&) = delete;
+  ~DrainingReceiver() { finish(); }
+
+  // Close the sending end and wait for the receiver to finish.
+  void finish() noexcept {
+    conn_.closeSender();
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+  }
+};
+
 // _____________________________________________________________________________
 // Benchmark result metrics struct.
 struct BenchmarkMetric {
@@ -180,16 +213,8 @@ class ZeroCopySenderBenchmarkRunner {
     // Ceiling division: the final chunk carries the remainder.
     const size_t numChunks = (totalBytes_ + chunkSize_ - 1) / chunkSize_;
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    // Background receiver; joined on every exit path (also when a send throws).
+    DrainingReceiver receiver{conn, totalBytes_};
 
     CpuTimeTimer timer;
     size_t bytesSent = 0;
@@ -210,8 +235,7 @@ class ZeroCopySenderBenchmarkRunner {
     }
 
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
-    conn.closeSender();
-    receiverThread.join();
+    receiver.finish();
 
     return calculateMetric("1. Standard send() [Baseline]", wallSec, cpuPercent,
                            bytesSent, numChunks);
@@ -232,16 +256,8 @@ class ZeroCopySenderBenchmarkRunner {
 
     ZeroCopySocketSender sender(config);
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    // Background receiver; joined on every exit path (also when a send throws).
+    DrainingReceiver receiver{conn, totalBytes_};
 
     CpuTimeTimer timer;
 
@@ -257,8 +273,7 @@ class ZeroCopySenderBenchmarkRunner {
 
     sender.flushAndDrainAll();
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
-    conn.closeSender();
-    receiverThread.join();
+    receiver.finish();
 
     return calculateMetric("2. io_uring Standard Send (Unpinned)", wallSec,
                            cpuPercent, totalBytes_, numChunks);
@@ -279,16 +294,8 @@ class ZeroCopySenderBenchmarkRunner {
 
     ZeroCopySocketSender sender(config);
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    // Background receiver; joined on every exit path (also when a send throws).
+    DrainingReceiver receiver{conn, totalBytes_};
 
     CpuTimeTimer timer;
 
@@ -304,8 +311,7 @@ class ZeroCopySenderBenchmarkRunner {
 
     sender.flushAndDrainAll();
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
-    conn.closeSender();
-    receiverThread.join();
+    receiver.finish();
 
     return calculateMetric("3. io_uring SEND_ZC (Registered Fixed Buffers)",
                            wallSec, cpuPercent, totalBytes_, numChunks);
