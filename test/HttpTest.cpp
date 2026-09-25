@@ -97,18 +97,20 @@ auto makeIgnoreBodyServer(size_t chunkSize) {
 template <BodyReadMode mode>
 auto makeStreamableServer(std::vector<std::string> chunks, bool useSendZC,
                           size_t chunkSize) {
+  // `mutable` so the captured chunks can be moved into the generator frame
+  // instead of copied.
   auto handler = [chunks = std::move(chunks)](
                      auto req, auto&& send,
-                     auto...) -> boost::asio::awaitable<void> {
+                     auto...) mutable -> boost::asio::awaitable<void> {
     // Pass the chunks as a by-value coroutine parameter (frame-copied and
     // therefore alive for the generator's lifetime), not as a lambda capture
     // of an immediately-invoked lambda (which would dangle).
     auto generator =
         [](std::vector<std::string> chunks) -> cppcoro::generator<std::string> {
-      for (auto& chunk : chunks) {
+      for (const auto& chunk : chunks) {
         co_yield chunk;
       }
-    }(chunks);
+    }(std::move(chunks));
     co_await send(createOkResponse(std::move(generator), req,
                                    ad_utility::MediaType::textPlain));
   };
