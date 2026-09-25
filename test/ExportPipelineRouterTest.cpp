@@ -62,6 +62,28 @@ TEST(ExportPipelineRouterTest, UrlParamFastExportFalsySelectsV1) {
   }
 }
 
+// Engine overrides from the URL and the header are case-insensitive.
+TEST(ExportPipelineRouterTest, EngineOverridesIgnoreCase) {
+  auto query = parse("SELECT * WHERE { ?s ?p ?o }");
+  ExportPipelineRouter::ParamValueMap params;
+  params["export-engine"] = {"V2"};
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, params),
+            ExportEngineMode::FastStreamingV2);
+  params["export-engine"] = {"Legacy"};
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                query, params, std::nullopt, ExportEngineMode::FastStreamingV2),
+            ExportEngineMode::LegacyV1);
+
+  ExportPipelineRouter::ParamValueMap noParams;
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(query, noParams,
+                                               std::string_view{"StReAmInG"}),
+            ExportEngineMode::FastStreamingV2);
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                query, noParams, std::string_view{"V1"},
+                ExportEngineMode::FastStreamingV2),
+            ExportEngineMode::LegacyV1);
+}
+
 TEST(ExportPipelineRouterTest, UrlParamExportEngineV2) {
   auto query = parse("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
 
