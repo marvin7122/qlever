@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -99,6 +100,8 @@ class ZeroCopyBufferPool {
     AD_CONTRACT_CHECK(numBuffers > 0);
     AD_CONTRACT_CHECK(bufferSizeBytes > 0);
     AD_CONTRACT_CHECK((bufferSizeBytes % kZeroCopyPageAlignment) == 0);
+    AD_CONTRACT_CHECK(numBuffers <=
+                      std::numeric_limits<size_t>::max() / bufferSizeBytes);
 
     numBuffers_ = numBuffers;
     bufferSizeBytes_ = bufferSizeBytes;
