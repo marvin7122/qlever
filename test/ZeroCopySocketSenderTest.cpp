@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <arpa/inet.h>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
@@ -63,8 +64,10 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   // IORING_OP_SEND_ZC requires TCP loopback: AF_UNIX socketpairs reject
   // zero-copy sends, so connect a TCP loopback pair (same pattern as
   // `ZeroCopySenderBenchmark::SocketPairConnection`).
+  // Every descriptor is closed on all exits, including a failing `ASSERT_*`.
   int listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
   ASSERT_GE(listenFd, 0);
+  absl::Cleanup closeListenFd = [listenFd] { ::close(listenFd); };
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -77,11 +80,12 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   ASSERT_EQ(::listen(listenFd, 1), 0);
   int sendFd = ::socket(AF_INET, SOCK_STREAM, 0);
   ASSERT_GE(sendFd, 0);
+  absl::Cleanup closeSendFd = [sendFd] { ::close(sendFd); };
   ASSERT_EQ(::connect(sendFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)),
             0);
   int recvFd = ::accept(listenFd, nullptr, nullptr);
   ASSERT_GE(recvFd, 0);
-  ::close(listenFd);
+  absl::Cleanup closeRecvFd = [recvFd] { ::close(recvFd); };
 
   ZeroCopySenderConfig config;
   config.ringEntries = 16;
@@ -115,6 +119,14 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
       totalReceived += static_cast<size_t>(bytes);
     }
   });
+  // Join on every exit: a destroyed joinable `std::thread` calls
+  // `std::terminate`. Shutting the socket down wakes a blocked `recv`.
+  absl::Cleanup joinReceiver = [&receiverThread, recvFd] {
+    if (receiverThread.joinable()) {
+      ::shutdown(recvFd, SHUT_RDWR);
+      receiverThread.join();
+    }
+  };
 
   // Sender thread loop
   for (size_t i = 0; i < numChunks; ++i) {
@@ -130,9 +142,6 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   EXPECT_EQ(sender.bufferPool().availableSlots(), config.numBuffers);
 
   receiverThread.join();
-
-  ::close(sendFd);
-  ::close(recvFd);
 
   EXPECT_EQ(receivedData, expectedData);
 }
