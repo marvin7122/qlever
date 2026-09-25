@@ -11,6 +11,7 @@
 
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
+#include "engine/CountStarCardinality.h"
 #include "engine/ExistsJoin.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
@@ -1971,6 +1972,16 @@ std::unique_ptr<Operation> GroupByImpl::cloneImpl() const {
 }
 
 // _____________________________________________________________________________
+std::optional<IdTable> GroupByImpl::computeCountStarFromMetadata() const {
+  if (auto count = computeCountStarCardinality(*_subtree)) {
+    IdTable table{1, getExecutionContext()->getAllocator()};
+    table.push_back({Id::makeFromInt(count.value())});
+    return table;
+  }
+  return std::nullopt;
+}
+
+// _____________________________________________________________________________
 std::optional<IdTable> GroupByImpl::computeCountStar() const {
   bool isSingleGlobalAggregateFunction =
       _groupByVariables.empty() && _aliases.size() == 1;
@@ -1986,6 +1997,13 @@ std::optional<IdTable> GroupByImpl::computeCountStar() const {
   }();
   if (!singleAggregateIsNonDistinctCountStar) {
     return std::nullopt;
+  }
+
+  if (!getRuntimeParameter<
+          &RuntimeParameters::groupByDisableIndexScanOptimizations_>()) {
+    if (auto result = computeCountStarFromMetadata()) {
+      return result;
+    }
   }
 
   auto childRes = _subtree->getResult(true);

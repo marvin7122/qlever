@@ -16,8 +16,10 @@
 #include "engine/Join.h"
 #include "engine/MaterializedViews.h"
 #include "engine/NamedResultCache.h"
+#include "engine/OptionalJoin.h"
 #include "engine/QueryPlanner.h"
 #include "engine/Sort.h"
+#include "engine/Union.h"
 #include "engine/Values.h"
 #include "engine/ValuesForTesting.h"
 #include "engine/sparqlExpressions/AggregateExpression.h"
@@ -3459,4 +3461,161 @@ TEST(GroupBy, BlankNodeInGroupBy) {
   EXPECT_EQ(table(0, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_EQ(table(1, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_NE(table(0, 1), table(1, 1));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarTwoPredicateJoin) {
+  // COUNT(*) of `?s <p1> ?o1 . ?s <p2> ?o2`.
+  // x has 2 p1 and 1 p2; y has 1 p1 and 1 p2; z has only p1. Total = 2+1 = 3.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <p1> <a> . <x> <p1> <b> . <x> <p2> <c> . "
+                    "<y> <p1> <d> . <y> <p2> <e> . <z> <p1> <f> ."))};
+  auto qec = ctx.makeQec();
+  auto left = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<p1>"), Variable{"?o1"}});
+  auto right = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<p2>"), Variable{"?o2"}});
+  auto join = makeExecutionTree<Join>(&qec, left, right, 0, 0);
+  std::vector<Alias> aliases{
+      Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+            Variable{"?c"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, join};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(3)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarBagUnionOfTwoScans) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <p1> <a> . <y> <p2> <b> . <z> <p2> <c> ."))};
+  auto qec = ctx.makeQec();
+  auto left = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<p1>"), Variable{"?o"}});
+  auto right = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<p2>"), Variable{"?o"}});
+  auto unionOp = makeExecutionTree<Union>(&qec, left, right);
+  std::vector<Alias> aliases{
+      Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+            Variable{"?c"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, unionOp};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(3)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarOptionalEmptyRight) {
+  QecWrapper ctx{
+      std::make_shared<Index>(makeTestIndex("<x> <p1> <a> . <y> <p1> <b> ."))};
+  auto qec = ctx.makeQec();
+  auto left = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<p1>"), Variable{"?o1"}});
+  auto right = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<missing>"), Variable{"?o2"}});
+  auto optional = makeExecutionTree<OptionalJoin>(&qec, left, right);
+  std::vector<Alias> aliases{
+      Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+            Variable{"?c"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, optional};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(2)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarTwoPredicateJoinRunsSpanBlocks) {
+  // The test index uses tiny permutation blocks, so the runs of `<x>` and `<y>`
+  // span several blocks. x: 3 p1 * 2 p2 = 6, y: 1 p1 * 3 p2 = 3, w and z have
+  // only one of the predicates. Total = 9.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<w> <p2> <a> . <x> <p1> <a> . <x> <p1> <b> . <x> <p1> <c> . "
+      "<x> <p2> <a> . <x> <p2> <b> . <y> <p1> <a> . <y> <p2> <a> . "
+      "<y> <p2> <b> . <y> <p2> <c> . <z> <p1> <a> ."))};
+  auto qec = ctx.makeQec();
+  auto left = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<p1>"), Variable{"?o1"}});
+  auto right = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<p2>"), Variable{"?o2"}});
+  auto join = makeExecutionTree<Join>(&qec, left, right, 0, 0);
+  std::vector<Alias> aliases{
+      Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+            Variable{"?c"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, join};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(9)}}));
+  // The count came from the run-length merge, not from evaluating the join.
+  EXPECT_EQ(join->getRootOperation()->runtimeInfo().status_,
+            RuntimeInformation::Status::optimizedOut);
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarTwoPredicateJoinSkipsNonMatchingKeys) {
+  // `<p1>` has 40 subjects (one of them with 3 rows), `<p2>` matches only
+  // three of them plus one key beyond all `<p1>` keys, so the merge skips
+  // long stretches and whole blocks of `<p1>`. Count = 3 * 2 + 1 + 1 = 8.
+  std::string turtle;
+  for (int i = 0; i < 40; ++i) {
+    turtle +=
+        absl::StrCat("<s", absl::Dec(i, absl::kZeroPad2), "> <p1> <a> . ");
+  }
+  turtle += "<s10> <p1> <b> . <s10> <p1> <c> . ";
+  turtle += "<s10> <p2> <a> . <s10> <p2> <b> . <s25> <p2> <a> . ";
+  turtle += "<s39> <p2> <a> . <t> <p2> <a> .";
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(turtle))};
+  auto qec = ctx.makeQec();
+  // Compute the count and check whether the join was optimized out.
+  auto expectCount = [&qec](bool optimizedOut) {
+    auto left = makeExecutionTree<IndexScan>(
+        &qec, Permutation::Enum::PSO,
+        SparqlTripleSimple{Variable{"?s"}, iri("<p1>"), Variable{"?o1"}});
+    auto right = makeExecutionTree<IndexScan>(
+        &qec, Permutation::Enum::PSO,
+        SparqlTripleSimple{Variable{"?s"}, iri("<p2>"), Variable{"?o2"}});
+    auto join = makeExecutionTree<Join>(&qec, left, right, 0, 0);
+    std::vector<Alias> aliases{
+        Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+              Variable{"?c"}}};
+    GroupByImpl groupBy{&qec, {}, aliases, join};
+    EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+                matchesIdTableFromVector({{I(8)}}));
+    EXPECT_EQ(join->getRootOperation()->runtimeInfo().status_ ==
+                  RuntimeInformation::Status::optimizedOut,
+              optimizedOut);
+  };
+  expectCount(true);
+  // The regular join evaluation gives the same count.
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::groupByDisableIndexScanOptimizations_>(true);
+  expectCount(false);
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarJoinNotOnFirstColumnFallsBack) {
+  // `?o` is the second column of both scans, so the metadata path does not
+  // apply; the regular join evaluation must still give the right count.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <p1> <a> . <y> <p1> <a> . <x> <p2> <a> . "
+                    "<z> <p2> <b> ."))};
+  auto qec = ctx.makeQec();
+  auto left = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s1"}, iri("<p1>"), Variable{"?o"}});
+  auto right = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s2"}, iri("<p2>"), Variable{"?o"}});
+  auto join = makeExecutionTree<Join>(&qec, left, right, 1, 1);
+  std::vector<Alias> aliases{
+      Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+            Variable{"?c"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, join};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(2)}}));
+  EXPECT_NE(join->getRootOperation()->runtimeInfo().status_,
+            RuntimeInformation::Status::optimizedOut);
 }
