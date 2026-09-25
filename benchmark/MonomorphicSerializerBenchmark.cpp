@@ -165,6 +165,10 @@ class PerfCounterMonitor {
 #endif
   }
 
+  // Owns raw perf fds: copying would double-close them.
+  PerfCounterMonitor(const PerfCounterMonitor&) = delete;
+  PerfCounterMonitor& operator=(const PerfCounterMonitor&) = delete;
+
   ~PerfCounterMonitor() noexcept {
 #ifdef __linux__
     if (fdCycles_ >= 0) close(fdCycles_);
