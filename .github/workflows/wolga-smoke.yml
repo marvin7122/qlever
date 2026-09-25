@@ -7,9 +7,12 @@ on:
   workflow_dispatch:
 
 # Least privilege: this smoke test only probes the runner machine and needs
-# no GitHub API access.
-permissions:
-  contents: read
+# neither the repository contents nor GitHub API access.
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   smoke:
