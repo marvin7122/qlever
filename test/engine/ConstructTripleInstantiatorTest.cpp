@@ -168,6 +168,31 @@ TEST(InstantiateTerm, PrecomputedBlankNodeUsesRowIdxTotal) {
 }
 
 // _____________________________________________________________________________
+TEST(EvaluatedTermRef, MoveLeavesSourceEmpty) {
+  EvaluatedTerm term = makeTerm("<http://example.org/x>");
+  EvaluatedTermRef source{term};
+
+  EvaluatedTermRef constructed{std::move(source)};
+  EXPECT_EQ(source.data_, nullptr);
+  EXPECT_EQ(source.keepAlive_, nullptr);
+  EXPECT_EQ(constructed.data_, term.get());
+  EXPECT_EQ(constructed.keepAlive_, term);
+
+  EvaluatedTermRef assigned;
+  assigned = std::move(constructed);
+  EXPECT_EQ(constructed.data_, nullptr);
+  EXPECT_EQ(constructed.keepAlive_, nullptr);
+  EXPECT_EQ(assigned.data_, term.get());
+  EXPECT_EQ(assigned.keepAlive_, term);
+
+  // Copies share ownership and leave the source intact.
+  EvaluatedTermRef copy{assigned};
+  EXPECT_EQ(copy.data_, term.get());
+  EXPECT_EQ(assigned.data_, term.get());
+  EXPECT_EQ(term.use_count(), 3);
+}
+
+// _____________________________________________________________________________
 TEST(InstantiateTerm, PrecomputedBlankNodeIgnoresBatchRowIdx) {
   // This test verifies that the `rowIdxTotal` parameter of `instantiateTerm`
   // determines the blank node Id value , not the `rowIdxInBatch` parameter.

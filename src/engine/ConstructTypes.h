@@ -13,12 +13,14 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "global/Id.h"
 #include "global/ValueId.h"
 #include "index/LocalVocab.h"
+#include "util/Exception.h"
 
 namespace qlever::constructExport {
 
@@ -77,8 +79,27 @@ struct EvaluatedTermRef {
   EvaluatedTermRef(const EvaluatedTerm& term)
       : data_{term.get()}, keepAlive_{term} {}
 
-  const EvaluatedTermData& operator*() const { return *data_; }
-  const EvaluatedTermData* operator->() const { return data_; }
+  EvaluatedTermRef(const EvaluatedTermRef&) = default;
+  EvaluatedTermRef& operator=(const EvaluatedTermRef&) = default;
+  // A moved-from ref no longer owns its term, so it must not keep pointing to
+  // it: reset `data_` to null.
+  EvaluatedTermRef(EvaluatedTermRef&& other) noexcept
+      : data_{std::exchange(other.data_, nullptr)},
+        keepAlive_{std::move(other.keepAlive_)} {}
+  EvaluatedTermRef& operator=(EvaluatedTermRef&& other) noexcept {
+    data_ = std::exchange(other.data_, nullptr);
+    keepAlive_ = std::move(other.keepAlive_);
+    return *this;
+  }
+
+  const EvaluatedTermData& operator*() const {
+    AD_EXPENSIVE_CHECK(data_ != nullptr);
+    return *data_;
+  }
+  const EvaluatedTermData* operator->() const {
+    AD_EXPENSIVE_CHECK(data_ != nullptr);
+    return data_;
+  }
 };
 
 // A constant (`Iri` or `Literal`) whose string value is fully known at
