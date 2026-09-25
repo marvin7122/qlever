@@ -4,6 +4,7 @@
 // 2020 - 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2022 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
 // 2024 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -228,7 +229,7 @@ void Server::run() {
                  static_cast<int>(numThreads_),
                  std::move(httpSessionHandler),
                  absl::bind_front(&Server::makeWebSocketSessionSupplier, this),
-                 ad_utility::MemorySize::megabytes(1),
+                 DEFAULT_LAZY_BODY_CHUNK_SIZE,
                  useSendZC};
 
   AD_LOG_INFO << "The server is ready, listening for requests on port "
