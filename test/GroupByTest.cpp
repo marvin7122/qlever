@@ -3653,4 +3653,14 @@ TEST_F(GroupByOptimizations, minMaxTwoVariableScanNotApplicable) {
     expectNotApplicable({}, {Alias{makeMinPimpl(o), Variable{"?out"}}},
                         std::move(scan));
   }
+  // A scan with three variables or with only one variable (both are rejected
+  // by the precondition that is shared with `computeGroupByObjectWithCount`).
+  expectNotApplicable(
+      {}, {Alias{makeMinPimpl(o), Variable{"?out"}}},
+      makeExecutionTree<IndexScan>(&qec, Permutation::SPO,
+                                   SparqlTripleSimple{s, Variable{"?p"}, o}));
+  expectNotApplicable({}, {Alias{makeMinPimpl(s), Variable{"?out"}}},
+                      makeExecutionTree<IndexScan>(
+                          &qec, Permutation::POS,
+                          SparqlTripleSimple{s, iri("<p1>"), iri("<a>")}));
 }
