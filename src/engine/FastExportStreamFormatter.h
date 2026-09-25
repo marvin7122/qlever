@@ -311,18 +311,19 @@ class FastExportStreamFormatter {
     size_t posSecondQuote = normLiteral.find('"', 1);
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
+    std::string_view content = normLiteral.substr(1, posLastQuote - 1);
 
-    // If no internal special chars, write directly
+    // If the content between the delimiting quotes has no special chars,
+    // write directly. Only the content is checked: the delimiting quotes are
+    // special characters themselves.
     if (posSecondQuote == posLastQuote &&
-        !detail::hasSpecialCharacters<detail::turtleSpecialTable>(
-            normLiteral)) {
+        !detail::hasSpecialCharacters<detail::turtleSpecialTable>(content)) {
       writeRaw(normLiteral);
       return;
     }
 
     // Write opening quote
     writeChar('"');
-    std::string_view content = normLiteral.substr(1, posLastQuote - 1);
     for (char c : content) {
       if (c == '\\') {
         writeRaw("\\\\");
