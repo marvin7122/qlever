@@ -409,7 +409,6 @@ addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpr
 
 addLinkAndDiscoverTest(ExceptionTest)
 
-
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
 addLinkAndDiscoverTest(NowDatetimeExpressionTest index)
