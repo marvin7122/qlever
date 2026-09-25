@@ -90,7 +90,7 @@ class AlignedBatchBuffer {
 
   void clear() noexcept { size_ = 0; }
 
-  void push_back(const T& val) noexcept {
+  void push_back(const T& val) {
     AD_CORRECTNESS_CHECK(size_ < capacity_);
     // Placement new starts the element lifetime in the raw storage (see
     // `reserve`); assignment through `T*` would not in C++17. This cannot
