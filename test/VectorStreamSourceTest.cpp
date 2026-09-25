@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "engine/export_v2/VectorStreamSource.h"
+#include "util/Exception.h"
 #include "util/IdTableHelpers.h"
 #include "util/IndexTestHelpers.h"
 
@@ -34,7 +35,7 @@ Pair makeEmptyBlock(size_t numColumns) {
 }
 
 std::vector<Pair> collect(const VectorStreamSource& source,
-                          std::vector<Pair>& blocks,
+                          const std::vector<Pair>& blocks,
                           ql::span<const EqualityFilter> filters = {}) {
   std::vector<Pair> result;
   source.run(
@@ -47,7 +48,7 @@ std::vector<Pair> collect(const VectorStreamSource& source,
 }
 
 TEST(VectorStreamSource, RejectsZeroRowsPerChunk) {
-  EXPECT_ANY_THROW(RowsPerChunk{0});
+  EXPECT_THROW(RowsPerChunk{0}, ad_utility::Exception);
 }
 
 TEST(VectorStreamSource, EmptyInputProducesNoChunks) {
@@ -125,16 +126,16 @@ TEST(VectorStreamSource, RejectsChangingSchemasAndInvalidFilterColumns) {
   std::vector<Pair> changingSchema;
   changingSchema.push_back(makeEmptyBlock(1));
   changingSchema.push_back(makeEmptyBlock(2));
-  EXPECT_ANY_THROW(collect(source, changingSchema));
+  EXPECT_THROW(collect(source, changingSchema), ad_utility::Exception);
 
   std::vector<Pair> oneColumn;
   oneColumn.push_back(makeEmptyBlock(1));
   const std::array filters{EqualityFilter{1, Id::makeFromInt(1)}};
-  EXPECT_ANY_THROW(collect(source, oneColumn, filters));
+  EXPECT_THROW(collect(source, oneColumn, filters), ad_utility::Exception);
 }
 
 TEST(VectorStreamSource, OutputOwnsLocalVocabEntriesFromEveryInputBlock) {
-  auto* qec = ad_utility::testing::getQec();
+  const auto* qec = ad_utility::testing::getQec();
   VectorStreamSource source{VectorStreamConfig{RowsPerChunk{2}}};
   std::vector<Pair> chunks;
   Id firstId;
