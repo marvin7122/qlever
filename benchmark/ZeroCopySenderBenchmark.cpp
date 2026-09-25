@@ -170,27 +170,37 @@ class SocketPairConnection {
     }
     ::close(listenFd);
 
+    // The tuning below must not leak the connected sockets on failure: close
+    // them before throwing (each message is built first, while errno is
+    // still from the failed call).
+    auto cleanupAndThrow = [this](std::string message) {
+      ::close(sendFd_);
+      ::close(recvFd_);
+      sendFd_ = -1;
+      recvFd_ = -1;
+      AD_THROW(std::move(message));
+    };
     int flag = 1;
     if (::setsockopt(sendFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) !=
         0) {
-      AD_THROW(absl::StrCat("setsockopt TCP_NODELAY failed: ",
-                            std::strerror(errno)));
+      cleanupAndThrow(absl::StrCat("setsockopt TCP_NODELAY failed: ",
+                                   std::strerror(errno)));
     }
     if (::setsockopt(recvFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) !=
         0) {
-      AD_THROW(absl::StrCat("setsockopt TCP_NODELAY failed: ",
-                            std::strerror(errno)));
+      cleanupAndThrow(absl::StrCat("setsockopt TCP_NODELAY failed: ",
+                                   std::strerror(errno)));
     }
 
     int bufSize = 4 * 1024 * 1024;
     if (::setsockopt(sendFd_, SOL_SOCKET, SO_SNDBUF, &bufSize,
                      sizeof(bufSize)) != 0) {
-      AD_THROW(
+      cleanupAndThrow(
           absl::StrCat("setsockopt SO_SNDBUF failed: ", std::strerror(errno)));
     }
     if (::setsockopt(recvFd_, SOL_SOCKET, SO_RCVBUF, &bufSize,
                      sizeof(bufSize)) != 0) {
-      AD_THROW(
+      cleanupAndThrow(
           absl::StrCat("setsockopt SO_RCVBUF failed: ", std::strerror(errno)));
     }
 
@@ -200,8 +210,8 @@ class SocketPairConnection {
     recvTimeout.tv_sec = 30;
     if (::setsockopt(recvFd_, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout,
                      sizeof(recvTimeout)) != 0) {
-      AD_THROW(absl::StrCat("setsockopt SO_RCVTIMEO failed: ",
-                            std::strerror(errno)));
+      cleanupAndThrow(absl::StrCat("setsockopt SO_RCVTIMEO failed: ",
+                                   std::strerror(errno)));
     }
   }
 
@@ -267,8 +277,11 @@ class ZeroCopySenderBenchmarkRunner {
       size_t totalBytes = kTotalSendSizeBytes,
       size_t chunkSize = kChunkSizeBytes)
       : totalBytes_{totalBytes}, chunkSize_{chunkSize} {
-    // `chunkSize_ == 0` would divide by zero in every benchmark method below.
+    // `chunkSize_ == 0` would divide by zero in every benchmark method below,
+    // and a non-multiple `totalBytes_` would silently truncate the remainder
+    // while the metrics still report the full size.
     AD_CONTRACT_CHECK(chunkSize_ > 0);
+    AD_CONTRACT_CHECK(totalBytes_ % chunkSize_ == 0);
     testPayload_.resize(chunkSize_);
     std::mt19937 rng(42);
     std::uniform_int_distribution<int> dist(0, 255);
@@ -313,9 +326,11 @@ class ZeroCopySenderBenchmarkRunner {
       bytesSent += chunkSize_;
     }
 
-    CpuTimes times = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
+    // Stop the timer after the receiver drained the data, so the wall time
+    // covers the full goodput (identical harness overhead in all paradigms).
+    CpuTimes times = timer.elapsed();
 
     return calculateMetric("1. Standard send() [Baseline]", times.wallSeconds,
                            times.cpuPercentage, bytesSent, numChunks);
@@ -334,6 +349,13 @@ class ZeroCopySenderBenchmarkRunner {
     config.useZeroCopy = false;
 
     ZeroCopySocketSender sender(config);
+    // The numbers below only measure the io_uring path when the ring is
+    // actually up; otherwise the sender transparently falls back.
+    if (!sender.isRingInitialized()) {
+      std::cerr << "warning: io_uring unavailable, run 2 measures the "
+                   "synchronous fallback instead of io_uring sends"
+                << std::endl;
+    }
 
     // Background receiver thread. `JThread` joins on destruction (with the
     // receive timeout from `SocketPairConnection` as a backstop), so a sender
@@ -354,14 +376,17 @@ class ZeroCopySenderBenchmarkRunner {
     for (size_t i = 0; i < numChunks; ++i) {
       uint32_t slot = sender.acquireBuffer();
       auto span = sender.getSlotSpan(slot);
+      AD_CONTRACT_CHECK(span.size() >= chunkSize_);
       std::memcpy(span.data(), testPayload_.data(), chunkSize_);
       sender.sendChunk(conn.sendFd(), slot, chunkSize_);
     }
 
     sender.flushAndDrainAll();
-    CpuTimes times = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
+    // Stop the timer after the receiver drained the data, so the wall time
+    // covers the full goodput (identical harness overhead in all paradigms).
+    CpuTimes times = timer.elapsed();
 
     return calculateMetric("2. io_uring Standard Send (Unpinned)",
                            times.wallSeconds, times.cpuPercentage, totalBytes_,
@@ -381,6 +406,18 @@ class ZeroCopySenderBenchmarkRunner {
     config.useZeroCopy = true;
 
     ZeroCopySocketSender sender(config);
+    // The numbers below only measure zero-copy sends when the ring and the
+    // buffer registration are actually up; otherwise the sender
+    // transparently falls back.
+    if (!sender.isRingInitialized()) {
+      std::cerr << "warning: io_uring unavailable, run 3 measures the "
+                   "synchronous fallback instead of SEND_ZC"
+                << std::endl;
+    } else if (!sender.isBuffersRegistered()) {
+      std::cerr << "warning: buffer registration unavailable, run 3 measures "
+                   "unpinned sends instead of SEND_ZC"
+                << std::endl;
+    }
 
     // Background receiver thread. `JThread` joins on destruction (with the
     // receive timeout from `SocketPairConnection` as a backstop), so a sender
@@ -401,17 +438,21 @@ class ZeroCopySenderBenchmarkRunner {
     for (size_t i = 0; i < numChunks; ++i) {
       uint32_t slot = sender.acquireBuffer();
       auto span = sender.getSlotSpan(slot);
+      AD_CONTRACT_CHECK(span.size() >= chunkSize_);
       std::memcpy(span.data(), testPayload_.data(), chunkSize_);
       sender.sendChunk(conn.sendFd(), slot, chunkSize_);
     }
 
     sender.flushAndDrainAll();
-    CpuTimes times = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
+    // Stop the timer after the receiver drained the data, so the wall time
+    // covers the full goodput (identical harness overhead in all paradigms).
+    CpuTimes times = timer.elapsed();
 
     return calculateMetric("3. io_uring SEND_ZC (Registered Fixed Buffers)",
-                           wallSec, cpuPercent, totalBytes_, numChunks);
+                           times.wallSeconds, times.cpuPercentage, totalBytes_,
+                           numChunks);
   }
 
  private:
@@ -453,9 +494,10 @@ void printResultsTable(std::vector<BenchmarkMetric>& results) {
                "===========================================\n";
   std::cout << "  BENCHMARK: 100MB Socket Transmission (Zero-Copy Send vs "
                "io_uring vs Synchronous Send)\n";
-  std::cout
-      << "  Payload: 104,857,600 bytes | Chunk Size: 64 KB | Total Operations: "
-      << (kTotalSendSizeBytes / kChunkSizeBytes) << "\n";
+  std::cout << "  Payload: " << kTotalSendSizeBytes
+            << " bytes | Chunk Size: " << kChunkSizeBytes
+            << " bytes | Total Operations: "
+            << (kTotalSendSizeBytes / kChunkSizeBytes) << "\n";
   std::cout << "==============================================================="
                "=========================================\n";
   std::cout << std::left << std::setw(48) << "Socket Transmission Paradigm"
