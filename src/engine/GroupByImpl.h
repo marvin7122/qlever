@@ -1,7 +1,8 @@
-// Copyright 2018 - 2024, University of Freiburg
+// Copyright 2018 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures.
 // Authors: Florian Kramer [2018]
 //          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
@@ -241,18 +242,20 @@ class GroupByImpl : public Operation {
   // (implicit) group.
   std::optional<IdTable> computeCountStar() const;
 
-  // `SELECT (MIN(?v) AS ?m)` or `SELECT (MAX(?v) AS ?m)` over a two-variable
-  // index scan with one bound column. Uses the sorted distinct col1 IDs of
-  // the permutation that stores `?v` in column 1. Empty input yields UNDEF.
+  // Compute a single `MIN(?v)` or `MAX(?v)` without `GROUP BY` when the child
+  // is a two-variable `IndexScan` whose column 0 is bound (e.g.
+  // `?s <p> ?v`), from the distinct values of `?v` in the permutation that
+  // stores `?v` in column 1. Return `UNDEF` if the scan is empty, and
+  // `std::nullopt` if the query or the scan has a different shape, the scan
+  // has a `LIMIT`/`OFFSET`, or there are delta triples.
   std::optional<IdTable> computeMinMaxForSingleIndexScan() const;
 
-  // Shared eligibility shape ("shape catalog" entry) for the optimizations
-  // that answer an aggregate over a two-variable index scan with a bound
-  // first column and no graph filtering: `computeGroupByObjectWithCount` and
-  // `computeMinMaxForSingleIndexScan`. Returns the scan together with the
-  // bound `col0` ID, or `nullopt` when the child has a different shape.
-  // Aggregate-specific checks (e.g. the form of the aliases or `LIMIT`
-  // handling) stay with the individual callers.
+  // Return the child `IndexScan` (shared with `_subtree`) together with the
+  // `Id` of its bound column 0 if the child is a two-variable `IndexScan`
+  // without graph filtering, and `std::nullopt` otherwise. This is the common
+  // precondition of `computeGroupByObjectWithCount` and
+  // `computeMinMaxForSingleIndexScan`; checks that depend on the aggregate
+  // (e.g. the aliases or `LIMIT` handling) stay with the callers.
   std::optional<std::pair<std::shared_ptr<IndexScan>, Id>>
   getTwoVariableScanWithBoundCol0() const;
 

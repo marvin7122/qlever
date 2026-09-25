@@ -1,7 +1,8 @@
-// Copyright 2018 - 2025, University of Freiburg
+// Copyright 2018 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
 // Authors: Florian Kramer [2018 - 2020]
 //          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
@@ -911,17 +912,18 @@ std::optional<IdTable> GroupByImpl::computeGroupByForSingleIndexScan() const {
 // _____________________________________________________________________________
 std::optional<std::pair<std::shared_ptr<IndexScan>, Id>>
 GroupByImpl::getTwoVariableScanWithBoundCol0() const {
-  // The child must be an `IndexScan` with exactly two variables and no graph
-  // filtering.
+  // Require an `IndexScan` with exactly two variables and no graph filtering.
   auto indexScan =
       std::dynamic_pointer_cast<IndexScan>(_subtree->getRootOperation());
   if (!indexScan || !indexScan->graphsToFilter().areAllGraphsAllowed() ||
       indexScan->numVariables() != 2) {
     return std::nullopt;
   }
-  // The first column of the scan must be bound to a concrete ID.
+  // Require column 0 of the scan's permutation (its only bound column) to map
+  // to an `Id`. Otherwise (e.g. an IRI that is not in the vocabulary), leave
+  // the query to the general path.
   const auto& permutedTriple = indexScan->getPermutedTriple();
-  std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
+  const std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
   if (!col0Id.has_value()) {
     return std::nullopt;
   }
@@ -930,7 +932,7 @@ GroupByImpl::getTwoVariableScanWithBoundCol0() const {
 
 // ____________________________________________________________________________
 std::optional<IdTable> GroupByImpl::computeGroupByObjectWithCount() const {
-  auto scanAndCol0 = getTwoVariableScanWithBoundCol0();
+  const auto scanAndCol0 = getTwoVariableScanWithBoundCol0();
   if (!scanAndCol0.has_value()) {
     return std::nullopt;
   }
@@ -1990,8 +1992,12 @@ std::unique_ptr<Operation> GroupByImpl::cloneImpl() const {
 
 // _____________________________________________________________________________
 namespace {
-// Return the permutation in which `col0` stays bound and `wantedCol1` is
-// stored in column 1, or nullopt if no such permutation exists.
+// Return the permutation that keeps the bound column of the two-variable
+// `scan` in column 0 and stores `wantedCol1` in column 1, or `std::nullopt`
+// if `wantedCol1` is not a variable of `scan`. The name of a permutation lists
+// its columns in order, e.g. `OSP` stores the object in column 0 and the
+// subject in column 1. A scan with a bound subject or object is only possible
+// if all six permutations are loaded, so each returned permutation exists.
 std::optional<Permutation::Enum> permutationWithWantedCol1(
     const IndexScan& scan, const Variable& wantedCol1) {
   const bool predBound = !scan.predicate().isVariable();
@@ -2024,40 +2030,70 @@ std::optional<Permutation::Enum> permutationWithWantedCol1(
   }
   return std::nullopt;
 }
+
+// Return the smallest (`isMin`) or the largest of the `ids`, or `UNDEF` if
+// `ids` is empty (the SPARQL result of `MIN` and `MAX` over an empty group).
+// Values of incompatible datatypes are ordered by their datatype, exactly like
+// in the general `MIN`/`MAX` path (`compareIdsOrStrings` with
+// `CompareByType`). The `ids` are sorted by their bit representation, which
+// is not this order (e.g. for mixed `Int` and `Double` values), so all of them
+// are inspected.
+Id minOrMaxId(ql::span<const Id> ids, bool isMin) {
+  if (ids.empty()) {
+    return Id::makeUndefined();
+  }
+  auto isLess = [](Id a, Id b) {
+    using namespace valueIdComparators;
+    return compareIds<ComparisonForIncompatibleTypes::CompareByType>(
+               a, b, Comparison::LT) == ComparisonResult::True;
+  };
+  return isMin ? *ql::ranges::min_element(ids, isLess)
+               : *ql::ranges::max_element(ids, isLess);
+}
 }  // namespace
 
 // _____________________________________________________________________________
 std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
+  // Require a single `MIN(?v)` or `MAX(?v)` without `GROUP BY`. Only a plain
+  // variable argument can be answered from the stored `Id`s of that variable
+  // (e.g. `MIN(?v + 1)` cannot).
   if (!_groupByVariables.empty() || _aliases.size() != 1) {
     return std::nullopt;
   }
-  const auto* expr = _aliases.front()._expression.getPimpl();
-  const bool isMin =
-      dynamic_cast<const sparqlExpression::MinExpression*>(expr) != nullptr;
-  const bool isMax =
-      dynamic_cast<const sparqlExpression::MaxExpression*>(expr) != nullptr;
+  const auto* aggregate = _aliases.front()._expression.getPimpl();
+  const bool isMin = dynamic_cast<const sparqlExpression::MinExpression*>(
+                         aggregate) != nullptr;
+  const bool isMax = dynamic_cast<const sparqlExpression::MaxExpression*>(
+                         aggregate) != nullptr;
   if (!isMin && !isMax) {
     return std::nullopt;
   }
-  auto children = expr->children();
-  if (children.size() != 1) {
+  const auto arguments = aggregate->children();
+  if (arguments.size() != 1) {
     return std::nullopt;
   }
-  auto wantedVar = children[0]->getVariableOrNullopt();
-  if (!wantedVar.has_value()) {
+  const auto aggregatedVariable = arguments[0]->getVariableOrNullopt();
+  if (!aggregatedVariable.has_value()) {
     return std::nullopt;
   }
 
-  auto scanAndCol0 = getTwoVariableScanWithBoundCol0();
+  const auto scanAndCol0 = getTwoVariableScanWithBoundCol0();
   if (!scanAndCol0.has_value()) {
     return std::nullopt;
   }
   const auto& [indexScan, col0Id] = scanAndCol0.value();
+  // Only handle the plain scan: `getDistinctCol1IdsAndCounts` would apply a
+  // `LIMIT`/`OFFSET` to the distinct values instead of the scanned rows, and
+  // additional columns (e.g. from a `GRAPH` clause) are not handled here.
   if (!indexScan->additionalVariables().empty() ||
       !indexScan->getLimitOffset().isUnconstrained()) {
     return std::nullopt;
   }
 
+  // The target permutation is taken from the base index, so a scan of a
+  // materialized view must not be redirected. With delta triples from SPARQL
+  // updates, conservatively leave the query to the general path, like
+  // `computeGroupByForSingleIndexScan` does for distinct counts.
   const auto& locTriples =
       indexScan->permutation().getLocatedTriplesForPermutation(
           locatedTriplesState());
@@ -2066,45 +2102,26 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
     return std::nullopt;
   }
 
-  auto targetPermutation =
-      permutationWithWantedCol1(*indexScan, wantedVar.value());
+  const auto targetPermutation =
+      permutationWithWantedCol1(*indexScan, aggregatedVariable.value());
   if (!targetPermutation.has_value()) {
     return std::nullopt;
   }
 
-  const auto& permutation =
+  // The bound column of the scan stays column 0 of `targetPermutation`, so
+  // `col0Id` selects the same triples there.
+  const auto& permutationWithVariableInCol1 =
       getIndex().getImpl().getPermutation(targetPermutation.value());
-  auto distinctIds = permutation.getDistinctCol1IdsAndCounts(
-      col0Id, cancellationHandle_, locatedTriplesState(),
-      indexScan->getLimitOffset());
+  const IdTable distinctValuesAndCounts =
+      permutationWithVariableInCol1.getDistinctCol1IdsAndCounts(
+          col0Id, cancellationHandle_, locatedTriplesState(),
+          indexScan->getLimitOffset());
 
   indexScan->updateRuntimeInformationWhenOptimizedOut({});
 
-  IdTable table{1, getExecutionContext()->getAllocator()};
-  if (distinctIds.empty()) {
-    table.push_back({Id::makeUndefined()});
-  } else {
-    Id value = distinctIds(0, 0);
-    const auto cmp = isMin ? valueIdComparators::Comparison::LT
-                           : valueIdComparators::Comparison::GT;
-    // Incompatible datatypes are ordered by their datatype, exactly like the
-    // general `MIN`/`MAX` aggregate path (`compareIdsOrStrings` with
-    // `CompareByType`). This also makes the fold independent of the input
-    // order. The default `AlwaysUndef` would instead keep the first value
-    // whenever the datatypes are incompatible, which diverges from the
-    // general path as soon as the values have mixed datatypes.
-    using enum valueIdComparators::ComparisonForIncompatibleTypes;
-    for (size_t row = 1; row < distinctIds.numRows(); ++row) {
-      const Id candidate = distinctIds(row, 0);
-      if (valueIdComparators::compareIds<CompareByType>(candidate, value,
-                                                        cmp) ==
-          valueIdComparators::ComparisonResult::True) {
-        value = candidate;
-      }
-    }
-    table.push_back({value});
-  }
-  return table;
+  IdTable result{1, getExecutionContext()->getAllocator()};
+  result.push_back({minOrMaxId(distinctValuesAndCounts.getColumn(0), isMin)});
+  return result;
 }
 
 // _____________________________________________________________________________
