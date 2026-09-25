@@ -23,7 +23,7 @@ TEST(SimdEscapeClassifierTest, scanChunk32And16Turtle) {
   // Test clean 32-byte chunk
   std::string clean32 = "01234567890123456789012345678901";
   auto maskClean =
-      SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(clean32.data());
+      SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(clean32);
   EXPECT_TRUE(maskClean.isAllClean());
   EXPECT_FALSE(maskClean.hasEscape());
   EXPECT_EQ(maskClean.rawMask(), 0u);
@@ -35,8 +35,7 @@ TEST(SimdEscapeClassifierTest, scanChunk32And16Turtle) {
     for (char escapeChar : {'"', '\\', '\n', '\r'}) {
       std::string text = clean32;
       text[pos] = escapeChar;
-      auto mask =
-          SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(text.data());
+      auto mask = SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(text);
       EXPECT_TRUE(mask.hasEscape());
       EXPECT_EQ(mask.rawMask(), 1u << pos);
       EXPECT_EQ(mask.countEscapes(), 1u);
@@ -49,8 +48,8 @@ TEST(SimdEscapeClassifierTest, scanChunk32And16Turtle) {
   multiEscape[0] = '"';
   multiEscape[5] = '\\';
   multiEscape[31] = '\n';
-  auto maskMulti = SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(
-      multiEscape.data());
+  auto maskMulti =
+      SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(multiEscape);
   EXPECT_TRUE(maskMulti.hasEscape());
   EXPECT_EQ(maskMulti.rawMask(), (1u << 0) | (1u << 5) | (1u << 31));
   EXPECT_EQ(maskMulti.countEscapes(), 3u);
@@ -59,17 +58,38 @@ TEST(SimdEscapeClassifierTest, scanChunk32And16Turtle) {
   // Test 16-byte chunk
   std::string clean16 = "0123456789012345";
   auto mask16Clean =
-      SimdEscapeClassifier::scanChunk16<EscapeFormat::Turtle>(clean16.data());
+      SimdEscapeClassifier::scanChunk16<EscapeFormat::Turtle>(clean16);
   EXPECT_TRUE(mask16Clean.isAllClean());
   EXPECT_EQ(mask16Clean.countEscapes(), 0u);
 
   std::string escape16 = clean16;
   escape16[15] = '"';
   auto mask16 =
-      SimdEscapeClassifier::scanChunk16<EscapeFormat::Turtle>(escape16.data());
+      SimdEscapeClassifier::scanChunk16<EscapeFormat::Turtle>(escape16);
   EXPECT_TRUE(mask16.hasEscape());
   EXPECT_EQ(mask16.rawMask(), 1u << 15);
   EXPECT_EQ(mask16.firstEscapeIndex(), 15u);
+}
+
+// _____________________________________________________________________________
+TEST(SimdEscapeClassifierTest, scanChunkRequiresFullChunk) {
+  // A chunk longer than the scan width is fine: only the prefix is scanned.
+  std::string text(40, 'a');
+  text[35] = '"';
+  EXPECT_TRUE(SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(text)
+                  .isAllClean());
+  EXPECT_TRUE(SimdEscapeClassifier::scanChunk16<EscapeFormat::Turtle>(text)
+                  .isAllClean());
+
+  // Shorter inputs would make the vector kernels read out of bounds.
+  std::string shortText(31, 'a');
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      (void)SimdEscapeClassifier::scanChunk32<EscapeFormat::Turtle>(shortText),
+      ::testing::HasSubstr("chunk.size() >= 32"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      (void)SimdEscapeClassifier::scanChunk16<EscapeFormat::Turtle>(
+          std::string_view{shortText}.substr(0, 15)),
+      ::testing::HasSubstr("chunk.size() >= 16"));
 }
 
 // ___________________________________________________________________________
@@ -207,11 +227,11 @@ TEST(SimdEscapeClassifierTest, utf8Preservation) {
 template <EscapeFormat Format>
 static void expectVectorAndScalarScansAgree(const std::string& text) {
   for (size_t offset = 0; offset + 32 <= text.size(); ++offset) {
-    const char* chunk = text.data() + offset;
+    std::string_view chunk = std::string_view{text}.substr(offset, 32);
     EXPECT_EQ(SimdEscapeClassifier::scanChunk32<Format>(chunk).rawMask(),
-              detail::scanChunk32Scalar<Format>(chunk));
+              detail::scanChunk32Scalar<Format>(chunk.data()));
     EXPECT_EQ(SimdEscapeClassifier::scanChunk16<Format>(chunk).rawMask(),
-              detail::scanChunk16Scalar<Format>(chunk));
+              detail::scanChunk16Scalar<Format>(chunk.data()));
   }
 }
 

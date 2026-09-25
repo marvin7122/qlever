@@ -324,31 +324,31 @@ template <EscapeFormat Format>
 class SimdEscapeClassifier {
  public:
   // ___________________________________________________________________________
-  // Classify a 32-byte unaligned memory slice and return a 32-bit bitmask.
+  // Classify the first 32 bytes of `chunk` and return a 32-bit bitmask (bit `i`
+  // is set iff `chunk[i]` must be escaped). The vector kernel always loads 32
+  // bytes, so `chunk` must hold at least 32 bytes (checked). Raw pointers are
+  // rejected at compile time, because their implicit conversion to
+  // `std::string_view` would silently scan up to the first NUL byte.
   template <EscapeFormat Format = EscapeFormat::Turtle>
   [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32(
-      const char* data) noexcept {
-#if defined(QLEVER_SIMD_X86)
-    // The AVX2 kernel is compiled for any x86 host; only run it where the
-    // CPU supports it (see `cpuSupportsAvx2`).
-    if (cpuSupportsAvx2()) {
-      return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
-    }
-#endif
-    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
+      std::string_view chunk) {
+    AD_CONTRACT_CHECK(chunk.size() >= 32);
+    return scanChunk32Unchecked<Format>(chunk.data());
   }
+  template <EscapeFormat Format = EscapeFormat::Turtle>
+  static ChunkEscapeMask32 scanChunk32(const char* data) = delete;
 
   // ___________________________________________________________________________
-  // Classify a 16-byte unaligned memory slice and return a 16-bit bitmask.
+  // Classify the first 16 bytes of `chunk` and return a 16-bit bitmask. `chunk`
+  // must hold at least 16 bytes (checked).
   template <EscapeFormat Format = EscapeFormat::Turtle>
   [[nodiscard]] static inline ChunkEscapeMask16 scanChunk16(
-      const char* data) noexcept {
-#if defined(QLEVER_SIMD_SSE2)
-    return ChunkEscapeMask16{detail::scanChunk16Sse2<Format>(data)};
-#else
-    return ChunkEscapeMask16{detail::scanChunk16Scalar<Format>(data)};
-#endif
+      std::string_view chunk) {
+    AD_CONTRACT_CHECK(chunk.size() >= 16);
+    return scanChunk16Unchecked<Format>(chunk.data());
   }
+  template <EscapeFormat Format = EscapeFormat::Turtle>
+  static ChunkEscapeMask16 scanChunk16(const char* data) = delete;
 
   // ___________________________________________________________________________
   // Check whether a single character requires escaping in the specified format.
@@ -370,7 +370,7 @@ class SimdEscapeClassifier {
 #if defined(QLEVER_SIMD_X86)
     // Fast path: 32-byte AVX2 vector blocks
     while (len >= 32) {
-      ChunkEscapeMask32 mask = scanChunk32<Format>(ptr);
+      ChunkEscapeMask32 mask = scanChunk32Unchecked<Format>(ptr);
       if (mask.hasEscape()) {
         return offset + mask.firstEscapeIndex();
       }
@@ -381,7 +381,7 @@ class SimdEscapeClassifier {
 
     // Secondary path: 16-byte SSE2 vector block
     if (len >= 16) {
-      ChunkEscapeMask16 mask = scanChunk16<Format>(ptr);
+      ChunkEscapeMask16 mask = scanChunk16Unchecked<Format>(ptr);
       if (mask.hasEscape()) {
         return offset + mask.firstEscapeIndex();
       }
@@ -421,7 +421,7 @@ class SimdEscapeClassifier {
     size_t maskIdx = 0;
 
     while (len >= 32 && maskIdx < outMasks.size()) {
-      outMasks[maskIdx++] = scanChunk32<Format>(ptr).rawMask();
+      outMasks[maskIdx++] = scanChunk32Unchecked<Format>(ptr).rawMask();
       ptr += 32;
       len -= 32;
     }
@@ -461,7 +461,7 @@ class SimdEscapeClassifier {
 
 #if defined(QLEVER_SIMD_X86)
     while (len >= 32) {
-      uint32_t mask = scanChunk32<Format>(ptr).rawMask();
+      uint32_t mask = scanChunk32Unchecked<Format>(ptr).rawMask();
       if (mask == 0) {
         // Zero-escape fast path: 32 raw bytes copied with single vector
         // instruction
@@ -576,6 +576,36 @@ class SimdEscapeClassifier {
     }
     result.resize(static_cast<size_t>(out - result.data()));
     return result;
+  }
+
+ private:
+  // ___________________________________________________________________________
+  // Classify the 32 bytes at `data`. Precondition: `[data, data + 32)` is
+  // readable; the callers above guarantee this by their loop bounds.
+  template <EscapeFormat Format = EscapeFormat::Turtle>
+  [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32Unchecked(
+      const char* data) noexcept {
+#if defined(QLEVER_SIMD_X86)
+    // The AVX2 kernel is compiled for any x86 host; only run it where the
+    // CPU supports it (see `cpuSupportsAvx2`).
+    if (cpuSupportsAvx2()) {
+      return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    }
+#endif
+    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
+  }
+
+  // ___________________________________________________________________________
+  // Classify the 16 bytes at `data`. Precondition: `[data, data + 16)` is
+  // readable.
+  template <EscapeFormat Format = EscapeFormat::Turtle>
+  [[nodiscard]] static inline ChunkEscapeMask16 scanChunk16Unchecked(
+      const char* data) noexcept {
+#if defined(QLEVER_SIMD_SSE2)
+    return ChunkEscapeMask16{detail::scanChunk16Sse2<Format>(data)};
+#else
+    return ChunkEscapeMask16{detail::scanChunk16Scalar<Format>(data)};
+#endif
   }
 };
 
