@@ -2125,7 +2125,10 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
   // block are in the same segment, then so are all the `Id`s of that block,
   // and the block contributes either all or none of its rows. Only the few
   // blocks that straddle a segment boundary have to be decompressed.
-  const auto literalRange = vocab.prefixRanges("\"").ranges()[0];
+  const auto literalRanges = vocab.prefixRanges("\"").ranges();
+  // The segments below require the literals to form a single range.
+  static_assert(std::tuple_size_v<std::decay_t<decltype(literalRanges)>> == 1);
+  const auto& literalRange = literalRanges[0];
   auto segment = [&literalRange](Id id) {
     int subSegment = 0;
     if (id.getDatatype() == Datatype::VocabIndex) {
