@@ -1,5 +1,5 @@
 // Copyright 2025-2026 The QLever Authors, in particular:
-// 2026 Marvin Stoetzel <marvin.stoetzel@email.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 // 2025-2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
@@ -75,8 +75,17 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
         AD_CONTRACT_CHECK(!indices.empty());
         if constexpr (detail::HasLookupBatchWithBuilder_v<
                           std::decay_t<decltype(vocab)>>) {
-          vocab.lookupBatch(indices, builder);
-          return std::move(builder).finalize();
+          if constexpr (std::is_void_v<decltype(vocab.lookupBatch(indices,
+                                                                  builder))>) {
+            // Fill-only protocol: the words were decoded into `builder`.
+            vocab.lookupBatch(indices, builder);
+            return std::move(builder).finalize();
+          } else {
+            // The alternative already finalized `builder` (for example
+            // `UnicodeVocabulary`); finalizing it again would read a
+            // moved-from builder.
+            return vocab.lookupBatch(indices, builder);
+          }
         } else {
           // No batched leaf for the active alternative: reuse the
           // single-shot batch path and copy the words into the caller's
