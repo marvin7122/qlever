@@ -31,6 +31,7 @@
 #include "engine/ScatterGatherArenaStreamer.h"
 #include "util/Exception.h"
 #include "util/Log.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 #include "util/Timer.h"
 
 // Optional inclusion of QLever benchmark infrastructure
@@ -249,6 +250,10 @@ class ScatterGatherBenchmarkRunner {
     if (nullFd < 0) {
       AD_THROW("Failed to open /dev/null");
     }
+    // Close the descriptor on every exit path, including exceptions.
+    auto closeNullFd =
+        ad_utility::makeOnDestructionDontThrowDuringStackUnwinding(
+            [nullFd]() { ::close(nullFd); });
 
     const size_t n = arena.numTriples();
     ScatterGatherConfig config;
@@ -283,7 +288,6 @@ class ScatterGatherBenchmarkRunner {
 
     auto summary = std::move(streamer).finalize();
     auto endTime = std::chrono::steady_clock::now();
-    ::close(nullFd);
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();

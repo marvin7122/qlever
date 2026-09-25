@@ -21,8 +21,10 @@
 #include "engine/AsyncChunkPipeline.h"
 #include "util/Exception.h"
 #include "util/Log.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 #include "util/Random.h"
 #include "util/Timer.h"
+#include "util/jthread.h"
 
 namespace ad_benchmark {
 
@@ -150,7 +152,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
     // Spawn background worker to generate chunks concurrently into Slot 2.
-    std::thread producerThread(
+    ad_utility::JThread producerThread(
         [pipeline, numChunks, chunkSize, totalTriples = totalTriples_]() {
           try {
             for (size_t c = 0; c < numChunks; ++c) {
@@ -169,6 +171,11 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
             pipeline->setException(std::current_exception());
           }
         });
+    // If the consumer loop below throws, unblock the producer so that the
+    // destructor of `producerThread` can join it.
+    auto cancelOnExit =
+        ad_utility::makeOnDestructionDontThrowDuringStackUnwinding(
+            [&pipeline]() { pipeline->cancel(); });
 
     // Consumer loop: transmits chunks over simulated network socket.
     size_t totalBytes = 0;

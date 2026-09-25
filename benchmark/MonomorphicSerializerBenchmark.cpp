@@ -152,6 +152,8 @@ class PerfCounterMonitor {
     isAvailable_ = (fdCycles_ >= 0 && fdInstructions_ >= 0 && fdBranches_ >= 0);
 #endif
   }
+  PerfCounterMonitor(const PerfCounterMonitor&) = delete;
+  PerfCounterMonitor& operator=(const PerfCounterMonitor&) = delete;
 
   ~PerfCounterMonitor() noexcept {
 #ifdef __linux__

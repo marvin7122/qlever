@@ -62,6 +62,8 @@ class HardwarePerfCounter {
     isSupported_ = (branchFd_ >= 0 && missFd_ >= 0);
 #endif
   }
+  HardwarePerfCounter(const HardwarePerfCounter&) = delete;
+  HardwarePerfCounter& operator=(const HardwarePerfCounter&) = delete;
 
   ~HardwarePerfCounter() {
 #if defined(__linux__)

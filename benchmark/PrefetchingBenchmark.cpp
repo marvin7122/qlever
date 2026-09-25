@@ -154,6 +154,9 @@ class HardwarePerformanceMonitor {
     supported_ = false;
 #endif
   }
+  HardwarePerformanceMonitor(const HardwarePerformanceMonitor&) = delete;
+  HardwarePerformanceMonitor& operator=(const HardwarePerformanceMonitor&) =
+      delete;
 
   ~HardwarePerformanceMonitor() {
 #if defined(__linux__)
@@ -243,7 +246,6 @@ class PrefetchingBenchmark : public BenchmarkInterface {
 
   CompactVectorOfStrings<char> vocabWords_;
   std::vector<Id> lookupIds_;
-  std::vector<size_t> lookupPositions_;
 
  public:
   PrefetchingBenchmark() { setupSyntheticVocabulary(); }
@@ -279,13 +281,11 @@ class PrefetchingBenchmark : public BenchmarkInterface {
     std::uniform_int_distribution<uint64_t> dist(0, NUM_VOCAB_ENTRIES - 1);
 
     lookupIds_.reserve(NUM_LOOKUP_IDS);
-    lookupPositions_.reserve(NUM_LOOKUP_IDS);
 
     for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
       uint64_t vocabIndex = dist(rng);
       lookupIds_.push_back(
           Id::makeFromVocabIndex(VocabIndex::make(vocabIndex)));
-      lookupPositions_.push_back(i);
     }
   }
 

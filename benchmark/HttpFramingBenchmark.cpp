@@ -30,6 +30,7 @@
 #include "engine/InPlaceHttpChunkFraming.h"
 #include "util/Exception.h"
 #include "util/Log.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 
 #if __has_include("../benchmark/infrastructure/Benchmark.h")
 #include "../benchmark/infrastructure/Benchmark.h"
@@ -321,6 +322,10 @@ class HttpFramingBenchmarkRunner {
     if (nullFd < 0) {
       AD_THROW("Failed to open /dev/null for transmission benchmark");
     }
+    // Close the descriptor on every exit path, including exceptions.
+    auto closeNullFd =
+        ad_utility::makeOnDestructionDontThrowDuringStackUnwinding(
+            [nullFd]() { ::close(nullFd); });
 
     const size_t totalStreamBytes = streamGen.totalBytes();
     const char* src = streamGen.data();
@@ -358,7 +363,6 @@ class HttpFramingBenchmarkRunner {
     ++chunksEmitted;
 
     auto endTime = std::chrono::steady_clock::now();
-    ::close(nullFd);
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
