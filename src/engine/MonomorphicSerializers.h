@@ -164,7 +164,7 @@ namespace detail {
 
 // Double / Float serialization without dynamic allocation
 template <typename Writer>
-inline void writeFormattedDouble(Writer& writer, double val) noexcept {
+inline void writeFormattedDouble(Writer& writer, double val) {
   std::array<char, 32> buffer;
   char* end =
       ad_utility::formatDoubleToBuffer(val, buffer.data(), buffer.size());
@@ -283,7 +283,7 @@ struct MonomorphicCellWriter {
 
 // Delimiter emitter helper
 template <ExportFormat Format, typename Writer>
-inline void writeColumnDelimiter(Writer& writer) noexcept {
+inline void writeColumnDelimiter(Writer& writer) {
   if constexpr (Format == ExportFormat::Csv) {
     writer.writeChar(',');
   } else if constexpr (Format == ExportFormat::Tsv) {
@@ -296,7 +296,7 @@ inline void writeColumnDelimiter(Writer& writer) noexcept {
 
 // Row terminator emitter helper
 template <ExportFormat Format, typename Writer>
-inline void writeRowTerminator(Writer& writer) noexcept {
+inline void writeRowTerminator(Writer& writer) {
   if constexpr (Format == ExportFormat::Turtle ||
                 Format == ExportFormat::NTriples) {
     writer.writeRaw(" .\n");

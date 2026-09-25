@@ -217,3 +217,15 @@ TEST(FastExportStreamFormatterTest, StreamingFlushEmitsChunk) {
   EXPECT_EQ(summary.chunksEmitted_, 2u);
   EXPECT_THAT(chunks, ::testing::ElementsAre("abc", "de"));
 }
+
+// _____________________________________________________________________________
+TEST(MonomorphicSerializersTest, FixedSpanOverflowPropagatesException) {
+  // The row terminator no longer fits, the overflow exception must reach the
+  // caller instead of terminating inside a `noexcept` helper.
+  std::array<char, 3> buffer{};
+  FastExportStreamFormatter formatter{ql::span<char>{buffer}};
+  using Serializer = MonomorphicRowSerializer<ColumnType::Iri>;
+  EXPECT_ANY_THROW(Serializer::serializeRow<ExportFormat::Csv>(
+      formatter, std::string_view{"<a>"}));
+  EXPECT_EQ(formatter.currentChunk(), "<a>");
+}
