@@ -1,6 +1,11 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #pragma once
 
@@ -22,6 +27,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "util/Exception.h"
@@ -29,18 +35,21 @@
 
 namespace ad_utility::export_v2 {
 
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
 // Lifecycle & Morsel Status Enums
-// -----------------------------------------------------------------------------
 
 /// State machine states for an export session.
 enum class SessionState {
-  PrimaryOnly,  // Only primary coordinator executes morsels (helpers disabled
-                // or foreground queries > 1)
-  HelpersEligible,  // Helpers may be leased to execute morsels in parallel
-  Revoking,  // Foreground load arrived while helpers were active; waiting for
-             // active leases to drain
-  Closed     // Session finished or cancelled; no new work accepted
+  // Only the primary coordinator executes morsels, because the foreground
+  // query count exceeds `maxForegroundQueriesForHelperAdmission`.
+  PrimaryOnly,
+  // Helpers may be leased to execute morsels in parallel.
+  HelpersEligible,
+  // Foreground load crossed the admission threshold while helpers were
+  // active; waiting for their leases to drain.
+  Revoking,
+  // Session finished or cancelled; no new work is accepted.
+  Closed
 };
 
 /// Status of an individual work morsel slot.
@@ -81,64 +90,33 @@ inline std::string_view toString(MorselStatus status) noexcept {
   return "Unknown";
 }
 
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
 // Instrumentation & Profiling
-// -----------------------------------------------------------------------------
 
+// Per-morsel measurements. Wall and CPU duration are both kept because
+// their gap exposes blocking (page faults, accidental I/O) inside a morsel,
+// which would lengthen cooperative revocation.
 struct MorselProfile {
+  // Position of the morsel in submission (and output) order.
   size_t morselIndex_{0};
+  // When the morsel was submitted, started, and completed.
   std::chrono::steady_clock::time_point submittedAt_{};
   std::chrono::steady_clock::time_point startedAt_{};
   std::chrono::steady_clock::time_point completedAt_{};
+  // Time between submission and start.
   std::chrono::nanoseconds queueDelay_{0};
+  // Wall-clock and thread-CPU time of the task itself.
   std::chrono::nanoseconds wallDuration_{0};
   std::chrono::nanoseconds cpuDuration_{0};
+  // True if a helper worker ran the morsel, false for the coordinator.
   bool executedByHelper_{false};
   MorselStatus finalStatus_{MorselStatus::Pending};
 };
 
 class ElasticExportScheduler;
 
-// -----------------------------------------------------------------------------
-// ExportWorkLease: Opaque Move-Only RAII Lease Handle
-// -----------------------------------------------------------------------------
-
-/// Move-only RAII handle representing a leased helper execution slot. The
-/// scheduler is observed through a `weak_ptr`: a lease that outlives the
-/// scheduler (e.g. held across teardown) releases into expiry instead of a
-/// dangling pointer. The scheduler can only exist as `shared_ptr`, so the
-/// reference handed out at construction is never empty.
-class ExportWorkLease {
- public:
-  ExportWorkLease() noexcept = default;
-  ExportWorkLease(std::weak_ptr<ElasticExportScheduler> scheduler,
-                  uint64_t epoch, uint64_t jobId, uint64_t leaseId) noexcept;
-  ~ExportWorkLease();
-
-  ExportWorkLease(ExportWorkLease&& other) noexcept;
-  ExportWorkLease& operator=(ExportWorkLease&& other) noexcept;
-
-  ExportWorkLease(const ExportWorkLease&) = delete;
-  ExportWorkLease& operator=(const ExportWorkLease&) = delete;
-
-  [[nodiscard]] bool isValid() const noexcept { return active_; }
-  [[nodiscard]] uint64_t epoch() const noexcept { return epoch_; }
-  [[nodiscard]] uint64_t jobId() const noexcept { return jobId_; }
-  [[nodiscard]] uint64_t leaseId() const noexcept { return leaseId_; }
-
-  void release() noexcept;
-
- private:
-  std::weak_ptr<ElasticExportScheduler> scheduler_;
-  uint64_t epoch_{0};
-  uint64_t jobId_{0};
-  uint64_t leaseId_{0};
-  bool active_{false};
-};
-
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
 // Internal Base Job State & Owned Morsel for Type-Erased Thread Pool Dispatch
-// -----------------------------------------------------------------------------
 
 class ExportJobStateBase {
  public:
@@ -168,16 +146,14 @@ struct OwnedMorsel {
   }
 };
 
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
 // Forward declarations for Session and Scheduler
-// -----------------------------------------------------------------------------
 
 template <typename ResultType>
 class ExportWorkSession;
 
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
 // ElasticExportScheduler: Isolated Thread Pool & Concurrency Coordinator
-// -----------------------------------------------------------------------------
 
 class ElasticExportScheduler
     : public std::enable_shared_from_this<ElasticExportScheduler> {
@@ -193,7 +169,7 @@ class ElasticExportScheduler
   static constexpr size_t kDefaultQueueCapacity = 1024;
 
   [[nodiscard]] static std::shared_ptr<ElasticExportScheduler> create(
-      size_t numThreads = 0, size_t queueCapacity = kDefaultQueueCapacity);
+      size_t threadCount = 0, size_t queueCapacity = kDefaultQueueCapacity);
   ~ElasticExportScheduler();
 
   ElasticExportScheduler(const ElasticExportScheduler&) = delete;
@@ -267,17 +243,6 @@ class ElasticExportScheduler
   /// Register an active session state for demand change notifications.
   void registerSession(std::weak_ptr<ExportJobStateBase> sessionState);
 
-  /// Internal callback when an ExportWorkLease is released. The `leaseId`
-  /// must identify an outstanding lease; anything else is an internal
-  /// error. Epoch and job identity travel with the lease for diagnostics;
-  /// validity is decided by lease identity, so they are not parameters.
-  void onLeaseReleased(uint64_t leaseId) noexcept;
-
-  /// Internal registration of a newly issued lease identity, called from
-  /// the `ExportWorkLease` constructor so every live lease is tracked for
-  /// release validation.
-  void registerOutstandingLease(uint64_t leaseId);
-
   /// Internal generator for monotonic job identifiers.
   uint64_t nextJobId() noexcept {
     return nextJobId_.fetch_add(1, std::memory_order_relaxed);
@@ -288,8 +253,13 @@ class ElasticExportScheduler
   ExportWorkSession<ResultType> createSession();
 
  private:
-  explicit ElasticExportScheduler(size_t numThreads, size_t queueCapacity);
+  explicit ElasticExportScheduler(size_t threadCount, size_t queueCapacity);
   void workerLoop();
+  // Helper-slot accounting of a worker: register a newly issued lease
+  // identity, and retire it again. Releasing an identity that is not
+  // outstanding is an internal error.
+  void registerOutstandingLease(uint64_t leaseId);
+  void onLeaseReleased(uint64_t leaseId);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
   // Shared demand-change propagation: wake both scheduler condition
   // variables, prune expired sessions, and notify the live ones outside
@@ -319,9 +289,8 @@ class ElasticExportScheduler
   std::vector<std::thread> workers_;
 };
 
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
 // Typed Job State
-// -----------------------------------------------------------------------------
 
 template <typename ResultType>
 class ExportJobState final
@@ -336,13 +305,14 @@ class ExportJobState final
     MorselProfile profile_;
   };
 
-  ExportJobState(uint64_t jobId, ElasticExportScheduler* scheduler,
+  ExportJobState(uint64_t jobId,
+                 std::weak_ptr<ElasticExportScheduler> scheduler,
                  uint64_t initialEpoch, SessionState initialState)
       : jobId_{jobId},
-        scheduler_{scheduler},
+        scheduler_{std::move(scheduler)},
         state_{initialState},
         currentEpoch_{initialEpoch} {
-    AD_CONTRACT_CHECK(scheduler_ != nullptr);
+    AD_CONTRACT_CHECK(!scheduler_.expired());
   }
 
   [[nodiscard]] uint64_t jobId() const noexcept override { return jobId_; }
@@ -361,18 +331,25 @@ class ExportJobState final
 
   void onDemandChanged(size_t activeForegroundQueries,
                        uint64_t newEpoch) override {
+    // Only the scheduler calls this, so it is alive; a failed `lock` would
+    // mean teardown already started and there is nothing to enqueue into.
+    auto scheduler = scheduler_.lock();
+    if (!scheduler) {
+      return;
+    }
     std::vector<size_t> pendingIndicesToEnqueue;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (closed_ || cancelled_) {
         return;
       }
-      size_t maxQueries = scheduler_->maxForegroundQueriesForHelperAdmission();
+      size_t maxQueries = scheduler->maxForegroundQueriesForHelperAdmission();
       if (activeForegroundQueries <= maxQueries) {
-        // Foreground load is low; helpers are eligible
+        // Foreground load is within the admission threshold, so admit
+        // helpers.
         currentEpoch_.store(newEpoch, std::memory_order_release);
         state_.store(SessionState::HelpersEligible, std::memory_order_release);
-        // Collect pending slots to submit to helper pool. The scan only
+        // Collect pending slots to submit to the helper pool. The scan only
         // covers slots from `nextSlotToConsume_` onward, so it is bounded
         // by the in-flight morsels of this session and runs only on
         // threshold-crossing demand changes.
@@ -382,7 +359,8 @@ class ExportJobState final
           }
         }
       } else {
-        // Foreground load exceeded threshold; revoke helpers
+        // Foreground load exceeds the admission threshold, so revoke
+        // helpers.
         currentEpoch_.store(newEpoch, std::memory_order_release);
         if (activeHelpers_.load(std::memory_order_relaxed) > 0) {
           state_.store(SessionState::Revoking, std::memory_order_release);
@@ -393,13 +371,13 @@ class ExportJobState final
       cv_.notify_all();
     }
 
-    // Enqueue pending morsels outside the lock
+    // Enqueue pending morsels outside the lock.
     if (!pendingIndicesToEnqueue.empty()) {
       const auto self = this->shared_from_this();
       for (const size_t index : pendingIndicesToEnqueue) {
         // Discard is safe: a rejected morsel stays Pending and the
         // coordinator runs it lazily on the primary path.
-        static_cast<void>(scheduler_->enqueueMorsel(
+        static_cast<void>(scheduler->enqueueMorsel(
             OwnedMorsel(self, jobId_, newEpoch, index)));
       }
     }
@@ -436,58 +414,23 @@ class ExportJobState final
       return;
     }
 
-    absl::AnyInvocable<ResultType()> task;
-    auto startWall = std::chrono::steady_clock::now();
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (morselIndex >= slots_.size() ||
-          slots_[morselIndex].status_ != MorselStatus::Pending) {
-        return;
-      }
-      // Decisive re-check under `mutex_`: any state change between the
-      // fast-path filter above and this lock is caught here before the
-      // slot is marked Running, so no stale morsel can execute. Acquire
-      // loads pair with the release stores in `onDemandChanged` (the
-      // mutex already orders them; acquire states the protocol).
-      if (cancelled_ ||
-          currentEpoch_.load(std::memory_order_acquire) != leaseEpoch ||
-          state_.load(std::memory_order_acquire) == SessionState::Revoking ||
-          state_.load(std::memory_order_acquire) == SessionState::Closed) {
-        return;
-      }
-      slots_[morselIndex].status_ = MorselStatus::Running;
-      slots_[morselIndex].profile_.startedAt_ = startWall;
-      slots_[morselIndex].profile_.queueDelay_ =
-          startWall - slots_[morselIndex].profile_.submittedAt_;
-      slots_[morselIndex].profile_.executedByHelper_ = true;
-      task = std::move(slots_[morselIndex].task_);
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (morselIndex >= slots_.size() ||
+        slots_[morselIndex].status_ != MorselStatus::Pending) {
+      return;
     }
-
-    auto startCpu = getCpuDuration();
-    std::optional<ResultType> result;
-    std::exception_ptr exceptionPtr = nullptr;
-    try {
-      result = task();
-    } catch (...) {
-      exceptionPtr = std::current_exception();
+    // Decisive re-check under `mutex_`: any state change between the
+    // fast-path filter above and this lock is caught here before the slot
+    // is marked Running, so no stale morsel can execute. Acquire loads pair
+    // with the release stores in `onDemandChanged` (the mutex already orders
+    // them; acquire states the protocol).
+    if (cancelled_ ||
+        currentEpoch_.load(std::memory_order_acquire) != leaseEpoch ||
+        state_.load(std::memory_order_acquire) == SessionState::Revoking ||
+        state_.load(std::memory_order_acquire) == SessionState::Closed) {
+      return;
     }
-    auto endCpu = getCpuDuration();
-    auto endWall = std::chrono::steady_clock::now();
-
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (exceptionPtr) {
-        slots_[morselIndex].exception_ = std::move(exceptionPtr);
-      } else {
-        slots_[morselIndex].result_ = std::move(result);
-      }
-      slots_[morselIndex].status_ = MorselStatus::Completed;
-      slots_[morselIndex].profile_.completedAt_ = endWall;
-      slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
-      slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
-      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
-      cv_.notify_all();
-    }
+    runSlot(lock, morselIndex, true);
   }
 
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
@@ -517,11 +460,14 @@ class ExportJobState final
       }
     }
 
-    if (shouldEnqueue) {
+    // A session may outlive its scheduler; without one the slot simply
+    // stays Pending and the primary consumes it.
+    auto scheduler = shouldEnqueue ? scheduler_.lock() : nullptr;
+    if (scheduler) {
       // A false return means helpers became ineligible (or shutdown
       // started) after the check above; the slot stays Pending and the
       // primary consumes it, so ignoring the result is the fallback.
-      static_cast<void>(scheduler_->enqueueMorsel(
+      static_cast<void>(scheduler->enqueueMorsel(
           OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index)));
     }
     return index;
@@ -543,13 +489,10 @@ class ExportJobState final
   }
 
   ResultType consumeNextResult() {
-    size_t index = 0;
-    absl::AnyInvocable<ResultType()> primaryTask;
-
     std::unique_lock<std::mutex> lock(mutex_);
     AD_CONTRACT_CHECK(nextSlotToConsume_ < slots_.size(),
                       "No more submitted morsels to consume");
-    index = nextSlotToConsume_++;
+    const size_t index = nextSlotToConsume_++;
 
     while (true) {
       if (cancelled_) {
@@ -566,39 +509,9 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Pending) {
-        // Single-core fallback: execute directly on coordinator thread
-        slots_[index].status_ = MorselStatus::Running;
-        auto startWall = std::chrono::steady_clock::now();
-        slots_[index].profile_.startedAt_ = startWall;
-        slots_[index].profile_.queueDelay_ =
-            startWall - slots_[index].profile_.submittedAt_;
-        slots_[index].profile_.executedByHelper_ = false;
-        primaryTask = std::move(slots_[index].task_);
-
-        lock.unlock();
-        auto startCpu = getCpuDuration();
-        std::optional<ResultType> result;
-        std::exception_ptr exceptionPtr = nullptr;
-        try {
-          result = primaryTask();
-        } catch (...) {
-          exceptionPtr = std::current_exception();
-        }
-        auto endCpu = getCpuDuration();
-        auto endWall = std::chrono::steady_clock::now();
-        lock.lock();
-
-        if (exceptionPtr) {
-          slots_[index].exception_ = std::move(exceptionPtr);
-        } else {
-          slots_[index].result_ = std::move(result);
-        }
-        slots_[index].status_ = MorselStatus::Completed;
-        slots_[index].profile_.completedAt_ = endWall;
-        slots_[index].profile_.wallDuration_ = endWall - startWall;
-        slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
-        slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
-        cv_.notify_all();
+        // Coordinator fallback: no helper claimed this morsel, so run it
+        // here on the coordinator thread.
+        runSlot(lock, index, false);
         if (slots_[index].exception_) {
           std::rethrow_exception(slots_[index].exception_);
         }
@@ -606,7 +519,7 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Running) {
-        // Wait for running helper worker to finish CPU morsel
+        // Wait for the helper that runs this morsel to finish it.
         cv_.wait(lock, [&] {
           return slots_[index].status_ == MorselStatus::Completed ||
                  cancelled_.load(std::memory_order_relaxed);
@@ -623,7 +536,7 @@ class ExportJobState final
     {
       std::lock_guard<std::mutex> lock(mutex_);
       closed_ = true;
-      state_.store(SessionState::Closed, std::memory_order_relaxed);
+      state_.store(SessionState::Closed, std::memory_order_release);
     }
     return results;
   }
@@ -637,7 +550,7 @@ class ExportJobState final
     std::lock_guard<std::mutex> lock(mutex_);
     cancelled_ = true;
     closed_ = true;
-    state_.store(SessionState::Closed, std::memory_order_relaxed);
+    state_.store(SessionState::Closed, std::memory_order_release);
     for (auto& slot : slots_) {
       if (slot.status_ == MorselStatus::Pending) {
         slot.status_ = MorselStatus::Cancelled;
@@ -653,7 +566,7 @@ class ExportJobState final
   void close() {
     std::lock_guard<std::mutex> lock(mutex_);
     closed_ = true;
-    state_.store(SessionState::Closed, std::memory_order_relaxed);
+    state_.store(SessionState::Closed, std::memory_order_release);
     cv_.notify_all();
   }
 
@@ -668,6 +581,50 @@ class ExportJobState final
   }
 
  private:
+  // Execute the Pending slot `index` on the calling thread and publish its
+  // result or exception. `lock` must hold `mutex_` on entry; it is released
+  // while the task runs and held again on return. Shared by the helper and
+  // the coordinator path so that status and profiling cannot diverge.
+  void runSlot(std::unique_lock<std::mutex>& lock, size_t index,
+               bool executedByHelper) {
+    AD_CORRECTNESS_CHECK(lock.owns_lock());
+    auto& claimed = slots_[index];
+    AD_CORRECTNESS_CHECK(claimed.status_ == MorselStatus::Pending);
+    claimed.status_ = MorselStatus::Running;
+    const auto startWall = std::chrono::steady_clock::now();
+    claimed.profile_.startedAt_ = startWall;
+    claimed.profile_.queueDelay_ = startWall - claimed.profile_.submittedAt_;
+    claimed.profile_.executedByHelper_ = executedByHelper;
+    auto task = std::move(claimed.task_);
+
+    lock.unlock();
+    const auto startCpu = getCpuDuration();
+    std::optional<ResultType> result;
+    std::exception_ptr exceptionPtr = nullptr;
+    try {
+      result = task();
+    } catch (...) {
+      exceptionPtr = std::current_exception();
+    }
+    const auto endCpu = getCpuDuration();
+    const auto endWall = std::chrono::steady_clock::now();
+    lock.lock();
+
+    // `slots_` may have grown while unlocked, so index it again.
+    auto& slot = slots_[index];
+    if (exceptionPtr) {
+      slot.exception_ = std::move(exceptionPtr);
+    } else {
+      slot.result_ = std::move(result);
+    }
+    slot.status_ = MorselStatus::Completed;
+    slot.profile_.completedAt_ = endWall;
+    slot.profile_.wallDuration_ = endWall - startWall;
+    slot.profile_.cpuDuration_ = endCpu - startCpu;
+    slot.profile_.finalStatus_ = MorselStatus::Completed;
+    cv_.notify_all();
+  }
+
   // Profiling-only per-thread CPU clock. Linux-only by design (other
   // platforms fall through to a zero duration, which degrades profiles
   // without affecting scheduling); revisit if non-Linux support is needed.
@@ -683,7 +640,9 @@ class ExportJobState final
   }
 
   const uint64_t jobId_;
-  ElasticExportScheduler* const scheduler_;
+  // Observed, not owned: sessions may outlive the scheduler, and the
+  // scheduler itself only holds sessions weakly.
+  const std::weak_ptr<ElasticExportScheduler> scheduler_;
   std::atomic<SessionState> state_{SessionState::PrimaryOnly};
   std::atomic<uint64_t> currentEpoch_{1};
   std::atomic<size_t> activeHelpers_{0};
@@ -696,9 +655,8 @@ class ExportJobState final
   size_t nextSlotToConsume_{0};
 };
 
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
 // ExportWorkSession: Move-Only RAII Export Session Handle
-// -----------------------------------------------------------------------------
 
 template <typename ResultType>
 class ExportWorkSession {
@@ -707,14 +665,18 @@ class ExportWorkSession {
       std::shared_ptr<ExportJobState<ResultType>> state) noexcept
       : state_{std::move(state)} {}
 
-  ~ExportWorkSession() {
-    if (state_ && !state_->isCancelled()) {
-      state_->close();
-    }
-  }
+  ~ExportWorkSession() { closeHeldSession(); }
 
   ExportWorkSession(ExportWorkSession&&) noexcept = default;
-  ExportWorkSession& operator=(ExportWorkSession&&) noexcept = default;
+  // Assigning over a session ends it exactly like destruction would, so the
+  // replaced job state never stays open without a handle.
+  ExportWorkSession& operator=(ExportWorkSession&& other) noexcept {
+    if (this != &other) {
+      closeHeldSession();
+      state_ = std::move(other.state_);
+    }
+    return *this;
+  }
 
   ExportWorkSession(const ExportWorkSession&) = delete;
   ExportWorkSession& operator=(const ExportWorkSession&) = delete;
@@ -788,23 +750,30 @@ class ExportWorkSession {
 
  private:
   std::shared_ptr<ExportJobState<ResultType>> state_;
+
+  // Close the held job state unless it was cancelled (cancellation already
+  // closed it).
+  void closeHeldSession() {
+    if (state_ && !state_->isCancelled()) {
+      state_->close();
+    }
+  }
 };
 
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
 // Template implementation of createSession
-// -----------------------------------------------------------------------------
 
 template <typename ResultType>
 ExportWorkSession<ResultType> ElasticExportScheduler::createSession() {
-  uint64_t jId = nextJobId();
+  uint64_t jobId = nextJobId();
   uint64_t epoch = demandEpoch();
   SessionState initialState =
       (activeForegroundQueries() <= maxForegroundQueriesForHelperAdmission())
           ? SessionState::HelpersEligible
           : SessionState::PrimaryOnly;
 
-  auto state = std::make_shared<ExportJobState<ResultType>>(jId, this, epoch,
-                                                            initialState);
+  auto state = std::make_shared<ExportJobState<ResultType>>(
+      jobId, weak_from_this(), epoch, initialState);
   registerSession(state);
   return ExportWorkSession<ResultType>(std::move(state));
 }

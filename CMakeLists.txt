@@ -148,6 +148,10 @@ if (EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
     add_compile_definitions(QLEVER_EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
 endif()
 
+# Compile the Export Engine V2 sources and their tests (currently the elastic
+# export scheduler, see `doc/design/export_engine_v2_wp7_prerequisites.md`).
+# Nothing in the server uses them yet, so the option has no runtime effect;
+# `OFF` removes every V2 source and test from the build.
 option(QLEVER_ENABLE_EXPORT_V2 "Enable Fast-Path Streaming Export Engine V2" ON)
 if (QLEVER_ENABLE_EXPORT_V2)
     add_compile_definitions(QLEVER_ENABLE_EXPORT_V2)
