@@ -237,7 +237,9 @@ class IoUringPolicy {
   // Return the fixed-file slot for `fd`, registering (and `dup`ing) it on
   // first use. Throws when every slot is taken by another descriptor, so a
   // third file fails loudly instead of silently falling back to an
-  // unregistered read.
+  // unregistered read. Slots are keyed by descriptor number, so the caller
+  // must keep `fd` open (and referring to the same file) for the lifetime of
+  // the policy.
   unsigned fileIndexForFd(int fd);
 
   // Reap every CQE that is already ready. Does not block.
