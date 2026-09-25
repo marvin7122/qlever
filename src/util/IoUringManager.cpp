@@ -183,7 +183,11 @@ void IoUringPolicy::addBatch(int fd,
     const uint64_t requestId = nextRequestIdToAssign_++;
     inFlightReadsByRequestId_[requestId] =
         InFlightRead{handle, numBytesToReadPerRequest[i]};
-    io_uring_sqe_set_data64(sqe, requestId);
+    // Store the id in the pointer-sized `user_data` field, which every
+    // liburing version provides. The 64-bit `io_uring_sqe_set_data64` helper
+    // requires a very recent liburing that older images (e.g. the gcc11 CI
+    // image with its distro liburing) do not have yet.
+    io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(requestId));
     ++numInFlightReadRequests_;
   };
 
@@ -210,11 +214,40 @@ void IoUringPolicy::addBatch(int fd,
     while (stillToSubmit > 0) {
       const int submitted = io_uring_submit(&ring_);
       if (submitted <= 0) {
+        // The trailing `stillToSubmit` SQEs of this wave were prepared (their
+        // ids are registered and counted as in flight) but never reached the
+        // kernel, so their completions will never arrive. Roll their
+        // bookkeeping back before throwing, otherwise `wait()` and the
+        // destructor would block forever on phantom completions. NOTE: the
+        // unsubmitted SQEs stay queued in the submission queue, so the policy
+        // must not be reused after this throw (a later submit would flush
+        // them and their completions would hit unknown request ids).
+        rollbackUnsubmittedRequests(handle, stillToSubmit);
         AD_THROW("io_uring_submit failed in IoUringPolicy");
       }
       AD_CORRECTNESS_CHECK(static_cast<size_t>(submitted) <= stillToSubmit);
       stillToSubmit -= static_cast<size_t>(submitted);
     }
+  }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::rollbackUnsubmittedRequests(BatchHandle handle,
+                                                size_t numRequests) {
+  // `prepareOne` mints request ids consecutively and `io_uring_submit`
+  // submits SQEs in FIFO order, so the unsubmitted tail of the wave holds
+  // exactly the trailing `numRequests` ids below `nextRequestIdToAssign_`.
+  for (size_t k = 0; k < numRequests; ++k) {
+    inFlightReadsByRequestId_.erase(nextRequestIdToAssign_ - 1 - k);
+  }
+  numInFlightReadRequests_ -= numRequests;
+  auto it = numInFlightReadRequestsPerBatch_.find(handle);
+  AD_CORRECTNESS_CHECK(it != numInFlightReadRequestsPerBatch_.end());
+  AD_CORRECTNESS_CHECK(it->second >= numRequests);
+  if (it->second == numRequests) {
+    numInFlightReadRequestsPerBatch_.erase(it);
+  } else {
+    it->second -= numRequests;
   }
 }
 
@@ -257,31 +290,43 @@ void IoUringPolicy::drainAllReadyCqes() {
   while (true) {
     std::array<io_uring_cqe*, 64> cqes{};
     // `io_uring_peek_batch_cqe` returns the number of ready CQEs, or a
-    // negative error code; a negative value must not become a huge unsigned
-    // loop bound.
+    // negative `-errno` code on failure; a negative value must neither become
+    // a huge unsigned loop bound nor be silently swallowed like "no CQEs
+    // ready" (that would hide kernel/liburing failures and lose completions).
     const int n = io_uring_peek_batch_cqe(&ring_, cqes.data(), cqes.size());
-    if (n <= 0) {
+    if (n < 0) {
+      AD_THROW("io_uring_peek_batch_cqe failed in IoUringPolicy");
+    }
+    if (n == 0) {
       break;
     }
     for (int i = 0; i < n; ++i) {
-      raw.push_back(RawCqe{cqes[i]->res, io_uring_cqe_get_data64(cqes[i])});
+      // Recover the id via the pointer-sized `user_data` field, see
+      // `addBatch`.
+      raw.push_back(RawCqe{cqes[i]->res, reinterpret_cast<uint64_t>(
+                                             io_uring_cqe_get_data(cqes[i]))});
     }
     io_uring_cq_advance(&ring_, static_cast<unsigned>(n));
   }
   if (raw.empty()) {
     return;
   }
-  pendingErrorMessage_ = nullptr;
+  // Process every CQE of the wave before throwing, so the in-flight
+  // bookkeeping stays consistent. Report the first error of the wave.
+  const char* firstErrorMessage = nullptr;
   for (const RawCqe& cqe : raw) {
-    processCqe(cqe.res, cqe.id);
+    const char* errorMessage = processCqe(cqe.res, cqe.id);
+    if (firstErrorMessage == nullptr) {
+      firstErrorMessage = errorMessage;
+    }
   }
-  if (pendingErrorMessage_ != nullptr) {
-    AD_THROW(pendingErrorMessage_);
+  if (firstErrorMessage != nullptr) {
+    AD_THROW(firstErrorMessage);
   }
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
+const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
   --numInFlightReadRequests_;
 
   auto reqIt = inFlightReadsByRequestId_.find(requestId);
@@ -295,17 +340,13 @@ void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
     numInFlightReadRequestsPerBatch_.erase(it);
   }
 
-  if (pendingErrorMessage_ != nullptr) {
-    return;
-  }
   if (numBytesRead < 0) {
-    pendingErrorMessage_ = "I/O error in IoUringPolicy read operation";
-    return;
+    return "I/O error in IoUringPolicy read operation";
   }
   if (static_cast<size_t>(numBytesRead) != inFlightRead.expectedNumBytes) {
-    pendingErrorMessage_ = "read fewer bytes than requested in IoUringPolicy";
-    return;
+    return "read fewer bytes than requested in IoUringPolicy";
   }
+  return nullptr;
 }
 
 #endif  // QLEVER_HAS_IO_URING

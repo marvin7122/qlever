@@ -204,6 +204,14 @@ class IoUringPolicy {
   // read is prepared in `addBatch` and erased when its completion is reaped.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
+  // Undo the bookkeeping for the trailing `numRequests` prepared reads of
+  // `handle` (the most recently minted request ids) after an `io_uring_submit`
+  // failure left them unsubmitted: erase their metadata, decrement the
+  // in-flight counts, and drop the batch entry if nothing of it remains in
+  // flight. `nextRequestIdToAssign_` is intentionally not rewound, so the
+  // rolled-back ids stay unique.
+  void rollbackUnsubmittedRequests(BatchHandle handle, size_t numRequests);
+
   // Wait until at least `minComplete` CQEs are ready, then reap every ready
   // CQE. `minComplete` must be in `[1, numInFlightReadRequests_]`.
   void drainAtLeast(unsigned minComplete);
@@ -236,12 +244,10 @@ class IoUringPolicy {
   void drainAllReadyCqes();
 
   // Apply one completion to the in-flight bookkeeping. Always updates the
-  // counts. Stores the first I/O error message in `pendingErrorMessage_`.
-  void processCqe(int numBytesRead, uint64_t requestId);
-
-  // First I/O error seen while reaping a wave. Thrown after the wave is
-  // advanced so no CQE is processed twice.
-  const char* pendingErrorMessage_ = nullptr;
+  // counts, even for a failed read. Return a static error message if the read
+  // failed or was short, and `nullptr` otherwise. The caller throws only after
+  // the whole wave is advanced, so no CQE is processed twice.
+  [[nodiscard]] const char* processCqe(int numBytesRead, uint64_t requestId);
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;

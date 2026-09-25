@@ -465,13 +465,15 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
 TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
   // Mixed markers, reordered indices, and a duplicate must match `operator[]`.
   TwoSplitVocabulary sv;
-  auto ww = sv.makeDiskWriterPtr("splitVocabLookupBatch.dat");
+  const std::string vocabFilename =
+      absl::StrCat(gtestCurrentTestName(), ".dat");
+  auto ww = sv.makeDiskWriterPtr(vocabFilename);
   (*ww)("\"\"", true);
   (*ww)("\"abc\"", true);
   (*ww)("\"axyz\"", true);
   (*ww)("\"xyz\"", true);
   ww->finish();
-  sv.readFromFile("splitVocabLookupBatch.dat");
+  sv.readFromFile(vocabFilename);
 
   const std::array<size_t, 6> indices{
       static_cast<size_t>(sv.addMarker(1, 0)),

@@ -30,21 +30,9 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
 
-  // Fast path: every index misses the RAM cache, so hand the caller's span
-  // straight through to the on-disk batch lookup without copying the indices
-  // or allocating assembly buffers.
-  bool allDisk = true;
-  for (size_t idx : indices) {
-    if (internalVocab_[idx].has_value()) {
-      allDisk = false;
-      break;
-    }
-  }
-  if (allDisk) {
-    return externalVocab_.lookupBatch(indices);
-  }
-
-  std::vector<std::string_view> assembled(indices.size());
+  // Partition the indices with a single RAM-cache probe per index. The
+  // all-disk fast path below is derived from the partition instead of a
+  // separate pre-scan, which would probe every index twice.
   std::vector<size_t> diskIndices;
   std::vector<size_t> diskSlots;
   std::vector<size_t> internalIndices;
@@ -64,6 +52,14 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     }
   }
 
+  // Fast path: every index misses the RAM cache, so hand the caller's span
+  // straight through to the on-disk batch lookup without copying the indices
+  // or allocating assembly buffers.
+  if (internalIndices.empty()) {
+    return externalVocab_.lookupBatch(indices);
+  }
+
+  std::vector<std::string_view> assembled(indices.size());
   std::vector<VocabBatchOwner> owners;
   owners.reserve(2);
   if (!diskIndices.empty()) {

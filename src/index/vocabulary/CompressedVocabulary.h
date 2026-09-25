@@ -177,10 +177,17 @@ CPP_template(typename UnderlyingVocabulary,
     std::vector<std::string_view> views;
     views.reserve(indices.size());
 
-    for (const auto& idxAndWord : ::ranges::views::zip(indices, *compressed)) {
-      const auto& [idx, word] = idxAndWord;
+    for (const auto& [idx, word] : ::ranges::views::zip(indices, *compressed)) {
       std::string decompressed =
           compressionWrapper_.decompress(word, getDecoderIdx(idx));
+      if (decompressed.empty()) {
+        // `allocate(0)` may return `nullptr`, and both `memcpy` with a null
+        // pointer and `string_view(nullptr, 0)` are undefined behavior, so
+        // empty words (the vocabulary may legally contain the empty string)
+        // get a view of a static empty string instead.
+        views.emplace_back("", 0);
+        continue;
+      }
       char* mem = static_cast<char*>(buffer->allocate(decompressed.size()));
       std::memcpy(mem, decompressed.data(), decompressed.size());
       views.emplace_back(mem, decompressed.size());
