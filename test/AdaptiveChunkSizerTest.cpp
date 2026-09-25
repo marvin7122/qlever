@@ -223,4 +223,21 @@ TEST(AdaptiveChunkBufferTest, WriteAndFlushRampUp) {
   EXPECT_EQ(buffer.sizer().currentChunkBytes(), 128 * 1024);
 }
 
+// _____________________________________________________________________________
+TEST(AdaptiveChunkBufferTest, WriteOwnViewAcrossReallocation) {
+  AdaptiveChunkConfig config;
+  config.initialChunkBytes_ = 4;
+  AdaptiveChunkBuffer buffer{config};
+  buffer.write("abc");
+  // Each write appends the buffer to itself and forces a reallocation, so the
+  // source view points into storage that `resize` replaces.
+  buffer.write(buffer.currentView());
+  EXPECT_EQ(buffer.currentView(), "abcabc");
+  buffer.write(buffer.currentView());
+  EXPECT_EQ(buffer.currentView(), "abcabcabcabc");
+  // A strict sub-view of the buffer is rebased as well.
+  buffer.write(buffer.currentView().substr(3, 6));
+  EXPECT_EQ(buffer.currentView(), "abcabcabcabcabcabc");
+}
+
 }  // namespace
