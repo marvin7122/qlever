@@ -128,10 +128,12 @@ class AsyncChunkPipeline {
     // Apply backpressure if buffer reached capacity.
     if (buffer_.size() >= capacity_) {
       stats_.backpressureStalls++;
+      // `finish()` and `setException()` also end the stream, so a producer
+      // blocked on a full buffer must wake up for them as well.
       cvNotFull_.wait(lock, [this]() {
-        return buffer_.size() < capacity_ || isCancelled_;
+        return buffer_.size() < capacity_ || isCancelled_ || isFinished_;
       });
-      if (isCancelled_) {
+      if (isCancelled_ || isFinished_) {
         return false;
       }
     }
@@ -209,7 +211,13 @@ class AsyncChunkPipeline {
   // ___________________________________________________________________________
   // Cancellation API: Signal early consumer cancellation (e.g. broken pipe).
   void cancel() {
-    isCancelled_ = true;
+    {
+      // Set the flag under the mutex: a waiter evaluates its predicate while
+      // holding it, so the notification below cannot fall between that check
+      // and the wait (lost wakeup).
+      std::lock_guard<std::mutex> lock(mutex_);
+      isCancelled_ = true;
+    }
     cvNotFull_.notify_all();
     cvNotEmpty_.notify_all();
   }

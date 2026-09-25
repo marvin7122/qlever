@@ -185,6 +185,7 @@ addLinkAndDiscoverTest(PrefetchingBatchResolverTest)
 addLinkAndDiscoverTest(SwarDelimiterPackerTest)
 addLinkAndDiscoverTest(InPlaceHttpChunkFramingTest)
 addLinkAndDiscoverTest(AdaptiveChunkSizerTest)
+addLinkAndDiscoverTest(AsyncChunkPipelineTest)
 
 addLinkAndDiscoverTestSerialNoLibs(ConcurrentCacheTest)
 
