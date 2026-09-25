@@ -154,6 +154,11 @@ inline char* formatUndefined(ValueId, std::string_view, char* out,
   return out;
 }
 
+// Every `Datatype` must fit into the 4-bit tag that indexes the tables below.
+// The slots above `Datatype::MaxValue` cannot be reached by a valid `ValueId`
+// and keep the no-op formatter.
+static_assert(static_cast<size_t>(Datatype::MaxValue) < 16);
+
 // Builds the default 16-entry lookup table for standard RDF N-Triples export.
 constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
   std::array<TypeFormatDescriptor, 16> lut{};
@@ -161,52 +166,57 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
     lut[i] = TypeFormatDescriptor{"", "", &formatUndefined};
   }
 
-  // 0: Undefined
+  // Undefined
   lut[static_cast<size_t>(Datatype::Undefined)] =
       TypeFormatDescriptor{"", "", &formatUndefined};
 
-  // 1: Bool
+  // Bool
   lut[static_cast<size_t>(Datatype::Bool)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", &formatBoolean};
 
-  // 2: Int
+  // Int
   lut[static_cast<size_t>(Datatype::Int)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#integer>", &formatInteger};
 
-  // 3: Double
+  // Double
   lut[static_cast<size_t>(Datatype::Double)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#double>", &formatDouble};
 
-  // 4: VocabIndex (IRI by default when formatting raw names)
+  // VocabIndex (IRI by default when formatting raw names)
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 5: LocalVocabIndex
+  // LocalVocabIndex
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
-  // 6: TextRecordIndex
+  // SecondaryVocabIndex (a word of the secondary vocabulary, formatted like
+  // `VocabIndex`)
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+
+  // TextRecordIndex
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 7: Date
+  // Date
   lut[static_cast<size_t>(Datatype::Date)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", &formatDate};
 
-  // 8: GeoPoint
+  // GeoPoint
   lut[static_cast<size_t>(Datatype::GeoPoint)] = TypeFormatDescriptor{
       "\"", "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
       &formatGeoPoint};
 
-  // 9: WordVocabIndex
+  // WordVocabIndex
   lut[static_cast<size_t>(Datatype::WordVocabIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
 
-  // 10: BlankNodeIndex
+  // BlankNodeIndex
   lut[static_cast<size_t>(Datatype::BlankNodeIndex)] =
       TypeFormatDescriptor{"_:bn", "", &formatBlankNode};
 
-  // 11: EncodedVal
+  // EncodedVal
   lut[static_cast<size_t>(Datatype::EncodedVal)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
@@ -232,6 +242,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"\"", "\"", &formatTermWithDelimiters};
@@ -269,6 +281,8 @@ constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
   lut[static_cast<size_t>(Datatype::VocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::LocalVocabIndex)] =
+      TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
+  lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};
   lut[static_cast<size_t>(Datatype::TextRecordIndex)] =
       TypeFormatDescriptor{"", "", &formatTermWithDelimiters};

@@ -606,6 +606,7 @@ addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 # similar issues surface here instead of only in downstream includers.
 addLinkAndDiscoverTest(AdaptiveChunkSizerTest)
 addLinkAndDiscoverTest(AsyncChunkPipelineTest engine)
+addLinkAndDiscoverTest(BranchlessTypeDispatcherTest engine)
 addLinkAndDiscoverTest(FastIntToStringTest qlever_util)
 addLinkAndDiscoverTest(GTestHelpersTest)
 addLinkAndDiscoverTest(InPlaceHttpChunkFramingTest)
