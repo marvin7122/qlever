@@ -12,6 +12,7 @@
 
 #include <unistd.h>
 
+#include <cstdint>
 #include <stdexcept>
 
 #include "util/Exception.h"
@@ -141,7 +142,8 @@ void IoUringPolicy::addBatch(int fd,
     // liburing version provides. The 64-bit `io_uring_sqe_set_data64` helper
     // requires a very recent liburing that older images (e.g. the gcc11 CI
     // image with its distro liburing) do not have yet.
-    io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(requestId));
+    io_uring_sqe_set_data(
+        sqe, reinterpret_cast<void*>(static_cast<uintptr_t>(requestId)));
     numInFlightReadRequests_++;
   }
   // Flush the remaining prepared SQEs to the kernel (the loop above only
@@ -232,8 +234,8 @@ void ad_utility::IoUringPolicy::attributeCompletion(io_uring_cqe* cqe) {
   // SQE, then consume the CQE so its slot is freed. Do this before any throw.
   const int numBytesRead = cqe->res;
   // Recover the id via the pointer-sized `user_data` field, see `addBatch`.
-  const uint64_t requestId =
-      reinterpret_cast<uint64_t>(io_uring_cqe_get_data(cqe));
+  const uint64_t requestId = static_cast<uint64_t>(
+      reinterpret_cast<uintptr_t>(io_uring_cqe_get_data(cqe)));
   io_uring_cqe_seen(&ring_, cqe);
   numInFlightReadRequests_--;
 
