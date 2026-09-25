@@ -10,99 +10,106 @@
 
 #include <absl/numeric/bits.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "backports/span.h"
 #include "global/Id.h"
+#include "util/BitUtils.h"
 #include "util/Exception.h"
 
 namespace ql::index::compression {
 
-// _____________________________________________________________________________
-// Frame-of-reference bit packing with a per-block bit width (PFOR-style
-// deltas, but without exception/patch handling):
-// Compresses monotonically increasing 64-bit ValueId sequences into minimal
-// bit-widths (e.g. 4..16 bits per ID) by storing delta offsets.
+// Frame-of-reference (FOR) bit packing of up to `BLOCK_SIZE` `Id`s: every `Id`
+// is stored as its offset from the smallest `Id` of the block (compared by
+// their bits), using as many bits per value as the largest offset needs. For
+// sorted `Id`s with small gaps this needs far fewer than 64 bits per value;
+// for any input the round trip is exact. There are no exceptions or patches
+// (the "P" of PFOR), so a single outlier widens the whole block.
 class PforDeltaBitPacking {
  public:
   static constexpr size_t BLOCK_SIZE = 64;
 
   struct CompressedBlock {
     Id baseValue_{Id::makeUndefined()};
+    // Number of bits per value, in [0, 64]. 0 means all values are equal.
     uint8_t bitWidth_ = 0;
+    // Number of packed values, in [1, BLOCK_SIZE].
+    uint8_t numValues_ = 0;
     std::vector<uint64_t> packedWords_;
   };
 
-  // Compress a block of sorted Ids (typically BLOCK_SIZE) using
-  // frame-of-reference deltas. For a good compression ratio the input should
-  // be sorted non-decreasing by ValueId bits; the round-trip is exact for any
-  // input by unsigned modular arithmetic.
+ private:
+  // Position of the first bit of value `i` in the packed words.
+  struct BitPosition {
+    size_t word_;
+    size_t offset_;
+  };
+  static BitPosition bitPosition(size_t i, uint8_t bitWidth) {
+    size_t bit = i * bitWidth;
+    return {bit / 64, bit % 64};
+  }
+
+ public:
+  // Compress `inputIds`, which must contain between 1 and `BLOCK_SIZE` `Id`s.
   static CompressedBlock compressBlock(ql::span<const Id> inputIds) {
-    AD_CORRECTNESS_CHECK(!inputIds.empty());
+    AD_CONTRACT_CHECK(!inputIds.empty() && inputIds.size() <= BLOCK_SIZE,
+                      "`compressBlock` needs between 1 and 64 `Id`s");
+    uint64_t base = std::numeric_limits<uint64_t>::max();
+    uint64_t max = 0;
+    for (Id id : inputIds) {
+      base = std::min(base, id.getBits());
+      max = std::max(max, id.getBits());
+    }
     CompressedBlock block;
-    block.baseValue_ = inputIds.front();
+    block.baseValue_ = Id::fromBits(base);
+    block.numValues_ = static_cast<uint8_t>(inputIds.size());
+    block.bitWidth_ = static_cast<uint8_t>(absl::bit_width(max - base));
+    const uint8_t width = block.bitWidth_;
+    block.packedWords_.resize((inputIds.size() * width + 63) / 64, 0);
+    if (width == 0) {
+      return block;
+    }
 
-    const size_t n = inputIds.size();
-    std::vector<uint64_t> deltas(n, 0);
-    uint64_t maxDelta = 0;
-
-    for (size_t i = 0; i < n; ++i) {
-      deltas[i] = inputIds[i].getBits() - block.baseValue_.getBits();
-      if (deltas[i] > maxDelta) {
-        maxDelta = deltas[i];
+    for (size_t i = 0; i < inputIds.size(); ++i) {
+      uint64_t offset = inputIds[i].getBits() - base;
+      auto [word, shift] = bitPosition(i, width);
+      block.packedWords_[word] |= offset << shift;
+      // The value continues in the next word.
+      if (shift + width > 64) {
+        block.packedWords_[word + 1] |= offset >> (64 - shift);
       }
     }
-
-    block.bitWidth_ =
-        (maxDelta == 0) ? 1 : static_cast<uint8_t>(absl::bit_width(maxDelta));
-    if (block.bitWidth_ > 64) {
-      block.bitWidth_ = 64;
-    }
-
-    // Pack deltas into 64-bit words
-    size_t totalBits = n * block.bitWidth_;
-    block.packedWords_.resize((totalBits + 63) / 64, 0);
-
-    for (size_t i = 0; i < n; ++i) {
-      size_t bitOffset = i * block.bitWidth_;
-      size_t wordIdx = bitOffset / 64;
-      size_t intraWordOffset = bitOffset % 64;
-
-      block.packedWords_[wordIdx] |= (deltas[i] << intraWordOffset);
-      if (intraWordOffset + block.bitWidth_ > 64 &&
-          (wordIdx + 1) < block.packedWords_.size()) {
-        block.packedWords_[wordIdx + 1] |=
-            (deltas[i] >> (64 - intraWordOffset));
-      }
-    }
-
     return block;
   }
 
-  // Decompress a block back into full 64-bit ValueId integers.
-  static void decompressBlock(const CompressedBlock& block, size_t numRows,
+  // Write the `block.numValues_` `Id`s of `block` to the start of `outputIds`,
+  // which must be at least that large.
+  static void decompressBlock(const CompressedBlock& block,
                               ql::span<Id> outputIds) {
-    AD_CORRECTNESS_CHECK(outputIds.size() >= numRows);
-    AD_CORRECTNESS_CHECK(block.bitWidth_ >= 1 && block.bitWidth_ <= 64);
-    AD_CORRECTNESS_CHECK(block.packedWords_.size() * 64 >=
-                         numRows * block.bitWidth_);
-    const uint64_t mask =
-        (block.bitWidth_ == 64) ? ~0ULL : ((1ULL << block.bitWidth_) - 1);
-
-    for (size_t i = 0; i < numRows; ++i) {
-      size_t bitOffset = i * block.bitWidth_;
-      size_t wordIdx = bitOffset / 64;
-      size_t intraWordOffset = bitOffset % 64;
-
-      uint64_t delta = (block.packedWords_[wordIdx] >> intraWordOffset);
-      if (intraWordOffset + block.bitWidth_ > 64 &&
-          (wordIdx + 1) < block.packedWords_.size()) {
-        delta |= (block.packedWords_[wordIdx + 1] << (64 - intraWordOffset));
+    const size_t numValues = block.numValues_;
+    const uint8_t width = block.bitWidth_;
+    AD_CONTRACT_CHECK(outputIds.size() >= numValues,
+                      "Output too small for the compressed block");
+    AD_CONTRACT_CHECK(
+        numValues >= 1 && numValues <= BLOCK_SIZE && width <= 64 &&
+            block.packedWords_.size() == (numValues * width + 63) / 64,
+        "Invalid `CompressedBlock`");
+    const uint64_t base = block.baseValue_.getBits();
+    const uint64_t mask = ad_utility::bitMaskForLowerBits(width);
+    for (size_t i = 0; i < numValues; ++i) {
+      uint64_t offset = 0;
+      if (width > 0) {
+        auto [word, shift] = bitPosition(i, width);
+        offset = block.packedWords_[word] >> shift;
+        if (shift + width > 64) {
+          offset |= block.packedWords_[word + 1] << (64 - shift);
+        }
       }
-      delta &= mask;
-
-      outputIds[i] = Id::fromBits(block.baseValue_.getBits() + delta);
+      outputIds[i] = Id::fromBits(base + (offset & mask));
     }
   }
 };
