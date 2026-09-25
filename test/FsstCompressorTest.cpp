@@ -13,6 +13,8 @@
 
 #include <array>
 #include <memory>
+#include <range/v3/algorithm/max.hpp>
+#include <range/v3/view/transform.hpp>
 #include <range/v3/view/zip.hpp>
 #include <string_view>
 
@@ -446,8 +448,14 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
     }
 
     if constexpr (N >= 2) {
-      EXPECT_GE(scratch.size(),
-                repeated.maxDecompressedSize(compressed.front()));
+      // `scratch` only holds the intermediate stages, which expand at most
+      // `N - 1` times, so it grows to exactly the largest such bound.
+      const size_t intermediateBound = ::ranges::max(
+          compressed | ::ranges::views::transform([](std::string_view word) {
+            return FsstRepeatedDecoder<N>::maxDecompressedSize(word) /
+                   FsstDecoder::maxExpansionFactor;
+          }));
+      EXPECT_EQ(scratch.size(), intermediateBound);
     }
   }
 };
