@@ -105,13 +105,17 @@ jobs:
               # legs without a `container-env` matrix key).
               if [ -n "${{ matrix.container-env }}" ]; then export ${{ matrix.container-env }}; fi
               # apt runs its downloads as _apt via setgroups, which rootless podman
-              # on Wolga cannot do (no /etc/subuid entry), so keep apt's sandbox root.
+              # on Wolga cannot do (no /etc/subuid entry), so keep the apt sandbox
+              # user root.
+              # NEVER put a single quote (apostrophe) anywhere in this script,
+              # comments included: it ends the bash -c string, and the rest of
+              # the script then runs on the HOST as the runner user (seen
+              # 2026-09-25: apt and cmake failing with Permission denied).
               # Compiler cache on the host SSD (mounted at /ccache, persists
               # across runs). Images carry no ccache binary, so install it
               # on first use (~30s, once per fresh container layer).
-              # ccache is optional: some rootless hosts cannot write the image's
-              # apt state (Permission denied on /var/lib/apt/lists/lock), so a
-              # failed install falls back to building without a compiler cache.
+              # ccache is optional: a failed install falls back to building
+              # without a compiler cache.
               command -v ccache >/dev/null 2>&1 || (apt-get -o APT::Sandbox::User=root update -qq && apt-get -o APT::Sandbox::User=root install -qy ccache) || echo "ccache unavailable, building without it"
               LAUNCHER=""
               if command -v ccache >/dev/null 2>&1; then
