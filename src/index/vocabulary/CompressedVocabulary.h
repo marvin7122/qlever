@@ -164,6 +164,12 @@ CPP_template(typename UnderlyingVocabulary,
           AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
           const size_t bound =
               compressionWrapper_.maxDecompressedSize(word, decoderIdx);
+          // An empty stored word has a zero bound, which
+          // `decompressIntoSpan` rejects (see
+          // `ArenaVocabBatchBuilder::appendDecompressedWord`).
+          if (bound == 0) {
+            return IndexAndWord{index, std::string_view{}};
+          }
           if (buffer.size() < bound) {
             buffer.resize(bound);
           }
