@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     runs-on: [self-hosted, linux, x64, wolga-img]
@@ -27,10 +31,15 @@ jobs:
         with:
           submodules: recursive
       - name: Native gcc-13 Release build inside prebuilt CI image
+        # Passed via the environment (not interpolated into the script) so
+        # shell metacharacters in a manual dispatch input stay inert.
+        env:
+          TARGET_INPUT: ${{ inputs.target }}
         run: |
           mkdir -p "${PODMAN_ROOT}" "${PODMAN_TMP}"
           podman --root "${PODMAN_ROOT}" --tmpdir "${PODMAN_TMP}" run --rm \
             --network=host \
+            -e TARGET_INPUT \
             -v "${{ github.workspace }}:/work" \
             -w /work \
             localhost/qlever-ci:gcc13 bash -c '
@@ -45,11 +54,11 @@ jobs:
                 -DBUILD_SHARED_LIBS=ON -DQLEVER_ONE_TEST_CASE_PER_FILE=ON \
                 -DUSE_PRECOMPILED_HEADERS=OFF -DCHEAPER_COMPILATION=OFF \
                 -DQLEVER_ALLOCATOR_BACKEND=limit
-              if [ -n "${{ inputs.target }}" ]; then
-                TARGET_ARG="--target ${{ inputs.target }}"
-              else
-                TARGET_ARG=""
+              # Forwarded from the host step via `-e TARGET_INPUT`; a bash
+              # array keeps the target a single argument.
+              TARGET_ARGS=()
+              if [ -n "${TARGET_INPUT}" ]; then
+                TARGET_ARGS=(--target "${TARGET_INPUT}")
               fi
-              # shellcheck disable=SC2086
-              cmake --build /work/build --config Release ${TARGET_ARG} -- -j $(nproc)
+              cmake --build /work/build --config Release "${TARGET_ARGS[@]}" -- -j "$(nproc)"
             '

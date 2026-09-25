@@ -1,7 +1,10 @@
-// Copyright 2022 - 2023, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Julian Mundhahs <mundhahj@cs.uni-freiburg.de>
-//          Hannah Bast <bast@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022-2023 Julian Mundhahs <mundhahj@cs.uni-freiburg.de>, UFR
+// 2022-2023 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #ifndef QLEVER_ALGORITHM_H
 #define QLEVER_ALGORITHM_H
@@ -10,7 +13,9 @@
 #include <numeric>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/shift.h"
@@ -266,6 +271,123 @@ CPP_template(typename ForwardIterator, typename Tp,
     }
   }
   return first;
+}
+
+namespace detail {
+// Return the next probe distance of a galloping search: double `step`, but
+// never beyond `remaining` (the distance from the new lower end to `last`).
+// Capping keeps the doubling free of signed overflow for every range size; a
+// probe distance larger than `remaining` would be clamped to `remaining` by
+// the caller anyway, so the probed positions are the same as with plain
+// doubling.
+template <typename DistanceType>
+constexpr DistanceType nextGallopStep(DistanceType step,
+                                      DistanceType remaining) {
+  return step > remaining / 2 ? remaining : step * 2;
+}
+}  // namespace detail
+
+// Galloping `lower_bound_iterator` starting from `hint`: exponential probe
+// forward while the probed element is still less than `val`, then binary
+// search in the bracket. Preconditions: `hint` is within `[first, last]` and
+// at or before the answer, and the range is sorted by `comp` (same comparator
+// contract as `lower_bound_iterator`, which compares an iterator as the first
+// argument to a value). Both hold when resolving a batch in sorted order
+// carrying the previous result as the hint.
+CPP_template(typename RandomIt, typename Tp, typename Compare)(
+    requires ql::concepts::random_access_iterator<RandomIt> CPP_and
+        ql::concepts::invocable<Compare&, RandomIt,
+                                const Tp&>) constexpr RandomIt
+    gallop_lower_bound_iterator([[maybe_unused]] RandomIt first, RandomIt last,
+                                const Tp& val, Compare comp, RandomIt hint) {
+  using DistanceType = typename std::iterator_traits<RandomIt>::difference_type;
+  // `first` is only needed for this check, which is compiled out unless
+  // expensive checks are enabled (hence `[[maybe_unused]]`).
+  AD_EXPENSIVE_CHECK(first <= hint && hint <= last);
+  RandomIt lo = hint;
+  DistanceType step = 1;
+  while (true) {
+    const DistanceType remaining = last - lo;
+    const DistanceType jump = step < remaining ? step : remaining;
+    const RandomIt hi = lo + jump;
+    if (hi == last || !comp(hi, val)) {
+      return lower_bound_iterator(lo, hi, val, comp);
+    }
+    lo = hi;
+    step = detail::nextGallopStep(step, last - lo);
+  }
+}
+
+// Galloping `upper_bound_iterator` starting from `hint`: mirror image of
+// `gallop_lower_bound_iterator` for the comparator contract of
+// `upper_bound_iterator` (a value as the first argument, an iterator as the
+// second). Same preconditions: `hint` is within `[first, last]` and at or
+// before the answer.
+CPP_template(typename RandomIt, typename Tp, typename Compare)(
+    requires ql::concepts::random_access_iterator<RandomIt> CPP_and
+        ql::concepts::invocable<Compare&, const Tp&,
+                                RandomIt>) constexpr RandomIt
+    gallop_upper_bound_iterator([[maybe_unused]] RandomIt first, RandomIt last,
+                                const Tp& val, Compare comp, RandomIt hint) {
+  using DistanceType = typename std::iterator_traits<RandomIt>::difference_type;
+  // `first` is only needed for this check, which is compiled out unless
+  // expensive checks are enabled (hence `[[maybe_unused]]`).
+  AD_EXPENSIVE_CHECK(first <= hint && hint <= last);
+  RandomIt lo = hint;
+  DistanceType step = 1;
+  while (true) {
+    const DistanceType remaining = last - lo;
+    const DistanceType jump = step < remaining ? step : remaining;
+    const RandomIt hi = lo + jump;
+    if (hi == last || comp(val, hi)) {
+      return upper_bound_iterator(lo, hi, val, comp);
+    }
+    lo = hi;
+    step = detail::nextGallopStep(step, last - lo);
+  }
+}
+
+// Resolve a batch of `queries` against the sorted range `[first, last)` and
+// return one `lower_bound` offset per query, in the original order of
+// `queries`. Process a copy of the batch in sorted order (keeping each query's
+// original position for scattering the results back) and carry the previous
+// hit as the gallop hint for `gallop_lower_bound_iterator`: the sorted order
+// guarantees that each hint is at or before the answer of the next query.
+// Callers distinguish exact hits from holes by comparing each result against
+// the query.
+CPP_template(typename RandomIt, typename QueryRange)(
+    requires ql::concepts::random_access_iterator<RandomIt> CPP_and
+        ql::ranges::sized_range<QueryRange>)
+    std::vector<size_t> batch_lower_bound_with_hints(
+        RandomIt first, RandomIt last, const QueryRange& queries) {
+  // `remove_const_t` because the value type of e.g. `ql::span<const size_t>`
+  // is `const size_t`, which must not be copied into the sorted query pairs.
+  using QueryType = std::remove_const_t<ql::ranges::range_value_t<QueryRange>>;
+  if (ql::ranges::empty(queries)) {
+    return {};
+  }
+  std::vector<std::pair<QueryType, size_t>> sortedQueries;
+  sortedQueries.reserve(ql::ranges::size(queries));
+  size_t index = 0;
+  for (const auto& query : queries) {
+    sortedQueries.emplace_back(query, index++);
+  }
+  ql::ranges::sort(sortedQueries, [](const auto& a, const auto& b) {
+    return a.first < b.first;
+  });
+  std::vector<size_t> result(sortedQueries.size());
+  const auto comp = [](RandomIt it, const QueryType& value) {
+    return *it < value;
+  };
+  // The first query starts at `hint == first`, which is always a valid hint.
+  RandomIt hint = first;
+  for (const auto& [query, originalIndex] : sortedQueries) {
+    const RandomIt it =
+        gallop_lower_bound_iterator(first, last, query, comp, hint);
+    result[originalIndex] = static_cast<size_t>(it - first);
+    hint = it;
+  }
+  return result;
 }
 
 // In place version of `ql::ranges::set_difference` which writes the output to

@@ -6,6 +6,14 @@ on:
   # Fork PR profile 2026-09-25: runner diagnostic, tests no code; run manually via workflow_dispatch.
   workflow_dispatch:
 
+# Least privilege: this smoke test only probes the runner machine and needs
+# neither the repository contents nor GitHub API access.
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   smoke:
     runs-on: [self-hosted, linux, x64, wolga]

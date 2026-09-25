@@ -1,6 +1,9 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2024 - 2026 The QLever Authors, in particular:
+//
+// 2024 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 
@@ -70,6 +73,16 @@ std::optional<std::string_view> VocabularyInMemoryBinSearch::operator[](
     return std::nullopt;
   }
   return wordAtPosition(position.value());
+}
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
+    ql::span<const size_t> indices) const {
+  // Resolve the whole batch with one galloping pass over `indices()` instead
+  // of one binary search (`positionOfIndex`) per index.
+  return ad_utility::vocabulary::lookupBatchWithGallopHints(
+      this->indices(), indices,
+      [this](size_t position) { return wordAtPosition(position); });
 }
 
 // _____________________________________________________________________________

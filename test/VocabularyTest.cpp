@@ -1,6 +1,12 @@
-// Copyright 2011, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Björn Buchhold <buchholb>
+// Copyright 2011 - 2026 The QLever Authors, in particular:
+//
+// 2011 Björn Buchhold <buchholb>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/cleanup/cleanup.h>
 #include <gmock/gmock.h>
@@ -249,10 +255,11 @@ TEST(VocabularyTest, LookupBatch) {
   EXPECT_THAT((*dupResult), ::testing::ElementsAre("ab", "ab", "a"));
 }
 
-// The compressed on-disk vocabulary serves `lookupBatch` from one underlying
-// batch plus per-word decompression (the io_uring ring path for on-disk
-// words). Shuffled indices with duplicates must resolve exactly like
-// sequential single lookups, in input order.
+// The compressed on-disk vocabulary (`OnDiskCompressed`, the default type of
+// `createExampleVocabulary`) serves `lookupBatch` from one underlying batch
+// plus per-word decompression (the `io_uring` ring path for on-disk words).
+// Shuffled indices with duplicates must resolve exactly like sequential single
+// lookups, in input order.
 TEST(VocabularyTest, LookupBatchCompressedBatched) {
   auto v = createExampleVocabulary();
   std::vector<size_t> indices{3, 1, 3, 0, 2, 1, 0, 3, 2, 2, 1, 0};

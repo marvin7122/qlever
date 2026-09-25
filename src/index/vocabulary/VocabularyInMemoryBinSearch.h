@@ -1,6 +1,9 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2024 - 2026 The QLever Authors, in particular:
+//
+// 2024 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORYBINSEARCH_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORYBINSEARCH_H
@@ -138,9 +141,11 @@ class VocabularyInMemoryBinSearch
   }
 
   //____________________________________________________________________________
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
-  }
+  // Return one word per element of `indices`, in the order of `indices`, with
+  // `placeholderForMissingVocabIndex(index)` for each index that is not
+  // contained in the vocabulary (same result as `sequentialLookupBatch`). The
+  // returned views are valid as long as the result is alive.
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {

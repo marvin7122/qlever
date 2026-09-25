@@ -1,15 +1,20 @@
-// Copyright 2022 - 2023, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
-//          Hannah Bast <bast@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022-2023 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2022-2023 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <limits>
 #include <map>
 
+#include "backports/span.h"
 #include "util/Algorithm.h"
 #include "util/GTestHelpers.h"
 #include "util/HashMap.h"
@@ -245,6 +250,141 @@ TEST(AlgorithmTest, lowerUpperBoundIterator) {
                                                value, compForUpperBound),
               ql::ranges::upper_bound(input, value));
   }
+}
+
+// _____________________________________________________________________________
+TEST(AlgorithmTest, gallopBoundIterator) {
+  auto compForLowerBound = [](auto iterator, size_t value) {
+    return *iterator < value;
+  };
+  auto compForUpperBound = [](size_t value, auto iterator) {
+    return value < *iterator;
+  };
+  // Every hint at or before the answer must find it; begin and end are
+  // always valid hints (sorted-batch resolving carries a valid hint by
+  // construction).
+  auto checkRange = [&](const std::vector<size_t>& input, size_t maxValue) {
+    for (size_t value = 0; value <= maxValue; ++value) {
+      auto expectedLower = ql::ranges::lower_bound(input, value);
+      auto expectedUpper = ql::ranges::upper_bound(input, value);
+      auto answerIdx = static_cast<size_t>(expectedLower - input.begin());
+      for (size_t hintIdx = 0; hintIdx <= answerIdx; ++hintIdx) {
+        auto hint = input.begin() + hintIdx;
+        EXPECT_EQ(
+            ad_utility::gallop_lower_bound_iterator(
+                input.begin(), input.end(), value, compForLowerBound, hint),
+            expectedLower)
+            << "value " << value << " hintIdx " << hintIdx;
+        EXPECT_EQ(
+            ad_utility::gallop_upper_bound_iterator(
+                input.begin(), input.end(), value, compForUpperBound, hint),
+            expectedUpper)
+            << "value " << value << " hintIdx " << hintIdx;
+      }
+      // The end hint is only valid when the answer is the end.
+      if (expectedLower == input.end()) {
+        EXPECT_EQ(ad_utility::gallop_lower_bound_iterator(
+                      input.begin(), input.end(), value, compForLowerBound,
+                      input.end()),
+                  expectedLower)
+            << "value " << value;
+      }
+      if (expectedUpper == input.end()) {
+        EXPECT_EQ(ad_utility::gallop_upper_bound_iterator(
+                      input.begin(), input.end(), value, compForUpperBound,
+                      input.end()),
+                  expectedUpper)
+            << "value " << value;
+      }
+    }
+  };
+  checkRange({0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20}, 22);
+  // Run of equal elements: hints inside the run must still bracket it, with
+  // the lower bound at its start and the upper bound past its end.
+  checkRange({0, 2, 4, 4, 4, 6, 8}, 10);
+  // Empty and single-element ranges.
+  std::vector<size_t> empty;
+  EXPECT_EQ(
+      ad_utility::gallop_lower_bound_iterator(empty.begin(), empty.end(), 1u,
+                                              compForLowerBound, empty.begin()),
+      empty.end());
+  std::vector<size_t> single{5};
+  EXPECT_EQ(
+      ad_utility::gallop_lower_bound_iterator(
+          single.begin(), single.end(), 5u, compForLowerBound, single.begin()),
+      single.begin());
+  EXPECT_EQ(
+      ad_utility::gallop_lower_bound_iterator(
+          single.begin(), single.end(), 6u, compForLowerBound, single.begin()),
+      single.end());
+}
+
+// _____________________________________________________________________________
+TEST(AlgorithmTest, nextGallopStep) {
+  using ad_utility::detail::nextGallopStep;
+  // Double the step while the doubled step does not exceed `remaining`.
+  EXPECT_EQ(nextGallopStep(1, 10), 2);
+  EXPECT_EQ(nextGallopStep(4, 10), 8);
+  EXPECT_EQ(nextGallopStep(5, 10), 10);
+  EXPECT_EQ(nextGallopStep(5, 11), 10);
+  // Otherwise cap the step at `remaining`.
+  EXPECT_EQ(nextGallopStep(6, 10), 10);
+  EXPECT_EQ(nextGallopStep(1, 1), 1);
+  // Doubling a step beyond half of the maximum would overflow, capping at
+  // `remaining` does not.
+  constexpr auto max = std::numeric_limits<std::ptrdiff_t>::max();
+  EXPECT_EQ(nextGallopStep<std::ptrdiff_t>(max / 2 + 1, max), max);
+  EXPECT_EQ(nextGallopStep<std::ptrdiff_t>(max / 2, max), max - 1);
+  EXPECT_EQ(nextGallopStep<std::ptrdiff_t>(max, max), max);
+}
+
+// _____________________________________________________________________________
+TEST(AlgorithmTest, batchLowerBoundWithHints) {
+  // Sorted index array with holes (even numbers only, like a vocabulary with
+  // holes). The existing `gallopBoundIterator` test covers single searches
+  // with explicit hints; this test covers the batch driver: sorting a copy of
+  // the batch, carrying the previous hit as the hint, and scattering the
+  // results back into the original order.
+  std::vector<size_t> sorted{0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20};
+  auto reference = [&sorted](const std::vector<size_t>& queries) {
+    std::vector<size_t> expected;
+    for (auto query : queries) {
+      expected.push_back(static_cast<size_t>(
+          ql::ranges::lower_bound(sorted, query) - sorted.begin()));
+    }
+    return expected;
+  };
+  // Ascending, descending, and mixed batches, with duplicates, holes, and
+  // out-of-range queries.
+  std::vector<std::vector<size_t>> batches{
+      {0, 2, 4, 20},
+      {20, 4, 2, 0},
+      {3, 3, 3},
+      {1, 7, 5, 9, 0, 21, 22},
+      {5},
+      {21},
+      {0},
+      {20},
+      {10, 10, 11, 9, 9, 12},
+      {22, 0, 20, 1, 19, 2, 3, 4, 5, 6, 21}};
+  for (const auto& queries : batches) {
+    EXPECT_EQ(
+        batch_lower_bound_with_hints(sorted.begin(), sorted.end(), queries),
+        reference(queries));
+    // The vocabularies pass their batches as `ql::span<const size_t>`.
+    ql::span<const size_t> spanQueries{queries.data(), queries.size()};
+    EXPECT_EQ(
+        batch_lower_bound_with_hints(sorted.begin(), sorted.end(), spanQueries),
+        reference(queries));
+  }
+  // Empty batch and empty range.
+  EXPECT_TRUE(batch_lower_bound_with_hints(sorted.begin(), sorted.end(),
+                                           std::vector<size_t>{})
+                  .empty());
+  std::vector<size_t> empty;
+  EXPECT_EQ(batch_lower_bound_with_hints(empty.begin(), empty.end(),
+                                         std::vector<size_t>{1, 2}),
+            (std::vector<size_t>{0, 0}));
 }
 
 // ____________________________________________________________________________

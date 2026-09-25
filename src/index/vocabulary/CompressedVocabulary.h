@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
@@ -109,9 +115,7 @@ CPP_template(typename UnderlyingVocabulary,
       if (!position.has_value()) {
         return ad_utility::vocabulary::placeholderForMissingVocabIndex(idx);
       }
-      return compressionWrapper_.decompress(
-          underlyingVocabulary_.wordAtPosition(position.value()),
-          getDecoderIdxFromPosition(position.value()));
+      return decompressAtPosition(position.value());
     } else {
       decltype(auto) word = underlyingVocabulary_[idx];
       // As a safeguard for the future: only a vocabulary that deliberately has
@@ -149,16 +153,22 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   //____________________________________________________________________________
+  // Return the uncompressed word for each element of `indices`, in the order
+  // of `indices` (the same words as `operator[]`, including the placeholder
+  // for a hole). The returned views are valid as long as the result is alive.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     if constexpr (underlyingHasHoles) {
-      // Indices that are holes report a placeholder; keep the per-index path
-      // that implements that mapping.
-      return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+      // Resolve the whole batch with one galloping pass over the underlying
+      // indices instead of one binary search (`positionOfIndex`) per index,
+      // as `operator[]` would do.
+      return ad_utility::vocabulary::lookupBatchWithGallopHints(
+          underlyingVocabulary_.indices(), indices,
+          [this](size_t position) { return decompressAtPosition(position); });
     } else {
       // Fetch the compressed words in one batch through the underlying
       // vocabulary (an on-disk underlying vocabulary serves this from its
-      // io_uring ring pool), then decompress each word with the decoder for
+      // `io_uring` ring pool), then decompress each word with the decoder for
       // its block. The underlying lookup preserves order, so result `i`
       // belongs to `indices[i]`, exactly like the sequential path.
       auto compressed = underlyingVocabulary_.lookupBatch(indices);
@@ -578,6 +588,16 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
  private:
+  // Return the uncompressed word at the given `position` of the underlying
+  // vocabulary. Only valid for an underlying vocabulary with holes, which
+  // stores its words by position (see `underlyingHasHoles`).
+  std::string decompressAtPosition(size_t position) const {
+    static_assert(underlyingHasHoles);
+    return compressionWrapper_.decompress(
+        underlyingVocabulary_.wordAtPosition(position),
+        getDecoderIdxFromPosition(position));
+  }
+
   // Get the correct decoder for the word at the given position. One decoder is
   // created per `NumWordsPerBlock` words that are pushed to the `WordWriter`,
   // so `position` has to be the position of the word in exactly that sequence
