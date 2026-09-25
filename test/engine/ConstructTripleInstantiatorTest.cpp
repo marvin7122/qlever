@@ -161,6 +161,22 @@ TEST(InstantiateTerm, PrecomputedBlankNodeUsesRowIdxTotal) {
 }
 
 // _____________________________________________________________________________
+TEST(InstantiateTerm, PrecomputedBlankNodeOwnsItsTerm) {
+  // A blank-node term is allocated per row, so the returned ref must be its
+  // only owner: `data_` points to the term held by `keepAlive_`.
+  auto batchResult = BatchEvaluationResult{{}, 1};
+  PreprocessedTerm preprocessed = PrecomputedBlankNode{"_:b", ""};
+
+  auto result = instantiateTerm(preprocessed, batchResult, 0, 3);
+
+  ASSERT_TRUE(result.has_value());
+  ASSERT_NE(result->keepAlive_, nullptr);
+  EXPECT_EQ(result->data_, result->keepAlive_.get());
+  EXPECT_EQ(result->keepAlive_.use_count(), 1);
+  EXPECT_THAT(result, Optional(matchesEvaluatedTerm("_:b3", nullptr)));
+}
+
+// _____________________________________________________________________________
 TEST(InstantiateTerm, PrecomputedBlankNodeIgnoresBatchRowIdx) {
   // This test verifies that the `rowIdxTotal` parameter of `instantiateTerm`
   // determines the blank node Id value , not the `rowIdxInBatch` parameter.
