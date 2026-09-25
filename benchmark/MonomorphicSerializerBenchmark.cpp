@@ -39,11 +39,9 @@
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
-  static inline std::atomic<size_t> bytes_{0};
 
   static void start() noexcept {
     count_.store(0, std::memory_order_seq_cst);
-    bytes_.store(0, std::memory_order_seq_cst);
     enabled_.store(true, std::memory_order_seq_cst);
   }
 
@@ -53,10 +51,6 @@ struct AllocationTracker {
 
   static size_t getCount() noexcept {
     return count_.load(std::memory_order_seq_cst);
-  }
-
-  static size_t getBytes() noexcept {
-    return bytes_.load(std::memory_order_seq_cst);
   }
 };
 
@@ -82,7 +76,6 @@ struct AllocationTracker {
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
-    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
   }
   void* ptr = std::malloc(size);
   if (!ptr) {
@@ -100,7 +93,6 @@ void operator delete(void* ptr, std::size_t) noexcept {
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
-    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
   }
   void* ptr = std::malloc(size);
   if (!ptr) {
