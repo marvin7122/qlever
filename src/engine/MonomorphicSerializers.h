@@ -193,11 +193,9 @@ inline void writeFormattedDouble(Writer& writer, double val) {
   std::array<char, 32> buffer;
   char* end = ad_utility::doubleToChars(buffer.data(),
                                         buffer.data() + buffer.size(), val);
-  if (end != buffer.data()) {
-    writer.writeRaw(std::string_view(buffer.data(), end - buffer.data()));
-  } else {
-    writer.writeRaw("0.0");
-  }
+  // 32 bytes hold every formatted double, see `doubleToChars`.
+  AD_CORRECTNESS_CHECK(end != buffer.data());
+  writer.writeRaw(std::string_view(buffer.data(), end - buffer.data()));
 }
 
 // _____________________________________________________________________________
