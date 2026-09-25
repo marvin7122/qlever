@@ -1,6 +1,6 @@
 # Export Engine V2 WP7 Prerequisite Design
 
-**Status:** Design prerequisite. No production scheduler code is authorized by this document.
+**Status:** Accepted design. `src/engine/export_v2/ElasticExportScheduler.{h,cpp}` implements the scheduler core (sections 5, 7, 8, and 9), the `QueryRegistry` adapter `attachToQueryRegistry`, and the `QLEVER_ENABLE_EXPORT_V2` build gate. `Server` does not construct the scheduler yet, so no export uses it at runtime.
 
 **Source baseline:** `marvin7122/qlever` `origin/master` at `379568d8d`, inspected on 2026-09-03.
 
@@ -140,7 +140,7 @@ This choice minimizes concurrent algorithm risk. The queue remains private, so l
 
 The earlier DuckDB-style MPMC recommendation is deferred. QLever does not currently vendor DuckDB's queue dependency.
 
-After correctness verification, a benchmark must compare the initial queue against an MPMC queue and a Chase-Lev design.
+TODO: After correctness verification, a benchmark must compare the initial queue against an MPMC queue and a Chase-Lev design.
 
 The comparison must report submission rate, contention time, CPU consumption, and p99.9 revocation latency.
 
@@ -212,8 +212,8 @@ Publish distributions before choosing an acceptance threshold. The measured thre
 
 ## 14. Delivery sequence
 
-1. Land the scheduler core with a fake demand source and deterministic tests.
-2. Land the `QueryRegistry` callback adapter and compile-time gate in a separate change.
+1. Land the scheduler core with a fake demand source and deterministic tests, together with the `QueryRegistry` callback adapter and the compile-time gate. Both are inert until `Server` constructs the scheduler.
+2. Wire the scheduler into `Server` in a separate change.
 3. Land TSAN stress coverage before enabling more than one helper.
 4. Land instrumentation and the chaos benchmark before claiming any preemption bound.
 5. Compare queue backends only after the correctness baseline passes.
