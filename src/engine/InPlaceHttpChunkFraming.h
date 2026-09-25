@@ -336,8 +336,15 @@ class InPlaceHttpChunk {
 // High-level zero-copy streaming engine that accumulates arbitrary writes,
 // automatically frames full chunks in-place, and emits ready-to-transmit
 // contiguous `ql::span<const char>` buffers to a sink callback.
+//
+// Sink contract: the span passed to the sink points into the streamer's single
+// internal chunk buffer and is valid only until the sink returns; the next
+// chunk is framed into the same memory. A sink must consume the bytes
+// synchronously (e.g. a blocking write) or copy them before returning. It must
+// not retain the span for asynchronous transmission.
 class InPlaceHttpChunkStreamer {
  public:
+  // Receives each framed chunk; see the sink contract above.
   using ChunkSink = std::function<void(ql::span<const char>)>;
 
  private:

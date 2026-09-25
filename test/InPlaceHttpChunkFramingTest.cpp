@@ -221,6 +221,26 @@ TEST(InPlaceHttpChunkFramingTest, StreamerAutoChunkingAndFlush) {
   EXPECT_EQ(reconstructedPayload, part1 + part2 + part3);
 }
 
+// _____________________________________________________________________________
+// Every chunk is framed into the same internal buffer, so a sink sees each
+// span only for the duration of its call and must copy what it keeps.
+TEST(InPlaceHttpChunkFramingTest, SinkSpansAliasTheReusedChunkBuffer) {
+  std::vector<const char*> spanStarts;
+  std::vector<std::string> copies;
+  InPlaceHttpChunkStreamer streamer(
+      [&](ql::span<const char> span) {
+        spanStarts.push_back(span.data());
+        copies.emplace_back(span.data(), span.size());
+      },
+      4, false);
+  streamer.write(std::string_view{"aaaabbbb"});
+  ASSERT_EQ(spanStarts.size(), 2u);
+  EXPECT_EQ(spanStarts[0], spanStarts[1]);
+  EXPECT_EQ(copies[0], "4\r\naaaa\r\n");
+  EXPECT_EQ(copies[1], "4\r\nbbbb\r\n");
+  (void)std::move(streamer).finalize();
+}
+
 TEST(InPlaceHttpChunkFramingTest, StreamerLargeSingleWrite) {
   std::vector<std::string> emittedChunks;
   constexpr size_t chunkPayloadCap = 1000;
