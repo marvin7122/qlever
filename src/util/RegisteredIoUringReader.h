@@ -340,8 +340,10 @@ class RegisteredIoUringReader {
   ad_utility::HashMap<uint64_t, InFlightMeta> inFlightByReqId_;
   ad_utility::HashMap<BatchId, size_t> inFlightByBatchId_;
   uint64_t nextReqId_ = 0;
-  // Completed results of synchronously executed batches (no-liburing build
-  // or ring-init fallback), consumed by `waitBatch`.
+  // Completed results that `waitBatch` has not yet returned: batches that were
+  // executed synchronously (no-liburing build or ring-init fallback), and the
+  // completions recorded by `drainOneCqe` (which may drain completions of any
+  // in-flight batch). Consumed by `waitBatch`.
   ad_utility::HashMap<BatchId, BatchResult> syncResults_;
 
 #ifdef QLEVER_HAS_LIBURING
@@ -609,18 +611,13 @@ class RegisteredIoUringReader {
       return takeSyncResult(batchId);
     }
 
-    size_t completed = 0;
-    size_t totalBytes = 0;
-
+    // `drainOneCqe` records every completion under its own batch, so
+    // completions of `batchId` that were drained earlier (while waiting for
+    // another batch or for a free ring slot) are not lost.
     while (inFlightByBatchId_.find(batchId) != inFlightByBatchId_.end()) {
-      auto [bytesRead, bId] = drainOneCqe();
-      if (bId == batchId) {
-        ++completed;
-        totalBytes += bytesRead;
-      }
+      drainOneCqe();
     }
-
-    return BatchResult{completed, totalBytes, true};
+    return takeSyncResult(batchId);
 #else
     return takeSyncResult(batchId);
 #endif
@@ -721,6 +718,10 @@ class RegisteredIoUringReader {
       AD_THROW(absl::StrCat("io_uring short read: expected ",
                             meta.expectedBytes, " got ", res));
     }
+
+    BatchResult& batchResult = syncResults_[meta.batchId];
+    ++batchResult.requestsCompleted;
+    batchResult.totalBytesRead += static_cast<size_t>(res);
 
     auto batchIt = inFlightByBatchId_.find(meta.batchId);
     AD_CORRECTNESS_CHECK(batchIt != inFlightByBatchId_.end());

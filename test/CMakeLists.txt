@@ -577,6 +577,8 @@ addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ZeroCopySocketSenderTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(RegisteredIoUringReaderTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
 addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
