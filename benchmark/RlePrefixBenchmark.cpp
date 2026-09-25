@@ -70,8 +70,6 @@ struct WikidataStreamDataset {
     std::mt19937 gen(seed);
     std::poisson_distribution<size_t> runDist(
         static_cast<double>(avgTriplesPerSubject));
-    std::uniform_int_distribution<size_t> predDist(0,
-                                                   49);  // 50 common predicates
     std::uniform_int_distribution<size_t> objDist(0, 999'999);
 
     // Populate common predicates in vocabulary
