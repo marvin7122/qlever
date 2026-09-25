@@ -140,8 +140,13 @@ struct RleFormatterConfig {
 //    it into subsequent output rows with a single 64-bit/128-bit word copy.
 // 3. Seamlessly switches back to dynamic formatting when the run ends.
 class RlePrefixFormatter {
+ public:
+  // Maximum size of a formatted prefix that is cached for the following rows
+  // of the same run. Longer terms are formatted directly into the output.
+  static constexpr size_t SLICE_CAPACITY = 2048;
+
  private:
-  RlePrefixSlice<2048> slice_{};
+  RlePrefixSlice<SLICE_CAPACITY> slice_{};
   RleFormatterConfig config_{};
   RleStats stats_{};
 
@@ -178,33 +183,7 @@ class RlePrefixFormatter {
 
     // Cache miss: format new prefix slice
     ++stats_.cacheMisses_;
-    std::array<char, 2048> tempBuf{};
-    char* curr = tempBuf.data();
-
-    // Opening delimiter (e.g. "<")
-    if (!config_.prefix_.empty()) {
-      std::memcpy(curr, config_.prefix_.data(), config_.prefix_.size());
-      curr += config_.prefix_.size();
-    }
-    // Term content
-    if (!rawTerm.empty()) {
-      std::memcpy(curr, rawTerm.data(), rawTerm.size());
-      curr += rawTerm.size();
-    }
-    // Closing delimiter (e.g. ">")
-    if (!config_.suffix_.empty()) {
-      std::memcpy(curr, config_.suffix_.data(), config_.suffix_.size());
-      curr += config_.suffix_.size();
-    }
-    // Trailing column delimiter (e.g. " " or "\t")
-    if (!config_.delimiter_.empty()) {
-      std::memcpy(curr, config_.delimiter_.data(), config_.delimiter_.size());
-      curr += config_.delimiter_.size();
-    }
-
-    size_t formattedLen = static_cast<size_t>(curr - tempBuf.data());
-    slice_.assign(id, std::string_view(tempBuf.data(), formattedLen));
-    return slice_.spliceInto(out);
+    return formatAndCache(id, rawTerm, out);
   }
 
   // ___________________________________________________________________________
@@ -226,32 +205,39 @@ class RlePrefixFormatter {
     // Cache miss: invoke lookup once
     ++stats_.cacheMisses_;
     std::string_view rawTerm = lookupFunc(id);
+    return formatAndCache(id, rawTerm, out);
+  }
 
-    std::array<char, 2048> tempBuf{};
+ private:
+  // ___________________________________________________________________________
+  // Format `rawTerm` with the configured delimiters into `out`. If the result
+  // fits into the slice, it is cached for the following rows of the run of
+  // `id`; otherwise it is written directly and the slice is invalidated.
+  char* formatAndCache(ValueId id, std::string_view rawTerm,
+                       char* out) noexcept {
+    const std::array<std::string_view, 4> parts{
+        config_.prefix_, rawTerm, config_.suffix_, config_.delimiter_};
+    size_t formattedLen = 0;
+    for (std::string_view part : parts) {
+      formattedLen += part.size();
+    }
+    if (formattedLen > SLICE_CAPACITY) {
+      slice_.invalidate();
+      for (std::string_view part : parts) {
+        out = spliceSlice(part.data(), part.size(), out);
+      }
+      return out;
+    }
+    std::array<char, SLICE_CAPACITY> tempBuf;
     char* curr = tempBuf.data();
-
-    if (!config_.prefix_.empty()) {
-      std::memcpy(curr, config_.prefix_.data(), config_.prefix_.size());
-      curr += config_.prefix_.size();
+    for (std::string_view part : parts) {
+      curr = spliceSlice(part.data(), part.size(), curr);
     }
-    if (!rawTerm.empty()) {
-      std::memcpy(curr, rawTerm.data(), rawTerm.size());
-      curr += rawTerm.size();
-    }
-    if (!config_.suffix_.empty()) {
-      std::memcpy(curr, config_.suffix_.data(), config_.suffix_.size());
-      curr += config_.suffix_.size();
-    }
-    if (!config_.delimiter_.empty()) {
-      std::memcpy(curr, config_.delimiter_.data(), config_.delimiter_.size());
-      curr += config_.delimiter_.size();
-    }
-
-    size_t formattedLen = static_cast<size_t>(curr - tempBuf.data());
     slice_.assign(id, std::string_view(tempBuf.data(), formattedLen));
     return slice_.spliceInto(out);
   }
 
+ public:
   // ___________________________________________________________________________
   // Batch format a sorted column slice.
   // Precondition: `ids` and `rawTerms` must have identical sizes.

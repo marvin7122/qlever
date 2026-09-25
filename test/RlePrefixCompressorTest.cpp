@@ -264,3 +264,26 @@ TEST(RlePrefixCompressorTest, ResetAndInvalidate) {
   EXPECT_EQ(formatter.stats().cacheMisses_, 1u);
   EXPECT_EQ(formatter.stats().cacheHits_, 0u);
 }
+
+// _____________________________________________________________________________
+// A term that does not fit into the cached slice is written directly (and
+// correctly) instead of overflowing the internal buffer.
+TEST(RlePrefixCompressorTest, TermLongerThanSliceIsNotCached) {
+  RlePrefixFormatter formatter{
+      RleFormatterConfig{.prefix_ = "<", .suffix_ = ">", .delimiter_ = " "}};
+  const auto id = ValueId::makeFromVocabIndex(VocabIndex::make(7));
+  const std::string longTerm(RlePrefixFormatter::SLICE_CAPACITY + 100, 'x');
+  const std::string expectedRow = "<" + longTerm + "> ";
+
+  std::vector<char> buffer(3 * expectedRow.size());
+  char* curr = buffer.data();
+  curr = formatter.formatPrefix(id, longTerm, curr);
+  curr = formatter.formatPrefixWithLookup(
+      id, [&](ValueId) -> std::string_view { return longTerm; }, curr);
+  curr = formatter.formatPrefix(id, "short", curr);
+
+  EXPECT_EQ(std::string_view(buffer.data(), curr - buffer.data()),
+            expectedRow + expectedRow + "<short> ");
+  EXPECT_EQ(formatter.stats().cacheHits_, 0u);
+  EXPECT_EQ(formatter.stats().cacheMisses_, 3u);
+}
