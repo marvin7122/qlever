@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include "backports/span.h"
@@ -19,10 +20,13 @@
 
 namespace ql::engine::rle {
 
-// _____________________________________________________________________________
-// Run-Length Encoded (RLE) Vector Stream for Late Materialization:
-// Passes repeated predicate and subject IDs as (ValueId, RunLength) pairs,
-// avoiding copying millions of redundant IDs across query execution tree nodes.
+// A column of `Id`s stored as runs: a `Run` is an `Id` together with the number
+// of consecutive rows that hold it. Memory is proportional to the number of
+// runs, not rows; `materialize` expands the runs into a flat column.
+//
+// Invariants: `totalRows()` is the sum of all run lengths, every run has a
+// positive length, and two adjacent runs only have the same `Id` when the
+// first one has the maximal length `UINT32_MAX`.
 class RleVectorStream {
  public:
   struct Run {
@@ -34,40 +38,66 @@ class RleVectorStream {
   std::vector<Run> runs_;
   size_t totalUncompressedRows_ = 0;
 
+  static constexpr uint32_t MAX_RUN_LENGTH =
+      std::numeric_limits<uint32_t>::max();
+
  public:
+  RleVectorStream() = default;
+  RleVectorStream(const RleVectorStream&) = default;
+  RleVectorStream& operator=(const RleVectorStream&) = default;
+  // A moved-from stream is empty, so its row count stays consistent.
+  RleVectorStream(RleVectorStream&& other) noexcept
+      : runs_{std::exchange(other.runs_, {})},
+        totalUncompressedRows_{std::exchange(other.totalUncompressedRows_, 0)} {
+  }
+  RleVectorStream& operator=(RleVectorStream&& other) noexcept {
+    runs_ = std::exchange(other.runs_, {});
+    totalUncompressedRows_ = std::exchange(other.totalUncompressedRows_, 0);
+    return *this;
+  }
+
+  // Append `length` rows with `value`. Extends the last run if it has the same
+  // value; a run that would exceed `UINT32_MAX` rows is filled up to that
+  // length and the rest starts a new run. Appending zero rows is a no-op.
   void append(Id value, uint32_t length) {
-    if (!runs_.empty() && runs_.back().value_ == value) {
-      // Merging two `uint32_t` lengths can wrap past `UINT32_MAX`: saturate
-      // the current run and spill the remainder into a fresh run instead.
+    if (length == 0) {
+      return;
+    }
+    AD_CONTRACT_CHECK(
+        length <= std::numeric_limits<size_t>::max() - totalUncompressedRows_,
+        "Too many rows for an `RleVectorStream`");
+    if (runs_.empty() || runs_.back().value_ != value) {
+      runs_.push_back({value, length});
+    } else {
       uint64_t merged = static_cast<uint64_t>(runs_.back().length_) + length;
-      if (merged <= std::numeric_limits<uint32_t>::max()) {
+      if (merged <= MAX_RUN_LENGTH) {
         runs_.back().length_ = static_cast<uint32_t>(merged);
       } else {
-        runs_.back().length_ = std::numeric_limits<uint32_t>::max();
+        // Add the new run first, so that the stream is unchanged if the
+        // allocation throws.
         runs_.push_back(
-            {value, static_cast<uint32_t>(
-                        merged - std::numeric_limits<uint32_t>::max())});
+            {value, static_cast<uint32_t>(merged - MAX_RUN_LENGTH)});
+        runs_[runs_.size() - 2].length_ = MAX_RUN_LENGTH;
       }
-    } else {
-      runs_.push_back({value, length});
     }
     totalUncompressedRows_ += length;
   }
 
-  [[nodiscard]] size_t numRuns() const noexcept { return runs_.size(); }
-  [[nodiscard]] size_t totalRows() const noexcept {
-    return totalUncompressedRows_;
-  }
+  // The number of runs.
+  size_t numRuns() const { return runs_.size(); }
+  // The number of rows, i.e. the sum of all run lengths.
+  size_t totalRows() const { return totalUncompressedRows_; }
+  // The runs in row order. Invalidated by the next `append`.
+  ql::span<const Run> runs() const { return runs_; }
 
-  [[nodiscard]] ql::span<const Run> runs() const noexcept { return runs_; }
-
-  // Late materialization: expands RLE runs directly into destination buffer
+  // Write the rows into the first `totalRows()` elements of `dest`, which must
+  // have at least that size. Elements beyond are left unchanged.
   void materialize(ql::span<Id> dest) const {
-    AD_CORRECTNESS_CHECK(dest.size() >= totalUncompressedRows_);
-    size_t outIdx = 0;
+    AD_CONTRACT_CHECK(dest.size() >= totalUncompressedRows_,
+                      "Destination too small for the rows of the stream");
+    auto out = dest.begin();
     for (const auto& run : runs_) {
-      std::fill_n(dest.data() + outIdx, run.length_, run.value_);
-      outIdx += run.length_;
+      out = std::fill_n(out, run.length_, run.value_);
     }
   }
 };

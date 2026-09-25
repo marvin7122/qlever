@@ -16,6 +16,7 @@
 
 using namespace ql::engine::rle;
 
+// _____________________________________________________________________________
 TEST(RleVectorStreamTest, AppendAndMaterialize) {
   RleVectorStream stream;
 
@@ -43,20 +44,36 @@ TEST(RleVectorStreamTest, AppendAndMaterialize) {
 
 TEST(RleVectorStreamTest, AppendEdgeCases) {
   RleVectorStream stream;
-  // Zero-length appends still record the value without growing the row count.
+  // Appending zero rows changes nothing.
   stream.append(Id::makeFromInt(7), 0);
+  EXPECT_EQ(stream.numRuns(), 0u);
   EXPECT_EQ(stream.totalRows(), 0u);
 
   // Merging past UINT32_MAX saturates the run and spills into a fresh one.
-  stream.append(Id::makeFromInt(9), std::numeric_limits<uint32_t>::max());
-  stream.append(Id::makeFromInt(9), 10);
-  ASSERT_EQ(stream.numRuns(), 3u);
-  EXPECT_EQ(stream.runs()[1].length_, std::numeric_limits<uint32_t>::max());
-  EXPECT_EQ(stream.runs()[2].length_, 10u);
-  EXPECT_EQ(stream.totalRows(),
-            static_cast<size_t>(std::numeric_limits<uint32_t>::max()) + 10u);
+  constexpr uint32_t max = std::numeric_limits<uint32_t>::max();
+  stream.append(Id::makeFromInt(9), max - 5);
+  stream.append(Id::makeFromInt(9), 15);
+  ASSERT_EQ(stream.numRuns(), 2u);
+  EXPECT_EQ(stream.runs()[0].length_, max);
+  EXPECT_EQ(stream.runs()[1].length_, 10u);
+  EXPECT_EQ(stream.totalRows(), static_cast<size_t>(max) + 10u);
+
+  // A moved-from stream is empty.
+  RleVectorStream moved{std::move(stream)};
+  EXPECT_EQ(moved.numRuns(), 2u);
+  EXPECT_EQ(stream.numRuns(), 0u);
+  EXPECT_EQ(stream.totalRows(), 0u);
 }
 
+// _____________________________________________________________________________
+TEST(RleVectorStreamTest, MaterializeIntoTooSmallDestinationThrows) {
+  RleVectorStream stream;
+  stream.append(Id::makeFromInt(4), 3);
+  std::vector<Id> dest(2);
+  EXPECT_ANY_THROW(stream.materialize(dest));
+}
+
+// _____________________________________________________________________________
 TEST(RleVectorStreamTest, MaterializeExactlySizedDestination) {
   RleVectorStream stream;
   stream.append(Id::makeFromInt(4), 3);
