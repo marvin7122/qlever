@@ -13,18 +13,14 @@ using Literal = ad_utility::triple_component::Literal;
 using ql::engine::scalar::IntegerDateOperations;
 
 // Date functions.
-// The input is `std::nullopt` if the argument to the expression is not a date.
+// `ExtractYear`, `ExtractMonth` and `ExtractDay` take the date `Id` from
+// `DateIdValueGetter` (`UNDEF` if the argument is not a date) and read the
+// component from the packed `Id`. The other functions take a
+// `std::optional<DateYearOrDuration>` from `DateValueGetter`, which is
+// `std::nullopt` if the argument is not a date.
 
 //______________________________________________________________________________
 struct ExtractYear {
-  Id operator()(std::optional<DateYearOrDuration> d) const {
-    if (!d.has_value()) {
-      return Id::makeUndefined();
-    }
-    return Id::makeFromInt(
-        IntegerDateOperations::extractYear(Id::makeFromDate(d.value())));
-  }
-
   Id operator()(Id id) const {
     if (id.getDatatype() != Datatype::Date) {
       return Id::makeUndefined();
@@ -35,18 +31,6 @@ struct ExtractYear {
 
 //______________________________________________________________________________
 struct ExtractMonth {
-  Id operator()(std::optional<DateYearOrDuration> d) const {
-    if (!d.has_value()) {
-      return Id::makeUndefined();
-    }
-    auto month =
-        IntegerDateOperations::extractMonth(Id::makeFromDate(d.value()));
-    if (month == 0) {
-      return Id::makeUndefined();
-    }
-    return Id::makeFromInt(month);
-  }
-
   Id operator()(Id id) const {
     if (id.getDatatype() != Datatype::Date) {
       return Id::makeUndefined();
@@ -61,17 +45,6 @@ struct ExtractMonth {
 
 //______________________________________________________________________________
 struct ExtractDay {
-  Id operator()(std::optional<DateYearOrDuration> d) const {
-    if (!d.has_value()) {
-      return Id::makeUndefined();
-    }
-    auto day = IntegerDateOperations::extractDay(Id::makeFromDate(d.value()));
-    if (day == 0) {
-      return Id::makeUndefined();
-    }
-    return Id::makeFromInt(day);
-  }
-
   Id operator()(Id id) const {
     if (id.getDatatype() != Datatype::Date) {
       return Id::makeUndefined();
@@ -157,8 +130,8 @@ using ExtractSeconds =
     ExtractTimeComponentImpl<&Date::getSecond, &Id::makeFromDouble>;
 
 //______________________________________________________________________________
-NARY_EXPRESSION(MonthExpression, 1, FV<ExtractMonth, DateValueGetter>);
-NARY_EXPRESSION(DayExpression, 1, FV<ExtractDay, DateValueGetter>);
+NARY_EXPRESSION(MonthExpression, 1, FV<ExtractMonth, DateIdValueGetter>);
+NARY_EXPRESSION(DayExpression, 1, FV<ExtractDay, DateIdValueGetter>);
 NARY_EXPRESSION(TimezoneStrExpression, 1,
                 FV<ExtractStrTimezone, DateValueGetter>);
 NARY_EXPRESSION(TimezoneDurationExpression, 1,
@@ -180,7 +153,7 @@ CPP_class_template(typename NaryOperation)(
 };
 
 using YearExpression =
-    YearExpressionImpl<Operation<1, FV<ExtractYear, DateValueGetter>>>;
+    YearExpressionImpl<Operation<1, FV<ExtractYear, DateIdValueGetter>>>;
 
 }  // namespace detail
 using namespace detail;
