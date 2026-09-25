@@ -119,6 +119,13 @@ class DirectIoFile {
 #endif
 
     fd_ = ::open(path_.c_str(), flags);
+#ifdef O_NOATIME
+    // `O_NOATIME` requires owning the file (or `CAP_FOWNER`); fall back to a
+    // regular open for readable files owned by someone else.
+    if (fd_ < 0 && errno == EPERM) {
+      fd_ = ::open(path_.c_str(), flags & ~O_NOATIME);
+    }
+#endif
     if (fd_ < 0) {
       AD_THROW(absl::StrCat("Failed to open file: ", path_,
                             " (errno: ", strerror(errno), ")"));
