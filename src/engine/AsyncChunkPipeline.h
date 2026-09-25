@@ -7,8 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
-#define QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
+#ifndef QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H
+#define QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H
 
 #include <atomic>
 #include <chrono>
@@ -45,17 +45,6 @@ struct HasSize<T, std::void_t<decltype(std::declval<const T&>().size())>>
 template <typename T>
 inline constexpr bool HasSize_v = HasSize<T>::value;
 }  // namespace detail
-
-// _____________________________________________________________________________
-// Exception thrown or propagated when a pipeline consumer cancels early
-// (e.g. HTTP client disconnected, query timed out, or client socket broke).
-class PipelineCancelledException : public std::runtime_error {
- public:
-  PipelineCancelledException()
-      : std::runtime_error("AsyncChunkPipeline operation cancelled.") {}
-  explicit PipelineCancelledException(const std::string& message)
-      : std::runtime_error(message) {}
-};
 
 // _____________________________________________________________________________
 // Diagnostic accounting and performance metrics for the double-buffering
@@ -278,23 +267,7 @@ class AsyncChunkPipeline {
           }
         });
 
-    // RAII guard ensuring worker is cancelled and joined upon generator exit.
-    // NOTE: `WorkerGuard` has a user-declared destructor, so it has no
-    // implicit move constructor; it is therefore populated in place instead
-    // of being moved into the `shared_ptr` (moving would fall back to the
-    // deleted copy of the `std::thread` member).
-    struct WorkerGuard {
-      std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
-      std::thread thread;
-      ~WorkerGuard() {
-        if (pipe) {
-          pipe->cancel();
-        }
-        if (thread.joinable()) {
-          thread.join();
-        }
-      }
-    };
+    // Cancel and join the worker upon generator exit.
     auto guard = std::make_shared<WorkerGuard>();
     guard->pipe = pipeline;
     guard->thread = std::move(worker);
@@ -329,20 +302,7 @@ class AsyncChunkPipeline {
       }
     });
 
-    // NOTE: populated in place, see `makeDoubleBuffered` above: the
-    // user-declared destructor suppresses the implicit move constructor.
-    struct WorkerGuard {
-      std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
-      std::thread thread;
-      ~WorkerGuard() {
-        if (pipe) {
-          pipe->cancel();
-        }
-        if (thread.joinable()) {
-          thread.join();
-        }
-      }
-    };
+    // Cancel and join the worker upon generator exit.
     auto guard = std::make_shared<WorkerGuard>();
     guard->pipe = pipeline;
     guard->thread = std::move(worker);
@@ -358,6 +318,24 @@ class AsyncChunkPipeline {
 #endif
 
  private:
+  // RAII guard ensuring a background worker is cancelled and joined when the
+  // adapter generator exits. NOTE: the user-declared destructor suppresses the
+  // implicit move constructor, so the adapters populate it in place instead of
+  // moving it into the `shared_ptr` (moving would fall back to the deleted
+  // copy of the `std::thread` member).
+  struct WorkerGuard {
+    std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
+    std::thread thread;
+    ~WorkerGuard() {
+      if (pipe) {
+        pipe->cancel();
+      }
+      if (thread.joinable()) {
+        thread.join();
+      }
+    }
+  };
+
   const size_t capacity_;
   mutable std::mutex mutex_;
   std::condition_variable cvNotEmpty_;
@@ -394,4 +372,4 @@ class ChunkSink {
 
 }  // namespace qlever::export_pipeline
 
-#endif  // QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
+#endif  // QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H
