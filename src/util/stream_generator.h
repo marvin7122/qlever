@@ -70,7 +70,7 @@ class stream_generator_promise {
   // buffer the frame itself would be `BUFFER_SIZE` bytes (8 MiB by default),
   // which overflows the stack when the compiler elides the heap allocation
   // of the frame.
-  std::unique_ptr<char[]> data_ = std::make_unique<char[]>(BUFFER_SIZE);
+  std::unique_ptr<char[]> data_{new char[BUFFER_SIZE]};  // sweep: no zero-init
   size_t currentIndex_ = 0;
   static_assert(BUFFER_SIZE > 0, "Buffer size must be greater than zero");
   // Temporarily store data that didn't fit into the buffer so far.
