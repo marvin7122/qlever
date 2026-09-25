@@ -72,19 +72,26 @@ class VectorizedPrefixTable {
   }
 
   // ___________________________________________________________________________
-  // Write a well-known prefix into `out` using 128-bit vector stores.
-  // Returns the number of valid bytes (`entry.length`). The stores cover
-  // whole 16-byte blocks, so `out` must have room for the length rounded
-  // up to a multiple of 16 (16, 32, or 48 bytes for the prefixes below);
-  // sizing `out` for exactly `entry.length` bytes would overflow.
-  [[nodiscard]] inline size_t writePrefixFast(WellKnownPrefixId id,
-                                              char* out) const noexcept {
+  // Number of bytes `writePrefixFast` stores for a prefix of `length` bytes:
+  // the vector stores cover whole 16-byte blocks.
+  [[nodiscard]] static constexpr size_t storeSize(size_t length) {
+    return (length + 15) / 16 * 16;
+  }
+
+  // ___________________________________________________________________________
+  // Write a well-known prefix into `out` using 128-bit vector stores and
+  // return the number of valid bytes (`entry.length`). The stores cover whole
+  // 16-byte blocks, so `out` must hold `storeSize(entry.length)` bytes (at
+  // most 48); a smaller `out` throws instead of overflowing.
+  [[nodiscard]] size_t writePrefixFast(WellKnownPrefixId id,
+                                       ql::span<char> out) const {
     const auto index = static_cast<size_t>(id);
     AD_CONTRACT_CHECK(index < entries_.size());
     const auto& entry = entries_[index];
+    AD_CONTRACT_CHECK(out.size() >= storeSize(entry.length));
 #ifdef QLEVER_SLICER_X86
     const __m128i* src = reinterpret_cast<const __m128i*>(entry.data);
-    __m128i* dst = reinterpret_cast<__m128i*>(out);
+    __m128i* dst = reinterpret_cast<__m128i*>(out.data());
 
     if (entry.length <= 16) {
       _mm_storeu_si128(dst, _mm_load_si128(src));
@@ -97,7 +104,7 @@ class VectorizedPrefixTable {
       _mm_storeu_si128(dst + 2, _mm_load_si128(src + 2));
     }
 #else
-    std::memcpy(out, entry.data, entry.length);
+    std::memcpy(out.data(), entry.data, entry.length);
 #endif
     return entry.length;
   }
