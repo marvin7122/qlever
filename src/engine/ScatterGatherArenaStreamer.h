@@ -20,8 +20,6 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -29,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/strings/str_cat.h"
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
