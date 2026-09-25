@@ -133,7 +133,9 @@ struct CheckpointMorselRunner {
       state_;
   std::shared_ptr<std::vector<std::optional<ColumnIndex>>> columnsPtr_;
   std::shared_ptr<std::vector<ColumnLattice>> latticePtr_;
-  const Index* indexPtr_ = nullptr;
+  // Shared ownership: closing the session does not join running helpers, so
+  // a helper may still serialize after the request's context is gone.
+  std::shared_ptr<const Index> index_;
   RowFormat format_ = RowFormat::Csv;
   bool checkpoints_ = false;
 
@@ -156,7 +158,7 @@ struct CheckpointMorselRunner {
             std::min(seg.end_, pos + kRevocationCheckRows);
         ExportEngineV2::appendSerializedRows(
             seg.block_->idTable_.asStaticView<0>(), seg.block_->localVocab_,
-            format_, builder, *indexPtr_, *columnsPtr_, pos, windowEnd,
+            format_, builder, *index_, *columnsPtr_, pos, windowEnd,
             *latticePtr_);
         pos = windowEnd;
         if (pos < seg.end_ || s + 1 < numSegments) {
@@ -248,7 +250,6 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
       columns.indices_);
   auto latticePtr =
       std::make_shared<std::vector<ColumnLattice>>(columns.lattice_.columns_);
-  const Index* indexPtr = &index;
   // The plans own their blocks, so workers can serialize after the driver
   // moved on. No table or vocabulary clone: one shared owner per block.
   // Unordered tasks checkpoint revocation mid-morsel (see above); ordered
@@ -256,7 +257,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   const CheckpointMorselRunner runner{session.sharedState(),
                                       columnsPtr,
                                       latticePtr,
-                                      indexPtr,
+                                      qet.getQec()->getIndexSharedPtr(),
                                       format,
                                       !ordered};
   for (auto&& plan : planExportMorsels(
