@@ -8,11 +8,11 @@
 
 #include <cctype>
 #include <chrono>
+#include <exception>
 #include <iomanip>
 #include <iostream>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "engine/ExportPipelineRouter.h"
 #include "parser/SparqlParser.h"
@@ -26,7 +26,18 @@ int main(int argc, char** argv) {
     std::string arg = argv[i];
     if (arg != "-p" && !arg.empty() &&
         std::isdigit(static_cast<unsigned char>(arg[0]))) {
-      numQueries = std::stoull(arg);
+      size_t parsedLength = 0;
+      try {
+        numQueries = std::stoull(arg, &parsedLength);
+      } catch (const std::exception& e) {
+        std::cerr << "Invalid iteration count '" << arg << "': " << e.what()
+                  << '\n';
+        return 1;
+      }
+      if (parsedLength != arg.size()) {
+        std::cerr << "Invalid iteration count '" << arg << "'\n";
+        return 1;
+      }
     }
   }
   // The reported rates divide by `numQueries`, so reject zero iterations.
@@ -64,7 +75,7 @@ int main(int argc, char** argv) {
     const ParsedQuery& query = (i % 3 == 0)   ? selectQuery
                                : (i % 3 == 1) ? constructQuery
                                               : askQuery;
-    auto mode = ExportPipelineRouter::selectEngine(
+    ExportEngineMode mode = ExportPipelineRouter::selectEngine(
         query, (i % 3 == 0) ? fastParams : defaultParams,
         (i % 5 == 0) ? std::optional<std::string_view>("v2") : std::nullopt);
     if (mode == ExportEngineMode::FastStreamingV2) {

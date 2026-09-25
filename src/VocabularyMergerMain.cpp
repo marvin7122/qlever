@@ -1,6 +1,12 @@
-// Copyright 2019, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach(joka921) <johannes.kalmbach@gmail.com>
+// Copyright 2019 - 2026 The QLever Authors, in particular:
+//
+// 2019 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 //
 // Only performs the "mergeVocabulary" step of the IndexBuilder pipeline
 // Can be used e.g. for benchmarking this step to develop faster IndexBuilders.
@@ -28,7 +34,6 @@ int main(int argc, char** argv) {
     return count++;
   };
 
-  ad_utility::vocabulary::VocabularyOnDisk vocab;
   ad_utility::vocabulary::TripleComponentComparator comparator;
   ad_utility::vocabulary_merger::mergeVocabulary(
       basename, numFiles,

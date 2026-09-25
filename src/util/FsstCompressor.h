@@ -15,6 +15,7 @@
 #include <fsst.h>
 
 #include <array>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <range/v3/view/iota.hpp>
@@ -196,6 +197,13 @@ class FsstRepeatedDecoder {
     if constexpr (N == 1) {
       return decoders_[0].decompressInto(str, out);
     } else {
+      // Check before the `resize` below, which could otherwise invalidate an
+      // aliasing `out`. `std::less` gives a total order on unrelated pointers.
+      std::less<const char*> less;
+      AD_CONTRACT_CHECK(
+          !less(out.data(), scratch.data() + scratch.capacity()) ||
+              !less(scratch.data(), out.data() + out.size()),
+          "`out` must not alias `scratch`");
       if (scratch.size() < out.size()) {
         scratch.resize(out.size());
       }

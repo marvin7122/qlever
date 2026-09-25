@@ -78,7 +78,11 @@ class RecordingWriter {
     char buffer[64];
     const auto [end, error] =
         std::to_chars(std::begin(buffer), std::end(buffer), value);
-    ASSERT_EQ(error, std::errc{});
+    // `ASSERT_*` would only return from this helper, not abort the test.
+    EXPECT_EQ(error, std::errc{});
+    if (error != std::errc{}) {
+      return;
+    }
     output_.append(buffer, end);
 #endif
   }

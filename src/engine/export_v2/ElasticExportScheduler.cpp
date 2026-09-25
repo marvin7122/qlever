@@ -1,6 +1,10 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "engine/export_v2/ElasticExportScheduler.h"
 
@@ -69,8 +73,16 @@ ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
   }
 
   workers_.reserve(threadCount);
-  for (size_t i = 0; i < threadCount; ++i) {
-    workers_.emplace_back(&ElasticExportScheduler::workerLoop, this);
+  try {
+    for (size_t i = 0; i < threadCount; ++i) {
+      workers_.emplace_back(&ElasticExportScheduler::workerLoop, this);
+    }
+  } catch (...) {
+    // The destructor does not run for a partially constructed object, so the
+    // already started workers must be stopped and joined here; destroying a
+    // joinable `std::thread` would call `std::terminate`.
+    shutdown();
+    throw;
   }
 }
 
