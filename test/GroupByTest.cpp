@@ -3537,6 +3537,33 @@ TEST_F(GroupByOptimizations, distinctCountTwoVariableScanColumnTwo) {
 }
 
 // _____________________________________________________________________________
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanBoundObject) {
+  // `?s ?p <a>` with `COUNT(DISTINCT ?p)`, scanned in OSP: the counted
+  // variable ?p is column 2, so the helper must select OPS (where ?p is
+  // column 1). The data has three distinct subjects but only two distinct
+  // predicates for <a>, so counting the wrong column is detected.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <p1> <a> . <y> <p1> <a> . <z> <p1> <a> . <x> <p2> <a> ."))};
+  auto qec = ctx.makeQec();
+
+  // SELECT (COUNT(DISTINCT ?p) AS ?count) WHERE { ?s ?p <a> }
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::OSP,
+      SparqlTripleSimple{Variable{"?s"}, Variable{"?p"}, iri("<a>")});
+  Variable varP{"?p"};
+  auto countDistinctPPimpl = SparqlExpressionPimpl{
+      std::make_unique<CountExpression>(
+          true, std::make_unique<VariableExpression>(varP)),
+      "COUNT(DISTINCT ?p)"};
+  std::vector<Alias> aliases{
+      Alias{std::move(countDistinctPPimpl), Variable{"?count"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+
+  auto result = groupBy.computeResultOnlyForTesting(false);
+  EXPECT_EQ(result.idTableView(), makeIdTableFromVector({{I(2)}}));
+}
+
+// _____________________________________________________________________________
 TEST_F(GroupByOptimizations, distinctCountTwoVariableScanEmptyRelation) {
   // `?s <notInVocab> ?o` where the predicate is not in the vocabulary: the
   // scan is empty, so the implicit group by yields a single row with count 0.

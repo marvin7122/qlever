@@ -975,12 +975,12 @@ std::optional<size_t> GroupByImpl::computeDistinctCountForTwoVariableScan(
   if (indexScan->predicate().isVariable() &&
       indexScan->predicate().getVariable() == countedVariable) {
     // Counted variable is the predicate. The bound column is the subject
-    // (`?s p <o>`, SPO has p in column 1) or the object (`<s> p ?o`, OSP has
+    // (`<s> ?p ?o`, SPO has p in column 1) or the object (`?s ?p <o>`, OPS has
     // p in column 1).
     if (!indexScan->subject().isVariable()) {
       targetPermutation = Permutation::SPO;
     } else if (!indexScan->object().isVariable()) {
-      targetPermutation = Permutation::OSP;
+      targetPermutation = Permutation::OPS;
     }
   } else if (indexScan->subject().isVariable() &&
              indexScan->subject().getVariable() == countedVariable) {
