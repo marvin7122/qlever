@@ -297,7 +297,10 @@ class ScatterGatherChunkStreamer {
 
   // ___________________________________________________________________________
   // Append a single character to the formatting header.
-  void writeChar(char c) { writeRawHeader(std::string_view(&c, 1)); }
+  void writeChar(char c) {
+    const std::array<char, 1> buffer{c};
+    writeRawHeader(std::string_view(buffer.data(), buffer.size()));
+  }
 
   // ___________________________________________________________________________
   // Write an integer directly without intermediate heap allocations.
