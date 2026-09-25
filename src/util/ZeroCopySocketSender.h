@@ -49,6 +49,15 @@
 #include <liburing.h>
 #endif
 
+// The asynchronous path needs liburing >= 2.3 (`io_uring_prep_send_zc*`,
+// `IORING_CQE_F_NOTIF`, the `*_data64` helpers). Older distro liburing
+// versions (e.g. the one in the gcc11 CI image) use the synchronous fallback.
+#if defined(QLEVER_HAS_LIBURING) && defined(IO_URING_VERSION_MAJOR) && \
+    (IO_URING_VERSION_MAJOR > 2 ||                                     \
+     (IO_URING_VERSION_MAJOR == 2 && IO_URING_VERSION_MINOR >= 3))
+#define QLEVER_HAS_LIBURING_SEND_ZC 1
+#endif
+
 namespace ad_utility {
 
 // 4KB memory page alignment constant for DMA and zero-copy kernel pinning.
@@ -225,7 +234,7 @@ class ZeroCopySocketSender {
   ZeroCopySenderConfig config_;
   ZeroCopyBufferPool bufferPool_;
 
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
   io_uring ring_{};
   bool ringInitialized_ = false;
   bool buffersRegistered_ = false;
@@ -269,7 +278,7 @@ class ZeroCopySocketSender {
   ZeroCopySocketSender(ZeroCopySocketSender&& other) noexcept
       : config_{other.config_},
         bufferPool_{std::move(other.bufferPool_)},
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
         ring_{other.ring_},
         ringInitialized_{std::exchange(other.ringInitialized_, false)},
         buffersRegistered_{std::exchange(other.buffersRegistered_, false)},
@@ -287,7 +296,7 @@ class ZeroCopySocketSender {
       teardown();
       config_ = other.config_;
       bufferPool_ = std::move(other.bufferPool_);
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
       ring_ = other.ring_;
       ringInitialized_ = std::exchange(other.ringInitialized_, false);
       buffersRegistered_ = std::exchange(other.buffersRegistered_, false);
@@ -314,7 +323,7 @@ class ZeroCopySocketSender {
         return slotOpt.value();
       }
 
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
       if (ringInitialized_) {
         // Pool exhausted: submit pending queue and drain completions
         io_uring_submit(&ring_);
@@ -342,7 +351,7 @@ class ZeroCopySocketSender {
     AD_CONTRACT_CHECK(numBytes > 0);
     AD_CONTRACT_CHECK(numBytes <= config_.bufferSizeBytes);
 
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     if (!ringInitialized_) {
       sendChunkSync(sockfd, bufferIndex, numBytes, flags);
       return;
@@ -403,7 +412,7 @@ class ZeroCopySocketSender {
   // ___________________________________________________________________________
   // Flush all queued SQEs to the kernel.
   void submit() {
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     if (ringInitialized_) {
       int ret = io_uring_submit(&ring_);
       if (ret < 0 && ret != -EAGAIN && ret != -EBUSY) {
@@ -417,7 +426,7 @@ class ZeroCopySocketSender {
   // Wait for and drain all in-flight requests and kernel notifications,
   // ensuring all buffers are recycled back to the pool.
   void flushAndDrainAll() {
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     if (!ringInitialized_) {
       return;
     }
@@ -432,7 +441,7 @@ class ZeroCopySocketSender {
   // ___________________________________________________________________________
   // Drain at least `minCompletions` from the completion queue.
   void drainCompletions(size_t minCompletions = 1) {
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     if (!ringInitialized_) {
       return;
     }
@@ -469,14 +478,14 @@ class ZeroCopySocketSender {
     return totalPacketsSent_;
   }
   [[nodiscard]] bool isBuffersRegistered() const noexcept {
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     return buffersRegistered_;
 #else
     return false;
 #endif
   }
   [[nodiscard]] bool isRingInitialized() const noexcept {
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     return ringInitialized_;
 #else
     return false;
@@ -485,7 +494,7 @@ class ZeroCopySocketSender {
 
  private:
   void initRing() {
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     int ret =
         io_uring_queue_init(static_cast<unsigned int>(config_.ringEntries),
                             &ring_, config_.additionalFlags);
@@ -513,7 +522,7 @@ class ZeroCopySocketSender {
   }
 
   void teardown() noexcept {
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
     if (ringInitialized_) {
       // Submit still-queued SQEs first: without this, the drain loop below
       // would wait forever on completions the kernel never sees. Submission
@@ -545,7 +554,7 @@ class ZeroCopySocketSender {
 #endif
   }
 
-#ifdef QLEVER_HAS_LIBURING
+#ifdef QLEVER_HAS_LIBURING_SEND_ZC
   // ___________________________________________________________________________
   // Drain a single CQE and handle zero-copy dual notification lifecycle.
   void drainOneCqe() {
