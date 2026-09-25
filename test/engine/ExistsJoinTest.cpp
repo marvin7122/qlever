@@ -389,11 +389,11 @@ TEST(ExistsJoin, leftIndexNestedLoopJoinOptimizationisSkippedWhenLeftLarger) {
           std::vector<std::optional<Variable>>{Variable{"?a"}}),
       Variable{"?result"}};
   existsJoin.computeResultOnlyForTesting(false);
+  // The index nested loop join is skipped, but the hash-set EXISTS join
+  // (single join column) skips the `Sort` on the right instead.
   const auto& runtimeInfo =
       existsJoin.getChildren().at(1)->getRootOperation()->runtimeInfo();
-  EXPECT_EQ(runtimeInfo.status_,
-            RuntimeInformation::Status::fullyMaterializedCompleted);
-  EXPECT_GT(runtimeInfo.numRows_, 0);
+  EXPECT_EQ(runtimeInfo.status_, RuntimeInformation::Status::optimizedOut);
 }
 
 // _____________________________________________________________________________

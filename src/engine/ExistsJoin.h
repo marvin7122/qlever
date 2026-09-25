@@ -110,13 +110,13 @@ class ExistsJoin : public Operation {
   // `tryLeftIndexNestedLoopJoinIfSuitable`.
   std::optional<Result> tryIndexNestedLoopJoinIfSuitable(bool requestLaziness);
 
-  // Return a copy of the fully materialized `left` input with the `EXISTS`
-  // column appended: `true` iff the value of `leftJoinColumn` (the join column
-  // of `left`) occurs in `rightJoinColumn`. Require a single join column and
-  // no UNDEF values in either join column.
-  IdTable computeExistsJoinWithHashSet(
-      const IdTableView<0>& left, ql::span<const Id> leftJoinColumn,
-      ql::span<const Id> rightJoinColumn) const;
+  // Hash semijoin for a single join column whose right input is a `Sort`:
+  // skip that `Sort`, collect the join values of the unsorted right input in
+  // a hash set, and look up every left row (lazy or fully materialized). The
+  // order of the left input is kept. Handles UNDEF values on both sides.
+  // Returns `std::nullopt` if there are several join columns or the right
+  // input is not a `Sort`.
+  std::optional<Result> tryHashSetExistsJoinIfSuitable(bool requestLaziness);
 
   Result computeResult(bool requestLaziness) override;
 
