@@ -8,97 +8,64 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "engine/BlockedBloomFilter.h"
 #include "global/Id.h"
+#include "util/AllocatorTestHelpers.h"
 
 using namespace ql::engine::filter;
+using ad_utility::testing::makeAllocator;
 
+// _____________________________________________________________________________
 TEST(BlockedBloomFilterTest, InsertAndQueryMatches) {
-  BlockedBloomFilter filter{10000, 0.01};
+  BlockedBloomFilter filter{10000, makeAllocator(), 0.01};
 
   for (uint64_t i = 0; i < 5000; ++i) {
     filter.insert(Id::fromBits(i * 2));
   }
 
-  // All inserted elements must be present (zero false negatives)
+  // All inserted elements must be present (no false negatives).
   for (uint64_t i = 0; i < 5000; ++i) {
     EXPECT_TRUE(filter.contains(Id::fromBits(i * 2)));
   }
 
-  // Non-inserted elements should have ~1% false positive rate
+  // The filter is sized for 10000 elements but holds 5000, so the observed
+  // false-positive rate must stay well below the three-fold target.
   size_t falsePositives = 0;
   for (uint64_t i = 0; i < 5000; ++i) {
     if (filter.contains(Id::fromBits(i * 2 + 1))) {
       falsePositives++;
     }
   }
-
-  double fpr = static_cast<double>(falsePositives) / 5000.0;
-  EXPECT_LE(fpr, 0.03);  // within expected statistical bounds
+  double falsePositiveRate = static_cast<double>(falsePositives) / 5000.0;
+  EXPECT_LE(falsePositiveRate, 0.03);
 }
 
-TEST(BlockedBloomFilterTest, CreateFromColumnAndPrune) {
+// _____________________________________________________________________________
+TEST(BlockedBloomFilterTest, CreateFromColumn) {
   std::vector<Id> buildSide;
-  buildSide.reserve(1000);
   for (uint64_t i = 0; i < 1000; ++i) {
     buildSide.push_back(Id::fromBits(i * 10));
   }
-
-  auto filter = BlockedBloomFilter::createFromColumn(buildSide, 0.01);
+  auto filter =
+      BlockedBloomFilter::createFromColumn(buildSide, makeAllocator(), 0.01);
   for (const auto& id : buildSide) {
     EXPECT_TRUE(filter.contains(id));
   }
-
-  std::vector<Id> probeSide;
-  probeSide.reserve(2000);
-  for (uint64_t i = 0; i < 2000; ++i) {
-    probeSide.push_back(
-        Id::fromBits(i * 5));  // Every even index is in buildSide (i * 10)
-  }
-
-  auto matchingIndices = filter.pruneNonMatchingIndices(probeSide);
-  // Every even probe index i holds Id(i * 5) = buildSide[i / 2], so all 1000
-  // even indices must survive pruning (a Bloom filter has no false negatives;
-  // odd indices may additionally survive as false positives).
-  std::vector<bool> matched(probeSide.size(), false);
-  for (size_t idx : matchingIndices) {
-    matched[idx] = true;
-  }
-  for (size_t j = 0; j < 1000; ++j) {
-    EXPECT_TRUE(matched[2 * j]);
-  }
+  // 1000 elements at p = 0.01 need ceil(9585.1 / 512) = 19 blocks.
+  EXPECT_EQ(filter.numBlocks(), 19u);
 }
 
-TEST(BlockedBloomFilterTest, SemiJoinPushdownHelper) {
-  std::vector<Id> buildSide = {Id::fromBits(42), Id::fromBits(100),
-                               Id::fromBits(200), Id::fromBits(300)};
-  SemiJoinPushdownHelper helper{buildSide};
-
-  EXPECT_TRUE(helper.probe(Id::fromBits(42)));
-  EXPECT_TRUE(helper.probe(Id::fromBits(100)));
-  EXPECT_TRUE(helper.probe(Id::fromBits(200)));
-  EXPECT_TRUE(helper.probe(Id::fromBits(300)));
-  EXPECT_FALSE(helper.probe(Id::fromBits(999999)));
-
-  std::vector<Id> probeSide = {Id::fromBits(1), Id::fromBits(42),
-                               Id::fromBits(5), Id::fromBits(200),
-                               Id::fromBits(9)};
-  auto matchingIndices = helper.pruneNonMatchingIndices(probeSide);
-
-  EXPECT_TRUE(std::find(matchingIndices.begin(), matchingIndices.end(), 1) !=
-              matchingIndices.end());
-  EXPECT_TRUE(std::find(matchingIndices.begin(), matchingIndices.end(), 3) !=
-              matchingIndices.end());
-}
-
+// _____________________________________________________________________________
 TEST(BlockedBloomFilterTest, FalsePositiveRateControlsSize) {
   // The requested rate must change the size: m = -n*ln(p)/ln(2)^2 bits.
-  BlockedBloomFilter strict{10000, 0.001};
-  BlockedBloomFilter def{10000, 0.01};
-  BlockedBloomFilter loose{10000, 0.1};
+  BlockedBloomFilter strict{10000, makeAllocator(), 0.001};
+  BlockedBloomFilter def{10000, makeAllocator(), 0.01};
+  BlockedBloomFilter loose{10000, makeAllocator(), 0.1};
   EXPECT_LT(loose.numBlocks(), def.numBlocks());
   EXPECT_LT(def.numBlocks(), strict.numBlocks());
   // ceil(95851 / 512) = 188 blocks for n = 10000, p = 0.01.
@@ -106,15 +73,31 @@ TEST(BlockedBloomFilterTest, FalsePositiveRateControlsSize) {
   EXPECT_EQ(def.sizeBytes(), 188u * 64u);
 }
 
-TEST(BlockedBloomFilterTest, EmptyColumnHandling) {
+// _____________________________________________________________________________
+TEST(BlockedBloomFilterTest, InvalidFalsePositiveRate) {
+  for (double rate :
+       {0.0, 1.0, -0.5, 1.5, std::numeric_limits<double>::quiet_NaN()}) {
+    EXPECT_ANY_THROW((BlockedBloomFilter{10, makeAllocator(), rate}));
+  }
+  // Too many elements for the conversion of the block count to `size_t`.
+  EXPECT_ANY_THROW((BlockedBloomFilter{std::numeric_limits<size_t>::max(),
+                                       makeAllocator(), 0.01}));
+}
+
+// _____________________________________________________________________________
+TEST(BlockedBloomFilterTest, MemoryIsTakenFromTheAllocator) {
+  using namespace ad_utility::memory_literals;
+  // 1 M elements at p = 0.01 need about 1.2 MB, more than the limit.
+  EXPECT_ANY_THROW(
+      (BlockedBloomFilter{1'000'000, makeAllocator(100_kB), 0.01}));
+  EXPECT_NO_THROW((BlockedBloomFilter{1'000, makeAllocator(100_kB), 0.01}));
+}
+
+// _____________________________________________________________________________
+TEST(BlockedBloomFilterTest, EmptyFilter) {
   std::vector<Id> emptyBuildSide;
-  auto filter = BlockedBloomFilter::createFromColumn(emptyBuildSide);
+  auto filter =
+      BlockedBloomFilter::createFromColumn(emptyBuildSide, makeAllocator());
+  EXPECT_EQ(filter.numBlocks(), 1u);
   EXPECT_FALSE(filter.contains(Id::fromBits(1)));
-
-  SemiJoinPushdownHelper helper{emptyBuildSide};
-  EXPECT_FALSE(helper.probe(Id::fromBits(1)));
-
-  std::vector<Id> probeKeys = {Id::fromBits(1), Id::fromBits(2)};
-  auto pruned = helper.pruneNonMatchingIndices(probeKeys);
-  EXPECT_TRUE(pruned.empty());
 }

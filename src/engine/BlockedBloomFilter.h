@@ -10,157 +10,139 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <vector>
 
 #include "backports/span.h"
 #include "global/Id.h"
+#include "util/AllocatorWithLimit.h"
+#include "util/Exception.h"
 
 namespace ql::engine::filter {
 
-// _____________________________________________________________________________
-// Cache-Line Blocked Bloom Filter (Split-Block Bloom Filter):
-// Sized in discrete 64-byte (512-bit) blocks matching hardware cache lines.
-// Probing tests 8 bits in parallel inside a single L1 cache line, guaranteeing
-// zero Last-Level Cache (LLC) thrashing.
+// Approximate set of `Id`s: `contains` returns `true` for every inserted `Id`
+// (no false negatives) and for a small fraction of other `Id`s (false
+// positives). All memory is taken from the given `AllocatorWithLimit`, so it
+// counts towards the memory limit of the query.
+//
+// Split-block layout (Putze et al., "Cache-, Hash- and Space-Efficient Bloom
+// Filters"): the bit array consists of 64-byte blocks. An `Id` selects one
+// block and sets or tests 8 bits inside it, so an `insert` or `contains`
+// touches a single 64-byte block.
 class BlockedBloomFilter {
  public:
   static constexpr size_t BITS_PER_BLOCK = 512;
   static constexpr size_t BYTES_PER_BLOCK = 64;
 
-  struct alignas(64) Block {
+  struct alignas(BYTES_PER_BLOCK) Block {
     uint32_t words[16] = {0};
   };
+  static_assert(sizeof(Block) == BYTES_PER_BLOCK);
 
  private:
-  std::vector<Block> blocks_;
+  std::vector<Block, ad_utility::AllocatorWithLimit<Block>> blocks_;
 
-  // Salt constants for deriving 8 (lane, bit) positions inside the 512-bit
-  // block. k = 8 fixed lanes is the split-block scheme (Putze et al.): each
-  // probe touches a single cache line, so the hash count is a deliberate
-  // design constant rather than a tunable parameter.
+  // Odd multipliers from the split-block Bloom filter of Apache Parquet and
+  // Impala. Each one derives an independent (word, bit) position from the
+  // 32-bit in-block key. The number of positions per `Id` (8) is fixed by the
+  // split-block scheme and not a tuning parameter.
   static constexpr uint32_t SALTS[8] = {0x47b6137b, 0x44974d91, 0x8824ad5b,
                                         0xa2b7289d, 0x705495c7, 0x2df1424b,
                                         0x9efc4947, 0x5c6bfb31};
 
-  // Derive the (lane, bit) position of the i-th hash of `key` inside one
-  // block. All 16 words of the block are addressable, so no block capacity
-  // is wasted.
-  [[nodiscard]] static constexpr std::pair<uint32_t, uint32_t> laneAndBit(
-      uint32_t key, int i) noexcept {
+  // The (word, bit) position of the i-th of the 8 bits for `key`. The top 9
+  // bits of the product are the best mixed ones and address all 16 * 32 bits
+  // of a block.
+  static constexpr std::pair<uint32_t, uint32_t> wordAndBit(uint32_t key,
+                                                            size_t i) {
     uint32_t h = key * SALTS[i];
     return {(h >> 27) & 0xF, (h >> 22) & 0x1F};
   }
 
-  [[nodiscard]] static constexpr uint64_t hashId(Id id) noexcept {
+  // splitmix64 finalizer: the bits of consecutive `Id`s differ only in the
+  // low bits, but the block index and the in-block key need all 64 bits
+  // mixed.
+  static constexpr uint64_t hashId(Id id) {
     uint64_t z = id.getBits() + 0x9e3779b97f4a7c15ULL;
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
     z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
     return z ^ (z >> 31);
   }
 
+  // The block that `id` maps to and the 32-bit key for the in-block
+  // positions.
+  std::pair<size_t, uint32_t> blockAndKey(Id id) const {
+    uint64_t hash = hashId(id);
+    return {static_cast<size_t>((hash >> 32) % blocks_.size()),
+            static_cast<uint32_t>(hash)};
+  }
+
  public:
-  explicit BlockedBloomFilter(size_t expectedElements,
-                              double falsePositiveRate = 0.01) {
-    // Standard Bloom filter sizing: m = -n * ln(p) / ln(2)^2 bits, so the
-    // requested rate controls the size (p = 0.01 needs ~9.6 bits/element).
-    // The rate is clamped because ln(p) is undefined outside (0, 1).
-    static constexpr double kLn2Squared = 0.4804530139182014;  // ln(2)^2
-    double p = std::clamp(falsePositiveRate, 1e-9, 1.0 - 1e-9);
-    size_t targetBits = static_cast<size_t>(std::ceil(
-        -static_cast<double>(expectedElements) * std::log(p) / kLn2Squared));
-    blocks_.resize(std::max(
-        size_t{1}, (targetBits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK));
+  // Create an empty filter for `expectedElements` elements. The number of bits
+  // is m = -n * ln(p) / ln(2)^2 for the target false-positive rate `p`, which
+  // must be in (0, 1). With the fixed 8 bits per element, the actual rate is
+  // close to `p` for p around 0.01 (about 9.6 bits per element) and deviates
+  // from it for much smaller or larger `p`.
+  BlockedBloomFilter(size_t expectedElements,
+                     const ad_utility::AllocatorWithLimit<Id>& allocator,
+                     double falsePositiveRate = 0.01)
+      : blocks_{ad_utility::AllocatorWithLimit<Block>{allocator}} {
+    // Written as a positive range check, so that NaN is rejected as well.
+    AD_CONTRACT_CHECK(falsePositiveRate > 0.0 && falsePositiveRate < 1.0,
+                      "The false-positive rate of a `BlockedBloomFilter` must "
+                      "be in (0, 1)");
+    static constexpr double ln2Squared = 0.4804530139182014;
+    double numBits = std::ceil(static_cast<double>(expectedElements) *
+                               -std::log(falsePositiveRate) / ln2Squared);
+    double numBlocks = std::ceil(numBits / BITS_PER_BLOCK);
+    // Keep the conversion to `size_t` well-defined; the allocator enforces the
+    // actual memory limit.
+    AD_CONTRACT_CHECK(numBlocks < static_cast<double>(size_t{1} << 52),
+                      "Too many elements for a `BlockedBloomFilter`");
+    blocks_.resize(std::max(size_t{1}, static_cast<size_t>(numBlocks)));
   }
 
-  void insert(Id id) noexcept {
-    uint64_t hash = hashId(id);
-    size_t blockIdx = (hash >> 32) % blocks_.size();
-    uint32_t key = static_cast<uint32_t>(hash);
-
-    Block& blk = blocks_[blockIdx];
-    for (int i = 0; i < 8; ++i) {
-      auto [wordIdx, bitPos] = laneAndBit(key, i);
-      blk.words[wordIdx] |= (1U << bitPos);
-    }
-  }
-
-  [[nodiscard]] bool contains(Id id) const noexcept {
-    uint64_t hash = hashId(id);
-    size_t blockIdx = (hash >> 32) % blocks_.size();
-    uint32_t key = static_cast<uint32_t>(hash);
-
-    const Block& blk = blocks_[blockIdx];
-    for (int i = 0; i < 8; ++i) {
-      auto [wordIdx, bitPos] = laneAndBit(key, i);
-      if ((blk.words[wordIdx] & (1U << bitPos)) == 0) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  // Populate a BlockedBloomFilter from a column/span of Ids.
-  static BlockedBloomFilter createFromColumn(ql::span<const Id> column,
-                                             double falsePositiveRate = 0.01) {
-    BlockedBloomFilter filter{column.size(), falsePositiveRate};
+  // Create a filter that contains all `Id`s of `column`.
+  static BlockedBloomFilter createFromColumn(
+      ql::span<const Id> column,
+      const ad_utility::AllocatorWithLimit<Id>& allocator,
+      double falsePositiveRate = 0.01) {
+    BlockedBloomFilter filter{column.size(), allocator, falsePositiveRate};
     for (Id id : column) {
       filter.insert(id);
     }
     return filter;
   }
 
-  // Probe incoming candidate keys to prune non-matching row indices before
-  // buffer materialization.
-  [[nodiscard]] std::vector<size_t> pruneNonMatchingIndices(
-      ql::span<const Id> candidateKeys) const {
-    std::vector<size_t> matchingIndices;
-    matchingIndices.reserve(candidateKeys.size());
-    for (size_t i = 0; i < candidateKeys.size(); ++i) {
-      if (contains(candidateKeys[i])) {
-        matchingIndices.push_back(i);
+  // Add `id`. Must not run concurrently with other `insert` or `contains`
+  // calls; concurrent `contains` calls alone are safe.
+  void insert(Id id) {
+    auto [blockIdx, key] = blockAndKey(id);
+    Block& block = blocks_[blockIdx];
+    for (size_t i = 0; i < 8; ++i) {
+      auto [word, bit] = wordAndBit(key, i);
+      block.words[word] |= (1U << bit);
+    }
+  }
+
+  // `false` if `id` was definitely not inserted, `true` if it was inserted or
+  // is a false positive.
+  bool contains(Id id) const {
+    auto [blockIdx, key] = blockAndKey(id);
+    const Block& block = blocks_[blockIdx];
+    for (size_t i = 0; i < 8; ++i) {
+      auto [word, bit] = wordAndBit(key, i);
+      if ((block.words[word] & (1U << bit)) == 0) {
+        return false;
       }
     }
-    return matchingIndices;
+    return true;
   }
 
-  [[nodiscard]] size_t numBlocks() const noexcept { return blocks_.size(); }
-  [[nodiscard]] size_t sizeBytes() const noexcept {
-    return blocks_.size() * BYTES_PER_BLOCK;
-  }
-};
-
-// _____________________________________________________________________________
-// Semi-join pushdown helper: populates a BlockedBloomFilter from the build-side
-// (smaller table's join column) during join preparation and probes probe-side
-// candidate keys to prune non-matching rows before buffer materialization.
-class SemiJoinPushdownHelper {
- private:
-  BlockedBloomFilter filter_;
-
- public:
-  // The span is only read during construction (copied into the filter), so
-  // it need not stay alive afterwards.
-  explicit SemiJoinPushdownHelper(ql::span<const Id> buildSideKeys,
-                                  double falsePositiveRate = 0.01)
-      : filter_{BlockedBloomFilter::createFromColumn(buildSideKeys,
-                                                     falsePositiveRate)} {}
-
-  // Test whether a candidate key should be retained.
-  [[nodiscard]] bool probe(Id candidateKey) const noexcept {
-    return filter_.contains(candidateKey);
-  }
-
-  // Probe incoming candidate keys and return the indices of matching elements.
-  [[nodiscard]] std::vector<size_t> pruneNonMatchingIndices(
-      ql::span<const Id> candidateKeys) const {
-    return filter_.pruneNonMatchingIndices(candidateKeys);
-  }
-
-  [[nodiscard]] const BlockedBloomFilter& filter() const noexcept {
-    return filter_;
-  }
+  size_t numBlocks() const { return blocks_.size(); }
+  size_t sizeBytes() const { return blocks_.size() * BYTES_PER_BLOCK; }
 };
 
 }  // namespace ql::engine::filter

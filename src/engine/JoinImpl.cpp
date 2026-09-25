@@ -4,6 +4,7 @@
 // 2018-2026 Johannes Kalmbach (kalmbach@informatik.uni-freiburg.de), UFR
 // 2025 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 // 2026 Mark Veser (mark.veser87@gmail.com)
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -449,14 +450,17 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
   IdTableStatic<OUT_WIDTH> result = std::move(*dynRes).toStatic<OUT_WIDTH>();
 
   // Puts the rows of the given table into a hash map, with the value of
-  // the join column of a row as the key, and returns the hash map.
-  auto idTableToHashMap = [](const auto& table, const ColumnIndex jc) {
+  // the join column of a row as the key, and returns the hash map. Also adds
+  // each key to `filter`.
+  auto idTableToHashMap = [](const auto& table, const ColumnIndex jc,
+                             ql::engine::filter::BlockedBloomFilter& filter) {
     // This declaration works, because generic lambdas are just syntactic sugar
     // for templates.
     using Table = std::decay_t<decltype(table)>;
     ad_utility::HashMap<Id, std::vector<typename Table::row_type>> map;
     for (const auto& row : table) {
       map[row[jc]].push_back(row);
+      filter.insert(row[jc]);
     }
     return map;
   };
@@ -480,25 +484,23 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
                                    const ColumnIndex largerTableJoinColumn,
                                    const auto& smallerTable,
                                    const ColumnIndex smallerTableJoinColumn) {
-        // Put the smaller table into the hash table.
-        auto map = idTableToHashMap(smallerTable, smallerTableJoinColumn);
-
-        // Populate BlockedBloomFilter from the smaller table's join column
-        // during join preparation to prune non-matching probe keys before hash
-        // map lookups.
-        auto filter = ql::engine::filter::BlockedBloomFilter::createFromColumn(
-            smallerTable.getColumn(smallerTableJoinColumn));
+        // Put the smaller table into the hash table. The `BlockedBloomFilter`
+        // of its join column rejects most keys of the larger table that have
+        // no partner with one cache-line access, before the more expensive
+        // hash map lookup.
+        ql::engine::filter::BlockedBloomFilter filter{smallerTable.size(),
+                                                      result.getAllocator()};
+        auto map =
+            idTableToHashMap(smallerTable, smallerTableJoinColumn, filter);
 
         // Create cross product by going through the larger table.
         for (size_t i = 0; i < largerTable.size(); i++) {
           const Id key = largerTable(i, largerTableJoinColumn);
-          // Probe cache-line bloom filter first to prune non-matching keys
-          // before hash table lookup.
           if (!filter.contains(key)) {
             continue;
           }
 
-          // Skip if there is no matching entry for the join column.
+          // Skip, if there is no matching entry for the join column.
           auto entry = map.find(key);
           if (entry == map.end()) {
             continue;
