@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -136,6 +137,8 @@ class InPlaceHttpChunk {
         isFinalized_{false},
         framedStart_{nullptr},
         framedLength_{0} {
+    AD_CONTRACT_CHECK(maxPayloadCapacity <= std::numeric_limits<size_t>::max() -
+                                                TOTAL_OVERHEAD_BYTES);
     ownedBuffer_.emplace(totalCapacity_);
     buffer_ = ownedBuffer_->data();
   }
