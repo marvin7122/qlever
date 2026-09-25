@@ -81,12 +81,12 @@ VocabBatchLookupResult VocabularyInternalExternal::MixedLookupHandle::finish() {
   if (externalHandle_) {
     data->diskResult_ =
         vocab_->externalVocab_.finishLookup(std::move(externalHandle_));
-    for (auto [position, word] :
+    for (auto&& [position, word] :
          ::ranges::views::zip(externalPositions_, *data->diskResult_)) {
       data->views_[position] = word;
     }
   }
-  for (auto [position, word] :
+  for (auto&& [position, word] :
        ::ranges::views::zip(internalPositions_, data->internalWords_)) {
     data->views_[position] = word;
   }
