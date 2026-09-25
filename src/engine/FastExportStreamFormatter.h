@@ -20,9 +20,11 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
+#include "backports/concepts.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
@@ -208,9 +210,9 @@ class FastExportStreamFormatter {
 
   // ___________________________________________________________________________
   // Write an integer directly without heap allocation.
-  template <typename IntegerType>
-  requires std::is_integral_v<IntegerType>
-  void writeInteger(IntegerType value) {
+  CPP_template(typename IntegerType)(
+      requires std::is_integral_v<IntegerType>) void writeInteger(IntegerType
+                                                                      value) {
     // Format into a bounded stack buffer first: it holds the longest
     // representation of any integer type, so fixed-span writes only reserve
     // what they actually emit.
@@ -499,15 +501,14 @@ class FastExportStreamFormatter {
 // Helper function to map ad_utility::MediaType to ExportFormat.
 [[nodiscard]] inline ExportFormat toExportFormat(
     ad_utility::MediaType mediaType) {
-  using enum ad_utility::MediaType;
   switch (mediaType) {
-    case turtle:
+    case ad_utility::MediaType::turtle:
       return ExportFormat::Turtle;
-    case ntriples:
+    case ad_utility::MediaType::ntriples:
       return ExportFormat::NTriples;
-    case csv:
+    case ad_utility::MediaType::csv:
       return ExportFormat::Csv;
-    case tsv:
+    case ad_utility::MediaType::tsv:
       return ExportFormat::Tsv;
     default:
       AD_THROW(absl::StrCat("Unsupported media type for export formatter: ",

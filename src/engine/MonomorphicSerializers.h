@@ -160,20 +160,6 @@ struct CellValue {
   }
 };
 
-// _____________________________________________________________________________
-// High-performance low-level direct buffer serializer / writer concept wrapper.
-template <typename Writer>
-concept FormatterWriter =
-    requires(Writer& w, char c, std::string_view sv, int64_t i) {
-      { w.writeChar(c) };
-      { w.writeRaw(sv) };
-      { w.writeInteger(i) };
-      { w.writeEscapedCsv(sv) };
-      { w.writeEscapedTsv(sv) };
-      { w.writeEscapedTurtleLiteral(sv) };
-      { w.writeIri(sv) };
-    };
-
 namespace detail {
 
 // Double / Float serialization without dynamic allocation
@@ -271,8 +257,8 @@ struct MonomorphicCellWriter {
   }
 
   // Typed overload for integral values
-  template <typename Writer, typename T>
-  requires std::is_integral_v<T> static void write(Writer& writer, T val) {
+  CPP_template(typename Writer, typename T)(
+      requires std::is_integral_v<T>) static void write(Writer& writer, T val) {
     if constexpr (Type == ColumnType::Boolean) {
       writer.writeRaw(val ? "true" : "false");
     } else {
@@ -281,9 +267,9 @@ struct MonomorphicCellWriter {
   }
 
   // Typed overload for floating point values
-  template <typename Writer, typename T>
-  requires std::is_floating_point_v<T>
-  static void write(Writer& writer, T val) {
+  CPP_template(typename Writer, typename T)(
+      requires std::is_floating_point_v<T>) static void write(Writer& writer,
+                                                              T val) {
     writeFormattedDouble(writer, static_cast<double>(val));
   }
 
