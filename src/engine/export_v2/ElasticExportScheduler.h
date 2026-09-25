@@ -398,58 +398,23 @@ class ExportJobState final
       return;
     }
 
-    absl::AnyInvocable<ResultType()> task;
-    auto startWall = std::chrono::steady_clock::now();
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (morselIndex >= slots_.size() ||
-          slots_[morselIndex].status_ != MorselStatus::Pending) {
-        return;
-      }
-      // Decisive re-check under `mutex_`: any state change between the
-      // fast-path filter above and this lock is caught here before the
-      // slot is marked Running, so no stale morsel can execute. Acquire
-      // loads pair with the release stores in `onDemandChanged` (the
-      // mutex already orders them; acquire states the protocol).
-      if (cancelled_ ||
-          currentEpoch_.load(std::memory_order_acquire) != leaseEpoch ||
-          state_.load(std::memory_order_acquire) == SessionState::Revoking ||
-          state_.load(std::memory_order_acquire) == SessionState::Closed) {
-        return;
-      }
-      slots_[morselIndex].status_ = MorselStatus::Running;
-      slots_[morselIndex].profile_.startedAt_ = startWall;
-      slots_[morselIndex].profile_.queueDelay_ =
-          startWall - slots_[morselIndex].profile_.submittedAt_;
-      slots_[morselIndex].profile_.executedByHelper_ = true;
-      task = std::move(slots_[morselIndex].task_);
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (morselIndex >= slots_.size() ||
+        slots_[morselIndex].status_ != MorselStatus::Pending) {
+      return;
     }
-
-    auto startCpu = getCpuDuration();
-    std::optional<ResultType> result;
-    std::exception_ptr exceptionPtr = nullptr;
-    try {
-      result = task();
-    } catch (...) {
-      exceptionPtr = std::current_exception();
+    // Decisive re-check under `mutex_`: any state change between the
+    // fast-path filter above and this lock is caught here before the slot
+    // is marked Running, so no stale morsel can execute. Acquire loads pair
+    // with the release stores in `onDemandChanged` (the mutex already orders
+    // them; acquire states the protocol).
+    if (cancelled_ ||
+        currentEpoch_.load(std::memory_order_acquire) != leaseEpoch ||
+        state_.load(std::memory_order_acquire) == SessionState::Revoking ||
+        state_.load(std::memory_order_acquire) == SessionState::Closed) {
+      return;
     }
-    auto endCpu = getCpuDuration();
-    auto endWall = std::chrono::steady_clock::now();
-
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (exceptionPtr) {
-        slots_[morselIndex].exception_ = std::move(exceptionPtr);
-      } else {
-        slots_[morselIndex].result_ = std::move(result);
-      }
-      slots_[morselIndex].status_ = MorselStatus::Completed;
-      slots_[morselIndex].profile_.completedAt_ = endWall;
-      slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
-      slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
-      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
-      cv_.notify_all();
-    }
+    runSlot(lock, morselIndex, true);
   }
 
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
@@ -508,13 +473,10 @@ class ExportJobState final
   }
 
   ResultType consumeNextResult() {
-    size_t index = 0;
-    absl::AnyInvocable<ResultType()> primaryTask;
-
     std::unique_lock<std::mutex> lock(mutex_);
     AD_CONTRACT_CHECK(nextSlotToConsume_ < slots_.size(),
                       "No more submitted morsels to consume");
-    index = nextSlotToConsume_++;
+    const size_t index = nextSlotToConsume_++;
 
     while (true) {
       if (cancelled_) {
@@ -531,39 +493,9 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Pending) {
-        // Single-core fallback: execute directly on coordinator thread
-        slots_[index].status_ = MorselStatus::Running;
-        auto startWall = std::chrono::steady_clock::now();
-        slots_[index].profile_.startedAt_ = startWall;
-        slots_[index].profile_.queueDelay_ =
-            startWall - slots_[index].profile_.submittedAt_;
-        slots_[index].profile_.executedByHelper_ = false;
-        primaryTask = std::move(slots_[index].task_);
-
-        lock.unlock();
-        auto startCpu = getCpuDuration();
-        std::optional<ResultType> result;
-        std::exception_ptr exceptionPtr = nullptr;
-        try {
-          result = primaryTask();
-        } catch (...) {
-          exceptionPtr = std::current_exception();
-        }
-        auto endCpu = getCpuDuration();
-        auto endWall = std::chrono::steady_clock::now();
-        lock.lock();
-
-        if (exceptionPtr) {
-          slots_[index].exception_ = std::move(exceptionPtr);
-        } else {
-          slots_[index].result_ = std::move(result);
-        }
-        slots_[index].status_ = MorselStatus::Completed;
-        slots_[index].profile_.completedAt_ = endWall;
-        slots_[index].profile_.wallDuration_ = endWall - startWall;
-        slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
-        slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
-        cv_.notify_all();
+        // Coordinator fallback: no helper claimed this morsel, so run it
+        // here on the coordinator thread.
+        runSlot(lock, index, false);
         if (slots_[index].exception_) {
           std::rethrow_exception(slots_[index].exception_);
         }
@@ -633,6 +565,50 @@ class ExportJobState final
   }
 
  private:
+  // Execute the Pending slot `index` on the calling thread and publish its
+  // result or exception. `lock` must hold `mutex_` on entry; it is released
+  // while the task runs and held again on return. Shared by the helper and
+  // the coordinator path so that status and profiling cannot diverge.
+  void runSlot(std::unique_lock<std::mutex>& lock, size_t index,
+               bool executedByHelper) {
+    AD_CORRECTNESS_CHECK(lock.owns_lock());
+    auto& claimed = slots_[index];
+    AD_CORRECTNESS_CHECK(claimed.status_ == MorselStatus::Pending);
+    claimed.status_ = MorselStatus::Running;
+    const auto startWall = std::chrono::steady_clock::now();
+    claimed.profile_.startedAt_ = startWall;
+    claimed.profile_.queueDelay_ = startWall - claimed.profile_.submittedAt_;
+    claimed.profile_.executedByHelper_ = executedByHelper;
+    auto task = std::move(claimed.task_);
+
+    lock.unlock();
+    const auto startCpu = getCpuDuration();
+    std::optional<ResultType> result;
+    std::exception_ptr exceptionPtr = nullptr;
+    try {
+      result = task();
+    } catch (...) {
+      exceptionPtr = std::current_exception();
+    }
+    const auto endCpu = getCpuDuration();
+    const auto endWall = std::chrono::steady_clock::now();
+    lock.lock();
+
+    // `slots_` may have grown while unlocked, so index it again.
+    auto& slot = slots_[index];
+    if (exceptionPtr) {
+      slot.exception_ = std::move(exceptionPtr);
+    } else {
+      slot.result_ = std::move(result);
+    }
+    slot.status_ = MorselStatus::Completed;
+    slot.profile_.completedAt_ = endWall;
+    slot.profile_.wallDuration_ = endWall - startWall;
+    slot.profile_.cpuDuration_ = endCpu - startCpu;
+    slot.profile_.finalStatus_ = MorselStatus::Completed;
+    cv_.notify_all();
+  }
+
   // Profiling-only per-thread CPU clock. Linux-only by design (other
   // platforms fall through to a zero duration, which degrades profiles
   // without affecting scheduling); revisit if non-Linux support is needed.
