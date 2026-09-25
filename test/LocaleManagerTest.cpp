@@ -165,15 +165,14 @@ TEST(LocaleManagerTest, RaiseThrowsOnIcuError) {
 }
 
 // _____________________________________________________________________________
-TEST(LocaleManagerTest, AsciiFastPathKeepsIcuSemantics) {
-  // `compare` answers byte-identical pure-ASCII words without calling ICU.
-  // These checks pin down that the shortcut only decides equality and leaves
-  // every other result to ICU.
+TEST(LocaleManagerTest, ByteIdenticalFastPathKeepsIcuSemantics) {
+  // Check that the shortcut in `compare` for byte-identical words only decides
+  // equality and leaves every other result to ICU.
   using L = LocaleManager::Level;
   LocaleManagerICU loc;
-  // Identical words in separate buffers, as for a query constant compared
-  // against a vocabulary word. The trailing byte 0x7F is the largest ASCII
-  // value.
+  // Use identical words in separate buffers, as when a query constant is
+  // compared against a vocabulary word. End with byte `0x7F`, the largest
+  // ASCII value.
   std::string word = "Some ASCII word, with punctuation! \x7F";
   std::string copy = word;
   std::string nonAscii = "Straße";
@@ -182,18 +181,19 @@ TEST(LocaleManagerTest, AsciiFastPathKeepsIcuSemantics) {
                   L::IDENTICAL, L::TOTAL}) {
     EXPECT_EQ(loc.compare(word, copy, level), 0);
     EXPECT_EQ(loc.compare("", "", level), 0);
-    // Identical non-ASCII words take the ICU path and still compare equal.
+    // Check that identical non-ASCII words also compare equal.
     EXPECT_EQ(loc.compare(nonAscii, nonAsciiCopy, level), 0);
-    // Distinct words of the same length keep the ICU order.
+    // Check that distinct words of the same length keep the ICU order.
     EXPECT_LT(loc.compare("ab", "ba", level), 0);
     EXPECT_GT(loc.compare("ba", "ab", level), 0);
   }
-  // ICU order differs from byte order for distinct ASCII words: lowercase
-  // sorts before uppercase in en_US, while 'A' (65) < 'a' (97) bytewise.
+  // Check that distinct ASCII words keep the ICU order where it differs from
+  // byte order: lowercase sorts before uppercase in the `en_US` locale, while
+  // bytewise `'A'` (65) is less than `'a'` (97).
   EXPECT_LT(loc.compare("alpha", "ALPHA", L::TERTIARY), 0);
   EXPECT_EQ(loc.compare("alpha", "ALPHA", L::SECONDARY), 0);
-  // With punctuation ignored, distinct ASCII words can still compare equal via
-  // ICU.
+  // Check that distinct ASCII words still compare equal via ICU when
+  // punctuation is ignored.
   LocaleManagerICU ignorePunct("en", "US", true);
   EXPECT_EQ(ignorePunct.compare(".a", "a", L::PRIMARY), 0);
 }
