@@ -9,9 +9,10 @@
 #ifndef QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
 #define QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
 
+#include <absl/numeric/bits.h>
+
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -66,11 +67,11 @@ class ChunkEscapeMask32 {
   [[nodiscard]] constexpr uint32_t rawMask() const noexcept { return mask_; }
 
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
-    return mask_ == 0 ? 32u : static_cast<uint32_t>(std::countr_zero(mask_));
+    return mask_ == 0 ? 32u : static_cast<uint32_t>(absl::countr_zero(mask_));
   }
 
   [[nodiscard]] constexpr uint32_t countEscapes() const noexcept {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 };
 
@@ -90,11 +91,11 @@ class ChunkEscapeMask16 {
   [[nodiscard]] constexpr uint16_t rawMask() const noexcept { return mask_; }
 
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
-    return mask_ == 0 ? 16u : static_cast<uint32_t>(std::countr_zero(mask_));
+    return mask_ == 0 ? 16u : static_cast<uint32_t>(absl::countr_zero(mask_));
   }
 
   [[nodiscard]] constexpr uint32_t countEscapes() const noexcept {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 };
 
@@ -462,7 +463,7 @@ class SimdEscapeClassifier {
       // Escape characters present: process clean sub-slices and escapes
       uint32_t current = 0;
       while (mask != 0) {
-        uint32_t next = static_cast<uint32_t>(std::countr_zero(mask));
+        uint32_t next = static_cast<uint32_t>(absl::countr_zero(mask));
         uint32_t cleanLen = next - current;
         if (cleanLen > 0) {
           std::memcpy(dest, ptr + current, cleanLen);
@@ -499,7 +500,7 @@ class SimdEscapeClassifier {
   // present, returns input directly. Otherwise quotes and doubles internal
   // quotes.
   [[nodiscard]] static inline std::string escapeForCsv(std::string_view input) {
-    if (!hasEscapes<EscapeFormat::CsvSpecial>(input)) [[likely]] {
+    if (!hasEscapes<EscapeFormat::CsvSpecial>(input)) {
       return std::string{input};
     }
     std::string result;
@@ -517,7 +518,7 @@ class SimdEscapeClassifier {
   // Escape a field for IANA-TSV. If no tabs or newlines are present, returns
   // input directly. Otherwise replaces tabs with spaces and newlines with \n.
   [[nodiscard]] static inline std::string escapeForTsv(std::string_view input) {
-    if (!hasEscapes<EscapeFormat::Tsv>(input)) [[likely]] {
+    if (!hasEscapes<EscapeFormat::Tsv>(input)) {
       return std::string{input};
     }
     std::string result;
@@ -543,7 +544,7 @@ class SimdEscapeClassifier {
     // quotes, which unconditionally count as escape characters.
     if (posSecondQuote == posLastQuote &&
         !hasEscapes<EscapeFormat::Turtle>(
-            normLiteral.substr(1, posLastQuote - 1))) [[likely]] {
+            normLiteral.substr(1, posLastQuote - 1))) {
       return std::string{normLiteral};
     }
 
