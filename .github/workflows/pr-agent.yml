@@ -37,7 +37,7 @@ jobs:
             startsWith(github.event.comment.body, '/') &&
             contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
                      github.event.comment.author_association))) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Run PR-Agent
