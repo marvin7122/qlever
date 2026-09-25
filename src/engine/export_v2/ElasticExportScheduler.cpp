@@ -17,23 +17,20 @@
 
 namespace ad_utility::export_v2 {
 
-// -----------------------------------------------------------------------------
-// ElasticExportScheduler Implementation
-// -----------------------------------------------------------------------------
-
+// _____________________________________________________________________________
 std::shared_ptr<ElasticExportScheduler> ElasticExportScheduler::create(
-    size_t numThreads, size_t queueCapacity) {
+    size_t threadCount, size_t queueCapacity) {
   // `new`, not `make_shared`: the constructor is private, so only this
   // member function can invoke it.
   return std::shared_ptr<ElasticExportScheduler>(
-      new ElasticExportScheduler(numThreads, queueCapacity));
+      new ElasticExportScheduler(threadCount, queueCapacity));
 }
 
-ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
+// _____________________________________________________________________________
+ElasticExportScheduler::ElasticExportScheduler(size_t threadCount,
                                                size_t queueCapacity)
     : maxQueueCapacity_{queueCapacity > 0 ? queueCapacity
                                           : kDefaultQueueCapacity} {
-  size_t threadCount = numThreads;
   if (threadCount == 0) {
     threadCount = std::max(1u, std::thread::hardware_concurrency());
   }
@@ -44,13 +41,14 @@ ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
   }
 }
 
+// _____________________________________________________________________________
 ElasticExportScheduler::~ElasticExportScheduler() { shutdown(); }
 
+// _____________________________________________________________________________
 void ElasticExportScheduler::shutdown() {
-  bool expected = false;
-  // Seq-cst store; all readers use acquire loads, which synchronize with
-  // this store once observed.
-  if (stopping_.compare_exchange_strong(expected, true)) {
+  // Seq-cst exchange; all readers use acquire loads, which synchronize with
+  // this store once observed. Only the first call joins the workers.
+  if (!stopping_.exchange(true)) {
     {
       std::lock_guard<std::mutex> lock(queueMutex_);
       workAvailableCv_.notify_all();
@@ -64,6 +62,7 @@ void ElasticExportScheduler::shutdown() {
   }
 }
 
+// _____________________________________________________________________________
 void ElasticExportScheduler::onForegroundQueryStarted() {
   size_t prev =
       activeForegroundQueries_.fetch_add(1, std::memory_order_relaxed);
@@ -79,6 +78,7 @@ void ElasticExportScheduler::onForegroundQueryStarted() {
   }
 }
 
+// _____________________________________________________________________________
 void ElasticExportScheduler::onForegroundQueryEnded() {
   size_t prev =
       activeForegroundQueries_.fetch_sub(1, std::memory_order_relaxed);
@@ -95,6 +95,7 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
   }
 }
 
+// _____________________________________________________________________________
 // Shared by both demand-change hooks: wake producers and workers (a
 // threshold crossing can unblock a full queue or strand one, depending on
 // direction), drop expired sessions, and notify the live ones without
@@ -127,6 +128,7 @@ void ElasticExportScheduler::propagateDemandChange(
   }
 }
 
+// _____________________________________________________________________________
 void ElasticExportScheduler::attachToQueryRegistry(
     ad_utility::websocket::QueryRegistry& registry) {
   // Never empty: instances only exist as `shared_ptr` (see `create`), so
@@ -150,6 +152,7 @@ void ElasticExportScheduler::attachToQueryRegistry(
       });
 }
 
+// _____________________________________________________________________________
 bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
   std::unique_lock<std::mutex> lock(queueMutex_);
   // Besides shutdown, also stop waiting when helpers become ineligible:
@@ -172,6 +175,7 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
   return true;
 }
 
+// _____________________________________________________________________________
 void ElasticExportScheduler::registerSession(
     std::weak_ptr<ExportJobStateBase> sessionState) {
   std::lock_guard<std::mutex> lock(sessionsMutex_);
@@ -182,6 +186,7 @@ void ElasticExportScheduler::registerSession(
   sessions_.push_back(std::move(sessionState));
 }
 
+// _____________________________________________________________________________
 void ElasticExportScheduler::registerOutstandingLease(uint64_t leaseId) {
   std::lock_guard<std::mutex> lock(queueMutex_);
   AD_CORRECTNESS_CHECK(outstandingLeaseIds_.insert(leaseId).second,
@@ -191,6 +196,7 @@ void ElasticExportScheduler::registerOutstandingLease(uint64_t leaseId) {
   totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
 }
 
+// _____________________________________________________________________________
 void ElasticExportScheduler::onLeaseReleased(uint64_t leaseId) {
   std::lock_guard<std::mutex> lock(queueMutex_);
   // Only an outstanding lease identity may retire a helper slot; anything
@@ -200,12 +206,14 @@ void ElasticExportScheduler::onLeaseReleased(uint64_t leaseId) {
   totalActiveHelpers_.fetch_sub(1, std::memory_order_relaxed);
 }
 
+// _____________________________________________________________________________
 bool ElasticExportScheduler::isHelperAdmissionEligibleUnsafe() const noexcept {
   return activeForegroundQueries_.load(std::memory_order_relaxed) <=
          maxForegroundQueriesForHelperAdmission_.load(
              std::memory_order_relaxed);
 }
 
+// _____________________________________________________________________________
 void ElasticExportScheduler::workerLoop() {
   while (true) {
     std::shared_ptr<ExportJobStateBase> targetJobState;
