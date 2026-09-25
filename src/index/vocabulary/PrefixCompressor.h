@@ -134,11 +134,17 @@ class PrefixCompressor {
     if (idx.has_value()) {
       const std::string& prefix = prefixToCode_[*idx];
       AD_CORRECTNESS_CHECK(prefix.size() <= out.size());
-      std::memcpy(out.data(), prefix.data(), prefix.size());
+      // `memcpy` with a null pointer is undefined even for zero bytes, and
+      // `out` may be empty.
+      if (!prefix.empty()) {
+        std::memcpy(out.data(), prefix.data(), prefix.size());
+      }
       outputSize = prefix.size();
     }
     AD_CORRECTNESS_CHECK(rest.size() <= out.size() - outputSize);
-    std::memcpy(out.data() + outputSize, rest.data(), rest.size());
+    if (!rest.empty()) {
+      std::memcpy(out.data() + outputSize, rest.data(), rest.size());
+    }
     return outputSize + rest.size();
   }
 
