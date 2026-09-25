@@ -52,6 +52,7 @@ jobs:
             toolchain: gcc13
             build-type: Release
             extra-flags: ""
+            skip-if-pr: true  # Fork PR profile 2026-09-25: clang21 + gcc11 cover the compiler spread.
           - image: clang21
             toolchain: clang21
             build-type: Release
@@ -65,7 +66,9 @@ jobs:
           - image: clang16
             toolchain: clang16
             build-type: RelWithDebInfo
-            extra-flags: "-fsanitize=address -fno-omit-frame-pointer"
+            # Fork PR profile 2026-09-25: ASan and UBSan combined in one leg.
+            extra-flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
+            needs-seccomp: true
             # LeakSanitizer fatals at process startup under rootless podman
             # (restricted syscalls), which aborts gtest test discovery, so
             # leak detection stays off on this leg. Plain ASan is unaffected.
@@ -77,10 +80,12 @@ jobs:
             build-type: RelWithDebInfo
             extra-flags: "-fsanitize=undefined"
             needs-seccomp: true
+            skip-if-pr: true  # Fork PR profile 2026-09-25: covered by the combined ASan+UBSan leg.
           - image: gcc11
             toolchain: gcc11
             build-type: Release
             extra-flags: ""
+            skip-if-pr: true  # Fork PR profile 2026-09-25: gcc11+backports and gcc13 cover it.
           - image: gcc11
             toolchain: gcc11
             build-type: Release
@@ -151,10 +156,12 @@ jobs:
               # Per-leg extra environment inside the container (empty for
               # legs without a `container-env` matrix key).
               if [ -n "${{ matrix.container-env }}" ]; then export ${{ matrix.container-env }}; fi
+              # apt runs its downloads as _apt via setgroups, which rootless podman
+              # on Wolga cannot do (no /etc/subuid entry), so keep apt's sandbox root.
               # Compiler cache on the host SSD (mounted at /ccache, persists
               # across runs). Images carry no ccache binary, so install it
               # on first use (~30s, once per fresh container layer).
-              command -v ccache >/dev/null 2>&1 || (apt-get update -qq && apt-get install -qy ccache)
+              command -v ccache >/dev/null 2>&1 || (apt-get -o APT::Sandbox::User=root update -qq && apt-get -o APT::Sandbox::User=root install -qy ccache)
               export CCACHE_DIR=/ccache CCACHE_MAXSIZE=10G CCACHE_COMPRESS=true
               ccache -z >/dev/null
               # cmake configure pulls third-party sources (googletest etc.)
