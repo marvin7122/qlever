@@ -71,7 +71,7 @@ inline ScatterGatherChunk serializeTableChunk(
                                    .toStringRepresentation();
         appendEscaped(raw);
       } else {
-        AD_FAIL(
+        AD_THROW(
             "ExportEngineV2 cannot serialize index-backed `Id` without the "
             "index vocabulary");
       }
