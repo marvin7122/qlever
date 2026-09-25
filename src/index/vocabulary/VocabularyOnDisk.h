@@ -208,6 +208,13 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // was never called. The reads target `offsetPairs_`, which dies here.
     ~LookupHandle() override;
 
+   private:
+    // Only `VocabularyOnDisk::beginLookup` sets up the state below. The handle
+    // is only reachable through `VocabLookupHandleBase`, so no other code can
+    // mutate the targets of the in-flight reads.
+    friend class VocabularyOnDisk;
+
+    // The vocabulary that created this handle. It must outlive the handle.
     const VocabularyOnDisk* vocab_ = nullptr;
     std::unique_ptr<ad_utility::BatchManagerBase> manager_;
     // The requested indices, owned so the offset reads can be completed after
@@ -220,7 +227,6 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // The target buffers of the submitted offset read.
     std::vector<OffsetPair> offsetPairs_;
 
-   private:
     // Hand the `manager_` back to the pool. Used by `finish` and the
     // destructor; the handle owns the manager until one of them runs.
     void returnManagerToPool();
