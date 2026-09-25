@@ -18,6 +18,7 @@
 
 #include "backports/span.h"
 #include "util/FsstCompressor.h"
+#include "util/GTestHelpers.h"
 
 TEST(FsstEncoder, firstTest) {
   std::vector<std::string> s{
@@ -447,6 +448,12 @@ class FsstRepeatedDecoderTest : public ::testing::Test {
     if constexpr (N >= 2) {
       EXPECT_GE(scratch.size(),
                 repeated.maxDecompressedSize(compressed.front()));
+      // An output span that aliases `scratch` is rejected.
+      AD_EXPECT_THROW_WITH_MESSAGE(
+          (void)repeated.decompressInto(
+              compressed.front(),
+              ql::span<char>{scratch.data(), scratch.size()}, scratch),
+          ::testing::HasSubstr("must not alias"));
     }
   }
 };
