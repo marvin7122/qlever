@@ -9,6 +9,8 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "../../util/GTestHelpers.h"
@@ -77,6 +79,20 @@ TEST(VocabBatchLookupData, AsResultExposesViewsAndKeepsDataAlive) {
   ASSERT_EQ(result.size(), 2u);
   EXPECT_EQ(result[0], "foo");
   EXPECT_EQ(result[1], "bar");
+}
+
+// The views are taken before the word vector is moved into the storage. Short
+// words use the inline (SSO) storage of `std::string`; moving the vector does
+// not move the string objects, so these views must stay valid as well.
+TEST(VocabBatchLookupData, StringVectorKeepsShortWordViewsValid) {
+  std::vector<std::string> words{"a", "ab", "", std::string(100, 'x')};
+  auto data = std::make_shared<StringVectorVocabBatchLookupData>(words);
+  VocabBatchLookupResult result =
+      StringVectorVocabBatchLookupData::asResult(std::move(data));
+  ASSERT_EQ(result.size(), words.size());
+  for (size_t i = 0; i < words.size(); ++i) {
+    EXPECT_EQ(result[i], words[i]);
+  }
 }
 
 // An empty lookup result is valid: no views, empty span.

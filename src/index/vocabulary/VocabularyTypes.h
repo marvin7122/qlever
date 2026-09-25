@@ -268,8 +268,10 @@ class StringVectorVocabBatchLookupData : public VocabBatchStorage {
  public:
   explicit StringVectorVocabBatchLookupData(std::vector<std::string> words)
       : VocabBatchStorage(viewsInto(words)), words_{std::move(words)} {
-    // viewsInto ran on `words` before the move; moving std::string does not
-    // relocate the character buffer, so the views stay valid.
+    // `viewsInto` ran on `words` before the move. Moving the `std::vector`
+    // transfers its element buffer without moving the individual
+    // `std::string` objects, so the views (including those into the inline
+    // storage of short strings) stay valid.
   }
 
   static VocabBatchLookupResult asResult(
