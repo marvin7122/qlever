@@ -232,12 +232,29 @@ void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
   const uint64_t leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
   totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
   ExportWorkLease lease(this, leaseEpoch, jobId, leaseId);
-  if (targetJobState && !targetJobState->isCancelled() &&
-      submissionEpoch == leaseEpoch) {
-    targetJobState->onHelperLeaseAcquired(leaseEpoch);
-    targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
-    targetJobState->onHelperLeaseReleased(leaseEpoch);
+  runLeasedHelperTask(targetJobState.get(), targetMorselIndex, submissionEpoch,
+                      leaseEpoch);
+}
+
+void ElasticExportScheduler::runLeasedHelperTask(
+    ExportJobStateBase* targetJobState, size_t targetMorselIndex,
+    uint64_t submissionEpoch, uint64_t leaseEpoch) {
+  if (targetJobState == nullptr || targetJobState->isCancelled() ||
+      submissionEpoch != leaseEpoch) {
+    return;
   }
+  targetJobState->onHelperLeaseAcquired(leaseEpoch);
+  try {
+    targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
+  } catch (...) {
+    // An exception must never escape a helper thread (a dedicated worker or a
+    // `queryThreadPool_` thread): that would call `std::terminate`.
+    // `executeHelperTask` converts a task failure into a terminal `Cancelled`
+    // slot state (storing the exception and notifying waiters) before
+    // rethrowing, so the release below still runs and `consumeNextResult`
+    // rethrows the original failure.
+  }
+  targetJobState->onHelperLeaseReleased(leaseEpoch);
 }
 
 void ElasticExportScheduler::registerSession(
@@ -307,22 +324,8 @@ void ElasticExportScheduler::workerLoop() {
     }
 
     ExportWorkLease lease(this, leaseEpoch, jobId, leaseId);
-
-    if (targetJobState && !targetJobState->isCancelled()) {
-      if (submissionEpoch == leaseEpoch) {
-        targetJobState->onHelperLeaseAcquired(leaseEpoch);
-        try {
-          targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
-        } catch (...) {
-          // An exception must never escape the worker thread: that would call
-          // `std::terminate`. `executeHelperTask` converts a task failure
-          // into a terminal `Cancelled` slot state (storing the exception and
-          // notifying waiters) before rethrowing, so the release below still
-          // runs and `consumeNextResult` rethrows the original failure.
-        }
-        targetJobState->onHelperLeaseReleased(leaseEpoch);
-      }
-    }
+    runLeasedHelperTask(targetJobState.get(), targetMorselIndex,
+                        submissionEpoch, leaseEpoch);
   }
 }
 

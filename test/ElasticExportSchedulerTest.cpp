@@ -316,6 +316,41 @@ TEST(ElasticExportSchedulerTest, ThrowingMorselPropagatesToConsumer) {
   EXPECT_EQ(profiles[0].finalStatus_, MorselStatus::Cancelled);
 }
 
+// A morsel posted onto an external pool (`WorkPoster`, the live
+// `queryThreadPool_` path) that throws must not let the exception escape the
+// posted task, which would terminate the pool thread. The failure must still
+// reach the consumer.
+TEST(ElasticExportSchedulerTest, ThrowingPostedMorselDoesNotEscapePoolThread) {
+  std::vector<absl::AnyInvocable<void()>> posted;
+  ElasticExportScheduler scheduler(
+      [&posted](absl::AnyInvocable<void()> task) {
+        posted.push_back(std::move(task));
+      },
+      64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+
+  auto session = scheduler.createSession<std::string>();
+  session.submitMorsel(
+      []() -> std::string { throw std::runtime_error{"posted failed"}; });
+  ASSERT_EQ(posted.size(), 1u);
+  EXPECT_NO_THROW(posted[0]());
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+
+  EXPECT_THROW(
+      {
+        try {
+          session.consumeNextResult();
+        } catch (const std::runtime_error& e) {
+          EXPECT_STREQ(e.what(), "posted failed");
+          throw;
+        }
+      },
+      std::runtime_error);
+  auto profiles = session.inspectMorselProfiles();
+  ASSERT_EQ(profiles.size(), 1u);
+  EXPECT_EQ(profiles[0].finalStatus_, MorselStatus::Cancelled);
+}
+
 // -----------------------------------------------------------------------------
 // Test 7: Move Semantics & RAII
 // -----------------------------------------------------------------------------

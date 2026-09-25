@@ -271,6 +271,13 @@ class ElasticExportScheduler {
  private:
   void workerLoop();
   void runPostedMorsel(OwnedMorsel morsel);
+  // Run one admitted morsel under an acquired lease. Shared by `workerLoop`
+  // and `runPostedMorsel`; swallows the task's exception (already stored in
+  // the slot) so that no helper thread terminates.
+  static void runLeasedHelperTask(ExportJobStateBase* targetJobState,
+                                  size_t targetMorselIndex,
+                                  uint64_t submissionEpoch,
+                                  uint64_t leaseEpoch);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
 
   WorkPoster poster_;
@@ -445,7 +452,7 @@ class ExportJobState final
       }
     } catch (...) {
       // Convert the exception into a terminal slot state and wake the
-      // consumer: rethrowing lets `workerLoop` keep its never-escape
+      // consumer: rethrowing lets `runLeasedHelperTask` keep its never-escape
       // guarantee while `consumeNextResult` observes the stored failure
       // instead of waiting on a `Running` slot forever.
       std::lock_guard<std::mutex> lock(mutex_);
