@@ -230,65 +230,63 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
   }
 }
 
-// Key for the SELECT export cache (thesis section 4.10): the `Id` plus, for
-// `LocalVocabIndex` IDs only, the identity of the `LocalVocab` the index
-// refers to. All other datatypes resolve identically for every vocabulary:
-// the on-disk vocabulary is static during an export and the remaining
-// datatypes are encoded in the `Id` bits, so they share one cache entry
-// across the whole export. `LocalVocabIndex` IDs are block-local, hence the
-// vocabulary pointer disambiguates them. Callers must guarantee that no
-// `LocalVocab` is destroyed while the cache lives; in practice the cache
-// never outlives the exported `Result`, which owns all vocabularies.
-struct IdToStringAndTypeCacheKey {
-  Id id_;
-  const LocalVocab* localVocab_;
-  bool operator==(const IdToStringAndTypeCacheKey&) const = default;
-  template <typename H>
-  friend H AbslHashValue(H h, const IdToStringAndTypeCacheKey& key) {
-    return H::combine(std::move(h), key.id_, key.localVocab_);
+// Bounded cache for the SELECT export path that maps an `Id` to the result of
+// `idToStringAndType`. The cached strings are post-escaping, so one instance
+// serves a single call site (fixed template arguments and escape function).
+//
+// `Id`s of type `LocalVocabIndex` are never cached: they point into a
+// `LocalVocab` that can be destroyed while the export is still running (lazy
+// results free each block's vocabulary after it is exported), after which the
+// same address, and hence the same `Id`, can denote a different word. All
+// other `Id`s resolve identically for the whole export (the on-disk
+// vocabulary is static, the other datatypes are encoded in the `Id` bits).
+class IdToStringAndTypeCache {
+ public:
+  using Value = std::optional<std::pair<std::string, const char*>>;
+
+ private:
+  ad_utility::util::LRUCacheWithStatistics<Id, Value> cache_;
+  // Holds the result for an uncached `LocalVocabIndex` `Id` so that
+  // `cachedIdToStringAndType` can return a reference in every case. It is
+  // overwritten by the next uncached lookup.
+  Value uncached_;
+
+ public:
+  explicit IdToStringAndTypeCache(size_t capacity) : cache_{capacity} {}
+
+  // Return the cached value for `id`, computing it with `compute()` on a miss.
+  // `LocalVocabIndex` `Id`s bypass the cache (see above). The reference is
+  // valid until the next call.
+  template <typename Compute>
+  const Value& getOrCompute(Id id, const Compute& compute) {
+    if (id.getDatatype() == Datatype::LocalVocabIndex) {
+      uncached_ = compute();
+      return uncached_;
+    }
+    return cache_.getOrCompute(id, [&compute](const Id&) { return compute(); });
+  }
+
+  const ad_utility::util::LRUCacheStats& stats() const {
+    return cache_.stats();
   }
 };
 
-inline IdToStringAndTypeCacheKey makeIdToStringAndTypeCacheKey(
-    Id id, const LocalVocab& localVocab) {
-  return {id, id.getDatatype() == Datatype::LocalVocabIndex ? &localVocab
-                                                            : nullptr};
-}
-
-using IdToStringAndTypeCacheValue =
-    std::optional<std::pair<std::string, const char*>>;
-using IdToStringAndTypeCache =
-    ad_utility::util::LRUCacheWithStatistics<IdToStringAndTypeCacheKey,
-                                             IdToStringAndTypeCacheValue>;
-
-// Default capacity: one shared cache per export generator (all columns share
-// one bound, see thesis section 4.10). Bounds memory on distinct-heavy
-// results while keeping hot entities resident; the `LRUCacheStats` tell
-// whether an export would profit from tuning.
+// Default capacity: one cache per export call site shared by all columns.
+// Bounds memory on distinct-heavy results while keeping frequent terms
+// resident.
 static constexpr size_t ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES = 1 << 16;
 
-// Cached variant of `idToStringAndType` for the SELECT export path. The
-// cached string is post-`escapeFunction`, so one cache instance serves a
-// single call site (fixed template arguments and escape function). Returns a
-// reference into the cache; the cache must outlive the use.
+// Cached variant of `idToStringAndType` for the SELECT export path. Returns a
+// reference that is valid until the next lookup in `cache`.
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false, typename EscapeFunction>
-const IdToStringAndTypeCacheValue& cachedIdToStringAndType(
+const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
     IdToStringAndTypeCache& cache, const Index& index, Id id,
     const LocalVocab& localVocab, const EscapeFunction& escapeFunction) {
-  return cache.getOrCompute(
-      makeIdToStringAndTypeCacheKey(id, localVocab),
-      [&](const IdToStringAndTypeCacheKey& key) {
-        // The key carries the vocabulary for `LocalVocabIndex` IDs (see
-        // `makeIdToStringAndTypeCacheKey`), so resolve from the key. The
-        // `localVocab` argument is only the fallback for datatypes that never
-        // touch the vocabulary.
-        const LocalVocab& vocab =
-            key.localVocab_ != nullptr ? *key.localVocab_ : localVocab;
-        return idToStringAndType<removeQuotesAndAngleBrackets,
-                                 returnOnlyLiterals>(index, key.id_, vocab,
-                                                     escapeFunction);
-      });
+  return cache.getOrCompute(id, [&]() {
+    return idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+        index, id, localVocab, escapeFunction);
+  });
 }
 
 // Overload without an escape function (identity escaping). It forwards to the
@@ -298,7 +296,7 @@ const IdToStringAndTypeCacheValue& cachedIdToStringAndType(
 // `-Wdangling-reference` under `-Werror`.
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false>
-const IdToStringAndTypeCacheValue& cachedIdToStringAndType(
+const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
     IdToStringAndTypeCache& cache, const Index& index, Id id,
     const LocalVocab& localVocab) {
   static constexpr ql::identity noEscape{};

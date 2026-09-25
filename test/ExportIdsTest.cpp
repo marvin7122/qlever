@@ -341,6 +341,32 @@ TEST(ExportIds, cachedIdToStringAndTypeMatchesDirectAndHits) {
 }
 
 // _____________________________________________________________________________
+// `LocalVocabIndex` IDs bypass the cache: a `LocalVocab` can be destroyed
+// during a lazy export, and the same `Id` can then denote a different word.
+TEST(ExportIds, cachedIdToStringAndTypeBypassesLocalVocabIds) {
+  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
+  const Index& index = qec->getIndex();
+  ql::exportIds::IdToStringAndTypeCache cache{
+      ql::exportIds::ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES};
+
+  LocalVocab localVocab{};
+  Id localVocabId =
+      Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
+          LocalVocabEntry::literalWithoutQuotes("localLit",
+                                                qec->getLocalVocabContext())));
+  for (int pass = 0; pass < 2; ++pass) {
+    const auto& cached = ql::exportIds::cachedIdToStringAndType(
+        cache, index, localVocabId, localVocab);
+    EXPECT_EQ(cached,
+              ql::exportIds::idToStringAndType(index, localVocabId, localVocab))
+        << "Mismatch, pass " << pass;
+    ASSERT_TRUE(cached.has_value());
+    EXPECT_THAT(cached->first, ::testing::HasSubstr("localLit"));
+  }
+  EXPECT_EQ(cache.stats().totalLookups(), 0u);
+}
+
+// _____________________________________________________________________________
 // Empty span returns an empty vector.
 TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");
