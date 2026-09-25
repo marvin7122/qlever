@@ -174,6 +174,11 @@ class HardwarePerformanceMonitor {
 #endif
   }
 
+  // Owns raw perf-event fds, so copying or moving would double-close them.
+  HardwarePerformanceMonitor(const HardwarePerformanceMonitor&) = delete;
+  HardwarePerformanceMonitor& operator=(const HardwarePerformanceMonitor&) =
+      delete;
+
   [[nodiscard]] bool isSupported() const noexcept { return supported_; }
 
   void start() {
