@@ -15,6 +15,7 @@
 
 using namespace ql::engine::scalar;
 
+// _____________________________________________________________________________
 TEST(IntegerDateOperationsTest, ScalarDateExtraction) {
   auto dateId =
       Id::makeFromDate(DateYearOrDuration{Date{2026, 9, 3, 15, 30, 0.0}});
@@ -24,6 +25,7 @@ TEST(IntegerDateOperationsTest, ScalarDateExtraction) {
   EXPECT_EQ(IntegerDateOperations::extractDay(dateId), 3);
 }
 
+// _____________________________________________________________________________
 TEST(IntegerDateOperationsTest, MakePackedDateRoundTrip) {
   auto dateId = IntegerDateOperations::makePackedDate(2026, 9, 3, 15, 30, 0);
 
@@ -32,6 +34,7 @@ TEST(IntegerDateOperationsTest, MakePackedDateRoundTrip) {
   EXPECT_EQ(IntegerDateOperations::extractDay(dateId), 3);
 }
 
+// _____________________________________________________________________________
 TEST(IntegerDateOperationsTest, NonDateReturnsZero) {
   auto intId = Id::makeFromInt(42);
   EXPECT_EQ(IntegerDateOperations::extractYear(intId), 0);
@@ -39,6 +42,7 @@ TEST(IntegerDateOperationsTest, NonDateReturnsZero) {
   EXPECT_EQ(IntegerDateOperations::extractDay(intId), 0);
 }
 
+// _____________________________________________________________________________
 TEST(IntegerDateOperationsTest, BatchYearExtraction) {
   std::vector<Id> dates = {
       Id::makeFromDate(DateYearOrDuration{Date{1999, 12, 31, 0, 0, 0.0}}),
