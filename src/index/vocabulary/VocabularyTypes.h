@@ -180,7 +180,8 @@ struct MixedVocabBatchLookupData {
 // concrete vocabulary stores the state it needs (e.g. the pooled I/O manager
 // and the in-flight read batch, for `VocabularyOnDisk`) in a derived class and
 // implements `finish()`, which blocks until all I/O of the lookup has
-// completed and returns the resolved strings.
+// completed and returns the resolved strings. A handle refers to the
+// vocabulary that created it, so that vocabulary must outlive the handle.
 class VocabLookupHandleBase {
  public:
   virtual ~VocabLookupHandleBase() = default;
