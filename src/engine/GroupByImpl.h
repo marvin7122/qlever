@@ -244,10 +244,12 @@ class GroupByImpl : public Operation {
 
   // Compute a single `MIN(?v)` or `MAX(?v)` without `GROUP BY` when the child
   // is a two-variable `IndexScan` whose column 0 is bound (e.g.
-  // `?s <p> ?v`), from the distinct values of `?v` in the permutation that
-  // stores `?v` in column 1. Return `UNDEF` if the scan is empty, and
-  // `std::nullopt` if the query or the scan has a different shape, the scan
-  // has a `LIMIT`/`OFFSET`, or there are delta triples.
+  // `?s <p> ?v`), from the first and the last triple of the relation in the
+  // permutation that stores `?v` in column 1 (at most two blocks are read).
+  // Return `UNDEF` if the scan is empty, and `std::nullopt` if the query or
+  // the scan has a different shape, the scan has a `LIMIT`/`OFFSET`, there are
+  // delta triples, or the index order of the values of `?v` may differ from
+  // the order of `MIN`/`MAX` (e.g. mixed datatypes or mixed signs).
   std::optional<IdTable> computeMinMaxForSingleIndexScan() const;
 
   // Stores information required for substitution of an expression in an

@@ -10,6 +10,8 @@
 
 #include <absl/strings/str_join.h>
 
+#include <cmath>
+
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
 #include "engine/ExistsJoin.h"
@@ -29,7 +31,6 @@
 #include "engine/sparqlExpressions/StdevExpression.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
-#include "global/ValueIdComparators.h"
 #include "index/Index.h"
 #include "index/IndexImpl.h"
 #include "index/Permutation.h"
@@ -2032,24 +2033,55 @@ std::optional<Permutation::Enum> permutationWithWantedCol1(
   return std::nullopt;
 }
 
-// Return the smallest (`isMin`) or the largest of the `ids`, or `UNDEF` if
-// `ids` is empty (the SPARQL result of `MIN` and `MAX` over an empty group).
-// Values of incompatible datatypes are ordered by their datatype, exactly like
-// in the general `MIN`/`MAX` path (`compareIdsOrStrings` with
-// `CompareByType`). The `ids` are sorted by their bit representation, which
-// is not this order (e.g. for mixed `Int` and `Double` values), so all of them
-// are inspected.
-Id minOrMaxId(ql::span<const Id> ids, bool isMin) {
-  if (ids.empty()) {
-    return Id::makeUndefined();
+// Let `first` and `last` be the smallest and the largest `Id` of a non-empty
+// range of `Id`s that is sorted by the bits of the `Id`s (the order of an index
+// permutation). Return the `MIN` (`isMin`) or the `MAX` of that range, as the
+// general `MIN`/`MAX` path (`compareIdsOrStrings` with `CompareByType`) would
+// compute it, if it is determined by `first` and `last` alone. Return
+// `std::nullopt` otherwise; the caller then has to use the general path.
+//
+// The datatype occupies the most significant bits of an `Id`, so if `first`
+// and `last` have the same datatype, then so has every `Id` in between. For the
+// following datatypes, the order of the bits then equals the order of the
+// values, and different `Id`s have different values (so there are no ties
+// whose resolution would depend on the order of evaluation):
+// - `VocabIndex`: both orders compare the index into the vocabulary.
+// - `Bool`: `false` is stored as 0 and `true` as 1.
+// - `Int` if all values have the same sign: the values are stored in two's
+//   complement, so all negative values are stored after all non-negative ones,
+//   but within one sign the orders agree.
+// - `Double` if all values are non-negative and not NaN: the bits of such a
+//   `double` are ordered like its value (NaNs are stored after `+inf`, negative
+//   values after the NaNs and in reverse order, and `-0.0` would tie `0.0`).
+// All other cases (mixed datatypes, mixed signs, `Date`, `EncodedVal`, ...)
+// are left to the general path.
+std::optional<Id> minOrMaxFromSortedBounds(Id first, Id last, bool isMin) {
+  const Datatype datatype = first.getDatatype();
+  if (last.getDatatype() != datatype) {
+    return std::nullopt;
   }
-  auto isLess = [](Id a, Id b) {
-    using namespace valueIdComparators;
-    return compareIds<ComparisonForIncompatibleTypes::CompareByType>(
-               a, b, Comparison::LT) == ComparisonResult::True;
-  };
-  return isMin ? *ql::ranges::min_element(ids, isLess)
-               : *ql::ranges::max_element(ids, isLess);
+  const bool orderOfBitsIsOrderOfValues = [&]() {
+    switch (datatype) {
+      case Datatype::VocabIndex:
+      case Datatype::Bool:
+        return true;
+      case Datatype::Int:
+        return (first.getInt() < 0) == (last.getInt() < 0);
+      case Datatype::Double: {
+        auto isNonNegativeNumber = [](double d) {
+          return !std::isnan(d) && !std::signbit(d);
+        };
+        return isNonNegativeNumber(first.getDouble()) &&
+               isNonNegativeNumber(last.getDouble());
+      }
+      default:
+        return false;
+    }
+  }();
+  if (!orderOfBitsIsOrderOfValues) {
+    return std::nullopt;
+  }
+  return isMin ? first : last;
 }
 }  // namespace
 
@@ -2084,9 +2116,9 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
   }
   const auto& indexScan = scanAndCol0->scan_;
   const Id col0Id = scanAndCol0->col0Id_;
-  // Only handle the plain scan: `getDistinctCol1IdsAndCounts` would apply a
-  // `LIMIT`/`OFFSET` to the distinct values instead of the scanned rows, and
-  // additional columns (e.g. from a `GRAPH` clause) are not handled here.
+  // Only handle the plain scan: the first and the last triple of the relation
+  // ignore a `LIMIT`/`OFFSET` of the scan, and additional columns (e.g. from a
+  // `GRAPH` clause) are not handled here.
   if (!indexScan->additionalVariables().empty() ||
       !indexScan->getLimitOffset().isUnconstrained()) {
     return std::nullopt;
@@ -2111,18 +2143,35 @@ std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
   }
 
   // The bound column of the scan stays column 0 of `targetPermutation`, so
-  // `col0Id` selects the same triples there.
+  // `col0Id` selects the same triples there, sorted by the aggregated variable.
+  // Their first and last triple are read from the block metadata and at most
+  // the first and the last block of the relation (without delta triples, see
+  // above, both of these blocks contain a triple of the relation). An empty
+  // relation has no bounds, and `MIN`/`MAX` of an empty group is `UNDEF`.
   const auto& permutationWithVariableInCol1 =
       getIndex().getImpl().getPermutation(targetPermutation.value());
-  const IdTable distinctValuesAndCounts =
-      permutationWithVariableInCol1.getDistinctCol1IdsAndCounts(
-          col0Id, cancellationHandle_, locatedTriplesState(),
-          indexScan->getLimitOffset());
+  const auto& locatedTriples = locatedTriplesState();
+  const auto metadataAndBlocks =
+      permutationWithVariableInCol1.getMetadataAndBlocks(
+          permutationWithVariableInCol1.getScanSpecAndBlocks(
+              ScanSpecification{col0Id, std::nullopt, std::nullopt},
+              locatedTriples),
+          locatedTriples);
+  Id extremum = Id::makeUndefined();
+  if (metadataAndBlocks.has_value()) {
+    const auto& bounds = metadataAndBlocks->firstAndLastTriple_;
+    const auto extremumFromBounds = minOrMaxFromSortedBounds(
+        bounds.firstTriple_.col1Id_, bounds.lastTriple_.col1Id_, isMin);
+    if (!extremumFromBounds.has_value()) {
+      return std::nullopt;
+    }
+    extremum = extremumFromBounds.value();
+  }
 
   indexScan->updateRuntimeInformationWhenOptimizedOut({});
 
   IdTable result{1, getExecutionContext()->getAllocator()};
-  result.push_back({minOrMaxId(distinctValuesAndCounts.getColumn(0), isMin)});
+  result.push_back({extremum});
   return result;
 }
 
