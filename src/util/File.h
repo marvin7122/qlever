@@ -191,8 +191,9 @@ class File {
       size_t toRead = nofBytesToRead - bytesRead;
 
       // Time the call because a cold `pread` blocks off-CPU, which `cpu_s`
-      // cannot see. When disabled this costs one relaxed atomic load and a
-      // predicted branch; the `pread` itself is then called directly.
+      // cannot see. Without `QLEVER_MEASURE_IO_WAIT` (the default) this
+      // compiles to the bare `pread`; otherwise a disabled instrumentation
+      // costs one relaxed atomic load and a predicted branch.
       // Each loop iteration is timed separately, so `calls_` counts
       // `pread` syscalls; partial reads count multiply.
       const ssize_t ret =

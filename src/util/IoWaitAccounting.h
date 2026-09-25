@@ -44,13 +44,15 @@ namespace ad_utility::ioWait {
 // `delayacct_blkio_ticks` needs `kernel.task_delayacct` to be enabled. This
 // accounting depends on neither.
 //
-// COST. Two `clock_gettime(CLOCK_MONOTONIC)` calls per measured call, which
-// are vDSO calls (~25 ns) as long as the system clocksource is `tsc`, plus a
-// relaxed load and store per counter (no read-modify-write). Counters are
-// `thread_local`, so no cache line is written by more than one core and the
-// cost does not grow with thread count. Disabled by default; the enable flag is
-// a relaxed atomic load of a value that does not change during a query, so the
-// branch predicts perfectly.
+// COST. When enabled, two `clock_gettime(CLOCK_MONOTONIC)` calls per measured
+// call, which are vDSO calls (~25 ns) as long as the system clocksource is
+// `tsc`, plus a relaxed load and store per counter (no read-modify-write).
+// Counters are `thread_local`, so no cache line is written by more than one
+// core and the cost does not grow with thread count. Without
+// `QLEVER_MEASURE_IO_WAIT` (the default) `timed()` compiles to the direct
+// call, so no counter, clock, atomic, or branch instruction remains in the hot
+// path. With the switch on but the runtime flag off, the cost is one relaxed
+// atomic load and a predicted branch per call.
 //
 // Environment override for enabling the instrumentation independently of
 // the runtime parameter.
@@ -200,11 +202,6 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
   if (!enabled()) {
     return callable();
   }
-#else
-  (void)selector;
-  return callable();
-#endif
-#ifdef QLEVER_MEASURE_IO_WAIT
   // Resolved before the clock starts so one-time thread registration is not
   // counted as storage wait.
   LiveCounters& counters = selector(detail::threadCounters());
@@ -217,6 +214,9 @@ decltype(auto) timed(Selector selector, Callable&& callable) {
     counters.add(detail::nowNanos() - start);
     return result;
   }
+#else
+  (void)selector;
+  return callable();
 #endif
 }
 
