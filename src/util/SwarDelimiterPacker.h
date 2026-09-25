@@ -106,35 +106,34 @@ struct PackedDelimiter {
 // _____________________________________________________________________________
 // SIMD Within A Register (SWAR) Delimiter Packer:
 // Packs common RDF syntax delimiter sequences into 64-bit unsigned integers
-// and performs branchless unaligned 64-bit store intrinsics.
+// and writes them with length-exact unaligned stores.
 class SwarDelimiterPacker {
  public:
   // ___________________________________________________________________________
   // Core Store Intrinsics:
-  // Performs an unaligned 64-bit store of `delimPattern` into `out` and
-  // advances the pointer by `len` bytes. Preconditions:
+  // Stores the first `len` bytes of the little-endian `delimPattern` into
+  // `out` and returns `out + len`. Exactly `len` bytes are written, so the
+  // caller only needs `len` bytes of writable capacity at `out`; `len == 0`
+  // writes nothing. Preconditions:
   // - `out` must not be nullptr.
-  // - `out` must point to a buffer with at least 8 bytes of writable capacity.
   // - `len` must be <= 8.
-  //
-  // Compiles to a single unaligned 64-bit store instruction (e.g. `mov [rdi],
-  // rsi`) with zero branching.
   [[nodiscard]] static inline char* writeDelim64(char* out,
                                                  uint64_t delimPattern,
                                                  size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 8);
-    std::memcpy(out, &delimPattern, sizeof(uint64_t));
+    std::memcpy(out, &delimPattern, len);
     return out + len;
   }
 
-  // Compile-time fixed-length overload for maximum compiler optimization.
+  // Compile-time fixed-length overload: the constant `Len` lets the compiler
+  // emit fixed-width stores. Writes exactly `Len` bytes.
   template <size_t Len>
   [[nodiscard]] static inline char* writeDelim64(char* out,
                                                  uint64_t delimPattern) {
     static_assert(Len <= 8, "SWAR delimiter length must be <= 8 bytes");
     AD_CONTRACT_CHECK(out != nullptr);
-    std::memcpy(out, &delimPattern, sizeof(uint64_t));
+    std::memcpy(out, &delimPattern, Len);
     return out + Len;
   }
 
@@ -144,23 +143,25 @@ class SwarDelimiterPacker {
     return writeDelim64(out, delim.pattern(), delim.len());
   }
 
-  // 32-bit store intrinsic (writes 4 bytes unaligned, advances by `len` <= 4)
+  // 32-bit variant: writes exactly the first `len` <= 4 bytes of the
+  // little-endian `delimPattern` and returns `out + len`.
   [[nodiscard]] static inline char* writeDelim32(char* out,
                                                  uint32_t delimPattern,
                                                  size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 4);
-    std::memcpy(out, &delimPattern, sizeof(uint32_t));
+    std::memcpy(out, &delimPattern, len);
     return out + len;
   }
 
-  // 16-bit store intrinsic (writes 2 bytes unaligned, advances by `len` <= 2)
+  // 16-bit variant: writes exactly the first `len` <= 2 bytes of the
+  // little-endian `delimPattern` and returns `out + len`.
   [[nodiscard]] static inline char* writeDelim16(char* out,
                                                  uint16_t delimPattern,
                                                  size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 2);
-    std::memcpy(out, &delimPattern, sizeof(uint16_t));
+    std::memcpy(out, &delimPattern, len);
     return out + len;
   }
 

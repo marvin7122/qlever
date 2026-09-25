@@ -129,6 +129,8 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
   buffer.fill('W');
   next = SwarDelimiterPacker::writeDelim64(buffer.data(), 0, 0);
   EXPECT_EQ(next, buffer.data());
+  EXPECT_EQ(std::string_view(buffer.data(), buffer.size()),
+            std::string(buffer.size(), 'W'));
 
   // Test writing full 8-byte pattern
   buffer.fill('A');
@@ -184,6 +186,84 @@ TEST(SwarDelimiterPackerTest, WriteDelim32And16) {
       buffer.data(), packDelimPattern16("\r\n"), 2);
   EXPECT_EQ(next16, buffer.data() + 2);
   EXPECT_EQ(std::string_view(buffer.data(), 2), "\r\n");
+}
+
+// _____________________________________________________________________________
+// Every store writes exactly the requested number of bytes: the bytes after
+// the delimiter keep their sentinel value, and a zero-length write is a no-op.
+TEST(SwarDelimiterPackerTest, WritesExactlyRequestedLength) {
+  constexpr char sentinel = '#';
+  const uint64_t pattern8 = SwarDelimiterPacker::pack("abcdefgh");
+  const std::string_view expected8 = "abcdefgh";
+
+  // Checks that `buffer` holds `expected` followed only by sentinels.
+  auto expectPrefixThenSentinels = [&](const std::array<char, 16>& buffer,
+                                       std::string_view expected) {
+    EXPECT_EQ(std::string_view(buffer.data(), expected.size()), expected);
+    for (size_t i = expected.size(); i < buffer.size(); ++i) {
+      EXPECT_EQ(buffer[i], sentinel) << "byte " << i << " was overwritten";
+    }
+  };
+
+  std::array<char, 16> buffer;
+  for (size_t len = 0; len <= 8; ++len) {
+    buffer.fill(sentinel);
+    char* next =
+        SwarDelimiterPacker::writeDelim64(buffer.data(), pattern8, len);
+    EXPECT_EQ(next, buffer.data() + len);
+    expectPrefixThenSentinels(buffer, expected8.substr(0, len));
+  }
+
+  buffer.fill(sentinel);
+  EXPECT_EQ(SwarDelimiterPacker::writeDelim64<0>(buffer.data(), pattern8),
+            buffer.data());
+  expectPrefixThenSentinels(buffer, "");
+
+  buffer.fill(sentinel);
+  EXPECT_EQ(SwarDelimiterPacker::writeDelim64<3>(buffer.data(), pattern8),
+            buffer.data() + 3);
+  expectPrefixThenSentinels(buffer, "abc");
+
+  buffer.fill(sentinel);
+  EXPECT_EQ(SwarDelimiterPacker::writeDelim(buffer.data(), PackedDelimiter{}),
+            buffer.data());
+  expectPrefixThenSentinels(buffer, "");
+
+  buffer.fill(sentinel);
+  EXPECT_EQ(SwarDelimiterPacker::writeDelim(
+                buffer.data(), SwarDelimiterPacker::TRIPLE_O_IRI_END),
+            buffer.data() + 4);
+  expectPrefixThenSentinels(buffer, "> .\n");
+
+  const uint32_t pattern4 = packDelimPattern32("abcd");
+  for (size_t len = 0; len <= 4; ++len) {
+    buffer.fill(sentinel);
+    char* next =
+        SwarDelimiterPacker::writeDelim32(buffer.data(), pattern4, len);
+    EXPECT_EQ(next, buffer.data() + len);
+    expectPrefixThenSentinels(buffer, expected8.substr(0, len));
+  }
+
+  const uint16_t pattern2 = packDelimPattern16("ab");
+  for (size_t len = 0; len <= 2; ++len) {
+    buffer.fill(sentinel);
+    char* next =
+        SwarDelimiterPacker::writeDelim16(buffer.data(), pattern2, len);
+    EXPECT_EQ(next, buffer.data() + len);
+    expectPrefixThenSentinels(buffer, expected8.substr(0, len));
+  }
+
+  // Exactly sized heap buffers need no slack (checked by ASan builds).
+  std::vector<char> exact(3);
+  char* end = SwarDelimiterPacker::writeDelim(
+      exact.data(), SwarDelimiterPacker::TRIPLE_S_TO_P_IRI);
+  EXPECT_EQ(end, exact.data() + exact.size());
+  EXPECT_EQ(std::string_view(exact.data(), exact.size()), "> <");
+  std::vector<char> single(1);
+  end = SwarDelimiterPacker::writeDelim16(single.data(),
+                                          packDelimPattern16(","), 1);
+  EXPECT_EQ(end, single.data() + 1);
+  EXPECT_EQ(single[0], ',');
 }
 
 // _____________________________________________________________________________
