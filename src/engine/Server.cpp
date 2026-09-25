@@ -979,7 +979,9 @@ CPP_template_def(typename RequestT, typename SendT)(
   auto responseGenerator =
       useV2Csv
           ? ql::engine::export_v2::SelectCsvStreamer::run(
-                queryExecutionTree, parsedQuery, std::move(cancellationHandle))
+                queryExecutionTree, parsedQuery,
+                ql::engine::export_v2::SelectCsvStreamer::defaultRowsPerChunk,
+                std::move(cancellationHandle))
           : ExportQueryExecutionTrees::computeResult(
                 parsedQuery, queryExecutionTree, mediaType, requestTimer,
                 std::move(cancellationHandle));

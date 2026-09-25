@@ -4,63 +4,42 @@
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
 // You may not use this file except in compliance with the Apache 2.0 License,
-// which can be found in the `LICENSE` file at the root of this project.
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_CSVCHUNKSINK_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_CSVCHUNKSINK_H
 
+#include <cstdint>
 #include <string>
-#include <utility>
 
 #include "engine/QueryExecutionTree.h"
+#include "engine/QueryExportTypes.h"
 #include "engine/idTable/IdTable.h"
-#include "index/ExportIds.h"
 #include "index/Index.h"
 #include "index/LocalVocab.h"
-#include "rdfTypes/RdfEscaping.h"
 
 namespace ql::engine::export_v2 {
 
-// Serialize one rechunked result block to CSV. The cell conversion is
-// exactly the V1 conversion (`idToStringAndType` with `escapeForCsv`), so
-// V1 and V2 bytes agree by construction. Later work packages replace this
-// sink with vectorized serializers without touching the call site.
-//
-// The selected columns are stored by value: the sink is a small per-request
-// object, and owning the column list removes any lifetime coupling between
-// the sink and the caller's column vector.
+// Serializer for rows of a SELECT result to CSV. The cell conversion is the
+// one of the V1 CSV export (`idToStringAndType` with `escapeForCsv`), so both
+// produce identical bytes.
 class CsvChunkSink {
- public:
-  CsvChunkSink(const Index& index,
-               QueryExecutionTree::ColumnIndicesAndTypes selectedColumns)
-      : index_{index}, selectedColumns_{std::move(selectedColumns)} {}
-
-  // Append the CSV rendering of every row in `table` (resolved against
-  // `vocab`) to `out`.
-  void appendChunk(const IdTable& table, const LocalVocab& vocab,
-                   std::string& out) const {
-    for (size_t i = 0; i < table.numRows(); ++i) {
-      for (size_t j = 0; j < selectedColumns_.size(); ++j) {
-        if (selectedColumns_[j].has_value()) {
-          const auto& column = selectedColumns_[j].value();
-          Id id = table(i, column.columnIndex_);
-          auto cell = ql::exportIds::idToStringAndType<true>(
-              index_, id, vocab, RdfEscaping::escapeForCsv);
-          if (cell.has_value()) [[likely]] {
-            out += cell.value().first;
-          }
-        }
-        if (j + 1 < selectedColumns_.size()) {
-          out += ',';
-        }
-      }
-      out += '\n';
-    }
-  }
-
  private:
   const Index& index_;
   QueryExecutionTree::ColumnIndicesAndTypes selectedColumns_;
+
+ public:
+  // `index` must outlive the sink. Every column index in `selectedColumns`
+  // must be valid for all tables passed to `appendRows`.
+  CsvChunkSink(const Index& index,
+               QueryExecutionTree::ColumnIndicesAndTypes selectedColumns);
+
+  // Append the CSV rendering of the rows `rows` of `table`, whose local
+  // vocabulary entries are resolved against `vocab`, to `out`. Each row ends
+  // with a newline; unbound and unselectable cells are empty.
+  void appendRows(const IdTableView<0>& table, const LocalVocab& vocab,
+                  ql::ranges::iota_view<uint64_t, uint64_t> rows,
+                  std::string& out) const;
 };
 
 }  // namespace ql::engine::export_v2
