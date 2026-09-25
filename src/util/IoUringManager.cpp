@@ -10,6 +10,7 @@
 
 #include "util/IoUringManager.h"
 
+#include <absl/strings/str_cat.h>
 #include <sched.h>
 #include <unistd.h>
 
@@ -116,7 +117,12 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
     usedFallbackRing = true;
   }
   if (ret < 0) {
-    AD_THROW("io_uring_queue_init_params failed in IoUringManager");
+    AD_THROW(absl::StrCat(
+        "io_uring_queue_init_params failed in IoUringManager (",
+        usedFallbackRing ? "plain fallback ring after the special setup was "
+                           "denied"
+                         : "setup with special flags",
+        "): ", std::strerror(-ret)));
   }
   // Report SQPoll only when the kernel granted the requested setup. After the
   // fallback above no poll thread exists, even though SQPoll was requested.
