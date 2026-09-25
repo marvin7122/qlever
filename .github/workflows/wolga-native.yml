@@ -149,7 +149,7 @@ jobs:
             -v "${{ github.workspace }}:/work" \
             -v "${CCACHE_BASE}/${{ matrix.toolchain }}:/ccache" \
             -w /work \
-            -e GH_CLONE_TOKEN \
+            -e GH_CLONE_TOKEN -e CI_BUILD_JOBS \
             localhost/qlever-ci:${{ matrix.image }} bash -c '
               set -e
               if [ -n "${GH_CLONE_TOKEN:-}" ]; then git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf "x-access-token:%s" "${GH_CLONE_TOKEN}" | base64 -w0)"; fi
@@ -191,13 +191,14 @@ jobs:
                 ${{ matrix.additional-cmake-options }} \
                 -DADDITIONAL_LINKER_FLAGS="-B /usr/bin/mold" \
                 -DBUILD_SHARED_LIBS=ON -DQLEVER_ONE_TEST_CASE_PER_FILE=ON \
-                -DUSE_PRECOMPILED_HEADERS=${{ matrix.toolchain == 'clang21' && 'ON' || 'OFF' }} -DCHEAPER_COMPILATION=OFF \
+                -DUSE_PRECOMPILED_HEADERS=ON -DCHEAPER_COMPILATION=OFF \
                 -DQLEVER_ALLOCATOR_BACKEND=${{ matrix.allocator-backend || 'limit' }}
+              # CI_BUILD_JOBS (runner .env) raises -j on dedicated build boxes.
               # -j8, not -j$(nproc): the 16-core host is shared (OCR jobs,
               # other users) and RAM-bound. -j16 OOM-killed the UBSan leg
               # (SIGKILL 54min in) and starved a gcc13 rebuild into a
               # CancellationException-429 flake.
-              cmake --build /work/build --config ${{ matrix.build-type }} -- -j 8
+              cmake --build /work/build --config ${{ matrix.build-type }} -- -j ${CI_BUILD_JOBS:-8}
               echo "--- ccache stats for ${{ matrix.toolchain }} (this leg) ---"
               ccache -s
               cd /work/build/test
