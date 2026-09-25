@@ -4,6 +4,7 @@
 // 2020 - 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2022 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
 // 2024 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -961,17 +962,16 @@ CPP_template_def(typename RequestT, typename SendT)(
         const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
         SharedCancellationHandle cancellationHandle,
         ql::engine::ExportEngineMode engineMode) const {
-  // First V2 executor: SELECT queries in CSV format stream through the V2
-  // path; every other combination keeps executing the proven V1 pipeline.
-  // The router guarantees V2 eligibility, the arm narrows it to the
-  // implemented shape.
+  // Only SELECT queries exported as CSV have a V2 executor so far; every other
+  // shape executes the V1 pipeline. The router guarantees V2 eligibility, this
+  // check narrows it to the implemented shape.
   const auto& parsedQuery = plannedQuery.parsedQuery();
   const auto& queryExecutionTree = plannedQuery.queryExecutionTree();
-  const bool useV2Csv =
-      engineMode == ql::engine::ExportEngineMode::FastStreamingV2 &&
-      mediaType == MediaType::csv && parsedQuery.hasSelectClause();
-  if (engineMode == ql::engine::ExportEngineMode::FastStreamingV2 &&
-      !useV2Csv) {
+  const bool v2Requested =
+      engineMode == ql::engine::ExportEngineMode::FastStreamingV2;
+  const bool useV2Csv = v2Requested && mediaType == MediaType::csv &&
+                        parsedQuery.hasSelectClause();
+  if (v2Requested && !useV2Csv) {
     AD_LOG_INFO << "V2 export engine requested for an unimplemented shape; "
                    "executing via the V1 implementation."
                 << std::endl;
@@ -1131,10 +1131,8 @@ CPP_template_def(typename RequestT, typename SendT)(
   plannedQuery->parsedQuery().updateExportLimit(
       qlever::http_api_helpers::determineSendLimit(params, mediaType));
 
-  // WP1 ingress routing: decide between the legacy pipeline and the
-  // streaming export engine. Shapes without a V2 executor fall back to the
-  // V1 implementation inside `sendStreamableResponse`; executed V2 shapes
-  // are covered by the V1/V2 parity test.
+  // Decide between the legacy export pipeline and the streaming export engine
+  // (see `ExportPipelineRouter`).
   std::optional<std::string_view> exportEngineHeader;
   std::string_view exportEngineHeaderValue =
       request.base()["X-QLever-Export-Engine"];

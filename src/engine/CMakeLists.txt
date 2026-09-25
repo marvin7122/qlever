@@ -21,7 +21,7 @@ add_library(engine
         PermutationSelector.cpp ConstructTripleGenerator.cpp
         ConstructTemplatePreprocessor.cpp ConstructTripleInstantiator.cpp ConstructBatchEvaluator.cpp
         ConstructDeduplicator.cpp MaterializedViewsQueryAnalysis.cpp UpdateMetadata.cpp ExternalValues.cpp
-        export_v2/SelectCsvStreamer.cpp)
+        export_v2/SelectCsvStreamer.cpp ExportPipelineRouter.cpp)
 add_subdirectory(spatialJoinAlgorithms)
 
 # `Boost::program_options` is not used inside `engine` itself, but the
