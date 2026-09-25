@@ -174,10 +174,12 @@ class LocaleManagerICU : public LocaleManagerBase {
   // a>b, 0 iff a==b.
   [[nodiscard]] int compare(std::string_view a, std::string_view b,
                             const Level level) const {
-    // ASCII fast path for vocabulary binary search (`getPositionOfWord`,
-    // `lower_bound`, etc. all funnel through here): byte-identical ASCII
-    // words compare equal without the expensive ICU call.
-    if (asciiByteEqual(a, b)) {
+    // Skip the expensive ICU call for byte-identical words, which compare
+    // equal at every collation level. The vocabulary binary search
+    // (`getPositionOfWord`, `lower_bound`) calls this for every probe. Keep
+    // ICU for all other pairs, because ICU order differs from byte order
+    // (e.g. lowercase sorts before uppercase in the `en_US` locale).
+    if (a == b) {
       return 0;
     }
     UErrorCode err = U_ZERO_ERROR;
@@ -304,20 +306,6 @@ class LocaleManagerICU : public LocaleManagerBase {
   }
 
  private:
-  // Return true iff `a` and `b` are byte-identical pure-ASCII strings.
-  // Byte-identical words compare equal at every ICU collation level, so this
-  // lets `compare` skip ICU for identical words. Only equality is decided
-  // here: the ordering of distinct words must keep using ICU even for
-  // pure-ASCII input, because ICU collation order differs from byte order
-  // (e.g. in en_US lowercase sorts before uppercase, see
-  // `StringSortComparatorTest`), so a memcmp-based ordering would change
-  // results.
-  static bool asciiByteEqual(std::string_view a, std::string_view b) noexcept {
-    return a == b && ql::ranges::all_of(a, [](char c) {
-             return static_cast<unsigned char>(c) < 0x80;
-           });
-  }
-
   // raise an exception if the error code holds an error.
   static void raise(const UErrorCode& err) {
     if (U_FAILURE(err)) {
