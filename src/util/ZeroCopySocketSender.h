@@ -281,6 +281,10 @@ class ZeroCopySocketSender {
     AD_CONTRACT_CHECK(config_.ringEntries > 0);
     AD_CONTRACT_CHECK(config_.numBuffers > 0);
     AD_CONTRACT_CHECK(config_.bufferSizeBytes > 0);
+    // `ringEntries * 2` must not wrap, and `ringEntries` must survive the
+    // `unsigned int` cast at `io_uring_queue_init` below.
+    AD_CONTRACT_CHECK(config_.ringEntries <=
+                      std::numeric_limits<unsigned int>::max() / 2);
 
     inFlightTable_.resize(config_.ringEntries * 2);
 
@@ -574,8 +578,16 @@ class ZeroCopySocketSender {
         }
       }
 
-      if (buffersRegistered_) {
+      // Only unregister while no buffer is still pinned by the kernel:
+      // unregistering with in-flight zero-copy buffers would free user memory
+      // (rawBuffer_) that the kernel may still DMA into.
+      if (buffersRegistered_ && numInFlightBuffers_ == 0) {
         io_uring_unregister_buffers(&ring_);
+        buffersRegistered_ = false;
+      } else if (buffersRegistered_) {
+        AD_LOG_WARN << "ZeroCopySocketSender destroyed with buffers still "
+                       "pinned by the kernel; skipping unregister, call "
+                       "flushAndDrainAll() before destruction\n";
         buffersRegistered_ = false;
       }
 
@@ -645,6 +657,13 @@ class ZeroCopySocketSender {
 
     if (flags & IORING_CQE_F_MORE) {
       // Kernel is holding the buffer for zero-copy DMA; wait for CQE 2 (NOTIF)
+      // Below we still validate the byte count, mirroring the non-MORE path:
+      // a truncated send must not be counted as success and freed on NOTIF.
+      if (static_cast<size_t>(res) != entry.expectedBytes) {
+        entry.waitingForNotification = true;
+        AD_THROW(absl::StrCat("io_uring short send with MORE (res: ", res,
+                              ", expected: ", entry.expectedBytes, ")"));
+      }
       entry.waitingForNotification = true;
     } else {
       if (static_cast<size_t>(res) != entry.expectedBytes) {
@@ -684,7 +703,13 @@ class ZeroCopySocketSender {
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
           pollfd pfd{sockfd, POLLOUT, 0};
-          int ret = ::poll(&pfd, 1, -1);
+          // Bounded wait (matching the session's 30s read timeout): a stalled
+          // peer must surface as an error, not hang the session forever.
+          int ret = ::poll(&pfd, 1, 30 * 1000);
+          if (ret == 0) {
+            bufferPool_.releaseSlot(bufferIndex);
+            AD_THROW("send timed out waiting for socket writability");
+          }
           if (ret < 0) {
             if (errno == EINTR) {
               continue;
@@ -692,6 +717,10 @@ class ZeroCopySocketSender {
             bufferPool_.releaseSlot(bufferIndex);
             AD_THROW(
                 absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+          }
+          if (pfd.revents == 0) {
+            // Spurious wakeup, keep waiting within the timeout above.
+            continue;
           }
           if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
             bufferPool_.releaseSlot(bufferIndex);
