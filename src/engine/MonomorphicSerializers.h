@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -89,6 +90,8 @@ inline constexpr ColumnType UNDEFINED = ColumnType::Undefined;
 
 // _____________________________________________________________________________
 // Lightweight value holder representing a cell value across formats and types.
+// Like `std::string_view`, a `CellValue` does not own the characters of
+// `stringVal_`; they must outlive the `CellValue`.
 struct CellValue {
   ColumnType type_ = ColumnType::Undefined;
   std::string_view stringVal_{};
@@ -106,14 +109,22 @@ struct CellValue {
       const char* s, ColumnType type = ColumnType::String) noexcept
       : type_(type), stringVal_(s) {}
 
+  // `CellValue` does not own its characters, so construction from a temporary
+  // string, which would leave `stringVal_` dangling, is rejected.
+  CellValue(std::string&&, ColumnType = ColumnType::String) = delete;
+
   /* implicit */ constexpr CellValue(int64_t v) noexcept
       : type_(ColumnType::Int), intVal_(v) {}
 
   /* implicit */ constexpr CellValue(int v) noexcept
       : type_(ColumnType::Int), intVal_(v) {}
 
-  /* implicit */ constexpr CellValue(uint64_t v) noexcept
-      : type_(ColumnType::Int), intVal_(static_cast<int64_t>(v)) {}
+  // Precondition: `v` fits into `int64_t`.
+  /* implicit */ constexpr CellValue(uint64_t v)
+      : type_(ColumnType::Int), intVal_(static_cast<int64_t>(v)) {
+    AD_CONTRACT_CHECK(
+        v <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+  }
 
   /* implicit */ constexpr CellValue(double v) noexcept
       : type_(ColumnType::Double), doubleVal_(v) {}

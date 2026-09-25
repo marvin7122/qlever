@@ -212,3 +212,12 @@ TEST(MonomorphicSerializersTest, FixedSpanFormatterOverflowThrows) {
   EXPECT_THROW(fmt.writeRaw("xy"), ad_utility::Exception);
   EXPECT_THROW(fmt.writeInteger(42), ad_utility::Exception);
 }
+
+// _____________________________________________________________________________
+TEST(MonomorphicSerializersTest, CellValueRejectsUnsignedOverflow) {
+  EXPECT_EQ(CellValue{uint64_t{42}}.intVal_, 42);
+  EXPECT_THROW(CellValue{std::numeric_limits<uint64_t>::max()},
+               ad_utility::Exception);
+  static_assert(!std::is_constructible_v<CellValue, std::string&&>);
+  static_assert(std::is_constructible_v<CellValue, const std::string&>);
+}
