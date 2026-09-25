@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -321,6 +322,7 @@ class HttpFramingBenchmarkRunner {
     if (nullFd < 0) {
       AD_THROW("Failed to open /dev/null for transmission benchmark");
     }
+    absl::Cleanup closeNullFd{[nullFd] { ::close(nullFd); }};
 
     const size_t totalStreamBytes = streamGen.totalBytes();
     const char* src = streamGen.data();
@@ -358,7 +360,6 @@ class HttpFramingBenchmarkRunner {
     ++chunksEmitted;
 
     auto endTime = std::chrono::steady_clock::now();
-    ::close(nullFd);
 
     std::chrono::duration<double> elapsed = endTime - startTime;
     const double elapsedSec = elapsed.count();
