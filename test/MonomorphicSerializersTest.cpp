@@ -9,7 +9,11 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <limits>
 #include <string>
+#include <tuple>
+#include <type_traits>
 #include <vector>
 
 #include "engine/FastExportStreamFormatter.h"
@@ -139,4 +143,16 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
       });
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
+}
+
+// _____________________________________________________________________________
+// Writing past the end of a caller-provided span throws instead of
+// terminating (the write functions are not `noexcept`).
+TEST(MonomorphicSerializersTest, FixedSpanFormatterOverflowThrows) {
+  std::array<char, 4> storage{};
+  FastExportStreamFormatter fmt{ql::span<char>(storage)};
+  fmt.writeRaw("abcd");
+  EXPECT_THROW(fmt.writeChar('e'), ad_utility::Exception);
+  EXPECT_THROW(fmt.writeRaw("xy"), ad_utility::Exception);
+  EXPECT_THROW(fmt.writeInteger(42), ad_utility::Exception);
 }

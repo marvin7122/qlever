@@ -191,14 +191,14 @@ class FastExportStreamFormatter {
 
   // ___________________________________________________________________________
   // Directly append a raw character.
-  void writeChar(char c) noexcept {
+  void writeChar(char c) {
     ensureAvailable(1);
     bufferPtr_[writePos_++] = c;
   }
 
   // ___________________________________________________________________________
   // Directly append a raw string slice without escaping.
-  void writeRaw(std::string_view sv) noexcept {
+  void writeRaw(std::string_view sv) {
     if (sv.empty()) {
       return;
     }
@@ -211,7 +211,7 @@ class FastExportStreamFormatter {
   // Write an integer directly without heap allocation.
   template <typename IntegerType>
   requires std::is_integral_v<IntegerType>
-  void writeInteger(IntegerType value) noexcept {
+  void writeInteger(IntegerType value) {
     ensureAvailable(32);
     auto [ptr, ec] = std::to_chars(bufferPtr_ + writePos_,
                                    bufferPtr_ + bufferCapacity_, value);
