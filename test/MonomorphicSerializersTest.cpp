@@ -182,8 +182,9 @@ TEST(MonomorphicSerializersTest, CsvLiteralMatchesProductionWriteTerm) {
       });
   std::string monomorphicOut =
       captureOutput([&](FastExportStreamFormatter& fmt) {
-        detail::MonomorphicCellWriter<ColumnType::Literal, ExportFormat::Csv>::
-            write(fmt, CellValue::makeLiteral(literal));
+        ql::serialization::detail::MonomorphicCellWriter<
+            ColumnType::Literal,
+            ExportFormat::Csv>::write(fmt, CellValue::makeLiteral(literal));
       });
 
   EXPECT_EQ(monomorphicOut, productionOut);
