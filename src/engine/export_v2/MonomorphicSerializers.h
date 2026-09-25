@@ -13,7 +13,6 @@
 
 #include <array>
 #include <cmath>
-#include <concepts>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -127,7 +126,7 @@ struct CellWriter {
             std::enable_if_t<std::is_integral_v<Value>, int> = 0>
   static void write(Writer& writer, Value value) {
     static_assert(Type == ColumnType::Integer,
-                  "This column type requires a string or floating argument");
+                  "An integral argument requires an Integer column");
     writer.writeInteger(value);
   }
 

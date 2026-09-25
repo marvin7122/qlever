@@ -94,28 +94,27 @@ struct ColumnLatticeResult {
 
 // Map one constant `ValueId` datatype onto the lattice.
 [[nodiscard]] inline ColumnLattice latticeForDatatype(Datatype datatype) {
-  using enum Datatype;
   switch (datatype) {
-    case Int:
+    case Datatype::Int:
       return ColumnLattice::Int;
-    case Double:
+    case Datatype::Double:
       return ColumnLattice::Double;
-    case Bool:
+    case Datatype::Bool:
       return ColumnLattice::Bool;
-    case Date:
+    case Datatype::Date:
       return ColumnLattice::Date;
-    case GeoPoint:
+    case Datatype::GeoPoint:
       return ColumnLattice::GeoPoint;
-    case EncodedVal:
+    case Datatype::EncodedVal:
       return ColumnLattice::Encoded;
-    case VocabIndex:
-    case LocalVocabIndex:
-    case SecondaryVocabIndex:
-    case WordVocabIndex:
-    case TextRecordIndex:
+    case Datatype::VocabIndex:
+    case Datatype::LocalVocabIndex:
+    case Datatype::SecondaryVocabIndex:
+    case Datatype::WordVocabIndex:
+    case Datatype::TextRecordIndex:
       return ColumnLattice::Vocab;
-    case BlankNodeIndex:
-    case Undefined:
+    case Datatype::BlankNodeIndex:
+    case Datatype::Undefined:
       return ColumnLattice::Union;
   }
   // Unreachable while the switch covers every enumerator; a future datatype
