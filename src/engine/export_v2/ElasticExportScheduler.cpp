@@ -4,6 +4,8 @@
 
 #include "engine/export_v2/ElasticExportScheduler.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <algorithm>
 
 namespace ad_utility::export_v2 {
@@ -265,7 +267,6 @@ void ElasticExportScheduler::workerLoop() {
     size_t targetMorselIndex = 0;
     uint64_t submissionEpoch = 0;
     uint64_t leaseEpoch = 0;
-    uint64_t jobId = 0;
     uint64_t leaseId = 0;
 
     {
@@ -290,18 +291,22 @@ void ElasticExportScheduler::workerLoop() {
       targetJobState = std::move(morsel.jobState_);
       targetMorselIndex = morsel.morselIndex_;
       submissionEpoch = morsel.submissionEpoch_;
-      jobId = morsel.jobId_;
 
       // Acquire pairs with the release-sequence incrementing the epoch on
       // demand changes. Identity registration and slot accounting happen
-      // in the lease constructor below, outside `queueMutex_`.
+      // below, outside `queueMutex_`.
       leaseEpoch = demandEpoch_.load(std::memory_order_acquire);
       leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Never empty: the scheduler owns its workers and outlives them
-    // (`shutdown` joins before destruction completes).
-    ExportWorkLease lease(weak_from_this(), leaseEpoch, jobId, leaseId);
+    // Account the helper slot directly on `this` instead of through an
+    // `ExportWorkLease`: the lease locks its `weak_ptr`, and if the last
+    // external owner drops the scheduler while this worker holds that
+    // temporary `shared_ptr`, the destructor would run on this worker and
+    // `shutdown` would join the worker from itself. `this` is valid here
+    // because `shutdown` joins all workers before destruction completes.
+    registerOutstandingLease(leaseId);
+    absl::Cleanup releaseLease = [this, leaseId] { onLeaseReleased(leaseId); };
 
     if (targetJobState && !targetJobState->isCancelled()) {
       if (submissionEpoch == leaseEpoch) {
