@@ -6,104 +6,73 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of this project.
 
-#include <chrono>
-#include <iostream>
+#include <cstddef>
+#include <cstdint>
+#include <string>
 #include <vector>
 
 #include "../benchmark/infrastructure/Benchmark.h"
-#include "../benchmark/infrastructure/BenchmarkMetadata.h"
+#include "backports/algorithm.h"
 #include "global/Id.h"
 #include "index/PforDeltaBitPacking.h"
-#include "util/ConfigManager/ConfigManager.h"
-
-using namespace ql::index::compression;
+#include "util/Exception.h"
 
 namespace ad_benchmark {
 
-namespace {
-
-void runComparativeBenchmark() {
-  constexpr size_t NUM_BLOCKS = 100'000;
-  constexpr size_t TOTAL_IDS = NUM_BLOCKS * 64;  // 6.4 million IDs
-
-  std::cout
-      << "=================================================================\n";
-  std::cout
-      << "Comparative Benchmark: Uncompressed 64-bit Array vs PFOR-DELTA ("
-      << TOTAL_IDS << " monotonic IDs)\n";
-  std::cout
-      << "=================================================================\n";
-
-  std::vector<Id> input(TOTAL_IDS);
-  for (size_t i = 0; i < TOTAL_IDS; ++i) {
-    input[i] = Id::fromBits(1'000'000 + i * 2);
-  }
-
-  // 1. BASELINE: Uncompressed Copy / Scan
-  auto b0 = std::chrono::high_resolution_clock::now();
-  std::vector<Id> baseCopy(TOTAL_IDS);
-  for (size_t i = 0; i < TOTAL_IDS; ++i) {
-    baseCopy[i] = input[i];
-  }
-  auto b1 = std::chrono::high_resolution_clock::now();
-  double baseMs = std::chrono::duration<double, std::milli>(b1 - b0).count();
-  std::cout << "Baseline copy/scan: " << baseMs << " ms\n";
-  size_t baseBytes = TOTAL_IDS * sizeof(Id);
-
-  // 2. PROTOTYPE: PFOR-DELTA Compression & Decompression
-  auto c0 = std::chrono::high_resolution_clock::now();
-  std::vector<PforDeltaBitPacking::CompressedBlock> compressedBlocks;
-  compressedBlocks.reserve(NUM_BLOCKS);
-  for (size_t b = 0; b < NUM_BLOCKS; ++b) {
-    compressedBlocks.push_back(PforDeltaBitPacking::compressBlock(
-        ql::span<const Id>(&input[b * 64], 64)));
-  }
-  auto c1 = std::chrono::high_resolution_clock::now();
-  double compressMs =
-      std::chrono::duration<double, std::milli>(c1 - c0).count();
-  std::cout << "Compression: " << compressMs << " ms ("
-            << (TOTAL_IDS / (compressMs / 1000.0)) / 1e6 << " M IDs/sec)\n";
-
-  // Measure Decompression
-  auto d0 = std::chrono::high_resolution_clock::now();
-  std::vector<Id> decompressed(TOTAL_IDS);
-  for (size_t b = 0; b < NUM_BLOCKS; ++b) {
-    PforDeltaBitPacking::decompressBlock(
-        compressedBlocks[b], 64, ql::span<Id>(&decompressed[b * 64], 64));
-  }
-  auto d1 = std::chrono::high_resolution_clock::now();
-  double decompressMs =
-      std::chrono::duration<double, std::milli>(d1 - d0).count();
-
-  size_t compressedBytes = 0;
-  for (const auto& blk : compressedBlocks) {
-    compressedBytes += sizeof(blk) + blk.packedWords_.size() * sizeof(uint64_t);
-  }
-
-  std::cout << "\n--- Memory Footprint ---\n";
-  std::cout << "Baseline 64-bit Memory: " << (baseBytes / (1024 * 1024))
-            << " MB\n";
-  std::cout << "PFOR-DELTA Memory:      " << (compressedBytes / (1024 * 1024))
-            << " MB\n";
-  std::cout << ">>> Memory Compression Ratio: "
-            << static_cast<double>(baseBytes) / compressedBytes << "x\n";
-
-  std::cout << "\n--- Decompression Throughput ---\n";
-  std::cout << "PFOR-DELTA Decompress:  " << decompressMs << " ms ("
-            << (TOTAL_IDS / (decompressMs / 1000.0)) / 1e6 << " M IDs/sec)\n";
-  std::cout
-      << "=================================================================\n";
-}
-
-}  // namespace
-
+// Compression and decompression cost and size of `PforDeltaBitPacking` for
+// 6.4 M sorted `Id`s with gap 2 (7 bits per value), against copying the flat
+// column.
 class PforDeltaBitPackingBenchmark : public BenchmarkInterface {
  public:
-  std::string name() const final { return "PFOR-DELTA Bit Packing Benchmark"; }
+  std::string name() const final { return "PforDeltaBitPacking"; }
 
   BenchmarkResults runAllBenchmarks() final {
-    runComparativeBenchmark();
-    return BenchmarkResults{};
+    using ql::index::compression::PforDeltaBitPacking;
+    constexpr size_t BLOCK = PforDeltaBitPacking::BLOCK_SIZE;
+    constexpr size_t NUM_BLOCKS = 100'000;
+    constexpr size_t NUM_IDS = NUM_BLOCKS * BLOCK;
+    BenchmarkResults results{};
+
+    std::vector<Id> input;
+    input.reserve(NUM_IDS);
+    for (uint64_t i = 0; i < NUM_IDS; ++i) {
+      input.push_back(Id::fromBits(1'000'000 + i * 2));
+    }
+    auto block = [&input](size_t b) {
+      return ql::span<const Id>{input}.subspan(b * BLOCK, BLOCK);
+    };
+
+    auto& group = results.addGroup("6.4 M sorted Ids, gap 2");
+    std::vector<Id> copy(NUM_IDS);
+    group.addMeasurement("Copy flat column",
+                         [&] { ql::ranges::copy(input, copy.begin()); });
+    AD_CORRECTNESS_CHECK(copy == input);
+
+    std::vector<PforDeltaBitPacking::CompressedBlock> compressed;
+    group.addMeasurement("Compress", [&] {
+      compressed.clear();
+      compressed.reserve(NUM_BLOCKS);
+      for (size_t b = 0; b < NUM_BLOCKS; ++b) {
+        compressed.push_back(PforDeltaBitPacking::compressBlock(block(b)));
+      }
+    });
+
+    std::vector<Id> decompressed(NUM_IDS);
+    group.addMeasurement("Decompress", [&] {
+      for (size_t b = 0; b < NUM_BLOCKS; ++b) {
+        PforDeltaBitPacking::decompressBlock(
+            compressed[b], ql::span<Id>{decompressed}.subspan(b * BLOCK));
+      }
+    });
+    AD_CORRECTNESS_CHECK(decompressed == input);
+
+    size_t compressedBytes = 0;
+    for (const auto& c : compressed) {
+      compressedBytes += sizeof(c) + c.packedWords_.size() * sizeof(uint64_t);
+    }
+    group.metadata().addKeyValuePair("flat bytes", NUM_IDS * sizeof(Id));
+    group.metadata().addKeyValuePair("compressed bytes", compressedBytes);
+    return results;
   }
 };
 
