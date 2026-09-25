@@ -456,6 +456,11 @@ class SimdEscapeClassifier {
   // High-performance branchless copier and escape serializer.
   // Fast path copies 32-byte chunks with zero per-character checks when mask is
   // 0. Returns pointer past the last written byte in `dest`.
+  // Precondition: `dest` has room for the worst-case escaped size of `input`,
+  // i.e. `input.size()` times the longest escape sequence of `Format` (2 for
+  // CSV, TSV and Turtle, 6 for XML). Like `std::memcpy`, this raw-pointer
+  // primitive does not know the capacity of `dest`; the callers in this class
+  // size their output accordingly.
   template <EscapeFormat Format>
   static inline char* copyAndEscape(std::string_view input,
                                     char* dest) noexcept {
@@ -553,15 +558,17 @@ class SimdEscapeClassifier {
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
 
+    std::string_view normalizedContent =
+        normLiteral.substr(1, posLastQuote - 1);
+
     // If there are only two quotes and no internal special characters, pass
-    // through
+    // through. (Only the content between the quotes is checked: the enclosing
+    // quotes are escape characters themselves.)
     if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
+        !hasEscapes<EscapeFormat::Turtle>(normalizedContent)) [[likely]] {
       return std::string{normLiteral};
     }
 
-    std::string_view normalizedContent =
-        normLiteral.substr(1, posLastQuote - 1);
     std::string result;
     result.resize(normLiteral.size() * 2 + 2);
     char* out = result.data();

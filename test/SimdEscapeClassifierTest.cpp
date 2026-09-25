@@ -166,6 +166,15 @@ TEST(SimdEscapeClassifierTest, escapeForTsv) {
 
 // ___________________________________________________________________________
 TEST(SimdEscapeClassifierTest, validRDFLiteralFromNormalized) {
+  // Literals without characters to escape are passed through unchanged
+  // (fast path), including language tags and datatypes.
+  EXPECT_EQ(SimdEscapeClassifier::validRDFLiteralFromNormalized(R"("plain")"),
+            R"("plain")");
+  EXPECT_EQ(SimdEscapeClassifier::validRDFLiteralFromNormalized(R"("hi"@en)"),
+            R"("hi"@en)");
+  EXPECT_EQ(
+      SimdEscapeClassifier::validRDFLiteralFromNormalized(R"("42"^^<int>)"),
+      R"("42"^^<int>)");
   EXPECT_EQ(SimdEscapeClassifier::validRDFLiteralFromNormalized(R"(""\a\"")"),
             R"("\"\\a\\\"")");
   EXPECT_EQ(SimdEscapeClassifier::validRDFLiteralFromNormalized(R"("\b\"@en)"),
