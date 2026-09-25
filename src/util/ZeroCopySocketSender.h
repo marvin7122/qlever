@@ -64,6 +64,11 @@ namespace ad_utility {
 // 4KB memory page alignment constant for DMA and zero-copy kernel pinning.
 inline constexpr size_t kZeroCopyPageAlignment = 4096;
 
+// Upper bound for a single wait on the peer (socket writability or an
+// `io_uring` send completion). A stalled peer must surface as an error instead
+// of blocking the sending thread forever.
+inline constexpr int kZeroCopyPeerStallTimeoutSeconds = 30;
+
 // _____________________________________________________________________________
 // Configuration parameters for ZeroCopySocketSender.
 struct ZeroCopySenderConfig {
@@ -602,7 +607,13 @@ class ZeroCopySocketSender {
   // Drain a single CQE and handle zero-copy dual notification lifecycle.
   void drainOneCqe() {
     io_uring_cqe* cqe = nullptr;
-    int ret = io_uring_wait_cqe(&ring_, &cqe);
+    __kernel_timespec timeout{};
+    timeout.tv_sec = kZeroCopyPeerStallTimeoutSeconds;
+    int ret = io_uring_wait_cqe_timeout(&ring_, &cqe, &timeout);
+    if (ret == -ETIME) {
+      AD_THROW(
+          "timed out waiting for an io_uring send completion (peer stalled)");
+    }
     if (ret < 0) {
       AD_THROW(absl::StrCat("io_uring_wait_cqe failed (errno: ", -ret, ")"));
     }
@@ -705,7 +716,7 @@ class ZeroCopySocketSender {
           pollfd pfd{sockfd, POLLOUT, 0};
           // Bounded wait (matching the session's 30s read timeout): a stalled
           // peer must surface as an error, not hang the session forever.
-          int ret = ::poll(&pfd, 1, 30 * 1000);
+          int ret = ::poll(&pfd, 1, kZeroCopyPeerStallTimeoutSeconds * 1000);
           if (ret == 0) {
             bufferPool_.releaseSlot(bufferIndex);
             AD_THROW("send timed out waiting for socket writability");
