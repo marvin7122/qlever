@@ -2132,57 +2132,38 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
   for (ColumnIndex c = 0; c < row.numColumns(); ++c) {
     row(0, c) = Id::makeUndefined();
   }
-  auto colOpt = innerChildren[0]->getVariableColumnOrNullopt(concatVar.value());
-  if (!colOpt.has_value()) {
-    return std::nullopt;
-  }
   LocalVocab localVocab;
-  auto strlenExpr = sparqlExpression::makeStrlenExpression(
-      std::make_unique<sparqlExpression::VariableExpression>(
-          concatVar.value()));
+  // The value getter only needs the index and the local vocab of the context,
+  // so one context serves all objects.
+  sparqlExpression::EvaluationContext scanCtx{
+      *getExecutionContext(),
+      innerChildren[0]->getVariableColumns(),
+      row.asStaticView<0>(),
+      getExecutionContext()->getAllocator(),
+      localVocab,
+      cancellationHandle_,
+      deadline_};
   int64_t sumStrlen = 0;
   for (size_t i = 0; i < objects.numRows(); ++i) {
-    row(0, colOpt.value()) = objects(i, 0);
-    sparqlExpression::EvaluationContext scanCtx{
-        *getExecutionContext(),
-        innerChildren[0]->getVariableColumns(),
-        row.asStaticView<0>(),
-        getExecutionContext()->getAllocator(),
-        localVocab,
-        cancellationHandle_,
-        deadline_};
     // GROUP_CONCAT extracts each value with
     // `LiteralValueGetterWithoutStrFunction`, which rejects non-xsd:string
     // typed literals (as well as IRIs and numeric/encoded values): a single
     // rejected value makes its whole group UNDEF, which then poisons the
     // outer SUM. STRLEN would still count such values, so bail unless
     // GROUP_CONCAT accepts the value exactly as it would on the generic path.
+    // For an accepted value, STRLEN counts the code points of exactly the
+    // content that GROUP_CONCAT appends, so one vocabulary lookup per distinct
+    // object yields both the check and the length.
     auto groupConcatLiteral =
         sparqlExpression::detail::LiteralValueGetterWithoutStrFunction{}(
             objects(i, 0), &scanCtx);
     if (!groupConcatLiteral.has_value()) {
       return std::nullopt;
     }
-    auto evaluated = strlenExpr->evaluate(&scanCtx);
-    std::optional<Id> scalar;
-    std::visit(
-        [&](auto&& value) {
-          using T = std::decay_t<decltype(value)>;
-          if constexpr (std::is_same_v<T, Id>) {
-            scalar = value;
-          } else if constexpr (std::is_same_v<
-                                   T, sparqlExpression::VectorWithMemoryLimit<
-                                          Id>>) {
-            if (value.size() == 1) {
-              scalar = value[0];
-            }
-          }
-        },
-        evaluated);
-    if (!scalar.has_value() || scalar.value().getDatatype() != Datatype::Int) {
-      return std::nullopt;
-    }
-    sumStrlen += scalar.value().getInt() * objects(i, 1).getInt();
+    const auto length = static_cast<int64_t>(
+        utf8Length(asStringViewUnsafe(groupConcatLiteral->getContent())));
+    sumStrlen += length * objects(i, 1).getInt();
+    cancellationHandle_->throwIfCancelled();
   }
 
   const int64_t sepLen =
