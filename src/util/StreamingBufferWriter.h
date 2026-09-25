@@ -240,6 +240,14 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Complete the current streaming chunk and drain CPU write-combining buffers.
+  //
+  // Visibility contract of `write`: non-temporal stores are always visible to
+  // later loads of the writing thread (x86 keeps program order for a core's own
+  // stores, including write-combining ones), so the accessors below
+  // (`data()`, `writtenSpan()`, ...) may be read on the writing thread without
+  // a fence. Before the written bytes are handed to another thread or to a
+  // device (e.g. a socket send completed by the kernel on another core or by
+  // DMA), call `flush()`, which orders all preceding stores.
   void flush() { sfence(); }
 
   // ___________________________________________________________________________
