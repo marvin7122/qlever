@@ -3694,7 +3694,7 @@ MinMaxFastAndGeneralPath computeMinMaxOnBothPaths(QueryExecutionContext& qec,
   const auto disableOptimizations = setRuntimeParameterForTest<
       &RuntimeParameters::groupByDisableIndexScanOptimizations_>(true);
   auto generalPath =
-      makeGroupBy().computeResultOnlyForTesting(false).idTable().clone();
+      makeGroupBy().computeResultOnlyForTesting(false).cloneIdTable();
   return {std::move(fastPath), std::move(generalPath)};
 }
 
