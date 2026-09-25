@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -197,4 +198,34 @@ TEST(SimdEscapeClassifierTest, utf8Preservation) {
   std::string utf8WithEscape = "\"München \"Düsseldorf\" Zürich\"@de";
   EXPECT_EQ(SimdEscapeClassifier::validRDFLiteralFromNormalized(utf8WithEscape),
             "\"München \\\"Düsseldorf\\\" Zürich\"@de");
+}
+
+// _____________________________________________________________________________
+// The dispatched `scanChunk32`/`scanChunk16` (AVX2/SSE2 when available) must
+// agree with the portable scalar kernels, which are the fallback on CPUs
+// without the vector extensions.
+template <EscapeFormat Format>
+static void expectVectorAndScalarScansAgree(const std::string& text) {
+  for (size_t offset = 0; offset + 32 <= text.size(); ++offset) {
+    const char* chunk = text.data() + offset;
+    EXPECT_EQ(SimdEscapeClassifier::scanChunk32<Format>(chunk).rawMask(),
+              detail::scanChunk32Scalar<Format>(chunk));
+    EXPECT_EQ(SimdEscapeClassifier::scanChunk16<Format>(chunk).rawMask(),
+              detail::scanChunk16Scalar<Format>(chunk));
+  }
+}
+
+TEST(SimdEscapeClassifierTest, vectorKernelsMatchScalarFallback) {
+  std::mt19937 rng(42);
+  const std::string alphabet = "ab\"\\\n\r\t,&<>'x";
+  std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+  std::string text(256, 'a');
+  for (char& c : text) {
+    c = alphabet[pick(rng)];
+  }
+  expectVectorAndScalarScansAgree<EscapeFormat::Turtle>(text);
+  expectVectorAndScalarScansAgree<EscapeFormat::Tsv>(text);
+  expectVectorAndScalarScansAgree<EscapeFormat::CsvQuote>(text);
+  expectVectorAndScalarScansAgree<EscapeFormat::CsvSpecial>(text);
+  expectVectorAndScalarScansAgree<EscapeFormat::Xml>(text);
 }

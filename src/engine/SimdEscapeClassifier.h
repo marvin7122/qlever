@@ -26,6 +26,14 @@
 #define QLEVER_SIMD_X86 1
 #endif
 
+// SSE2 is part of the x86-64 baseline. On 32-bit x86 it is only used when the
+// compiler targets it, since older 32-bit CPUs lack it.
+#if defined(QLEVER_SIMD_X86) &&                                     \
+    (defined(__x86_64__) || defined(_M_X64) || defined(__SSE2__) || \
+     (defined(_M_IX86_FP) && _M_IX86_FP >= 2))
+#define QLEVER_SIMD_SSE2 1
+#endif
+
 #include "engine/SimdCpuFeatures.h"
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -237,6 +245,8 @@ template <EscapeFormat Format>
   }
 }
 
+#if defined(QLEVER_SIMD_SSE2)
+
 // SSE2 16-byte vector classification.
 template <EscapeFormat Format>
 [[nodiscard]] QLEVER_SSE2_TARGET inline uint16_t scanChunk16Sse2(
@@ -277,6 +287,8 @@ template <EscapeFormat Format>
     return static_cast<uint16_t>(_mm_movemask_epi8(match));
   }
 }
+
+#endif  // QLEVER_SIMD_SSE2
 
 #endif  // QLEVER_SIMD_X86
 
@@ -331,7 +343,7 @@ class SimdEscapeClassifier {
   template <EscapeFormat Format = EscapeFormat::Turtle>
   [[nodiscard]] static inline ChunkEscapeMask16 scanChunk16(
       const char* data) noexcept {
-#if defined(QLEVER_SIMD_X86)
+#if defined(QLEVER_SIMD_SSE2)
     return ChunkEscapeMask16{detail::scanChunk16Sse2<Format>(data)};
 #else
     return ChunkEscapeMask16{detail::scanChunk16Scalar<Format>(data)};
