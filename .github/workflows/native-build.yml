@@ -6,6 +6,16 @@ on:
   # master; full signal via 'ci'-labeled PRs or manual dispatch.
   pull_request:
     types: [opened, synchronize, reopened, labeled]
+    # Fork PR profile 2026-09-25: run only when relevant code changes.
+    paths:
+      - 'src/util/**'
+      - 'src/index/vocabulary/**'
+      - 'src/engine/export_v2/**'
+      - 'src/engine/ExportQueryExecutionTrees*'
+      - 'src/engine/Server*'
+      - 'src/engine/QueryExecutionContext*'
+      - 'CMakeLists.txt'
+      - '.github/workflows/native-build.yml'
   workflow_dispatch:
 
 concurrency:
