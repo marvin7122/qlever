@@ -67,6 +67,8 @@ class FirstColumnRuns {
       : blocks_{std::move(blocks)},
         cancellationHandle_{std::move(cancellationHandle)} {}
 
+  // Return the next distinct value of the first column together with the
+  // number of rows that have it, or `std::nullopt` when the scan is exhausted.
   std::optional<std::pair<Id, size_t>> next() {
     if (!fillBlock()) {
       return std::nullopt;

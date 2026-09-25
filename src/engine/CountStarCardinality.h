@@ -14,8 +14,9 @@ class QueryExecutionTree;
 // evaluating the child operation. Handles a bag `UNION` of two eligible
 // index scans (sum of exact sizes), an `OPTIONAL` whose right-hand side is
 // provably empty (left size), and an inner join of two eligible
-// bound-predicate scans on a single variable (sum of multiplicity products
-// from distinct col1 counts). Returns `std::nullopt` when the root operation
+// bound-predicate scans that are both sorted on the single join variable (sum
+// of the products of the per-key multiplicities, streamed from lazy scans of
+// the blocks that can match). Returns `std::nullopt` when the root operation
 // has any other shape or a precondition fails, in which case the caller falls
 // back to counting the materialized child result.
 std::optional<size_t> computeCountStarCardinality(
