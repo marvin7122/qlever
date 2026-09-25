@@ -76,7 +76,8 @@ class VocabularyCreator {
   }
 
   // Create and return a `VocabularyOnDisk` from words. The ids will be [0, ..
-  // words.size()). `preferIoUring == false` forces the synchronous `pread`
+  // words.size()). With the default `preferIoUring == true`, the vocabulary
+  // uses `io_uring` where available; `false` forces the synchronous `pread`
   // fallback backend, which covers that path in the concurrency tests.
   auto createVocabulary(const std::vector<std::string>& words,
                         bool preferIoUring = true) {
@@ -119,10 +120,11 @@ class VocabularyOnDiskHandle {
   VocabularyOnDisk* operator->() { return &vocabulary_; }
 };
 
+// Return a handle that owns a vocabulary of `words` together with its backing
+// file; both live until the handle is destroyed. The two backends use
+// different files (`.dat` and `.sync.dat`), so one test can hold both.
 VocabularyOnDiskHandle createVocabularyFromWords(
     const std::vector<std::string>& words, bool preferIoUring = true) {
-  // The sync-fallback variant gets its own backing file so both variants can
-  // coexist within one test.
   return VocabularyOnDiskHandle{
       absl::StrCat(gtestCurrentTestName(),
                    preferIoUring ? ".dat" : ".sync.dat"),
