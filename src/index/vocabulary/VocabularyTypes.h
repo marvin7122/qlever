@@ -439,6 +439,37 @@ struct HasBuilderLookupBatch<
                std::declval<ql::span<const size_t>>(),
                std::declval<ArenaVocabBatchBuilder&>()))>> : std::true_type {};
 
+// Decode the words at `indices` of `vocab` into `builder` and return the
+// finalized result. This is the single implementation of the builder-based
+// `lookupBatch(indices, builder)` overload of the dispatching wrappers
+// (`UnicodeVocabulary`, `Vocabulary`, `PolymorphicVocabulary`). It supports
+// both contracts of the underlying overload: a leaf (e.g.
+// `CompressedVocabulary`) only fills the builder and returns `void`, a wrapper
+// returns the finalized `VocabBatchLookupResult` itself. Vocabularies without
+// the overload are looked up single-shot and copied into `builder`. In all
+// cases `builder` is consumed (finalized) by the call.
+template <typename Vocab>
+VocabBatchLookupResult lookupBatchIntoBuilder(const Vocab& vocab,
+                                              ql::span<const size_t> indices,
+                                              ArenaVocabBatchBuilder& builder) {
+  if constexpr (HasBuilderLookupBatch<Vocab>::value) {
+    if constexpr (std::is_void_v<decltype(vocab.lookupBatch(indices,
+                                                            builder))>) {
+      vocab.lookupBatch(indices, builder);
+      return std::move(builder).finalize();
+    } else {
+      return vocab.lookupBatch(indices, builder);
+    }
+  } else {
+    auto singleShot = vocab.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+    for (std::string_view word : singleShot) {
+      builder.appendWord(word);
+    }
+    return std::move(builder).finalize();
+  }
+}
+
 // _____________________________________________________________________________
 // Construct a PMR arena-backed `VocabBatchLookupResult` by copying words into a
 // monotonic buffer arena.

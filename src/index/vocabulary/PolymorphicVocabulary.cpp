@@ -65,14 +65,8 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
 VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   return std::visit(
-      [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
-        if constexpr (HasBuilderLookupBatch<
-                          std::decay_t<decltype(vocab)>>::value) {
-          vocab.lookupBatch(indices, builder);
-          return std::move(builder).finalize();
-        } else {
-          return vocab.lookupBatch(indices);
-        }
+      [&indices, &builder](const auto& vocab) {
+        return lookupBatchIntoBuilder(vocab, indices, builder);
       },
       vocab_);
 }

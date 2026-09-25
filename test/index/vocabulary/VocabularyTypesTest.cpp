@@ -8,6 +8,10 @@
 #include <absl/functional/function_ref.h>
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+#include <string>
+#include <vector>
+
 #include "../../util/GTestHelpers.h"
 #include "index/vocabulary/VocabularyTypes.h"
 
@@ -182,4 +186,68 @@ TEST(VocabularyTypes, sequentialLookupBatchWithMissingWords) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       sequentialLookupBatch(VocabWithHolesThrowing{}, indices),
       ::testing::HasSubstr("replaceOptionalByPlaceholderOnExport"));
+}
+
+namespace {
+// Vocabularies that exercise the three contracts that
+// `lookupBatchIntoBuilder` dispatches on. Each returns "w<index>".
+std::string wordFor(size_t index) { return "w" + std::to_string(index); }
+
+// A leaf whose builder overload only fills the builder and returns `void`.
+struct VoidBuilderVocab {
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t>) const {
+    throw std::runtime_error("single-shot lookup must not be used");
+  }
+  void lookupBatch(ql::span<const size_t> indices,
+                   ArenaVocabBatchBuilder& builder) const {
+    for (size_t index : indices) {
+      builder.appendWord(wordFor(index));
+    }
+  }
+};
+
+// A wrapper whose builder overload returns the finalized result itself.
+struct ResultBuilderVocab {
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t>) const {
+    throw std::runtime_error("single-shot lookup must not be used");
+  }
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder& builder) const {
+    for (size_t index : indices) {
+      builder.appendWord(wordFor(index));
+    }
+    return std::move(builder).finalize();
+  }
+};
+
+// A vocabulary without a builder overload.
+struct SingleShotVocab {
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    ArenaVocabBatchBuilder builder(indices.size());
+    for (size_t index : indices) {
+      builder.appendWord(wordFor(index));
+    }
+    return std::move(builder).finalize();
+  }
+};
+
+// _____________________________________________________________________________
+template <typename Vocab>
+void expectLookupBatchIntoBuilder() {
+  std::vector<size_t> indices{3, 0, 7};
+  ArenaVocabBatchBuilder builder(indices.size());
+  VocabBatchLookupResult result =
+      lookupBatchIntoBuilder(Vocab{}, indices, builder);
+  ASSERT_EQ(result.size(), 3u);
+  EXPECT_EQ(result[0], "w3");
+  EXPECT_EQ(result[1], "w0");
+  EXPECT_EQ(result[2], "w7");
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(LookupBatchIntoBuilder, SupportsAllBuilderContracts) {
+  expectLookupBatchIntoBuilder<VoidBuilderVocab>();
+  expectLookupBatchIntoBuilder<ResultBuilderVocab>();
+  expectLookupBatchIntoBuilder<SingleShotVocab>();
 }
