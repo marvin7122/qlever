@@ -210,7 +210,13 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
       : alloc_{std::move(alloc)} {}
 
  protected:
-  void* do_allocate(std::size_t bytes, std::size_t) override {
+  // `AllocatorWithLimit` allocates through `std::allocator`, i.e. plain
+  // `operator new`, which only guarantees `__STDCPP_DEFAULT_NEW_ALIGNMENT__`.
+  // That covers every request of `monotonic_buffer_resource` for the `char`
+  // arenas built here; reject stricter alignments instead of returning
+  // misaligned memory.
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+    AD_CONTRACT_CHECK(alignment <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
     return alloc_.allocate(bytes);
   }
   void do_deallocate(void* p, std::size_t bytes, std::size_t) override {

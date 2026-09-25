@@ -251,3 +251,14 @@ TEST(LookupBatchIntoBuilder, SupportsAllBuilderContracts) {
   expectLookupBatchIntoBuilder<ResultBuilderVocab>();
   expectLookupBatchIntoBuilder<SingleShotVocab>();
 }
+
+// _____________________________________________________________________________
+TEST(AllocatorAsMemoryResource, HonorsOrRejectsAlignment) {
+  AllocatorAsMemoryResource resource{
+      ad_utility::makeUnlimitedAllocator<std::byte>()};
+  constexpr size_t defaultAlignment = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
+  void* p = resource.allocate(24, defaultAlignment);
+  EXPECT_EQ(reinterpret_cast<uintptr_t>(p) % defaultAlignment, 0u);
+  resource.deallocate(p, 24, defaultAlignment);
+  EXPECT_ANY_THROW(resource.allocate(24, 2 * defaultAlignment));
+}
