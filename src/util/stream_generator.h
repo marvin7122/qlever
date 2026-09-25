@@ -67,7 +67,7 @@ class suspend_sometimes {
 template <size_t BUFFER_SIZE>
 class stream_generator_promise {
   // Heap-allocated so that the coroutine frame stays small. With an inline
-  // buffer the frame itself would be `BUFFER_SIZE` bytes (8 MiB by default),
+  // buffer the frame itself would be `BUFFER_SIZE` bytes large,
   // which overflows the stack when the compiler elides the heap allocation
   // of the frame.
   std::unique_ptr<char[]> data_ = std::make_unique<char[]>(BUFFER_SIZE);
@@ -311,12 +311,13 @@ stream_generator_promise<BUFFER_SIZE>::get_return_object() noexcept {
 }
 }  // namespace detail
 
-// The default buffer size of 8 MiB. Each generator coroutine allocates one
-// such buffer on the heap. A larger buffer means fewer coroutine suspensions
-// and fewer chunks per exported byte for large results, at the cost of up to
-// 8 MiB of memory per running export. Responses smaller than the buffer are
-// sent as a single chunk either way.
-inline constexpr size_t DEFAULT_STREAM_GENERATOR_BUFFER_SIZE = 8u << 20;
+// The default buffer size of 1 MiB. Each generator coroutine allocates one
+// such buffer on the heap. Nothing is sent before the first buffer is full, so
+// a larger buffer delays the first byte and removes the overlap between
+// producing and sending the result: with 4 or 8 MiB, a 15 MB CONSTRUCT export
+// was 14% or 23% slower end to end than with 1 MiB, while the CPU saved by the
+// fewer chunks was only 5 to 10%.
+inline constexpr size_t DEFAULT_STREAM_GENERATOR_BUFFER_SIZE = 1u << 20;
 using stream_generator =
     basic_stream_generator<DEFAULT_STREAM_GENERATOR_BUFFER_SIZE>;
 
