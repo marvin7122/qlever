@@ -10,13 +10,16 @@
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <cstring>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "util/ZeroCopySocketSender.h"
+#include "util/jthread.h"
 
 using namespace ad_utility;
 
@@ -65,9 +68,23 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   // `ZeroCopySenderBenchmark::SocketPairConnection`).
   struct FdGuard {
     int fd = -1;
-    ~FdGuard() {
+    FdGuard(const FdGuard&) = delete;
+    FdGuard& operator=(const FdGuard&) = delete;
+    FdGuard(FdGuard&& other) noexcept : fd{std::exchange(other.fd, -1)} {}
+    FdGuard& operator=(FdGuard&& other) noexcept {
       if (fd >= 0) {
         ::close(fd);
+      }
+      fd = std::exchange(other.fd, -1);
+      return *this;
+    }
+    ~FdGuard() { reset(); }
+    // Close the owned descriptor (if any) and release ownership, so the
+    // destructor becomes a no-op for it.
+    void reset() {
+      if (fd >= 0) {
+        ::close(fd);
+        fd = -1;
       }
     }
   };
@@ -92,8 +109,9 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   FdGuard recvGuard{::accept(listenFd, nullptr, nullptr)};
   ASSERT_GE(recvGuard.fd, 0);
   int recvFd = recvGuard.fd;
-  listenGuard.fd = -1;
-  ::close(listenFd);
+  // The listening socket is no longer needed: hand its lifetime back to the
+  // guard instead of closing the raw descriptor behind its back.
+  listenGuard.reset();
 
   ZeroCopySenderConfig config;
   config.ringEntries = 16;
@@ -115,8 +133,18 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
 
   std::vector<char> receivedData(numChunks * chunkSize, 0);
 
-  // Background thread to receive data
-  std::thread receiverThread([&]() {
+  // Bound the receiver's blocking `::recv`, so an early test failure cannot
+  // hang the joining thread below forever.
+  struct timeval recvTimeout {};
+  recvTimeout.tv_sec = 30;
+  ASSERT_EQ(::setsockopt(recvFd, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout,
+                         sizeof(recvTimeout)),
+            0);
+
+  // Background thread to receive data. `JThread` joins on destruction, so an
+  // early `ASSERT_*` return or a sender exception cannot leak a joinable
+  // thread (which would call `std::terminate`).
+  ad_utility::JThread receiverThread([&]() {
     size_t totalReceived = 0;
     while (totalReceived < expectedData.size()) {
       ssize_t bytes = ::recv(recvFd, receivedData.data() + totalReceived,
