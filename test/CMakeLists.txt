@@ -580,6 +580,14 @@ addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
+addLinkAndDiscoverTest(FastIntToStringTest)
+addLinkAndDiscoverTest(RlePrefixCompressorTest)
+addLinkAndDiscoverTest(ScatterGatherArenaStreamerTest)
+addLinkAndDiscoverTest(SimdEscapeClassifierTest)
+addLinkAndDiscoverTest(SimdValidityBitmaskTest)
+addLinkAndDiscoverTest(StreamingBufferWriterTest)
+addLinkAndDiscoverTestNoLibs(ZeroCopySocketSenderTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
 addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
