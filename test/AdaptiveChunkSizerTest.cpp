@@ -170,14 +170,13 @@ TEST(AdaptiveChunkSizerTest, ZeroRowAndZeroByteHandling) {
 }
 
 TEST(AdaptiveChunkSizerTest, CustomConfiguration) {
-  AdaptiveChunkConfig config{
-      .initialChunkBytes_ = 32 * 1024,
-      .maxChunkBytes_ = 512 * 1024,
-      .growthFactor_ = 4.0,
-      .initialEstimatedRowBytes_ = 64.0,
-      .minChunkRows_ = 5,
-      .maxChunkRows_ = 1000,
-  };
+  AdaptiveChunkConfig config;
+  config.initialChunkBytes_ = 32 * 1024;
+  config.maxChunkBytes_ = 512 * 1024;
+  config.growthFactor_ = 4.0;
+  config.initialEstimatedRowBytes_ = 64.0;
+  config.minChunkRows_ = 5;
+  config.maxChunkRows_ = 1000;
   AdaptiveChunkSizer sizer(config);
 
   EXPECT_EQ(sizer.currentChunkBytes(), 32 * 1024);

@@ -131,10 +131,7 @@ class AdaptiveChunkSizer {
                      double growthFactor = 2.0,
                      double initialEstimatedRowBytes = 120.0)
       : AdaptiveChunkSizer(AdaptiveChunkConfig{
-            .initialChunkBytes_ = initialBytes,
-            .maxChunkBytes_ = maxBytes,
-            .growthFactor_ = growthFactor,
-            .initialEstimatedRowBytes_ = initialEstimatedRowBytes}) {}
+            initialBytes, maxBytes, growthFactor, initialEstimatedRowBytes}) {}
 
   // ___________________________________________________________________________
   // Target byte capacity for the active chunk buffer.
@@ -143,20 +140,8 @@ class AdaptiveChunkSizer {
   }
 
   // ___________________________________________________________________________
-  // Target byte capacity alias for consistency.
-  [[nodiscard]] size_t currentChunkSizeBytes() const noexcept {
-    return currentChunkBytesTarget_;
-  }
-
-  // ___________________________________________________________________________
   // Average formatted bytes per row/triple observed so far.
   [[nodiscard]] double averageRowBytes() const noexcept {
-    return estimatedRowBytes_;
-  }
-
-  // ___________________________________________________________________________
-  // Estimated row bytes alias for consistency.
-  [[nodiscard]] double estimatedRowBytes() const noexcept {
     return estimatedRowBytes_;
   }
 
@@ -254,14 +239,11 @@ class AdaptiveChunkSizer {
   // ___________________________________________________________________________
   // Snapshot of current statistics.
   [[nodiscard]] AdaptiveChunkStats stats() const noexcept {
-    return AdaptiveChunkStats{
-        .chunksFlushed_ = chunksFlushed_,
-        .totalBytes_ = totalBytesObserved_,
-        .totalRows_ = totalRowsObserved_,
-        .currentChunkBytes_ = currentChunkBytesTarget_,
-        .averageRowBytes_ = estimatedRowBytes_,
-        .targetRowsForNextChunk_ = targetRowCount(),
-    };
+    // Field order: chunksFlushed, totalBytes, totalRows, currentChunkBytes,
+    // averageRowBytes, targetRowsForNextChunk.
+    return AdaptiveChunkStats{chunksFlushed_,     totalBytesObserved_,
+                              totalRowsObserved_, currentChunkBytesTarget_,
+                              estimatedRowBytes_, targetRowCount()};
   }
 };
 

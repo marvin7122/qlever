@@ -132,12 +132,7 @@ class AdaptiveChunkBenchmark : public BenchmarkInterface {
   // ___________________________________________________________________________
   // Benchmark 2: AdaptiveChunkSizer (64 KB -> 4 MB exponential ramp-up).
   ChunkBenchmarkResult runAdaptiveChunkSizer() const {
-    AdaptiveChunkSizer sizer(AdaptiveChunkConfig{
-        .initialChunkBytes_ = 64 * 1024,
-        .maxChunkBytes_ = 4 * 1024 * 1024,
-        .growthFactor_ = 2.0,
-        .initialEstimatedRowBytes_ = 120.0,
-    });
+    AdaptiveChunkSizer sizer(64 * 1024, 4 * 1024 * 1024, 2.0, 120.0);
 
     ad_utility::timer::Timer totalTimer(ad_utility::timer::Timer::Started);
     ad_utility::timer::Timer ttfbTimer(ad_utility::timer::Timer::Started);
