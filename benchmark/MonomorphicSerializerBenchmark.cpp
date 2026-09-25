@@ -248,7 +248,6 @@ DatasetStorage generateBenchmarkDataset(size_t numRows) {
   data.stringPool_.push_back(
       "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>");
   data.stringPool_.push_back("<http://example.org/prop/population>");
-  data.stringPool_.push_back("<http://example.org/prop/areaSqKm>");
 
   std::string_view predLabel = data.stringPool_[0];
   std::string_view predType = data.stringPool_[1];
