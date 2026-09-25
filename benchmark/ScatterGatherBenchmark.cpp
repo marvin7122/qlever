@@ -95,9 +95,8 @@ class SimulatedDecompressionArena {
     static constexpr std::string_view alphabet =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-./:";
 
-    for (size_t i = 0; i < totalArenaBytes; ++i) {
-      storage_[i] = alphabet[rng() % alphabet.size()];
-    }
+    std::generate(storage_.begin(), storage_.end(),
+                  [&rng]() { return alphabet[rng() % alphabet.size()]; });
 
     literalSpans_.reserve(numTriples);
     subjects_.reserve(numTriples);
