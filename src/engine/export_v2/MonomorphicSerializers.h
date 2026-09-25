@@ -10,18 +10,20 @@
 #define QLEVER_SRC_ENGINE_EXPORT_V2_MONOMORPHICSERIALIZERS_H
 
 #include <array>
-#include <concepts>
 #include <cstddef>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
+#include "backports/concepts.h"
 #include "global/Id.h"
 
 namespace ql::engine::export_v2 {
 
-// Define the semantic type of a column in a statically known export schema.
+// The semantic type of one column in a schema that is known at compile time.
+// It selects the writer operation for the cell (e.g. IRI vs. literal
+// escaping), so the row loop contains no runtime dispatch on the value type.
 enum class ColumnType {
   Iri,
   Literal,
@@ -33,58 +35,64 @@ enum class ColumnType {
   Undefined
 };
 
+// The output format. It is a template parameter so that delimiter,
+// terminator, and escaping are fixed per instantiation. `Turtle` and
+// `NTriples` rows are triples and therefore must have exactly three columns.
 enum class RowFormat { Csv, Tsv, Turtle, NTriples };
+
+// The value passed for a `ColumnType::Undefined` column. An explicit tag type
+// (instead of an arbitrary ignored value) makes an unbound cell visible at the
+// call site and rejects bound values for undefined columns at compile time.
+struct UndefinedCell {};
 
 namespace detail {
 
+// A value that can be viewed as a string. Pointers are excluded because a
+// null `const char*` would make the `std::string_view` construction undefined;
+// string literals bind as arrays and are therefore still accepted.
 template <typename Value>
-concept StringLike = requires(const Value& value) { std::string_view{value}; };
+CPP_concept StringLike =
+    std::is_constructible_v<std::string_view, const Value&> &&
+    !std::is_pointer_v<Value>;
+
+template <RowFormat Format>
+constexpr bool isRdfFormat =
+    Format == RowFormat::Turtle || Format == RowFormat::NTriples;
 
 template <ColumnType Type, RowFormat Format>
 struct CellWriter {
-  template <typename Writer, StringLike Value>
-  static void write(Writer& writer, const Value& value) {
+  CPP_template(typename Writer, typename Value)(
+      requires StringLike<Value>) static void write(Writer& writer,
+                                                    const Value& value) {
+    static_assert(Type == ColumnType::Iri || Type == ColumnType::Literal ||
+                      Type == ColumnType::BlankNode ||
+                      Type == ColumnType::String,
+                  "Only Iri, Literal, BlankNode, and String columns accept a "
+                  "string argument");
     const std::string_view string{value};
-    if constexpr (Type == ColumnType::Iri) {
-      if constexpr (Format == RowFormat::Csv) {
-        writer.writeEscapedCsv(string);
-      } else if constexpr (Format == RowFormat::Tsv) {
-        writer.writeEscapedTsv(string);
-      } else {
-        writer.writeIri(string);
-      }
+    if constexpr (Format == RowFormat::Csv) {
+      writer.writeEscapedCsv(string);
+    } else if constexpr (Format == RowFormat::Tsv) {
+      writer.writeEscapedTsv(string);
+    } else if constexpr (Type == ColumnType::Iri) {
+      writer.writeIri(string);
     } else if constexpr (Type == ColumnType::Literal) {
-      if constexpr (Format == RowFormat::Csv) {
-        writer.writeEscapedCsv(string);
-      } else if constexpr (Format == RowFormat::Tsv) {
-        writer.writeEscapedTsv(string);
-      } else {
-        writer.writeEscapedTurtleLiteral(string);
-      }
-    } else if constexpr (Type == ColumnType::BlankNode ||
-                         Type == ColumnType::String) {
-      if constexpr (Format == RowFormat::Csv) {
-        writer.writeEscapedCsv(string);
-      } else if constexpr (Format == RowFormat::Tsv) {
-        writer.writeEscapedTsv(string);
-      } else {
-        writer.writeRaw(string);
-      }
+      // The N-Triples literal escapes are a subset of the Turtle ones, so one
+      // writer operation serves both formats.
+      writer.writeEscapedTurtleLiteral(string);
     } else {
-      static_assert(Type == ColumnType::Iri || Type == ColumnType::Literal ||
-                        Type == ColumnType::BlankNode ||
-                        Type == ColumnType::String,
-                    "This column type requires a non-string argument");
+      writer.writeRaw(string);
     }
   }
 
-  template <typename Writer, std::integral Value>
-  static void write(Writer& writer, Value value) {
+  CPP_template(typename Writer, typename Value)(
+      requires ql::concepts::integral<Value>) static void write(Writer& writer,
+                                                                Value value) {
     static_assert(!std::is_same_v<Value, bool>,
                   "A Boolean column takes an Id, not a C++ bool; pass "
                   "Id::makeFromBool(...) instead");
     static_assert(Type == ColumnType::Integer,
-                  "This column type requires an integer argument");
+                  "Only an Integer column accepts an integral argument");
     writer.writeInteger(value);
   }
 
@@ -98,20 +106,24 @@ struct CellWriter {
     writer.writeRaw(id.getBoolLiteral());
   }
 
-  template <typename Writer, std::floating_point Value>
-  static void write(Writer& writer, Value value) {
+  CPP_template(typename Writer,
+               typename Value)(requires ql::concepts::floating_point<
+                               Value>) static void write(Writer& writer,
+                                                         Value value) {
     static_assert(Type == ColumnType::Double,
-                  "Only a Double column accepts floating arguments");
+                  "Only a Double column accepts a floating-point argument");
     writer.writeDouble(value);
   }
 
+  // An unbound CSV/TSV cell is the empty field between two delimiters, so
+  // nothing is written. RDF formats have no representation for an unbound
+  // term, so `Undefined` columns are rejected for them at compile time.
   template <typename Writer>
-  static void writeUndefined(Writer& writer) {
-    static_assert(Type == ColumnType::Undefined);
-    if constexpr (Format == RowFormat::Turtle ||
-                  Format == RowFormat::NTriples) {
-      writer.writeRaw("UNDEF");
-    }
+  static void write(Writer&, UndefinedCell) {
+    static_assert(Type == ColumnType::Undefined,
+                  "Only an Undefined column accepts an UndefinedCell");
+    static_assert(!isRdfFormat<Format>,
+                  "Turtle and N-Triples cannot represent an unbound term");
   }
 };
 
@@ -128,52 +140,51 @@ void writeDelimiter(Writer& writer) {
 
 template <RowFormat Format, typename Writer>
 void writeTerminator(Writer& writer) {
-  if constexpr (Format == RowFormat::Turtle || Format == RowFormat::NTriples) {
+  if constexpr (isRdfFormat<Format>) {
     writer.writeRaw(" .\n");
   } else {
     writer.writeChar('\n');
   }
 }
 
-template <ColumnType Type, RowFormat Format, typename Writer, typename Value>
-void writeCell(Writer& writer, const Value& value) {
-  if constexpr (Type == ColumnType::Undefined) {
-    CellWriter<Type, Format>::writeUndefined(writer);
-  } else {
-    CellWriter<Type, Format>::write(writer, value);
-  }
-}
-
-}  // namespace detail
-
 // Writer shape required by `MonomorphicRowSerializer`. Checked (not used for
 // dispatch) so a writer missing an operation fails with a single readable
 // message at the call site instead of deep inside `CellWriter`.
 template <typename Writer>
-concept HasWriterOps =
-    requires(Writer& writer, char c, std::string_view s, int i, double d) {
-      writer.writeChar(c);
-      writer.writeRaw(s);
-      writer.writeEscapedCsv(s);
-      writer.writeEscapedTsv(s);
-      writer.writeEscapedTurtleLiteral(s);
-      writer.writeIri(s);
-      writer.writeInteger(i);
-      writer.writeDouble(d);
-    };
+CPP_requires(HasWriterOpsRequires,
+             requires(Writer& writer, char c, std::string_view s, int i,
+                      double d)(writer.writeChar(c), writer.writeRaw(s),
+                                writer.writeEscapedCsv(s),
+                                writer.writeEscapedTsv(s),
+                                writer.writeEscapedTurtleLiteral(s),
+                                writer.writeIri(s), writer.writeInteger(i),
+                                writer.writeDouble(d)));
 
-// Serialize typed tuple values for one compile-time schema. This class does
-// not perform runtime schema dispatch. Callers only use it when the planner can
-// select a concrete instantiation before entering the row loop.
+}  // namespace detail
+
+template <typename Writer>
+CPP_concept HasWriterOps =
+    CPP_requires_ref(detail::HasWriterOpsRequires, Writer);
+
+// Serialize the values of one row for a schema that is fixed at compile time.
+// This class does not perform runtime schema dispatch: callers use it only
+// when the concrete instantiation can be selected before the row loop.
 template <ColumnType... ColumnTypes>
 class MonomorphicRowSerializer {
  public:
   static_assert(sizeof...(ColumnTypes) > 0,
                 "A row serializer needs at least one column");
 
+  // The schema as values, e.g. for a caller that checks at runtime that a
+  // result table matches the instantiation it is about to use.
   static constexpr size_t numColumns = sizeof...(ColumnTypes);
   static constexpr std::array<ColumnType, numColumns> schema{ColumnTypes...};
 
+  // Write one row with one value per column (in schema order), separated by
+  // the delimiter of `Format` and followed by its row terminator. Each value
+  // must match its column type: a string for Iri/Literal/BlankNode/String, an
+  // integer for Integer, a floating-point value for Double, an `Id` for
+  // Boolean, and `UndefinedCell` for Undefined. A mismatch fails to compile.
   template <RowFormat Format, typename Writer, typename... Values>
   static void serializeRow(Writer& writer, const Values&... values) {
     static_assert(HasWriterOps<Writer>,
@@ -183,6 +194,8 @@ class MonomorphicRowSerializer {
                   "writeDouble)");
     static_assert(sizeof...(Values) == numColumns,
                   "The argument count must match the static schema");
+    static_assert(!detail::isRdfFormat<Format> || numColumns == 3,
+                  "A Turtle or N-Triples row is a triple with three columns");
     serializeTuple<Format>(writer, std::tie(values...),
                            std::make_index_sequence<numColumns>{});
     detail::writeTerminator<Format>(writer);
@@ -193,9 +206,11 @@ class MonomorphicRowSerializer {
             size_t... Indices>
   static void serializeTuple(Writer& writer, const Tuple& values,
                              std::index_sequence<Indices...>) {
+    // For every column: a delimiter before all but the first one, then the
+    // cell itself.
     ((Indices == 0 ? void() : detail::writeDelimiter<Format>(writer),
-      detail::writeCell<schema[Indices], Format>(writer,
-                                                 std::get<Indices>(values))),
+      detail::CellWriter<schema[Indices], Format>::write(
+          writer, std::get<Indices>(values))),
      ...);
   }
 };

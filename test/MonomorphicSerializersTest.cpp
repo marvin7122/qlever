@@ -8,14 +8,17 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <charconv>
-#include <iterator>
+#include <cstdint>
 #include <limits>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
+#include "backports/concepts.h"
 #include "engine/export_v2/MonomorphicSerializers.h"
 #include "global/Id.h"
 
@@ -24,6 +27,7 @@ namespace {
 using ql::engine::export_v2::ColumnType;
 using ql::engine::export_v2::MonomorphicRowSerializer;
 using ql::engine::export_v2::RowFormat;
+using ql::engine::export_v2::UndefinedCell;
 
 class RecordingWriter {
  public:
@@ -50,22 +54,23 @@ class RecordingWriter {
     output_.append(value);
   }
 
-  template <std::integral Value>
-  void writeInteger(Value value) {
+  CPP_template(typename Value)(
+      requires ql::concepts::integral<Value>) void writeInteger(Value value) {
     appendNumber(value);
   }
 
-  template <std::floating_point Value>
-  void writeDouble(Value value) {
+  CPP_template(typename Value)(requires ql::concepts::floating_point<
+                               Value>) void writeDouble(Value value) {
     appendNumber(value);
   }
 
+  // Everything written so far; valid while this writer is alive.
   const std::string& output() const { return output_; }
 
  private:
   template <typename Value>
   void appendNumber(Value value) {
-    if constexpr (std::floating_point<Value>) {
+    if constexpr (std::is_floating_point_v<Value>) {
       // No floating-point `std::to_chars` on macOS before 13.3; the
       // ostringstream default formatting matches the expected output.
       std::ostringstream stream;
@@ -73,11 +78,11 @@ class RecordingWriter {
       output_ += stream.str();
       return;
     }
-    char buffer[64];
+    std::array<char, 64> buffer;
     const auto [end, error] =
-        std::to_chars(std::begin(buffer), std::end(buffer), value);
+        std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
     ASSERT_EQ(error, std::errc{});
-    output_.append(buffer, end);
+    output_.append(buffer.data(), end);
   }
 
   std::string output_;
@@ -111,9 +116,9 @@ TEST(MonomorphicSerializersTest, HandlesEmptyAndBoundaryValues) {
                                ColumnType::Boolean, ColumnType::Undefined>;
   RecordingWriter writer;
 
-  Serializer::serializeRow<RowFormat::Tsv>(writer, std::string_view{},
-                                           std::numeric_limits<int64_t>::min(),
-                                           Id::makeFromBool(false), 0);
+  Serializer::serializeRow<RowFormat::Tsv>(
+      writer, std::string_view{}, std::numeric_limits<int64_t>::min(),
+      Id::makeFromBool(false), UndefinedCell{});
 
   EXPECT_EQ(writer.output(), "T\t-9223372036854775808\tfalse\t\n");
 }
@@ -131,25 +136,43 @@ TEST(MonomorphicSerializersTest, BooleanRendersStoredIdLiteral) {
   }
 }
 
-TEST(MonomorphicSerializersTest, TurtleCoversDoubleUndefinedAndBlankNode) {
+TEST(MonomorphicSerializersTest, TurtleCoversBlankNodeAndDouble) {
   using Serializer =
-      MonomorphicRowSerializer<ColumnType::Double, ColumnType::Undefined,
-                               ColumnType::BlankNode>;
+      MonomorphicRowSerializer<ColumnType::BlankNode, ColumnType::Iri,
+                               ColumnType::Double>;
   RecordingWriter writer;
 
-  Serializer::serializeRow<RowFormat::Turtle>(writer, 153.07, 0, "_:b0");
+  Serializer::serializeRow<RowFormat::Turtle>(writer, "_:b0", "<p>", 153.07);
 
-  EXPECT_EQ(writer.output(), "153.07 UNDEF _:b0 .\n");
+  EXPECT_EQ(writer.output(), "_:b0 I<p> 153.07 .\n");
+}
+
+TEST(MonomorphicSerializersTest, UndefinedIsAnEmptyCsvField) {
+  using Serializer =
+      MonomorphicRowSerializer<ColumnType::Undefined, ColumnType::Integer,
+                               ColumnType::Undefined>;
+  RecordingWriter writer;
+
+  Serializer::serializeRow<RowFormat::Csv>(writer, UndefinedCell{}, 42,
+                                           UndefinedCell{});
+
+  EXPECT_EQ(writer.output(), ",42,\n");
 }
 
 TEST(MonomorphicSerializersTest, NTriplesRendersIriAndLiteral) {
-  using Serializer =
-      MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Literal>;
+  using Serializer = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Iri,
+                                              ColumnType::Literal>;
   RecordingWriter writer;
 
-  Serializer::serializeRow<RowFormat::NTriples>(writer, "<s>", "lit");
+  Serializer::serializeRow<RowFormat::NTriples>(writer, "<s>", "<p>", "lit");
 
-  EXPECT_EQ(writer.output(), "I<s> Llit .\n");
+  EXPECT_EQ(writer.output(), "I<s> I<p> Llit .\n");
+}
+
+TEST(MonomorphicSerializersTest, WriterConceptDetectsMissingOperations) {
+  using ql::engine::export_v2::HasWriterOps;
+  static_assert(HasWriterOps<RecordingWriter>);
+  static_assert(!HasWriterOps<int>);
 }
 
 TEST(MonomorphicSerializersTest, ExposesTheStaticSchema) {
