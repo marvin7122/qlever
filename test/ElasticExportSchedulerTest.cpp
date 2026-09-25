@@ -601,3 +601,56 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
 
   scheduler->onForegroundQueryEnded();
 }
+
+// _____________________________________________________________________________
+// Idle workers wake when a threshold change makes helpers eligible again.
+TEST(ElasticExportSchedulerTest, IdleWorkerWakesWhenThresholdRises) {
+  auto scheduler = ElasticExportScheduler::create(1, 8);
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler->onForegroundQueryStarted();
+  auto session = scheduler->createSession<int>();
+
+  std::promise<void> unblockPromise;
+  auto unblockFuture = unblockPromise.get_future();
+  bool unblocked = false;
+  absl::Cleanup unblockOnExit = [&] {
+    if (!unblocked) {
+      unblockPromise.set_value();
+    }
+  };
+  session.submitMorsel([unblockFuture = std::move(unblockFuture)]() mutable {
+    unblockFuture.wait();
+    return 1;
+  });
+  auto waitFor = [](const auto& condition) {
+    auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (!condition() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(1ms);
+    }
+    return condition();
+  };
+  ASSERT_TRUE(waitFor([&] { return scheduler->activeHelperCount() == 1u; }));
+
+  // The only worker is busy, so the second morsel stays in the queue.
+  session.submitMorsel([]() { return 2; });
+
+  // Make helpers ineligible, then let the worker finish its morsel: it goes
+  // idle although the queue still holds the second morsel.
+  scheduler->setMaxForegroundQueriesForHelperAdmission(0);
+  unblockPromise.set_value();
+  unblocked = true;
+  ASSERT_TRUE(waitFor([&] { return scheduler->activeHelperCount() == 0u; }));
+
+  // Raising the threshold must wake the idle worker, which then runs the
+  // queued morsel before the coordinator asks for it.
+  scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  ASSERT_TRUE(waitFor([&] {
+    return session.inspectMorselProfiles()[1].finalStatus_ ==
+           MorselStatus::Completed;
+  }));
+  EXPECT_TRUE(session.inspectMorselProfiles()[1].executedByHelper_);
+  EXPECT_EQ(session.consumeNextResult(), 1);
+  EXPECT_EQ(session.consumeNextResult(), 2);
+
+  scheduler->onForegroundQueryEnded();
+}

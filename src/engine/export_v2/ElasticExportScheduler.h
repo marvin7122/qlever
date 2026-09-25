@@ -216,13 +216,15 @@ class ElasticExportScheduler
 
   /// Set the maximum number of active queries allowed for helper admission.
   /// Defaults to 1 (i.e. only the export query itself is running).
-  void setMaxForegroundQueriesForHelperAdmission(size_t count) noexcept {
+  void setMaxForegroundQueriesForHelperAdmission(size_t count) {
     maxForegroundQueriesForHelperAdmission_.store(count,
                                                   std::memory_order_relaxed);
     // Eligibility may have flipped in either direction; wake blocked
-    // enqueuers so they re-check it instead of waiting on a stale state.
+    // enqueuers and idle workers so they re-check it instead of waiting on
+    // a stale state.
     std::lock_guard<std::mutex> lock(queueMutex_);
     queueNotFullCv_.notify_all();
+    workAvailableCv_.notify_all();
   }
 
   [[nodiscard]] size_t maxForegroundQueriesForHelperAdmission() const noexcept {
