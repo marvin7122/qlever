@@ -48,7 +48,8 @@ std::optional<EvaluatedTermRef> instantiateTerm(
           EvaluatedTerm owned =
               std::make_shared<const EvaluatedTermData>(EvaluatedTermData{
                   absl::StrCat(t.prefix_, rowIdxTotal, t.suffix_), nullptr});
-          return EvaluatedTermRef{owned.get(), std::move(owned)};
+          const EvaluatedTermData* data = owned.get();
+          return EvaluatedTermRef{data, std::move(owned)};
         } else {
           static_assert(ad_utility::alwaysFalse<T>, "Unhandled variant type");
         }
