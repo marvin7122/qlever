@@ -58,6 +58,15 @@
 
 namespace ad_utility {
 
+// Flag that suppresses `SIGPIPE` for a single `send()` to a closed peer.
+// `MSG_NOSIGNAL` is not available on every platform (e.g. older macOS SDKs);
+// there, Boost.Asio already sets `SO_NOSIGPIPE` on the sockets it creates.
+#ifdef MSG_NOSIGNAL
+inline constexpr int kSendNoSignalFlag = MSG_NOSIGNAL;
+#else
+inline constexpr int kSendNoSignalFlag = 0;
+#endif
+
 // 4KB memory page alignment constant for DMA and zero-copy kernel pinning.
 inline constexpr size_t kZeroCopyPageAlignment = 4096;
 
@@ -378,7 +387,7 @@ class ZeroCopySocketSender {
     (void)zcFlags;
     // Suppress SIGPIPE on a closed peer for every path (the sync fallback
     // already ORs this in; the io_uring paths receive the same flags).
-    flags |= MSG_NOSIGNAL;
+    flags |= kSendNoSignalFlag;
     AD_CONTRACT_CHECK(sockfd >= 0);
     AD_CONTRACT_CHECK(bufferIndex < config_.numBuffers);
     AD_CONTRACT_CHECK(numBytes > 0);
@@ -704,7 +713,7 @@ class ZeroCopySocketSender {
     size_t sent = 0;
     while (sent < numBytes) {
       ssize_t bytesSent = ::send(sockfd, slotSpan.data() + sent,
-                                 numBytes - sent, flags | MSG_NOSIGNAL);
+                                 numBytes - sent, flags | kSendNoSignalFlag);
       if (bytesSent < 0) {
         if (errno == EINTR) {
           continue;
