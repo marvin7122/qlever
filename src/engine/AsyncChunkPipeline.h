@@ -7,8 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
-#define QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
+#ifndef QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H
+#define QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H
 
 #include <atomic>
 #include <chrono>
@@ -394,4 +394,4 @@ class ChunkSink {
 
 }  // namespace qlever::export_pipeline
 
-#endif  // QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
+#endif  // QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H
