@@ -135,7 +135,6 @@ struct CheckpointMorselRunner {
   std::shared_ptr<std::vector<ColumnLattice>> latticePtr_;
   const Index* indexPtr_ = nullptr;
   RowFormat format_ = RowFormat::Csv;
-  ad_utility::SharedCancellationHandle cancellationHandle_;
   bool checkpoints_ = false;
 
   absl::AnyInvocable<ScatterGatherChunkBuilder()> makeTask(
@@ -254,9 +253,12 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   // moved on. No table or vocabulary clone: one shared owner per block.
   // Unordered tasks checkpoint revocation mid-morsel (see above); ordered
   // tasks run each morsel to completion.
-  const CheckpointMorselRunner runner{
-      session.sharedState(), columnsPtr, latticePtr, indexPtr, format,
-      cancellationHandle,    !ordered};
+  const CheckpointMorselRunner runner{session.sharedState(),
+                                      columnsPtr,
+                                      latticePtr,
+                                      indexPtr,
+                                      format,
+                                      !ordered};
   for (auto&& plan : planExportMorsels(
            result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
