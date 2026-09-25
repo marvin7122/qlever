@@ -45,11 +45,22 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. ThreadSanitizer provides its own global operator new/delete, so
-// defining ours as well causes multiple-definition link errors; skip the
-// overloads under TSan (the tracker then reports zero, benchmarks are only
-// built — never run — in sanitizer CI jobs).
-#if !defined(__SANITIZE_THREAD__)
+// runs.
+// Skipped under AddressSanitizer or ThreadSanitizer: their runtimes already
+// provide these replaceable allocation functions, so defining them here causes
+// multiple-definition link errors (the `heap-allocations` metadata then reads
+// 0). Clang signals sanitizers via `__has_feature`, GCC via the `__SANITIZE_*`
+// macros; `__has_feature` must only be invoked where it is defined, so the
+// checks are nested.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+
+#ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -69,7 +80,7 @@ void* operator new(std::size_t size) {
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { operator delete(ptr); }
-#endif  // !defined(__SANITIZE_THREAD__)
+#endif  // SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 
 namespace ad_benchmark {
 namespace {
