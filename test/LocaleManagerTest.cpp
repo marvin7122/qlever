@@ -1,7 +1,8 @@
-// Copyright 2026 The QLever Authors, in particular:
+// Copyright 2019 - 2026 The QLever Authors, in particular:
 //
 // 2019 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2025 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 //
@@ -121,8 +122,6 @@ TEST(LocaleManager, PrefixSortKey) {
   ASSERT_GT(a, b);
   ASSERT_EQ(a, a);
   ASSERT_NE(a, b);
-  ASSERT_FALSE(comp("vivæ", "vivae",
-                    ad_utility::vocabulary::LocaleManager::Level::PRIMARY));
   ASSERT_FALSE(comp("vivæ", "vivae",
                     ad_utility::vocabulary::LocaleManager::Level::PRIMARY));
 }
