@@ -37,14 +37,11 @@
 #include "util/Exception.h"
 #include "util/Log.h"
 
-#if defined(__has_include)
-#if __has_include(<liburing.h>)
-#define QLEVER_HAS_LIBURING 1
-#include <liburing.h>
-#endif
-#endif
-
-#if defined(QLEVER_HAS_IO_URING) && !defined(QLEVER_HAS_LIBURING)
+// Use `io_uring` only when CMake found and linked liburing (it then defines
+// `QLEVER_HAS_IO_URING`). A present `<liburing.h>` alone is not enough: with
+// `USE_IO_URING=OFF` the library is not linked, and every build without it
+// must still compile and link against the synchronous `send()` fallback.
+#ifdef QLEVER_HAS_IO_URING
 #define QLEVER_HAS_LIBURING 1
 #include <liburing.h>
 #endif
