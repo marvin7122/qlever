@@ -352,11 +352,11 @@ void VocabularyOnDisk::open(const std::string& filename) {
   // The knobs keep their defaults unless the operator sets them, e.g. via
   // `qlever-server --set-runtime-parameter iouring-sqpoll=true`.
   const auto ringSize =
-      getRuntimeParameter<&RuntimeParameters::iouringRingSize_>();
+      getRuntimeParameter<&RuntimeParameters::ioUringRingSize_>();
   batchWindow_ = getRuntimeParameter<&RuntimeParameters::vocabBatchWindow_>();
   ad_utility::IoUringSetupOptions setupOptions;
   setupOptions.useSqPoll =
-      getRuntimeParameter<&RuntimeParameters::iouringSqPoll_>();
+      getRuntimeParameter<&RuntimeParameters::ioUringSqPoll_>();
 
   // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`. Each
   // manager owns its ring exclusively while checked out (pop, use both

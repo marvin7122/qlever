@@ -253,7 +253,7 @@ struct RuntimeParameters {
   // The io_uring submission ring size for the batched vocabulary lookup. A
   // power of two is preferred because liburing rounds up. Must be within
   // 1 and 4096.
-  SizeT iouringRingSize_{256, "iouring-ring-size"};
+  SizeT ioUringRingSize_{256, "iouring-ring-size"};
 
   // The maximum number of reads that one `addBatch` submission carries on
   // the batched vocabulary lookup path. 0 (default) means no cap: the whole
@@ -265,7 +265,7 @@ struct RuntimeParameters {
   // SQPoll kernel poll thread, so submissions pay no `io_uring_enter`
   // syscall while the poller stays awake. Off by default; when the kernel
   // denies the setup, the lookup transparently falls back to a plain ring.
-  Bool iouringSqPoll_{false, "iouring-sqpoll"};
+  Bool ioUringSqPoll_{false, "iouring-sqpoll"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE

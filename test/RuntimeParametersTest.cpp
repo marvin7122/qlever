@@ -82,16 +82,16 @@ TEST(RuntimeParameters, getKeysAndToMapAreConsistent) {
 
 // The io_uring tuning knobs default to the current behavior: a 256-slot
 // ring, uncapped batches, and no SQPoll thread.
-TEST(RuntimeParameters, iouringKnobDefaults) {
+TEST(RuntimeParameters, ioUringKnobDefaults) {
   RuntimeParameters params;
-  EXPECT_EQ(params.iouringRingSize_.get(), 256u);
+  EXPECT_EQ(params.ioUringRingSize_.get(), 256u);
   EXPECT_EQ(params.vocabBatchWindow_.get(), 0u);
-  EXPECT_FALSE(params.iouringSqPoll_.get());
+  EXPECT_FALSE(params.ioUringSqPoll_.get());
 }
 
 // The ring size must name a usable liburing ring: 0 and values above 4096
 // are rejected, the boundaries are accepted.
-TEST(RuntimeParameters, iouringRingSizeConstraints) {
+TEST(RuntimeParameters, ioUringRingSizeConstraints) {
   RuntimeParameters params;
   AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
       params.setFromAssignment("iouring-ring-size=0"),
@@ -102,9 +102,9 @@ TEST(RuntimeParameters, iouringRingSizeConstraints) {
       AllOf(HasSubstr("iouring-ring-size"), HasSubstr("1 and 4096")),
       std::runtime_error);
   EXPECT_NO_THROW(params.setFromAssignment("iouring-ring-size=1"));
-  EXPECT_EQ(params.iouringRingSize_.get(), 1u);
+  EXPECT_EQ(params.ioUringRingSize_.get(), 1u);
   EXPECT_NO_THROW(params.setFromAssignment("iouring-ring-size=4096"));
-  EXPECT_EQ(params.iouringRingSize_.get(), 4096u);
+  EXPECT_EQ(params.ioUringRingSize_.get(), 4096u);
 }
 
 // The batch window is either uncapped (0) or a cap up to 1M reads.
@@ -121,10 +121,10 @@ TEST(RuntimeParameters, vocabBatchWindowConstraints) {
 }
 
 // The SQPoll toggle accepts plain booleans in both directions.
-TEST(RuntimeParameters, iouringSqPollToggle) {
+TEST(RuntimeParameters, ioUringSqPollToggle) {
   RuntimeParameters params;
   EXPECT_NO_THROW(params.setFromAssignment("iouring-sqpoll=true"));
-  EXPECT_TRUE(params.iouringSqPoll_.get());
+  EXPECT_TRUE(params.ioUringSqPoll_.get());
   EXPECT_NO_THROW(params.setFromAssignment("iouring-sqpoll=false"));
-  EXPECT_FALSE(params.iouringSqPoll_.get());
+  EXPECT_FALSE(params.ioUringSqPoll_.get());
 }
