@@ -1,8 +1,18 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 - 2026 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gtest/gtest.h>
+
+#include <array>
+#include <string>
+#include <vector>
 
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
@@ -109,6 +119,30 @@ TEST(VocabularyInternalExternal, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary("AccessOperator1"));
   testAccessOperatorForUnorderedVocabulary(
       createVocabularyFromDisk("AccessOperator2"));
+}
+
+// `lookupBatch` must match `operator[]` in request order, including cache
+// hits (even `i` in the writer: stored in RAM) and misses (odd `i`: disk
+// only), plus reordered and duplicated indices.
+TEST(VocabularyInternalExternal, LookupBatchMatchesAccessOperator) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto vocab = createVocabulary(gtestCurrentTestName())(words);
+  const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
+  auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  EXPECT_THROW(vocab.lookupBatch(ql::span<const size_t>{}),
+               ad_utility::Exception);
+
+  // Index 0 is always RAM-cached and odd writer indices are passed with
+  // `isExternal == false`, so indices 0, 1, and 3 are RAM-cached while 2 and
+  // 4 are disk-only. Cover both pure paths, including a duplicate.
+  const std::array<size_t, 3> ramOnly{0, 1, 3};
+  assertLookupResultMatchesVocabularyAtIndices(
+      vocab, vocab.lookupBatch(ramOnly), ramOnly);
+  const std::array<size_t, 3> diskOnly{2, 4, 2};
+  assertLookupResultMatchesVocabularyAtIndices(
+      vocab, vocab.lookupBatch(diskOnly), diskOnly);
 }
 
 TEST(VocabularyInternalExternal, EmptyVocabulary) {

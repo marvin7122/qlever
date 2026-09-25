@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
@@ -134,6 +140,18 @@ TYPED_TEST(CompressedVocabularyF, LowerUpperBoundNumeric) {
 // _______________________________________________________
 TYPED_TEST(CompressedVocabularyF, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(this->createCompressedVocabulary());
+}
+
+// _______________________________________________________
+TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto vocab = this->createCompressedVocabulary()(words);
+  const std::array<size_t, 7> indices{4, 1, 0, 3, 1, 2, 4};
+  auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  EXPECT_THROW(vocab.lookupBatch(ql::span<const size_t>{}),
+               ad_utility::Exception);
 }
 
 // _______________________________________________________
