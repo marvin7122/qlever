@@ -64,8 +64,7 @@ TEST(ZeroCopyBufferPoolTest, BasicAcquireAndRelease) {
 // _____________________________________________________________________________
 TEST(ZeroCopySocketSenderTest, TransmissionOverTcpLoopback) {
   // IORING_OP_SEND_ZC requires TCP loopback: AF_UNIX socketpairs reject
-  // zero-copy sends, so connect a TCP loopback pair (same pattern as
-  // `ZeroCopySenderBenchmark::SocketPairConnection`).
+  // zero-copy sends, so connect a TCP loopback pair.
   struct FdGuard {
     int fd = -1;
     explicit FdGuard(int fd_) : fd{fd_} {}
