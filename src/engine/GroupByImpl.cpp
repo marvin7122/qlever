@@ -2090,9 +2090,6 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
     return std::nullopt;
   }
 
-  auto distinctIds = permutation.value().getDistinctCol0IdsAndCounts(
-      cancellationHandle_, locatedTriplesState(), scan->getLimitOffset());
-
   // `COUNT(?unbound)` is 0 when the counted variable is not bound by the
   // subtree.
   const bool countedIsBound =
@@ -2105,27 +2102,82 @@ std::optional<IdTable> GroupByImpl::computeTypedCountFromMetadata() const {
     return table;
   }
 
+  // Whether an `Id` passes the filter, or `std::nullopt` if deciding this
+  // requires a string lookup (`LocalVocabIndex`, `SecondaryVocabIndex`).
   const auto& vocab = getIndex().getVocab();
-  size_t total = 0;
-  for (size_t i = 0; i < distinctIds.numRows(); ++i) {
-    const Id id = distinctIds(i, 0);
-    const size_t multiplicity = static_cast<size_t>(distinctIds(i, 1).getInt());
-    bool match = false;
+  auto matches = [&vocab, wantBlank](Id id) -> std::optional<bool> {
     if (wantBlank) {
-      match = id.getDatatype() == Datatype::BlankNodeIndex;
+      return id.getDatatype() == Datatype::BlankNodeIndex;
     } else if (idIsAlwaysLiteral(id)) {
-      match = true;
+      return true;
     } else if (idIsNeverLiteral(id)) {
-      match = false;
+      return false;
     } else if (id.getDatatype() == Datatype::VocabIndex) {
-      match = vocab.isLiteral(id.getVocabIndex());
-    } else {
-      // `LocalVocabIndex` and `SecondaryVocabIndex` need a string lookup;
-      // fall back to the regular evaluation for exactness.
-      return std::nullopt;
+      return vocab.isLiteral(id.getVocabIndex());
     }
-    if (match) {
-      total += multiplicity;
+    return std::nullopt;
+  };
+
+  // Partition the `Id`s into segments on which `matches` is constant: one
+  // segment per datatype, and the `VocabIndex` segment is further split at
+  // the (single, contiguous) range of literals. The segments are ordered like
+  // the `Id`s, so if the first and the last `Id` of the leading column of a
+  // block are in the same segment, then so are all the `Id`s of that block,
+  // and the block contributes either all or none of its rows. Only the few
+  // blocks that straddle a segment boundary have to be decompressed.
+  const auto literalRange = vocab.prefixRanges("\"").ranges()[0];
+  auto segment = [&literalRange](Id id) {
+    int subSegment = 0;
+    if (id.getDatatype() == Datatype::VocabIndex) {
+      const auto index = id.getVocabIndex();
+      subSegment = index < literalRange.first    ? 0
+                   : index < literalRange.second ? 1
+                                                 : 2;
+    }
+    return std::pair{id.getDatatype(), subSegment};
+  };
+
+  const Permutation& perm = permutation.value();
+  auto scanSpecAndBlocks = perm.getScanSpecAndBlocks(
+      ScanSpecification{std::nullopt, std::nullopt, std::nullopt},
+      locatedTriplesState());
+  size_t total = 0;
+  BlockMetadataRanges mixedBlocks;
+  for (const BlockMetadataRange& range : scanSpecAndBlocks.blockMetadata_) {
+    for (auto it = range.begin(); it != range.end(); ++it) {
+      const Id first = it->firstTriple_.col0Id_;
+      const Id last = it->lastTriple_.col0Id_;
+      if (segment(first) != segment(last)) {
+        mixedBlocks.emplace_back(it, std::next(it));
+        continue;
+      }
+      auto match = matches(first);
+      if (!match.has_value()) {
+        return std::nullopt;
+      }
+      if (match.value()) {
+        total += it->numRows_;
+      }
+    }
+  }
+  checkCancellation();
+
+  if (!mixedBlocks.empty()) {
+    auto distinctIds = perm.reader().getDistinctColIdsAndCounts(
+        0,
+        CompressedRelationReader::ScanSpecAndBlocks{scanSpecAndBlocks.scanSpec_,
+                                                    mixedBlocks},
+        cancellationHandle_,
+        perm.getLocatedTriplesForPermutation(locatedTriplesState()),
+        LimitOffsetClause{});
+    for (size_t i = 0; i < distinctIds.numRows(); ++i) {
+      auto match = matches(distinctIds(i, 0));
+      if (!match.has_value()) {
+        return std::nullopt;
+      }
+      if (match.value()) {
+        total += static_cast<size_t>(distinctIds(i, 1).getInt());
+      }
     }
   }
 

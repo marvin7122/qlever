@@ -635,6 +635,57 @@ TEST_F(GroupByOptimizations, countFilterNegatedIsLiteralFallsBack) {
 }
 
 // _____________________________________________________________________________
+// An index with many small blocks (the test default) whose object column mixes
+// all relevant datatypes, so that the metadata path sees blocks that lie
+// completely inside or outside the literal range as well as blocks that
+// straddle a boundary. The expected counts come from the regular evaluation
+// (index scan optimizations disabled).
+TEST_F(GroupByOptimizations, countFilterMatchesRegularEvaluationOnManyBlocks) {
+  std::string turtle;
+  for (size_t i = 0; i < 40; ++i) {
+    auto s = absl::StrCat("<s", i, ">");
+    absl::StrAppend(&turtle, s, " <p> \"lit", i, "\" . ", s, " <p> <o", i,
+                    "> . ", s, " <q> ", i, " . ", s, " <q> _:b", i, " . ");
+    if (i % 3 == 0) {
+      absl::StrAppend(
+          &turtle, s, " <r> \"lang", i, "\"@en . ", s,
+          " <r> \"2020-01-01\"^^<http://www.w3.org/2001/XMLSchema#date> . ",
+          "_:c", i, " <p> <o", i, "> . ");
+    }
+  }
+  auto* qec = getQec(turtle);
+  using namespace sparqlExpression;
+  auto regularCount = [&](const FilterTreeFactory& makeFilterTree,
+                          const Variable& counted) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::groupByDisableIndexScanOptimizations_>(true);
+    GroupByImpl groupBy{qec,
+                        {},
+                        {Alias{makeCountPimpl(counted, false), Variable{"?c"}}},
+                        makeFilterTree()};
+    return groupBy.computeResultOnlyForTesting(false).idTableView()(0, 0);
+  };
+  for (const auto& [name, makeFilter] : std::vector<
+           std::pair<std::string, std::function<SparqlExpression::Ptr()>>>{
+           {"isLiteral(?o)", makeIsLiteralOfO},
+           {"isBlank(?o)",
+            [] {
+              return makeIsBlankExpression(
+                  makeVariableExpression(Variable{"?o"}));
+            }},
+           {"isBlank(?s)", [] {
+              return makeIsBlankExpression(
+                  makeVariableExpression(Variable{"?s"}));
+            }}}) {
+    auto factory = makeTypedCountSetup(qec, makeFilter, name);
+    auto expected = regularCount(factory, Variable{"?o"});
+    EXPECT_GT(expected.getInt(), 0) << name;
+    checkTypedCount(qec, factory, makeCountPimpl(Variable{"?o"}, false),
+                    {{expected}});
+  }
+}
+
+// _____________________________________________________________________________
 TEST_F(GroupByOptimizations, countFilterIsLiteralWithLimitFallsBack) {
   auto* qec = getQec("<s> <p> \"lit\" . <s> <p> <iri> . <s> <p> 1 .");
   auto scan = makeExecutionTree<IndexScan>(

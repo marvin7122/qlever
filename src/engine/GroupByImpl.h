@@ -247,12 +247,13 @@ class GroupByImpl : public Operation {
   //
   // The `FILTER` must be a single `ISLITERAL(?v)` or `ISBLANK(?v)` on a
   // variable of a full three-variable scan, and the aggregate a non-distinct
-  // `COUNT(?x)` or `COUNT(*)`. The result is computed from the distinct IDs
-  // of the leading column of the matching permutation (which stores the
-  // filtered variable first) by summing the multiplicities of the IDs with a
-  // matching datatype. A vocabulary lookup is only needed for `VocabIndex`
-  // IDs; the other datatypes are classified directly. If no such case
-  // applies, an empty optional is returned.
+  // `COUNT(?x)` or `COUNT(*)`. The result is computed from the block metadata
+  // of the permutation that stores the filtered variable first: a block whose
+  // first and last leading `Id` lie in the same segment (same datatype, and
+  // for `VocabIndex` the same side of the contiguous literal range)
+  // contributes all or none of its rows. Only blocks that straddle a segment
+  // boundary are decompressed. If no such case applies, an empty optional is
+  // returned.
   std::optional<IdTable> computeTypedCountFromMetadata() const;
 
   // Stores information required for substitution of an expression in an
