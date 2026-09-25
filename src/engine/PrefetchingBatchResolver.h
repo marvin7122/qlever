@@ -156,7 +156,8 @@ class PrefetchingBatchResolver {
 
       results[pos] = ql::exportIds::literalOrIriToStringAndType<
           removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-          LiteralOrIriView::fromStringRepresentation(word), escapeFunction);
+          ql::exportIds::LiteralOrIriView::fromStringRepresentation(word),
+          escapeFunction);
     }
   }
 
