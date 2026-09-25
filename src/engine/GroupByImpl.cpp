@@ -909,12 +909,12 @@ std::optional<IdTable> GroupByImpl::computeGroupByForSingleIndexScan() const {
 }
 
 // _____________________________________________________________________________
-std::optional<std::pair<std::shared_ptr<const IndexScan>, Id>>
+std::optional<std::pair<std::shared_ptr<IndexScan>, Id>>
 GroupByImpl::getTwoVariableScanWithBoundCol0() const {
   // The child must be an `IndexScan` with exactly two variables and no graph
   // filtering.
   auto indexScan =
-      std::dynamic_pointer_cast<const IndexScan>(_subtree->getRootOperation());
+      std::dynamic_pointer_cast<IndexScan>(_subtree->getRootOperation());
   if (!indexScan || !indexScan->graphsToFilter().areAllGraphsAllowed() ||
       indexScan->numVariables() != 2) {
     return std::nullopt;

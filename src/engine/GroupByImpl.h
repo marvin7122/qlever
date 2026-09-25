@@ -253,7 +253,7 @@ class GroupByImpl : public Operation {
   // bound `col0` ID, or `nullopt` when the child has a different shape.
   // Aggregate-specific checks (e.g. the form of the aliases or `LIMIT`
   // handling) stay with the individual callers.
-  std::optional<std::pair<std::shared_ptr<const IndexScan>, Id>>
+  std::optional<std::pair<std::shared_ptr<IndexScan>, Id>>
   getTwoVariableScanWithBoundCol0() const;
 
   // Stores information required for substitution of an expression in an
