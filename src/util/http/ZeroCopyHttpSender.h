@@ -86,12 +86,12 @@ inline void sendBytesViaZeroCopySocket(int sockfd, ZeroCopySocketSender& sender,
 inline void waitForSocketWritable(int sockfd) {
   AD_CONTRACT_CHECK(sockfd >= 0);
   pollfd pfd{sockfd, POLLOUT, 0};
-  // Bounded wait (matching the session's 30s read timeout): a stalled peer
+  // Bounded wait (matching the session's read timeout): a stalled peer
   // must surface as an error instead of stalling the session coroutine
   // forever. The session owns this socket exclusively while a response is
   // being written.
   while (true) {
-    int ret = ::poll(&pfd, 1, 30 * 1000);
+    int ret = ::poll(&pfd, 1, kZeroCopyPeerStallTimeoutSeconds * 1000);
     if (ret == 0) {
       AD_THROW("timed out waiting for socket writability (peer stalled)");
     }
