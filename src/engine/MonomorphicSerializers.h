@@ -422,34 +422,29 @@ class MonomorphicRowSerializer {
     }
   }
 
+  // Serialize the cell of column `Index` (preceded by a delimiter unless it is
+  // the first column) with the writer selected by the `Index`-th column type.
+  template <ExportFormat Format, size_t Index, typename Writer, typename Cell>
+  static void serializeIndexedCell(Writer& writer, const Cell& cell) {
+    if constexpr (Index > 0) {
+      detail::writeColumnDelimiter<Format>(writer);
+    }
+    detail::MonomorphicCellWriter<getColumnType<Index>(), Format>::write(writer,
+                                                                         cell);
+  }
+
   // Compile-time unrolled cell serialization from indexed span
   template <ExportFormat Format, typename Writer, size_t... Is>
   static void serializeSpanCells(Writer& writer, ql::span<const CellValue> row,
                                  std::index_sequence<Is...>) {
-    (
-        [&]() {
-          if constexpr (Is > 0) {
-            detail::writeColumnDelimiter<Format>(writer);
-          }
-          detail::MonomorphicCellWriter<ColumnTypes, Format>::write(writer,
-                                                                    row[Is]);
-        }(),
-        ...);
+    (serializeIndexedCell<Format, Is>(writer, row[Is]), ...);
   }
 
   // Compile-time unrolled cell serialization from tuple
   template <ExportFormat Format, typename Writer, typename Tuple, size_t... Is>
   static void serializeTupleCells(Writer& writer, const Tuple& tuple,
                                   std::index_sequence<Is...>) {
-    (
-        [&]() {
-          if constexpr (Is > 0) {
-            detail::writeColumnDelimiter<Format>(writer);
-          }
-          detail::MonomorphicCellWriter<ColumnTypes, Format>::write(
-              writer, std::get<Is>(tuple));
-        }(),
-        ...);
+    (serializeIndexedCell<Format, Is>(writer, std::get<Is>(tuple)), ...);
   }
 
  public:

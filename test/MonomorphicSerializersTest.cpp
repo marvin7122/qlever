@@ -12,6 +12,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "engine/FastExportStreamFormatter.h"
@@ -88,6 +89,19 @@ TEST(MonomorphicSerializersTest, MonomorphicSpanAndBatchSerialization) {
   });
 
   EXPECT_EQ(result, "<http://a>,<http://b>,10\n<http://c>,<http://d>,20\n");
+}
+
+TEST(MonomorphicSerializersTest, MonomorphicTupleSerialization) {
+  // Each tuple element must be written by the writer of its own column type.
+  using Serializer = MonomorphicRowSerializer<ColumnType::Iri, ColumnType::Int,
+                                              ColumnType::Boolean>;
+  std::tuple<std::string_view, int64_t, bool> row{"<http://s>", 7, true};
+
+  std::string result = captureOutput([&](FastExportStreamFormatter& fmt) {
+    Serializer::serializeRowTuple<ExportFormat::Tsv>(fmt, row);
+  });
+
+  EXPECT_EQ(result, "<http://s>\t7\ttrue\n");
 }
 
 TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
