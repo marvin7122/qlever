@@ -119,6 +119,10 @@ jobs:
       # Host-SSD compiler cache, one dir per toolchain, shared across all
       # runs and PRs landing on this host (CI speedup 2026-09-24).
       CCACHE_BASE: /local/data-ssd/stoetzem/ccache
+      # Job token for github clones inside the containers (CMake
+      # FetchContent, emsdk tag fetch). Anonymous clones from the shared
+      # Wolga egress got HTTP 401 ("could not read Username") in bursts.
+      GH_CLONE_TOKEN: ${{ github.token }}
     steps:
       - name: Skip early if master-only leg on a PR
         if: github.event_name == 'pull_request' && matrix.skip-if-pr == true
@@ -138,8 +142,10 @@ jobs:
             -v "${{ github.workspace }}:/work" \
             -v "${CCACHE_BASE}/${{ matrix.toolchain }}:/ccache" \
             -w /work \
+            -e GH_CLONE_TOKEN \
             localhost/qlever-ci:${{ matrix.image }} bash -c '
               set -e
+              if [ -n "${GH_CLONE_TOKEN:-}" ]; then git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf "x-access-token:%s" "${GH_CLONE_TOKEN}" | base64 -w0)"; fi
               # Per-leg extra environment inside the container (empty for
               # legs without a `container-env` matrix key).
               if [ -n "${{ matrix.container-env }}" ]; then export ${{ matrix.container-env }}; fi
@@ -201,8 +207,10 @@ jobs:
             --network=host \
             -v "${{ github.workspace }}:/work" \
             -w /work \
+            -e GH_CLONE_TOKEN \
             localhost/qlever-ci:${{ matrix.image }} bash -c '
               set -e
+              if [ -n "${GH_CLONE_TOKEN:-}" ]; then git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf "x-access-token:%s" "${GH_CLONE_TOKEN}" | base64 -w0)"; fi
               cd /work && rm -rf /work/build && mkdir -p /work/build
               conan profile detect
               # Same configure retry as the native step: anonymous github
@@ -241,8 +249,10 @@ jobs:
             --network=host \
             -v "${{ github.workspace }}:/work" \
             -w /work \
+            -e GH_CLONE_TOKEN \
             localhost/qlever-ci:${{ matrix.image }} bash -c '
               set -e
+              if [ -n "${GH_CLONE_TOKEN:-}" ]; then git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf "x-access-token:%s" "${GH_CLONE_TOKEN}" | base64 -w0)"; fi
               # Fleet egress to github flakes: retry the tag fetch (mirrors
               # configure_with_retry below) instead of failing the leg when
               # the clone stays shallow and tagless.
