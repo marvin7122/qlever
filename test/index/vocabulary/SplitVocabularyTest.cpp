@@ -154,7 +154,13 @@ TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   ASSERT_EQ(sv.getMarkerForWord("<abc>"), 0);
   ASSERT_EQ(sv.getMarkerForWord("\"abc\""), 1);
 
-  auto ww = sv.makeDiskWriterPtr("twoSplitVocab.dat");
+  // Remove the written files even if an assertion below fails.
+  const auto filename = gtestCurrentTestName();
+  absl::Cleanup cleanup = [&filename]() {
+    ad_utility::deleteFile(filename);
+    ad_utility::deleteFile(absl::StrCat(filename, ".a"));
+  };
+  auto ww = sv.makeDiskWriterPtr(filename);
   ASSERT_EQ((*ww)("\"\"", true), sv.addMarker(0, 0));
   ASSERT_EQ((*ww)("\"abc\"", true), sv.addMarker(0, 1));
   ASSERT_EQ((*ww)("\"axyz\"", true), sv.addMarker(1, 1));
@@ -162,7 +168,7 @@ TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   ww->readableName() = "Split Vocab with Two Underlying Vocabs";
   ww->finish();
 
-  sv.readFromFile("twoSplitVocab.dat");
+  sv.readFromFile(filename);
   ASSERT_EQ(sv.size(), 4);
   ASSERT_EQ(sv[1], "\"xyz\"");
   ASSERT_EQ(sv[(1ULL << 59) | 1], "\"axyz\"");
@@ -227,9 +233,6 @@ TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   ASSERT_FALSE(sv.getGeoInfo(1ULL << 59).has_value());
   ASSERT_FALSE(sv.getGeoInfo((1ULL << 59) | 1).has_value());
 
-  const auto filename = gtestCurrentTestName();
-  ad_utility::deleteFile(filename);
-  ad_utility::deleteFile(absl::StrCat(filename, ".a"));
   sv.close();
 }
 
