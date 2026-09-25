@@ -4,19 +4,18 @@
 
 #include "engine/CountStarCardinality.h"
 
+#include <algorithm>
 #include <memory>
+#include <utility>
 
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
 #include "engine/Operation.h"
 #include "engine/OptionalJoin.h"
 #include "engine/QueryExecutionTree.h"
-#include "engine/Sort.h"
 #include "engine/Union.h"
-#include "index/Index.h"
-#include "index/IndexImpl.h"
+#include "index/CompressedRelation.h"
 #include "index/Permutation.h"
-#include "index/TripleComponentConversions.h"
 
 namespace {
 // An index scan whose exact result size can be taken from metadata: no graph
@@ -25,39 +24,6 @@ namespace {
 bool isMetadataEligibleScan(const IndexScan& scan) {
   return scan.graphsToFilter().areAllGraphsAllowed() &&
          scan.additionalVariables().empty();
-}
-
-std::optional<Permutation::Enum> permutationWithWantedCol1(
-    const IndexScan& scan, const Variable& wantedCol1) {
-  const bool predBound = !scan.predicate().isVariable();
-  const bool subjBound = !scan.subject().isVariable();
-  const bool objBound = !scan.object().isVariable();
-  if (scan.subject().isVariable() &&
-      scan.subject().getVariable() == wantedCol1) {
-    if (predBound) {
-      return Permutation::PSO;
-    }
-    if (objBound) {
-      return Permutation::OSP;
-    }
-  } else if (scan.object().isVariable() &&
-             scan.object().getVariable() == wantedCol1) {
-    if (predBound) {
-      return Permutation::POS;
-    }
-    if (subjBound) {
-      return Permutation::SOP;
-    }
-  } else if (scan.predicate().isVariable() &&
-             scan.predicate().getVariable() == wantedCol1) {
-    if (subjBound) {
-      return Permutation::SPO;
-    }
-    if (objBound) {
-      return Permutation::OPS;
-    }
-  }
-  return std::nullopt;
 }
 
 // The exact result size of an eligible index scan, respecting LIMIT/OFFSET.
@@ -70,17 +36,57 @@ std::optional<size_t> exactSizeIfEligibleScan(const QueryExecutionTree& tree) {
   return scan->getLimitOffset().actualSize(scan->getExactSize());
 }
 
-const IndexScan* unwrapIndexScan(const QueryExecutionTree& tree) {
-  std::shared_ptr<Operation> op = tree.getRootOperation();
-  if (auto* sort = dynamic_cast<Sort*>(op.get())) {
-    const auto children = sort->getChildren();
-    if (children.size() != 1) {
-      return nullptr;
+// The run lengths of the first column of a lazy index scan whose result is
+// sorted on that column: `next()` yields each distinct value with the number of
+// rows that have it, also when a run spans several blocks. Holds one block at a
+// time, so memory stays bounded by the block size.
+class FirstColumnRuns {
+  using Blocks = CompressedRelationReader::IdTableGeneratorInputRange;
+  using CancellationHandle = ad_utility::SharedCancellationHandle;
+  Blocks blocks_;
+  CancellationHandle cancellationHandle_;
+  std::optional<IdTable> block_;
+  size_t pos_ = 0;
+
+  // Make `block_` hold at least one unread row. Return false at the end.
+  bool fillBlock() {
+    while (!block_.has_value() || pos_ >= block_->numRows()) {
+      auto next = blocks_.get();
+      if (!next.has_value()) {
+        return false;
+      }
+      cancellationHandle_->throwIfCancelled();
+      block_ = std::move(next);
+      pos_ = 0;
     }
-    op = children[0]->getRootOperation();
+    return true;
   }
-  return dynamic_cast<const IndexScan*>(op.get());
-}
+
+ public:
+  FirstColumnRuns(Blocks blocks, CancellationHandle cancellationHandle)
+      : blocks_{std::move(blocks)},
+        cancellationHandle_{std::move(cancellationHandle)} {}
+
+  std::optional<std::pair<Id, size_t>> next() {
+    if (!fillBlock()) {
+      return std::nullopt;
+    }
+    const Id id = (*block_)(pos_, 0);
+    size_t count = 0;
+    while (true) {
+      const auto col = block_->getColumn(0);
+      const auto runEnd = std::find_if(col.begin() + pos_, col.end(),
+                                       [id](Id other) { return other != id; });
+      const auto newPos = static_cast<size_t>(runEnd - col.begin());
+      count += newPos - pos_;
+      pos_ = newPos;
+      if (pos_ < block_->numRows() || !fillBlock() ||
+          (*block_)(pos_, 0) != id) {
+        return std::pair{id, count};
+      }
+    }
+  }
+};
 
 // Mark the optimized-out operations for runtime information display.
 void markOptimizedOut(Operation* parent, const std::shared_ptr<Operation>& left,
@@ -129,8 +135,15 @@ std::optional<size_t> computeCountStarCardinality(
     if (children.size() != 2) {
       return std::nullopt;
     }
-    const auto* leftScan = unwrapIndexScan(*children[0]);
-    const auto* rightScan = unwrapIndexScan(*children[1]);
+    // Both inputs must be index scans sorted on the join column (the planner
+    // chooses such permutations for a join of two scans). Then the count is
+    // computed from two lazy scans restricted to the blocks that can match
+    // (the same blocks `Join` reads), without materializing the join result
+    // or the per-key counts of either side.
+    auto leftScan =
+        std::dynamic_pointer_cast<IndexScan>(children[0]->getRootOperation());
+    auto rightScan =
+        std::dynamic_pointer_cast<IndexScan>(children[1]->getRootOperation());
     if (!leftScan || !rightScan) {
       return std::nullopt;
     }
@@ -141,66 +154,47 @@ std::optional<size_t> computeCountStarCardinality(
     }
     auto joinColumns =
         QueryExecutionTree::getJoinColumns(*children[0], *children[1]);
-    if (joinColumns.size() != 1) {
+    if (joinColumns.size() != 1 || joinColumns[0][0] != 0 ||
+        joinColumns[0][1] != 0) {
       return std::nullopt;
     }
-    auto joinVar =
-        children[0]->getVariableAndInfoByColumnIndex(joinColumns[0][0]).first;
-    const Index& index = tree.getRootOperation()->getIndex();
     const auto& locatedTriplesState =
         tree.getRootOperation()->locatedTriplesState();
-    const auto& cancellationHandle =
-        tree.getRootOperation()->getCancellationHandle();
-
-    auto distinctCounts = [&](const IndexScan& scan) -> std::optional<IdTable> {
-      const auto& locTriples =
-          scan.permutation().getLocatedTriplesForPermutation(
-              locatedTriplesState);
-      if (!locTriples.isEmpty() || scan.permutation().permutationType() ==
-                                       Permutation::Type::MATERIALIZED_VIEW) {
-        return std::nullopt;
-      }
-      const auto& permutedTriple = scan.getPermutedTriple();
-      std::optional<Id> col0Id = toValueId(*permutedTriple[0], index);
-      if (!col0Id.has_value()) {
-        return std::nullopt;
-      }
-      auto target = permutationWithWantedCol1(scan, joinVar);
-      if (!target.has_value()) {
-        return std::nullopt;
-      }
-      const auto& permutation = index.getImpl().getPermutation(target.value());
-      return permutation.getDistinctCol1IdsAndCounts(
-          col0Id.value(), cancellationHandle, locatedTriplesState,
-          scan.getLimitOffset());
+    auto isPlainPermutation = [&](const IndexScan& scan) {
+      return scan.permutation()
+                 .getLocatedTriplesForPermutation(locatedTriplesState)
+                 .isEmpty() &&
+             scan.permutation().permutationType() !=
+                 Permutation::Type::MATERIALIZED_VIEW;
     };
-
-    auto leftCounts = distinctCounts(*leftScan);
-    auto rightCounts = distinctCounts(*rightScan);
-    if (!leftCounts.has_value() || !rightCounts.has_value()) {
+    if (!isPlainPermutation(*leftScan) || !isPlainPermutation(*rightScan)) {
       return std::nullopt;
     }
+
+    const auto& cancellationHandle =
+        tree.getRootOperation()->getCancellationHandle();
+    auto [leftBlocks, rightBlocks] =
+        IndexScan::lazyScanForJoinOfTwoScans(*leftScan, *rightScan);
+    FirstColumnRuns left{std::move(leftBlocks), cancellationHandle};
+    FirstColumnRuns right{std::move(rightBlocks), cancellationHandle};
 
     markOptimizedOut(join, children[0]->getRootOperation(),
                      children[1]->getRootOperation());
 
-    const auto& left = leftCounts.value();
-    const auto& right = rightCounts.value();
-    size_t i = 0;
-    size_t j = 0;
+    // Merge the two sorted run streams; each common key contributes the
+    // product of its multiplicities.
     size_t total = 0;
-    while (i < left.numRows() && j < right.numRows()) {
-      const Id leftId = left(i, 0);
-      const Id rightId = right(j, 0);
-      if (leftId == rightId) {
-        total += static_cast<size_t>(left(i, 1).getInt()) *
-                 static_cast<size_t>(right(j, 1).getInt());
-        ++i;
-        ++j;
-      } else if (leftId < rightId) {
-        ++i;
+    auto l = left.next();
+    auto r = right.next();
+    while (l.has_value() && r.has_value()) {
+      if (l->first == r->first) {
+        total += l->second * r->second;
+        l = left.next();
+        r = right.next();
+      } else if (l->first < r->first) {
+        l = left.next();
       } else {
-        ++j;
+        r = right.next();
       }
     }
     return total;
