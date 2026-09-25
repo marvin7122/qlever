@@ -593,6 +593,30 @@ addLinkAndDiscoverTest(FilesystemHelpersTest qlever_util)
 
 addLinkAndDiscoverTest(LogTest)
 
+addLinkAndDiscoverTest(StreamingBufferWriterTest)
+
+addLinkAndDiscoverTestNoLibs(FastIntToStringTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(AdaptiveChunkSizerTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest qlever_util)
+
+addLinkAndDiscoverTest(SimdValidityBitmaskTest engine)
+
+addLinkAndDiscoverTest(RlePrefixCompressorTest engine)
+
+addLinkAndDiscoverTest(InPlaceHttpChunkFramingTest)
+
+addLinkAndDiscoverTest(PrefetchingBatchResolverTest engine index)
+
+addLinkAndDiscoverTest(ScatterGatherArenaStreamerTest engine)
+
+addLinkAndDiscoverTestNoLibs(ZeroCopySocketSenderTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(RegisteredIoUringReaderTest qlever_util)
+
+addLinkAndDiscoverTest(BranchlessTypeDispatcherTest engine)
+
 addLinkAndDiscoverTest(QueryEventLogTest qlever_util)
 
 addLinkAndDiscoverTest(MetricsTest metrics)
