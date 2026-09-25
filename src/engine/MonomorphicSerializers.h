@@ -488,12 +488,15 @@ class MonomorphicRowSerializer {
   }
 
   // ___________________________________________________________________________
-  // High-throughput batch serialization over a collection of rows
+  // High-throughput batch serialization over a collection of rows. Each row
+  // must be a contiguous range of `CellValue`s (e.g. `std::array<CellValue,
+  // N>`); it is passed as a span, so the variadic `serializeRow` overload
+  // (which would treat the whole row as a single cell) is never selected.
   template <ExportFormat Format, typename Writer, typename RowContainer>
   static size_t serializeBatch(Writer& writer, const RowContainer& rows) {
     size_t count = 0;
     for (const auto& row : rows) {
-      serializeRow<Format>(writer, row);
+      serializeRow<Format>(writer, ql::span<const CellValue>(row));
       ++count;
     }
     return count;
