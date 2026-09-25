@@ -12,6 +12,7 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <string>
 #include <string_view>
@@ -473,7 +474,12 @@ int main(int argc, char** argv) {
             << " terms...\n";
   auto dataset = BenchmarkDataset::generate(numTerms);
 
-  // Allocate 512 MB buffer for formatted outputs
+  // Allocate 128 bytes of formatted output per term; reject term counts for
+  // which that size does not fit into `size_t`.
+  if (numTerms > std::numeric_limits<size_t>::max() / 128) {
+    std::cerr << "Number of terms " << numTerms << " is too large.\n";
+    return 1;
+  }
   std::vector<char> outputBuffer(numTerms * 128);
 
   HardwarePerfCounter perf;
