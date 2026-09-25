@@ -237,11 +237,10 @@ class ZeroCopySocketSender {
     bool active = false;
   };
 
-  // Preallocated tracking table mapped by (requestId % tableSize)
+  // Preallocated tracking table, indexed by the buffer slot of the request.
   std::vector<InFlightRequest> inFlightTable_;
   size_t numInFlightRequests_ = 0;  // Requests in SQ/CQ
   size_t numInFlightBuffers_ = 0;   // Buffers currently pinned by kernel
-  uint64_t nextRequestId_ = 0;
 
   size_t totalBytesSent_ = 0;
   size_t totalPacketsSent_ = 0;
@@ -253,12 +252,11 @@ class ZeroCopySocketSender {
     AD_CONTRACT_CHECK(config_.ringEntries > 0);
     AD_CONTRACT_CHECK(config_.numBuffers > 0);
     AD_CONTRACT_CHECK(config_.bufferSizeBytes > 0);
-    AD_CONTRACT_CHECK(config_.ringEntries <= SIZE_MAX / 2);
     AD_CONTRACT_CHECK(
         config_.ringEntries <=
         static_cast<size_t>(std::numeric_limits<unsigned int>::max()));
 
-    inFlightTable_.resize(config_.ringEntries * 2);
+    inFlightTable_.resize(config_.numBuffers);
 
     initRing();
   }
@@ -279,7 +277,6 @@ class ZeroCopySocketSender {
         inFlightTable_{std::move(other.inFlightTable_)},
         numInFlightRequests_{std::exchange(other.numInFlightRequests_, 0)},
         numInFlightBuffers_{std::exchange(other.numInFlightBuffers_, 0)},
-        nextRequestId_{std::exchange(other.nextRequestId_, 0)},
         totalBytesSent_{std::exchange(other.totalBytesSent_, 0)},
         totalPacketsSent_{std::exchange(other.totalPacketsSent_, 0)} {
   }
@@ -297,7 +294,6 @@ class ZeroCopySocketSender {
       inFlightTable_ = std::move(other.inFlightTable_);
       numInFlightRequests_ = std::exchange(other.numInFlightRequests_, 0);
       numInFlightBuffers_ = std::exchange(other.numInFlightBuffers_, 0);
-      nextRequestId_ = std::exchange(other.nextRequestId_, 0);
       totalBytesSent_ = std::exchange(other.totalBytesSent_, 0);
       totalPacketsSent_ = std::exchange(other.totalPacketsSent_, 0);
     }
@@ -383,8 +379,9 @@ class ZeroCopySocketSender {
                          flags | MSG_NOSIGNAL);
     }
 
-    const uint64_t reqId = nextRequestId_++;
-    const size_t tableIdx = reqId % inFlightTable_.size();
+    // Every in-flight send owns its buffer slot until its final completion,
+    // so the slot index identifies the request uniquely.
+    const size_t tableIdx = bufferIndex;
     AD_CORRECTNESS_CHECK(!inFlightTable_[tableIdx].active);
 
     // Field order: bufferIndex, expectedBytes, waitingForNotification,
@@ -392,7 +389,7 @@ class ZeroCopySocketSender {
     inFlightTable_[tableIdx] =
         InFlightRequest{bufferIndex, numBytes, false, true};
 
-    io_uring_sqe_set_data64(sqe, reqId);
+    io_uring_sqe_set_data64(sqe, tableIdx);
     ++numInFlightRequests_;
     ++numInFlightBuffers_;
 #else
@@ -550,10 +547,10 @@ class ZeroCopySocketSender {
 
     const int res = cqe->res;
     const unsigned int flags = cqe->flags;
-    const uint64_t reqId = io_uring_cqe_get_data64(cqe);
+    const uint64_t tableIdx = io_uring_cqe_get_data64(cqe);
     io_uring_cqe_seen(&ring_, cqe);
 
-    const size_t tableIdx = reqId % inFlightTable_.size();
+    AD_CORRECTNESS_CHECK(tableIdx < inFlightTable_.size());
     auto& entry = inFlightTable_[tableIdx];
     AD_CORRECTNESS_CHECK(entry.active);
 
