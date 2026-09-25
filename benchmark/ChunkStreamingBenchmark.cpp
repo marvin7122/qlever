@@ -7,6 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
+
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
@@ -21,6 +23,7 @@
 #include "../benchmark/infrastructure/BenchmarkMetadata.h"
 #include "engine/AsyncChunkPipeline.h"
 #include "util/Timer.h"
+#include "util/jthread.h"
 
 namespace ad_benchmark {
 
@@ -148,7 +151,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
     // Spawn background worker to generate chunks concurrently into Slot 2.
-    std::thread producerThread(
+    ad_utility::JThread producerThread(
         [pipeline, numChunks, chunkSize, totalTriples = totalTriples_]() {
           try {
             for (size_t c = 0; c < numChunks; ++c) {
@@ -168,29 +171,24 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
           }
         });
 
-    // Consumer loop: transmits chunks over simulated network socket.
-    // If `pop()` rethrows a producer exception, the producer is cancelled
-    // and joined during unwinding: destroying the still-joinable thread
-    // would call `std::terminate` and hide the producer error.
-    size_t totalBytes = 0;
-    try {
-      while (auto chunkOpt = pipeline->pop()) {
-        std::string chunk = std::move(*chunkOpt);
-        totalBytes += chunk.size();
-        // Socket transmits chunk while worker concurrently prepares next chunk
-        simulateNetworkTransmission(chunk.size(), latency);
-      }
-    } catch (...) {
-      pipeline->cancel();
+    // If the consumer loop throws (e.g. `pop()` rethrows a producer
+    // exception), cancel the pipeline so the producer stops blocking in
+    // `push()`; the `JThread` destructor then joins it during unwinding.
+    absl::Cleanup cancelOnError{[&pipeline, &producerThread] {
       if (producerThread.joinable()) {
-        producerThread.join();
+        pipeline->cancel();
       }
-      throw;
-    }
+    }};
 
-    if (producerThread.joinable()) {
-      producerThread.join();
+    // Consumer loop: transmits chunks over simulated network socket.
+    size_t totalBytes = 0;
+    while (auto chunkOpt = pipeline->pop()) {
+      std::string chunk = std::move(*chunkOpt);
+      totalBytes += chunk.size();
+      // Socket transmits chunk while worker concurrently prepares next chunk
+      simulateNetworkTransmission(chunk.size(), latency);
     }
+    producerThread.join();
 
     timer.stop();
     const double duration = ad_utility::timer::Timer::toSeconds(timer.value());
