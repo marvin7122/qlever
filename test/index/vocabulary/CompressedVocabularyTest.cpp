@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
@@ -10,6 +16,8 @@
 #include "backports/algorithm.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/PrefixCompressor.h"
+#include "index/vocabulary/StringSortComparator.h"
+#include "index/vocabulary/UnicodeVocabulary.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
@@ -508,4 +516,30 @@ TEST(CompressedVocabularyWithHoles, nonAscendingIndicesThrow) {
   for (size_t i = 0; i < numWords; ++i) {
     EXPECT_EQ(vocab[indices.at(i)], words.at(i)) << "at position " << i;
   }
+}
+
+// _____________________________________________________________________________
+// `CompressedVocabulary::lookupBatch(indices, builder)` returns `void`; the
+// builder-aware `UnicodeVocabulary::lookupBatch` must finalize the builder
+// instead of returning that call.
+TEST(CompressedVocabulary, LookupBatchWithBuilderThroughUnicodeVocabulary) {
+  using Compressed =
+      CompressedVocabulary<VocabularyOnDisk, DummyCompressionWrapper, 4>;
+  const std::string filename = gtestCurrentTestName();
+  UnicodeVocabulary<Compressed, SimpleStringComparator> vocab{
+      SimpleStringComparator{"en", "US", false}};
+  auto& underlying = vocab.getUnderlyingVocabulary();
+  {
+    auto writerPtr = underlying.makeDiskWriterPtr(filename);
+    for (std::string_view word : {"alpha", "beta", "gamma"}) {
+      (*writerPtr)(word, false);
+    }
+    writerPtr->finish();
+  }
+  underlying.open(filename);
+
+  const std::vector<size_t> indices{2, 0, 1};
+  ArenaVocabBatchBuilder builder{indices.size()};
+  auto result = vocab.lookupBatch(indices, builder);
+  EXPECT_THAT(result, ::testing::ElementsAre("gamma", "alpha", "beta"));
 }
