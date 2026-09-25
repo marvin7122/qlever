@@ -248,9 +248,11 @@ class AsyncChunkPipeline {
     AD_CONTRACT_CHECK(capacity >= 1);
     auto pipeline = std::make_shared<AsyncChunkPipeline<ChunkType>>(capacity);
 
-    // Launch background worker thread to pull chunks eagerly.
-    std::thread worker(
-        [pipeline, source = std::move(sourceGenerator)]() mutable {
+    // Launch background worker thread to pull chunks eagerly. The guard
+    // cancels and joins it on every exit path of this generator.
+    WorkerGuard guard{pipeline};
+    guard.start(
+        std::thread([pipeline, source = std::move(sourceGenerator)]() mutable {
           try {
             for (auto&& chunk : source) {
               if (pipeline->isCancelled()) {
@@ -264,23 +266,7 @@ class AsyncChunkPipeline {
           } catch (...) {
             pipeline->setException(std::current_exception());
           }
-        });
-
-    // RAII guard ensuring worker is cancelled and joined upon generator exit.
-    struct WorkerGuard {
-      std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
-      std::thread thread;
-      ~WorkerGuard() {
-        if (pipe) {
-          pipe->cancel();
-        }
-        if (thread.joinable()) {
-          thread.join();
-        }
-      }
-    };
-    auto guard =
-        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
+        }));
 
     while (true) {
       auto chunkOpt = pipeline->pop();
@@ -302,30 +288,17 @@ class AsyncChunkPipeline {
     AD_CONTRACT_CHECK(capacity >= 1);
     auto pipeline = std::make_shared<AsyncChunkPipeline<ChunkType>>(capacity);
 
-    std::thread worker([pipeline, func = std::move(producerFunc)]() mutable {
-      try {
-        ChunkSink<ChunkType> sink(pipeline);
-        func(sink);
-        pipeline->finish();
-      } catch (...) {
-        pipeline->setException(std::current_exception());
-      }
-    });
-
-    struct WorkerGuard {
-      std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
-      std::thread thread;
-      ~WorkerGuard() {
-        if (pipe) {
-          pipe->cancel();
-        }
-        if (thread.joinable()) {
-          thread.join();
-        }
-      }
-    };
-    auto guard =
-        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
+    WorkerGuard guard{pipeline};
+    guard.start(
+        std::thread([pipeline, func = std::move(producerFunc)]() mutable {
+          try {
+            ChunkSink<ChunkType> sink(pipeline);
+            func(sink);
+            pipeline->finish();
+          } catch (...) {
+            pipeline->setException(std::current_exception());
+          }
+        }));
 
     while (true) {
       auto chunkOpt = pipeline->pop();
@@ -347,6 +320,33 @@ class AsyncChunkPipeline {
   bool isFinished_{false};
   std::exception_ptr exception_{nullptr};
   PipelineStats stats_{};
+
+  // Owns the background worker of `makeDoubleBuffered` / `pipelineStream`.
+  // The destructor cancels the pipeline (unblocking a producer waiting on
+  // backpressure) and joins the worker. It lives in the generator's frame, so
+  // it runs when the stream ends, when the consumer destroys the generator
+  // early, and when `pop()` rethrows a producer exception. It is constructed in
+  // place and never moved.
+  class WorkerGuard {
+   private:
+    std::shared_ptr<AsyncChunkPipeline> pipeline_;
+    std::thread thread_;
+
+   public:
+    explicit WorkerGuard(std::shared_ptr<AsyncChunkPipeline> pipeline)
+        : pipeline_{std::move(pipeline)} {
+      AD_CONTRACT_CHECK(pipeline_ != nullptr);
+    }
+    WorkerGuard(const WorkerGuard&) = delete;
+    WorkerGuard& operator=(const WorkerGuard&) = delete;
+    ~WorkerGuard() {
+      pipeline_->cancel();
+      if (thread_.joinable()) {
+        thread_.join();
+      }
+    }
+    void start(std::thread thread) { thread_ = std::move(thread); }
+  };
 };
 
 // _____________________________________________________________________________

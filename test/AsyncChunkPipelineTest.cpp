@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "engine/AsyncChunkPipeline.h"
 
@@ -65,5 +66,72 @@ TEST(AsyncChunkPipeline, FinishAndCancelWakeBlockedProducer) {
     EXPECT_TRUE(pipeline.isCancelled());
   }
 }
+
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
+// _____________________________________________________________________________
+cppcoro::generator<std::string> finiteSource() {
+  co_yield std::string{"a"};
+  co_yield std::string{"b"};
+  co_yield std::string{"c"};
+}
+
+// _____________________________________________________________________________
+cppcoro::generator<std::string> infiniteSource() {
+  while (true) {
+    co_yield std::string{"x"};
+  }
+}
+
+// _____________________________________________________________________________
+cppcoro::generator<std::string> failingSource() {
+  co_yield std::string{"a"};
+  throw std::runtime_error("source failed");
+}
+
+// _____________________________________________________________________________
+TEST(AsyncChunkPipeline, MakeDoubleBufferedYieldsAllChunks) {
+  std::vector<std::string> chunks;
+  for (auto& chunk :
+       AsyncChunkPipeline<std::string>::makeDoubleBuffered(finiteSource(), 1)) {
+    chunks.push_back(chunk);
+  }
+  EXPECT_THAT(chunks, ::testing::ElementsAre("a", "b", "c"));
+}
+
+// _____________________________________________________________________________
+TEST(AsyncChunkPipeline, MakeDoubleBufferedEarlyStopJoinsWorker) {
+  // The worker blocks on backpressure; destroying the generator must cancel
+  // the pipeline and join the worker instead of hanging or terminating.
+  auto generator =
+      AsyncChunkPipeline<std::string>::makeDoubleBuffered(infiniteSource(), 1);
+  auto it = generator.begin();
+  ASSERT_NE(it, generator.end());
+  EXPECT_EQ(*it, "x");
+}
+
+// _____________________________________________________________________________
+TEST(AsyncChunkPipeline, MakeDoubleBufferedRethrowsProducerException) {
+  auto generator =
+      AsyncChunkPipeline<std::string>::makeDoubleBuffered(failingSource(), 1);
+  auto it = generator.begin();
+  ASSERT_NE(it, generator.end());
+  EXPECT_EQ(*it, "a");
+  EXPECT_THROW(++it, std::runtime_error);
+}
+
+// _____________________________________________________________________________
+TEST(AsyncChunkPipeline, PipelineStreamRethrowsProducerException) {
+  auto generator = AsyncChunkPipeline<std::string>::pipelineStream(
+      [](qlever::export_pipeline::ChunkSink<std::string>& sink) {
+        sink.push("a");
+        throw std::runtime_error("producer failed");
+      },
+      1);
+  auto it = generator.begin();
+  ASSERT_NE(it, generator.end());
+  EXPECT_EQ(*it, "a");
+  EXPECT_THROW(++it, std::runtime_error);
+}
+#endif
 
 }  // namespace
