@@ -181,3 +181,39 @@ TEST(MonomorphicSerializersTest, FastPathTemplateDispatch) {
 
   EXPECT_EQ(dispatchedOut, "<http://s> <http://p> \"o\" .\n");
 }
+
+// _____________________________________________________________________________
+TEST(FastExportStreamFormatterTest, FixedSpanFlushKeepsBufferedBytes) {
+  std::array<char, 16> buffer{};
+  FastExportStreamFormatter formatter{ql::span<char>{buffer}};
+  formatter.writeRaw("abc");
+  // Without a sink, `flush()` must neither drop nor double-count the bytes.
+  formatter.flush();
+  EXPECT_EQ(formatter.currentChunk(), "abc");
+  EXPECT_EQ(formatter.bytesBuffered(), 3u);
+  EXPECT_EQ(formatter.totalBytesWritten(), 3u);
+  formatter.writeRaw("de");
+  EXPECT_EQ(formatter.currentChunk(), "abcde");
+  EXPECT_EQ(formatter.totalBytesWritten(), 5u);
+
+  auto summary = std::move(formatter).finalize();
+  EXPECT_EQ(summary.totalBytesWritten_, 5u);
+  EXPECT_EQ(summary.chunksEmitted_, 0u);
+  EXPECT_EQ(std::string_view(buffer.data(), 5), "abcde");
+}
+
+// _____________________________________________________________________________
+TEST(FastExportStreamFormatterTest, StreamingFlushEmitsChunk) {
+  std::vector<std::string> chunks;
+  FastExportStreamFormatter formatter{
+      [&chunks](std::string_view chunk) { chunks.emplace_back(chunk); }};
+  formatter.writeRaw("abc");
+  formatter.flush();
+  EXPECT_EQ(formatter.bytesBuffered(), 0u);
+  EXPECT_EQ(formatter.totalBytesWritten(), 3u);
+  formatter.writeRaw("de");
+  auto summary = std::move(formatter).finalize();
+  EXPECT_EQ(summary.totalBytesWritten_, 5u);
+  EXPECT_EQ(summary.chunksEmitted_, 2u);
+  EXPECT_THAT(chunks, ::testing::ElementsAre("abc", "de"));
+}

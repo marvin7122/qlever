@@ -456,15 +456,15 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Flush current chunk to sink in streaming mode.
+  // Flush current chunk to sink in streaming mode. In fixed-span mode there is
+  // no sink and the caller's buffer is the output, so this is a no-op: the
+  // written bytes stay visible via `currentChunk()`.
   void flush() {
-    if (writePos_ == 0) {
+    if (!isStreaming_ || writePos_ == 0) {
       return;
     }
-    if (isStreaming_ && sink_) {
-      sink_(std::string_view(bufferPtr_, writePos_));
-      ++chunksEmitted_;
-    }
+    sink_(std::string_view(bufferPtr_, writePos_));
+    ++chunksEmitted_;
     totalBytesWritten_ += writePos_;
     writePos_ = 0;
   }
@@ -474,7 +474,7 @@ class FastExportStreamFormatter {
   // Consumes the formatter, flushes remaining content, and returns summary.
   [[nodiscard]] ExportStreamSummary finalize() && {
     flush();
-    ExportStreamSummary summary{totalTriples_, totalBytesWritten_,
+    ExportStreamSummary summary{totalTriples_, totalBytesWritten(),
                                 chunksEmitted_};
     // Invalidate buffer
     bufferPtr_ = nullptr;
