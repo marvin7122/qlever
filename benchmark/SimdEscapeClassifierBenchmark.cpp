@@ -24,6 +24,7 @@ using ql::engine::export_v2::EscapeFormat;
 using ql::engine::export_v2::SimdEscapeClassifier;
 
 constexpr size_t targetBytesPerMeasurement = 64 * 1024 * 1024;
+volatile size_t observedChecksum = 0;
 
 template <EscapeFormat Format, bool UseSimd>
 double measure(const std::vector<std::string>& inputs, size_t length) {
@@ -45,8 +46,8 @@ double measure(const std::vector<std::string>& inputs, size_t length) {
       static_cast<double>(repetitions * inputs.size() * length);
   const double nanoseconds =
       std::chrono::duration<double, std::nano>(elapsed).count();
-  static volatile size_t observedChecksum = checksum;
-  (void)observedChecksum;  // suppress unused variable warning
+  // Store every checksum so the measured loop cannot be discarded.
+  observedChecksum = checksum;
   return nanoseconds / bytes;
 }
 
