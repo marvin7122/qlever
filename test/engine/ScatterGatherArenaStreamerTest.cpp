@@ -37,6 +37,10 @@ constexpr size_t kTinyMaxChunkBytes = 100;
 struct ScopedPipeFds {
   int readFd = -1;
   int writeFd = -1;
+  ScopedPipeFds() = default;
+  // Owns the descriptors: copying or moving would close them twice.
+  ScopedPipeFds(const ScopedPipeFds&) = delete;
+  ScopedPipeFds& operator=(const ScopedPipeFds&) = delete;
   ~ScopedPipeFds() {
     if (readFd >= 0) {
       ::close(readFd);
