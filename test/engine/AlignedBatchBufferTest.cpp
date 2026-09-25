@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -104,4 +105,13 @@ TEST(AlignedBatchBuffer, PushBackBeyondCapacityThrows) {
     buffer.push_back(0);
   }
   EXPECT_ANY_THROW(buffer.push_back(0));
+}
+
+// _____________________________________________________________________________
+TEST(AlignedBatchBuffer, ReserveRejectsSizesThatWouldOverflow) {
+  AlignedBatchBuffer<uint64_t> buffer;
+  EXPECT_ANY_THROW(buffer.reserve(std::numeric_limits<size_t>::max()));
+  EXPECT_ANY_THROW(
+      buffer.reserve(std::numeric_limits<size_t>::max() / sizeof(uint64_t)));
+  EXPECT_EQ(buffer.capacity(), 0);
 }

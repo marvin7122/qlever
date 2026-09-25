@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <new>
 #include <type_traits>
@@ -69,8 +70,12 @@ class AlignedBatchBuffer {
     // Round the capacity up to whole cache lines. The bit-mask form is only
     // correct when `sizeof(T)` divides `Alignment`, so use division.
     constexpr size_t elementsPerLine = Alignment / sizeof(T);
+    // Neither the rounding nor the byte size of the allocation may overflow.
+    constexpr size_t maxSize = std::numeric_limits<size_t>::max();
+    AD_CONTRACT_CHECK(newCapacity <= maxSize - (elementsPerLine - 1));
     const size_t alignedCapacity =
         (newCapacity + elementsPerLine - 1) / elementsPerLine * elementsPerLine;
+    AD_CONTRACT_CHECK(alignedCapacity <= maxSize / sizeof(T));
     T* raw = static_cast<T*>(::operator new[](alignedCapacity * sizeof(T),
                                               std::align_val_t{Alignment}));
     std::unique_ptr<T[], AlignedDeleter> newData(raw);
