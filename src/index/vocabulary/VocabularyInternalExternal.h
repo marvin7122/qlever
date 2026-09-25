@@ -182,6 +182,12 @@ class VocabularyInternalExternal {
    public:
     VocabBatchLookupResult finish() override;
 
+   private:
+    // Only `VocabularyInternalExternal::beginLookup` sets up the state below.
+    // The handle is only reachable through `VocabLookupHandleBase`.
+    friend class VocabularyInternalExternal;
+
+    // The vocabulary that created this handle. It must outlive the handle.
     const VocabularyInternalExternal* vocab_ = nullptr;
     std::unique_ptr<VocabLookupHandleBase> externalHandle_;
     std::vector<std::string> internalWords_;
