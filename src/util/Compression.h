@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <string_view>
+#include <utility>
 
 #include "backports/span.h"
 #include "util/Exception.h"
@@ -31,7 +32,7 @@ std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
                                     DecompressFunc&& decompress) {
   AD_CONTRACT_CHECK(bound > 0);
   AD_CONTRACT_CHECK(destination.size() >= bound);
-  size_t bytesWritten = decompress(destination);
+  size_t bytesWritten = std::forward<DecompressFunc>(decompress)(destination);
   AD_CORRECTNESS_CHECK(bytesWritten <= bound);
   return std::string_view{destination.data(), bytesWritten};
 }
