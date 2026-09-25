@@ -21,6 +21,7 @@
 #include <ctime>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -298,14 +299,17 @@ inline uint64_t ticksFromStat(const std::string& stat) {
 // Linux-only: reads `/proc/self/task`, returning early where it is absent.
 // One pass over `/proc/self/task`, recording the io_uring worker population.
 inline void sampleWorkers() {
-  DIR* dir = opendir("/proc/self/task");
+  // RAII handle, so `closedir` also runs if a `std::string` or stream
+  // construction below throws.
+  std::unique_ptr<DIR, decltype(&closedir)> dir{opendir("/proc/self/task"),
+                                                &closedir};
   if (dir == nullptr) {
     return;
   }
   uint64_t threads = 0;
   uint64_t workers = 0;
   uint64_t ticks = 0;
-  while (dirent* entry = readdir(dir)) {
+  while (dirent* entry = readdir(dir.get())) {
     if (entry->d_name[0] == '.') {
       continue;
     }
@@ -323,7 +327,6 @@ inline void sampleWorkers() {
       ticks += ticksFromStat(stat);
     }
   }
-  closedir(dir);
   WorkerSample& sample = workerSample();
   const uint64_t prevThreads =
       sample.maxThreads_.load(std::memory_order_relaxed);
@@ -384,14 +387,21 @@ inline void startReporter() {
     }
     std::thread{[file = std::string{path}]() {
       while (true) {
-        detail::sampleWorkers();
-        // Write to a temporary and rename, so a reader never sees half a line.
-        const std::string tmp = file + ".tmp";
-        {
-          std::ofstream out{tmp, std::ios::trunc};
-          out << report() << '\n';
+        // Never let an exception escape this detached thread: it would call
+        // `std::terminate` and kill the server over diagnostics.
+        try {
+          detail::sampleWorkers();
+          // Write to a temporary and rename, so a reader never sees half a
+          // line.
+          const std::string tmp = file + ".tmp";
+          {
+            std::ofstream out{tmp, std::ios::trunc};
+            out << report() << '\n';
+          }
+          std::rename(tmp.c_str(), file.c_str());
+        } catch (...) {
+          // Diagnostics must not kill the server; retry on the next tick.
         }
-        std::rename(tmp.c_str(), file.c_str());
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
       }
     }}.detach();
