@@ -71,9 +71,159 @@ class StreamingBufferWriter {
   }
 
   // ___________________________________________________________________________
+  // Static Helper: Non-temporal streaming memory copy with trailing memory
+  // fence.
+  static void streamCopy(void* dest, const void* src, size_t count) {
+    streamCopyNoFence(dest, src, count);
+    sfence();
+  }
+
+  // ___________________________________________________________________________
+  // Construct a writer wrapping a caller-provided destination buffer span.
+  explicit StreamingBufferWriter(std::span<char> destinationBuffer)
+      : buffer_{destinationBuffer.data()},
+        capacity_{destinationBuffer.size()},
+        bytesWritten_{0},
+        ownedBuffer_{std::nullopt} {}
+
+  // ___________________________________________________________________________
+  // Construct a writer wrapping a caller-provided memory pointer and capacity.
+  StreamingBufferWriter(char* destination, size_t capacity)
+      : buffer_{destination},
+        capacity_{capacity},
+        bytesWritten_{0},
+        ownedBuffer_{std::nullopt} {
+    AD_CONTRACT_CHECK(destination != nullptr || capacity == 0);
+  }
+
+  // ___________________________________________________________________________
+  // Construct an owning writer with a 64-byte aligned internal buffer.
+  explicit StreamingBufferWriter(size_t initialCapacity)
+      : capacity_{initialCapacity}, bytesWritten_{0} {
+    ownedBuffer_.emplace(initialCapacity);
+    buffer_ = ownedBuffer_->data();
+  }
+
+  // ___________________________________________________________________________
+  // Move constructors and assignment.
+  StreamingBufferWriter(StreamingBufferWriter&& other) noexcept
+      : buffer_{other.buffer_},
+        capacity_{other.capacity_},
+        bytesWritten_{other.bytesWritten_},
+        ownedBuffer_{std::move(other.ownedBuffer_)} {
+    other.buffer_ = nullptr;
+    other.capacity_ = 0;
+    other.bytesWritten_ = 0;
+  }
+
+  StreamingBufferWriter& operator=(StreamingBufferWriter&& other) noexcept {
+    if (this != &other) {
+      buffer_ = other.buffer_;
+      capacity_ = other.capacity_;
+      bytesWritten_ = other.bytesWritten_;
+      ownedBuffer_ = std::move(other.ownedBuffer_);
+
+      other.buffer_ = nullptr;
+      other.capacity_ = 0;
+      other.bytesWritten_ = 0;
+    }
+    return *this;
+  }
+
+  // Disable copy semantics to prevent unintended buffer duplications.
+  StreamingBufferWriter(const StreamingBufferWriter&) = delete;
+  StreamingBufferWriter& operator=(const StreamingBufferWriter&) = delete;
+
+  ~StreamingBufferWriter() = default;
+
+  // ___________________________________________________________________________
+  // Write raw bytes using non-temporal streaming stores. The stores are not
+  // fenced; call `flush()` (or use `writtenSpan()`) before the bytes are read
+  // through `data()` by another thread or device.
+  void write(const void* src, size_t numBytes) {
+    AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
+    // Subtraction form: the naive `bytesWritten_ + numBytes <= capacity_`
+    // can wrap around `size_t` for huge `numBytes` and pass incorrectly.
+    AD_CONTRACT_CHECK(bytesWritten_ <= capacity_);
+    AD_CONTRACT_CHECK(numBytes <= capacity_ - bytesWritten_);
+
+    if (numBytes == 0) {
+      return;
+    }
+
+    streamCopyNoFence(buffer_ + bytesWritten_, src, numBytes);
+    bytesWritten_ += numBytes;
+  }
+
+  // ___________________________________________________________________________
+  // Write string_view data using non-temporal streaming stores. (A
+  // `std::span<const char>` overload was deliberately omitted: it is
+  // ambiguous with this overload for `std::string` and string literals;
+  // span callers can pass `{data.data(), data.size()}`.)
+  void write(std::string_view data) { write(data.data(), data.size()); }
+
+  // ___________________________________________________________________________
+  // Complete the current streaming chunk and drain CPU write-combining buffers.
+  void flush() { sfence(); }
+
+  // ___________________________________________________________________________
+  // Reset write position to the beginning of the existing buffer.
+  void reset() noexcept { bytesWritten_ = 0; }
+
+  // ___________________________________________________________________________
+  // Retarget the writer to a new caller-provided buffer span.
+  void reset(std::span<char> newBuffer) noexcept {
+    ownedBuffer_.reset();
+    buffer_ = newBuffer.data();
+    capacity_ = newBuffer.size();
+    bytesWritten_ = 0;
+  }
+
+  // ___________________________________________________________________________
+  // Accessors
+  [[nodiscard]] size_t bytesWritten() const noexcept { return bytesWritten_; }
+  [[nodiscard]] size_t capacity() const noexcept { return capacity_; }
+  [[nodiscard]] size_t remainingCapacity() const noexcept {
+    return capacity_ - bytesWritten_;
+  }
+  [[nodiscard]] bool empty() const noexcept { return bytesWritten_ == 0; }
+  [[nodiscard]] bool full() const noexcept {
+    return bytesWritten_ == capacity_;
+  }
+  [[nodiscard]] bool isOwner() const noexcept {
+    return ownedBuffer_.has_value();
+  }
+
+  [[nodiscard]] char* currentWritePointer() noexcept {
+    // Avoid pointer arithmetic on a null `buffer_` for zero-capacity writers.
+    return bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_;
+  }
+  [[nodiscard]] const char* currentWritePointer() const noexcept {
+    return bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_;
+  }
+  [[nodiscard]] char* data() noexcept { return buffer_; }
+  [[nodiscard]] const char* data() const noexcept { return buffer_; }
+
+  // Fences before returning, so the written bytes are visible to whoever the
+  // span is handed to (another thread, `writev`, or a DMA engine).
+  [[nodiscard]] std::span<const char> writtenSpan() const noexcept {
+    sfence();
+    return {buffer_, bytesWritten_};
+  }
+  [[nodiscard]] std::span<char> remainingSpan() noexcept {
+    // Avoid pointer arithmetic on a null `buffer_` for zero-capacity writers.
+    return {bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_,
+            capacity_ - bytesWritten_};
+  }
+
+ private:
+  // ___________________________________________________________________________
   // Static Helper: Non-temporal streaming memory copy without trailing fence.
   // Copies `count` bytes from `src` to `dest` using 64-byte non-temporal stores
   // on aligned blocks, with standard cache-friendly head and tail handling.
+  // Private because the stores are only guaranteed to be visible to other
+  // threads or devices after `sfence()`; `streamCopy`, `flush` and
+  // `writtenSpan` provide that fence.
   static void streamCopyNoFence(void* dest, const void* src, size_t count) {
     AD_CONTRACT_CHECK(dest != nullptr || count == 0);
     AD_CONTRACT_CHECK(src != nullptr || count == 0);
@@ -142,147 +292,6 @@ class StreamingBufferWriter {
     // Fallback for non-x86 architectures.
     std::memcpy(destPtr, srcPtr, count);
 #endif
-  }
-
-  // ___________________________________________________________________________
-  // Static Helper: Non-temporal streaming memory copy with trailing memory
-  // fence.
-  static void streamCopy(void* dest, const void* src, size_t count) {
-    streamCopyNoFence(dest, src, count);
-    sfence();
-  }
-
-  // ___________________________________________________________________________
-  // Construct a writer wrapping a caller-provided destination buffer span.
-  explicit StreamingBufferWriter(std::span<char> destinationBuffer)
-      : buffer_{destinationBuffer.data()},
-        capacity_{destinationBuffer.size()},
-        bytesWritten_{0},
-        ownedBuffer_{std::nullopt} {}
-
-  // ___________________________________________________________________________
-  // Construct a writer wrapping a caller-provided memory pointer and capacity.
-  StreamingBufferWriter(char* destination, size_t capacity)
-      : buffer_{destination},
-        capacity_{capacity},
-        bytesWritten_{0},
-        ownedBuffer_{std::nullopt} {
-    AD_CONTRACT_CHECK(destination != nullptr || capacity == 0);
-  }
-
-  // ___________________________________________________________________________
-  // Construct an owning writer with a 64-byte aligned internal buffer.
-  explicit StreamingBufferWriter(size_t initialCapacity)
-      : capacity_{initialCapacity}, bytesWritten_{0} {
-    ownedBuffer_.emplace(initialCapacity);
-    buffer_ = ownedBuffer_->data();
-  }
-
-  // ___________________________________________________________________________
-  // Move constructors and assignment.
-  StreamingBufferWriter(StreamingBufferWriter&& other) noexcept
-      : buffer_{other.buffer_},
-        capacity_{other.capacity_},
-        bytesWritten_{other.bytesWritten_},
-        ownedBuffer_{std::move(other.ownedBuffer_)} {
-    other.buffer_ = nullptr;
-    other.capacity_ = 0;
-    other.bytesWritten_ = 0;
-  }
-
-  StreamingBufferWriter& operator=(StreamingBufferWriter&& other) noexcept {
-    if (this != &other) {
-      buffer_ = other.buffer_;
-      capacity_ = other.capacity_;
-      bytesWritten_ = other.bytesWritten_;
-      ownedBuffer_ = std::move(other.ownedBuffer_);
-
-      other.buffer_ = nullptr;
-      other.capacity_ = 0;
-      other.bytesWritten_ = 0;
-    }
-    return *this;
-  }
-
-  // Disable copy semantics to prevent unintended buffer duplications.
-  StreamingBufferWriter(const StreamingBufferWriter&) = delete;
-  StreamingBufferWriter& operator=(const StreamingBufferWriter&) = delete;
-
-  ~StreamingBufferWriter() = default;
-
-  // ___________________________________________________________________________
-  // Write raw bytes using non-temporal streaming stores.
-  void write(const void* src, size_t numBytes) {
-    AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
-    // Subtraction form: the naive `bytesWritten_ + numBytes <= capacity_`
-    // can wrap around `size_t` for huge `numBytes` and pass incorrectly.
-    AD_CONTRACT_CHECK(bytesWritten_ <= capacity_);
-    AD_CONTRACT_CHECK(numBytes <= capacity_ - bytesWritten_);
-
-    if (numBytes == 0) {
-      return;
-    }
-
-    streamCopyNoFence(buffer_ + bytesWritten_, src, numBytes);
-    bytesWritten_ += numBytes;
-  }
-
-  // ___________________________________________________________________________
-  // Write string_view data using non-temporal streaming stores. (A
-  // `std::span<const char>` overload was deliberately omitted: it is
-  // ambiguous with this overload for `std::string` and string literals;
-  // span callers can pass `{data.data(), data.size()}`.)
-  void write(std::string_view data) { write(data.data(), data.size()); }
-
-  // ___________________________________________________________________________
-  // Complete the current streaming chunk and drain CPU write-combining buffers.
-  void flush() { sfence(); }
-
-  // ___________________________________________________________________________
-  // Reset write position to the beginning of the existing buffer.
-  void reset() noexcept { bytesWritten_ = 0; }
-
-  // ___________________________________________________________________________
-  // Retarget the writer to a new caller-provided buffer span.
-  void reset(std::span<char> newBuffer) noexcept {
-    ownedBuffer_.reset();
-    buffer_ = newBuffer.data();
-    capacity_ = newBuffer.size();
-    bytesWritten_ = 0;
-  }
-
-  // ___________________________________________________________________________
-  // Accessors
-  [[nodiscard]] size_t bytesWritten() const noexcept { return bytesWritten_; }
-  [[nodiscard]] size_t capacity() const noexcept { return capacity_; }
-  [[nodiscard]] size_t remainingCapacity() const noexcept {
-    return capacity_ - bytesWritten_;
-  }
-  [[nodiscard]] bool empty() const noexcept { return bytesWritten_ == 0; }
-  [[nodiscard]] bool full() const noexcept {
-    return bytesWritten_ == capacity_;
-  }
-  [[nodiscard]] bool isOwner() const noexcept {
-    return ownedBuffer_.has_value();
-  }
-
-  [[nodiscard]] char* currentWritePointer() noexcept {
-    // Avoid pointer arithmetic on a null `buffer_` for zero-capacity writers.
-    return bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_;
-  }
-  [[nodiscard]] const char* currentWritePointer() const noexcept {
-    return bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_;
-  }
-  [[nodiscard]] char* data() noexcept { return buffer_; }
-  [[nodiscard]] const char* data() const noexcept { return buffer_; }
-
-  [[nodiscard]] std::span<const char> writtenSpan() const noexcept {
-    return {buffer_, bytesWritten_};
-  }
-  [[nodiscard]] std::span<char> remainingSpan() noexcept {
-    // Avoid pointer arithmetic on a null `buffer_` for zero-capacity writers.
-    return {bytesWritten_ == 0 ? buffer_ : buffer_ + bytesWritten_,
-            capacity_ - bytesWritten_};
   }
 };
 

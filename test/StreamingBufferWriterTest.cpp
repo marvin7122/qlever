@@ -145,3 +145,15 @@ TEST(StreamingBufferWriterTest, MoveSemantics) {
   EXPECT_EQ(writer1.capacity(), 0);
   EXPECT_EQ(writer1.bytesWritten(), 0);
 }
+
+// _____________________________________________________________________________
+// `writtenSpan()` is the fenced view of the bytes written so far.
+TEST(StreamingBufferWriterTest, WrittenSpanCoversAllWrites) {
+  std::vector<char> buffer(256);
+  StreamingBufferWriter writer(std::span<char>{buffer.data(), buffer.size()});
+  const std::string payload(200, 'q');
+  writer.write(payload);
+  writer.write(std::string_view{"tail"});
+  auto span = writer.writtenSpan();
+  EXPECT_EQ(std::string_view(span.data(), span.size()), payload + "tail");
+}
