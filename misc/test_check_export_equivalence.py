@@ -9,8 +9,10 @@ Run with:  python3 -m unittest misc.test_check_export_equivalence
 or:        python3 misc/test_check_export_equivalence.py
 """
 import os
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 try:
     from misc.check_export_equivalence import main
@@ -89,8 +91,8 @@ ex:b ex:q "different" .
 
     def test_tsv_multi_bnode_row_swap(self):
         # First-use labels plus a positional Counter would fail here.
-        a = _write(self._tmp.name, "a.tsv", "?s\t?o\n_:x\tfoo\n_:y\tbar\n")
-        b = _write(self._tmp.name, "b.tsv", "?s\t?o\n_:a\tbar\n_:b\tfoo\n")
+        a = _write(self._tmp.name, "a.tsv", "?s\t?o\n_:x\t\"foo\"\n_:y\t\"bar\"\n")
+        b = _write(self._tmp.name, "b.tsv", "?s\t?o\n_:a\t\"bar\"\n_:b\t\"foo\"\n")
         self.assertEqual(main(["--format", "tsv", a, b]), 0)
 
     def test_tsv_column_reorder(self):
@@ -111,7 +113,81 @@ ex:b ex:q "different" .
                    "<http://ex/s> <http://ex/p> <http://ex/o> .\n")
         self.assertEqual(main(["--format", "turtle", a, b]), 0)
 
+    # --- SELECT term types and multiset cardinality ---
+    def test_tsv_integer_differs_from_plain_literal(self):
+        a = _write(self._tmp.name, "a.tsv", "?x\n1\n")
+        b = _write(self._tmp.name, "b.tsv", "?x\n\"1\"\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 1)
+
+    def test_tsv_literal_containing_scheme_is_not_an_iri(self):
+        a = _write(self._tmp.name, "a.tsv", "?x\n\"a://b\"\n")
+        b = _write(self._tmp.name, "b.tsv", "?x\n<a://b>\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 1)
+
+    def test_tsv_cell_with_several_triples_is_rejected(self):
+        a = _write(self._tmp.name, "a.tsv",
+                   "?x\n\"a\" . <urn:x> <urn:y> <urn:z>\n")
+        b = _write(self._tmp.name, "b.tsv", "?x\n\"a\"\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 2)
+
+    def test_tsv_bare_word_is_rejected(self):
+        a = _write(self._tmp.name, "a.tsv", "?x\nfoo\n")
+        self.assertEqual(main(["--format", "tsv", a, a]), 2)
+
+    def test_all_unbound_solutions_keep_cardinality(self):
+        a = _write(self._tmp.name, "a.tsv", "?x\n\n")
+        b = _write(self._tmp.name, "b.tsv", "?x\n\n\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 1)
+        self.assertEqual(main(["--format", "tsv", a, a]), 0)
+        c = _write(self._tmp.name, "c.csv", "x\n\n")
+        d = _write(self._tmp.name, "d.csv", "x\n\n\n")
+        self.assertEqual(main(["--format", "csv", c, d]), 1)
+
+    def test_csv_compares_lexical_forms(self):
+        a = _write(self._tmp.name, "a.csv", "x,y\nhttp://ex/a,1\n")
+        b = _write(self._tmp.name, "b.csv", "y,x\n1,http://ex/a\n")
+        c = _write(self._tmp.name, "c.csv", "x,y\nhttp://ex/a,2\n")
+        self.assertEqual(main(["--format", "csv", a, b]), 0)
+        self.assertEqual(main(["--format", "csv", a, c]), 1)
+
+    # --- Header handling ---
+    def test_dollar_and_question_mark_variables_match(self):
+        a = _write(self._tmp.name, "a.tsv", "?x\n<a>\n")
+        b = _write(self._tmp.name, "b.tsv", "$x\n<a>\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 0)
+
+    def test_header_whitespace_and_bom_are_ignored(self):
+        a = _write(self._tmp.name, "a.csv", "\ufeff?s, ?o\n<a>,<b>\n")
+        b = _write(self._tmp.name, "b.csv", "?s,?o\n<a>,<b>\n")
+        self.assertEqual(main(["--format", "csv", a, b]), 0)
+
+    def test_crlf_tsv_matches_lf_tsv(self):
+        a = _write(self._tmp.name, "a.tsv", "?s\t?o\r\n<a>\t<b>\r\n")
+        b = _write(self._tmp.name, "b.tsv", "?s\t?o\n<a>\t<b>\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 0)
+
+    def test_duplicate_header_variable_is_rejected(self):
+        a = _write(self._tmp.name, "a.csv", "?x,?x\n<a>,<a>\n")
+        b = _write(self._tmp.name, "b.csv", "?x\n<a>\n")
+        self.assertEqual(main(["--format", "csv", a, b]), 2)
+
+    def test_empty_header_is_rejected(self):
+        a = _write(self._tmp.name, "a.tsv", "\n")
+        b = _write(self._tmp.name, "b.tsv", "?x\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 2)
+
     # --- Error handling ---
+    def test_non_utf8_input_is_a_read_error(self):
+        path = os.path.join(self._tmp.name, "a.tsv")
+        with open(path, "wb") as fh:
+            fh.write(b"?x\n\"\xff\"\n")
+        self.assertEqual(main(["--format", "tsv", path, path]), 2)
+
+    def test_missing_rdflib_is_a_usage_error(self):
+        a = _write(self._tmp.name, "a.tsv", "?x\n<a>\n")
+        with mock.patch.dict(sys.modules, {"rdflib": None}):
+            self.assertEqual(main(["--format", "tsv", a, a]), 2)
+
     def test_unknown_format(self):
         self.assertEqual(main(["--format", "xml", "a", "b"]), 2)
 
