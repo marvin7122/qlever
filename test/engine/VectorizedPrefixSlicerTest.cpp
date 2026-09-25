@@ -38,10 +38,27 @@ TEST(VectorizedPrefixSlicerTest, AllPrefixesRoundTrip) {
   const auto& table = VectorizedPrefixTable::instance();
   for (const auto& [id, expected] : cases) {
     std::array<char, 48> buffer{};
-    size_t written = table.writePrefixFast(id, buffer.data());
+    size_t written = table.writePrefixFast(id, buffer);
     EXPECT_EQ(written, expected.size());
     EXPECT_EQ(std::string_view(buffer.data(), written), expected);
   }
+}
+
+// A buffer sized for the valid length only (not the rounded-up store size)
+// is rejected instead of being overwritten, and so is an out-of-range id.
+TEST(VectorizedPrefixSlicerTest, TooSmallBufferAndInvalidIdThrow) {
+  const auto& table = VectorizedPrefixTable::instance();
+  // "http://schema.org/" has 18 bytes, the stores cover 32.
+  std::array<char, 18> exact{};
+  EXPECT_ANY_THROW(static_cast<void>(
+      table.writePrefixFast(WellKnownPrefixId::SchemaOrg, exact)));
+  std::array<char, 32> rounded{};
+  EXPECT_EQ(table.writePrefixFast(WellKnownPrefixId::SchemaOrg, rounded), 18u);
+  EXPECT_ANY_THROW(static_cast<void>(
+      table.writePrefixFast(WellKnownPrefixId::Count, rounded)));
+  static_assert(VectorizedPrefixTable::storeSize(18) == 32);
+  static_assert(VectorizedPrefixTable::storeSize(32) == 32);
+  static_assert(VectorizedPrefixTable::storeSize(33) == 48);
 }
 
 }  // namespace
