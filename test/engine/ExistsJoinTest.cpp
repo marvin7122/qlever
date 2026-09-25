@@ -1034,3 +1034,69 @@ TEST(ExistsJoin, hashSetExistsJoinSingleColumn) {
     }
   }
 }
+
+// _____________________________________________________________________________
+TEST(ExistsJoin, hashSetExistsJoinSkipsSortOnTheRight) {
+  // Single join column, unsorted right input: the `ExistsJoin` puts a `Sort`
+  // on the right, which the hash-set EXISTS join skips. The left input is
+  // larger than the right one, so the index nested loop joins do not apply.
+  // UNDEF matches every value on the other side.
+  auto* const qec = getQec();
+  using V = Variable;
+  const auto alloc = ad_utility::testing::makeAllocator();
+  struct TestCase {
+    VectorTable leftInput;
+    VectorTable rightInput;
+    std::vector<bool> expectedAsBool;
+  };
+  const std::vector<TestCase> cases{
+      // Unsorted right keys {5,3}; left keys {3,4,5}.
+      {{{3, 6}, {4, 7}, {5, 8}}, {{5, 37}, {3, 15}}, {true, false, true}},
+      // Right side empty -> every EXISTS is false, also for UNDEF on the left.
+      {{{U, 6}, {3, 6}, {4, 7}}, {}, {false, false, false}},
+      // UNDEF on the left matches a non-empty right side.
+      {{{U, 6}, {3, 7}, {4, 8}}, {{4, 15}}, {true, false, true}},
+      // UNDEF on the right matches every left row.
+      {{{3, 6}, {4, 7}, {5, 8}}, {{9, 15}, {U, 19}}, {true, true, true}},
+      // Duplicates on both sides.
+      {{{3, 6}, {3, 7}, {4, 8}}, {{3, 19}, {3, 15}}, {true, true, false}},
+  };
+
+  for (bool requestLaziness : {false, true}) {
+    for (const auto& [leftInput, rightInput, expectedAsBool] : cases) {
+      qec->getQueryTreeCache().clearAll();
+      const IdTable left = makeIdTableFromVector(leftInput);
+      const IdTable right = rightInput.empty()
+                                ? IdTable{2, alloc}
+                                : makeIdTableFromVector(rightInput);
+      ExistsJoin exists{qec,
+                        ad_utility::makeExecutionTree<ValuesForTesting>(
+                            qec, left.clone(),
+                            std::vector<std::optional<Variable>>{V{"?joinCol"},
+                                                                 V{"?leftCol"}},
+                            false, std::vector<ColumnIndex>{0}),
+                        ad_utility::makeExecutionTree<ValuesForTesting>(
+                            qec, right.clone(),
+                            std::vector<std::optional<Variable>>{
+                                V{"?joinCol"}, V{"?rightCol"}}),
+                        V{"?exists"}};
+      auto res = exists.computeResultOnlyForTesting(requestLaziness);
+      IdTable table{3, alloc};
+      if (res.isFullyMaterialized()) {
+        table = res.idTableView().clone();
+      } else {
+        for (auto& [idTable, localVocab] : res.idTables()) {
+          table.insertAtEnd(idTable);
+        }
+      }
+      IdTable expected = left.clone();
+      expected.addEmptyColumn();
+      ql::ranges::transform(expectedAsBool, expected.getColumn(2).begin(),
+                            &Id::makeFromBool);
+      EXPECT_THAT(table, matchesIdTable(expected));
+      EXPECT_EQ(
+          exists.getChildren().at(1)->getRootOperation()->runtimeInfo().status_,
+          RuntimeInformation::Status::optimizedOut);
+    }
+  }
+}
