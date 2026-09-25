@@ -63,9 +63,10 @@ class PrefixCompressor {
   // expands to, or empty when `code` is not a known prefix code (the byte is
   // then dropped, mirroring `decompress`).
   std::string_view prefixForCode(char code) const {
-    auto idx = static_cast<uint8_t>(code) - MIN_COMPRESSION_PREFIX;
-    if (idx >= 0 && idx < NUM_COMPRESSION_PREFIXES) {
-      return prefixToCode_[idx];
+    const auto byte = static_cast<uint8_t>(code);
+    if (byte >= MIN_COMPRESSION_PREFIX &&
+        byte - MIN_COMPRESSION_PREFIX < NUM_COMPRESSION_PREFIXES) {
+      return prefixToCode_[byte - MIN_COMPRESSION_PREFIX];
     }
     return {};
   }
