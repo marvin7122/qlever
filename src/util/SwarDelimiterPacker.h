@@ -72,7 +72,7 @@ struct PackedDelimiter {
 
   constexpr PackedDelimiter() noexcept = default;
 
-  constexpr PackedDelimiter(uint64_t pattern, uint8_t len) noexcept
+  constexpr PackedDelimiter(uint64_t pattern, uint8_t len)
       : pattern_(pattern), len_(len) {
     // The length invariant is load-bearing: `toString` shifts by `len_ * 8`,
     // which is undefined for `len_ > 8`.
