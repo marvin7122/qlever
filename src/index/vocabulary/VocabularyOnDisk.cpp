@@ -250,7 +250,8 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
   }};
   // Wait for the offset reads submitted by `beginLookup`, then read the string
   // data (Phase 2) and return it.
-  manager_->wait(offsetBatch_);
+  AD_CORRECTNESS_CHECK(offsetBatch_.has_value());
+  manager_->wait(offsetBatch_.value());
   return vocab_->readStrings(*manager_, offsetPairs_);
 }
 
@@ -264,7 +265,9 @@ VocabularyOnDisk::LookupHandle::~LookupHandle() {
   if (manager_) {
     ad_utility::terminateIfThrows(
         [this]() {
-          manager_->wait(offsetBatch_);
+          if (offsetBatch_.has_value()) {
+            manager_->wait(offsetBatch_.value());
+          }
           returnManagerToPool();
         },
         "draining in-flight offset reads and returning the `IoManager` in "

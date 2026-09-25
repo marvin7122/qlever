@@ -12,6 +12,7 @@
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -212,8 +213,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // The requested indices, owned so the offset reads can be completed after
     // the caller's span has gone out of scope.
     std::vector<size_t> indices_;
-    // The batched offset read submitted by `beginLookup`.
-    ad_utility::BatchManagerBase::BatchHandle offsetBatch_ = 0;
+    // The batched offset read submitted by `beginLookup`. Empty until the
+    // batch was actually submitted, so a handle whose `beginLookup` threw
+    // before the submission never waits on a batch it does not own.
+    std::optional<ad_utility::BatchManagerBase::BatchHandle> offsetBatch_;
     // The target buffers of the submitted offset read.
     std::vector<OffsetPair> offsetPairs_;
 
