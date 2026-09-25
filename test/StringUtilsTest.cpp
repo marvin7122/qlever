@@ -1,6 +1,13 @@
-// Copyright 2011, University of Freiburg, Chair of Algorithms and Data
-// Structures.
-// Author: Björn Buchhold (buchhold@informatik.uni-freiburg.de)
+// Copyright 2011 - 2026, The QLever Authors, in particular:
+//
+// 2011        Björn Buchhold <buchhold@informatik.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
+
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
@@ -15,6 +22,7 @@
 
 #include "../test/util/GTestHelpers.h"
 #include "backports/functional.h"
+#include "backports/string.h"
 #include "global/Constants.h"
 #include "util/ConstexprUtils.h"
 #include "util/Forward.h"
@@ -571,4 +579,43 @@ TEST(StringUtils, commonPrefix) {
   EXPECT_EQ(ad_utility::commonPrefix("a", "ab"), "a");
   EXPECT_EQ(ad_utility::commonPrefix("ab", "b"), "");
   EXPECT_EQ(ad_utility::commonPrefix("b", "ab"), "");
+}
+
+// _____________________________________________________________________________
+// `ql::resize_and_overwrite` hands `op` a buffer of `count` characters and
+// resizes the string to the size that `op` returns, also for `count == 0`.
+TEST(StringUtilsTest, resizeAndOverwrite) {
+  std::string str = "old";
+  ql::resize_and_overwrite(str, 5, [](char* buf, size_t count) {
+    EXPECT_EQ(count, 5u);
+    buf[0] = 'a';
+    buf[1] = 'b';
+    return size_t{2};
+  });
+  EXPECT_EQ(str, "ab");
+
+  bool called = false;
+  ql::resize_and_overwrite(str, 0, [&called](char*, size_t count) {
+    called = true;
+    EXPECT_EQ(count, 0u);
+    return size_t{0};
+  });
+  EXPECT_TRUE(called);
+  EXPECT_EQ(str, "");
+}
+
+// _____________________________________________________________________________
+// `decodeToOwnedString` decodes into a buffer of `bound` characters and keeps
+// only the decoded prefix.
+TEST(StringUtilsTest, decodeToOwnedString) {
+  auto decodeHello = [](ql::span<char> out) {
+    EXPECT_EQ(out.size(), 8u);
+    std::string_view hello = "hello";
+    ql::ranges::copy(hello, out.begin());
+    return hello.size();
+  };
+  EXPECT_EQ(ad_utility::decodeToOwnedString(8, decodeHello), "hello");
+  EXPECT_EQ(ad_utility::decodeToOwnedString(
+                0, [](ql::span<char>) -> size_t { return 0; }),
+            "");
 }
