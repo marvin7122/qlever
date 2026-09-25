@@ -674,14 +674,18 @@ class ExportWorkSession {
       std::shared_ptr<ExportJobState<ResultType>> state) noexcept
       : state_{std::move(state)} {}
 
-  ~ExportWorkSession() {
-    if (state_ && !state_->isCancelled()) {
-      state_->close();
-    }
-  }
+  ~ExportWorkSession() { closeHeldSession(); }
 
   ExportWorkSession(ExportWorkSession&&) noexcept = default;
-  ExportWorkSession& operator=(ExportWorkSession&&) noexcept = default;
+  // Assigning over a session ends it exactly like destruction would, so the
+  // replaced job state never stays open without a handle.
+  ExportWorkSession& operator=(ExportWorkSession&& other) noexcept {
+    if (this != &other) {
+      closeHeldSession();
+      state_ = std::move(other.state_);
+    }
+    return *this;
+  }
 
   ExportWorkSession(const ExportWorkSession&) = delete;
   ExportWorkSession& operator=(const ExportWorkSession&) = delete;
@@ -755,6 +759,14 @@ class ExportWorkSession {
 
  private:
   std::shared_ptr<ExportJobState<ResultType>> state_;
+
+  // Close the held job state unless it was cancelled (cancellation already
+  // closed it).
+  void closeHeldSession() {
+    if (state_ && !state_->isCancelled()) {
+      state_->close();
+    }
+  }
 };
 
 // -----------------------------------------------------------------------------

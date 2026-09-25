@@ -295,6 +295,13 @@ TEST(ElasticExportSchedulerTest, MoveSemanticsAndRAII) {
   auto movedSession = std::move(session);
   EXPECT_EQ(movedSession.consumeNextResult(), "moved");
 
+  // Move assignment closes the session it replaces.
+  auto replacement = scheduler->createSession<std::string>();
+  auto replacedState = movedSession.stateHandle();
+  movedSession = std::move(replacement);
+  EXPECT_EQ(replacedState->state(), SessionState::Closed);
+  EXPECT_NE(movedSession.state(), SessionState::Closed);
+
   scheduler->onForegroundQueryEnded();
 }
 
