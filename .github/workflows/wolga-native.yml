@@ -52,6 +52,7 @@ jobs:
             toolchain: gcc13
             build-type: Release
             extra-flags: ""
+            skip-if-pr: true  # Fork PR profile 2026-09-25: clang21 + gcc11 cover the compiler spread.
           - image: clang21
             toolchain: clang21
             build-type: Release
@@ -65,7 +66,9 @@ jobs:
           - image: clang16
             toolchain: clang16
             build-type: RelWithDebInfo
-            extra-flags: "-fsanitize=address -fno-omit-frame-pointer"
+            # Fork PR profile 2026-09-25: ASan and UBSan combined in one leg.
+            extra-flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
+            needs-seccomp: true
             # LeakSanitizer fatals at process startup under rootless podman
             # (restricted syscalls), which aborts gtest test discovery, so
             # leak detection stays off on this leg. Plain ASan is unaffected.
@@ -77,6 +80,7 @@ jobs:
             build-type: RelWithDebInfo
             extra-flags: "-fsanitize=undefined"
             needs-seccomp: true
+            skip-if-pr: true  # Fork PR profile 2026-09-25: covered by the combined ASan+UBSan leg.
           - image: gcc11
             toolchain: gcc11
             build-type: Release
