@@ -13,8 +13,8 @@
 #include <gmock/gmock.h>
 #include <unistd.h>
 
-#include <cassert>
 #include <cstdlib>
+#include <stdexcept>
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
@@ -346,13 +346,17 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
 // never observe a leaked `QLEVER_NVME_PASSTHROUGH`.
 class EnvVarGuard {
  public:
-  EnvVarGuard(const char* name, [[maybe_unused]] const char* value) : name_{name} {
+  EnvVarGuard(const char* name, const char* value) : name_{name} {
     const char* old = ::getenv(name);
     if (old != nullptr) {
       old_ = old;
     }
-    // No GTest assertion here: assertions return from a constructor.
-    assert(::setenv(name, value, 1) == 0);
+    // Set the variable unconditionally (`assert` would compile the call out
+    // under `NDEBUG`) and throw on failure: a GTest assertion would only
+    // return from the constructor.
+    if (::setenv(name, value, 1) != 0) {
+      throw std::runtime_error{"setenv failed in EnvVarGuard"};
+    }
   }
   ~EnvVarGuard() {
     if (old_.has_value()) {
@@ -382,6 +386,51 @@ TEST(VocabularyOnDisk, AccessOperatorWithCoalescingEnabledMatchesWords) {
   }
 }
 
+// The same with batch lookups: the whole-block runs end at the end of the
+// regular words file instead of asking for the rest of its final block, so a
+// word in the last partial block still reads back exactly.
+TEST(VocabularyOnDisk, LookupBatchWithCoalescingEnabledMatchesWords) {
+  EnvVarGuard guard{"QLEVER_NVME_PASSTHROUGH", "1:512"};
+  std::vector<std::string> words{"a", std::string(700, 'x'), "bc", "", "tail"};
+  auto vocab = createVocabularyFromWords(words);
+  std::array<size_t, 6> indices{4, 0, 1, 3, 2, 4};
+  auto result = vocab->lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
+                                                                indices);
+  ASSERT_EQ(result->size(), indices.size());
+  for (const auto& [word, idx] : ::ranges::views::zip(*result, indices)) {
+    EXPECT_EQ(word, words[idx]) << "at index " << idx;
+  }
+}
+
+// Malformed passthrough settings fail fast in `open` instead of silently
+// taking the plain path: trailing characters, a missing separator, a zero
+// namespace id, a block size other than 512, a negative or overflowing gap.
+TEST(VocabularyOnDisk, OpenRejectsMalformedPassthroughSettings) {
+  std::string filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  VocabularyCreator creator{filename};
+  creator.createVocabulary({"alpha", "beta"});
+  auto expectOpenThrows = [&filename](const char* name, const char* value) {
+    EnvVarGuard guard{name, value};
+    VocabularyOnDisk vocabulary;
+    EXPECT_THROW(vocabulary.open(filename), ad_utility::Exception)
+        << name << "=" << value;
+  };
+  for (const char* value : {"1:512x", "1:512:99", "1", "0:512", "1:4096", "1:0",
+                            ":512", "-1:512", "1:"}) {
+    expectOpenThrows("QLEVER_NVME_PASSTHROUGH", value);
+  }
+  for (const char* value : {"-1", "", "12abc", "99999999999999999999999999"}) {
+    expectOpenThrows("QLEVER_NVME_MAX_GAP_BLOCKS", value);
+  }
+  // Well-formed values open normally.
+  EnvVarGuard passthrough{"QLEVER_NVME_PASSTHROUGH", "1:512"};
+  EnvVarGuard gap{"QLEVER_NVME_MAX_GAP_BLOCKS", "0"};
+  VocabularyOnDisk vocabulary;
+  vocabulary.open(filename);
+  EXPECT_EQ(vocabulary[1], "beta");
+}
+
 // A truncated words file must fail loudly: `operator[]` used to ignore the
 // short read and return zero-filled memory, which silently emptied whole
 // query plans on devices where `pread` cannot serve the read at all.
@@ -395,4 +444,19 @@ TEST(VocabularyOnDisk, AccessOperatorOnTruncatedWordsFileThrows) {
   VocabularyOnDisk vocabulary;
   vocabulary.open(filename);
   EXPECT_THROW(vocabulary[0], ad_utility::Exception);
+}
+
+// The same with coalescing enabled: the whole-block plan must not slice
+// bytes past the end of the truncated regular file.
+TEST(VocabularyOnDisk, AccessOperatorOnTruncatedWordsFileThrowsWithCoalescing) {
+  EnvVarGuard guard{"QLEVER_NVME_PASSTHROUGH", "1:512"};
+  std::string filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  VocabularyCreator creator{filename};
+  creator.createVocabulary({"alpha", "beta", "gamma"});
+  ASSERT_EQ(::truncate(filename.c_str(), 3), 0);
+  VocabularyOnDisk vocabulary;
+  vocabulary.open(filename);
+  EXPECT_THROW(vocabulary[0], ad_utility::Exception);
+  std::array<size_t, 1> indices{0};
+  EXPECT_THROW(vocabulary.lookupBatch(indices), ad_utility::Exception);
 }

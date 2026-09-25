@@ -28,11 +28,18 @@
 // The NVMe command layout for `IORING_OP_URING_CMD` comes from the kernel
 // headers. When they are unavailable, only the translation and probing helpers
 // below are compiled; SQE preparation is compiled out (see
-// `kUringCmdSupported`), so every read keeps the plain path.
+// `kUringCmdSupported`), so every read keeps the plain path. The header alone
+// is not enough: older kernel headers ship `linux/nvme_ioctl.h` without the
+// `uring_cmd` interface, and older liburing versions lack the 128-byte SQE and
+// 32-byte CQE ring flags that the NVMe driver requires, so the feature macro
+// also requires those symbols.
 #if defined(__has_include)
 #if __has_include(<linux/nvme_ioctl.h>)
 #include <linux/nvme_ioctl.h>
+#if defined(NVME_URING_CMD_IO) && defined(IORING_SETUP_SQE128) && \
+    defined(IORING_SETUP_CQE32)
 #define QLEVER_HAS_NVME_URING_CMD 1
+#endif
 #endif
 #endif
 #endif
@@ -81,8 +88,9 @@ struct ReadParams {
   uint32_t transferBytes;
 };
 
-// Maximum block count of a single NVMe read: CDW12 carries the 0-based count
-// in its low 16 bits.
+// Maximum number of blocks of a single NVMe read (2^16): CDW12 carries the
+// 0-based count in its low 16 bits, so its largest value 0xFFFF means 2^16
+// blocks.
 inline constexpr uint64_t kMaxBlocksPerRead = 0x10000;
 
 // Translate (`fileOffset`, `numBytes`) into NVMe addressing for a namespace
@@ -96,7 +104,7 @@ inline constexpr uint64_t kMaxBlocksPerRead = 0x10000;
 // plain block-layer read path, so the bytes read stay identical.
 inline std::optional<ReadParams> translateToReadParams(
     uint64_t fileOffset, size_t numBytes, uint32_t namespaceId,
-    uint32_t logicalBlockSize, uint64_t lbaBase = 0) {
+    uint32_t logicalBlockSize, uint64_t lbaBase = 0) noexcept {
   if (namespaceId == 0 || logicalBlockSize == 0 || numBytes == 0) {
     return std::nullopt;
   }
@@ -122,8 +130,10 @@ inline std::optional<ReadParams> translateToReadParams(
 // Coalescing granularity for `planBlockReads`: 512-byte blocks divide every
 // standard NVMe namespace block size, so ranges built from whole 512-byte
 // blocks satisfy `translateToReadParams` on 512-byte namespaces (verified on
-// Toshiba KXG60 hardware with 512-byte blocks). A namespace with larger
-// blocks needs its own granularity here.
+// Toshiba KXG60 hardware with 512-byte blocks). Runs built from 512-byte
+// blocks are in general not aligned to larger logical blocks, so the
+// coalesced path only supports 512-byte namespaces (`VocabularyOnDisk::open`
+// rejects any other block size).
 inline constexpr uint64_t kCoalesceBlockSize = 512;
 
 // Maximum gap of uncovered blocks that `planBlockReads` swallows inside a
@@ -164,9 +174,14 @@ struct BlockReadPlan {
 // Runs stop before exceeding `kCoalesceMaxRunBlocks`, so staging stays
 // bounded and every run translates to a single NVMe command. The default
 // gap of zero keeps the exact-contiguity behavior for single-word plans.
-inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
-                                    const std::vector<size_t>& sizes,
-                                    uint64_t maxGapBlocks = 0) {
+// When `fileSize` is set (a regular file, whose reads stop at the end of the
+// file), the last run is shortened to end there, so it does not ask for the
+// bytes of a final partial block that the file does not have. Every word
+// must then end at or before `fileSize` (checked).
+inline BlockReadPlan planBlockReads(
+    const std::vector<uint64_t>& fileOffsets, const std::vector<size_t>& sizes,
+    uint64_t maxGapBlocks = 0,
+    std::optional<uint64_t> fileSize = std::nullopt) {
   AD_CONTRACT_CHECK(fileOffsets.size() == sizes.size());
   BlockReadPlan plan;
   std::vector<uint64_t> firstBlocks(sizes.size());
@@ -182,6 +197,10 @@ inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
     }
     AD_CONTRACT_CHECK(fileOffsets[i] <=
                       std::numeric_limits<uint64_t>::max() - sizes[i]);
+    // A word past the end of a regular file would slice unread staging
+    // bytes, so it must fail here instead of returning wrong bytes.
+    AD_CONTRACT_CHECK(!fileSize.has_value() ||
+                      fileOffsets[i] + sizes[i] <= fileSize.value());
     const uint64_t first = fileOffsets[i] / kCoalesceBlockSize;
     const uint64_t last = (fileOffsets[i] + sizes[i] - 1) / kCoalesceBlockSize;
     firstBlocks[i] = first;
@@ -220,6 +239,15 @@ inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
     i = j + 1;
   }
   plan.stagingBytes = stagingBytes;
+  // Runs are sorted and every word ends at or before `fileSize`, so only the
+  // last run can extend past the end of the file.
+  if (fileSize.has_value() && !plan.runs.empty()) {
+    auto& lastRun = plan.runs.back();
+    AD_CORRECTNESS_CHECK(lastRun.fileOffset < fileSize.value());
+    lastRun.numBytes =
+        std::min(lastRun.numBytes,
+                 static_cast<size_t>(fileSize.value() - lastRun.fileOffset));
+  }
   // Exactly one slice per input word, in input order.
   plan.slices.reserve(sizes.size());
   for (size_t i = 0; i < sizes.size(); ++i) {
@@ -239,11 +267,15 @@ inline BlockReadPlan planBlockReads(const std::vector<uint64_t>& fileOffsets,
 }
 
 #ifdef QLEVER_HAS_NVME_URING_CMD
-// True iff `fd` is an NVMe namespace character device (`/dev/ngXnY`).
-// `NVME_IOCTL_ID` returns the namespace id (a positive integer) on such a
-// device and fails with a negative errno on anything else. Never throws.
-inline bool isNvmeNamespaceCharacterDevice(int fd) noexcept {
-  return ::ioctl(fd, NVME_IOCTL_ID) > 0;
+// True iff `fd` is an NVMe namespace character device (`/dev/ngXnY`) whose
+// namespace id is `namespaceId`. `NVME_IOCTL_ID` returns the namespace id (a
+// positive integer) on such a device and fails with a negative errno on
+// anything else. Never throws.
+inline bool isNvmeNamespaceCharacterDevice(int fd,
+                                           uint32_t namespaceId) noexcept {
+  const int reportedNamespaceId = ::ioctl(fd, NVME_IOCTL_ID);
+  return reportedNamespaceId > 0 &&
+         static_cast<uint32_t>(reportedNamespaceId) == namespaceId;
 }
 #endif
 
@@ -252,12 +284,15 @@ inline bool isNvmeNamespaceCharacterDevice(int fd) noexcept {
 // submits native NVMe commands to an NVMe character device (`/dev/ngXnY`),
 // never to a regular file. The NVMe identity check on top rejects other
 // character devices (such as `/dev/null` or a tty), which must keep the plain
-// read path instead of receiving an NVMe command they cannot serve. Regular
+// read path instead of receiving an NVMe command they cannot serve, and it
+// requires the device's namespace id to equal the configured `namespaceId`,
+// so a misconfigured id never reads another namespace's blocks. Regular
 // vocabulary files therefore always fail this probe and keep the plain read
 // path. Never throws: any `fstat` or identity-check failure means "not
 // capable", so a failed probe disables passthrough for the fd without failing
 // the batch.
-inline bool isPassthroughCandidate(int fd) noexcept {
+inline bool isPassthroughCandidate(
+    int fd, [[maybe_unused]] uint32_t namespaceId) noexcept {
   struct stat sb {};
   if (::fstat(fd, &sb) != 0) {
     return false;
@@ -266,7 +301,7 @@ inline bool isPassthroughCandidate(int fd) noexcept {
     return false;
   }
 #ifdef QLEVER_HAS_NVME_URING_CMD
-  return isNvmeNamespaceCharacterDevice(fd);
+  return isNvmeNamespaceCharacterDevice(fd, namespaceId);
 #else
   // Without the NVMe `uring_cmd` layout no passthrough SQE can be prepared,
   // so no fd can be a passthrough candidate.

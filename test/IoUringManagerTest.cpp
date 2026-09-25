@@ -878,7 +878,7 @@ TEST(NvmePassthroughTranslation, alignedRangeTranslates) {
 // length, empty read, zero namespace or block size, more than 2^16 blocks, or
 // an LBA translation that would overflow) translates to `std::nullopt`, so
 // the caller keeps the plain read path with identical bytes.
-TEST(NvmePassthroughTranslation, untranslatableRangesFallBack) {
+TEST(NvmePassthroughTranslation, untranslatableRangesFallback) {
   using ad_utility::nvmePassthrough::translateToReadParams;
   EXPECT_FALSE(translateToReadParams(100, 4096, 1, 512).has_value());  // offset
   EXPECT_FALSE(translateToReadParams(0, 100, 1, 512).has_value());     // length
@@ -1010,17 +1010,42 @@ TEST(NvmeBlockCoalescing, capsRunLength) {
   }
 }
 
+// With a known file size, the last run ends at the end of the file instead
+// of covering the rest of its final block (a regular file cannot serve those
+// bytes). Earlier runs, the staging layout, and all slices are unchanged.
+TEST(NvmeBlockCoalescing, clampsLastRunToFileSize) {
+  using ad_utility::nvmePassthrough::planBlockReads;
+  const auto plan = planBlockReads({0, 5000}, {10, 100}, 0, 5100);
+  ASSERT_EQ(plan.runs.size(), 2u);
+  EXPECT_EQ(plan.runs[0].fileOffset, 0u);
+  EXPECT_EQ(plan.runs[0].numBytes, 512u);
+  EXPECT_EQ(plan.runs[1].fileOffset, 4608u);
+  EXPECT_EQ(plan.runs[1].numBytes, 5100u - 4608u);
+  EXPECT_EQ(plan.stagingBytes, 1024u);
+  ASSERT_EQ(plan.slices.size(), 2u);
+  EXPECT_EQ(plan.slices[1].stagingOffset, 512u + (5000 - 4608));
+  EXPECT_EQ(plan.slices[1].numBytes, 100u);
+  // A file that ends exactly at a block boundary leaves the run whole.
+  const auto aligned = planBlockReads({0}, {512}, 0, 512);
+  ASSERT_EQ(aligned.runs.size(), 1u);
+  EXPECT_EQ(aligned.runs[0].numBytes, 512u);
+  // Without a file size (a device), runs always cover whole blocks.
+  const auto device = planBlockReads({5000}, {100});
+  ASSERT_EQ(device.runs.size(), 1u);
+  EXPECT_EQ(device.runs[0].numBytes, 512u);
+}
+
 // The capability probe fails closed without throwing: an invalid fd, a
 // regular file, and a non-NVMe character device (such as `/dev/null`) are
 // all "not capable", so enabling passthrough can never divert them to the
 // `uring_cmd` path.
 TEST(NvmePassthroughProbe, failsClosedForNonDevices) {
-  EXPECT_FALSE(ad_utility::nvmePassthrough::isPassthroughCandidate(-1));
+  using ad_utility::nvmePassthrough::isPassthroughCandidate;
+  EXPECT_FALSE(isPassthroughCandidate(-1, /*namespaceId=*/1));
   auto [tmp, fd] = makeTempFile("X");
-  EXPECT_FALSE(ad_utility::nvmePassthrough::isPassthroughCandidate(fd));
+  EXPECT_FALSE(isPassthroughCandidate(fd, /*namespaceId=*/1));
   ad_utility::File nullFile{"/dev/null", "r"};
-  EXPECT_FALSE(
-      ad_utility::nvmePassthrough::isPassthroughCandidate(nullFile.fd()));
+  EXPECT_FALSE(isPassthroughCandidate(nullFile.fd(), /*namespaceId=*/1));
 }
 
 #ifdef QLEVER_HAS_IO_URING
@@ -1033,6 +1058,45 @@ TEST(NvmePassthrough, disabledByDefault) {
   ad_utility::IoUringPolicy policy(64);
   EXPECT_FALSE(policy.isNvmePassthroughEnabled());
   EXPECT_FALSE(policy.uses128ByteSqes());
+}
+
+// The options constructor with passthrough disabled builds the same plain
+// 64-byte-SQE ring as the primary constructor and serves ordinary reads.
+TEST(NvmePassthrough, disabledOptionsBuildPlainRing) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime";
+  }
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  ad_utility::IoUringPolicy policy(64, ad_utility::nvmePassthrough::Options{});
+  EXPECT_FALSE(policy.isNvmePassthroughEnabled());
+  EXPECT_FALSE(policy.uses128ByteSqes());
+  ReadBatchForTesting batch;
+  batch.add({{4, 4}, {0, 4}});
+  batch.submitToWithHandle(policy, fd, 0);
+  policy.wait(0);
+  EXPECT_THAT(batch.result(), ::testing::ElementsAre("BBBB", "AAAA"));
+}
+
+// A zero namespace id or block size is a contract violation on both
+// configuration paths, and enabling passthrough before configuring it is
+// rejected instead of silently keeping every read on the plain path.
+TEST(NvmePassthrough, invalidConfigurationThrows) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime";
+  }
+  using ad_utility::nvmePassthrough::Options;
+  EXPECT_THROW(ad_utility::IoUringPolicy(64, Options{true, 0, 512}),
+               ad_utility::Exception);
+  EXPECT_THROW(ad_utility::IoUringPolicy(64, Options{true, 1, 0}),
+               ad_utility::Exception);
+  ad_utility::IoUringPolicy policy(64);
+  EXPECT_THROW(policy.setNvmePassthroughEnabled(true), ad_utility::Exception);
+  EXPECT_FALSE(policy.isNvmePassthroughEnabled());
+  EXPECT_THROW(policy.configureNvmePassthrough(0, 512), ad_utility::Exception);
+  EXPECT_THROW(policy.configureNvmePassthrough(1, 0), ad_utility::Exception);
+  // Disabling never needs a configuration.
+  policy.setNvmePassthroughEnabled(false);
+  EXPECT_FALSE(policy.isNvmePassthroughEnabled());
 }
 
 // Enabling passthrough must not change a single byte for regular files: the

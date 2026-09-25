@@ -235,23 +235,26 @@ class IoUringPolicy {
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
   // --- NVMe passthrough (`IORING_OP_URING_CMD`) state. Disabled by default;
-  // see `NvmePassthrough.h` for the submission helper and the design doc
-  // `docs/io_uring/nvme-passthrough-design.md` (branch
-  // `feat/iouring-nvme-passthrough`) for the full plan. When enabled and the
+  // see `NvmePassthrough.h` for the submission helper. When enabled and the
   // fd passes the capability probe, `addBatch` submits native NVMe reads that
-  // bypass the generic storage stack; otherwise (regular files, kernels
-  // without `uring_cmd` support, unaligned ranges) it keeps the plain
-  // block-layer read, so the bytes read are identical either way.
+  // bypass the generic storage stack; otherwise (regular files, other
+  // character devices, a namespace id that does not match, builds without
+  // `uring_cmd` support, rings without 128-byte SQEs, unaligned ranges) it
+  // keeps the plain block-layer read, so the bytes read are identical either
+  // way. There is no runtime fallback after the probe: a kernel whose NVMe
+  // driver rejects `uring_cmd` completes the request with an error, which
+  // `wait` reports as an I/O error.
   bool nvmePassthroughEnabled_ = false;
   uint32_t nvmeNamespaceId_ = 0;
   uint32_t nvmeLogicalBlockSize_ = 0;
   // Whether `ring_` was created with `IORING_SETUP_SQE128`. Only such a ring
   // owns the 80-byte SQE command area the NVMe command travels in.
   bool sqe128_ = false;
-  // Per-fd capability probe cache: the result of `isNvmeCapable`. Vocabulary
-  // files stay open for the process lifetime, so an fd number is not reused
-  // for a different device behind our back; a stale `true` can at worst turn
-  // a later completion into an I/O error, never into silent wrong bytes.
+  // Per-fd capability probe cache: the result of `isNvmeCapable`, keyed by the
+  // fd number only. It is therefore valid only while each probed fd stays
+  // open: every fd passed to `addBatch` must outlive this policy (as in
+  // `VocabularyOnDisk`, which owns both its files and its pool of managers).
+  // A caller that closes an fd and reuses its number must use a new policy.
   mutable ad_utility::HashMap<int, bool> nvmeCapableFds_;
 
   // Lifetime counters for the passthrough path: submitted native NVMe reads,
@@ -277,6 +280,10 @@ class IoUringPolicy {
   // (`drainOneCqe`) and non-blocking (`tryReapOneCqe`) reap paths.
   void attributeCompletion(io_uring_cqe* cqe);
 
+  // Create the ring with default (64-byte) SQEs. Throws if the kernel rejects
+  // the setup.
+  void initPlainRing();
+
   // Drain completions until the ring has a free submission slot. Called from
   // a fiber body this cooperates via `FiberIoScheduler` instead of parking
   // the thread; called from a plain thread it blocks in `drainOneCqe`.
@@ -299,15 +306,19 @@ class IoUringPolicy {
                          const nvmePassthrough::Options& nvmeOptions);
   ~IoUringPolicy();
 
-  // Set the NVMe namespace the passthrough path addresses. Throws on a zero
-  // namespace id or block size (programmer error, not a probe result).
+  // Set the NVMe namespace the passthrough path addresses. A zero namespace
+  // id or block size violates the contract (a programmer error, not a probe
+  // result) and throws.
   void configureNvmePassthrough(uint32_t namespaceId,
                                 uint32_t logicalBlockSize);
-  // Enable or disable the passthrough path (default: disabled). Enabling on a
-  // 64-byte-SQE ring only warns: without the SQE command area every request
-  // keeps the plain path.
+  // Enable or disable the passthrough path (default: disabled). Enabling
+  // requires a prior `configureNvmePassthrough`. Enabling on a 64-byte-SQE
+  // ring only warns: without the SQE command area every request keeps the
+  // plain path.
   void setNvmePassthroughEnabled(bool enabled);
-  bool isNvmePassthroughEnabled() const { return nvmePassthroughEnabled_; }
+  bool isNvmePassthroughEnabled() const noexcept {
+    return nvmePassthroughEnabled_;
+  }
 
   // Log lifetime passthrough counters (submitted reads, bytes, capable-fd
   // fallbacks), tagged with the owning manager's address so repeated
@@ -317,10 +328,12 @@ class IoUringPolicy {
   // refused at least one capable request.
   void dumpStats(const void* managerId) const;
   // True iff this ring was created with 128-byte SQEs.
-  bool uses128ByteSqes() const { return sqe128_; }
+  bool uses128ByteSqes() const noexcept { return sqe128_; }
   // True iff `fd` passed the passthrough capability probe (cached per fd; the
-  // first call probes, later calls reuse the cached result). Regular files
-  // and non-NVMe character devices always report false. Never throws.
+  // first call probes, later calls reuse the cached result). Regular files,
+  // non-NVMe character devices, and NVMe devices whose namespace id differs
+  // from the configured one always report false. A failed probe never
+  // throws; only inserting into the cache can (on allocation failure).
   bool isNvmeCapable(int fd) const;
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the

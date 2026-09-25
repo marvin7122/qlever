@@ -10,8 +10,10 @@
 
 #include "util/IoUringManager.h"
 
+#include <absl/strings/str_cat.h>
 #include <unistd.h>
 
+#include <cstring>
 #include <stdexcept>
 
 #include "util/Exception.h"
@@ -57,7 +59,7 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+void IoUringPolicy::initPlainRing() {
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
   // submission queue. liburing rounds the requested size up to a power of two,
@@ -65,28 +67,32 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // a conservative (lower) bound for the "ring full" check below. See
   // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
   // details.
-  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
+  const int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
   if (ret < 0) {
-    AD_THROW("io_uring_queue_init failed in IoUringManager");
+    AD_THROW(absl::StrCat("io_uring_queue_init failed in IoUringManager: ",
+                          std::strerror(-ret)));
   }
+}
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_{ringSize} {
+  initPlainRing();
 }
 
 //______________________________________________________________________________
 IoUringPolicy::IoUringPolicy(unsigned ringSize,
                              const nvmePassthrough::Options& nvmeOptions)
-    : ringSize_(ringSize) {
+    : ringSize_{ringSize} {
   if (!nvmeOptions.enabled) {
-    int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
-    if (ret < 0) {
-      AD_THROW("io_uring_queue_init failed in IoUringManager");
-    }
+    initPlainRing();
     return;
   }
-  if (nvmeOptions.namespaceId == 0 || nvmeOptions.logicalBlockSize == 0) {
-    AD_THROW(
-        "NVMe passthrough enabled with zero namespace id or block size in "
-        "IoUringPolicy");
-  }
+  AD_CONTRACT_CHECK(
+      nvmeOptions.namespaceId != 0 && nvmeOptions.logicalBlockSize != 0,
+      "NVMe passthrough enabled with zero namespace id or block size in "
+      "`IoUringPolicy` (namespace id ",
+      nvmeOptions.namespaceId, ", block size ", nvmeOptions.logicalBlockSize,
+      ")");
   nvmeNamespaceId_ = nvmeOptions.namespaceId;
   nvmeLogicalBlockSize_ = nvmeOptions.logicalBlockSize;
 #ifdef IORING_SETUP_SQE128
@@ -99,11 +105,12 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
     // fall back still submit unchanged.
     struct io_uring_params params {};
     params.flags = IORING_SETUP_SQE128 | IORING_SETUP_CQE32;
-    int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+    const int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
     if (ret < 0) {
       AD_THROW(
-          "io_uring_queue_init_params with IORING_SETUP_SQE128 | "
-          "IORING_SETUP_CQE32 failed in IoUringPolicy");
+          absl::StrCat("io_uring_queue_init_params with IORING_SETUP_SQE128 | "
+                       "IORING_SETUP_CQE32 failed in IoUringPolicy: ",
+                       std::strerror(-ret)));
     }
     sqe128_ = true;
     nvmePassthroughEnabled_ = true;
@@ -123,26 +130,27 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
                  "`IORING_SETUP_SQE128`; continuing with a plain ring and the "
                  "passthrough path disabled.\n";
 #endif
-  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
-  if (ret < 0) {
-    AD_THROW("io_uring_queue_init failed in IoUringManager");
-  }
+  initPlainRing();
 }
 
 //______________________________________________________________________________
 void IoUringPolicy::configureNvmePassthrough(uint32_t namespaceId,
                                              uint32_t logicalBlockSize) {
-  if (namespaceId == 0 || logicalBlockSize == 0) {
-    AD_THROW(
-        "configureNvmePassthrough requires a nonzero namespace id and block "
-        "size");
-  }
+  AD_CONTRACT_CHECK(namespaceId != 0 && logicalBlockSize != 0,
+                    "`configureNvmePassthrough` requires a nonzero namespace "
+                    "id and block size (namespace id ",
+                    namespaceId, ", block size ", logicalBlockSize, ")");
   nvmeNamespaceId_ = namespaceId;
   nvmeLogicalBlockSize_ = logicalBlockSize;
 }
 
 //______________________________________________________________________________
 void IoUringPolicy::setNvmePassthroughEnabled(bool enabled) {
+  // Enabling without a namespace would silently route every request to the
+  // plain path, so it is a caller error.
+  AD_CONTRACT_CHECK(!enabled || nvmeNamespaceId_ != 0,
+                    "call `configureNvmePassthrough` before enabling NVMe "
+                    "passthrough");
   if (enabled && !sqe128_) {
     AD_LOG_WARN << "NVMe passthrough enabled on a 64-byte-SQE ring, which "
                    "has no SQE command area; every request keeps the plain "
@@ -157,7 +165,8 @@ bool IoUringPolicy::isNvmeCapable(int fd) const {
   if (it != nvmeCapableFds_.end()) {
     return it->second;
   }
-  const bool capable = nvmePassthrough::isPassthroughCandidate(fd);
+  const bool capable =
+      nvmePassthrough::isPassthroughCandidate(fd, nvmeNamespaceId_);
   nvmeCapableFds_[fd] = capable;
   return capable;
 }

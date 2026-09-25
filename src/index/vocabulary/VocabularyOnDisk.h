@@ -12,6 +12,7 @@
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,7 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/NvmePassthrough.h"
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 
@@ -60,6 +62,9 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // gap size can change without rebuilding); defaults to
   // `kCoalesceMaxGapBlocks`.
   uint64_t maxGapBlocks_ = ad_utility::nvmePassthrough::kCoalesceMaxGapBlocks;
+  // Size of the words file if it is a regular file (set in `open`), so the
+  // coalesced plan stops at its end; `std::nullopt` for a device.
+  std::optional<uint64_t> regularWordsFileSize_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -203,6 +208,15 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   VocabBatchLookupResult readStrings(
       ad_utility::BatchManagerBase& manager,
       ql::span<const OffsetPair> offsetPairs) const;
+
+  // Read word `i` (`sizes[i]` bytes at `fileOffsets[i]` in `file_`) into
+  // `targets[i]` via `manager`, as whole-block runs (see `planBlockReads`)
+  // that merge gaps of at most `maxGapBlocks` blocks. Used instead of
+  // per-word reads when `coalesceForPassthrough_` is set.
+  void readCoalesced(ad_utility::BatchManagerBase& manager,
+                     const std::vector<uint64_t>& fileOffsets,
+                     const std::vector<size_t>& sizes, uint64_t maxGapBlocks,
+                     ql::span<char* const> targets) const;
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H

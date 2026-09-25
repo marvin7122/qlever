@@ -12,12 +12,16 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
+#include <absl/strings/str_cat.h>
+#include <sys/stat.h>
 
 #include <algorithm>
 #include <array>
-#include <cstdio>
+#include <charconv>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
+#include <string_view>
 
 #include "global/Constants.h"
 #include "util/ExceptionHandling.h"
@@ -28,6 +32,22 @@
 #include "util/Views.h"
 
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
+
+namespace {
+// Parse all of `text` as a decimal unsigned integer of type `T`. Return
+// `std::nullopt` for an empty string, a sign, any trailing character, or a
+// value that does not fit `T`.
+template <typename T>
+std::optional<T> parseWholeUnsigned(std::string_view text) {
+  T value{};
+  const char* end = text.data() + text.size();
+  const auto [ptr, ec] = std::from_chars(text.data(), end, value);
+  if (text.empty() || ec != std::errc{} || ptr != end) {
+    return std::nullopt;
+  }
+  return value;
+}
+}  // namespace
 
 // ____________________________________________________________________________
 OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
@@ -59,9 +79,6 @@ std::string VocabularyOnDisk::operator[](uint64_t idx) const {
     // batch lookups. Plain `pread` cannot serve character devices at all,
     // and silently returning unwritten memory would corrupt results without
     // an error (e.g. an unresolvable IRI empties a whole query plan).
-    const auto plan = ad_utility::nvmePassthrough::planBlockReads(
-        {offsetAndSize.offset_}, {offsetAndSize.size_});
-    std::vector<char> staging(plan.stagingBytes);
     auto manager = ioManagers_->pop().value();
     absl::Cleanup returnManager{[this, &manager]() {
       ad_utility::terminateIfThrows(
@@ -69,22 +86,9 @@ std::string VocabularyOnDisk::operator[](uint64_t idx) const {
           "returning the `IoManager` to the pool in "
           "`VocabularyOnDisk::operator[]`");
     }};
-    std::vector<size_t> runSizes;
-    std::vector<uint64_t> runOffsets;
-    std::vector<char*> runTargets;
-    runSizes.reserve(plan.runs.size());
-    runOffsets.reserve(plan.runs.size());
-    runTargets.reserve(plan.runs.size());
-    for (const auto& run : plan.runs) {
-      runSizes.push_back(run.numBytes);
-      runOffsets.push_back(run.fileOffset);
-      runTargets.push_back(staging.data() + run.stagingOffset);
-    }
-    manager->wait(
-        manager->addBatch(file_.fd(), runSizes, runOffsets, runTargets));
-    AD_CORRECTNESS_CHECK(plan.slices.size() == 1);
-    std::memcpy(result.data(), staging.data() + plan.slices[0].stagingOffset,
-                plan.slices[0].numBytes);
+    std::array<char*, 1> target{result.data()};
+    readCoalesced(*manager, {offsetAndSize.offset_}, {offsetAndSize.size_},
+                  /*maxGapBlocks=*/0, target);
     return result;
   }
   const ssize_t numRead = file_.read(result.data(), offsetAndSize.size_,
@@ -230,6 +234,35 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
 }
 
 // _____________________________________________________________________________
+void VocabularyOnDisk::readCoalesced(ad_utility::BatchManagerBase& manager,
+                                     const std::vector<uint64_t>& fileOffsets,
+                                     const std::vector<size_t>& sizes,
+                                     uint64_t maxGapBlocks,
+                                     ql::span<char* const> targets) const {
+  const auto plan = ad_utility::nvmePassthrough::planBlockReads(
+      fileOffsets, sizes, maxGapBlocks, regularWordsFileSize_);
+  std::vector<char> staging(plan.stagingBytes);
+  std::vector<size_t> runSizes;
+  std::vector<uint64_t> runOffsets;
+  std::vector<char*> runTargets;
+  runSizes.reserve(plan.runs.size());
+  runOffsets.reserve(plan.runs.size());
+  runTargets.reserve(plan.runs.size());
+  for (const auto& run : plan.runs) {
+    runSizes.push_back(run.numBytes);
+    runOffsets.push_back(run.fileOffset);
+    runTargets.push_back(staging.data() + run.stagingOffset);
+  }
+  manager.wait(manager.addBatch(file_.fd(), runSizes, runOffsets, runTargets));
+  AD_CORRECTNESS_CHECK(plan.slices.size() == targets.size());
+  for (auto&& [target, slice] : ::ranges::views::zip(targets, plan.slices)) {
+    if (slice.numBytes > 0) {
+      std::memcpy(target, staging.data() + slice.stagingOffset, slice.numBytes);
+    }
+  }
+}
+
+// _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::readStrings(
     ad_utility::BatchManagerBase& manager,
     ql::span<const OffsetPair> offsetPairs) const {
@@ -266,29 +299,7 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     // passthrough; unaligned remainders cannot occur. Small gaps between
     // words merge into shared runs (software readahead), so scattered
     // words cost commands like a stream instead of one command per word.
-    const auto plan = ad_utility::nvmePassthrough::planBlockReads(
-        fileOffsets, sizes, maxGapBlocks_);
-    std::vector<char> staging(plan.stagingBytes);
-    std::vector<size_t> runSizes;
-    std::vector<uint64_t> runOffsets;
-    std::vector<char*> runTargets;
-    runSizes.reserve(plan.runs.size());
-    runOffsets.reserve(plan.runs.size());
-    runTargets.reserve(plan.runs.size());
-    for (const auto& run : plan.runs) {
-      runSizes.push_back(run.numBytes);
-      runOffsets.push_back(run.fileOffset);
-      runTargets.push_back(staging.data() + run.stagingOffset);
-    }
-    manager.wait(
-        manager.addBatch(file_.fd(), runSizes, runOffsets, runTargets));
-    AD_CORRECTNESS_CHECK(plan.slices.size() == numIndices);
-    for (auto&& [target, slice] : ::ranges::views::zip(targets, plan.slices)) {
-      if (slice.numBytes > 0) {
-        std::memcpy(target, staging.data() + slice.stagingOffset,
-                    slice.numBytes);
-      }
-    }
+    readCoalesced(manager, fileOffsets, sizes, maxGapBlocks_, targets);
   } else {
     manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
   }
@@ -383,31 +394,50 @@ void VocabularyOnDisk::open(const std::string& filename) {
   // opened by this vocabulary. Regular files keep the plain path through
   // the per-fd capability probe, so setting this is safe for all
   // vocabularies. Malformed values throw: a misconfiguration must fail fast
-  // instead of silently taking the fallback path.
+  // instead of silently taking the fallback path. The coalesced reads are
+  // built from 512-byte blocks, so other block sizes are rejected as well.
   ad_utility::nvmePassthrough::Options nvmeOptions;
   if (const char* env = std::getenv("QLEVER_NVME_PASSTHROUGH")) {
-    unsigned int namespaceId = 0;
-    unsigned int blockSize = 0;
-    if (std::sscanf(env, "%u:%u", &namespaceId, &blockSize) != 2 ||
-        namespaceId == 0 || blockSize == 0) {
-      AD_THROW(
-          "Malformed QLEVER_NVME_PASSTHROUGH, expected <nsid>:<blocksize> "
-          "with nonzero values");
+    const std::string_view value{env};
+    const size_t colon = value.find(':');
+    const auto namespaceId =
+        colon == std::string_view::npos
+            ? std::nullopt
+            : parseWholeUnsigned<uint32_t>(value.substr(0, colon));
+    const auto blockSize =
+        colon == std::string_view::npos
+            ? std::nullopt
+            : parseWholeUnsigned<uint32_t>(value.substr(colon + 1));
+    if (!namespaceId.has_value() || !blockSize.has_value() ||
+        namespaceId.value() == 0 ||
+        blockSize.value() != ad_utility::nvmePassthrough::kCoalesceBlockSize) {
+      AD_THROW(absl::StrCat(
+          "Malformed QLEVER_NVME_PASSTHROUGH \"", value,
+          "\", expected <nsid>:<blocksize> with a nonzero namespace id and "
+          "block size ",
+          ad_utility::nvmePassthrough::kCoalesceBlockSize));
     }
-    nvmeOptions = {true, namespaceId, blockSize};
+    nvmeOptions = {true, namespaceId.value(), blockSize.value()};
   }
   coalesceForPassthrough_ = nvmeOptions.enabled;
+  // Reads of a regular file stop at its end, so the coalesced plan must not
+  // ask for the rest of the final block (see `planBlockReads`). A device has
+  // no such end within the vocabulary image.
+  struct stat wordsFileStat {};
+  regularWordsFileSize_ =
+      ::fstat(file_.fd(), &wordsFileStat) == 0 && S_ISREG(wordsFileStat.st_mode)
+          ? std::optional<uint64_t>{static_cast<uint64_t>(
+                wordsFileStat.st_size)}
+          : std::nullopt;
   // Gap size override without rebuilding: malformed values throw, so a
   // misconfiguration fails fast instead of silently using the default.
   if (const char* gapEnv = std::getenv("QLEVER_NVME_MAX_GAP_BLOCKS")) {
-    char* end = nullptr;
-    const unsigned long gap = std::strtoul(gapEnv, &end, 10);
-    if (end == gapEnv || *end != '\0') {
-      AD_THROW(
-          "Malformed QLEVER_NVME_MAX_GAP_BLOCKS, expected a nonnegative "
-          "integer block count");
+    const auto gap = parseWholeUnsigned<uint64_t>(gapEnv);
+    if (!gap.has_value()) {
+      AD_THROW(absl::StrCat("Malformed QLEVER_NVME_MAX_GAP_BLOCKS \"", gapEnv,
+                            "\", expected a nonnegative integer block count"));
     }
-    maxGapBlocks_ = gap;
+    maxGapBlocks_ = gap.value();
   }
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
