@@ -79,26 +79,34 @@ struct EvaluatedTermRef {
   EvaluatedTermRef(const EvaluatedTerm& term)
       : data_{term.get()}, keepAlive_{term} {}
 
-  EvaluatedTermRef(const EvaluatedTermRef&) = default;
-  EvaluatedTermRef& operator=(const EvaluatedTermRef&) = default;
-  // A moved-from ref no longer owns its term, so it must not keep pointing to
-  // it: reset `data_` to null.
+  // Move-only because `owned_` is unique. A moved-from ref no longer owns its
+  // term, so it must not keep pointing to it: reset `data_` to null.
   EvaluatedTermRef(EvaluatedTermRef&& other) noexcept
       : data_{std::exchange(other.data_, nullptr)},
-        keepAlive_{std::move(other.keepAlive_)} {}
+        keepAlive_{std::move(other.keepAlive_)},
+        owned_{std::move(other.owned_)} {}
   EvaluatedTermRef& operator=(EvaluatedTermRef&& other) noexcept {
     data_ = std::exchange(other.data_, nullptr);
     keepAlive_ = std::move(other.keepAlive_);
+    owned_ = std::move(other.owned_);
     return *this;
   }
 
   const EvaluatedTermData& operator*() const {
-    AD_EXPENSIVE_CHECK(data_ != nullptr);
+    checkOwnsData();
     return *data_;
   }
   const EvaluatedTermData* operator->() const {
-    AD_EXPENSIVE_CHECK(data_ != nullptr);
+    checkOwnsData();
     return data_;
+  }
+
+ private:
+  // Exactly one of `keepAlive_` and `owned_` holds the term `data_` points to.
+  void checkOwnsData() const {
+    AD_EXPENSIVE_CHECK(data_ != nullptr);
+    AD_EXPENSIVE_CHECK((keepAlive_ == nullptr) != (owned_ == nullptr));
+    AD_EXPENSIVE_CHECK(data_ == (owned_ ? owned_.get() : keepAlive_.get()));
   }
 };
 

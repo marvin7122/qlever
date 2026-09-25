@@ -185,11 +185,17 @@ TEST(EvaluatedTermRef, MoveLeavesSourceEmpty) {
   EXPECT_EQ(assigned.data_, term.get());
   EXPECT_EQ(assigned.keepAlive_, term);
 
-  // Copies share ownership and leave the source intact.
-  EvaluatedTermRef copy{assigned};
-  EXPECT_EQ(copy.data_, term.get());
-  EXPECT_EQ(assigned.data_, term.get());
-  EXPECT_EQ(term.use_count(), 3);
+  // A uniquely owned (blank-node) term moves along with its ref.
+  auto owned =
+      std::make_unique<EvaluatedTermData>(EvaluatedTermData{"_:b0", nullptr});
+  const EvaluatedTermData* ownedData = owned.get();
+  EvaluatedTermRef ownedSource{std::move(owned)};
+  EvaluatedTermRef ownedTarget{std::move(ownedSource)};
+  EXPECT_EQ(ownedSource.data_, nullptr);
+  EXPECT_EQ(ownedSource.owned_, nullptr);
+  EXPECT_EQ(ownedTarget.data_, ownedData);
+  EXPECT_EQ(ownedTarget.owned_.get(), ownedData);
+  EXPECT_EQ(ownedTarget->rdfTermString_, "_:b0");
 }
 
 // _____________________________________________________________________________
