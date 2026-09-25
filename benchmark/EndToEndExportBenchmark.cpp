@@ -88,7 +88,7 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
   }
 
  private:
-  double runE2eEntityScanBaseline(size_t numRows) {
+  double runE2eEntityScanBaseline(size_t numRows) const {
     auto start = std::chrono::steady_clock::now();
     std::string out;
     out.reserve(1024 * 1024);
@@ -104,7 +104,7 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
     return std::chrono::duration<double>(end - start).count();
   }
 
-  double runE2eEntityScanOptimized(size_t numRows) {
+  double runE2eEntityScanOptimized(size_t numRows) const {
     auto start = std::chrono::steady_clock::now();
     alignas(64) char buffer[1024 * 1024];
     char* ptr = buffer;
@@ -123,7 +123,7 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
     return std::chrono::duration<double>(end - start).count();
   }
 
-  double runE2eLiteralScanBaseline(size_t numRows) {
+  double runE2eLiteralScanBaseline(size_t numRows) const {
     auto start = std::chrono::steady_clock::now();
     std::string out;
     out.reserve(1024 * 1024);
@@ -147,7 +147,7 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
     return std::chrono::duration<double>(end - start).count();
   }
 
-  double runE2eLiteralScanOptimized(size_t numRows) {
+  double runE2eLiteralScanOptimized(size_t numRows) const {
     auto start = std::chrono::steady_clock::now();
     alignas(64) char buffer[1024 * 1024];
     char* ptr = buffer;
@@ -169,7 +169,7 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
     return std::chrono::duration<double>(end - start).count();
   }
 
-  double runE2eMixedScanBaseline(size_t numRows) {
+  double runE2eMixedScanBaseline(size_t numRows) const {
     auto start = std::chrono::steady_clock::now();
     std::string out;
     out.reserve(1024 * 1024);
@@ -193,7 +193,7 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
     return std::chrono::duration<double>(end - start).count();
   }
 
-  double runE2eMixedScanOptimized(size_t numRows) {
+  double runE2eMixedScanOptimized(size_t numRows) const {
     auto start = std::chrono::steady_clock::now();
     alignas(64) char buffer[1024 * 1024];
     char* ptr = buffer;
