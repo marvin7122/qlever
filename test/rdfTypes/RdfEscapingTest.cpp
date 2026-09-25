@@ -1,7 +1,13 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Robin Textor-Falconi (textorr@informatik.uni-freiburg.de)
-//          Hannah bast <bast@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2022 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gtest/gtest.h>
 
@@ -46,16 +52,25 @@ TEST(RdfEscapingTest, escapeForTsv) {
 
 // ___________________________________________________________________________
 TEST(RdfEscapingTest, appendEscapedForCsvTsv) {
-  // Append sinks match the allocating APIs and preserve caller-owned prefixes.
-  for (const auto& input :
-       {"abc", "a\nb\rc,d", "\"", "a\"b", "a\"\"c", "a\nb\tc"}) {
-    std::string csvOut{"prefix:"};
-    appendEscapedForCsv(csvOut, input);
-    ASSERT_EQ(csvOut, "prefix:" + escapeForCsv(std::string{input}));
-    std::string tsvOut{"prefix:"};
-    appendEscapedForTsv(tsvOut, input);
-    ASSERT_EQ(tsvOut, "prefix:" + escapeForTsv(std::string{input}));
-  }
+  // The append variants escape like `escapeForCsv` / `escapeForTsv` and keep
+  // what is already in the caller's buffer.
+  auto csv = [](std::string_view input) {
+    std::string out{"prefix:"};
+    appendEscapedForCsv(out, input);
+    return out;
+  };
+  auto tsv = [](std::string_view input) {
+    std::string out{"prefix:"};
+    appendEscapedForTsv(out, input);
+    return out;
+  };
+  EXPECT_EQ(csv("abc"), "prefix:abc");
+  EXPECT_EQ(csv("a\nb\rc,d"), "prefix:\"a\nb\rc,d\"");
+  EXPECT_EQ(csv("\""), "prefix:\"\"\"\"");
+  EXPECT_EQ(csv("a\"\"c"), "prefix:\"a\"\"\"\"c\"");
+  EXPECT_EQ(tsv("abc"), "prefix:abc");
+  EXPECT_EQ(tsv("a\nb\tc"), "prefix:a\\nb c");
+  EXPECT_EQ(tsv("\t\n"), "prefix: \\n");
 }
 
 // ___________________________________________________________________________
