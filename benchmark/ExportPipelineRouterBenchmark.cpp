@@ -6,13 +6,13 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "engine/ExportPipelineRouter.h"
 #include "parser/SparqlParser.h"
@@ -41,6 +41,7 @@ void printUsage(const char* prog) {
 
 }  // namespace
 
+// _____________________________________________________________________________
 int main(int argc, char** argv) {
   size_t numQueries = 1'000'000;
   for (int i = 1; i < argc; ++i) {
@@ -64,8 +65,8 @@ int main(int argc, char** argv) {
 
   std::cout << "==============================================================="
                "=================\n";
-  std::cout << " QLever Fast-Path V2: Ingress Routing & Capability Inspection "
-               "Microbenchmark\n";
+  std::cout
+      << " QLever Fast-Path V2: Ingress Routing Decision Microbenchmark\n";
   std::cout << " Iterations: " << numQueries << " routing evaluations\n";
   std::cout << "==============================================================="
                "=================\n\n";
@@ -74,6 +75,11 @@ int main(int argc, char** argv) {
       SparqlParser::parseQuery(nullptr, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
   auto constructQuery = SparqlParser::parseQuery(
       nullptr, "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }");
+  // Ineligible for V2, so every V2 request for it exercises the fallback.
+  auto orderByQuery = SparqlParser::parseQuery(
+      nullptr, "SELECT ?s WHERE { ?s ?p ?o } ORDER BY ?s");
+  const std::array<const ParsedQuery*, 3> queries{&selectQuery, &constructQuery,
+                                                  &orderByQuery};
 
   ParamValueMap fastParams;
   fastParams["fast-export"] = {"1"};
@@ -82,8 +88,7 @@ int main(int argc, char** argv) {
 
   auto runOnce = [&](size_t i) {
     return ExportPipelineRouter::selectEngine(
-        (i % 2 == 0) ? selectQuery : constructQuery,
-        (i % 3 == 0) ? fastParams : defaultParams,
+        *queries[i % queries.size()], (i % 2 == 0) ? fastParams : defaultParams,
         (i % 5 == 0) ? std::optional<std::string_view>("v2") : std::nullopt);
   };
 
@@ -98,11 +103,11 @@ int main(int argc, char** argv) {
 
   // 1. Benchmark: Select Engine Routing
   auto start = std::chrono::high_resolution_clock::now();
-  size_t dummyV2Count = 0;
+  size_t numV2Selections = 0;
 
   for (size_t i = 0; i < numQueries; ++i) {
     if (runOnce(i) == ExportEngineMode::FastStreamingV2) {
-      ++dummyV2Count;
+      ++numV2Selections;
     }
   }
   auto end = std::chrono::high_resolution_clock::now();
@@ -120,7 +125,7 @@ int main(int argc, char** argv) {
             << mDecisionsPerSec << " Million decisions/sec\n";
   std::cout << "  Latency:       " << std::fixed << std::setprecision(2)
             << nsPerDecision << " ns / decision\n";
-  std::cout << "  V2 Selections: " << dummyV2Count << " / " << numQueries
+  std::cout << "  V2 Selections: " << numV2Selections << " / " << numQueries
             << "\n";
   std::cout << "==============================================================="
                "=================\n";
