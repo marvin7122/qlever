@@ -72,8 +72,9 @@ void ElasticExportScheduler::onForegroundQueryStarted() {
       maxForegroundQueriesForHelperAdmission_.load(std::memory_order_relaxed);
 
   if (current > maxQueries) {
+    // Release half pairs with the acquire load in `workerLoop`.
     uint64_t newEpoch =
-        demandEpoch_.fetch_add(1, std::memory_order_relaxed) + 1;
+        demandEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
     propagateDemandChange(current, newEpoch);
   }
 }
@@ -87,8 +88,9 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
       maxForegroundQueriesForHelperAdmission_.load(std::memory_order_relaxed);
 
   if (current <= maxQueries) {
+    // Release half pairs with the acquire load in `workerLoop`.
     uint64_t newEpoch =
-        demandEpoch_.fetch_add(1, std::memory_order_relaxed) + 1;
+        demandEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
     propagateDemandChange(current, newEpoch);
   }
 }
@@ -235,8 +237,8 @@ void ElasticExportScheduler::workerLoop() {
       targetMorselIndex = morsel.morselIndex_;
       submissionEpoch = morsel.submissionEpoch_;
 
-      // Acquire pairs with the release-sequence incrementing the epoch on
-      // demand changes. Identity registration and slot accounting happen
+      // Acquire pairs with the acq-rel increments of the epoch on demand
+      // changes. Identity registration and slot accounting happen
       // below, outside `queueMutex_`.
       leaseEpoch = demandEpoch_.load(std::memory_order_acquire);
       leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);

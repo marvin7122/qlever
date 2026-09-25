@@ -588,7 +588,7 @@ class ExportJobState final
     {
       std::lock_guard<std::mutex> lock(mutex_);
       closed_ = true;
-      state_.store(SessionState::Closed, std::memory_order_relaxed);
+      state_.store(SessionState::Closed, std::memory_order_release);
     }
     return results;
   }
@@ -602,7 +602,7 @@ class ExportJobState final
     std::lock_guard<std::mutex> lock(mutex_);
     cancelled_ = true;
     closed_ = true;
-    state_.store(SessionState::Closed, std::memory_order_relaxed);
+    state_.store(SessionState::Closed, std::memory_order_release);
     for (auto& slot : slots_) {
       if (slot.status_ == MorselStatus::Pending) {
         slot.status_ = MorselStatus::Cancelled;
@@ -618,7 +618,7 @@ class ExportJobState final
   void close() {
     std::lock_guard<std::mutex> lock(mutex_);
     closed_ = true;
-    state_.store(SessionState::Closed, std::memory_order_relaxed);
+    state_.store(SessionState::Closed, std::memory_order_release);
     cv_.notify_all();
   }
 
