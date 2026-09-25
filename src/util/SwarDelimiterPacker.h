@@ -119,7 +119,7 @@ class SwarDelimiterPacker {
   // rsi`) with zero branching.
   [[nodiscard]] static inline char* writeDelim64(char* out,
                                                  uint64_t delimPattern,
-                                                 size_t len) noexcept {
+                                                 size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 8);
     std::memcpy(out, &delimPattern, sizeof(uint64_t));
@@ -128,8 +128,8 @@ class SwarDelimiterPacker {
 
   // Compile-time fixed-length overload for maximum compiler optimization.
   template <size_t Len>
-  [[nodiscard]] static inline char* writeDelim64(
-      char* out, uint64_t delimPattern) noexcept {
+  [[nodiscard]] static inline char* writeDelim64(char* out,
+                                                 uint64_t delimPattern) {
     static_assert(Len <= 8, "SWAR delimiter length must be <= 8 bytes");
     AD_CONTRACT_CHECK(out != nullptr);
     std::memcpy(out, &delimPattern, sizeof(uint64_t));
@@ -137,15 +137,15 @@ class SwarDelimiterPacker {
   }
 
   // Write a strongly typed PackedDelimiter
-  [[nodiscard]] static inline char* writeDelim(
-      char* out, const PackedDelimiter& delim) noexcept {
+  [[nodiscard]] static inline char* writeDelim(char* out,
+                                               const PackedDelimiter& delim) {
     return writeDelim64(out, delim.pattern(), delim.len());
   }
 
   // 32-bit store intrinsic (writes 4 bytes unaligned, advances by `len` <= 4)
   [[nodiscard]] static inline char* writeDelim32(char* out,
                                                  uint32_t delimPattern,
-                                                 size_t len) noexcept {
+                                                 size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 4);
     std::memcpy(out, &delimPattern, sizeof(uint32_t));
@@ -155,7 +155,7 @@ class SwarDelimiterPacker {
   // 16-bit store intrinsic (writes 2 bytes unaligned, advances by `len` <= 2)
   [[nodiscard]] static inline char* writeDelim16(char* out,
                                                  uint16_t delimPattern,
-                                                 size_t len) noexcept {
+                                                 size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 2);
     std::memcpy(out, &delimPattern, sizeof(uint16_t));
