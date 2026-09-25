@@ -87,16 +87,44 @@ class CpuTimeTimer {
 };
 
 // _____________________________________________________________________________
-// RAII wrapper managing a connected TCP loopback or socketpair endpoint.
+// Owns a POSIX file descriptor and closes it on scope exit, including when an
+// `AD_THROW` leaves the constructor of `SocketPairConnection` early.
+class ScopedFd {
+ private:
+  int fd_ = -1;
+
+ public:
+  ScopedFd() = default;
+  explicit ScopedFd(int fd) : fd_{fd} {}
+  ScopedFd(const ScopedFd&) = delete;
+  ScopedFd& operator=(const ScopedFd&) = delete;
+  ~ScopedFd() { reset(); }
+
+  void reset() noexcept {
+    if (fd_ >= 0) {
+      ::close(fd_);
+      fd_ = -1;
+    }
+  }
+  void reset(int fd) noexcept {
+    reset();
+    fd_ = fd;
+  }
+  [[nodiscard]] int get() const noexcept { return fd_; }
+};
+
+// _____________________________________________________________________________
+// A connected TCP connection over the loopback interface. TCP (unlike a Unix
+// socket pair) supports `IORING_OP_SEND_ZC`.
 class SocketPairConnection {
  private:
-  int sendFd_ = -1;
-  int recvFd_ = -1;
+  ScopedFd sendFd_;
+  ScopedFd recvFd_;
 
  public:
   SocketPairConnection() {
-    int listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listenFd < 0) {
+    ScopedFd listenFd{::socket(AF_INET, SOCK_STREAM, 0)};
+    if (listenFd.get() < 0) {
       AD_THROW("socket failed");
     }
 
@@ -106,80 +134,56 @@ class SocketPairConnection {
     addr.sin_port = 0;
 
     int enable = 1;
-    ::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
-    if (::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) !=
-        0) {
-      ::close(listenFd);
+    ::setsockopt(listenFd.get(), SOL_SOCKET, SO_REUSEADDR, &enable,
+                 sizeof(enable));
+    if (::bind(listenFd.get(), reinterpret_cast<sockaddr*>(&addr),
+               sizeof(addr)) != 0) {
       AD_THROW("bind failed");
     }
 
     socklen_t addrLen = sizeof(addr);
-    if (::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr), &addrLen) !=
-        0) {
-      ::close(listenFd);
+    if (::getsockname(listenFd.get(), reinterpret_cast<sockaddr*>(&addr),
+                      &addrLen) != 0) {
       AD_THROW("getsockname failed");
     }
 
-    if (::listen(listenFd, 1) != 0) {
-      ::close(listenFd);
+    if (::listen(listenFd.get(), 1) != 0) {
       AD_THROW("listen failed");
     }
 
-    sendFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (sendFd_ < 0) {
-      ::close(listenFd);
+    sendFd_.reset(::socket(AF_INET, SOCK_STREAM, 0));
+    if (sendFd_.get() < 0) {
       AD_THROW("client socket failed");
     }
 
-    if (::connect(sendFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) !=
-        0) {
-      ::close(listenFd);
-      ::close(sendFd_);
+    if (::connect(sendFd_.get(), reinterpret_cast<sockaddr*>(&addr),
+                  sizeof(addr)) != 0) {
       AD_THROW("connect failed");
     }
 
-    recvFd_ = ::accept(listenFd, nullptr, nullptr);
-    if (recvFd_ < 0) {
-      ::close(listenFd);
-      ::close(sendFd_);
+    recvFd_.reset(::accept(listenFd.get(), nullptr, nullptr));
+    if (recvFd_.get() < 0) {
       AD_THROW("accept failed");
     }
-    ::close(listenFd);
 
     int flag = 1;
-    ::setsockopt(sendFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
-    ::setsockopt(recvFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    ::setsockopt(sendFd_.get(), IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    ::setsockopt(recvFd_.get(), IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
     int bufSize = 4 * 1024 * 1024;
-    ::setsockopt(sendFd_, SOL_SOCKET, SO_SNDBUF, &bufSize, sizeof(bufSize));
-    ::setsockopt(recvFd_, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
+    ::setsockopt(sendFd_.get(), SOL_SOCKET, SO_SNDBUF, &bufSize,
+                 sizeof(bufSize));
+    ::setsockopt(recvFd_.get(), SOL_SOCKET, SO_RCVBUF, &bufSize,
+                 sizeof(bufSize));
   }
-
-  ~SocketPairConnection() { close(); }
 
   SocketPairConnection(const SocketPairConnection&) = delete;
   SocketPairConnection& operator=(const SocketPairConnection&) = delete;
 
-  void close() noexcept {
-    if (sendFd_ >= 0) {
-      ::close(sendFd_);
-      sendFd_ = -1;
-    }
-    if (recvFd_ >= 0) {
-      ::close(recvFd_);
-      recvFd_ = -1;
-    }
-  }
+  void closeSender() noexcept { sendFd_.reset(); }
 
-  void closeSender() noexcept {
-    if (sendFd_ >= 0) {
-      ::close(sendFd_);
-      sendFd_ = -1;
-    }
-  }
-
-  [[nodiscard]] int sendFd() const noexcept { return sendFd_; }
-  [[nodiscard]] int recvFd() const noexcept { return recvFd_; }
+  [[nodiscard]] int sendFd() const noexcept { return sendFd_.get(); }
+  [[nodiscard]] int recvFd() const noexcept { return recvFd_.get(); }
 };
 
 // _____________________________________________________________________________
@@ -208,9 +212,7 @@ struct BenchmarkMetric {
   double throughputMBs = 0.0;
   double throughputGbps = 0.0;
   double cpuPercentage = 0.0;
-  double iops = 0.0;
   double speedupVsBaseline = 1.0;
-  double cpuReductionVsBaseline = 0.0;
 };
 
 // _____________________________________________________________________________
@@ -228,9 +230,8 @@ class ZeroCopySenderBenchmarkRunner {
       : totalBytes_{totalBytes}, chunkSize_{chunkSize} {
     testPayload_.resize(chunkSize_);
     std::mt19937 rng(42);
-    for (size_t i = 0; i < chunkSize_; ++i) {
-      testPayload_[i] = static_cast<char>(rng() % 256);
-    }
+    std::generate(testPayload_.begin(), testPayload_.end(),
+                  [&rng]() { return static_cast<char>(rng() % 256); });
   }
 
   // 1. Baseline: Synchronous send() syscall in loop
@@ -272,7 +273,7 @@ class ZeroCopySenderBenchmarkRunner {
     receiverThread.join();
 
     return calculateMetric("1. Standard send() [Baseline]", wallSec, cpuPercent,
-                           bytesSent, numChunks);
+                           bytesSent);
   }
 
   // 2. io_uring Standard Send (Unpinned buffers)
@@ -316,7 +317,7 @@ class ZeroCopySenderBenchmarkRunner {
     receiverThread.join();
 
     return calculateMetric("2. io_uring Standard Send (Unpinned)", wallSec,
-                           cpuPercent, totalBytes_, numChunks);
+                           cpuPercent, totalBytes_);
   }
 
   // 3. io_uring Zero-Copy Send (IORING_OP_SEND_ZC with Registered Buffers)
@@ -360,13 +361,12 @@ class ZeroCopySenderBenchmarkRunner {
     receiverThread.join();
 
     return calculateMetric("3. io_uring SEND_ZC (Registered Fixed Buffers)",
-                           wallSec, cpuPercent, totalBytes_, numChunks);
+                           wallSec, cpuPercent, totalBytes_);
   }
 
  private:
   BenchmarkMetric calculateMetric(std::string_view name, double elapsedSec,
-                                  double cpuPercent, size_t totalBytes,
-                                  size_t numChunks) const {
+                                  double cpuPercent, size_t totalBytes) const {
     double mbSent = static_cast<double>(totalBytes) / (1024.0 * 1024.0);
     double gbSent = static_cast<double>(totalBytes * 8ULL) / 1e9;
 
@@ -376,26 +376,22 @@ class ZeroCopySenderBenchmarkRunner {
     m.throughputMBs = elapsedSec > 0.0 ? mbSent / elapsedSec : 0.0;
     m.throughputGbps = elapsedSec > 0.0 ? gbSent / elapsedSec : 0.0;
     m.cpuPercentage = cpuPercent;
-    m.iops =
-        elapsedSec > 0.0 ? static_cast<double>(numChunks) / elapsedSec : 0.0;
     return m;
   }
 };
 
 // _____________________________________________________________________________
 // Formatter for benchmark results table
-void printResultsTable(std::vector<BenchmarkMetric>& results) {
+// Only the standalone `main` below prints this table; the benchmark
+// infrastructure build has no caller for it.
+[[maybe_unused]] void printResultsTable(std::vector<BenchmarkMetric>& results) {
   if (results.empty()) return;
 
   double baselineThroughput = results[0].throughputMBs;
-  double baselineCpu = results[0].cpuPercentage;
 
   for (auto& r : results) {
     r.speedupVsBaseline =
         baselineThroughput > 0.0 ? r.throughputMBs / baselineThroughput : 1.0;
-    r.cpuReductionVsBaseline =
-        baselineCpu > 0.0 ? (1.0 - (r.cpuPercentage / baselineCpu)) * 100.0
-                          : 0.0;
   }
 
   std::cout << "\n============================================================="
