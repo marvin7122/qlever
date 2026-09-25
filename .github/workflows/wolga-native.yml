@@ -151,10 +151,12 @@ jobs:
               # Per-leg extra environment inside the container (empty for
               # legs without a `container-env` matrix key).
               if [ -n "${{ matrix.container-env }}" ]; then export ${{ matrix.container-env }}; fi
+              # apt runs its downloads as _apt via setgroups, which rootless podman
+              # on Wolga cannot do (no /etc/subuid entry), so keep apt's sandbox root.
               # Compiler cache on the host SSD (mounted at /ccache, persists
               # across runs). Images carry no ccache binary, so install it
               # on first use (~30s, once per fresh container layer).
-              command -v ccache >/dev/null 2>&1 || (apt-get update -qq && apt-get install -qy ccache)
+              command -v ccache >/dev/null 2>&1 || (apt-get -o APT::Sandbox::User=root update -qq && apt-get -o APT::Sandbox::User=root install -qy ccache)
               export CCACHE_DIR=/ccache CCACHE_MAXSIZE=10G CCACHE_COMPRESS=true
               ccache -z >/dev/null
               # cmake configure pulls third-party sources (googletest etc.)
