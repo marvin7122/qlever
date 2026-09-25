@@ -318,11 +318,12 @@ class BranchlessTypeDispatcher {
 
   // ___________________________________________________________________________
   // Format a single RDF term branchlessly into `out`.
-  // Precondition: `out` must point to sufficient pre-allocated memory.
+  // Precondition: `out` must point to at least `maxFormattedBytes(rawTerm,
+  // lut)` writable bytes.
   // Returns: Pointer past the last byte written.
   static inline char* dispatchTermFormat(
       ValueId id, std::string_view rawTerm, char* out,
-      const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
+      const LookupTable& lut = kDefaultTypeFormatLut) {
     AD_CONTRACT_CHECK(out != nullptr);
     const uint8_t typeTag =
         static_cast<uint8_t>(id.getBits() >> ValueId::numDataBits) & 0x0F;
@@ -333,11 +334,13 @@ class BranchlessTypeDispatcher {
   // ___________________________________________________________________________
   // Batch format a contiguous slice of terms branchlessly.
   // Preconditions: `ids` and `rawTerms` must have identical lengths, and `out`
-  // must be non-null.
+  // must be non-null and point to at least the sum of `maxFormattedBytes` of
+  // all `rawTerms` writable bytes (use the `ql::span<char>` overload to have
+  // this checked).
   // Returns: Total number of bytes written.
   static inline size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
-      char* out, const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
+      char* out, const LookupTable& lut = kDefaultTypeFormatLut) {
     AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
     AD_CONTRACT_CHECK(out != nullptr || ids.empty());
 
@@ -347,6 +350,38 @@ class BranchlessTypeDispatcher {
       curr = dispatchTermFormat(ids[i], rawTerms[i], curr, lut);
     }
     return static_cast<size_t>(curr - out);
+  }
+
+  // ___________________________________________________________________________
+  // Upper bound for the number of bytes that `dispatchTermFormat` writes for a
+  // term whose vocabulary string is `rawTerm`: the longest delimiter pair of
+  // `lut` plus the longer of `rawTerm` and the longest formatted inline value
+  // (number, boolean, date, geo point, or blank node index).
+  static constexpr size_t kMaxInlineValueBytes = 128;
+  [[nodiscard]] static size_t maxFormattedBytes(
+      std::string_view rawTerm,
+      const LookupTable& lut = kDefaultTypeFormatLut) noexcept {
+    size_t maxDelimiterBytes = 0;
+    for (const auto& desc : lut) {
+      maxDelimiterBytes = std::max(maxDelimiterBytes,
+                                   desc.prefix_.size() + desc.suffix_.size());
+    }
+    return maxDelimiterBytes + std::max(rawTerm.size(), kMaxInlineValueBytes);
+  }
+
+  // ___________________________________________________________________________
+  // Bounds-checked variant of `dispatchBatchTermFormat`: throws if `out` is
+  // smaller than the `maxFormattedBytes` of all terms, instead of relying on
+  // the caller to size the output buffer.
+  static size_t dispatchBatchTermFormat(
+      ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
+      ql::span<char> out, const LookupTable& lut = kDefaultTypeFormatLut) {
+    size_t requiredBytes = 0;
+    for (std::string_view rawTerm : rawTerms) {
+      requiredBytes += maxFormattedBytes(rawTerm, lut);
+    }
+    AD_CONTRACT_CHECK(requiredBytes <= out.size());
+    return dispatchBatchTermFormat(ids, rawTerms, out.data(), lut);
   }
 
   // Access to built-in lookup tables.

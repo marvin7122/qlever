@@ -58,3 +58,25 @@ TEST(BranchlessTypeDispatcher, SecondaryVocabIndexIsFormattedLikeVocabIndex) {
     EXPECT_FALSE(format(secondaryId, "http://example.org/b", *lut).empty());
   }
 }
+
+// _____________________________________________________________________________
+TEST(BranchlessTypeDispatcher, CheckedBatchFormatRejectsTooSmallBuffer) {
+  const std::vector<ValueId> ids{
+      ValueId::makeFromInt(7),
+      ValueId::makeFromVocabIndex(VocabIndex::make(1))};
+  const std::vector<std::string_view> rawTerms{"", "http://example.org/c"};
+
+  std::vector<char> buffer(
+      BranchlessTypeDispatcher::maxFormattedBytes(rawTerms[0]) +
+      BranchlessTypeDispatcher::maxFormattedBytes(rawTerms[1]));
+  const size_t written = BranchlessTypeDispatcher::dispatchBatchTermFormat(
+      ids, rawTerms, ql::span<char>{buffer});
+  EXPECT_EQ(std::string_view(buffer.data(), written),
+            "\"7\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+            "<http://example.org/c>");
+
+  std::vector<char> tooSmall(written - 1);
+  EXPECT_THROW(BranchlessTypeDispatcher::dispatchBatchTermFormat(
+                   ids, rawTerms, ql::span<char>{tooSmall}),
+               ad_utility::Exception);
+}

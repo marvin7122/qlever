@@ -458,7 +458,7 @@ int main(int argc, char** argv) {
                 << '\n';
       return 1;
     }
-    // Bound the benchmark size (and with it the `numTerms * 128` allocation
+    // Bound the benchmark size (and with it the output buffer allocation
     // below) to something runnable; uncaught huge inputs would OOM.
     if (numTerms == 0 || numTerms > 50'000'000) {
       std::cerr << "Term count out of range (1..50000000 expected)\n";
@@ -474,8 +474,14 @@ int main(int argc, char** argv) {
             << " terms...\n";
   auto dataset = BenchmarkDataset::generate(numTerms);
 
-  // Allocate 512 MB buffer for formatted outputs
-  std::vector<char> outputBuffer(numTerms * 128);
+  // Size the output buffer from the per-term upper bound of the dispatcher, so
+  // that long vocabulary terms cannot overflow it.
+  size_t outputBytes = 0;
+  for (std::string_view rawTerm : dataset.rawTerms_) {
+    outputBytes += ql::engine::BranchlessTypeDispatcher::maxFormattedBytes(
+        rawTerm, ql::engine::BranchlessTypeDispatcher::defaultLut());
+  }
+  std::vector<char> outputBuffer(outputBytes);
 
   HardwarePerfCounter perf;
   if (perf.isSupported()) {
