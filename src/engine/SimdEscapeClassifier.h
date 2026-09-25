@@ -531,16 +531,17 @@ class SimdEscapeClassifier {
     size_t posSecondQuote = normLiteral.find('"', 1);
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
+    std::string_view normalizedContent =
+        normLiteral.substr(1, posLastQuote - 1);
 
-    // If there are only two quotes and no internal special characters, pass
-    // through
+    // If there are only two quotes and no special characters between them,
+    // pass through. Only the content is checked: the delimiting quotes are
+    // escape characters themselves.
     if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
+        !hasEscapes<EscapeFormat::Turtle>(normalizedContent)) [[likely]] {
       return std::string{normLiteral};
     }
 
-    std::string_view normalizedContent =
-        normLiteral.substr(1, posLastQuote - 1);
     std::string result;
     result.resize(normLiteral.size() * 2 + 2);
     char* out = result.data();
