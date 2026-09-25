@@ -383,6 +383,7 @@ inline void requirePmrStringInlineStorage(size_t size) {
 // for stack-reuse tests that must observe a dirty stack.
 template <size_t N>
 char clobberStack(char sentinel) {
+  static_assert(N > 0, "clobberStack requires a non-empty buffer");
   volatile char buffer[N];
   for (size_t i = 0; i < N; ++i) {
     buffer[i] = sentinel;
