@@ -603,6 +603,22 @@ TEST(ReadLeadingPageCacheHits, emptyBatch) {
   EXPECT_EQ(ad_utility::readLeadingPageCacheHits(fd, {}, {}, {}), 0u);
 }
 
+// Spans of different lengths violate the precondition and are rejected before
+// any read.
+TEST(ReadLeadingPageCacheHits, mismatchedSpanLengthsThrow) {
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  std::vector<size_t> numBytes{4, 4};
+  std::vector<uint64_t> offsets{0};
+  std::vector<char> storage(8);
+  std::vector<char*> buffers{storage.data(), storage.data() + 4};
+  EXPECT_ANY_THROW(
+      ad_utility::readLeadingPageCacheHits(fd, numBytes, offsets, buffers));
+  std::vector<uint64_t> twoOffsets{0, 4};
+  std::vector<char*> oneBuffer{storage.data()};
+  EXPECT_ANY_THROW(ad_utility::readLeadingPageCacheHits(fd, numBytes,
+                                                        twoOffsets, oneBuffer));
+}
+
 // Check that the `manager` (as returned by `makeBatchManager`, see the tests
 // below) performs correct reads via the type-erased `BatchManagerBase`
 // interface.

@@ -58,6 +58,8 @@ void SyncIoPolicy::addBatch(int fd,
 size_t readLeadingPageCacheHits(int fd, ql::span<const size_t> numBytesToRead,
                                 ql::span<const uint64_t> offsets,
                                 ql::span<char*> buffers) {
+  AD_CONTRACT_CHECK(offsets.size() == numBytesToRead.size() &&
+                    buffers.size() == numBytesToRead.size());
 #ifdef RWF_NOWAIT
   for (size_t i = 0; i < numBytesToRead.size(); ++i) {
     iovec target{buffers[i], numBytesToRead[i]};

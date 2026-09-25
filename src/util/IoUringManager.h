@@ -243,7 +243,8 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 // at the first read that is not fully served (not cached, short, error, or
 // `RWF_NOWAIT` unsupported), so the caller issues that read and all later
 // ones through its regular path, which also reports any real error. Always
-// returns 0 on platforms without `RWF_NOWAIT`.
+// returns 0 on platforms without `RWF_NOWAIT`. Precondition: the three spans
+// have equal length.
 size_t readLeadingPageCacheHits(int fd, ql::span<const size_t> numBytesToRead,
                                 ql::span<const uint64_t> offsets,
                                 ql::span<char*> buffers);
