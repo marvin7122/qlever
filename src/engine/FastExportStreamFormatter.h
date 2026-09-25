@@ -511,7 +511,11 @@ class FastExportStreamFormatter {
   // ___________________________________________________________________________
   // Inspect the currently buffered (not yet flushed) slice. The view is
   // invalidated by the next write, flush, or finalize.
+  // After `finalize()` the buffer pointer is null and the view is empty.
   [[nodiscard]] std::string_view currentChunk() const noexcept {
+    if (bufferPtr_ == nullptr) {
+      return {};
+    }
     return std::string_view(bufferPtr_, writePos_);
   }
 
