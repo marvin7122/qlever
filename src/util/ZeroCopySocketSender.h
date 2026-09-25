@@ -25,7 +25,6 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -123,8 +122,8 @@ class ZeroCopyBufferPool {
 
     auto* basePtr = static_cast<char*>(rawBuffer_);
     for (size_t i = 0; i < numBuffers_; ++i) {
-      iovecs_.push_back(iovec{.iov_base = basePtr + (i * bufferSizeBytes_),
-                              .iov_len = bufferSizeBytes_});
+      iovecs_.push_back(
+          iovec{basePtr + (i * bufferSizeBytes_), bufferSizeBytes_});
       freeSlots_.push_back(static_cast<uint32_t>(numBuffers_ - 1 - i));
     }
   }
@@ -393,12 +392,9 @@ class ZeroCopySocketSender {
     const size_t tableIdx = reqId % inFlightTable_.size();
     AD_CORRECTNESS_CHECK(!inFlightTable_[tableIdx].active);
 
-    inFlightTable_[tableIdx] = InFlightRequest{
-        .bufferIndex = bufferIndex,
-        .expectedBytes = numBytes,
-        .waitingForNotification = false,
-        .active = true,
-    };
+    inFlightTable_[tableIdx] =
+        InFlightRequest{bufferIndex, numBytes, /*waitingForNotification=*/false,
+                        /*active=*/true};
 
     io_uring_sqe_set_data64(sqe, reqId);
     ++numInFlightRequests_;
