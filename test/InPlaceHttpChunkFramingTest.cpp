@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <charconv>
+#include <limits>
 #include <numeric>
 #include <string>
 #include <string_view>
@@ -19,6 +20,7 @@
 #include "backports/span.h"
 #include "engine/InPlaceHttpChunkFraming.h"
 #include "util/Exception.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 
 using namespace ad_utility::http;
 
@@ -214,6 +216,16 @@ TEST(InPlaceHttpChunkFramingTest, StreamerLargeSingleWrite) {
 TEST(InPlaceHttpChunkFramingTest, PipeTransmission) {
   int pipeFds[2];
   ASSERT_EQ(::pipe(pipeFds), 0);
+  // Close both ends on every exit path, including failed assertions.
+  auto closeFds =
+      ad_utility::makeOnDestructionDontThrowDuringStackUnwinding([&pipeFds]() {
+        for (int& fd : pipeFds) {
+          if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+          }
+        }
+      });
 
   InPlaceHttpChunk chunk(2048);
   std::string payload = "Testing direct kernel transmission over POSIX pipe!";
@@ -225,13 +237,22 @@ TEST(InPlaceHttpChunkFramingTest, PipeTransmission) {
       ::write(pipeFds[1], framedSpan.data(), framedSpan.size());
   EXPECT_EQ(bytesWritten, static_cast<ssize_t>(framedSpan.size()));
   ::close(pipeFds[1]);
+  pipeFds[1] = -1;
 
   std::string readBuf(framedSpan.size(), '\0');
   ssize_t bytesRead = ::read(pipeFds[0], readBuf.data(), readBuf.size());
-  ::close(pipeFds[0]);
 
   EXPECT_EQ(bytesRead, static_cast<ssize_t>(framedSpan.size()));
   EXPECT_EQ(readBuf, std::string_view(framedSpan.data(), framedSpan.size()));
+}
+
+// An owning chunk whose payload capacity plus the framing overhead would wrap
+// around `size_t` must be rejected before any allocation happens.
+TEST(InPlaceHttpChunkFramingTest, OwningConstructorRejectsOverflowingCapacity) {
+  EXPECT_ANY_THROW(InPlaceHttpChunk{std::numeric_limits<size_t>::max()});
+  EXPECT_ANY_THROW(InPlaceHttpChunk{std::numeric_limits<size_t>::max() -
+                                    InPlaceHttpChunk::TOTAL_OVERHEAD_BYTES +
+                                    1});
 }
 
 TEST(InPlaceHttpChunkFramingTest, ResetAndReuse) {
@@ -249,7 +270,7 @@ TEST(InPlaceHttpChunkFramingTest, ResetAndReuse) {
 
     std::string_view sv(framed.data(), framed.size());
     EXPECT_TRUE(sv.find(msg) != std::string_view::npos);
-    EXPECT_TRUE(ql::ends_with(sv, "\r\n"));
+    EXPECT_TRUE(sv.ends_with("\r\n"));
   }
 }
 
