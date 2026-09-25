@@ -267,23 +267,7 @@ class AsyncChunkPipeline {
           }
         });
 
-    // RAII guard ensuring worker is cancelled and joined upon generator exit.
-    // NOTE: `WorkerGuard` has a user-declared destructor, so it has no
-    // implicit move constructor; it is therefore populated in place instead
-    // of being moved into the `shared_ptr` (moving would fall back to the
-    // deleted copy of the `std::thread` member).
-    struct WorkerGuard {
-      std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
-      std::thread thread;
-      ~WorkerGuard() {
-        if (pipe) {
-          pipe->cancel();
-        }
-        if (thread.joinable()) {
-          thread.join();
-        }
-      }
-    };
+    // Cancel and join the worker upon generator exit.
     auto guard = std::make_shared<WorkerGuard>();
     guard->pipe = pipeline;
     guard->thread = std::move(worker);
@@ -318,20 +302,7 @@ class AsyncChunkPipeline {
       }
     });
 
-    // NOTE: populated in place, see `makeDoubleBuffered` above: the
-    // user-declared destructor suppresses the implicit move constructor.
-    struct WorkerGuard {
-      std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
-      std::thread thread;
-      ~WorkerGuard() {
-        if (pipe) {
-          pipe->cancel();
-        }
-        if (thread.joinable()) {
-          thread.join();
-        }
-      }
-    };
+    // Cancel and join the worker upon generator exit.
     auto guard = std::make_shared<WorkerGuard>();
     guard->pipe = pipeline;
     guard->thread = std::move(worker);
@@ -347,6 +318,24 @@ class AsyncChunkPipeline {
 #endif
 
  private:
+  // RAII guard ensuring a background worker is cancelled and joined when the
+  // adapter generator exits. NOTE: the user-declared destructor suppresses the
+  // implicit move constructor, so the adapters populate it in place instead of
+  // moving it into the `shared_ptr` (moving would fall back to the deleted
+  // copy of the `std::thread` member).
+  struct WorkerGuard {
+    std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
+    std::thread thread;
+    ~WorkerGuard() {
+      if (pipe) {
+        pipe->cancel();
+      }
+      if (thread.joinable()) {
+        thread.join();
+      }
+    }
+  };
+
   const size_t capacity_;
   mutable std::mutex mutex_;
   std::condition_variable cvNotEmpty_;
