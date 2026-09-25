@@ -605,6 +605,7 @@ addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 # translation unit standalone, so previously missing direct includes and
 # similar issues surface here instead of only in downstream includers.
 addLinkAndDiscoverTest(AdaptiveChunkSizerTest)
+addLinkAndDiscoverTest(AsyncChunkPipelineTest engine)
 addLinkAndDiscoverTest(FastIntToStringTest qlever_util)
 addLinkAndDiscoverTest(GTestHelpersTest)
 addLinkAndDiscoverTest(InPlaceHttpChunkFramingTest)
