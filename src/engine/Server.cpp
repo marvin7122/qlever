@@ -4,6 +4,7 @@
 // 2020 - 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2022 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
 // 2024 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -960,10 +961,8 @@ CPP_template_def(typename RequestT, typename SendT)(
         const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
         SharedCancellationHandle cancellationHandle,
         ql::engine::ExportEngineMode engineMode) const {
-  // WP1 vertical slice: the routing decision is live, but the V2 streaming
-  // engine is not implemented yet, so both arms execute the proven V1
-  // pipeline. Follow-up work packages replace the V2 arm without touching
-  // the call site or the routing decision.
+  // TODO<Marvin Stoetzel> Execute the V2 streaming engine in the V2 arm. Until
+  // then, both arms execute the V1 pipeline.
   if (engineMode == ql::engine::ExportEngineMode::FastStreamingV2) {
     AD_LOG_INFO << "V2 export engine requested; executing via the V1 "
                    "implementation until the streaming engine lands."
@@ -1120,10 +1119,8 @@ CPP_template_def(typename RequestT, typename SendT)(
   plannedQuery->parsedQuery().updateExportLimit(
       qlever::http_api_helpers::determineSendLimit(params, mediaType));
 
-  // WP1 ingress routing: decide between the legacy pipeline and the
-  // streaming export engine. The V2 arm currently falls back to the V1
-  // implementation inside `sendStreamableResponse`, so this decision is
-  // behavior-preserving by construction.
+  // Decide between the legacy export pipeline and the streaming export engine
+  // (see `ExportPipelineRouter`).
   std::optional<std::string_view> exportEngineHeader;
   std::string_view exportEngineHeaderValue =
       request.base()["X-QLever-Export-Engine"];
