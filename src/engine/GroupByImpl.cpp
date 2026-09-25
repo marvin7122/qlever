@@ -1187,6 +1187,9 @@ std::optional<IdTable> GroupByImpl::computeOptimizedGroupByIfPossible() const {
     if (auto result = computeGroupByForFullIndexScan()) {
       return result;
     }
+    if (auto result = computeSumOverDistinctValues()) {
+      return result;
+    }
   }
   if (auto result = computeGroupByForJoinWithFullScan()) {
     return result;
@@ -1968,6 +1971,176 @@ bool GroupByImpl::isVariableBoundInSubtree(const Variable& variable) const {
 std::unique_ptr<Operation> GroupByImpl::cloneImpl() const {
   return std::make_unique<GroupByImpl>(_executionContext, _groupByVariables,
                                        _aliases, _subtree->clone());
+}
+
+// _____________________________________________________________________________
+namespace {
+std::optional<Permutation::Enum> permutationWithWantedCol1(
+    const IndexScan& scan, const Variable& wantedCol1) {
+  const bool predBound = !scan.predicate().isVariable();
+  const bool subjBound = !scan.subject().isVariable();
+  const bool objBound = !scan.object().isVariable();
+  if (scan.subject().isVariable() &&
+      scan.subject().getVariable() == wantedCol1) {
+    if (predBound) {
+      return Permutation::PSO;
+    }
+    if (objBound) {
+      return Permutation::OSP;
+    }
+  } else if (scan.object().isVariable() &&
+             scan.object().getVariable() == wantedCol1) {
+    if (predBound) {
+      return Permutation::POS;
+    }
+    if (subjBound) {
+      return Permutation::SOP;
+    }
+  } else if (scan.predicate().isVariable() &&
+             scan.predicate().getVariable() == wantedCol1) {
+    if (subjBound) {
+      return Permutation::SPO;
+    }
+    if (objBound) {
+      return Permutation::OPS;
+    }
+  }
+  return std::nullopt;
+}
+}  // namespace
+
+// _____________________________________________________________________________
+std::optional<IdTable> GroupByImpl::computeSumOverDistinctValues() const {
+  if (!_groupByVariables.empty() || _aliases.size() != 1) {
+    return std::nullopt;
+  }
+  auto* sum = dynamic_cast<const sparqlExpression::SumExpression*>(
+      _aliases.front()._expression.getPimpl());
+  if (!sum) {
+    return std::nullopt;
+  }
+  if (sum->isAggregate() ==
+      sparqlExpression::SparqlExpression::AggregateStatus::DistinctAggregate) {
+    return std::nullopt;
+  }
+  auto sumChildren = sum->children();
+  if (sumChildren.size() != 1) {
+    return std::nullopt;
+  }
+  auto innerVars = sumChildren[0]->getUnaggregatedVariables();
+  if (innerVars.size() != 1) {
+    return std::nullopt;
+  }
+  const Variable& wantedVar = innerVars.front();
+
+  // Note: deliberately `IndexScan`, not `const IndexScan`: the calls to
+  // `updateRuntimeInformationWhenOptimizedOut` below mutate the runtime
+  // info (same pattern as `computeGroupByObjectWithCount`).
+  auto indexScan =
+      std::dynamic_pointer_cast<IndexScan>(_subtree->getRootOperation());
+  if (!indexScan || indexScan->numVariables() != 2 ||
+      !indexScan->graphsToFilter().areAllGraphsAllowed() ||
+      !indexScan->additionalVariables().empty() ||
+      !indexScan->getLimitOffset().isUnconstrained()) {
+    return std::nullopt;
+  }
+  if (!isVariableBoundInSubtree(wantedVar)) {
+    return std::nullopt;
+  }
+
+  const auto& locTriples =
+      indexScan->permutation().getLocatedTriplesForPermutation(
+          locatedTriplesState());
+  if (!locTriples.isEmpty() || indexScan->permutation().permutationType() ==
+                                   Permutation::Type::MATERIALIZED_VIEW) {
+    return std::nullopt;
+  }
+
+  const auto& permutedTriple = indexScan->getPermutedTriple();
+  std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
+  if (!col0Id.has_value()) {
+    return std::nullopt;
+  }
+  auto targetPermutation = permutationWithWantedCol1(*indexScan, wantedVar);
+  if (!targetPermutation.has_value()) {
+    return std::nullopt;
+  }
+  const auto& permutation =
+      getIndex().getImpl().getPermutation(targetPermutation.value());
+  auto distinctIds = permutation.getDistinctCol1IdsAndCounts(
+      col0Id.value(), cancellationHandle_, locatedTriplesState(),
+      indexScan->getLimitOffset());
+
+  auto colOpt = _subtree->getVariableColumnOrNullopt(wantedVar);
+  if (!colOpt.has_value()) {
+    return std::nullopt;
+  }
+  const ColumnIndex col = colOpt.value();
+
+  IdTable row{indexScan->getResultWidth(),
+              getExecutionContext()->getAllocator()};
+  row.emplace_back();
+  for (ColumnIndex c = 0; c < row.numColumns(); ++c) {
+    row(0, c) = Id::makeUndefined();
+  }
+
+  LocalVocab localVocab;
+  double total = 0.0;
+  bool anyDouble = false;
+  auto* inner = sumChildren[0].get();
+  for (size_t i = 0; i < distinctIds.numRows(); ++i) {
+    row(0, col) = distinctIds(i, 0);
+    const int64_t multiplicity = distinctIds(i, 1).getInt();
+    auto ctx = createEvaluationContext(localVocab, row.asStaticView<0>());
+    ctx._beginIndex = 0;
+    ctx._endIndex = 1;
+    auto evaluated = inner->evaluate(&ctx);
+    bool poisoned = false;
+    std::optional<Id> scalar;
+    std::visit(
+        [&](auto&& value) {
+          using T = std::decay_t<decltype(value)>;
+          if constexpr (std::is_same_v<T, Id>) {
+            scalar = value;
+          } else if constexpr (std::is_same_v<
+                                   T, sparqlExpression::VectorWithMemoryLimit<
+                                          Id>>) {
+            if (value.size() == 1) {
+              scalar = value[0];
+            }
+          }
+        },
+        evaluated);
+    if (!scalar.has_value() || scalar.value().isUndefined()) {
+      poisoned = true;
+    } else if (scalar.value().getDatatype() == Datatype::Int) {
+      total += static_cast<double>(scalar.value().getInt()) *
+               static_cast<double>(multiplicity);
+    } else if (scalar.value().getDatatype() == Datatype::Double) {
+      anyDouble = true;
+      total += scalar.value().getDouble() * static_cast<double>(multiplicity);
+    } else if (scalar.value().getDatatype() == Datatype::Bool) {
+      total +=
+          scalar.value().getBool() ? static_cast<double>(multiplicity) : 0.0;
+    } else {
+      poisoned = true;
+    }
+    if (poisoned) {
+      IdTable table{1, getExecutionContext()->getAllocator()};
+      table.push_back({Id::makeUndefined()});
+      indexScan->updateRuntimeInformationWhenOptimizedOut({});
+      return table;
+    }
+  }
+
+  indexScan->updateRuntimeInformationWhenOptimizedOut({});
+  IdTable table{1, getExecutionContext()->getAllocator()};
+  if (anyDouble) {
+    table.push_back({Id::makeFromDouble(total)});
+  } else {
+    table.push_back({Id::makeFromInt(static_cast<int64_t>(total))});
+  }
+  return table;
 }
 
 // _____________________________________________________________________________
