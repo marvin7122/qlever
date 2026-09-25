@@ -313,7 +313,7 @@ stream_generator_promise<BUFFER_SIZE>::get_return_object() noexcept {
 
 // The default buffer size of 8 MiB. Each generator coroutine allocates one
 // such buffer on the heap.
-inline constexpr size_t DEFAULT_STREAM_GENERATOR_BUFFER_SIZE = 8u << 20;
+inline constexpr size_t DEFAULT_STREAM_GENERATOR_BUFFER_SIZE = 1u << 20;
 using stream_generator =
     basic_stream_generator<DEFAULT_STREAM_GENERATOR_BUFFER_SIZE>;
 
