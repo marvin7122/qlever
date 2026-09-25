@@ -7,6 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
+
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -23,6 +25,7 @@
 #include "util/Log.h"
 #include "util/Random.h"
 #include "util/Timer.h"
+#include "util/jthread.h"
 
 namespace ad_benchmark {
 
@@ -150,7 +153,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
     // Spawn background worker to generate chunks concurrently into Slot 2.
-    std::thread producerThread(
+    ad_utility::JThread producerThread(
         [pipeline, numChunks, chunkSize, totalTriples = totalTriples_]() {
           try {
             for (size_t c = 0; c < numChunks; ++c) {
@@ -169,6 +172,9 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
             pipeline->setException(std::current_exception());
           }
         });
+    // If the consumer loop throws, unblock the producer before `producerThread`
+    // is joined by its destructor.
+    absl::Cleanup cancelPipeline{[&pipeline] { pipeline->cancel(); }};
 
     // Consumer loop: transmits chunks over simulated network socket.
     size_t totalBytes = 0;
@@ -179,9 +185,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
       simulateNetworkTransmission(chunk.size(), latency);
     }
 
-    if (producerThread.joinable()) {
-      producerThread.join();
-    }
+    producerThread.join();
 
     timer.stop();
     const double duration = ad_utility::timer::Timer::toSeconds(timer.value());
