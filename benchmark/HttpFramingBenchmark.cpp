@@ -268,17 +268,11 @@ class HttpFramingBenchmarkRunner {
     const char* src = streamGen.data();
 
     size_t totalPayloadWritten = 0;
-    size_t totalFramedWritten = 0;
-    size_t chunksEmitted = 0;
 
     auto startTime = std::chrono::steady_clock::now();
 
-    InPlaceHttpChunkStreamer streamer(
-        [&](ql::span<const char> chunk) {
-          totalFramedWritten += chunk.size();
-          ++chunksEmitted;
-        },
-        chunkSize, true);
+    InPlaceHttpChunkStreamer streamer([](ql::span<const char>) {}, chunkSize,
+                                      true);
 
     // Stream in realistic record slices (e.g. 1 KB records)
     constexpr size_t recordSliceSize = 1024;
