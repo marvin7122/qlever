@@ -237,8 +237,49 @@ using BatchIoManager = BatchManager<IoUringPolicy>;
 using BatchIoManager = BatchManager<SyncIoPolicy>;
 #endif
 
+// Returns how many of the leading reads of a batch were served from the page
+// cache: read `i` is attempted with a non-blocking `preadv2(RWF_NOWAIT)`, which
+// copies the bytes if they are cached and fails with `EAGAIN` otherwise. Stops
+// at the first read that is not fully served (not cached, short, error, or
+// `RWF_NOWAIT` unsupported), so the caller issues that read and all later
+// ones through its regular path, which also reports any real error. Always
+// returns 0 on platforms without `RWF_NOWAIT`.
+size_t readLeadingPageCacheHits(int fd, ql::span<const size_t> numBytesToRead,
+                                ql::span<const uint64_t> offsets,
+                                ql::span<char*> buffers);
+
+// Wraps a `ReadPolicy`: serves the leading reads of each batch that are
+// already in the page cache with one synchronous syscall each and forwards the
+// rest of the batch to `Inner`. On a warm cache an io_uring read costs about
+// twice the kernel time of a `pread` (request setup, submission and completion
+// bookkeeping), while its asynchrony only pays off on a cache miss. A cold
+// batch costs one extra failed syscall.
+template <typename Inner>
+class PageCacheFirstPolicy {
+ public:
+  using BatchHandle = typename Inner::BatchHandle;
+
+  explicit PageCacheFirstPolicy(unsigned ringSize) : inner_(ringSize) {}
+
+  void addBatch(int fd, ql::span<const size_t> numBytesToRead,
+                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+                BatchHandle handle) {
+    const size_t numServed =
+        readLeadingPageCacheHits(fd, numBytesToRead, offsets, buffers);
+    inner_.addBatch(fd, numBytesToRead.subspan(numServed),
+                    offsets.subspan(numServed), buffers.subspan(numServed),
+                    handle);
+  }
+
+  void wait(BatchHandle handle) { inner_.wait(handle); }
+
+ private:
+  Inner inner_;
+};
+
 // Build a batch manager. When io_uring is compiled in and the runtime flag
-// `preferIoUring` is set, try to build an `IoUringManager`. If its setup
+// `preferIoUring` is set, try to build an `IoUringManager` that serves page
+// cache hits synchronously (`PageCacheFirstPolicy`). If its setup
 // syscall fails at runtime clear `preferIoUring` and fall back to a
 // `SyncIoManager`. Passing the flag by reference makes this probe-once: after
 // the first failure, every subsequent call goes straight to the sync manager,
@@ -248,7 +289,8 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize);
+      return std::make_unique<
+          BatchManager<PageCacheFirstPolicy<IoUringPolicy>>>(ringSize);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
