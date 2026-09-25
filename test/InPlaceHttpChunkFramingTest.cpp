@@ -18,6 +18,7 @@
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
 #include "engine/InPlaceHttpChunkFraming.h"
+#include "util/GTestHelpers.h"
 
 using namespace ad_utility::http;
 
@@ -122,6 +123,37 @@ TEST(InPlaceHttpChunkFramingTest, NonOwningExternalBuffer) {
 
   // 45 bytes = 0x2d
   EXPECT_EQ(framed, "2d\r\nZero-copy HTTP framing using external memory!\r\n");
+}
+
+// _____________________________________________________________________________
+// Payload lengths above `kMaxSupportedPayloadBytes` need more hex digits than
+// the reserved header holds, so every way to set up a chunk rejects them.
+TEST(InPlaceHttpChunkFramingTest, PayloadLimitOnAllConstructionPaths) {
+  constexpr size_t maxPayload = InPlaceHttpChunk::kMaxSupportedPayloadBytes;
+  constexpr size_t overhead = InPlaceHttpChunk::TOTAL_OVERHEAD_BYTES;
+  auto matcher = ::testing::HasSubstr("kMaxSupportedPayloadBytes");
+
+  // Owning: rejected before anything is allocated.
+  AD_EXPECT_THROW_WITH_MESSAGE(InPlaceHttpChunk{maxPayload + 1}, matcher);
+
+  // Non-owning and retarget: the contract check only inspects the span size
+  // and fails before any byte is accessed, so a small backing buffer with an
+  // oversized span length suffices.
+  std::vector<char> storage(64);
+  ql::span<char> tooLarge{storage.data(), maxPayload + 1 + overhead};
+  AD_EXPECT_THROW_WITH_MESSAGE(InPlaceHttpChunk{tooLarge}, matcher);
+
+  InPlaceHttpChunk chunk{ql::span<char>{storage.data(), storage.size()}};
+  AD_EXPECT_THROW_WITH_MESSAGE(chunk.reset(tooLarge), matcher);
+  // A rejected retarget leaves the chunk on its previous buffer.
+  EXPECT_EQ(chunk.maxPayloadCapacity(), storage.size() - overhead);
+  auto framed = chunk.finalizeChunk(1);
+  EXPECT_EQ(framed.size(), 1u + 2 + 1 + 2);
+
+  // Too small for the framing overhead.
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      chunk.reset(ql::span<char>{storage.data(), overhead - 1}),
+      ::testing::HasSubstr("TOTAL_OVERHEAD_BYTES"));
 }
 
 TEST(InPlaceHttpChunkFramingTest, StreamerAutoChunkingAndFlush) {

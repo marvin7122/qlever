@@ -125,6 +125,16 @@ class InPlaceHttpChunk {
   size_t framedLength_{0};
   std::optional<AlignedBuffer> ownedBuffer_{std::nullopt};
 
+  // Payload capacity of a caller-provided buffer of `bufferSize` bytes. Checks
+  // that the buffer holds the framing overhead and that its payload capacity
+  // fits the reserved header, like the owning constructor does.
+  static size_t payloadCapacityForBuffer(size_t bufferSize) {
+    AD_CONTRACT_CHECK(bufferSize >= TOTAL_OVERHEAD_BYTES);
+    AD_CONTRACT_CHECK(bufferSize - TOTAL_OVERHEAD_BYTES <=
+                      kMaxSupportedPayloadBytes);
+    return bufferSize - TOTAL_OVERHEAD_BYTES;
+  }
+
  public:
   // Largest payload whose hex length fits the reserved header (14 digits).
   static constexpr size_t kMaxSupportedPayloadBytes = (size_t{1} << 56) - 1;
@@ -150,21 +160,17 @@ class InPlaceHttpChunk {
 
   // ___________________________________________________________________________
   // Construct a non-owning chunk wrapping a caller-provided destination span.
-  // Precondition: destinationBuffer.size() >= TOTAL_OVERHEAD_BYTES (18 bytes).
+  // Preconditions (checked): `destinationBuffer.size() >= TOTAL_OVERHEAD_BYTES`
+  // (18 bytes) and a payload capacity of at most `kMaxSupportedPayloadBytes`.
   explicit InPlaceHttpChunk(ql::span<char> destinationBuffer)
       : buffer_{destinationBuffer.data()},
         totalCapacity_{destinationBuffer.size()},
-        maxPayloadCapacity_{destinationBuffer.size() >= TOTAL_OVERHEAD_BYTES
-                                ? destinationBuffer.size() -
-                                      TOTAL_OVERHEAD_BYTES
-                                : 0},
+        maxPayloadCapacity_{payloadCapacityForBuffer(destinationBuffer.size())},
         lastPayloadBytes_{0},
         isFinalized_{false},
         framedStart_{nullptr},
         framedLength_{0},
-        ownedBuffer_{std::nullopt} {
-    AD_CONTRACT_CHECK(destinationBuffer.size() >= TOTAL_OVERHEAD_BYTES);
-  }
+        ownedBuffer_{std::nullopt} {}
 
   // ___________________________________________________________________________
   // Move constructors and assignment.
@@ -287,13 +293,16 @@ class InPlaceHttpChunk {
   }
 
   // ___________________________________________________________________________
-  // Retarget the chunk to a new caller-provided buffer span.
+  // Retarget the chunk to a new caller-provided buffer span. Same
+  // preconditions as the non-owning constructor; on a violation the chunk is
+  // left unchanged.
   void reset(ql::span<char> newBuffer) {
-    AD_CONTRACT_CHECK(newBuffer.size() >= TOTAL_OVERHEAD_BYTES);
+    const size_t maxPayloadCapacity =
+        payloadCapacityForBuffer(newBuffer.size());
     ownedBuffer_.reset();
     buffer_ = newBuffer.data();
     totalCapacity_ = newBuffer.size();
-    maxPayloadCapacity_ = totalCapacity_ - TOTAL_OVERHEAD_BYTES;
+    maxPayloadCapacity_ = maxPayloadCapacity;
     isFinalized_ = false;
     lastPayloadBytes_ = 0;
     framedStart_ = nullptr;
