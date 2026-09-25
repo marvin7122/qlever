@@ -533,7 +533,10 @@ class RegisteredIoUringReader {
 
       const uint64_t reqId = nextReqId_++;
       inFlightByReqId_[reqId] = InFlightMeta{batchId, req.numBytes};
-      io_uring_sqe_set_data64(sqe, reqId);
+      // Store the id in the pointer-sized `user_data` field, which every
+      // liburing version provides; the `*_data64` helpers need a liburing
+      // newer than the distro one in the gcc11 CI image.
+      io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(reqId));
       ++numInFlightRequests_;
     }
 
@@ -652,7 +655,7 @@ class RegisteredIoUringReader {
     }
 
     const int res = cqe->res;
-    const uint64_t reqId = io_uring_cqe_get_data64(cqe);
+    const uint64_t reqId = cqe->user_data;
     io_uring_cqe_seen(&ring_, cqe);
     --numInFlightRequests_;
 
