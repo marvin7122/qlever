@@ -10,15 +10,16 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_SCATTERGATHERARENASTREAMER_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_SCATTERGATHERARENASTREAMER_H
 
+#include <absl/strings/str_cat.h>
 #include <sys/uio.h>
 
 #include <algorithm>
 #include <cerrno>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -33,10 +34,18 @@
 
 namespace qlever::export_v2 {
 
+// Return the total number of bytes described by `iovecs`.
+inline size_t totalIovecBytes(ql::span<const iovec> iovecs) {
+  return std::accumulate(
+      iovecs.begin(), iovecs.end(), size_t{0},
+      [](size_t sum, const iovec& entry) { return sum + entry.iov_len; });
+}
+
 class OwnedByteSpan;
 
 // Immutable shared storage for bytes referenced by scatter-gather chunks. The
-// factory consumes its input, so no mutable alias to the stored string exists.
+// constructor takes the string by value and moves it into shared ownership,
+// so no mutable alias to the stored bytes exists.
 class ImmutableByteBuffer {
  private:
   std::shared_ptr<const std::string> bytes_;
@@ -49,7 +58,8 @@ class ImmutableByteBuffer {
   [[nodiscard]] OwnedByteSpan slice(size_t offset, size_t size) const;
 };
 
-// A byte range that carries the immutable allocation owning its data.
+// A byte range of an `ImmutableByteBuffer` that shares ownership of the whole
+// buffer, so the bytes stay alive as long as any chunk references them.
 class OwnedByteSpan {
   friend class ImmutableByteBuffer;
   friend class ScatterGatherChunkBuilder;
@@ -77,19 +87,23 @@ inline OwnedByteSpan ImmutableByteBuffer::slice(size_t offset,
   return OwnedByteSpan{bytes_, offset, size};
 }
 
+// The outcome of writing a chunk: the number of bytes written, and whether
+// the write stopped early because of cancellation (then fewer than `size()`).
 struct ScatterGatherWriteResult {
   size_t bytesWritten_ = 0;
   bool cancelled_ = false;
 };
 
+// The outcome of one `writev`-like call: `bytesWritten_ >= 0` on success,
+// otherwise `-1` and the `errno` value in `errorNumber_`.
 struct ScatterGatherWriteAttempt {
   ssize_t bytesWritten_ = 0;
   int errorNumber_ = 0;
 };
 
-// An immutable chunk whose segments retain all referenced allocations. Raw
-// iovec pointers exist only during a writer callback and cannot escape through
-// this class's interface.
+// An immutable chunk whose segments retain all referenced allocations. The
+// `iovec` pointers passed to a writer callback are only valid during that
+// call; the public interface (`writeToFd`) does not expose them.
 class ScatterGatherChunk {
   friend class ScatterGatherChunkBuilder;
   friend class ScatterGatherChunkTestAccess;
@@ -128,15 +142,18 @@ class ScatterGatherChunk {
       }
 
       iovecs.clear();
-      const size_t end = std::min(segments_.size(), segmentIndex + UIO_MAXIOV);
-      for (size_t index = segmentIndex; index < end; ++index) {
-        const auto& segment = segments_[index];
-        const size_t offset = index == segmentIndex ? segmentOffset : 0;
+      const size_t batchSize =
+          std::min<size_t>(segments_.size() - segmentIndex, UIO_MAXIOV);
+      // Only the first segment of a batch can be partially written already.
+      size_t offset = segmentOffset;
+      for (const auto& segment : ql::span<const Segment>{segments_}.subspan(
+               segmentIndex, batchSize)) {
         // `iov_base` is `void*`, so exposing the read-only segment bytes
         // requires `const_cast`; `writev` only reads the referenced memory.
         iovecs.push_back({const_cast<char*>(segment.owner_->data() +
                                             segment.offset_ + offset),
                           segment.size_ - offset});
+        offset = 0;
       }
 
       const auto attempt = writer({iovecs.data(), iovecs.size()});
@@ -160,11 +177,7 @@ class ScatterGatherChunk {
       AD_CONTRACT_CHECK(attempt.bytesWritten_ > 0);
 
       size_t remaining = static_cast<size_t>(attempt.bytesWritten_);
-      size_t offered = 0;
-      for (const auto& iovec : iovecs) {
-        offered += iovec.iov_len;
-      }
-      AD_CONTRACT_CHECK(remaining <= offered);
+      AD_CONTRACT_CHECK(remaining <= totalIovecBytes(iovecs));
       totalWritten += remaining;
 
       while (remaining > 0) {
@@ -186,10 +199,12 @@ class ScatterGatherChunk {
  public:
   ScatterGatherChunk() = default;
 
+  // Total number of bytes over all segments.
   [[nodiscard]] size_t size() const noexcept { return totalBytes_; }
   [[nodiscard]] bool empty() const noexcept { return segments_.empty(); }
   [[nodiscard]] size_t numSegments() const noexcept { return segments_.size(); }
 
+  // Copy all bytes into one string (for tests and diagnostics).
   [[nodiscard]] std::string toString() const {
     std::string result;
     result.reserve(totalBytes_);
@@ -199,6 +214,10 @@ class ScatterGatherChunk {
     return result;
   }
 
+  // Write the whole chunk to `fd` with `writev`, at most `UIO_MAXIOV`
+  // segments per call. Partial writes, `EINTR`, and `EAGAIN` are retried;
+  // `isCancelled` is polled before every call and on `EAGAIN`, and a `true`
+  // result stops the write. Any other error throws.
   [[nodiscard]] ScatterGatherWriteResult writeToFd(
       int fd, const IsCancelled& isCancelled = [] { return false; }) const {
     AD_CONTRACT_CHECK(fd >= 0);
@@ -212,7 +231,8 @@ class ScatterGatherChunk {
   }
 };
 
-// Consuming builder that pairs each referenced byte range with its owner.
+// Build a `ScatterGatherChunk` from copied bytes and referenced
+// `OwnedByteSpan`s, in append order. `finalize` consumes the builder.
 class ScatterGatherChunkBuilder {
  private:
   struct PendingSegment {
@@ -227,6 +247,8 @@ class ScatterGatherChunkBuilder {
   size_t totalBytes_ = 0;
 
  public:
+  // Copy `bytes` into the chunk's own storage (for small, short-lived
+  // pieces such as delimiters); adjacent copies share one segment.
   void appendCopy(std::string_view bytes) {
     if (bytes.empty()) {
       return;
@@ -242,6 +264,7 @@ class ScatterGatherChunkBuilder {
     totalBytes_ += bytes.size();
   }
 
+  // Reference `bytes` without copying; the chunk shares ownership.
   void appendOwned(OwnedByteSpan bytes) {
     if (bytes.empty()) {
       return;

@@ -97,10 +97,7 @@ TEST(ScatterGatherArenaStreamerTest, HandlesPartialWritesAndEintr) {
         if (calls == 1) {
           return ScatterGatherWriteAttempt{-1, EINTR};
         }
-        size_t offered = 0;
-        for (const auto& iovec : iovecs) {
-          offered += iovec.iov_len;
-        }
+        const size_t offered = totalIovecBytes(iovecs);
         return ScatterGatherWriteAttempt{
             static_cast<ssize_t>(std::min<size_t>(3, offered)), 0};
       });
@@ -123,10 +120,7 @@ TEST(ScatterGatherArenaStreamerTest, RetriesEagainThenWrites) {
         if (calls == 1) {
           return ScatterGatherWriteAttempt{-1, EAGAIN};
         }
-        size_t offered = 0;
-        for (const auto& iovec : iovecs) {
-          offered += iovec.iov_len;
-        }
+        const size_t offered = totalIovecBytes(iovecs);
         return ScatterGatherWriteAttempt{static_cast<ssize_t>(offered), 0};
       });
 
@@ -190,6 +184,14 @@ TEST(ScatterGatherArenaStreamerTest, RejectsWriterWithoutProgress) {
       ::testing::HasSubstr("attempt.bytesWritten_ > 0"));
 }
 
+TEST(ScatterGatherArenaStreamerTest, TotalIovecBytesSumsAllLengths) {
+  std::string bytes = "abcdef";
+  std::vector<iovec> iovecs{
+      {bytes.data(), 2}, {bytes.data() + 2, 0}, {bytes.data() + 2, 4}};
+  EXPECT_EQ(totalIovecBytes(iovecs), 6);
+  EXPECT_EQ(totalIovecBytes({}), 0);
+}
+
 TEST(ScatterGatherArenaStreamerTest, LimitsEachWritevBatch) {
   ScatterGatherChunkBuilder builder;
   std::vector<ImmutableByteBuffer> buffers;
@@ -204,10 +206,7 @@ TEST(ScatterGatherArenaStreamerTest, LimitsEachWritevBatch) {
   const auto result = ScatterGatherChunkTestAccess::writeWith(
       chunk, [&](ql::span<const iovec> iovecs) {
         maxBatch = std::max(maxBatch, iovecs.size());
-        size_t offered = 0;
-        for (const auto& iovec : iovecs) {
-          offered += iovec.iov_len;
-        }
+        const size_t offered = totalIovecBytes(iovecs);
         return ScatterGatherWriteAttempt{static_cast<ssize_t>(offered), 0};
       });
 
