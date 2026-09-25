@@ -9,14 +9,15 @@
 #ifndef QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H
 #define QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H
 
-#include <bit>
+#include <absl/numeric/bits.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -41,7 +42,7 @@ inline constexpr char HEX_DIGITS[17] = "0123456789abcdef";
 // >> 2. Note: (val | 1ULL) ensures val == 0 has countl_zero == 63 -> (67 - 63)
 // >> 2 = 1.
 [[nodiscard]] inline constexpr uint32_t numHexDigits(uint64_t val) noexcept {
-  return (67 - std::countl_zero(val | 1ULL)) >> 2;
+  return (67 - absl::countl_zero(val | 1ULL)) >> 2;
 }
 
 // _____________________________________________________________________________
@@ -136,6 +137,9 @@ class InPlaceHttpChunk {
         isFinalized_{false},
         framedStart_{nullptr},
         framedLength_{0} {
+    // The sum in the initializer above must not wrap around.
+    AD_CONTRACT_CHECK(maxPayloadCapacity <= std::numeric_limits<size_t>::max() -
+                                                TOTAL_OVERHEAD_BYTES);
     ownedBuffer_.emplace(totalCapacity_);
     buffer_ = ownedBuffer_->data();
   }
@@ -393,6 +397,10 @@ class InPlaceHttpChunkStreamer {
   // ___________________________________________________________________________
   // Write std::string_view slice.
   void write(std::string_view sv) { write(sv.data(), sv.size()); }
+
+  // Write std::string. Without this overload, a `std::string` argument is
+  // ambiguous between the `string_view` and the `span` overloads.
+  void write(const std::string& str) { write(str.data(), str.size()); }
 
   // ___________________________________________________________________________
   // Write ql::span<const char> slice.

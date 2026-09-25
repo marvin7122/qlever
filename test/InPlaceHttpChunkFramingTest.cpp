@@ -10,14 +10,17 @@
 #include <unistd.h>
 
 #include <charconv>
+#include <limits>
 #include <numeric>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
 #include "engine/InPlaceHttpChunkFraming.h"
 #include "util/Exception.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 
 using namespace ad_utility::http;
 
@@ -161,18 +164,18 @@ TEST(InPlaceHttpChunkFramingTest, StreamerAutoChunkingAndFlush) {
   EXPECT_EQ(summary.totalPayloadBytes_, 250);
 
   // Validate chunk 1: 100 bytes ('A' * 60 + 'B' * 40)
-  EXPECT_TRUE(emittedChunks[0].starts_with("64\r\n"));  // 100 = 0x64
-  EXPECT_TRUE(emittedChunks[0].ends_with("\r\n"));
+  EXPECT_TRUE(ql::starts_with(emittedChunks[0], "64\r\n"));  // 100 = 0x64
+  EXPECT_TRUE(ql::ends_with(emittedChunks[0], "\r\n"));
   EXPECT_EQ(emittedChunks[0].size(), 4 + 100 + 2);
 
   // Validate chunk 2: 100 bytes ('B' * 30 + 'C' * 70)
-  EXPECT_TRUE(emittedChunks[1].starts_with("64\r\n"));
-  EXPECT_TRUE(emittedChunks[1].ends_with("\r\n"));
+  EXPECT_TRUE(ql::starts_with(emittedChunks[1], "64\r\n"));
+  EXPECT_TRUE(ql::ends_with(emittedChunks[1], "\r\n"));
   EXPECT_EQ(emittedChunks[1].size(), 4 + 100 + 2);
 
   // Validate chunk 3: 50 bytes ('C' * 50)
-  EXPECT_TRUE(emittedChunks[2].starts_with("32\r\n"));  // 50 = 0x32
-  EXPECT_TRUE(emittedChunks[2].ends_with("\r\n"));
+  EXPECT_TRUE(ql::starts_with(emittedChunks[2], "32\r\n"));  // 50 = 0x32
+  EXPECT_TRUE(ql::ends_with(emittedChunks[2], "\r\n"));
   EXPECT_EQ(emittedChunks[2].size(), 4 + 50 + 2);
 
   // Validate chunk 4: terminating chunk
@@ -213,6 +216,16 @@ TEST(InPlaceHttpChunkFramingTest, StreamerLargeSingleWrite) {
 TEST(InPlaceHttpChunkFramingTest, PipeTransmission) {
   int pipeFds[2];
   ASSERT_EQ(::pipe(pipeFds), 0);
+  // Close both ends on every exit path, including failed assertions.
+  auto closeFds =
+      ad_utility::makeOnDestructionDontThrowDuringStackUnwinding([&pipeFds]() {
+        for (int& fd : pipeFds) {
+          if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+          }
+        }
+      });
 
   InPlaceHttpChunk chunk(2048);
   std::string payload = "Testing direct kernel transmission over POSIX pipe!";
@@ -224,13 +237,22 @@ TEST(InPlaceHttpChunkFramingTest, PipeTransmission) {
       ::write(pipeFds[1], framedSpan.data(), framedSpan.size());
   EXPECT_EQ(bytesWritten, static_cast<ssize_t>(framedSpan.size()));
   ::close(pipeFds[1]);
+  pipeFds[1] = -1;
 
   std::string readBuf(framedSpan.size(), '\0');
   ssize_t bytesRead = ::read(pipeFds[0], readBuf.data(), readBuf.size());
-  ::close(pipeFds[0]);
 
   EXPECT_EQ(bytesRead, static_cast<ssize_t>(framedSpan.size()));
   EXPECT_EQ(readBuf, std::string_view(framedSpan.data(), framedSpan.size()));
+}
+
+// An owning chunk whose payload capacity plus the framing overhead would wrap
+// around `size_t` must be rejected before any allocation happens.
+TEST(InPlaceHttpChunkFramingTest, OwningConstructorRejectsOverflowingCapacity) {
+  EXPECT_ANY_THROW(InPlaceHttpChunk{std::numeric_limits<size_t>::max()});
+  EXPECT_ANY_THROW(InPlaceHttpChunk{std::numeric_limits<size_t>::max() -
+                                    InPlaceHttpChunk::TOTAL_OVERHEAD_BYTES +
+                                    1});
 }
 
 TEST(InPlaceHttpChunkFramingTest, ResetAndReuse) {
