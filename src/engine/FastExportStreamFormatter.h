@@ -219,7 +219,8 @@ class FastExportStreamFormatter {
     std::array<char, std::numeric_limits<IntegerType>::digits10 + 3> tmp{};
     auto [ptr, ec] = std::to_chars(tmp.data(), tmp.data() + tmp.size(), value);
     AD_CORRECTNESS_CHECK(ec == std::errc{});
-    writeRaw(std::string_view(tmp.data(), ptr));
+    writeRaw(
+        std::string_view(tmp.data(), static_cast<size_t>(ptr - tmp.data())));
   }
 
   // ___________________________________________________________________________
