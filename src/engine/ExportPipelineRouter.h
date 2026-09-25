@@ -9,17 +9,19 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORTPIPELINEROUTER_H
 #define QLEVER_SRC_ENGINE_EXPORTPIPELINEROUTER_H
 
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "parser/ParsedQuery.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
-#include "util/StringUtils.h"
 
 namespace ql::engine {
 
@@ -81,23 +83,20 @@ class ExportPipelineRouter {
     }
 
     if (optExportEngine.has_value()) {
-      const auto optVal =
-          ad_utility::getLowercase(std::string(optExportEngine.value()));
-      if (optVal == "v2" || optVal == "fast") {
+      const std::string_view optVal = optExportEngine.value();
+      if (equalsAnyIgnoreCase(optVal, {"v2", "fast"})) {
         return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-      } else if (optVal == "v1" || optVal == "legacy") {
+      } else if (equalsAnyIgnoreCase(optVal, {"v1", "legacy"})) {
         return ExportEngineMode::LegacyV1;
       }
     }
 
     // 2. Check explicit HTTP Header override (e.g. X-QLever-Export-Engine: v2)
     if (exportHeader.has_value()) {
-      const auto headerVal =
-          ad_utility::getLowercase(std::string(exportHeader.value()));
-      if (headerVal == "v2" || headerVal == "fast" ||
-          headerVal == "streaming") {
+      const std::string_view headerVal = exportHeader.value();
+      if (equalsAnyIgnoreCase(headerVal, {"v2", "fast", "streaming"})) {
         return evaluateEligibility(query, ExportEngineMode::FastStreamingV2);
-      } else if (headerVal == "v1" || headerVal == "legacy") {
+      } else if (equalsAnyIgnoreCase(headerVal, {"v1", "legacy"})) {
         return ExportEngineMode::LegacyV1;
       }
     }
@@ -162,21 +161,19 @@ class ExportPipelineRouter {
       }
 
       if (optExportEngine.has_value()) {
-        const auto val =
-            ad_utility::getLowercase(std::string(optExportEngine.value()));
-        if (val == "v2" || val == "fast") {
+        const std::string_view val = optExportEngine.value();
+        if (equalsAnyIgnoreCase(val, {"v2", "fast"})) {
           explicitlyRequestedV2 = true;
-        } else if (val == "v1" || val == "legacy") {
+        } else if (equalsAnyIgnoreCase(val, {"v1", "legacy"})) {
           explicitlyRequestedV1 = true;
         }
       }
 
       if (exportHeader.has_value()) {
-        const auto val =
-            ad_utility::getLowercase(std::string(exportHeader.value()));
-        if (val == "v2" || val == "fast" || val == "streaming") {
+        const std::string_view val = exportHeader.value();
+        if (equalsAnyIgnoreCase(val, {"v2", "fast", "streaming"})) {
           explicitlyRequestedV2 = true;
-        } else if (val == "v1" || val == "legacy") {
+        } else if (equalsAnyIgnoreCase(val, {"v1", "legacy"})) {
           explicitlyRequestedV1 = true;
         }
       }
@@ -229,14 +226,21 @@ class ExportPipelineRouter {
     return targetMode;
   }
 
+  // Case-insensitive comparison without allocation, so these can stay
+  // `noexcept`.
+  [[nodiscard]] static bool equalsAnyIgnoreCase(
+      std::string_view val, std::initializer_list<std::string_view> options) {
+    return ql::ranges::any_of(options, [val](std::string_view option) {
+      return absl::EqualsIgnoreCase(val, option);
+    });
+  }
+
   [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
+    return equalsAnyIgnoreCase(val, {"1", "true", "yes", "on"});
   }
 
   [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "0" || lower == "false" || lower == "no" || lower == "off";
+    return equalsAnyIgnoreCase(val, {"0", "false", "no", "off"});
   }
 
   // Unsupported-construct detection is not implemented yet; all SELECT and
