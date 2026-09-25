@@ -111,7 +111,9 @@ class VectorizedPrefixTable {
 
  private:
   void initEntry(WellKnownPrefixId id, std::string_view prefix) {
-    auto& e = entries_[static_cast<size_t>(id)];
+    const auto index = static_cast<size_t>(id);
+    AD_CONTRACT_CHECK(index < entries_.size());
+    auto& e = entries_[index];
     AD_CONTRACT_CHECK(prefix.size() <= sizeof(e.data));
     std::memset(e.data, 0, sizeof(e.data));
     std::memcpy(e.data, prefix.data(), prefix.size());
