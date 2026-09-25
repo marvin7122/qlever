@@ -15,6 +15,7 @@
 #include <stdexcept>
 
 #include "util/Exception.h"
+#include "util/FiberIoScheduler.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -112,13 +113,11 @@ void IoUringPolicy::addBatch(int fd,
                             targetBufferPerRequest)) {
     // The ring has no free slot, so make room: submit what we have prepared so
     // far and block until enough completions have been drained.
-    if (numInFlightReadRequests_ >= ringSize_) {
+    if (isRingFull()) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
       io_uring_submit(&ring_);
-      while (numInFlightReadRequests_ >= ringSize_) {
-        drainOneCqe();
-      }
+      drainUntilSlotFree();
     }
 
     // Claim the next free SQE. The check above guarantees a slot is available,
@@ -152,14 +151,67 @@ void IoUringPolicy::addBatch(int fd,
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::wait(BatchHandle handle) {
-  // Drain completions until this batch is gone. `drainOneCqe` erases a batch as
-  // soon as its last read completes, so a present entry always still has
-  // outstanding reads.
-  while (numInFlightReadRequestsPerBatch_.find(handle) !=
-         numInFlightReadRequestsPerBatch_.end()) {
+bool IoUringPolicy::isBatchComplete(BatchHandle handle) const {
+  // `drainOneCqe`/`attributeCompletion` erases a batch as soon as its last
+  // read completes, so a present entry always still has outstanding reads.
+  return numInFlightReadRequestsPerBatch_.find(handle) ==
+         numInFlightReadRequestsPerBatch_.end();
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::drainUntilSlotFree() {
+#ifdef QLEVER_HAS_FIBER_IO
+  if (FiberIoScheduler::isInsideFiber()) {
+    FiberIoScheduler::local().waitForFreeSlot(*this);
+    return;
+  }
+#endif
+  while (isRingFull()) {
     drainOneCqe();
   }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::wait(BatchHandle handle) {
+#ifdef QLEVER_HAS_FIBER_IO
+  // Inside a scheduler fiber, cooperate (reap and yield) instead of parking
+  // the thread. Outside fibers, keep the blocking behavior, so existing
+  // callers such as `VocabularyOnDisk::lookupBatch` are unaffected.
+  if (FiberIoScheduler::isInsideFiber()) {
+    FiberIoScheduler::local().waitForBatch(*this, handle);
+    return;
+  }
+#endif
+  // Drain completions until this batch is gone.
+  while (!isBatchComplete(handle)) {
+    drainOneCqe();
+  }
+}
+
+//______________________________________________________________________________
+bool IoUringPolicy::tryReapOneCqe() {
+  // Peek at the completion queue without blocking. Returns 0 with `cqe` set
+  // when a completion is available, `-EAGAIN` when the queue is empty.
+  io_uring_cqe* cqe = nullptr;
+  int ret = io_uring_peek_cqe(&ring_, &cqe);
+  if (ret == -EAGAIN) {
+    return false;
+  }
+  if (ret < 0) {
+    AD_THROW("io_uring_peek_cqe failed in IoUringPolicy");
+  }
+  AD_CORRECTNESS_CHECK(cqe != nullptr);
+  attributeCompletion(cqe);
+  return true;
+}
+
+//______________________________________________________________________________
+size_t IoUringPolicy::reapAvailableCompletions() {
+  size_t numReaped = 0;
+  while (tryReapOneCqe()) {
+    ++numReaped;
+  }
+  return numReaped;
 }
 
 //______________________________________________________________________________
@@ -170,7 +222,12 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
   if (ret < 0) {
     AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
   }
+  attributeCompletion(cqe);
+}
 
+//______________________________________________________________________________
+void ad_utility::IoUringPolicy::attributeCompletion(io_uring_cqe* cqe) {
+  AD_CORRECTNESS_CHECK(cqe != nullptr);
   // Recover the read's result (`cqe->res`) and the request id we stored in the
   // SQE, then consume the CQE so its slot is freed. Do this before any throw.
   const int numBytesRead = cqe->res;
