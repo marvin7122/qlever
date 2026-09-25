@@ -113,18 +113,6 @@ inline std::string gtestCurrentTestSuiteName(bool replaceSlashes = true) {
   return name;
 }
 
-// Name of the currently running test (e.g.
-// `"GTestHelpersTest_CurrentTestSuiteAndTestName"`), with the same slash
-// handling as above.
-inline std::string gtestCurrentTestName(bool replaceSlashes = true) {
-  const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-  std::string name = info != nullptr ? info->name() : "";
-  if (replaceSlashes) {
-    absl::StrReplaceAll({{"/", "_"}}, &name);
-  }
-  return name;
-}
-
 // _____________________________________________________________________________
 // Largest N such that `std::pmr::string(N, 'x')` stores its characters inside
 // the string object (small-string optimization) on this standard library.
