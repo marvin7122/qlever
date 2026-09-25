@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <array>
 #include <string>
 #include <string_view>
 
@@ -29,15 +28,21 @@ using qlever::export_v2::ScatterGatherChunkBuilder;
 // GCC 11 builds can compile the unit test without IndexImpl/range-v3. Only
 // index-free `Id` datatypes can therefore be resolved here; index-backed IDs
 // fail loudly instead of being silently replaced by placeholder text (the
-// full `Id` -> string conversion lives in `index/ExportIds.h`).
+// full `Id` -> string conversion lives in `index/ExportIds.h`). Consumes
+// `builder`: it is finalized into the returned chunk and left empty.
 inline ScatterGatherChunk serializeTableChunk(
     const IdTable& idTable, const LocalVocab& localVocab, RowFormat format,
     ScatterGatherChunkBuilder& builder) {
   const size_t numRows = idTable.numRows();
   const size_t numCols = idTable.numColumns();
 
-  auto appendEscaped = [&builder, format](std::string_view raw) {
-    std::array<char, 256> buf{};
+  // Escaping at most doubles the input, plus two CSV quotes. The buffer is
+  // reused across cells, so it only grows to the longest escaped entry.
+  std::string buf;
+  auto appendEscaped = [&builder, &buf, format](std::string_view raw) {
+    if (buf.size() < 2 * raw.size() + 2) {
+      buf.resize(2 * raw.size() + 2);
+    }
     if (format == RowFormat::Csv) {
       auto escaped = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Csv>(
           raw, {buf.data(), buf.size()});
@@ -71,7 +76,7 @@ inline ScatterGatherChunk serializeTableChunk(
                                    .toStringRepresentation();
         appendEscaped(raw);
       } else {
-        AD_FAIL(
+        AD_THROW(
             "ExportEngineV2 cannot serialize index-backed `Id` without the "
             "index vocabulary");
       }

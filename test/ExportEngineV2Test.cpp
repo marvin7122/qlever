@@ -13,6 +13,7 @@
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
 #include "util/AllocatorTestHelpers.h"
+#include "util/GTestHelpers.h"
 
 using namespace ql::engine::export_v2;
 using namespace qlever::export_v2;
@@ -68,8 +69,9 @@ TEST(ExportEngineV2Test, SerializeTableChunkRejectsIndexBackedIds) {
   // Index-backed IDs need the index vocabulary (`index/ExportIds.h`); this
   // lightweight serializer must fail loudly instead of emitting placeholder
   // text.
-  EXPECT_ANY_THROW(
-      serializeTableChunk(table, localVocab, RowFormat::Csv, builder));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      serializeTableChunk(table, localVocab, RowFormat::Csv, builder),
+      ::testing::HasSubstr("index-backed"));
 }
 
 TEST(ExportEngineV2Test, PipelineMorselIntegration) {
