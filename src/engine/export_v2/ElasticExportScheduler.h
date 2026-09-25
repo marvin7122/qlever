@@ -1,6 +1,11 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #pragma once
 
@@ -98,43 +103,6 @@ struct MorselProfile {
 };
 
 class ElasticExportScheduler;
-
-// -----------------------------------------------------------------------------
-// ExportWorkLease: Opaque Move-Only RAII Lease Handle
-// -----------------------------------------------------------------------------
-
-/// Move-only RAII handle representing a leased helper execution slot. The
-/// scheduler is observed through a `weak_ptr`: a lease that outlives the
-/// scheduler (e.g. held across teardown) releases into expiry instead of a
-/// dangling pointer. The scheduler can only exist as `shared_ptr`, so the
-/// reference handed out at construction is never empty.
-class ExportWorkLease {
- public:
-  ExportWorkLease() noexcept = default;
-  ExportWorkLease(std::weak_ptr<ElasticExportScheduler> scheduler,
-                  uint64_t epoch, uint64_t jobId, uint64_t leaseId) noexcept;
-  ~ExportWorkLease();
-
-  ExportWorkLease(ExportWorkLease&& other) noexcept;
-  ExportWorkLease& operator=(ExportWorkLease&& other) noexcept;
-
-  ExportWorkLease(const ExportWorkLease&) = delete;
-  ExportWorkLease& operator=(const ExportWorkLease&) = delete;
-
-  [[nodiscard]] bool isValid() const noexcept { return active_; }
-  [[nodiscard]] uint64_t epoch() const noexcept { return epoch_; }
-  [[nodiscard]] uint64_t jobId() const noexcept { return jobId_; }
-  [[nodiscard]] uint64_t leaseId() const noexcept { return leaseId_; }
-
-  void release() noexcept;
-
- private:
-  std::weak_ptr<ElasticExportScheduler> scheduler_;
-  uint64_t epoch_{0};
-  uint64_t jobId_{0};
-  uint64_t leaseId_{0};
-  bool active_{false};
-};
 
 // -----------------------------------------------------------------------------
 // Internal Base Job State & Owned Morsel for Type-Erased Thread Pool Dispatch
@@ -263,17 +231,6 @@ class ElasticExportScheduler
   /// Register an active session state for demand change notifications.
   void registerSession(std::weak_ptr<ExportJobStateBase> sessionState);
 
-  /// Internal callback when an ExportWorkLease is released. The `leaseId`
-  /// must identify an outstanding lease; anything else is an internal
-  /// error. Epoch and job identity travel with the lease for diagnostics;
-  /// validity is decided by lease identity, so they are not parameters.
-  void onLeaseReleased(uint64_t leaseId) noexcept;
-
-  /// Internal registration of a newly issued lease identity, called from
-  /// the `ExportWorkLease` constructor so every live lease is tracked for
-  /// release validation.
-  void registerOutstandingLease(uint64_t leaseId);
-
   /// Internal generator for monotonic job identifiers.
   uint64_t nextJobId() noexcept {
     return nextJobId_.fetch_add(1, std::memory_order_relaxed);
@@ -286,6 +243,11 @@ class ElasticExportScheduler
  private:
   explicit ElasticExportScheduler(size_t numThreads, size_t queueCapacity);
   void workerLoop();
+  // Helper-slot accounting of a worker: register a newly issued lease
+  // identity, and retire it again. Releasing an identity that is not
+  // outstanding is an internal error.
+  void registerOutstandingLease(uint64_t leaseId);
+  void onLeaseReleased(uint64_t leaseId);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
   // Shared demand-change propagation: wake both scheduler condition
   // variables, prune expired sessions, and notify the live ones outside

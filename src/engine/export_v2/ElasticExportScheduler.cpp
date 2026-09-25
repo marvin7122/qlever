@@ -1,6 +1,11 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "engine/export_v2/ElasticExportScheduler.h"
 
@@ -8,68 +13,9 @@
 
 #include <algorithm>
 
+#include "util/ExceptionHandling.h"
+
 namespace ad_utility::export_v2 {
-
-// -----------------------------------------------------------------------------
-// ExportWorkLease Implementation
-// -----------------------------------------------------------------------------
-
-ExportWorkLease::ExportWorkLease(
-    std::weak_ptr<ElasticExportScheduler> scheduler, uint64_t epoch,
-    uint64_t jobId, uint64_t leaseId) noexcept
-    : scheduler_{std::move(scheduler)},
-      epoch_{epoch},
-      jobId_{jobId},
-      leaseId_{leaseId},
-      active_{true} {
-  // Register before anyone can release: every live lease has exactly one
-  // outstanding identity, which `onLeaseReleased` validates. An expired
-  // scheduler needs no accounting, so there is nothing to register to.
-  if (auto live = scheduler_.lock()) {
-    live->registerOutstandingLease(leaseId);
-  } else {
-    active_ = false;
-  }
-}
-
-ExportWorkLease::~ExportWorkLease() { release(); }
-
-ExportWorkLease::ExportWorkLease(ExportWorkLease&& other) noexcept
-    : scheduler_{std::move(other.scheduler_)},
-      epoch_{other.epoch_},
-      jobId_{other.jobId_},
-      leaseId_{other.leaseId_},
-      active_{other.active_} {
-  // Only `active_` gates the destructor; the remaining members are
-  // unreadable once inactive, so they are left untouched.
-  other.active_ = false;
-  other.scheduler_.reset();
-}
-
-ExportWorkLease& ExportWorkLease::operator=(ExportWorkLease&& other) noexcept {
-  if (this != &other) {
-    release();
-    scheduler_ = std::move(other.scheduler_);
-    epoch_ = other.epoch_;
-    jobId_ = other.jobId_;
-    leaseId_ = other.leaseId_;
-    active_ = other.active_;
-    other.active_ = false;
-    other.scheduler_.reset();
-  }
-  return *this;
-}
-
-void ExportWorkLease::release() noexcept {
-  if (active_) {
-    active_ = false;
-    // `lock()` is noexcept; an expired scheduler means teardown already
-    // ran, so there is nothing to account to.
-    if (auto scheduler = scheduler_.lock()) {
-      scheduler->onLeaseReleased(leaseId_);
-    }
-  }
-}
 
 // -----------------------------------------------------------------------------
 // ElasticExportScheduler Implementation
@@ -239,17 +185,14 @@ void ElasticExportScheduler::registerOutstandingLease(uint64_t leaseId) {
   AD_CORRECTNESS_CHECK(outstandingLeaseIds_.insert(leaseId).second,
                        "Duplicate export helper lease identity");
   // Accounting lives with identity: every outstanding lease holds exactly
-  // one helper slot, so the count always equals the set size, including
-  // for directly constructed leases.
+  // one helper slot, so the count always equals the set size.
   totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void ElasticExportScheduler::onLeaseReleased(uint64_t leaseId) noexcept {
+void ElasticExportScheduler::onLeaseReleased(uint64_t leaseId) {
   std::lock_guard<std::mutex> lock(queueMutex_);
   // Only an outstanding lease identity may retire a helper slot; anything
-  // else is a stale or duplicate release and an internal error. The
-  // lease-side `active_` flag already prevents double release through one
-  // handle, this guards the accounting against anything else.
+  // else is a stale or duplicate release and an internal error.
   AD_CORRECTNESS_CHECK(outstandingLeaseIds_.erase(leaseId) == 1,
                        "Release of unknown export helper lease");
   totalActiveHelpers_.fetch_sub(1, std::memory_order_relaxed);
@@ -299,21 +242,36 @@ void ElasticExportScheduler::workerLoop() {
       leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Account the helper slot directly on `this` instead of through an
-    // `ExportWorkLease`: the lease locks its `weak_ptr`, and if the last
-    // external owner drops the scheduler while this worker holds that
-    // temporary `shared_ptr`, the destructor would run on this worker and
-    // `shutdown` would join the worker from itself. `this` is valid here
-    // because `shutdown` joins all workers before destruction completes.
+    // Account the helper slot directly on `this`: `this` is valid here
+    // because `shutdown` joins all workers before destruction completes, and
+    // the worker never holds an owning reference to the scheduler (dropping
+    // the last owner here would make `shutdown` join this worker from
+    // itself).
     registerOutstandingLease(leaseId);
-    absl::Cleanup releaseLease = [this, leaseId] { onLeaseReleased(leaseId); };
+    // A failed release is an accounting bug that cannot propagate out of a
+    // destructor, so it terminates with a diagnostic.
+    absl::Cleanup releaseLease = [this, leaseId] {
+      ad_utility::terminateIfThrows(
+          [this, leaseId] { onLeaseReleased(leaseId); },
+          "Releasing an export helper lease");
+    };
 
-    if (targetJobState && !targetJobState->isCancelled()) {
-      if (submissionEpoch == leaseEpoch) {
-        targetJobState->onHelperLeaseAcquired(leaseEpoch);
-        targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
-        targetJobState->onHelperLeaseReleased(leaseEpoch);
-      }
+    // A morsel skipped here (cancelled job or stale epoch) is only dropped
+    // from the queue; its slot stays `Pending`, so the coordinator executes
+    // it in `consumeNextResult`.
+    if (targetJobState && !targetJobState->isCancelled() &&
+        submissionEpoch == leaseEpoch) {
+      targetJobState->onHelperLeaseAcquired(leaseEpoch);
+      // Pair acquisition with release even if `executeHelperTask` throws, so
+      // a session never stays `Revoking` on a leaked helper count.
+      absl::Cleanup releaseJobLease = [&targetJobState, leaseEpoch] {
+        ad_utility::terminateIfThrows(
+            [&targetJobState, leaseEpoch] {
+              targetJobState->onHelperLeaseReleased(leaseEpoch);
+            },
+            "Releasing an export job helper lease");
+      };
+      targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
     }
   }
 }

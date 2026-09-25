@@ -1,6 +1,11 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -290,17 +295,6 @@ TEST(ElasticExportSchedulerTest, MoveSemanticsAndRAII) {
   auto movedSession = std::move(session);
   EXPECT_EQ(movedSession.consumeNextResult(), "moved");
 
-  ExportWorkLease lease1(scheduler, 1, 10, 100);
-  EXPECT_TRUE(lease1.isValid());
-  EXPECT_EQ(lease1.epoch(), 1u);
-  EXPECT_EQ(lease1.jobId(), 10u);
-
-  ExportWorkLease lease2 = std::move(lease1);
-  EXPECT_FALSE(lease1.isValid());
-  EXPECT_TRUE(lease2.isValid());
-  lease2.release();
-  EXPECT_FALSE(lease2.isValid());
-
   scheduler->onForegroundQueryEnded();
 }
 
@@ -379,23 +373,6 @@ TEST(ElasticExportSchedulerTest, EnqueueRefusesWorkWhenHelpersIneligible) {
   scheduler->onForegroundQueryEnded();
   scheduler->onForegroundQueryEnded();
   EXPECT_TRUE(scheduler->enqueueMorsel(makeMorsel(2)));
-}
-
-// -----------------------------------------------------------------------------
-// Test 8d: Lease Release After Scheduler Destruction Is A No-Op
-// -----------------------------------------------------------------------------
-
-TEST(ElasticExportSchedulerTest, LeaseReleaseAfterSchedulerDestruction) {
-  std::optional<ExportWorkLease> lease;
-  {
-    auto scheduler = ElasticExportScheduler::create(2, 64);
-    lease.emplace(scheduler, 1, 10, 100);
-    EXPECT_TRUE(lease->isValid());
-  }
-  // The scheduler is gone while the lease is still active. Releasing into
-  // the expired `weak_ptr` must be a no-op rather than a use-after-free.
-  lease->release();
-  EXPECT_FALSE(lease->isValid());
 }
 
 // -----------------------------------------------------------------------------
