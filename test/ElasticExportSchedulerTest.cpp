@@ -376,6 +376,27 @@ TEST(ElasticExportSchedulerTest, EnqueueRefusesWorkWhenHelpersIneligible) {
 }
 
 // -----------------------------------------------------------------------------
+// Test 8d: A Session That Outlives Its Scheduler Falls Back To The Primary
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, SessionOutlivesScheduler) {
+  std::optional<ExportWorkSession<int>> session;
+  {
+    auto scheduler = ElasticExportScheduler::create(2, 64);
+    scheduler->onForegroundQueryStarted();
+    session.emplace(scheduler->createSession<int>());
+    EXPECT_EQ(session->state(), SessionState::HelpersEligible);
+  }
+  // The scheduler is gone. Submitting must not touch it; the morsel stays
+  // Pending and runs on the coordinator.
+  session->submitMorsel([]() { return 7; });
+  EXPECT_EQ(session->consumeNextResult(), 7);
+  auto profiles = session->inspectMorselProfiles();
+  ASSERT_EQ(profiles.size(), 1u);
+  EXPECT_FALSE(profiles[0].executedByHelper_);
+}
+
+// -----------------------------------------------------------------------------
 // Test 9: Concurrent Multi-Session Stress Test
 // -----------------------------------------------------------------------------
 

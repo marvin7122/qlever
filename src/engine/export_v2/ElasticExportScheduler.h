@@ -294,13 +294,14 @@ class ExportJobState final
     MorselProfile profile_;
   };
 
-  ExportJobState(uint64_t jobId, ElasticExportScheduler* scheduler,
+  ExportJobState(uint64_t jobId,
+                 std::weak_ptr<ElasticExportScheduler> scheduler,
                  uint64_t initialEpoch, SessionState initialState)
       : jobId_{jobId},
-        scheduler_{scheduler},
+        scheduler_{std::move(scheduler)},
         state_{initialState},
         currentEpoch_{initialEpoch} {
-    AD_CONTRACT_CHECK(scheduler_ != nullptr);
+    AD_CONTRACT_CHECK(!scheduler_.expired());
   }
 
   [[nodiscard]] uint64_t jobId() const noexcept override { return jobId_; }
@@ -319,13 +320,19 @@ class ExportJobState final
 
   void onDemandChanged(size_t activeForegroundQueries,
                        uint64_t newEpoch) override {
+    // Only the scheduler calls this, so it is alive; a failed `lock` would
+    // mean teardown already started and there is nothing to enqueue into.
+    auto scheduler = scheduler_.lock();
+    if (!scheduler) {
+      return;
+    }
     std::vector<size_t> pendingIndicesToEnqueue;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (closed_ || cancelled_) {
         return;
       }
-      size_t maxQueries = scheduler_->maxForegroundQueriesForHelperAdmission();
+      size_t maxQueries = scheduler->maxForegroundQueriesForHelperAdmission();
       if (activeForegroundQueries <= maxQueries) {
         // Foreground load is low; helpers are eligible
         currentEpoch_.store(newEpoch, std::memory_order_release);
@@ -355,7 +362,7 @@ class ExportJobState final
     if (!pendingIndicesToEnqueue.empty()) {
       auto self = this->shared_from_this();
       for (size_t index : pendingIndicesToEnqueue) {
-        scheduler_->enqueueMorsel(OwnedMorsel(self, jobId_, newEpoch, index));
+        scheduler->enqueueMorsel(OwnedMorsel(self, jobId_, newEpoch, index));
       }
     }
   }
@@ -472,11 +479,14 @@ class ExportJobState final
       }
     }
 
-    if (shouldEnqueue) {
+    // A session may outlive its scheduler; without one the slot simply
+    // stays Pending and the primary consumes it.
+    auto scheduler = shouldEnqueue ? scheduler_.lock() : nullptr;
+    if (scheduler) {
       // A false return means helpers became ineligible (or shutdown
       // started) after the check above; the slot stays Pending and the
       // primary consumes it, so ignoring the result is the fallback.
-      scheduler_->enqueueMorsel(
+      scheduler->enqueueMorsel(
           OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index));
     }
     return index;
@@ -638,7 +648,9 @@ class ExportJobState final
   }
 
   const uint64_t jobId_;
-  ElasticExportScheduler* const scheduler_;
+  // Observed, not owned: sessions may outlive the scheduler, and the
+  // scheduler itself only holds sessions weakly.
+  const std::weak_ptr<ElasticExportScheduler> scheduler_;
   std::atomic<SessionState> state_{SessionState::PrimaryOnly};
   std::atomic<uint64_t> currentEpoch_{1};
   std::atomic<size_t> activeHelpers_{0};
@@ -758,8 +770,8 @@ ExportWorkSession<ResultType> ElasticExportScheduler::createSession() {
           ? SessionState::HelpersEligible
           : SessionState::PrimaryOnly;
 
-  auto state = std::make_shared<ExportJobState<ResultType>>(jId, this, epoch,
-                                                            initialState);
+  auto state = std::make_shared<ExportJobState<ResultType>>(
+      jId, weak_from_this(), epoch, initialState);
   registerSession(state);
   return ExportWorkSession<ResultType>(std::move(state));
 }
