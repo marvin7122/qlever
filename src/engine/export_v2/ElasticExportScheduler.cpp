@@ -69,8 +69,16 @@ ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
   }
 
   workers_.reserve(threadCount);
-  for (size_t i = 0; i < threadCount; ++i) {
-    workers_.emplace_back(&ElasticExportScheduler::workerLoop, this);
+  try {
+    for (size_t i = 0; i < threadCount; ++i) {
+      workers_.emplace_back(&ElasticExportScheduler::workerLoop, this);
+    }
+  } catch (...) {
+    // The destructor does not run for a partially constructed object, so the
+    // already started workers must be stopped and joined here; destroying a
+    // joinable `std::thread` would call `std::terminate`.
+    shutdown();
+    throw;
   }
 }
 
