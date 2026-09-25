@@ -81,6 +81,7 @@ jobs:
             toolchain: gcc11
             build-type: Release
             extra-flags: ""
+            skip-if-pr: true  # Fork PR profile 2026-09-25: gcc11+backports and gcc13 cover it.
           - image: gcc11
             toolchain: gcc11
             build-type: Release
@@ -102,6 +103,7 @@ jobs:
           - image: conan
             run-kind: conan
             build-type: Release
+            skip-if-pr: true  # Fork PR profile 2026-09-25: packaging leg, master only.
           # Emscripten/WASM leg (mirrors
           # native-build-with-conan-and-emscripten.yml, build job only;
           # npm publish stays on the hosted workflow): emsdk 6.0.5,
@@ -109,6 +111,7 @@ jobs:
           - image: emsdk-6.0.5
             run-kind: emsdk
             build-type: Release
+            skip-if-pr: true  # Fork PR profile 2026-09-25: packaging leg, master only.
           # NOTE: no TSan leg here. ThreadSanitizer aborts with "unexpected
           # memory mapping" unless the host sets vm.mmap_rnd_bits=28, which
           # needs root on the runner hosts. TSan stays on the GitHub-hosted
@@ -119,6 +122,10 @@ jobs:
       # Host-SSD compiler cache, one dir per toolchain, shared across all
       # runs and PRs landing on this host (CI speedup 2026-09-24).
       CCACHE_BASE: /local/data-ssd/stoetzem/ccache
+      # Job token for github clones inside the containers (CMake
+      # FetchContent, emsdk tag fetch). Anonymous clones from the shared
+      # Wolga egress got HTTP 401 ("could not read Username") in bursts.
+      GH_CLONE_TOKEN: ${{ github.token }}
     steps:
       - name: Skip early if master-only leg on a PR
         if: github.event_name == 'pull_request' && matrix.skip-if-pr == true
@@ -138,15 +145,19 @@ jobs:
             -v "${{ github.workspace }}:/work" \
             -v "${CCACHE_BASE}/${{ matrix.toolchain }}:/ccache" \
             -w /work \
+            -e GH_CLONE_TOKEN \
             localhost/qlever-ci:${{ matrix.image }} bash -c '
               set -e
+              if [ -n "${GH_CLONE_TOKEN:-}" ]; then git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf "x-access-token:%s" "${GH_CLONE_TOKEN}" | base64 -w0)"; fi
               # Per-leg extra environment inside the container (empty for
               # legs without a `container-env` matrix key).
               if [ -n "${{ matrix.container-env }}" ]; then export ${{ matrix.container-env }}; fi
+              # apt runs its downloads as _apt via setgroups, which rootless podman
+              # on Wolga cannot do (no /etc/subuid entry), so keep apt's sandbox root.
               # Compiler cache on the host SSD (mounted at /ccache, persists
               # across runs). Images carry no ccache binary, so install it
               # on first use (~30s, once per fresh container layer).
-              command -v ccache >/dev/null 2>&1 || (apt-get update -qq && apt-get install -qy ccache)
+              command -v ccache >/dev/null 2>&1 || (apt-get -o APT::Sandbox::User=root update -qq && apt-get -o APT::Sandbox::User=root install -qy ccache)
               export CCACHE_DIR=/ccache CCACHE_MAXSIZE=10G CCACHE_COMPRESS=true
               ccache -z >/dev/null
               # cmake configure pulls third-party sources (googletest etc.)
@@ -201,8 +212,10 @@ jobs:
             --network=host \
             -v "${{ github.workspace }}:/work" \
             -w /work \
+            -e GH_CLONE_TOKEN \
             localhost/qlever-ci:${{ matrix.image }} bash -c '
               set -e
+              if [ -n "${GH_CLONE_TOKEN:-}" ]; then git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf "x-access-token:%s" "${GH_CLONE_TOKEN}" | base64 -w0)"; fi
               cd /work && rm -rf /work/build && mkdir -p /work/build
               conan profile detect
               # Same configure retry as the native step: anonymous github
@@ -241,8 +254,10 @@ jobs:
             --network=host \
             -v "${{ github.workspace }}:/work" \
             -w /work \
+            -e GH_CLONE_TOKEN \
             localhost/qlever-ci:${{ matrix.image }} bash -c '
               set -e
+              if [ -n "${GH_CLONE_TOKEN:-}" ]; then git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $(printf "x-access-token:%s" "${GH_CLONE_TOKEN}" | base64 -w0)"; fi
               # Fleet egress to github flakes: retry the tag fetch (mirrors
               # configure_with_retry below) instead of failing the leg when
               # the clone stays shallow and tagless.
