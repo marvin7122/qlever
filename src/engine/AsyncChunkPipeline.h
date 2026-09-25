@@ -199,7 +199,13 @@ class AsyncChunkPipeline {
   // ___________________________________________________________________________
   // Cancellation API: Signal early consumer cancellation (e.g. broken pipe).
   void cancel() {
-    isCancelled_ = true;
+    {
+      // Set the flag under the mutex that guards the wait predicates, so that
+      // a thread between its predicate check and blocking cannot miss the
+      // notification below.
+      std::lock_guard<std::mutex> lock(mutex_);
+      isCancelled_ = true;
+    }
     cvNotFull_.notify_all();
     cvNotEmpty_.notify_all();
   }
