@@ -20,9 +20,13 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
     ad_utility::MediaType mediaType,
     ad_utility::SharedCancellationHandle cancellationHandle,
     [[maybe_unused]] ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  // This function is a coroutine so that `timer` lives in its frame: the
+  // Legacy generator holds a reference to it while it is being consumed.
   ad_utility::Timer timer{ad_utility::Timer::Started};
-  return ExportQueryExecutionTrees::computeResult(
-      parsedQuery, qet, mediaType, timer, std::move(cancellationHandle));
+  for (auto& chunk : ExportQueryExecutionTrees::computeResult(
+           parsedQuery, qet, mediaType, timer, std::move(cancellationHandle))) {
+    co_yield std::move(chunk);
+  }
 }
 
 }  // namespace ql::engine::export_v2

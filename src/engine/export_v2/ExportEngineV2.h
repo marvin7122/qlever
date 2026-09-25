@@ -11,18 +11,14 @@
 #include <string>
 
 #include "engine/QueryExecutionTree.h"
-#include "engine/export_v2/AsyncChunkPipeline.h"
 #include "engine/export_v2/ElasticExportScheduler.h"
 #include "engine/export_v2/ExportEngineV2Serialize.h"
-#include "engine/export_v2/VectorStreamSource.h"
 #include "parser/ParsedQuery.h"
 #include "util/CancellationHandle.h"
+#include "util/Generator.h"
 #include "util/http/MediaTypes.h"
-#include "util/stream_generator.h"
 
 namespace ql::engine::export_v2 {
-
-using qlever::export_v2::AsyncChunkPipeline;
 
 // _____________________________________________________________________________
 // Unified Export Engine V2 (WP8): Coordinates push-based streaming export
