@@ -17,7 +17,6 @@
 #include <cstring>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string_view>
 #include <vector>
 
@@ -33,6 +32,7 @@
 #define QLEVER_STREAMING_HAS_SSE2 1
 #endif
 
+#include "backports/span.h"
 #include "util/AlignedAllocator.h"
 #include "util/Exception.h"
 
@@ -161,7 +161,7 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Construct a writer wrapping a caller-provided destination buffer span.
-  explicit StreamingBufferWriter(std::span<char> destinationBuffer)
+  explicit StreamingBufferWriter(ql::span<char> destinationBuffer)
       : buffer_{destinationBuffer.data()},
         capacity_{destinationBuffer.size()},
         bytesWritten_{0},
@@ -233,7 +233,7 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Write string_view data using non-temporal streaming stores. (A
-  // `std::span<const char>` overload was deliberately omitted: it is
+  // `ql::span<const char>` overload was deliberately omitted: it is
   // ambiguous with this overload for `std::string` and string literals;
   // span callers can pass `{data.data(), data.size()}`.)
   void write(std::string_view data) { write(data.data(), data.size()); }
@@ -248,7 +248,7 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Retarget the writer to a new caller-provided buffer span.
-  void reset(std::span<char> newBuffer) noexcept {
+  void reset(ql::span<char> newBuffer) noexcept {
     ownedBuffer_.reset();
     buffer_ = newBuffer.data();
     capacity_ = newBuffer.size();
@@ -279,10 +279,10 @@ class StreamingBufferWriter {
   [[nodiscard]] char* data() noexcept { return buffer_; }
   [[nodiscard]] const char* data() const noexcept { return buffer_; }
 
-  [[nodiscard]] std::span<const char> writtenSpan() const noexcept {
+  [[nodiscard]] ql::span<const char> writtenSpan() const noexcept {
     return {buffer_, bytesWritten_};
   }
-  [[nodiscard]] std::span<char> remainingSpan() noexcept {
+  [[nodiscard]] ql::span<char> remainingSpan() noexcept {
     return {buffer_ + bytesWritten_, capacity_ - bytesWritten_};
   }
 };
