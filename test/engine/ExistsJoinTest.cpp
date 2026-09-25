@@ -1,6 +1,7 @@
-// Copyright 2024 - 2025, University of Freiburg
+// Copyright 2024 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
-// Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #include <gmock/gmock.h>
 
@@ -976,17 +977,17 @@ TEST(ExistsJoin, hashSetExistsJoinSingleColumn) {
   // as declared to the test operation via `sortedCols`: the lazy result
   // machinery verifies this declaration when expensive checks are enabled.
   // Looping over `forceFullyMaterialized` covers both the lazy EXISTS path
-  // (right child served lazily) and the materialized hash-set semijoin (both
-  // children materialized), which is the path added for PR 43.
-  auto qec = getQec();
+  // (right child served lazily) and the hash-set path for fully materialized
+  // inputs (`computeExistsJoinWithHashSet`).
+  auto* const qec = getQec();
   using V = Variable;
-  auto alloc = ad_utility::testing::makeAllocator();
+  const auto alloc = ad_utility::testing::makeAllocator();
   struct TestCase {
     VectorTable leftInput;
     VectorTable rightInput;
     std::vector<bool> expectedAsBool;
   };
-  std::vector<TestCase> cases{
+  const std::vector<TestCase> cases{
       // Left join keys {3,4,5}; right join keys {3,5}.
       {{{3, 6}, {4, 7}, {5, 8}}, {{3, 15}, {5, 37}}, {true, false, true}},
       // Right side empty -> every EXISTS is false.
@@ -997,8 +998,8 @@ TEST(ExistsJoin, hashSetExistsJoinSingleColumn) {
       {{{3, 6}, {3, 7}, {4, 8}}, {{3, 15}, {3, 19}}, {true, true, false}},
   };
 
-  auto makeChild = [&](const IdTable& input, const V& joinVar,
-                       const V& otherVar, bool forceFullyMaterialized) {
+  const auto makeChild = [&](const IdTable& input, const V& joinVar,
+                             const V& otherVar, bool forceFullyMaterialized) {
     return ad_utility::makeExecutionTree<ValuesForTesting>(
         qec, input.clone(),
         std::vector<std::optional<Variable>>{joinVar, otherVar}, false,
@@ -1009,11 +1010,12 @@ TEST(ExistsJoin, hashSetExistsJoinSingleColumn) {
   for (bool forceFullyMaterialized : {false, true}) {
     qec->getQueryTreeCache().clearAll();
     for (const auto& [leftInput, rightInput, expectedAsBool] : cases) {
-      IdTable left = makeIdTableFromVector(leftInput);
+      const IdTable left = makeIdTableFromVector(leftInput);
       // An empty `VectorTable` has no columns; the empty right side needs an
       // explicit two-column table.
-      IdTable right = rightInput.empty() ? IdTable{2, alloc}
-                                         : makeIdTableFromVector(rightInput);
+      const IdTable right = rightInput.empty()
+                                ? IdTable{2, alloc}
+                                : makeIdTableFromVector(rightInput);
       ExistsJoin exists{
           qec,
           makeChild(left, V{"?joinCol"}, V{"?leftCol"}, forceFullyMaterialized),
@@ -1021,7 +1023,7 @@ TEST(ExistsJoin, hashSetExistsJoinSingleColumn) {
                     forceFullyMaterialized),
           V{"?exists"}};
       EXPECT_EQ(exists.getResultWidth(), left.numColumns() + 1);
-      auto res = exists.computeResultOnlyForTesting();
+      const auto res = exists.computeResultOnlyForTesting();
       const auto& table = res.idTableView();
       ASSERT_EQ(table.numRows(), expectedAsBool.size());
       IdTable expected = left.clone();
