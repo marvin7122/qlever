@@ -68,7 +68,7 @@ TEST_P(MaterializedViewsStarRewriteTest, starRewrite) {
   MaterializedViewsManager manager{onDiskBase};
   manager.writeViewToDisk(viewName, qlv.parseAndPlanQuery(p.writeQuery_));
   qlv.loadMaterializedView(viewName);
-  auto starView = std::bind_front(&viewScanSimple, viewName);
+  auto starView = absl::bind_front(&viewScanSimple, viewName);
 
   // With the materialized view loaded, an index scan on the view is performed
   // instead of a regular join.
