@@ -66,7 +66,8 @@ inline char* spliceSlice(const char* src, size_t len, char* out) noexcept {
 }
 
 // _____________________________________________________________________________
-// Internal thread-local prefix slice storage.
+// Internal per-formatter prefix slice storage (a plain member, not
+// `thread_local`, so one formatter must not be used concurrently).
 // Holds the pre-formatted bytes for the currently cached ValueId.
 template <size_t MaxBufferSize = 2048>
 class RlePrefixSlice {
@@ -135,8 +136,7 @@ struct RleFormatterConfig {
 //
 // RlePrefixFormatter:
 // 1. Detects consecutive runs of identical ValueIds in sorted columns.
-// 2. Formats the constant IRI once into a thread-local prefix slice, and
-// splices
+// 2. Formats the constant IRI once into a member prefix slice, and splices
 //    it into subsequent output rows with a single 64-bit/128-bit word copy.
 // 3. Seamlessly switches back to dynamic formatting when the run ends.
 class RlePrefixFormatter {
