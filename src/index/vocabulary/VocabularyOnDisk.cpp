@@ -346,10 +346,10 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Read the io_uring tuning knobs once: the ring size and the setup options
-  // (currently whether the rings use an SQPoll poll thread) apply to every
-  // pooled manager, and the batch window applies to every `lookupBatch` call.
-  // The knobs keep their defaults unless the operator sets them, e.g. via
+  // Read the io_uring tuning knobs once from the global `RuntimeParameters`:
+  // `ioUringRingSize_` and `ioUringSqPoll_` configure every pooled
+  // `BatchManagerBase`, and `vocabBatchWindow_` configures every `lookupBatch`
+  // call. An operator sets them e.g. via
   // `qlever-server --set-runtime-parameter iouring-sqpoll=true`.
   const auto ringSize =
       getRuntimeParameter<&RuntimeParameters::ioUringRingSize_>();
@@ -358,17 +358,18 @@ void VocabularyOnDisk::open(const std::string& filename) {
   setupOptions.useSqPoll =
       getRuntimeParameter<&RuntimeParameters::ioUringSqPoll_>();
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`. Each
-  // manager owns its ring exclusively while checked out (pop, use both
-  // phases, push back while idle), so at most one thread ever submits to a
-  // ring at a time, and one SQPoll thread per pooled ring cannot serialize
-  // concurrent submitters. `SINGLE_ISSUER` still stays off: rings migrate
-  // across threads over their lifetime until per-thread rings land.
+  // Initialize the pool `ioManagers_` of persistent `BatchManagerBase`s for
+  // `lookupBatch`. A `lookupBatch` call `pop`s one manager, runs both phases
+  // on it, and `push`es it back, so at most one thread submits to a ring at a
+  // time, and the SQPoll thread of one ring never serves concurrent
+  // submitters. Keep `IoUringSetupOptions::singleIssuer` off, because a pooled
+  // ring is used by different threads over its lifetime.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
+  for ([[maybe_unused]] auto i :
+       ad_utility::integerRange(NUM_VOCAB_BATCH_IO_MANAGERS)) {
     ioManagers_->push(ad_utility::makeBatchManager(
         preferIoUring, static_cast<unsigned>(ringSize), setupOptions));
   }
