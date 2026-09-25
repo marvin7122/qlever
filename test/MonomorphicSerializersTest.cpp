@@ -9,7 +9,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "engine/FastExportStreamFormatter.h"
