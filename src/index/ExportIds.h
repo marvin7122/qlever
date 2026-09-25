@@ -272,19 +272,39 @@ static constexpr size_t ID_TO_STRING_AND_TYPE_CACHE_NUM_ENTRIES = 1 << 16;
 // single call site (fixed template arguments and escape function). Returns a
 // reference into the cache; the cache must outlive the use.
 template <bool removeQuotesAndAngleBrackets = false,
-          bool returnOnlyLiterals = false,
-          typename EscapeFunction = ql::identity>
+          bool returnOnlyLiterals = false, typename EscapeFunction>
 const IdToStringAndTypeCacheValue& cachedIdToStringAndType(
     IdToStringAndTypeCache& cache, const Index& index, Id id,
-    const LocalVocab& localVocab,
-    const EscapeFunction& escapeFunction = EscapeFunction{}) {
+    const LocalVocab& localVocab, const EscapeFunction& escapeFunction) {
   return cache.getOrCompute(
       makeIdToStringAndTypeCacheKey(id, localVocab),
       [&](const IdToStringAndTypeCacheKey& key) {
+        // The key carries the vocabulary for `LocalVocabIndex` IDs (see
+        // `makeIdToStringAndTypeCacheKey`), so resolve from the key. The
+        // `localVocab` argument is only the fallback for datatypes that never
+        // touch the vocabulary.
+        const LocalVocab& vocab =
+            key.localVocab_ != nullptr ? *key.localVocab_ : localVocab;
         return idToStringAndType<removeQuotesAndAngleBrackets,
-                                 returnOnlyLiterals>(index, key.id_, localVocab,
+                                 returnOnlyLiterals>(index, key.id_, vocab,
                                                      escapeFunction);
       });
+}
+
+// Overload without an escape function (identity escaping). It forwards to the
+// function above with a persistent identity instance: a default-constructed
+// temporary would bind to the `escapeFunction` const reference while the
+// function returns a reference into the cache, which GCC flags as
+// `-Wdangling-reference` under `-Werror`.
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false>
+const IdToStringAndTypeCacheValue& cachedIdToStringAndType(
+    IdToStringAndTypeCache& cache, const Index& index, Id id,
+    const LocalVocab& localVocab) {
+  static constexpr ql::identity noEscape{};
+  return cachedIdToStringAndType<removeQuotesAndAngleBrackets,
+                                 returnOnlyLiterals>(cache, index, id,
+                                                     localVocab, noEscape);
 }
 
 // Positions (indices into the `ids` span) split by datatype: `VocabIndex` ids
