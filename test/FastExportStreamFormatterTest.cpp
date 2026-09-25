@@ -98,6 +98,19 @@ TEST(FastExportStreamFormatterTest, WriteRowCsvAndTsv) {
   EXPECT_EQ(tsvCollector.output_, "a,b\tc\n");
 }
 
+// TSV escaping matches `RdfEscaping::escapeForTsv` byte for byte: tabs become
+// spaces, newlines become `\n`, and a carriage return passes through.
+TEST(FastExportStreamFormatterTest, TsvEscapingMatchesBaseline) {
+  for (std::string_view field :
+       {"plain", "a\tb", "line1\nline2", "cr\rinside", "mixed\t\r\n", ""}) {
+    CollectingFormatter collector;
+    collector.formatter_.writeEscapedTsv(field);
+    static_cast<void>(std::move(collector.formatter_).finalize());
+    EXPECT_EQ(collector.output_, RdfEscaping::escapeForTsv(std::string{field}))
+        << "field: " << field;
+  }
+}
+
 // `ensureAvailable` throws, so the write functions must not be `noexcept`:
 // an exception escaping a `noexcept` function calls `std::terminate`.
 TEST(FastExportStreamFormatterTest, WriteFunctionsAreNotNoexcept) {
