@@ -57,15 +57,13 @@ class SimulatedVocabularyFile {
  public:
   explicit SimulatedVocabularyFile(
       std::string_view pathTemplate = "/tmp/qlever_vocab_sim_XXXXXX.bin") {
-    char tempPath[256];
-    std::strncpy(tempPath, pathTemplate.data(), sizeof(tempPath) - 1);
-    tempPath[sizeof(tempPath) - 1] = '\0';
-
-    int fd = mkstemps(tempPath, 4);
+    // `mkstemps` needs a mutable, null-terminated buffer.
+    std::string tempPath{pathTemplate};
+    int fd = mkstemps(tempPath.data(), 4);
     if (fd < 0) {
       AD_THROW("mkstemps failed to create temporary vocabulary file");
     }
-    filePath_ = tempPath;
+    filePath_ = std::move(tempPath);
 
     std::cout << "Generating 1GB simulated vocabulary data in: " << filePath_
               << " ... " << std::flush;
