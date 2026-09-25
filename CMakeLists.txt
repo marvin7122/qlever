@@ -119,11 +119,6 @@ message(STATUS "QLEVER_NO_UNDEFINED_SYMBOLS is ${QLEVER_NO_UNDEFINED_SYMBOLS}")
 # has to load all the shared libraries again.
 option(QLEVER_ONE_TEST_CASE_PER_FILE "Register one `ctest` test per test binary instead of one per gtest case" OFF)
 
-option(QLEVER_ENABLE_EXPORT_V2 "Compile the experimental export V2 path" OFF)
-if (QLEVER_ENABLE_EXPORT_V2)
-    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2=1)
-endif ()
-
 # Disable nlohmann implicit conversions (e.g. json → std::string) globally so
 # all TUs, including those compiled via PCH, see the same flag value.
 add_compile_definitions(JSON_USE_IMPLICIT_CONVERSIONS=0)
@@ -163,7 +158,7 @@ if (REDUCED_FEATURE_SET_FOR_CPP17)
   set(QLEVER_ENABLE_EXPORT_V2 OFF)
 endif()
 if (QLEVER_ENABLE_EXPORT_V2)
-    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2)
+    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2=1)
 endif()
 
 # Select the memory-allocator backend that `qlever::Allocator` resolves to
