@@ -81,6 +81,7 @@ jobs:
             toolchain: gcc11
             build-type: Release
             extra-flags: ""
+            skip-if-pr: true  # Fork PR profile 2026-09-25: gcc11+backports and gcc13 cover it.
           - image: gcc11
             toolchain: gcc11
             build-type: Release
