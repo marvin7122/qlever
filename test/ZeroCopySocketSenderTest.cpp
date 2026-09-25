@@ -110,6 +110,9 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
   EXPECT_EQ(sender.inFlightBuffers(), 0u);
   EXPECT_EQ(sender.bufferPool().availableSlots(), config.numBuffers);
 
+  // Signal EOF to the receiver so a short send (fewer bytes than expected)
+  // is reported as data mismatch instead of hanging the join.
+  ::shutdown(sendFd, SHUT_WR);
   receiverThread.join();
 
   ::close(sendFd);

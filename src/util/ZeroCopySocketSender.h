@@ -21,9 +21,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -89,6 +89,7 @@ class ZeroCopyBufferPool {
     AD_CONTRACT_CHECK(numBuffers > 0);
     AD_CONTRACT_CHECK(bufferSizeBytes > 0);
     AD_CONTRACT_CHECK((bufferSizeBytes % kZeroCopyPageAlignment) == 0);
+    AD_CONTRACT_CHECK(numBuffers <= SIZE_MAX / bufferSizeBytes);
 
     numBuffers_ = numBuffers;
     bufferSizeBytes_ = bufferSizeBytes;
@@ -110,8 +111,11 @@ class ZeroCopyBufferPool {
 
     auto* basePtr = static_cast<char*>(rawBuffer_);
     for (size_t i = 0; i < numBuffers_; ++i) {
-      iovecs_.push_back(iovec{.iov_base = basePtr + (i * bufferSizeBytes_),
-                              .iov_len = bufferSizeBytes_});
+      // `iovec` field order: iov_base, iov_len (positional init for C++17).
+      iovec vec;
+      vec.iov_base = basePtr + (i * bufferSizeBytes_);
+      vec.iov_len = bufferSizeBytes_;
+      iovecs_.push_back(vec);
       freeSlots_.push_back(static_cast<uint32_t>(numBuffers_ - 1 - i));
     }
   }
@@ -249,6 +253,10 @@ class ZeroCopySocketSender {
     AD_CONTRACT_CHECK(config_.ringEntries > 0);
     AD_CONTRACT_CHECK(config_.numBuffers > 0);
     AD_CONTRACT_CHECK(config_.bufferSizeBytes > 0);
+    AD_CONTRACT_CHECK(config_.ringEntries <= SIZE_MAX / 2);
+    AD_CONTRACT_CHECK(
+        config_.ringEntries <=
+        static_cast<size_t>(std::numeric_limits<unsigned int>::max()));
 
     inFlightTable_.resize(config_.ringEntries * 2);
 
@@ -355,32 +363,34 @@ class ZeroCopySocketSender {
 
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
 
+    // `MSG_NOSIGNAL` on every variant: a closed peer must surface as an
+    // error, never as a `SIGPIPE` terminating the process (matches the
+    // synchronous fallback below).
     if (config_.useZeroCopy) {
       if (buffersRegistered_ && config_.useRegisteredBuffers) {
         // Zero-Copy Send with Registered Fixed Buffer (Opcode:
         // IORING_OP_SEND_ZC)
         io_uring_prep_send_zc_fixed(sqe, sockfd, slotSpan.data(), numBytes,
-                                    flags, zcFlags, bufferIndex);
+                                    flags | MSG_NOSIGNAL, zcFlags, bufferIndex);
       } else {
         // Zero-Copy Send with Unpinned Buffer
-        io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes, flags,
-                              zcFlags);
+        io_uring_prep_send_zc(sqe, sockfd, slotSpan.data(), numBytes,
+                              flags | MSG_NOSIGNAL, zcFlags);
       }
     } else {
       // Standard asynchronous io_uring send
-      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, flags);
+      io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes,
+                         flags | MSG_NOSIGNAL);
     }
 
     const uint64_t reqId = nextRequestId_++;
     const size_t tableIdx = reqId % inFlightTable_.size();
     AD_CORRECTNESS_CHECK(!inFlightTable_[tableIdx].active);
 
-    inFlightTable_[tableIdx] = InFlightRequest{
-        .bufferIndex = bufferIndex,
-        .expectedBytes = numBytes,
-        .waitingForNotification = false,
-        .active = true,
-    };
+    // Field order: bufferIndex, expectedBytes, waitingForNotification,
+    // active (positional init for C++17).
+    inFlightTable_[tableIdx] =
+        InFlightRequest{bufferIndex, numBytes, false, true};
 
     io_uring_sqe_set_data64(sqe, reqId);
     ++numInFlightRequests_;
@@ -502,18 +512,19 @@ class ZeroCopySocketSender {
 #endif
   }
 
+  // Best-effort shutdown: submit pending SQEs, then drain completions
+  // through the same request/notification lifecycle as `flushAndDrainAll`
+  // (zero-copy sends need both CQEs before their buffers recycle). Errors
+  // are swallowed: teardown runs from the destructor and must not throw.
   void teardown() noexcept {
 #ifdef QLEVER_HAS_LIBURING
     if (ringInitialized_) {
-      while (numInFlightRequests_ > 0 || numInFlightBuffers_ > 0) {
-        io_uring_cqe* cqe = nullptr;
-        if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
-          break;
+      try {
+        submit();
+        while (numInFlightRequests_ > 0 || numInFlightBuffers_ > 0) {
+          drainOneCqe();
         }
-        io_uring_cqe_seen(&ring_, cqe);
-        if (numInFlightRequests_ > 0) {
-          --numInFlightRequests_;
-        }
+      } catch (...) {
       }
 
       if (buffersRegistered_) {
@@ -572,6 +583,20 @@ class ZeroCopySocketSender {
                             ", errno: ", -res, ")"));
     }
 
+    // A short send (fewer bytes than requested) must never silently drop
+    // the suffix: fail loudly like the error path below. (On the blocking
+    // sockets used here every send completes fully or reports an error.)
+    if (res >= 0 && static_cast<size_t>(res) != entry.expectedBytes) {
+      bufferPool_.releaseSlot(entry.bufferIndex);
+      AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
+      AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
+      --numInFlightBuffers_;
+      --numInFlightRequests_;
+      entry.active = false;
+      AD_THROW(absl::StrCat("io_uring short send (got: ", res,
+                            ", expected: ", entry.expectedBytes, ")"));
+    }
+
     totalBytesSent_ += static_cast<size_t>(res);
     ++totalPacketsSent_;
 
@@ -590,18 +615,30 @@ class ZeroCopySocketSender {
   }
 #endif
 
-  // Synchronous send fallback.
+  // Synchronous send fallback. Retries the unsent suffix (handling `EINTR`)
+  // until `numBytes` are on the wire; the slot recycles only afterwards.
   void sendChunkSync(int sockfd, uint32_t bufferIndex, size_t numBytes,
                      int flags) {
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
-    ssize_t bytesSent =
-        ::send(sockfd, slotSpan.data(), numBytes, flags | MSG_NOSIGNAL);
-    if (bytesSent < 0) {
-      bufferPool_.releaseSlot(bufferIndex);
-      AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+    size_t offset = 0;
+    while (offset < numBytes) {
+      ssize_t bytesSent = ::send(sockfd, slotSpan.data() + offset,
+                                 numBytes - offset, flags | MSG_NOSIGNAL);
+      if (bytesSent < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+      }
+      if (bytesSent == 0) {
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW("send returned 0 for a nonempty chunk (peer closed?)");
+      }
+      offset += static_cast<size_t>(bytesSent);
     }
 
-    totalBytesSent_ += static_cast<size_t>(bytesSent);
+    totalBytesSent_ += numBytes;
     ++totalPacketsSent_;
     bufferPool_.releaseSlot(bufferIndex);
   }

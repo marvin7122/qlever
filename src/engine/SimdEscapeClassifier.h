@@ -9,9 +9,10 @@
 #ifndef QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
 #define QLEVER_SRC_ENGINE_SIMDESCAPECLASSIFIER_H
 
+#include <absl/numeric/bits.h>
+
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -39,6 +40,23 @@
 
 namespace ad_utility::simd {
 
+// _____________________________________________________________________________
+// Runtime AVX2 availability check. The `target("avx2")` attribute only changes
+// code generation; it does not check CPU support, so executing AVX2 code on a
+// pre-AVX2 x86 host raises SIGILL. Gate every AVX2 call site on this check
+// and fall back to the scalar implementation when AVX2 is unavailable.
+[[nodiscard]] inline bool cpuSupportsAvx2() noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+#if defined(__x86_64__) || defined(__i386__)
+  return __builtin_cpu_supports("avx2");
+#else
+  return false;
+#endif
+#else
+  return false;
+#endif
+}
+
 // Supported serialization formats for SIMD escape classification.
 enum class EscapeFormat {
   CsvQuote,    // Escape quotes (")
@@ -64,11 +82,11 @@ class ChunkEscapeMask32 {
   [[nodiscard]] constexpr uint32_t rawMask() const noexcept { return mask_; }
 
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
-    return mask_ == 0 ? 32u : static_cast<uint32_t>(std::countr_zero(mask_));
+    return mask_ == 0 ? 32u : static_cast<uint32_t>(absl::countr_zero(mask_));
   }
 
   [[nodiscard]] constexpr uint32_t countEscapes() const noexcept {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 };
 
@@ -88,11 +106,11 @@ class ChunkEscapeMask16 {
   [[nodiscard]] constexpr uint16_t rawMask() const noexcept { return mask_; }
 
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
-    return mask_ == 0 ? 16u : static_cast<uint32_t>(std::countr_zero(mask_));
+    return mask_ == 0 ? 16u : static_cast<uint32_t>(absl::countr_zero(mask_));
   }
 
   [[nodiscard]] constexpr uint32_t countEscapes() const noexcept {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 };
 
@@ -314,7 +332,10 @@ class SimdEscapeClassifier {
   [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32(
       const char* data) noexcept {
 #if defined(QLEVER_SIMD_X86)
-    return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    if (cpuSupportsAvx2()) {
+      return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    }
+    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
 #else
     return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
 #endif
@@ -457,7 +478,7 @@ class SimdEscapeClassifier {
       // Escape characters present: process clean sub-slices and escapes
       uint32_t current = 0;
       while (mask != 0) {
-        uint32_t next = static_cast<uint32_t>(std::countr_zero(mask));
+        uint32_t next = static_cast<uint32_t>(absl::countr_zero(mask));
         uint32_t cleanLen = next - current;
         if (cleanLen > 0) {
           std::memcpy(dest, ptr + current, cleanLen);

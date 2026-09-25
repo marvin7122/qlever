@@ -24,6 +24,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -273,10 +274,8 @@ class ScatterGatherChunkStreamer {
       size_t offset = currentHeaderBuffer_.size();
       currentHeaderBuffer_.insert(currentHeaderBuffer_.end(), sv.begin(),
                                   sv.end());
-      currentSlices_.push_back(SliceRecord{.isArena = false,
-                                           .arenaPtr = nullptr,
-                                           .headerOffset = offset,
-                                           .len = sv.size()});
+      // Field order: isArena, arenaPtr, headerOffset, len.
+      currentSlices_.push_back(SliceRecord{false, nullptr, offset, sv.size()});
     }
     currentChunkBytes_ += sv.size();
   }
@@ -287,8 +286,8 @@ class ScatterGatherChunkStreamer {
 
   // ___________________________________________________________________________
   // Write an integer directly without intermediate heap allocations.
-  template <typename IntegerType>
-  requires std::is_integral_v<IntegerType>
+  template <typename IntegerType,
+            std::enable_if_t<std::is_integral_v<IntegerType>, int> = 0>
   void writeInteger(IntegerType value) {
     std::array<char, 32> buf;
     auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), value);
@@ -316,10 +315,8 @@ class ScatterGatherChunkStreamer {
       flush();
     }
 
-    currentSlices_.push_back(SliceRecord{.isArena = true,
-                                         .arenaPtr = span.data(),
-                                         .headerOffset = 0,
-                                         .len = span.size()});
+    // Field order: isArena, arenaPtr, headerOffset, len.
+    currentSlices_.push_back(SliceRecord{true, span.data(), 0, span.size()});
     currentChunkBytes_ += span.size();
     currentZeroCopyBytes_ += span.size();
     ++currentZeroCopySpans_;
@@ -344,6 +341,12 @@ class ScatterGatherChunkStreamer {
 
   // ___________________________________________________________________________
   // Write an RDF literal with optional datatype or language tag.
+  // Precondition: `content` must already be escaped for the target format
+  // (quotes/backslashes/line breaks for Turtle/N-Triples, quote doubling for
+  // CSV, tabs/newlines handled by the caller for TSV). This streamer is a
+  // zero-copy transport: escaping would force a copy of the arena span, so it
+  // stays the caller's responsibility (see `FastExportStreamFormatter` for the
+  // escaping routines to apply before handing spans to this class).
   void writeLiteral(ql::span<const char> content,
                     std::string_view datatype = "",
                     std::string_view langTag = "") {
@@ -457,6 +460,8 @@ class ScatterGatherChunkStreamer {
   // Write a tabular row of cell spans (CSV / TSV format).
   void writeRow(ExportFormat format,
                 ql::span<const ql::span<const char>> cells) {
+    AD_CORRECTNESS_CHECK(format == ExportFormat::Csv ||
+                         format == ExportFormat::Tsv);
     const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
     for (size_t i = 0; i < cells.size(); ++i) {
       if (i > 0) {
@@ -484,8 +489,11 @@ class ScatterGatherChunkStreamer {
           slice.isArena ? static_cast<const void*>(slice.arenaPtr)
                         : static_cast<const void*>(currentHeaderBuffer_.data() +
                                                    slice.headerOffset);
-      iovecs.push_back(
-          iovec{.iov_base = const_cast<void*>(ptr), .iov_len = slice.len});
+      // `iovec` field order: iov_base, iov_len (positional init for C++17).
+      ::iovec vec;
+      vec.iov_base = const_cast<void*>(ptr);
+      vec.iov_len = slice.len;
+      iovecs.push_back(vec);
     }
 
     ScatterGatherChunk chunk(ScatterGatherChunk::Passkey{}, std::move(iovecs),
