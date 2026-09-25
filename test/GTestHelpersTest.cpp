@@ -10,6 +10,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <string>
 
 #include "util/GTestHelpers.h"
@@ -43,8 +44,9 @@ INSTANTIATE_TEST_SUITE_P(CustomInstantiation, GTestHelpersParameterizedTest,
 // Return true iff `pointer` points inside the object storage of `object`.
 template <typename T>
 static bool pointsIntoObject(const void* pointer, const T& object) {
-  const auto* start = reinterpret_cast<const char*>(&object);
-  return pointer >= start && pointer < start + sizeof(object);
+  const auto start = reinterpret_cast<uintptr_t>(&object);
+  const auto address = reinterpret_cast<uintptr_t>(pointer);
+  return address >= start && address < start + sizeof(object);
 }
 
 // _____________________________________________________________________________

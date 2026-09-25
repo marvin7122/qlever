@@ -12,6 +12,7 @@
 #include <gmock/gmock.h>
 #include <re2/re2.h>
 
+#include <cstdint>
 #include <memory>
 #include <memory_resource>
 #include <optional>
@@ -120,8 +121,11 @@ inline size_t pmrStringSsoCapacity() {
   size_t capacity = 0;
   for (size_t size = 0; size <= 64; ++size) {
     std::pmr::string s(size, 'x');
-    const auto* begin = reinterpret_cast<const char*>(&s);
-    if (s.data() < begin || s.data() >= begin + sizeof(s)) {
+    // Compare integer addresses: relational comparison of pointers into
+    // unrelated objects is unspecified.
+    const auto begin = reinterpret_cast<uintptr_t>(&s);
+    const auto data = reinterpret_cast<uintptr_t>(s.data());
+    if (data < begin || data >= begin + sizeof(s)) {
       break;
     }
     capacity = size;
@@ -134,8 +138,9 @@ inline size_t pmrStringSsoCapacity() {
 inline void requirePmrStringInlineStorage(size_t size) {
   AD_CONTRACT_CHECK(size > 0);
   std::pmr::string s(size, 'x');
-  const auto* begin = reinterpret_cast<const char*>(&s);
-  AD_CONTRACT_CHECK(s.data() >= begin && s.data() < begin + sizeof(s));
+  const auto begin = reinterpret_cast<uintptr_t>(&s);
+  const auto data = reinterpret_cast<uintptr_t>(s.data());
+  AD_CONTRACT_CHECK(data >= begin && data < begin + sizeof(s));
 }
 
 // _____________________________________________________________________________
