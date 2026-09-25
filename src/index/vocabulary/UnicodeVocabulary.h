@@ -11,27 +11,10 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
-#include <type_traits>
 #include <utility>
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
-
-namespace unicodeVocabularyDetail {
-// Whether `V` offers the two-argument `lookupBatch` overload that decodes
-// into an `ArenaVocabBatchBuilder`. Formulated with `std::void_t` instead
-// of a requires-expression so this header also compiles in the C++17
-// backport builds (`requires` needs C++20). Defined at namespace scope
-// because GCC 11 rejects partial specializations of static member variable
-// templates inside a class ("explicit template argument list not allowed").
-template <typename V, typename = void>
-constexpr bool hasBuilderLookupBatch = false;
-template <typename V>
-constexpr bool hasBuilderLookupBatch<
-    V, std::void_t<decltype(std::declval<const V&>().lookupBatch(
-           std::declval<ql::span<const size_t>>(),
-           std::declval<ArenaVocabBatchBuilder&>()))>> = true;
-}  // namespace unicodeVocabularyDetail
 
 /// Vocabulary with multi-level `UnicodeComparator` that allows comparison
 /// according to different Levels. Groups of words that are adjacent on a
@@ -66,8 +49,7 @@ class UnicodeVocabulary {
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const {
-    if constexpr (unicodeVocabularyDetail::hasBuilderLookupBatch<
-                      UnderlyingVocabulary>) {
+    if constexpr (HasArenaVocabBatchLookup<UnderlyingVocabulary>::value) {
       return _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
       return _underlyingVocabulary.lookupBatch(indices);
