@@ -6,40 +6,38 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
 #include <arpa/inet.h>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
-#include <time.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <iomanip>
 #include <iostream>
-#include <memory>
 #include <random>
 #include <string>
 #include <string_view>
 #include <thread>
-#include <tuple>
 #include <vector>
 
-#include "backports/span.h"
 #include "util/Exception.h"
-#include "util/Log.h"
 #include "util/ZeroCopySocketSender.h"
+#include "util/jthread.h"
 
 // Optional inclusion of QLever benchmark infrastructure.
-// Standalone CMake builds set QLEVER_ZEROCOPY_BENCH_STANDALONE to avoid
-// linking benchmark → sparqlParser → IndexImpl (Wolga GCC 11 / range-v3).
+// TODO: drop the standalone fallback once the Wolga GCC 11 toolchain links
+// benchmark → sparqlParser → IndexImpl cleanly. Standalone CMake builds set
+// QLEVER_ZEROCOPY_BENCH_STANDALONE to avoid that link chain (range-v3).
 #if !defined(QLEVER_ZEROCOPY_BENCH_STANDALONE) && \
     __has_include("../benchmark/infrastructure/Benchmark.h")
 #include "../benchmark/infrastructure/Benchmark.h"
@@ -51,48 +49,64 @@ namespace {
 
 using namespace ad_utility;
 
-// Benchmark payload constants (100 MB transmission)
-constexpr size_t kTotalSendSizeBytes = 100ULL * 1024ULL * 1024ULL;  // 100 MB
-constexpr size_t kChunkSizeBytes = 64 * 1024;                       // 64 KB
+// Benchmark payload constants (100 MiB transmission).
+constexpr size_t kTotalSendSizeBytes = 100ULL * 1024ULL * 1024ULL;  // 100 MiB
+constexpr size_t kChunkSizeBytes = 64 * 1024;                       // 64 KiB
 
 // _____________________________________________________________________________
 // Helper to measure the calling (sender) thread's CPU time using POSIX
 // clock_gettime. The background receiver thread's CPU time is deliberately
 // excluded: it is identical harness overhead across all paradigms, so the
 // comparison isolates sender-side cost.
+// Named measurements returned by `CpuTimeTimer::elapsed`.
+struct CpuTimes {
+  double wallSeconds = 0.0;
+  double cpuPercentage = 0.0;
+};
+
 class CpuTimeTimer {
  private:
-  struct timespec startCpu_ {};
+  // Nanoseconds per second and percent scale, shared by `reset`/`elapsed`.
+  static constexpr double kNanosPerSecond = 1e9;
+  static constexpr double kPercentScale = 100.0;
+
+  timespec startCpu_{};
   std::chrono::steady_clock::time_point startWall_;
 
  public:
   CpuTimeTimer() { reset(); }
 
   void reset() {
-    ::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &startCpu_);
+    if (::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &startCpu_) != 0) {
+      AD_THROW(absl::StrCat("clock_gettime failed: ", std::strerror(errno)));
+    }
     startWall_ = std::chrono::steady_clock::now();
   }
 
-  // Returns {wallSeconds, cpuSeconds, cpuPercentage}
-  [[nodiscard]] std::tuple<double, double, double> elapsed() const {
+  // Measure the wall time and sender-thread CPU usage since `reset`.
+  [[nodiscard]] CpuTimes elapsed() const {
     auto endWall = std::chrono::steady_clock::now();
-    struct timespec endCpu {};
-    ::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &endCpu);
+    timespec endCpu{};
+    if (::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &endCpu) != 0) {
+      AD_THROW(absl::StrCat("clock_gettime failed: ", std::strerror(errno)));
+    }
 
-    std::chrono::duration<double> wallDur = endWall - startWall_;
-    double wallSec = wallDur.count();
+    std::chrono::duration<double> wallDur{endWall - startWall_};
+    double wallSec{wallDur.count()};
 
-    double cpuSec =
-        static_cast<double>(endCpu.tv_sec - startCpu_.tv_sec) +
-        static_cast<double>(endCpu.tv_nsec - startCpu_.tv_nsec) / 1e9;
+    double cpuSec{static_cast<double>(endCpu.tv_sec - startCpu_.tv_sec) +
+                  static_cast<double>(endCpu.tv_nsec - startCpu_.tv_nsec) /
+                      kNanosPerSecond};
 
-    double cpuPercent = wallSec > 0.0 ? (cpuSec / wallSec) * 100.0 : 0.0;
-    return {wallSec, cpuSec, cpuPercent};
+    double cpuPercent{wallSec > 0.0 ? (cpuSec / wallSec) * kPercentScale : 0.0};
+    return {wallSec, cpuPercent};
   }
 };
 
 // _____________________________________________________________________________
-// RAII wrapper managing a connected TCP loopback or socketpair endpoint.
+// RAII wrapper managing a connected TCP loopback endpoint (a real loopback
+// TCP pair, not an `AF_UNIX` socketpair, because `IORING_OP_SEND_ZC` requires
+// TCP).
 class SocketPairConnection {
  private:
   int sendFd_ = -1;
@@ -111,7 +125,12 @@ class SocketPairConnection {
     addr.sin_port = 0;
 
     int enable = 1;
-    ::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+    if (::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enable,
+                     sizeof(enable)) != 0) {
+      ::close(listenFd);
+      AD_THROW(absl::StrCat("setsockopt SO_REUSEADDR failed: ",
+                            std::strerror(errno)));
+    }
     if (::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) !=
         0) {
       ::close(listenFd);
@@ -152,12 +171,38 @@ class SocketPairConnection {
     ::close(listenFd);
 
     int flag = 1;
-    ::setsockopt(sendFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
-    ::setsockopt(recvFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    if (::setsockopt(sendFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) !=
+        0) {
+      AD_THROW(absl::StrCat("setsockopt TCP_NODELAY failed: ",
+                            std::strerror(errno)));
+    }
+    if (::setsockopt(recvFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) !=
+        0) {
+      AD_THROW(absl::StrCat("setsockopt TCP_NODELAY failed: ",
+                            std::strerror(errno)));
+    }
 
     int bufSize = 4 * 1024 * 1024;
-    ::setsockopt(sendFd_, SOL_SOCKET, SO_SNDBUF, &bufSize, sizeof(bufSize));
-    ::setsockopt(recvFd_, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
+    if (::setsockopt(sendFd_, SOL_SOCKET, SO_SNDBUF, &bufSize,
+                     sizeof(bufSize)) != 0) {
+      AD_THROW(
+          absl::StrCat("setsockopt SO_SNDBUF failed: ", std::strerror(errno)));
+    }
+    if (::setsockopt(recvFd_, SOL_SOCKET, SO_RCVBUF, &bufSize,
+                     sizeof(bufSize)) != 0) {
+      AD_THROW(
+          absl::StrCat("setsockopt SO_RCVBUF failed: ", std::strerror(errno)));
+    }
+
+    // Bound the receiver's blocking `::recv`, so a sender failure cannot hang
+    // the joining receiver thread forever.
+    struct timeval recvTimeout {};
+    recvTimeout.tv_sec = 30;
+    if (::setsockopt(recvFd_, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout,
+                     sizeof(recvTimeout)) != 0) {
+      AD_THROW(absl::StrCat("setsockopt SO_RCVTIMEO failed: ",
+                            std::strerror(errno)));
+    }
   }
 
   ~SocketPairConnection() { close(); }
@@ -217,9 +262,9 @@ class ZeroCopySenderBenchmarkRunner {
     AD_CONTRACT_CHECK(chunkSize_ > 0);
     testPayload_.resize(chunkSize_);
     std::mt19937 rng(42);
-    for (size_t i = 0; i < chunkSize_; ++i) {
-      testPayload_[i] = static_cast<char>(rng() % 256);
-    }
+    std::uniform_int_distribution<int> dist(0, 255);
+    std::generate(testPayload_.begin(), testPayload_.end(),
+                  [&]() { return static_cast<char>(dist(rng)); });
   }
 
   // 1. Baseline: Synchronous send() syscall in loop
@@ -227,16 +272,19 @@ class ZeroCopySenderBenchmarkRunner {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    // Background receiver thread. `JThread` joins on destruction (with the
+    // receive timeout from `SocketPairConnection` as a backstop), so a sender
+    // failure cannot leak a joinable thread via `std::terminate`.
+    ad_utility::JThread receiverThread(
+        [recvFd = conn.recvFd(), total = totalBytes_]() {
+          std::vector<char> buf(64 * 1024);
+          size_t totalReceived = 0;
+          while (totalReceived < total) {
+            ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
+            if (n <= 0) break;
+            totalReceived += static_cast<size_t>(n);
+          }
+        });
 
     CpuTimeTimer timer;
     size_t bytesSent = 0;
@@ -255,13 +303,12 @@ class ZeroCopySenderBenchmarkRunner {
       bytesSent += chunkSize_;
     }
 
-    auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
-    (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
+    CpuTimes times = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 
-    return calculateMetric("1. Standard send() [Baseline]", wallSec, cpuPercent,
-                           bytesSent, numChunks);
+    return calculateMetric("1. Standard send() [Baseline]", times.wallSeconds,
+                           times.cpuPercentage, bytesSent, numChunks);
   }
 
   // 2. io_uring Standard Send (Unpinned buffers)
@@ -278,16 +325,19 @@ class ZeroCopySenderBenchmarkRunner {
 
     ZeroCopySocketSender sender(config);
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    // Background receiver thread. `JThread` joins on destruction (with the
+    // receive timeout from `SocketPairConnection` as a backstop), so a sender
+    // failure cannot leak a joinable thread via `std::terminate`.
+    ad_utility::JThread receiverThread(
+        [recvFd = conn.recvFd(), total = totalBytes_]() {
+          std::vector<char> buf(64 * 1024);
+          size_t totalReceived = 0;
+          while (totalReceived < total) {
+            ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
+            if (n <= 0) break;
+            totalReceived += static_cast<size_t>(n);
+          }
+        });
 
     CpuTimeTimer timer;
 
@@ -299,13 +349,13 @@ class ZeroCopySenderBenchmarkRunner {
     }
 
     sender.flushAndDrainAll();
-    auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
-    (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
+    CpuTimes times = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 
-    return calculateMetric("2. io_uring Standard Send (Unpinned)", wallSec,
-                           cpuPercent, totalBytes_, numChunks);
+    return calculateMetric("2. io_uring Standard Send (Unpinned)",
+                           times.wallSeconds, times.cpuPercentage, totalBytes_,
+                           numChunks);
   }
 
   // 3. io_uring Zero-Copy Send (IORING_OP_SEND_ZC with Registered Buffers)
@@ -322,16 +372,19 @@ class ZeroCopySenderBenchmarkRunner {
 
     ZeroCopySocketSender sender(config);
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    // Background receiver thread. `JThread` joins on destruction (with the
+    // receive timeout from `SocketPairConnection` as a backstop), so a sender
+    // failure cannot leak a joinable thread via `std::terminate`.
+    ad_utility::JThread receiverThread(
+        [recvFd = conn.recvFd(), total = totalBytes_]() {
+          std::vector<char> buf(64 * 1024);
+          size_t totalReceived = 0;
+          while (totalReceived < total) {
+            ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
+            if (n <= 0) break;
+            totalReceived += static_cast<size_t>(n);
+          }
+        });
 
     CpuTimeTimer timer;
 
@@ -343,8 +396,7 @@ class ZeroCopySenderBenchmarkRunner {
     }
 
     sender.flushAndDrainAll();
-    auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
-    (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
+    CpuTimes times = timer.elapsed();
     conn.closeSender();
     receiverThread.join();
 
@@ -399,7 +451,7 @@ void printResultsTable(std::vector<BenchmarkMetric>& results) {
   std::cout << std::left << std::setw(48) << "Socket Transmission Paradigm"
             << std::right << std::setw(10) << "Time (s)" << std::setw(14)
             << "MB/s" << std::setw(14) << "Gbps" << std::setw(12) << "CPU %"
-            << std::setw(12) << "Speedup" << "\n";
+            << std::setw(12) << "Speedup" << std::setw(12) << "CPU d%" << "\n";
   std::cout << "---------------------------------------------------------------"
                "-----------------------------------------\n";
 
@@ -411,7 +463,8 @@ void printResultsTable(std::vector<BenchmarkMetric>& results) {
               << r.throughputGbps << std::fixed << std::setprecision(1)
               << std::setw(11) << r.cpuPercentage << "%" << std::fixed
               << std::setprecision(2) << std::setw(11) << r.speedupVsBaseline
-              << "x\n";
+              << "x" << std::fixed << std::setprecision(1) << std::setw(11)
+              << r.cpuReductionVsBaseline << "%\n";
   }
   std::cout << "==============================================================="
                "=========================================\n\n";
@@ -485,6 +538,9 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
 
   } catch (const std::exception& e) {
     std::cerr << "Benchmark failed with exception: " << e.what() << std::endl;
+    return 1;
+  } catch (...) {
+    std::cerr << "Benchmark failed with unknown exception" << std::endl;
     return 1;
   }
 
