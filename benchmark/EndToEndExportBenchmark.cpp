@@ -204,6 +204,7 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
       if (i % 3 == 0) {
         *ptr++ = '<';
         ptr = ad_utility::formatQid(i, ptr);
+        *ptr++ = '>';
         ptr = ad_utility::formatPrefixedInt(
             " <http://www.wikidata.org/prop/direct/P1082> ", i * 100, ptr);
         *ptr++ = ' ';
