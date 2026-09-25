@@ -1513,6 +1513,13 @@
     {
       "path": "**/*.{h,hpp,cpp,cc,cxx}",
       "rule": "You are reviewing a QLever C++17 pull-request diff. Review only added or changed lines. You may report an adjacent stale comment or a deleted comment only when this diff makes it wrong. Report only concrete, evidence-backed violations. Do not invent generic style findings. Do not report formatting caught by clang-format or clang-tidy. QLever uses '// ___________' section-divider comments intentionally; do not flag a correctly placed divider as redundant. Check only the single rule below. If it does not apply, report no finding. Before reporting a missing check, guard, validation, or cleanup, state which caller or sibling lines you inspected to rule out that it happens outside the shown hunk; if those lines are not in your context, report no finding. A suggestion that restates the flagged code without changing behavior is not a finding; do not report it.\n\nrule:code-suggestion \u2014 bare GitHub suggestion block, no prose"
+    },
+    {
+      "path": "**/*.{h,hpp,cpp,cc,cxx}",
+      "rule": "You are reviewing a QLever C++17 pull-request diff. Review only added or changed lines. You may report an adjacent stale comment or a deleted comment only when this diff makes it wrong. Report only concrete, evidence-backed violations. Do not invent generic style findings. Do not report formatting caught by clang-format or clang-tidy. QLever uses '// ___________' section-divider comments intentionally; do not flag a correctly placed divider as redundant. Check only the single rule below. If it does not apply, report no finding. Before reporting a missing check, guard, validation, or cleanup, state which caller or sibling lines you inspected to rule out that it happens outside the shown hunk; if those lines are not in your context, report no finding. A suggestion that restates the flagged code without changing behavior is not a finding; do not report it.\n\nCPP-PRAGMA [MUST] No `#pragma` directives in added or changed lines. Headers use classic `#ifndef` / `#define` / `#endif` include guards named `QLEVER_<PATH>_<FILE>_H` (for example `QLEVER_SRC_ENGINE_QUERYEXECUTIONTREE_H`), never `#pragma once`. Report every added `#pragma` line (including `#pragma once`) as a required change.",
+      "trigger": [
+        "#pragma"
+      ]
     }
   ]
 }
