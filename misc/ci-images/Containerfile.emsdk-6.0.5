@@ -44,6 +44,10 @@ ENV PATH="/opt/emsdk:/opt/emsdk/upstream/emscripten:${PATH}"
 ENV EMSDK=/opt/emsdk
 # conan (hosted leg: `pipx install conan`).
 RUN pip3 install --break-system-packages conan
+# Hosted leg runs `conan profile detect --force` before writing
+# ~/.conan2/settings_user.yml; the Wolga leg does not, so bake the default
+# profile (and ~/.conan2) into the image.
+RUN conan profile detect --force
 # TypeScript for the qleverwasm link (hosted leg: `npm install -g
 # typescript@7`). Installed WITHOUT node/npm: every node binary aborts under
 # chroot build isolation (libuv fd assertion), so the tarball is fetched
