@@ -152,7 +152,9 @@ class PrefetchingBatchResolver {
       const size_t pos = positions[i];
       const Id id = ids[pos];
       const auto vocabIndex = id.getVocabIndex();
-      std::string_view word = index.indexToString(vocabIndex);
+      // Bind by value: `indexToString` may return an owning `std::string`,
+      // so a `string_view` would dangle at the end of the full expression.
+      const auto word = index.indexToString(vocabIndex);
 
       results[pos] = ql::exportIds::literalOrIriToStringAndType<
           removeQuotesAndAngleBrackets, returnOnlyLiterals>(
