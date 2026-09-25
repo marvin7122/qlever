@@ -396,7 +396,7 @@ class ExportJobState final
     // Enqueue pending morsels outside the lock
     if (!pendingIndicesToEnqueue.empty()) {
       const auto self = this->shared_from_this();
-      for (size_t index : pendingIndicesToEnqueue) {
+      for (const size_t index : pendingIndicesToEnqueue) {
         // Discard is safe: a rejected morsel stays Pending and the
         // coordinator runs it lazily on the primary path.
         static_cast<void>(scheduler_->enqueueMorsel(
