@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
@@ -204,14 +205,19 @@ namespace detail {
 
 #if defined(QLEVER_SIMD_X86)
 
+// The AVX2 kernels take the batch as raw memory (64 words of 8 bytes).
+// `__m256i` is declared as a may-alias vector type by GCC and Clang, so the
+// unaligned vector loads below may read the object representation of any
+// 8-byte type (`uint64_t` or `ValueId`) without violating strict aliasing.
+
 // AVX2 implementation: Scans 64 64-bit values (512 bytes) using 16 __m256i
 // vectors. For each 4-element vector, _mm256_cmpeq_epi64 checks against 0
 // (undefined ValueId), and _mm256_movemask_pd extracts the 4-bit comparison
 // mask.
 [[nodiscard]] QLEVER_AVX2_TARGET inline uint64_t scanBatch64Avx2(
-    const uint64_t* data) noexcept {
+    const void* data) noexcept {
   const __m256i zero = _mm256_setzero_si256();
-  const auto* ptr = reinterpret_cast<const __m256i*>(data);
+  const auto* ptr = static_cast<const __m256i*>(data);
   uint64_t resultMask = 0;
 
   for (size_t i = 0; i < 16; ++i) {
@@ -227,8 +233,8 @@ namespace detail {
 
 // AVX2 fast test for all-unbound (all 64 values == 0) via bitwise OR reduction.
 [[nodiscard]] QLEVER_AVX2_TARGET inline bool isAllUnbound64Avx2(
-    const uint64_t* data) noexcept {
-  const auto* ptr = reinterpret_cast<const __m256i*>(data);
+    const void* data) noexcept {
+  const auto* ptr = static_cast<const __m256i*>(data);
   __m256i or0 =
       _mm256_or_si256(_mm256_loadu_si256(ptr + 0), _mm256_loadu_si256(ptr + 1));
   __m256i or1 =
@@ -280,15 +286,34 @@ QLEVER_AVX2_TARGET inline char* write64DelimiterPairsAvx2(
 
 #endif  // QLEVER_SIMD_X86
 
-// Portable scalar fallback for scanning 64 64-bit values.
-[[nodiscard]] inline uint64_t scanBatch64Scalar(const uint64_t* data) noexcept {
+// The 64-bit word of a batch element, read through the element's own type.
+[[nodiscard]] inline uint64_t wordBits(uint64_t word) noexcept { return word; }
+[[nodiscard]] inline uint64_t wordBits(ValueId id) noexcept {
+  return id.getBits();
+}
+
+// Portable scalar fallback for scanning 64 64-bit values (`uint64_t` or
+// `ValueId`).
+template <typename Word>
+[[nodiscard]] inline uint64_t scanBatch64Scalar(const Word* data) noexcept {
   uint64_t mask = 0;
   for (size_t i = 0; i < 64; ++i) {
-    if (data[i] != 0) {
+    if (wordBits(data[i]) != 0) {
       mask |= (1ULL << i);
     }
   }
   return mask;
+}
+
+// Portable scalar fallback for the all-unbound test.
+template <typename Word>
+[[nodiscard]] inline bool isAllUnbound64Scalar(const Word* data) noexcept {
+  for (size_t i = 0; i < 64; ++i) {
+    if (wordBits(data[i]) != 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // Portable fallback for writing 64 delimiter characters using 64-bit stores.
@@ -321,6 +346,12 @@ inline char* write64DelimiterPairsScalar(char* dest, char delimiter,
 // column-level batch classification, and fast-path vectorized unbound
 // serialization.
 class SimdValidityScanner {
+  // The AVX2 kernels read a `ValueId` batch as raw 64-bit words and treat the
+  // all-zero word as unbound. Assert the layout this relies on.
+  static_assert(sizeof(ValueId) == sizeof(uint64_t));
+  static_assert(std::is_trivially_copyable_v<ValueId>);
+  static_assert(ValueId::makeUndefined().getBits() == 0);
+
  public:
   // ___________________________________________________________________________
   // Scan a batch of exactly 64 ValueIds (512 bytes) and construct a
@@ -328,16 +359,12 @@ class SimdValidityScanner {
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
       const ValueId* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
-    // `ValueId` is a standard-layout class whose first (and only) member is
-    // the underlying `uint64_t`, so it is pointer-interconvertible with it
-    // and this access is well-defined.
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
-      return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
+      return ValidityBitmask64{detail::scanBatch64Avx2(data)};
     }
 #endif
-    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
+    return ValidityBitmask64{detail::scanBatch64Scalar(data)};
   }
 
   // ___________________________________________________________________________
@@ -358,18 +385,12 @@ class SimdValidityScanner {
   [[nodiscard]] static inline bool isAllUnbound64(
       const ValueId* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
-      return detail::isAllUnbound64Avx2(raw);
+      return detail::isAllUnbound64Avx2(data);
     }
 #endif
-    for (size_t i = 0; i < 64; ++i) {
-      if (raw[i] != 0) {
-        return false;
-      }
-    }
-    return true;
+    return detail::isAllUnbound64Scalar(data);
   }
 
   // ___________________________________________________________________________

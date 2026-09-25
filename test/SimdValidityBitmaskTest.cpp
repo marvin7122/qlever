@@ -188,6 +188,34 @@ TEST(SimdValidityBitmaskTest, SimdScanBatch64AllCases) {
 }
 
 // _____________________________________________________________________________
+// The scalar kernels read each `ValueId` through `getBits()`; they are the
+// fallback on CPUs without AVX2 and must agree with the dispatched scan.
+TEST(SimdValidityBitmaskTest, ScalarFallbackMatchesDispatchedScan) {
+  std::mt19937_64 rng(7);
+  std::bernoulli_distribution dist(0.3);
+  std::vector<ValueId> batch(64);
+  std::vector<uint64_t> rawBatch(64);
+  for (size_t trial = 0; trial < 100; ++trial) {
+    for (size_t i = 0; i < 64; ++i) {
+      batch[i] = dist(rng) ? ValueId::makeFromInt(static_cast<int64_t>(i + 1))
+                           : ValueId::makeUndefined();
+      rawBatch[i] = batch[i].getBits();
+    }
+    const uint64_t scalarMask = detail::scanBatch64Scalar(batch.data());
+    EXPECT_EQ(SimdValidityScanner::scanBatch64(batch.data()).rawMask(),
+              scalarMask);
+    EXPECT_EQ(detail::scanBatch64Scalar(rawBatch.data()), scalarMask);
+    EXPECT_EQ(SimdValidityScanner::scanBatch64(rawBatch.data()).rawMask(),
+              scalarMask);
+    EXPECT_EQ(SimdValidityScanner::isAllUnbound64(batch.data()),
+              detail::isAllUnbound64Scalar(batch.data()));
+  }
+  std::fill(batch.begin(), batch.end(), ValueId::makeUndefined());
+  EXPECT_TRUE(detail::isAllUnbound64Scalar(batch.data()));
+  EXPECT_EQ(detail::scanBatch64Scalar(batch.data()), 0u);
+}
+
+// _____________________________________________________________________________
 TEST(SimdValidityBitmaskTest, RandomizedSimdScanning) {
   std::mt19937_64 rng(1337);
   std::bernoulli_distribution dist(0.5);
