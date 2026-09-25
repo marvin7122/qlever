@@ -20,7 +20,6 @@
 #include <mutex>
 #include <optional>
 #include <queue>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -32,17 +31,6 @@
 #include "util/Log.h"
 
 namespace qlever::export_pipeline {
-
-// _____________________________________________________________________________
-// Exception thrown or propagated when a pipeline consumer cancels early
-// (e.g. HTTP client disconnected, query timed out, or client socket broke).
-class PipelineCancelledException : public std::runtime_error {
- public:
-  PipelineCancelledException()
-      : std::runtime_error("AsyncChunkPipeline operation cancelled.") {}
-  explicit PipelineCancelledException(const std::string& message)
-      : std::runtime_error(message) {}
-};
 
 // _____________________________________________________________________________
 // Diagnostic accounting and performance metrics for the double-buffering
