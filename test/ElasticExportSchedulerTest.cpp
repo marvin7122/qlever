@@ -517,9 +517,8 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
     EXPECT_FALSE(profile.executedByHelper_);
   }
 }
-// -----------------------------------------------------------------------------
-// Test 13: Blocked enqueuer wakes when the admission threshold flips
-// -----------------------------------------------------------------------------
+// _____________________________________________________________________________
+// Blocked enqueuer wakes when the admission threshold flips.
 
 TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
   auto scheduler = ElasticExportScheduler::create(2, 1);
@@ -532,6 +531,16 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
     unblockFuture.wait();
     return 1;
   };
+  // Never leave the helpers blocked if the test exits early, otherwise the
+  // scheduler destructor would wait for them forever.
+  bool helpersReleased = false;
+  auto releaseHelpers = [&] {
+    if (!helpersReleased) {
+      helpersReleased = true;
+      unblockPromise.set_value();
+    }
+  };
+  absl::Cleanup releaseHelpersOnExit = [&] { releaseHelpers(); };
   session.submitMorsel(blockingTask);
   session.submitMorsel(blockingTask);
 
@@ -550,12 +559,20 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
   auto state = session.stateHandle();
   std::atomic<bool> enqueueReturned{false};
   std::atomic<bool> enqueueResult{true};
-  std::thread blockedEnqueuer([&]() {
+  ad_utility::JThread blockedEnqueuer([&]() {
     bool admitted = scheduler->enqueueMorsel(
         OwnedMorsel(state, state->jobId(), scheduler->demandEpoch(), 99));
     enqueueResult.store(admitted);
     enqueueReturned.store(true);
   });
+  // Runs before `blockedEnqueuer` is joined: if the wakeup regressed, shut
+  // the scheduler down so the enqueuer returns and the join cannot hang.
+  absl::Cleanup unblockEnqueuerOnExit = [&] {
+    if (!enqueueReturned.load()) {
+      releaseHelpers();
+      scheduler->shutdown();
+    }
+  };
 
   // Flip to ineligible while the enqueuer is blocked: the threshold setter
   // must wake it so it re-checks eligibility instead of waiting on a stale
@@ -575,7 +592,7 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
 
   // Cleanup: release the workers and drain the three submitted morsels. The
   // rejected morsel was never queued, so exactly three results arrive.
-  unblockPromise.set_value();
+  releaseHelpers();
   auto results = session.drainRemainingResults();
   ASSERT_EQ(results.size(), 3u);
   EXPECT_EQ(results[0], 1);
