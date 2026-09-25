@@ -1,7 +1,12 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -14,6 +19,7 @@
 
 #include "engine/export_v2/ElasticExportScheduler.h"
 #include "util/http/websocket/QueryId.h"
+#include "util/jthread.h"
 
 using namespace ad_utility::export_v2;
 using namespace std::chrono_literals;
@@ -368,7 +374,9 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
 
   std::atomic<bool> stopQueryChanger{false};
   // Background thread fluctuating foreground demand
-  std::thread queryChanger([&]() {
+  // `JThread` and the cleanup join all threads even if an assertion ends the
+  // test early; destroying a joinable `std::thread` would terminate.
+  ad_utility::JThread queryChanger([&]() {
     while (!stopQueryChanger.load()) {
       scheduler.onForegroundQueryStarted();
       std::this_thread::sleep_for(1ms);
@@ -376,10 +384,13 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
       std::this_thread::sleep_for(1ms);
     }
   });
+  absl::Cleanup stopChanger = [&stopQueryChanger]() {
+    stopQueryChanger.store(true);
+  };
 
   constexpr size_t numWorkerThreads = 4;
   constexpr size_t morselsPerSession = 15;
-  std::vector<std::thread> sessionRunners;
+  std::vector<ad_utility::JThread> sessionRunners;
   sessionRunners.reserve(numWorkerThreads);
 
   for (size_t t = 0; t < numWorkerThreads; ++t) {
@@ -402,7 +413,4 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
   for (auto& t : sessionRunners) {
     t.join();
   }
-
-  stopQueryChanger.store(true);
-  queryChanger.join();
 }
