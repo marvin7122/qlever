@@ -68,14 +68,16 @@ TEST(VocabularyTypes, verifyWordWriterBaseDestructorBehavesAsExpected) {
 // (the whole point of the self-contained result type).
 TEST(ContiguousVocabBatchBuilder, FinalizeExposesViewsAndKeepsDataAlive) {
   const std::vector<size_t> wordSizes{3, 3};
-  ContiguousVocabBatchBuilder builder{wordSizes};
-  auto targets = builder.targets();
-  ASSERT_EQ(targets.size(), 2u);
-  std::memcpy(targets[0], "foo", 3);
-  std::memcpy(targets[1], "bar", 3);
-
-  VocabBatchLookupResult result = std::move(builder).finalize();
-
+  VocabBatchLookupResult result;
+  {
+    ContiguousVocabBatchBuilder builder{wordSizes};
+    auto targets = builder.targets();
+    ASSERT_EQ(targets.size(), 2u);
+    std::memcpy(targets[0], "foo", 3);
+    std::memcpy(targets[1], "bar", 3);
+    result = std::move(builder).finalize();
+  }
+  // The builder is destroyed; the result must still own the data.
   ASSERT_EQ(result.size(), 2u);
   EXPECT_EQ(result[0], "foo");
   EXPECT_EQ(result[1], "bar");
@@ -96,11 +98,14 @@ TEST(ArenaVocabBatchBuilder, AppendedWordsStayValidInFinalizedResult) {
   // Each word gets a pointer-stable allocation from the monotonic resource,
   // so appending the second (differently sized) word never invalidates the
   // first view. The finalized result keeps the arena alive.
-  ArenaVocabBatchBuilder builder{2};
-  builder.appendWord("foo");
-  builder.appendWord("barbaz");
-
-  VocabBatchLookupResult result = std::move(builder).finalize();
+  VocabBatchLookupResult result;
+  {
+    ArenaVocabBatchBuilder builder{2};
+    builder.appendWord("foo");
+    builder.appendWord("barbaz");
+    result = std::move(builder).finalize();
+  }
+  // The builder is destroyed; the result must still own the arena.
   ASSERT_EQ(result.size(), 2u);
   EXPECT_EQ(result[0], "foo");
   EXPECT_EQ(result[1], "barbaz");
