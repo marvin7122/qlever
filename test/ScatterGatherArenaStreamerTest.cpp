@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
 
@@ -195,6 +196,10 @@ TEST(ScatterGatherArenaStreamerTest, EvaluatedTermDataOverload) {
 TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
   int pipeFds[2];
   ASSERT_EQ(::pipe(pipeFds), 0);
+  absl::Cleanup closePipe{[&pipeFds] {
+    ::close(pipeFds[0]);
+    ::close(pipeFds[1]);
+  }};
 
   ScatterGatherConfig config;
   config.zeroCopyThresholdBytes = 10;
@@ -213,11 +218,9 @@ TEST(ScatterGatherArenaStreamerTest, WriteToPipeFd) {
 
   ssize_t written = chunkOpt->writeToFd(pipeFds[1]);
   EXPECT_EQ(written, static_cast<ssize_t>(chunkOpt->totalBytes()));
-  ::close(pipeFds[1]);
 
   std::string readBuf(chunkOpt->totalBytes(), '\0');
   ssize_t bytesRead = ::read(pipeFds[0], readBuf.data(), readBuf.size());
-  ::close(pipeFds[0]);
 
   EXPECT_EQ(bytesRead, static_cast<ssize_t>(chunkOpt->totalBytes()));
   EXPECT_EQ(readBuf, chunkOpt->toString());
