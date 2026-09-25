@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <iomanip>
@@ -35,6 +36,12 @@ namespace ad_benchmark {
 // End-to-End Export Benchmark: Simulates full server SPARQL SELECT & CONSTRUCT
 // streaming pipelines across 5,000,000 rows across all optimization layers.
 class EndToEndExportBenchmark : public BenchmarkInterface {
+  // 1 MiB output buffer, 64-byte aligned. Allocated on the heap because three
+  // of them on the stack would exceed common stack limits.
+  struct alignas(64) ScratchBuffer {
+    std::array<char, 1024 * 1024> data_;
+  };
+
  public:
   std::string name() const final {
     return "End-to-End Full-Pipeline QLever SPARQL Export Benchmark (5,000,000 "
@@ -104,8 +111,9 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
   }
 
   double runE2eEntityScanOptimized(size_t numRows) {
+    auto scratch = std::make_unique<ScratchBuffer>();
+    char* const buffer = scratch->data_.data();
     auto start = std::chrono::steady_clock::now();
-    alignas(64) char buffer[1024 * 1024];
     char* ptr = buffer;
     for (size_t i = 0; i < numRows; ++i) {
       if (ptr - buffer > 1024 * 1000) {
@@ -147,8 +155,9 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
   }
 
   double runE2eLiteralScanOptimized(size_t numRows) {
+    auto scratch = std::make_unique<ScratchBuffer>();
+    char* const buffer = scratch->data_.data();
     auto start = std::chrono::steady_clock::now();
-    alignas(64) char buffer[1024 * 1024];
     char* ptr = buffer;
     const std::string_view rawLabel =
         "Douglas Adams, author of \"The Hitchhiker's Guide\"";
@@ -193,8 +202,9 @@ class EndToEndExportBenchmark : public BenchmarkInterface {
   }
 
   double runE2eMixedScanOptimized(size_t numRows) {
+    auto scratch = std::make_unique<ScratchBuffer>();
+    char* const buffer = scratch->data_.data();
     auto start = std::chrono::steady_clock::now();
-    alignas(64) char buffer[1024 * 1024];
     char* ptr = buffer;
     for (size_t i = 0; i < numRows; ++i) {
       if (ptr - buffer > 1024 * 1000) {
