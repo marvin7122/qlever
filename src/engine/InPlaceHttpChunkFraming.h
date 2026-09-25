@@ -9,14 +9,14 @@
 #ifndef QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H
 #define QLEVER_SRC_ENGINE_INPLACEHTTPCHUNKFRAMING_H
 
-#include <bit>
+#include <absl/numeric/bits.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -41,7 +41,7 @@ inline constexpr char HEX_DIGITS[17] = "0123456789abcdef";
 // >> 2. Note: (val | 1ULL) ensures val == 0 has countl_zero == 63 -> (67 - 63)
 // >> 2 = 1.
 [[nodiscard]] inline constexpr uint32_t numHexDigits(uint64_t val) noexcept {
-  return (67 - std::countl_zero(val | 1ULL)) >> 2;
+  return (67 - absl::countl_zero(val | 1ULL)) >> 2;
 }
 
 // _____________________________________________________________________________

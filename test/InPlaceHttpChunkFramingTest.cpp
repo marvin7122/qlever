@@ -15,6 +15,7 @@
 #include <string_view>
 #include <vector>
 
+#include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
 #include "engine/InPlaceHttpChunkFraming.h"
 
@@ -160,18 +161,18 @@ TEST(InPlaceHttpChunkFramingTest, StreamerAutoChunkingAndFlush) {
   EXPECT_EQ(summary.totalPayloadBytes_, 250);
 
   // Validate chunk 1: 100 bytes ('A' * 60 + 'B' * 40)
-  EXPECT_TRUE(emittedChunks[0].starts_with("64\r\n"));  // 100 = 0x64
-  EXPECT_TRUE(emittedChunks[0].ends_with("\r\n"));
+  EXPECT_TRUE(ql::starts_with(emittedChunks[0], "64\r\n"));  // 100 = 0x64
+  EXPECT_TRUE(ql::ends_with(emittedChunks[0], "\r\n"));
   EXPECT_EQ(emittedChunks[0].size(), 4 + 100 + 2);
 
   // Validate chunk 2: 100 bytes ('B' * 30 + 'C' * 70)
-  EXPECT_TRUE(emittedChunks[1].starts_with("64\r\n"));
-  EXPECT_TRUE(emittedChunks[1].ends_with("\r\n"));
+  EXPECT_TRUE(ql::starts_with(emittedChunks[1], "64\r\n"));
+  EXPECT_TRUE(ql::ends_with(emittedChunks[1], "\r\n"));
   EXPECT_EQ(emittedChunks[1].size(), 4 + 100 + 2);
 
   // Validate chunk 3: 50 bytes ('C' * 50)
-  EXPECT_TRUE(emittedChunks[2].starts_with("32\r\n"));  // 50 = 0x32
-  EXPECT_TRUE(emittedChunks[2].ends_with("\r\n"));
+  EXPECT_TRUE(ql::starts_with(emittedChunks[2], "32\r\n"));  // 50 = 0x32
+  EXPECT_TRUE(ql::ends_with(emittedChunks[2], "\r\n"));
   EXPECT_EQ(emittedChunks[2].size(), 4 + 50 + 2);
 
   // Validate chunk 4: terminating chunk
@@ -247,7 +248,7 @@ TEST(InPlaceHttpChunkFramingTest, ResetAndReuse) {
 
     std::string_view sv(framed.data(), framed.size());
     EXPECT_TRUE(sv.find(msg) != std::string_view::npos);
-    EXPECT_TRUE(sv.ends_with("\r\n"));
+    EXPECT_TRUE(ql::ends_with(sv, "\r\n"));
   }
 }
 
