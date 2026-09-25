@@ -1,7 +1,8 @@
-// Copyright 2018 - 2025, University of Freiburg
+// Copyright 2018 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
 // Authors: Florian Kramer [2018 - 2020]
 //          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
@@ -984,17 +985,23 @@ std::optional<size_t> GroupByImpl::computeDistinctCountForTwoVariableScan(
     }
   } else if (indexScan->subject().isVariable() &&
              indexScan->subject().getVariable() == countedVariable) {
-    // Counted variable is the subject. The bound column must be the
-    // predicate (`?s <p> ?o`, PSO has s in column 1).
+    // Counted variable is the subject. The bound column is the predicate
+    // (`?s <p> ?o`, PSO has s in column 1) or the object (`?s ?p <o>`, OSP
+    // has s in column 1).
     if (!indexScan->predicate().isVariable()) {
       targetPermutation = Permutation::PSO;
+    } else if (!indexScan->object().isVariable()) {
+      targetPermutation = Permutation::OSP;
     }
   } else if (indexScan->object().isVariable() &&
              indexScan->object().getVariable() == countedVariable) {
-    // Counted variable is the object. The bound column must be the
-    // predicate (`?s <p> ?o`, POS has o in column 1).
+    // Counted variable is the object. The bound column is the predicate
+    // (`?s <p> ?o`, POS has o in column 1) or the subject (`<s> ?p ?o`, SOP
+    // has o in column 1).
     if (!indexScan->predicate().isVariable()) {
       targetPermutation = Permutation::POS;
+    } else if (!indexScan->subject().isVariable()) {
+      targetPermutation = Permutation::SOP;
     }
   }
 
