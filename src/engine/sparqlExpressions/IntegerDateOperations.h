@@ -11,36 +11,27 @@
 #include <cstdint>
 #include <optional>
 
+#include "backports/algorithm.h"
 #include "backports/span.h"
 #include "global/Id.h"
 #include "util/Exception.h"
 
 namespace ql::engine::scalar {
 
-// _____________________________________________________________________________
-// Integer-space date extractors (Pillar 2): the SHIFT/MASK constants document
-// the logical component layout, while construction and extraction delegate to
-// the `Id`/`Date` representation so no additional allocation is required.
+// Integer-space date helpers (Pillar 2): build a date `Id` from its components
+// and read the year, month or day of a date `Id` as an integer, without going
+// through the string or `DateYearOrDuration` expression machinery. All
+// functions delegate to the `Id`/`Date` representation.
 class IntegerDateOperations {
  public:
-  static constexpr uint64_t YEAR_SHIFT = 40;
-  static constexpr uint64_t MONTH_SHIFT = 32;
-  static constexpr uint64_t DAY_SHIFT = 24;
-  static constexpr uint64_t HOUR_SHIFT = 16;
-  static constexpr uint64_t MINUTE_SHIFT = 8;
-  static constexpr uint64_t SECOND_SHIFT = 0;
-
-  static constexpr uint64_t BYTE_MASK = 0xFF;
-  static constexpr uint64_t YEAR_MASK = 0xFFFF;
-
   // ___________________________________________________________________________
-  // Not constexpr: `DateYearOrDuration` has no constexpr constructor, so no
-  // invocation could ever be a constant expression. The SHIFT/MASK constants
-  // above document the logical component layout.
+  // Build a date `Id`. Throws `DateOutOfRangeException` if a component is out
+  // of range (for example month 13). Not constexpr, because
+  // `DateYearOrDuration` has no constexpr constructor.
   [[nodiscard]] static Id makePackedDate(int16_t year, uint8_t month,
                                          uint8_t day, uint8_t hour = 0,
                                          uint8_t minute = 0,
-                                         uint8_t second = 0) noexcept {
+                                         uint8_t second = 0) {
     return Id::makeFromDate(
         DateYearOrDuration{Date{static_cast<int>(year), month, day, hour,
                                 minute, static_cast<double>(second)}});
@@ -71,15 +62,13 @@ class IntegerDateOperations {
   }
 
   // ___________________________________________________________________________
-  // Batch extractor: writes extracted year integers directly into the output
-  // span (one scalar extraction per row, no intermediate allocation).
+  // Write the year of each of the `inputDates` to the element of `outputYears`
+  // at the same position (0 for non-date `Id`s). `outputYears` must be at
+  // least as large as `inputDates`.
   static void extractYearsBatch(ql::span<const Id> inputDates,
                                 ql::span<int64_t> outputYears) {
-    AD_CORRECTNESS_CHECK(outputYears.size() >= inputDates.size());
-    const size_t n = inputDates.size();
-    for (size_t i = 0; i < n; ++i) {
-      outputYears[i] = extractYear(inputDates[i]);
-    }
+    AD_CONTRACT_CHECK(outputYears.size() >= inputDates.size());
+    ql::ranges::transform(inputDates, outputYears.begin(), &extractYear);
   }
 };
 

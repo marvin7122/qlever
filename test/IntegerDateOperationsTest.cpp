@@ -54,3 +54,13 @@ TEST(IntegerDateOperationsTest, BatchYearExtraction) {
   EXPECT_EQ(years[1], 2000);
   EXPECT_EQ(years[2], 2026);
 }
+
+// _____________________________________________________________________________
+TEST(IntegerDateOperationsTest, InvalidInputsThrow) {
+  // Month 13 is out of range for `Date`.
+  EXPECT_ANY_THROW(IntegerDateOperations::makePackedDate(2026, 13, 1));
+  // The output span must be at least as large as the input span.
+  std::vector<Id> dates(2, IntegerDateOperations::makePackedDate(2026, 1, 1));
+  std::vector<int64_t> years(1);
+  EXPECT_ANY_THROW(IntegerDateOperations::extractYearsBatch(dates, years));
+}
