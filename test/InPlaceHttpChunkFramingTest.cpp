@@ -17,7 +17,6 @@
 
 #include "backports/span.h"
 #include "engine/InPlaceHttpChunkFraming.h"
-#include "util/Exception.h"
 
 using namespace ad_utility::http;
 
