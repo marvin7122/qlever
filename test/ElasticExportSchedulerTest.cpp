@@ -10,8 +10,10 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <future>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -453,6 +455,50 @@ TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
     EXPECT_TRUE(seen.contains("result_" + std::to_string(i)));
   }
   EXPECT_EQ(session.consumedSlots(), numMorsels);
+  EXPECT_FALSE(session.hasMoreResults());
+
+  scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 10b: Unordered Consume Re-Selects When Another Running Morsel Completes
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest,
+     UnorderedConsumeReselectsWhenAnotherRunningMorselCompletes) {
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  session.setOrdered(false);
+
+  auto started = std::make_shared<std::atomic<int>>(0);
+  auto release = std::make_shared<std::promise<void>>();
+  std::shared_future<void> released = release->get_future().share();
+  // Slot 0 keeps running until the consumer has emitted slot 1. The timeout
+  // turns a head-of-line-blocking regression into a failure, not a hang.
+  session.submitMorsel([started, released]() {
+    ++*started;
+    (void)released.wait_for(5s);
+    return std::string{"slow"};
+  });
+  session.submitMorsel([started]() {
+    ++*started;
+    std::this_thread::sleep_for(20ms);
+    return std::string{"fast"};
+  });
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (started->load() < 2 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  ASSERT_EQ(started->load(), 2) << "both morsels must run on helpers";
+
+  // Both slots are `Running`; the consumer must not wait on slot 0 while
+  // slot 1 completes.
+  EXPECT_EQ(session.consumeNextResult(), "fast");
+  release->set_value();
+  EXPECT_EQ(session.consumeNextResult(), "slow");
   EXPECT_FALSE(session.hasMoreResults());
 
   scheduler.onForegroundQueryEnded();
