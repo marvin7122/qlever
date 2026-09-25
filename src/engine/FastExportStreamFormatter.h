@@ -60,7 +60,6 @@ constexpr std::array<bool, 256> makeTsvSpecialTable() {
   std::array<bool, 256> table{};
   table[static_cast<uint8_t>('\t')] = true;
   table[static_cast<uint8_t>('\n')] = true;
-  table[static_cast<uint8_t>('\r')] = true;
   return table;
 }
 
@@ -291,7 +290,9 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Fast IANA-TSV field serializer.
+  // Fast IANA-TSV field serializer. Escapes exactly like
+  // `RdfEscaping::escapeForTsv`: tabs become spaces, newlines become `\n`,
+  // and all other bytes (including `\r`) pass through unchanged.
   void writeEscapedTsv(std::string_view field) {
     if (!detail::hasSpecialCharacters<detail::tsvSpecialTable>(field)) {
       writeRaw(field);
@@ -303,8 +304,6 @@ class FastExportStreamFormatter {
         writeChar(' ');
       } else if (c == '\n') {
         writeRaw("\\n");
-      } else if (c == '\r') {
-        writeRaw("\\r");
       } else {
         writeChar(c);
       }
@@ -512,7 +511,11 @@ class FastExportStreamFormatter {
   // ___________________________________________________________________________
   // Inspect the currently buffered (not yet flushed) slice. The view is
   // invalidated by the next write, flush, or finalize.
+  // After `finalize()` the buffer pointer is null and the view is empty.
   [[nodiscard]] std::string_view currentChunk() const noexcept {
+    if (bufferPtr_ == nullptr) {
+      return {};
+    }
     return std::string_view(bufferPtr_, writePos_);
   }
 
