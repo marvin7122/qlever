@@ -42,8 +42,7 @@ namespace ql::engine::prefetch {
 // Compiler and architecture agnostic software cache prefetching intrinsic.
 // Issues a non-blocking CPU prefetch instruction for the memory address
 // into the L1 data cache (_MM_HINT_T0 / temporal locality 3).
-inline void prefetchVocabEntry(const void* address,
-                               [[maybe_unused]] int distance = 8) noexcept {
+inline void prefetchVocabEntry(const void* address) noexcept {
   if (address == nullptr) {
     return;
   }
@@ -133,8 +132,8 @@ class PrefetchingBatchResolver {
     // Warm-up pipeline: prefetch the first `distance` entries
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t pfPos = positions[k];
-      prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-      prefetchVocabEntry(&positions[k], static_cast<int>(distance));
+      prefetchVocabEntry(&ids[pfPos]);
+      prefetchVocabEntry(&positions[k]);
     }
 
     // Main pipelined loop: prefetch row (i + distance) ahead while serializing
@@ -142,16 +141,11 @@ class PrefetchingBatchResolver {
     for (size_t i = 0; i < n; ++i) {
       if (i + distance < n) {
         const size_t pfPos = positions[i + distance];
-        prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-        prefetchVocabEntry(&positions[i + distance],
-                           static_cast<int>(distance));
-        const Id pfId = ids[pfPos];
-        if (pfId.getDatatype() == Datatype::VocabIndex) {
-          // Prefetch the underlying index entry if possible
-          const auto* vocabPtr =
-              reinterpret_cast<const void*>(&index.getImpl());
-          prefetchVocabEntry(vocabPtr, static_cast<int>(distance));
-        }
+        prefetchVocabEntry(&ids[pfPos]);
+        prefetchVocabEntry(&positions[i + distance]);
+        // The word bytes of the `Index` vocabulary are not addressable from
+        // here (the vocabulary may be compressed), so only the ID and
+        // position arrays are prefetched.
       }
 
       const size_t pos = positions[i];
@@ -192,7 +186,7 @@ class PrefetchingBatchResolver {
     for (size_t k = 0; k < std::min(distance, n); ++k) {
       const size_t idx = indices[k];
       if (idx < offsets.size()) {
-        prefetchVocabEntry(&offsets[idx], static_cast<int>(distance));
+        prefetchVocabEntry(&offsets[idx]);
       }
     }
 
@@ -202,7 +196,7 @@ class PrefetchingBatchResolver {
       if (i + distance < n) {
         const size_t pfIdx = indices[i + distance];
         if (pfIdx < offsets.size()) {
-          prefetchVocabEntry(&offsets[pfIdx], static_cast<int>(distance));
+          prefetchVocabEntry(&offsets[pfIdx]);
         }
       }
 
@@ -212,8 +206,7 @@ class PrefetchingBatchResolver {
         if (midIdx + 1 < offsets.size()) {
           const auto strOffset = offsets[midIdx];
           if (strOffset < data.size()) {
-            prefetchVocabEntry(data.data() + strOffset,
-                               static_cast<int>(distance / 2));
+            prefetchVocabEntry(data.data() + strOffset);
           }
         }
       }
