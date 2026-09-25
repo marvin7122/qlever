@@ -172,6 +172,7 @@ void IoUringPolicy::addBatch(int fd,
   // with no submitted reads behind that `wait()` could never drain.
   const unsigned fileIndex = fileIndexForFd(fd);
   numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
+
   auto prepareOne = [&](size_t i) {
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     AD_CORRECTNESS_CHECK(sqe != nullptr);
@@ -196,12 +197,15 @@ void IoUringPolicy::addBatch(int fd,
     const size_t freeSlots = ringSize_ - numInFlightReadRequests_;
     if (freeSlots == 0) {
       const unsigned want = static_cast<unsigned>(
-          std::min<size_t>(kReapWave, numInFlightReadRequests_));
+          std::min<size_t>(REAP_WAVE, numInFlightReadRequests_));
       drainAtLeast(want);
       continue;
     }
-    const size_t wave = std::min({numReadRequestsToPerform - next, freeSlots,
-                                  static_cast<size_t>(kSubmitWave)});
+    // Submit as many SQEs as the ring has room for. `io_uring_submit` is
+    // non-blocking and costs one `io_uring_enter` regardless of how many SQEs
+    // it flushes, so capping the wave only adds syscalls without bounding any
+    // resource: the ring itself is the bound.
+    const size_t wave = std::min(numReadRequestsToPerform - next, freeSlots);
     for (size_t k = 0; k < wave; ++k) {
       prepareOne(next + k);
     }
@@ -258,7 +262,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
     // The batch still has outstanding reads, so the total in-flight count
     // (which includes this batch's reads) is nonzero as well.
     const unsigned want = static_cast<unsigned>(
-        std::min<size_t>(kReapWave, numInFlightReadRequests_));
+        std::min<size_t>(REAP_WAVE, numInFlightReadRequests_));
     AD_CORRECTNESS_CHECK(want > 0);
     drainAtLeast(want);
   }

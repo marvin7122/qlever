@@ -260,17 +260,19 @@ class IoUringPolicy {
   explicit IoUringPolicy(unsigned ringSize);
   ~IoUringPolicy();
 
-  // Sliding-window submit (Option 2). Prepare and `io_uring_submit` up to
-  // `kSubmitWave` SQEs at a time. When the ring is full, wait for at least
-  // `kReapWave` completions, then submit the next wave. Do not drain one CQE
-  // and immediately submit one SQE: that is one `io_uring_enter` per read.
-  // Read `i` reads `numBytesToRead[i]` bytes from the file registered for
-  // `fd` (see `kNumFixedFiles`) at `offsets[i]` into `buffers[i]`. Every read
-  // uses `IOSQE_FIXED_FILE`, so the kernel skips the per-request file-table
-  // lookup. Track the reads under `handle` for `wait()`.
-  static constexpr unsigned kSubmitWave = 32;
-  static constexpr unsigned kReapWave = 8;
+  // Minimum completions to wait for when the ring is full or `wait()` blocks.
+  // Waiting for more than one CQE amortizes `io_uring_enter` on the reap path.
+  static constexpr unsigned REAP_WAVE = 8;
 
+  // Prepare as many SQEs as the ring has free slots and submit them. When the
+  // ring is full, wait for at least `REAP_WAVE` completions, reap every ready
+  // CQE, and submit the next wave. Do not drain one CQE and immediately
+  // submit one SQE: that is one `io_uring_enter` per read. Read `i` reads
+  // `numBytesToRead[i]` bytes from the file registered for `fd` (see
+  // `kNumFixedFiles`) at `offsets[i]` into `buffers[i]`. Every read uses
+  // `IOSQE_FIXED_FILE`, so the kernel skips the per-request file-table lookup.
+  // The caller owns `buffers` until `wait(handle)` returns. Track the reads
+  // under `handle` for `wait()`.
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
