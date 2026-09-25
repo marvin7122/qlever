@@ -349,6 +349,8 @@ class InPlaceHttpChunkStreamer {
         currentPayloadBytes_(0),
         emitTerminatingChunkOnFinalize_(emitTerminatingChunkOnFinalize) {
     AD_CONTRACT_CHECK(sink_ != nullptr);
+    // With zero capacity, `write` could never make progress.
+    AD_CONTRACT_CHECK(chunkPayloadCapacity > 0);
   }
 
   // Move-only semantics
