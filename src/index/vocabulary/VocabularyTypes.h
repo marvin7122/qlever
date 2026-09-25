@@ -761,12 +761,36 @@ struct HasLookupBatchWithBuilderImpl<
 }  // namespace detail
 
 // Whether `Vocab` provides the two-argument `lookupBatch(indices, builder)`
-// overload (see above). Dispatching wrappers (e.g. `UnicodeVocabulary`,
-// `PolymorphicVocabulary`) use this to call the builder overload when it
-// exists and fall back to the single-argument overload otherwise.
+// overload (see above). `lookupBatchWithBuilder` below uses this to call the
+// builder overload when it exists and fall back to the single-argument
+// overload otherwise.
 template <typename Vocab>
 constexpr bool hasLookupBatchWithBuilder =
     detail::HasLookupBatchWithBuilderImpl<Vocab>::value;
+
+// Look up `indices` in `vocab` and return the result, writing into `builder`
+// if `vocab` provides the builder overload of `lookupBatch`. That overload
+// either fills `builder` and returns `void` (e.g. `CompressedVocabulary`),
+// then `builder` is finalized here, or returns the finished result itself
+// (e.g. dispatching wrappers). Vocabularies without the builder overload use
+// their single-argument `lookupBatch`, and `builder` stays untouched.
+template <typename Vocab>
+VocabBatchLookupResult lookupBatchWithBuilder(const Vocab& vocab,
+                                              ql::span<const size_t> indices,
+                                              ArenaVocabBatchBuilder& builder) {
+  if constexpr (hasLookupBatchWithBuilder<Vocab>) {
+    if constexpr (std::is_void_v<decltype(vocab.lookupBatch(indices,
+                                                            builder))>) {
+      vocab.lookupBatch(indices, builder);
+      return std::move(builder).finalize();
+    } else {
+      return vocab.lookupBatch(indices, builder);
+    }
+  } else {
+    (void)builder;
+    return vocab.lookupBatch(indices);
+  }
+}
 
 // Return `vocab[index]` as a `std::string`. If the `operator[]` of `vocab`
 // returns a `std::optional` (which is the case for vocabularies with holes, see

@@ -267,6 +267,65 @@ TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
   EXPECT_THAT(result, ::testing::ElementsAre("one", "two"));
 }
 
+// Mock vocabularies for the three dispatch cases of `lookupBatchWithBuilder`.
+// The builder overload of `FillsBuilderVocab` returns `void` (like
+// `CompressedVocabulary`), the one of `ReturnsResultVocab` returns the finished
+// result (like the dispatching wrappers), and `NoBuilderVocab` has no builder
+// overload at all.
+struct FillsBuilderVocab {
+  void lookupBatch(ql::span<const size_t> indices,
+                   ArenaVocabBatchBuilder& builder) const {
+    for (size_t idx : indices) {
+      builder.appendWord(absl::StrCat("fill", idx));
+    }
+  }
+};
+struct ReturnsResultVocab {
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder&) const {
+    return makeStringVectorVocabBatchLookupResult(
+        ::ranges::to<std::vector<std::string>>(
+            indices | ql::views::transform([](size_t idx) {
+              return absl::StrCat("ret", idx);
+            })));
+  }
+};
+struct NoBuilderVocab {
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    return makeStringVectorVocabBatchLookupResult(
+        ::ranges::to<std::vector<std::string>>(
+            indices | ql::views::transform([](size_t idx) {
+              return absl::StrCat("single", idx);
+            })));
+  }
+};
+
+// _____________________________________________________________________________
+// `lookupBatchWithBuilder` finalizes the builder for a `void` builder overload,
+// forwards the result of a returning builder overload, and falls back to the
+// single-argument overload if there is no builder overload.
+TEST(VocabBatchLookupData, LookupBatchWithBuilderDispatch) {
+  using namespace ad_utility::vocabulary;
+  static_assert(hasLookupBatchWithBuilder<FillsBuilderVocab>);
+  static_assert(hasLookupBatchWithBuilder<ReturnsResultVocab>);
+  static_assert(!hasLookupBatchWithBuilder<NoBuilderVocab>);
+  const std::array<size_t, 2> indices{3, 7};
+
+  ArenaVocabBatchBuilder fillsBuilder(indices.size());
+  EXPECT_THAT(
+      lookupBatchWithBuilder(FillsBuilderVocab{}, indices, fillsBuilder),
+      ::testing::ElementsAre("fill3", "fill7"));
+
+  ArenaVocabBatchBuilder returnsBuilder(indices.size());
+  EXPECT_THAT(
+      lookupBatchWithBuilder(ReturnsResultVocab{}, indices, returnsBuilder),
+      ::testing::ElementsAre("ret3", "ret7"));
+
+  ArenaVocabBatchBuilder unusedBuilder(indices.size());
+  EXPECT_THAT(lookupBatchWithBuilder(NoBuilderVocab{}, indices, unusedBuilder),
+              ::testing::ElementsAre("single3", "single7"));
+}
+
 // _____________________________________________________________________________
 TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsWhenArenaExceedsBudget) {
   auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
