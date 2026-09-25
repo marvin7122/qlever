@@ -3502,8 +3502,10 @@ TEST_F(GroupByOptimizations, minMaxEmptyRelation) {
   std::vector<Alias> aliases{
       Alias{makeMinPimpl(Variable{"?o"}), Variable{"?out"}}};
   GroupByImpl groupBy{&qec, {}, std::move(aliases), std::move(scan)};
-  EXPECT_THAT(groupBy.computeMinMaxForSingleIndexScan(),
-              optionalHasTable({{Id::makeUndefined()}}));
+  // `<missing>` is not in the vocabulary, so the fast path leaves the query to
+  // the general path, which yields `UNDEF`. An empty relation of an IRI that is
+  // in the vocabulary is covered by `minMaxFromIndexBoundsEmptyRelation`.
+  EXPECT_FALSE(groupBy.computeMinMaxForSingleIndexScan().has_value());
   EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
               matchesIdTableFromVector({{Id::makeUndefined()}}));
 }
