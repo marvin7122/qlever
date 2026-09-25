@@ -292,7 +292,19 @@ class AdaptiveChunkBuffer {
     AD_CONTRACT_CHECK(sv.size() <=
                       std::numeric_limits<size_t>::max() - writePos_);
     if (writePos_ + sv.size() > buffer_.size()) {
+      // `sv` may alias `buffer_` (e.g. a previous `currentView()`), and
+      // `resize` may reallocate. Remember the offset of an aliasing slice and
+      // rebase it onto the new storage so that `memmove` never reads freed
+      // memory.
+      const auto oldBegin = reinterpret_cast<uintptr_t>(buffer_.data());
+      const auto source = reinterpret_cast<uintptr_t>(sv.data());
+      const bool aliasesBuffer =
+          source >= oldBegin && source < oldBegin + buffer_.size();
+      const size_t aliasOffset = aliasesBuffer ? source - oldBegin : 0;
       buffer_.resize(std::max(buffer_.size() * 2, writePos_ + sv.size()));
+      if (aliasesBuffer) {
+        sv = std::string_view(buffer_.data() + aliasOffset, sv.size());
+      }
     }
     // `memmove`: the slice may alias this buffer (e.g. `currentView()`).
     std::memmove(buffer_.data() + writePos_, sv.data(), sv.size());
