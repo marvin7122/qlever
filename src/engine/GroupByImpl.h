@@ -1,7 +1,8 @@
-// Copyright 2018 - 2024, University of Freiburg
+// Copyright 2018 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures.
 // Authors: Florian Kramer [2018]
 //          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
@@ -33,6 +34,8 @@ namespace groupBy::detail {
 template <size_t IN_WIDTH, size_t OUT_WIDTH>
 class LazyGroupByRange;
 }
+
+class IndexScan;
 
 class GroupByImpl : public Operation {
  public:
@@ -238,6 +241,16 @@ class GroupByImpl : public Operation {
   // Compute the result for a single `COUNT(*)` aggregate with a single
   // (implicit) group.
   std::optional<IdTable> computeCountStar() const;
+
+  // Compute a single `MIN(?v)` or `MAX(?v)` without `GROUP BY` when the child
+  // is a two-variable `IndexScan` whose column 0 is bound (e.g.
+  // `?s <p> ?v`), from the first and the last triple of the relation in the
+  // permutation that stores `?v` in column 1 (at most two blocks are read).
+  // Return `UNDEF` if the scan is empty, and `std::nullopt` if the query or
+  // the scan has a different shape, the scan has a `LIMIT`/`OFFSET`, there are
+  // delta triples, or the index order of the values of `?v` may differ from
+  // the order of `MIN`/`MAX` (e.g. mixed datatypes or mixed signs).
+  std::optional<IdTable> computeMinMaxForSingleIndexScan() const;
 
   // Stores information required for substitution of an expression in an
   // expression tree.
@@ -622,6 +635,22 @@ class GroupByImpl : public Operation {
   std::unique_ptr<Operation> cloneImpl() const override;
 
  private:
+  // A two-variable `IndexScan` child (shared with `_subtree`) and the `Id` of
+  // its bound column 0.
+  struct TwoVariableScanWithBoundCol0 {
+    std::shared_ptr<IndexScan> scan_;
+    Id col0Id_;
+  };
+
+  // Return the child as a `TwoVariableScanWithBoundCol0` if it is a
+  // two-variable `IndexScan` without graph filtering whose column 0 maps to an
+  // `Id`, and `std::nullopt` otherwise. This is the common precondition of
+  // `computeGroupByObjectWithCount` and `computeMinMaxForSingleIndexScan`;
+  // checks that depend on the aggregate (e.g. the aliases or `LIMIT` handling)
+  // stay with the callers.
+  std::optional<TwoVariableScanWithBoundCol0> getTwoVariableScanWithBoundCol0()
+      const;
+
   // Returns false if any alias expression is non-deterministic.
   [[nodiscard]] bool isDeterministicImpl() const override {
     return ql::ranges::all_of(_aliases, [](const Alias& alias) {

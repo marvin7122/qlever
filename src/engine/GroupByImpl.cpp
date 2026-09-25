@@ -1,13 +1,16 @@
-// Copyright 2018 - 2025, University of Freiburg
+// Copyright 2018 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
 // Authors: Florian Kramer [2018 - 2020]
 //          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "engine/GroupByImpl.h"
 
 #include <absl/strings/str_join.h>
+
+#include <cmath>
 
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
@@ -907,20 +910,36 @@ std::optional<IdTable> GroupByImpl::computeGroupByForSingleIndexScan() const {
       indexScan->permutation().numTriples()));
 }
 
-// ____________________________________________________________________________
-std::optional<IdTable> GroupByImpl::computeGroupByObjectWithCount() const {
-  // The child must be an `IndexScan` with exactly two variables.
+// _____________________________________________________________________________
+auto GroupByImpl::getTwoVariableScanWithBoundCol0() const
+    -> std::optional<TwoVariableScanWithBoundCol0> {
+  // Require an `IndexScan` with exactly two variables and no graph filtering.
   auto indexScan =
       std::dynamic_pointer_cast<IndexScan>(_subtree->getRootOperation());
   if (!indexScan || !indexScan->graphsToFilter().areAllGraphsAllowed() ||
       indexScan->numVariables() != 2) {
     return std::nullopt;
   }
+  // Require column 0 of the scan's permutation (its only bound column) to map
+  // to an `Id`. Otherwise (e.g. an IRI that is not in the vocabulary), leave
+  // the query to the general path.
   const auto& permutedTriple = indexScan->getPermutedTriple();
-  std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
+  const std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
   if (!col0Id.has_value()) {
     return std::nullopt;
   }
+  return TwoVariableScanWithBoundCol0{std::move(indexScan), col0Id.value()};
+}
+
+// ____________________________________________________________________________
+std::optional<IdTable> GroupByImpl::computeGroupByObjectWithCount() const {
+  const auto scanAndCol0 = getTwoVariableScanWithBoundCol0();
+  if (!scanAndCol0.has_value()) {
+    return std::nullopt;
+  }
+  const auto& indexScan = scanAndCol0->scan_;
+  const Id col0Id = scanAndCol0->col0Id_;
+  const auto& permutedTriple = indexScan->getPermutedTriple();
 
   // There must be exactly one GROUP BY variable and the result of the index
   // scan must be sorted by it.
@@ -948,7 +967,7 @@ std::optional<IdTable> GroupByImpl::computeGroupByObjectWithCount() const {
   // do the index scan, but something smarter).
   const auto& permutation = indexScan->permutation();
   auto result = permutation.getDistinctCol1IdsAndCounts(
-      col0Id.value(), cancellationHandle_, locatedTriplesState(),
+      col0Id, cancellationHandle_, locatedTriplesState(),
       indexScan->getLimitOffset());
 
   indexScan->updateRuntimeInformationWhenOptimizedOut({});
@@ -1185,6 +1204,9 @@ std::optional<IdTable> GroupByImpl::computeOptimizedGroupByIfPossible() const {
       return result;
     }
     if (auto result = computeGroupByForFullIndexScan()) {
+      return result;
+    }
+    if (auto result = computeMinMaxForSingleIndexScan()) {
       return result;
     }
   }
@@ -1968,6 +1990,189 @@ bool GroupByImpl::isVariableBoundInSubtree(const Variable& variable) const {
 std::unique_ptr<Operation> GroupByImpl::cloneImpl() const {
   return std::make_unique<GroupByImpl>(_executionContext, _groupByVariables,
                                        _aliases, _subtree->clone());
+}
+
+// _____________________________________________________________________________
+namespace {
+// Return the permutation that keeps the bound column of the two-variable
+// `scan` in column 0 and stores `wantedCol1` in column 1, or `std::nullopt`
+// if `wantedCol1` is not a variable of `scan`. The name of a permutation lists
+// its columns in order, e.g. `OSP` stores the object in column 0 and the
+// subject in column 1. A scan with a bound subject or object is only possible
+// if all six permutations are loaded, so each returned permutation exists.
+std::optional<Permutation::Enum> permutationWithWantedCol1(
+    const IndexScan& scan, const Variable& wantedCol1) {
+  const bool predBound = !scan.predicate().isVariable();
+  const bool subjBound = !scan.subject().isVariable();
+  const bool objBound = !scan.object().isVariable();
+  if (scan.subject().isVariable() &&
+      scan.subject().getVariable() == wantedCol1) {
+    if (predBound) {
+      return Permutation::PSO;
+    }
+    if (objBound) {
+      return Permutation::OSP;
+    }
+  } else if (scan.object().isVariable() &&
+             scan.object().getVariable() == wantedCol1) {
+    if (predBound) {
+      return Permutation::POS;
+    }
+    if (subjBound) {
+      return Permutation::SOP;
+    }
+  } else if (scan.predicate().isVariable() &&
+             scan.predicate().getVariable() == wantedCol1) {
+    if (subjBound) {
+      return Permutation::SPO;
+    }
+    if (objBound) {
+      return Permutation::OPS;
+    }
+  }
+  return std::nullopt;
+}
+
+// Let `first` and `last` be the smallest and the largest `Id` of a non-empty
+// range of `Id`s that is sorted by the bits of the `Id`s (the order of an index
+// permutation). Return the `MIN` (`isMin`) or the `MAX` of that range, as the
+// general `MIN`/`MAX` path (`compareIdsOrStrings` with `CompareByType`) would
+// compute it, if it is determined by `first` and `last` alone. Return
+// `std::nullopt` otherwise; the caller then has to use the general path.
+//
+// The datatype occupies the most significant bits of an `Id`, so if `first`
+// and `last` have the same datatype, then so has every `Id` in between. For the
+// following datatypes, the order of the bits then equals the order of the
+// values, and different `Id`s have different values (so there are no ties
+// whose resolution would depend on the order of evaluation):
+// - `VocabIndex`: both orders compare the index into the vocabulary.
+// - `Bool`: `false` is stored as 0 and `true` as 1.
+// - `Int` if all values have the same sign: the values are stored in two's
+//   complement, so all negative values are stored after all non-negative ones,
+//   but within one sign the orders agree.
+// - `Double` if all values are non-negative and not NaN: the bits of such a
+//   `double` are ordered like its value (NaNs are stored after `+inf`, negative
+//   values after the NaNs and in reverse order, and `-0.0` would tie `0.0`).
+// All other cases (mixed datatypes, mixed signs, `Date`, `EncodedVal`, ...)
+// are left to the general path.
+std::optional<Id> minOrMaxFromSortedBounds(Id first, Id last, bool isMin) {
+  const Datatype datatype = first.getDatatype();
+  if (last.getDatatype() != datatype) {
+    return std::nullopt;
+  }
+  const bool orderOfBitsIsOrderOfValues = [&]() {
+    switch (datatype) {
+      case Datatype::VocabIndex:
+      case Datatype::Bool:
+        return true;
+      case Datatype::Int:
+        return (first.getInt() < 0) == (last.getInt() < 0);
+      case Datatype::Double: {
+        auto isNonNegativeNumber = [](double d) {
+          return !std::isnan(d) && !std::signbit(d);
+        };
+        return isNonNegativeNumber(first.getDouble()) &&
+               isNonNegativeNumber(last.getDouble());
+      }
+      default:
+        return false;
+    }
+  }();
+  if (!orderOfBitsIsOrderOfValues) {
+    return std::nullopt;
+  }
+  return isMin ? first : last;
+}
+}  // namespace
+
+// _____________________________________________________________________________
+std::optional<IdTable> GroupByImpl::computeMinMaxForSingleIndexScan() const {
+  // Require a single `MIN(?v)` or `MAX(?v)` without `GROUP BY`. Only a plain
+  // variable argument can be answered from the stored `Id`s of that variable
+  // (e.g. `MIN(?v + 1)` cannot).
+  if (!_groupByVariables.empty() || _aliases.size() != 1) {
+    return std::nullopt;
+  }
+  const auto* aggregate = _aliases.front()._expression.getPimpl();
+  const bool isMin = dynamic_cast<const sparqlExpression::MinExpression*>(
+                         aggregate) != nullptr;
+  const bool isMax = dynamic_cast<const sparqlExpression::MaxExpression*>(
+                         aggregate) != nullptr;
+  if (!isMin && !isMax) {
+    return std::nullopt;
+  }
+  const auto arguments = aggregate->children();
+  if (arguments.size() != 1) {
+    return std::nullopt;
+  }
+  const auto aggregatedVariable = arguments[0]->getVariableOrNullopt();
+  if (!aggregatedVariable.has_value()) {
+    return std::nullopt;
+  }
+
+  const auto scanAndCol0 = getTwoVariableScanWithBoundCol0();
+  if (!scanAndCol0.has_value()) {
+    return std::nullopt;
+  }
+  const auto& indexScan = scanAndCol0->scan_;
+  const Id col0Id = scanAndCol0->col0Id_;
+  // Only handle the plain scan: the first and the last triple of the relation
+  // ignore a `LIMIT`/`OFFSET` of the scan, and additional columns (e.g. from a
+  // `GRAPH` clause) are not handled here.
+  if (!indexScan->additionalVariables().empty() ||
+      !indexScan->getLimitOffset().isUnconstrained()) {
+    return std::nullopt;
+  }
+
+  // The target permutation is taken from the base index, so a scan of a
+  // materialized view must not be redirected. With delta triples from SPARQL
+  // updates, conservatively leave the query to the general path, like
+  // `computeGroupByForSingleIndexScan` does for distinct counts.
+  const auto& locTriples =
+      indexScan->permutation().getLocatedTriplesForPermutation(
+          locatedTriplesState());
+  if (!locTriples.isEmpty() || indexScan->permutation().permutationType() ==
+                                   Permutation::Type::MATERIALIZED_VIEW) {
+    return std::nullopt;
+  }
+
+  const auto targetPermutation =
+      permutationWithWantedCol1(*indexScan, aggregatedVariable.value());
+  if (!targetPermutation.has_value()) {
+    return std::nullopt;
+  }
+
+  // The bound column of the scan stays column 0 of `targetPermutation`, so
+  // `col0Id` selects the same triples there, sorted by the aggregated variable.
+  // Their first and last triple are read from the block metadata and at most
+  // the first and the last block of the relation (without delta triples, see
+  // above, both of these blocks contain a triple of the relation). An empty
+  // relation has no bounds, and `MIN`/`MAX` of an empty group is `UNDEF`.
+  const auto& permutationWithVariableInCol1 =
+      getIndex().getImpl().getPermutation(targetPermutation.value());
+  const auto& locatedTriples = locatedTriplesState();
+  const auto metadataAndBlocks =
+      permutationWithVariableInCol1.getMetadataAndBlocks(
+          permutationWithVariableInCol1.getScanSpecAndBlocks(
+              ScanSpecification{col0Id, std::nullopt, std::nullopt},
+              locatedTriples),
+          locatedTriples);
+  Id extremum = Id::makeUndefined();
+  if (metadataAndBlocks.has_value()) {
+    const auto& bounds = metadataAndBlocks->firstAndLastTriple_;
+    const auto extremumFromBounds = minOrMaxFromSortedBounds(
+        bounds.firstTriple_.col1Id_, bounds.lastTriple_.col1Id_, isMin);
+    if (!extremumFromBounds.has_value()) {
+      return std::nullopt;
+    }
+    extremum = extremumFromBounds.value();
+  }
+
+  indexScan->updateRuntimeInformationWhenOptimizedOut({});
+
+  IdTable result{1, getExecutionContext()->getAllocator()};
+  result.push_back({extremum});
+  return result;
 }
 
 // _____________________________________________________________________________
