@@ -330,7 +330,9 @@ class ScatterGatherBenchmarkRunner {
 void printBenchmarkTable(
     size_t literalSize,
     const std::vector<ScatterGatherBenchmarkMetric>& metrics) {
-  if (metrics.empty()) return;
+  // The header reads the zero-copy payload from the second (scatter-gather)
+  // measurement.
+  AD_CONTRACT_CHECK(metrics.size() >= 2);
 
   const double baselineThroughput = metrics[0].throughputGBs;
 
