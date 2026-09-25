@@ -29,6 +29,7 @@
 #include "util/Concepts.h"
 #include "util/Exception.h"
 #include "util/Log.h"
+#include "util/StringUtils.h"
 #include "util/TypeTraits.h"
 
 namespace detail {
@@ -47,27 +48,6 @@ struct CastToUnsignedPtr {
   }
 };
 constexpr CastToUnsignedPtr castToUnsignedPtr{};
-
-// _____________________________________________________________________________
-// Allocate `bound` bytes without zero-initialization, decode directly into the
-// string buffer, and resize to the actual decoded size.
-CPP_template(typename Decode)(
-    requires ql::concepts::invocable<Decode, ql::span<char>>) std::string
-    decompressToOwnedString(size_t bound, Decode decode) {
-  if (bound == 0) {
-    return {};
-  }
-  std::string result;
-  size_t bytesWritten = 0;
-  ql::resize_and_overwrite(result, bound, [&](char* buf, size_t count) {
-    bytesWritten = decode(ql::span<char>{buf, count});
-    AD_CONTRACT_CHECK(bytesWritten <= bound);
-    return bytesWritten;
-  });
-  AD_CORRECTNESS_CHECK(result.size() <= bound);
-  AD_CORRECTNESS_CHECK(result.size() == bytesWritten);
-  return result;
-}
 }  // namespace detail
 
 // _____________________________________________________________________________
@@ -125,7 +105,7 @@ class FsstDecoder {
   // should use `decompressInto` instead.
   [[nodiscard]] std::string decompress(std::string_view str) const {
     const size_t bound = maxDecompressedSize(str);
-    std::string result = detail::decompressToOwnedString(
+    std::string result = ad_utility::decodeToOwnedString(
         bound,
         [this, str](ql::span<char> out) { return decompressInto(str, out); });
     AD_CORRECTNESS_CHECK(result.size() <= bound);
