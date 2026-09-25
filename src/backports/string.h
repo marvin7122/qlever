@@ -34,19 +34,24 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
                 std::declval<CharT*>(),
                 std::declval<typename std::basic_string<
                     CharT, Traits, Allocator>::size_type>())),
-            size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
-                                                                 Allocator>&
-                                                   str,
-                                               typename std::basic_string<
-                                                   CharT, Traits,
-                                                   Allocator>::size_type count,
-                                               Operation&& op) {
+            typename std::basic_string<CharT, Traits, Allocator>::
+                size_type>) void resize_and_overwrite(std::
+                                                          basic_string<
+                                                              CharT, Traits,
+                                                              Allocator>& str,
+                                                      typename std::
+                                                          basic_string<
+                                                              CharT, Traits,
+                                                              Allocator>::
+                                                              size_type count,
+                                                      Operation&& op) {
 #if defined(__cpp_lib_string_resize_and_overwrite) && \
     __cpp_lib_string_resize_and_overwrite >= 202110L
   str.resize_and_overwrite(count, std::forward<Operation>(op));
 #else
   str.resize(count);
-  const size_t newSize = std::forward<Operation>(op)(str.data(), count);
+  const typename std::basic_string<CharT, Traits, Allocator>::size_type
+      newSize = std::forward<Operation>(op)(str.data(), count);
   AD_CONTRACT_CHECK(newSize <= count);
   str.resize(newSize);
 #endif
