@@ -47,12 +47,12 @@ struct AllocationTracker {
 // Global new/delete instrumentation for allocation counting during benchmark
 // runs. The malloc/free pairing below is intentional and matched, but GCC
 // cannot see across the replaceable global operators and reports a false
-// positive -Wmismatched-new-delete at the `std::free` calls. A local
-// `#pragma GCC diagnostic ignored "-Wmismatched-new-delete"` does not cover
-// this warning (observed on GCC 11 with -Werror), so the sized-deallocation
-// overloads are deliberately omitted instead: every deallocation falls
-// through to the unsized overloads below, which perform the same
-// `malloc`/`free` pairing without triggering the warning.
+// positive -Wmismatched-new-delete. GCC raises it while compiling the
+// allocation call sites (via inlining), so a pragma around the `operator
+// delete` definitions alone does not cover it (observed on GCC 11 with
+// -Werror); the warning is therefore suppressed file-wide (GCC only). The
+// sized-deallocation overloads must stay: GCC's -Wsized-deallocation (part of
+// -Wextra) rejects an unsized `operator delete` without its sized partner.
 //
 // Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
 // already provide these replaceable allocation functions, so defining them
@@ -66,6 +66,11 @@ struct AllocationTracker {
 #endif
 #elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
 #define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 #endif
 
 #ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
@@ -83,6 +88,8 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
+void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -96,6 +103,8 @@ void* operator new[](std::size_t size) {
 }
 
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
+
+void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
 #endif  // SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 
 namespace ad_benchmark {
@@ -287,3 +296,7 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
