@@ -102,6 +102,7 @@ jobs:
           - image: conan
             run-kind: conan
             build-type: Release
+            skip-if-pr: true  # Fork PR profile 2026-09-25: packaging leg, master only.
           # Emscripten/WASM leg (mirrors
           # native-build-with-conan-and-emscripten.yml, build job only;
           # npm publish stays on the hosted workflow): emsdk 6.0.5,
@@ -109,6 +110,7 @@ jobs:
           - image: emsdk-6.0.5
             run-kind: emsdk
             build-type: Release
+            skip-if-pr: true  # Fork PR profile 2026-09-25: packaging leg, master only.
           # NOTE: no TSan leg here. ThreadSanitizer aborts with "unexpected
           # memory mapping" unless the host sets vm.mmap_rnd_bits=28, which
           # needs root on the runner hosts. TSan stays on the GitHub-hosted
