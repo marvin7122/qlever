@@ -23,14 +23,13 @@
 #include <cstring>
 #include <memory>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "backports/concepts.h"
+#include "absl/strings/str_cat.h"
 #include "backports/span.h"
 #include "util/AlignedAllocator.h"
 #include "util/Exception.h"
@@ -112,8 +111,8 @@ class ZeroCopyBufferPool {
 
     auto* basePtr = static_cast<char*>(rawBuffer_);
     for (size_t i = 0; i < numBuffers_; ++i) {
-      iovecs_.push_back(iovec{.iov_base = basePtr + (i * bufferSizeBytes_),
-                              .iov_len = bufferSizeBytes_});
+      iovecs_.push_back(
+          iovec{basePtr + (i * bufferSizeBytes_), bufferSizeBytes_});
       freeSlots_.push_back(static_cast<uint32_t>(numBuffers_ - 1 - i));
     }
   }
@@ -229,17 +228,17 @@ class ZeroCopySocketSender {
 
   // Internal fixed metadata for an in-flight socket send request.
   struct InFlightRequest {
-    uint32_t bufferIndex = 0;
     size_t expectedBytes = 0;
     bool waitingForNotification = false;
     bool active = false;
   };
 
-  // Preallocated tracking table mapped by (requestId % tableSize)
+  // One entry per buffer slot. A request owns its slot until the kernel
+  // releases it, so at most one request per slot is in flight and the slot
+  // index is a collision-free key (it is also the SQE user data).
   std::vector<InFlightRequest> inFlightTable_;
   size_t numInFlightRequests_ = 0;  // Requests in SQ/CQ
   size_t numInFlightBuffers_ = 0;   // Buffers currently pinned by kernel
-  uint64_t nextRequestId_ = 0;
 
   size_t totalBytesSent_ = 0;
   size_t totalPacketsSent_ = 0;
@@ -252,7 +251,7 @@ class ZeroCopySocketSender {
     AD_CONTRACT_CHECK(config_.numBuffers > 0);
     AD_CONTRACT_CHECK(config_.bufferSizeBytes > 0);
 
-    inFlightTable_.resize(config_.ringEntries * 2);
+    inFlightTable_.resize(config_.numBuffers);
 
     initRing();
   }
@@ -273,7 +272,6 @@ class ZeroCopySocketSender {
         inFlightTable_{std::move(other.inFlightTable_)},
         numInFlightRequests_{std::exchange(other.numInFlightRequests_, 0)},
         numInFlightBuffers_{std::exchange(other.numInFlightBuffers_, 0)},
-        nextRequestId_{std::exchange(other.nextRequestId_, 0)},
         totalBytesSent_{std::exchange(other.totalBytesSent_, 0)},
         totalPacketsSent_{std::exchange(other.totalPacketsSent_, 0)} {
   }
@@ -291,7 +289,6 @@ class ZeroCopySocketSender {
       inFlightTable_ = std::move(other.inFlightTable_);
       numInFlightRequests_ = std::exchange(other.numInFlightRequests_, 0);
       numInFlightBuffers_ = std::exchange(other.numInFlightBuffers_, 0);
-      nextRequestId_ = std::exchange(other.nextRequestId_, 0);
       totalBytesSent_ = std::exchange(other.totalBytesSent_, 0);
       totalPacketsSent_ = std::exchange(other.totalPacketsSent_, 0);
     }
@@ -311,14 +308,18 @@ class ZeroCopySocketSender {
       }
 
 #ifdef QLEVER_HAS_LIBURING
-      if (ringInitialized_) {
-        // Pool exhausted: submit pending queue and drain completions
-        io_uring_submit(&ring_);
+      // Pool exhausted: submit pending sends and wait for one to release its
+      // buffer. Without a buffer in flight no completion can arrive (the
+      // caller holds all slots without sending them), so waiting would hang.
+      if (ringInitialized_ && numInFlightBuffers_ > 0) {
+        submit();
         drainOneCqe();
         continue;
       }
 #endif
-      AD_THROW("Buffer pool exhausted with no asynchronous engine initialized");
+      AD_THROW(
+          "Buffer pool exhausted: all slots are acquired but none is in "
+          "flight");
     }
   }
 
@@ -346,7 +347,7 @@ class ZeroCopySocketSender {
 
     // If submission ring is full, submit and reap CQEs to free ring entries
     if (numInFlightRequests_ >= config_.ringEntries) {
-      io_uring_submit(&ring_);
+      submit();
       while (numInFlightRequests_ >= config_.ringEntries) {
         drainOneCqe();
       }
@@ -376,18 +377,11 @@ class ZeroCopySocketSender {
       io_uring_prep_send(sqe, sockfd, slotSpan.data(), numBytes, sendFlags);
     }
 
-    const uint64_t reqId = nextRequestId_++;
-    const size_t tableIdx = reqId % inFlightTable_.size();
-    AD_CORRECTNESS_CHECK(!inFlightTable_[tableIdx].active);
+    auto& entry = inFlightTable_[bufferIndex];
+    AD_CORRECTNESS_CHECK(!entry.active);
+    entry = InFlightRequest{numBytes, false, true};
 
-    inFlightTable_[tableIdx] = InFlightRequest{
-        .bufferIndex = bufferIndex,
-        .expectedBytes = numBytes,
-        .waitingForNotification = false,
-        .active = true,
-    };
-
-    io_uring_sqe_set_data64(sqe, reqId);
+    io_uring_sqe_set_data64(sqe, bufferIndex);
     ++numInFlightRequests_;
     ++numInFlightBuffers_;
 #else
@@ -547,58 +541,57 @@ class ZeroCopySocketSender {
 
     const int res = cqe->res;
     const unsigned int flags = cqe->flags;
-    const uint64_t reqId = io_uring_cqe_get_data64(cqe);
+    const uint64_t userData = io_uring_cqe_get_data64(cqe);
     io_uring_cqe_seen(&ring_, cqe);
 
-    const size_t tableIdx = reqId % inFlightTable_.size();
-    auto& entry = inFlightTable_[tableIdx];
+    AD_CORRECTNESS_CHECK(userData < inFlightTable_.size());
+    const auto bufferIndex = static_cast<uint32_t>(userData);
+    auto& entry = inFlightTable_[bufferIndex];
     AD_CORRECTNESS_CHECK(entry.active);
 
     if (entry.waitingForNotification) {
       // CQE 2: Kernel buffer release notification (IORING_CQE_F_NOTIF).
       // Buffer can now be safely recycled for subsequent writes.
-      bufferPool_.releaseSlot(entry.bufferIndex);
-      AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
-      AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
-      --numInFlightBuffers_;
-      --numInFlightRequests_;
-      entry.active = false;
-      entry.waitingForNotification = false;
+      releaseRequest(bufferIndex);
       return;
     }
 
+    // A zero-copy send posts a second (notification) CQE iff the first one
+    // carries `IORING_CQE_F_MORE`, also when the send failed or was short.
+    // The buffer stays pinned until that notification arrives, so only then
+    // may the slot be recycled.
+    const size_t expectedBytes = entry.expectedBytes;
+    const bool notificationFollows = (flags & IORING_CQE_F_MORE) != 0;
+    if (notificationFollows) {
+      entry.waitingForNotification = true;
+    } else {
+      releaseRequest(bufferIndex);
+    }
+
     if (res < 0) {
-      bufferPool_.releaseSlot(entry.bufferIndex);
-      AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
-      AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
-      --numInFlightBuffers_;
-      --numInFlightRequests_;
-      entry.active = false;
       AD_THROW(absl::StrCat("io_uring send error (res: ", res,
                             ", errno: ", -res, ": ", std::strerror(-res), ")"));
     }
-
+    // The remaining bytes of a short send are never retried, so a short send
+    // would silently truncate the chunk.
+    if (static_cast<size_t>(res) != expectedBytes) {
+      AD_THROW(absl::StrCat("io_uring short send (", res, " of ", expectedBytes,
+                            " bytes)"));
+    }
     totalBytesSent_ += static_cast<size_t>(res);
     ++totalPacketsSent_;
+  }
 
-    if (flags & IORING_CQE_F_MORE) {
-      // A short first completion would silently truncate the chunk: the
-      // remaining bytes are never retried, so require the full count here.
-      AD_CORRECTNESS_CHECK(static_cast<size_t>(res) == entry.expectedBytes);
-      // Kernel is holding the buffer for zero-copy DMA; wait for CQE 2 (NOTIF)
-      entry.waitingForNotification = true;
-    } else {
-      // Standard completion or synchronous copy; release buffer immediately.
-      // A short send would silently truncate the chunk, so verify the full
-      // expected byte count before releasing the buffer.
-      AD_CORRECTNESS_CHECK(static_cast<size_t>(res) == entry.expectedBytes);
-      bufferPool_.releaseSlot(entry.bufferIndex);
-      AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
-      AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
-      --numInFlightBuffers_;
-      --numInFlightRequests_;
-      entry.active = false;
-    }
+  // Return the slot of a finished request to the pool.
+  void releaseRequest(uint32_t bufferIndex) {
+    auto& entry = inFlightTable_[bufferIndex];
+    AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
+    AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
+    bufferPool_.releaseSlot(bufferIndex);
+    --numInFlightBuffers_;
+    --numInFlightRequests_;
+    entry.active = false;
+    entry.waitingForNotification = false;
   }
 #endif
 
