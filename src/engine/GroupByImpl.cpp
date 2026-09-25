@@ -2053,7 +2053,14 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
   }
   const Variable catVar = strlenVars.front();
 
-  auto* innerGroup = dynamic_cast<GroupBy*>(_subtree->getRootOperation().get());
+  // The server strips a subquery to its selected variables
+  // (`strip-columns`), so the inner GROUP BY can sit below a `StripColumns`.
+  // The fast path reads the index directly, so it may look through it.
+  auto* strip = dynamic_cast<StripColumns*>(_subtree->getRootOperation().get());
+  auto innerGroupOp = strip != nullptr
+                          ? strip->getChildren().at(0)->getRootOperation()
+                          : _subtree->getRootOperation();
+  auto* innerGroup = dynamic_cast<GroupBy*>(innerGroupOp.get());
   if (!innerGroup || innerGroup->groupByVariables().size() != 1 ||
       innerGroup->aliases().size() != 1) {
     return std::nullopt;
@@ -2176,6 +2183,10 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
       ->updateRuntimeInformationWhenOptimizedOut({});
   innerGroup->updateRuntimeInformationWhenOptimizedOut(
       {innerChildren[0]->getRootOperation()->getRuntimeInfoPointer()});
+  if (strip != nullptr) {
+    strip->updateRuntimeInformationWhenOptimizedOut(
+        {innerGroup->getRuntimeInfoPointer()});
+  }
 
   IdTable table{1, getExecutionContext()->getAllocator()};
   table.push_back({Id::makeFromInt(total)});

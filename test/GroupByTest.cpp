@@ -3541,17 +3541,27 @@ TEST_F(GroupByOptimizations, sumStrlenOfGroupConcatViaQueryPlanner) {
   auto query =
       "SELECT (SUM(STRLEN(?cat)) AS ?sum) { { SELECT (GROUP_CONCAT(?o; "
       "SEPARATOR=\" \") AS ?cat) { ?s <n> ?o } GROUP BY ?s } }";
-  auto pq =
-      SparqlParser::parseQuery(&qec->getIndex().encodedIriManager(), query);
-  QueryPlanner qp{qec, std::make_shared<ad_utility::CancellationHandle<>>()};
-  auto tree = qp.createExecutionTree(pq);
-  auto result = tree.getResult();
-  // "ab c" and "de": 4 + 2 code points.
-  EXPECT_THAT(result->idTableView(), matchesIdTableFromVector({{I(6)}}));
-  const auto& innerGroupBy =
-      tree.getRootOperation()->getChildren().at(0)->getRootOperation();
-  EXPECT_EQ(innerGroupBy->runtimeInfo().status_,
-            RuntimeInformation::Status::optimizedOut)
-      << tree.getRootOperation()->getDescriptor() << " / "
-      << innerGroupBy->getDescriptor();
+  // The server enables `strip-columns`, which puts a `StripColumns` between
+  // the two GROUP BYs; the fast path must match with and without it.
+  for (bool stripColumns : {false, true}) {
+    auto cleanup =
+        setRuntimeParameterForTest<&RuntimeParameters::stripColumns_>(
+            stripColumns);
+    auto pq =
+        SparqlParser::parseQuery(&qec->getIndex().encodedIriManager(), query);
+    QueryPlanner qp{qec, std::make_shared<ad_utility::CancellationHandle<>>()};
+    auto tree = qp.createExecutionTree(pq);
+    auto result = tree.getResult();
+    // "ab c" and "de": 4 + 2 code points.
+    EXPECT_THAT(result->idTableView(), matchesIdTableFromVector({{I(6)}}))
+        << "stripColumns = " << stripColumns;
+    auto* child = tree.getRootOperation()->getChildren().at(0);
+    if (stripColumns) {
+      child = child->getRootOperation()->getChildren().at(0);
+    }
+    EXPECT_EQ(child->getRootOperation()->runtimeInfo().status_,
+              RuntimeInformation::Status::optimizedOut)
+        << "stripColumns = " << stripColumns << ", child "
+        << child->getRootOperation()->getDescriptor();
+  }
 }
