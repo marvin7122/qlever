@@ -51,7 +51,7 @@ TEST(BlockedBloomFilterTest, CreateFromColumn) {
   for (uint64_t i = 0; i < 1000; ++i) {
     buildSide.push_back(Id::fromBits(i * 10));
   }
-  auto filter =
+  const auto filter =
       BlockedBloomFilter::createFromColumn(buildSide, makeAllocator(), 0.01);
   for (const auto& id : buildSide) {
     EXPECT_TRUE(filter.contains(id));
@@ -63,14 +63,14 @@ TEST(BlockedBloomFilterTest, CreateFromColumn) {
 // _____________________________________________________________________________
 TEST(BlockedBloomFilterTest, FalsePositiveRateControlsSize) {
   // The requested rate must change the size: m = -n*ln(p)/ln(2)^2 bits.
-  BlockedBloomFilter strict{10000, makeAllocator(), 0.001};
-  BlockedBloomFilter def{10000, makeAllocator(), 0.01};
-  BlockedBloomFilter loose{10000, makeAllocator(), 0.1};
-  EXPECT_LT(loose.numBlocks(), def.numBlocks());
-  EXPECT_LT(def.numBlocks(), strict.numBlocks());
+  const BlockedBloomFilter strict{10000, makeAllocator(), 0.001};
+  const BlockedBloomFilter medium{10000, makeAllocator(), 0.01};
+  const BlockedBloomFilter loose{10000, makeAllocator(), 0.1};
+  EXPECT_LT(loose.numBlocks(), medium.numBlocks());
+  EXPECT_LT(medium.numBlocks(), strict.numBlocks());
   // ceil(95851 / 512) = 188 blocks for n = 10000, p = 0.01.
-  EXPECT_EQ(def.numBlocks(), 188u);
-  EXPECT_EQ(def.sizeBytes(), 188u * 64u);
+  EXPECT_EQ(medium.numBlocks(), 188u);
+  EXPECT_EQ(medium.sizeBytes(), 188u * 64u);
 }
 
 // _____________________________________________________________________________
@@ -95,8 +95,8 @@ TEST(BlockedBloomFilterTest, MemoryIsTakenFromTheAllocator) {
 
 // _____________________________________________________________________________
 TEST(BlockedBloomFilterTest, EmptyFilter) {
-  std::vector<Id> emptyBuildSide;
-  auto filter =
+  const std::vector<Id> emptyBuildSide;
+  const auto filter =
       BlockedBloomFilter::createFromColumn(emptyBuildSide, makeAllocator());
   EXPECT_EQ(filter.numBlocks(), 1u);
   EXPECT_FALSE(filter.contains(Id::fromBits(1)));

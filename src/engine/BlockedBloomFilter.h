@@ -37,7 +37,7 @@ class BlockedBloomFilter {
   static constexpr size_t BYTES_PER_BLOCK = 64;
 
   struct alignas(BYTES_PER_BLOCK) Block {
-    uint32_t words[16] = {0};
+    uint32_t words_[16] = {0};
   };
   static_assert(sizeof(Block) == BYTES_PER_BLOCK);
 
@@ -46,19 +46,20 @@ class BlockedBloomFilter {
 
   // Odd multipliers from the split-block Bloom filter of Apache Parquet and
   // Impala. Each one derives an independent (word, bit) position from the
-  // 32-bit in-block key. The number of positions per `Id` (8) is fixed by the
-  // split-block scheme and not a tuning parameter.
-  static constexpr uint32_t SALTS[8] = {0x47b6137b, 0x44974d91, 0x8824ad5b,
-                                        0xa2b7289d, 0x705495c7, 0x2df1424b,
-                                        0x9efc4947, 0x5c6bfb31};
+  // 32-bit in-block key. The number of positions per `Id` (`BITS_PER_KEY`) is
+  // fixed by the split-block scheme and not a tuning parameter.
+  static constexpr size_t BITS_PER_KEY = 8;
+  static constexpr uint32_t SALTS[BITS_PER_KEY] = {
+      0x47b6137b, 0x44974d91, 0x8824ad5b, 0xa2b7289d,
+      0x705495c7, 0x2df1424b, 0x9efc4947, 0x5c6bfb31};
 
-  // The (word, bit) position of the i-th of the 8 bits for `key`. The top 9
+  // The (word, bit) position of the i-th bit for `key`. The top 9
   // bits of the product are the best mixed ones and address all 16 * 32 bits
   // of a block.
   static constexpr std::pair<uint32_t, uint32_t> wordAndBit(uint32_t key,
                                                             size_t i) {
-    uint32_t h = key * SALTS[i];
-    return {(h >> 27) & 0xF, (h >> 22) & 0x1F};
+    uint32_t product = key * SALTS[i];
+    return {(product >> 27) & 0xF, (product >> 22) & 0x1F};
   }
 
   // splitmix64 finalizer: the bits of consecutive `Id`s differ only in the
@@ -121,9 +122,9 @@ class BlockedBloomFilter {
   void insert(Id id) {
     auto [blockIdx, key] = blockAndKey(id);
     Block& block = blocks_[blockIdx];
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < BITS_PER_KEY; ++i) {
       auto [word, bit] = wordAndBit(key, i);
-      block.words[word] |= (1U << bit);
+      block.words_[word] |= (1U << bit);
     }
   }
 
@@ -132,9 +133,9 @@ class BlockedBloomFilter {
   bool contains(Id id) const {
     auto [blockIdx, key] = blockAndKey(id);
     const Block& block = blocks_[blockIdx];
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < BITS_PER_KEY; ++i) {
       auto [word, bit] = wordAndBit(key, i);
-      if ((block.words[word] & (1U << bit)) == 0) {
+      if ((block.words_[word] & (1U << bit)) == 0) {
         return false;
       }
     }
