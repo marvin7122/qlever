@@ -269,3 +269,13 @@ TEST(InPlaceHttpChunkFramingTest, MoveSemantics) {
   EXPECT_TRUE(c3.isFinalized());
   EXPECT_EQ(c3.framedLength(), f1.size());
 }
+
+// _____________________________________________________________________________
+// A payload capacity whose hex length does not fit into the header reserve is
+// rejected at construction, before any frame could overflow the header.
+TEST(InPlaceHttpChunkFramingTest, RejectsPayloadCapacityBeyondHeaderReserve) {
+  static_assert(InPlaceHttpChunk::MAX_PAYLOAD_CAPACITY ==
+                0x00FF'FFFF'FFFF'FFFFULL);
+  EXPECT_THROW(InPlaceHttpChunk{InPlaceHttpChunk::MAX_PAYLOAD_CAPACITY + 1},
+               ad_utility::Exception);
+}

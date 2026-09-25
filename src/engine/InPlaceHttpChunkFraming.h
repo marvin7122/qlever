@@ -110,6 +110,10 @@ class InPlaceHttpChunk {
   static constexpr size_t TOTAL_OVERHEAD_BYTES =
       HEADER_RESERVE_BYTES + TAIL_RESERVE_BYTES;                   // 18 bytes
   static constexpr size_t DEFAULT_PAYLOAD_CAPACITY = 1024 * 1024;  // 1 MB
+  // The hex length has to fit into the header reserve together with its CRLF,
+  // which leaves room for 14 hex digits.
+  static constexpr size_t MAX_PAYLOAD_CAPACITY =
+      (size_t{1} << (4 * (HEADER_RESERVE_BYTES - 2))) - 1;
 
   // 64-byte aligned buffer type for CPU cache-line & vector streaming stores
   using AlignedBuffer =
@@ -136,6 +140,7 @@ class InPlaceHttpChunk {
         isFinalized_{false},
         framedStart_{nullptr},
         framedLength_{0} {
+    AD_CONTRACT_CHECK(maxPayloadCapacity <= MAX_PAYLOAD_CAPACITY);
     ownedBuffer_.emplace(totalCapacity_);
     buffer_ = ownedBuffer_->data();
   }
@@ -156,6 +161,7 @@ class InPlaceHttpChunk {
         framedLength_{0},
         ownedBuffer_{std::nullopt} {
     AD_CONTRACT_CHECK(destinationBuffer.size() >= TOTAL_OVERHEAD_BYTES);
+    AD_CONTRACT_CHECK(maxPayloadCapacity_ <= MAX_PAYLOAD_CAPACITY);
   }
 
   // ___________________________________________________________________________
@@ -246,7 +252,9 @@ class InPlaceHttpChunk {
 
     // Branchless hex length formatting backwards
     const uint32_t digits = detail::numHexDigits(payloadBytes);
-    AD_CORRECTNESS_CHECK(digits <= 14);  // 14 hex digits + 2 CRLF <= 16 bytes
+    // Guaranteed by `payloadBytes <= maxPayloadCapacity_ <=
+    // MAX_PAYLOAD_CAPACITY`.
+    AD_CORRECTNESS_CHECK(digits <= HEADER_RESERVE_BYTES - 2);
     char* framedStart =
         detail::writeHexDigitsBackwards(headerEnd - 2, payloadBytes, digits);
 
@@ -286,6 +294,7 @@ class InPlaceHttpChunk {
     buffer_ = newBuffer.data();
     totalCapacity_ = newBuffer.size();
     maxPayloadCapacity_ = totalCapacity_ - TOTAL_OVERHEAD_BYTES;
+    AD_CONTRACT_CHECK(maxPayloadCapacity_ <= MAX_PAYLOAD_CAPACITY);
     isFinalized_ = false;
     lastPayloadBytes_ = 0;
     framedStart_ = nullptr;
