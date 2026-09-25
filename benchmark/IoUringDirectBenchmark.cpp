@@ -156,7 +156,7 @@ class IoUringDirectBenchmarkRunner {
       : filePath_{std::move(filePath)}, batchBlocks_{batchBlocks} {}
 
   // 1. Baseline: Synchronous pread() with standard page cache
-  BenchmarkMetric runSyncPread(bool randomAccess = false) {
+  BenchmarkMetric runSyncPread(bool randomAccess = false) const {
     DirectIoFile file(filePath_, /*useDirectIo=*/false);
     AD_CONTRACT_CHECK(file.isOpen());
 
@@ -188,7 +188,7 @@ class IoUringDirectBenchmarkRunner {
   }
 
   // 2. Synchronous pread() with Direct I/O (O_DIRECT)
-  BenchmarkMetric runSyncDirectPread(bool randomAccess = false) {
+  BenchmarkMetric runSyncDirectPread(bool randomAccess = false) const {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
 
@@ -219,7 +219,7 @@ class IoUringDirectBenchmarkRunner {
   }
 
   // 3. io_uring Standard (Unpinned buffers & Unregistered files)
-  BenchmarkMetric runIoUringUnpinned(bool randomAccess = false) {
+  BenchmarkMetric runIoUringUnpinned(bool randomAccess = false) const {
     DirectIoFile file(filePath_, /*useDirectIo=*/false);
     AD_CONTRACT_CHECK(file.isOpen());
 
@@ -263,7 +263,7 @@ class IoUringDirectBenchmarkRunner {
   }
 
   // 4. io_uring with O_DIRECT (Unpinned buffers)
-  BenchmarkMetric runIoUringDirectUnpinned(bool randomAccess = false) {
+  BenchmarkMetric runIoUringDirectUnpinned(bool randomAccess = false) const {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
 
@@ -308,7 +308,7 @@ class IoUringDirectBenchmarkRunner {
 
   // 5. io_uring with Registered Files (IORING_REGISTER_FILES) + Unpinned
   // Buffers
-  BenchmarkMetric runIoUringRegisteredFiles(bool randomAccess = false) {
+  BenchmarkMetric runIoUringRegisteredFiles(bool randomAccess = false) const {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
 
@@ -355,7 +355,7 @@ class IoUringDirectBenchmarkRunner {
 
   // 6. io_uring Fully Registered: IORING_REGISTER_FILES +
   // IORING_REGISTER_BUFFERS + O_DIRECT
-  BenchmarkMetric runIoUringFullyRegistered(bool randomAccess = false) {
+  BenchmarkMetric runIoUringFullyRegistered(bool randomAccess = false) const {
     DirectIoFile file(filePath_, /*useDirectIo=*/true);
     AD_CONTRACT_CHECK(file.isOpen());
 
