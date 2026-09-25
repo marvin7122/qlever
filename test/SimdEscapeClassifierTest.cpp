@@ -55,14 +55,17 @@ TEST(SimdEscapeClassifierTest, ClassifiesEveryPositionInAChunk) {
                 {input.data(), input.size()})
                 .raw(),
             0);
-  for (size_t position = 0; position < input.size(); ++position) {
-    input[position] = '\\';
-    const auto mask = SimdEscapeClassifier::classify32<EscapeFormat::Turtle>(
-        {input.data(), input.size()});
-    EXPECT_EQ(mask.raw(), uint32_t{1} << position);
-    EXPECT_EQ(mask.firstEscape(), position);
-    EXPECT_EQ(mask.count(), 1);
-    input[position] = 'a';
+  // Every Turtle escape character must be detected at every position.
+  for (const char escape : {'"', '\\', '\n', '\r'}) {
+    for (size_t position = 0; position < input.size(); ++position) {
+      input[position] = escape;
+      const auto mask = SimdEscapeClassifier::classify32<EscapeFormat::Turtle>(
+          {input.data(), input.size()});
+      EXPECT_EQ(mask.raw(), uint32_t{1} << position);
+      EXPECT_EQ(mask.firstEscape(), position);
+      EXPECT_EQ(mask.count(), 1);
+      input[position] = 'a';
+    }
   }
 }
 
@@ -93,6 +96,16 @@ TEST(SimdEscapeClassifierTest, CopiesAndEscapesAcrossChunkBoundaries) {
   EXPECT_EQ(escaped<EscapeFormat::Csv>("plain"), "plain");
   EXPECT_EQ(escaped<EscapeFormat::Tsv>("a\tb\nc\\d\r"), "a b\\nc\\\\d\\r");
   EXPECT_EQ(escaped<EscapeFormat::Tsv>(""), "");
+}
+
+// A CSV field without special characters is copied verbatim and therefore
+// only needs an output buffer of the input's size.
+TEST(SimdEscapeClassifierTest, PlainCsvFieldFitsExactSizeBuffer) {
+  const std::string input(70, 'a');
+  std::string output(input.size(), '\0');
+  const auto written = SimdEscapeClassifier::copyAndEscape<EscapeFormat::Csv>(
+      input, ql::span<char>{output.data(), output.size()});
+  EXPECT_EQ(std::string_view(written.data(), written.size()), input);
 }
 
 TEST(SimdEscapeClassifierTest, RecognizesOnlyFormatSpecificCharacters) {

@@ -9,7 +9,8 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_SIMDESCAPECLASSIFIER_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_SIMDESCAPECLASSIFIER_H
 
-#include <bit>
+#include <absl/numeric/bits.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -40,10 +41,10 @@ class EscapeMask32 {
   [[nodiscard]] constexpr bool hasEscape() const { return mask_ != 0; }
   [[nodiscard]] constexpr uint32_t raw() const { return mask_; }
   [[nodiscard]] constexpr uint32_t firstEscape() const {
-    return hasEscape() ? static_cast<uint32_t>(std::countr_zero(mask_)) : 32;
+    return hasEscape() ? static_cast<uint32_t>(absl::countr_zero(mask_)) : 32;
   }
   [[nodiscard]] constexpr uint32_t count() const {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 
  private:
@@ -225,6 +226,11 @@ class SimdEscapeClassifier {
         *output++ = '"';
         return {begin, static_cast<size_t>(output - begin)};
       }
+      // A CSV field without special characters is copied verbatim, so it
+      // needs no room for expansion.
+      AD_CONTRACT_CHECK(input.size() <= outputBuffer.size());
+      std::memcpy(output, input.data(), input.size());
+      return {begin, input.size()};
     }
     AD_CONTRACT_CHECK(input.size() <= outputBuffer.size() / 2);
     size_t offset = 0;
@@ -239,7 +245,7 @@ class SimdEscapeClassifier {
 
       uint32_t copied = 0;
       while (mask != 0) {
-        const uint32_t escape = std::countr_zero(mask);
+        const auto escape = static_cast<uint32_t>(absl::countr_zero(mask));
         std::memcpy(output, input.data() + offset + copied, escape - copied);
         output += escape - copied;
         output = detail::emitEscaped<Format>(input[offset + escape], output);
