@@ -102,24 +102,26 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
-  // The ring size must name a usable liburing ring: at least one slot, and
-  // bounded so one lookup cannot pin excessive kernel memory.
-  auto ioUringRingSizeConstraint = [](size_t value,
-                                      std::string_view parameterName) {
-    if (value < 1 || value > 4096) {
-      throw std::runtime_error{absl::StrCat("Parameter ", parameterName,
-                                            " must be within 1 and 4096, was ",
-                                            value)};
+  // Reject an `ioUringRingSize_` outside of
+  // `[MIN_IO_URING_RING_SIZE, MAX_IO_URING_RING_SIZE]`.
+  const auto ioUringRingSizeConstraint = [](size_t value,
+                                            std::string_view parameterName) {
+    if (value < MIN_IO_URING_RING_SIZE || value > MAX_IO_URING_RING_SIZE) {
+      throw std::runtime_error{
+          absl::StrCat("Parameter ", parameterName, " must be within ",
+                       MIN_IO_URING_RING_SIZE, " and ", MAX_IO_URING_RING_SIZE,
+                       ", was ", value)};
     }
   };
   ioUringRingSize_.setParameterConstraint(ioUringRingSizeConstraint);
-  // The batch window is either uncapped (0) or a positive cap up to 1M reads.
-  auto vocabBatchWindowConstraint = [](size_t value,
-                                       std::string_view parameterName) {
-    if (value > 1'000'000) {
-      throw std::runtime_error{absl::StrCat(
-          "Parameter ", parameterName,
-          " must be between 0 and 1000000 inclusive, was ", value)};
+  // Reject a `vocabBatchWindow_` outside of `[0, MAX_VOCAB_BATCH_WINDOW]`,
+  // where 0 means uncapped.
+  const auto vocabBatchWindowConstraint = [](size_t value,
+                                             std::string_view parameterName) {
+    if (value > MAX_VOCAB_BATCH_WINDOW) {
+      throw std::runtime_error{
+          absl::StrCat("Parameter ", parameterName, " must be between 0 and ",
+                       MAX_VOCAB_BATCH_WINDOW, " inclusive, was ", value)};
     }
   };
   vocabBatchWindow_.setParameterConstraint(vocabBatchWindowConstraint);
