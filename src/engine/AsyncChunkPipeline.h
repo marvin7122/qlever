@@ -44,6 +44,16 @@ struct PipelineStats {
   size_t consumerWaitStalls{0};
 };
 
+namespace detail {
+// Detect whether a chunk type exposes `size()` for byte accounting (C++17
+// replacement for a `requires` expression).
+template <typename T, typename = void>
+struct HasSizeMember : std::false_type {};
+template <typename T>
+struct HasSizeMember<T, std::void_t<decltype(std::declval<const T&>().size())>>
+    : std::true_type {};
+}  // namespace detail
+
 // Forward declaration of ChunkSink for high-level producer callbacks.
 template <typename ChunkType>
 class ChunkSink;
@@ -114,7 +124,7 @@ class AsyncChunkPipeline {
       }
     }
 
-    if constexpr (requires(const ChunkType& c) { c.size(); }) {
+    if constexpr (detail::HasSizeMember<ChunkType>::value) {
       stats_.totalBytesProduced += chunk.size();
     }
     stats_.totalChunksProduced++;
@@ -175,7 +185,7 @@ class AsyncChunkPipeline {
     ChunkType chunk = std::move(buffer_.front());
     buffer_.pop();
 
-    if constexpr (requires(const ChunkType& c) { c.size(); }) {
+    if constexpr (detail::HasSizeMember<ChunkType>::value) {
       stats_.totalBytesConsumed += chunk.size();
     }
     stats_.totalChunksConsumed++;
