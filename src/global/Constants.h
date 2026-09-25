@@ -3,6 +3,7 @@
 // 2014 - 2017 Björn Buchhold <buchhold@informatik.uni-freiburg.de>, UFR
 // 2014 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
 // 2018 - 2026 Johannes Kalmbach <kalmbach@informatik.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -375,10 +376,11 @@ constexpr inline std::string_view GSP_DIRECT_GRAPH_IDENTIFICATION_PREFIX =
     "http-graph-store";
 
 // Dual bound for batched vocabulary lookups (`lookupBatch`) in
-// `VocabularyOnDisk`: at most this many threads concurrently own a ring
-// (thread-confined, no locking on the I/O path), and the shared pool holds
-// this many managers as the fallback for threads without an owned ring. Each
-// manager owns an io_uring ring (or is a synchronous fallback).
+// `VocabularyOnDisk`: at most this many threads concurrently own a
+// thread-local batch manager (thread-confined, no locking on the I/O path),
+// and the shared pool holds this many managers as the fallback for threads
+// without an owned manager. Each manager is `io_uring`-backed when available,
+// or a synchronous fallback.
 constexpr inline size_t NUM_VOCAB_BATCH_IO_MANAGERS = 8;
 
 #endif  // QLEVER_SRC_GLOBAL_CONSTANTS_H

@@ -1,6 +1,12 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -10,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <memory>
 
 #include "global/Constants.h"
 #include "util/ExceptionHandling.h"
@@ -214,8 +221,9 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
 ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
   // One thread's exclusively owned ring for one vocabulary. Local to this
   // member function so it can name the private `ThreadRingBudget`. Releasing
-  // the budget slot happens after the manager is destroyed, so the ring is
-  // fully drained before another thread may claim the slot.
+  // the budget slot happens after the manager is destroyed, so the ring's
+  // destructor has reaped its in-flight requests (best effort, see
+  // `~IoUringPolicy`) before another thread may claim the slot.
   struct ThreadOwnedRing {
     std::unique_ptr<ad_utility::BatchManagerBase> manager_;
     // Weak: the vocabulary owns the budget. If the vocabulary is destroyed
@@ -262,14 +270,15 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
   // overshoot: each success consumes exactly one slot, so at most
   // `NUM_VOCAB_BATCH_IO_MANAGERS` threads hold one; a stale load at worst
   // sends a thread to the pool spuriously, which is always safe.
-  size_t claimed =
+  size_t numOwnedRings =
       threadRingBudget_->numOwnedRings.load(std::memory_order_acquire);
-  while (claimed < NUM_VOCAB_BATCH_IO_MANAGERS) {
+  while (numOwnedRings < NUM_VOCAB_BATCH_IO_MANAGERS) {
     if (threadRingBudget_->numOwnedRings.compare_exchange_weak(
-            claimed, claimed + 1, std::memory_order_acq_rel)) {
-      // Release the claimed slot if anything below throws (e.g. allocation
-      // failure inside `makeBatchManager`), so a failed claim never leaves a
-      // phantom slot behind.
+            numOwnedRings, numOwnedRings + size_t{1},
+            std::memory_order_acq_rel)) {
+      // Release the claimed slot if anything below throws before `owned`
+      // takes it over (e.g. allocation failure inside `makeBatchManager`), so
+      // a failed claim never leaves a phantom slot behind.
       absl::Cleanup releaseSlot{[budget = threadRingBudget_]() {
         budget->numOwnedRings.fetch_sub(1, std::memory_order_release);
       }};
@@ -289,10 +298,14 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
           threadRingBudget_->preferIoUring.load(std::memory_order_acquire);
       ThreadOwnedRing owned{ad_utility::makeBatchManager(preferIoUring),
                             threadRingBudget_};
+      // From here on, `owned` (or the map node it is moved into) is the single
+      // owner of the slot: its destructor releases it if `emplace` throws, so
+      // the guard must not release it a second time.
+      std::move(releaseSlot).Cancel();
       auto [newIt, inserted] =
           ownedRings.emplace(threadRingBudget_, std::move(owned));
-      (void)inserted;
-      std::move(releaseSlot).Cancel();
+      // The fast path above found no entry for this budget.
+      AD_CORRECTNESS_CHECK(inserted);
       return newIt->second.manager_.get();
     }
   }
@@ -309,8 +322,7 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   // on the I/O path.
   if (ad_utility::BatchManagerBase* manager = threadLocalManager();
       manager != nullptr) {
-    auto offsetPairs = readOffsetPairs(*manager, indices);
-    return readStrings(*manager, offsetPairs);
+    return lookupBatchVia(*manager, indices);
   }
 
   // Fallback for threads without an owned ring: pop a pooled manager, run both
@@ -324,9 +336,20 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "returning the `IoManager` to the pool in "
         "`VocabularyOnDisk::lookupBatch`");
   }};
+  return lookupBatchVia(*manager, indices);
+}
 
-  auto offsetPairs = readOffsetPairs(*manager, indices);
-  return readStrings(*manager, offsetPairs);
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyOnDisk::lookupBatchVia(
+    ad_utility::BatchManagerBase& manager,
+    ql::span<const size_t> indices) const {
+  auto offsetPairs = readOffsetPairs(manager, indices);
+  return readStrings(manager, offsetPairs);
+}
+
+// _____________________________________________________________________________
+size_t VocabularyOnDisk::numOwnedRingsForTesting() const {
+  return threadRingBudget_->numOwnedRings.load(std::memory_order_acquire);
 }
 
 // _____________________________________________________________________________
@@ -387,10 +410,13 @@ void VocabularyOnDisk::open(const std::string& filename, bool preferIoUring) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Remember the backend preference for threads that create their owned ring
-  // later (see `threadLocalManager`); each thread probes once, so a runtime
-  // failure degrades only that thread. Released so threads that load it later
-  // observe this store.
+  // Start from a fresh budget, so that a reopened vocabulary never reuses rings
+  // that threads created before this call: their entries are keyed by the old
+  // budget, which expires here, so they are pruned on the next claim and no
+  // longer counted. Then remember the backend preference for threads that
+  // create their owned ring later (see `threadLocalManager`); each thread
+  // probes once, so a runtime failure degrades only that thread.
+  threadRingBudget_ = std::make_shared<ThreadRingBudget>();
   threadRingBudget_->preferIoUring.store(preferIoUring,
                                          std::memory_order_release);
 
