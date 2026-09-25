@@ -212,18 +212,27 @@ class SocketPairConnection {
 
   void close() noexcept {
     if (sendFd_ >= 0) {
-      ::close(sendFd_);
+      if (::close(sendFd_) != 0) {
+        std::cerr << "warning: close(sendFd) failed: " << std::strerror(errno)
+                  << std::endl;
+      }
       sendFd_ = -1;
     }
     if (recvFd_ >= 0) {
-      ::close(recvFd_);
+      if (::close(recvFd_) != 0) {
+        std::cerr << "warning: close(recvFd) failed: " << std::strerror(errno)
+                  << std::endl;
+      }
       recvFd_ = -1;
     }
   }
 
   void closeSender() noexcept {
     if (sendFd_ >= 0) {
-      ::close(sendFd_);
+      if (::close(sendFd_) != 0) {
+        std::cerr << "warning: close(sendFd) failed: " << std::strerror(errno)
+                  << std::endl;
+      }
       sendFd_ = -1;
     }
   }
@@ -295,6 +304,7 @@ class ZeroCopySenderBenchmarkRunner {
         ssize_t n = ::send(conn.sendFd(), testPayload_.data() + chunkSent,
                            chunkSize_ - chunkSent, MSG_NOSIGNAL);
         if (n < 0) {
+          if (errno == EINTR) continue;
           if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
           AD_THROW("send() failed");
         }
