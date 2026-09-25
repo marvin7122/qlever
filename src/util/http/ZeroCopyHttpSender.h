@@ -86,17 +86,25 @@ inline void sendBytesViaZeroCopySocket(int sockfd, ZeroCopySocketSender& sender,
 inline void waitForSocketWritable(int sockfd) {
   AD_CONTRACT_CHECK(sockfd >= 0);
   pollfd pfd{sockfd, POLLOUT, 0};
-  // No timeout: mirrors the blocking-send semantics of the fallback. The
-  // session owns this socket exclusively while a response is being written.
+  // Bounded wait (matching the session's 30s read timeout): a stalled peer
+  // must surface as an error instead of stalling the session coroutine
+  // forever. The session owns this socket exclusively while a response is
+  // being written.
   while (true) {
-    int ret = ::poll(&pfd, 1, -1);
+    int ret = ::poll(&pfd, 1, 30 * 1000);
+    if (ret == 0) {
+      AD_THROW("timed out waiting for socket writability (peer stalled)");
+    }
     if (ret < 0) {
       if (errno == EINTR) {
         continue;
       }
       AD_THROW("poll for socket writability failed");
     }
-    AD_CORRECTNESS_CHECK(ret == 1);
+    if (pfd.revents == 0) {
+      // Spurious wakeup, keep waiting within the timeout above.
+      continue;
+    }
     if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
       AD_THROW("socket not writable (peer closed)");
     }
@@ -115,6 +123,9 @@ inline void waitForSocketWritable(int sockfd) {
 // use the regular `http::async_write` path otherwise (e.g. HTTP/1.0 without
 // chunked encoding). Generator exceptions propagate like on the Beast path,
 // where they surface as truncated responses; the session is then closed.
+// Before propagating, enqueued data is drained on a best-effort basis, and
+// the session discards the sender, so a reused keep-alive connection never
+// inherits pinned buffers.
 template <typename Stream>
 boost::asio::awaitable<void> asyncWriteStreamableBodyZeroCopy(
     Stream& stream,
@@ -141,30 +152,44 @@ boost::asio::awaitable<void> asyncWriteStreamableBodyZeroCopy(
       chunksSinceSubmit = 0;
     }
   };
-  for (auto&& chunk : generator) {
-    if (chunk.empty()) {
-      // An empty chunk would serialize as the terminating `0` chunk, so it
-      // must never be emitted mid-body.
-      continue;
+  // On any failure below (generator exception, poll/send error, drain error)
+  // make a best-effort attempt to drain what was enqueued, so the sender is
+  // left with no pinned buffers before the exception propagates to the
+  // session (which discards the sender, see `HttpServer::session`).
+  try {
+    for (auto&& chunk : generator) {
+      if (chunk.empty()) {
+        // An empty chunk would serialize as the terminating `0` chunk, so it
+        // must never be emitted mid-body.
+        continue;
+      }
+      if (!useRing) {
+        waitForSocketWritable(sockfd);
+      }
+      // Chunk-size line in hexadecimal, without leading `0x`.
+      std::string header = absl::StrCat(absl::Hex(chunk.size()), "\r\n");
+      sendBytesViaZeroCopySocket(sockfd, sender, header);
+      sendBytesViaZeroCopySocket(sockfd, sender, chunk);
+      static constexpr std::string_view kCrlf = "\r\n";
+      sendBytesViaZeroCopySocket(sockfd, sender, kCrlf);
+      submitIfDue();
     }
+    static constexpr std::string_view kTerminator = "0\r\n\r\n";
     if (!useRing) {
       waitForSocketWritable(sockfd);
     }
-    // Chunk-size line in hexadecimal, without leading `0x`.
-    std::string header = absl::StrCat(absl::Hex(chunk.size()), "\r\n");
-    sendBytesViaZeroCopySocket(sockfd, sender, header);
-    sendBytesViaZeroCopySocket(sockfd, sender, chunk);
-    static constexpr std::string_view kCrlf = "\r\n";
-    sendBytesViaZeroCopySocket(sockfd, sender, kCrlf);
-    submitIfDue();
+    sendBytesViaZeroCopySocket(sockfd, sender, kTerminator);
+    sender.submit();
+    sender.flushAndDrainAll();
+  } catch (...) {
+    try {
+      sender.submit();
+      sender.flushAndDrainAll();
+    } catch (...) {
+      // Best-effort only: the original exception propagates.
+    }
+    throw;
   }
-  static constexpr std::string_view kTerminator = "0\r\n\r\n";
-  if (!useRing) {
-    waitForSocketWritable(sockfd);
-  }
-  sendBytesViaZeroCopySocket(sockfd, sender, kTerminator);
-  sender.submit();
-  sender.flushAndDrainAll();
   co_return;
 }
 

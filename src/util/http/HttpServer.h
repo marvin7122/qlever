@@ -548,8 +548,18 @@ CPP_template(BodyReadMode bodyReadMode, typename HttpHandler,
                 ad_utility::httpUtils::ZeroCopyHttpSenderConfig{}
                     .toSenderConfig());
           }
-          co_await ad_utility::httpUtils::asyncWriteStreamableBodyZeroCopy(
-              stream, message, zeroCopySender.value());
+          try {
+            co_await ad_utility::httpUtils::asyncWriteStreamableBodyZeroCopy(
+                stream, message, zeroCopySender.value());
+          } catch (...) {
+            // The failed response may have left buffers pinned or requests
+            // in flight, so the sender must not be reused by the next
+            // keep-alive request on this session. Discard it (its destructor
+            // drains on a best-effort basis) and let the exception close the
+            // session via the handlers below.
+            zeroCopySender.reset();
+            throw;
+          }
           if (message.need_eof()) {
             streamNeedsClosing = true;
           }
