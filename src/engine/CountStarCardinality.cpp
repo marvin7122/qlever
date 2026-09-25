@@ -36,11 +36,43 @@ std::optional<size_t> exactSizeIfEligibleScan(const QueryExecutionTree& tree) {
   return scan->getLimitOffset().actualSize(scan->getExactSize());
 }
 
-// The run lengths of the first column of a lazy index scan whose result is
-// sorted on that column: `next()` yields each distinct value with the number of
-// rows that have it, also when a run spans several blocks. Holds one block at a
-// time, so memory stays bounded by the block size.
-class FirstColumnRuns {
+// The first index `i` in `[from, col.size())` with `!pred(col[i])`, where
+// `pred` holds on a prefix of `col`. Exponential search from `from`, then a
+// binary search in the last step, so the cost is logarithmic in the distance
+// `i - from`, not in the block size.
+template <typename Pred>
+size_t gallop(ql::span<const Id> col, size_t from, const Pred& pred) {
+  if (from >= col.size() || !pred(col[from])) {
+    return from;
+  }
+  size_t lo = from + 1;
+  size_t step = 1;
+  size_t probe = from + step;
+  while (probe < col.size() && pred(col[probe])) {
+    lo = probe + 1;
+    step *= 2;
+    probe = from + step;
+  }
+  const size_t hi = std::min(probe, col.size());
+  return static_cast<size_t>(
+      std::partition_point(col.begin() + lo, col.begin() + hi, pred) -
+      col.begin());
+}
+
+// The IDs of a permutation without located triples are never
+// `LocalVocabIndex`, so their order is the order of their bits (see
+// `ValueId::compareWithoutLocalVocab`). Comparing the bits inlines to one
+// integer comparison, unlike the general `ValueId::compareThreeWay`.
+bool idLess(Id a, Id b) { return a.compareWithoutLocalVocab(b) < 0; }
+bool idEqual(Id a, Id b) { return a.getBits() == b.getBits(); }
+
+// A cursor over the first column of a lazy index scan whose result is sorted
+// on that column. Holds one block at a time, so memory stays bounded by the
+// block size. `skipTo` skips non-matching keys with an exponential search
+// and drops a whole block with one comparison when all its keys are too
+// small, so the merge below does work proportional to the matches, not to
+// the rows of the larger side.
+class FirstColumnCursor {
   using Blocks = CompressedRelationReader::IdTableGeneratorInputRange;
   using CancellationHandle = ad_utility::SharedCancellationHandle;
   Blocks blocks_;
@@ -48,7 +80,15 @@ class FirstColumnRuns {
   std::optional<IdTable> block_;
   size_t pos_ = 0;
 
-  // Make `block_` hold at least one unread row. Return false at the end.
+  ql::span<const Id> column() const { return block_->getColumn(0); }
+
+ public:
+  FirstColumnCursor(Blocks blocks, CancellationHandle cancellationHandle)
+      : blocks_{std::move(blocks)},
+        cancellationHandle_{std::move(cancellationHandle)} {}
+
+  // Make the current block hold at least one unread row. Return false when
+  // the scan is exhausted.
   bool fillBlock() {
     while (!block_.has_value() || pos_ >= block_->numRows()) {
       auto next = blocks_.get();
@@ -62,31 +102,37 @@ class FirstColumnRuns {
     return true;
   }
 
- public:
-  FirstColumnRuns(Blocks blocks, CancellationHandle cancellationHandle)
-      : blocks_{std::move(blocks)},
-        cancellationHandle_{std::move(cancellationHandle)} {}
+  // The key of the current row. Requires `fillBlock()` to have returned true.
+  Id current() const { return column()[pos_]; }
 
-  // Return the next distinct value of the first column together with the
-  // number of rows that have it, or `std::nullopt` when the scan is exhausted.
-  std::optional<std::pair<Id, size_t>> next() {
-    if (!fillBlock()) {
-      return std::nullopt;
-    }
-    const Id id = (*block_)(pos_, 0);
-    size_t count = 0;
-    while (true) {
-      const auto col = block_->getColumn(0);
-      const auto runEnd = std::find_if(col.begin() + pos_, col.end(),
-                                       [id](Id other) { return other != id; });
-      const auto newPos = static_cast<size_t>(runEnd - col.begin());
-      count += newPos - pos_;
-      pos_ = newPos;
-      if (pos_ < block_->numRows() || !fillBlock() ||
-          (*block_)(pos_, 0) != id) {
-        return std::pair{id, count};
+  // Skip all rows whose key is less than `target`.
+  void skipTo(Id target) {
+    auto isLess = [target](Id id) { return idLess(id, target); };
+    while (fillBlock()) {
+      const auto col = column();
+      if (isLess(col.back())) {
+        pos_ = col.size();
+        continue;
       }
+      pos_ = gallop(col, pos_, isLess);
+      return;
     }
+  }
+
+  // Consume all rows whose key equals the current key and return their
+  // number. The run may span several blocks. Requires `fillBlock()` to have
+  // returned true.
+  size_t consumeRun() {
+    const Id id = current();
+    auto isEqual = [id](Id other) { return idEqual(other, id); };
+    size_t count = 0;
+    while (fillBlock() && isEqual(current())) {
+      const auto col = column();
+      const size_t end = gallop(col, pos_, isEqual);
+      count += end - pos_;
+      pos_ = end;
+    }
+    return count;
   }
 };
 
@@ -177,26 +223,26 @@ std::optional<size_t> computeCountStarCardinality(
         tree.getRootOperation()->getCancellationHandle();
     auto [leftBlocks, rightBlocks] =
         IndexScan::lazyScanForJoinOfTwoScans(*leftScan, *rightScan);
-    FirstColumnRuns left{std::move(leftBlocks), cancellationHandle};
-    FirstColumnRuns right{std::move(rightBlocks), cancellationHandle};
+    FirstColumnCursor left{std::move(leftBlocks), cancellationHandle};
+    FirstColumnCursor right{std::move(rightBlocks), cancellationHandle};
 
     markOptimizedOut(join, children[0]->getRootOperation(),
                      children[1]->getRootOperation());
 
-    // Merge the two sorted run streams; each common key contributes the
-    // product of its multiplicities.
+    // Merge the two sorted key streams; each common key contributes the
+    // product of its multiplicities. A side whose key is smaller skips ahead
+    // to the other side's key.
     size_t total = 0;
-    auto l = left.next();
-    auto r = right.next();
-    while (l.has_value() && r.has_value()) {
-      if (l->first == r->first) {
-        total += l->second * r->second;
-        l = left.next();
-        r = right.next();
-      } else if (l->first < r->first) {
-        l = left.next();
+    while (left.fillBlock() && right.fillBlock()) {
+      const Id l = left.current();
+      const Id r = right.current();
+      if (idEqual(l, r)) {
+        const size_t leftCount = left.consumeRun();
+        total += leftCount * right.consumeRun();
+      } else if (idLess(l, r)) {
+        left.skipTo(r);
       } else {
-        r = right.next();
+        right.skipTo(l);
       }
     }
     return total;

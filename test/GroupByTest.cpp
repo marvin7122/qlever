@@ -3555,6 +3555,47 @@ TEST_F(GroupByOptimizations, countStarTwoPredicateJoinRunsSpanBlocks) {
 }
 
 // _____________________________________________________________________________
+TEST_F(GroupByOptimizations, countStarTwoPredicateJoinSkipsNonMatchingKeys) {
+  // `<p1>` has 40 subjects (one of them with 3 rows), `<p2>` matches only
+  // three of them plus one key beyond all `<p1>` keys, so the merge skips
+  // long stretches and whole blocks of `<p1>`. Count = 3 * 2 + 1 + 1 = 8.
+  std::string turtle;
+  for (int i = 0; i < 40; ++i) {
+    turtle +=
+        absl::StrCat("<s", absl::Dec(i, absl::kZeroPad2), "> <p1> <a> . ");
+  }
+  turtle += "<s10> <p1> <b> . <s10> <p1> <c> . ";
+  turtle += "<s10> <p2> <a> . <s10> <p2> <b> . <s25> <p2> <a> . ";
+  turtle += "<s39> <p2> <a> . <t> <p2> <a> .";
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(turtle))};
+  auto qec = ctx.makeQec();
+  // Compute the count and check whether the join was optimized out.
+  auto expectCount = [&qec](bool optimizedOut) {
+    auto left = makeExecutionTree<IndexScan>(
+        &qec, Permutation::Enum::PSO,
+        SparqlTripleSimple{Variable{"?s"}, iri("<p1>"), Variable{"?o1"}});
+    auto right = makeExecutionTree<IndexScan>(
+        &qec, Permutation::Enum::PSO,
+        SparqlTripleSimple{Variable{"?s"}, iri("<p2>"), Variable{"?o2"}});
+    auto join = makeExecutionTree<Join>(&qec, left, right, 0, 0);
+    std::vector<Alias> aliases{
+        Alias{SparqlExpressionPimpl{makeCountStarExpression(false), "COUNT(*)"},
+              Variable{"?c"}}};
+    GroupByImpl groupBy{&qec, {}, aliases, join};
+    EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+                matchesIdTableFromVector({{I(8)}}));
+    EXPECT_EQ(join->getRootOperation()->runtimeInfo().status_ ==
+                  RuntimeInformation::Status::optimizedOut,
+              optimizedOut);
+  };
+  expectCount(true);
+  // The regular join evaluation gives the same count.
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::groupByDisableIndexScanOptimizations_>(true);
+  expectCount(false);
+}
+
+// _____________________________________________________________________________
 TEST_F(GroupByOptimizations, countStarJoinNotOnFirstColumnFallsBack) {
   // `?o` is the second column of both scans, so the metadata path does not
   // apply; the regular join evaluation must still give the right count.
