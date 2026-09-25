@@ -285,6 +285,23 @@ TEST(VocabularyTest, LookupBatchWindowOfOne) {
   EXPECT_THAT((*result), ::testing::ElementsAre("ab", "ab", "a"));
 }
 
+// A window that is at least as large as the batch reads the whole batch with
+// one submission per phase; the result must equal the uncapped lookup.
+TEST(VocabularyTest, LookupBatchWindowNotSmallerThanBatch) {
+  std::vector<size_t> indices{3, 1, 1, 0};
+  for (size_t window : {size_t{4}, size_t{5}, size_t{1'000'000}}) {
+    auto cleanup =
+        setRuntimeParameterForTest<&RuntimeParameters::vocabBatchWindow_>(
+            window);
+    auto v = createExampleVocabulary();
+    auto result = v->lookupBatch(indices);
+    EXPECT_THAT((*result), ::testing::ElementsAre("car", "ab", "ab", "a"))
+        << "window " << window;
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*v, result,
+                                                                  indices);
+  }
+}
+
 // Each streamed result must equal the eager `lookupBatch` for that batch's
 // indices, and the batches must be yielded in input order.
 TEST(VocabularyTest, LookupBatchesStreamed) {

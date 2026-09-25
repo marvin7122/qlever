@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
@@ -217,10 +218,57 @@ std::shared_ptr<VocabBatchLookupData> VocabularyOnDisk::readStringsData(
 }
 
 // _____________________________________________________________________________
-VocabBatchLookupResult VocabularyOnDisk::readStrings(
+std::shared_ptr<VocabBatchLookupData> VocabularyOnDisk::readWords(
     ad_utility::BatchManagerBase& manager,
-    ql::span<const OffsetPair> offsetPairs) const {
-  return VocabBatchLookupData::asResult(readStringsData(manager, offsetPairs));
+    ql::span<const size_t> indices) const {
+  const auto offsetPairs = readOffsetPairs(manager, indices);
+  return readStringsData(manager, offsetPairs);
+}
+
+// _____________________________________________________________________________
+std::shared_ptr<VocabBatchLookupData> VocabularyOnDisk::combineLookupData(
+    ql::span<const std::shared_ptr<VocabBatchLookupData>> parts) {
+  size_t totalBytes = 0;
+  size_t totalViews = 0;
+  for (const auto& part : parts) {
+    totalBytes += part->buffer().size();
+    totalViews += part->views().size();
+  }
+  auto combinedLookupData = std::make_shared<VocabBatchLookupData>();
+  auto& buffer = combinedLookupData->buffer();
+  auto& views = combinedLookupData->views();
+  // Reserve the exact capacity of `buffer` up front: the views emitted below
+  // point into `buffer`, so a reallocation by a later `insert` would leave
+  // them dangling.
+  buffer.reserve(totalBytes);
+  views.reserve(totalViews);
+  const char* const reservedBufferStart = buffer.data();
+  for (const auto& part : parts) {
+    const char* const partBegin = part->buffer().data();
+    const size_t partSize = part->buffer().size();
+    const size_t destinationOffset = buffer.size();
+    buffer.insert(buffer.end(), part->buffer().begin(), part->buffer().end());
+    // The views of `part` point into `part->buffer()`, which is released
+    // together with `part`. Translate each view to the same offset within the
+    // copy of that buffer inside `buffer`.
+    for (std::string_view view : part->views()) {
+      // Emit a default empty view for an empty `view`: its `data()` may be
+      // null (an empty `std::vector<char>` has no storage), and pointer
+      // arithmetic on a null pointer is undefined behavior.
+      if (view.empty()) {
+        views.emplace_back();
+        continue;
+      }
+      AD_CORRECTNESS_CHECK(
+          std::less_equal<>{}(partBegin, view.data()) &&
+          std::less_equal<>{}(view.data() + view.size(), partBegin + partSize));
+      const auto offsetInPart = static_cast<size_t>(view.data() - partBegin);
+      views.emplace_back(buffer.data() + destinationOffset + offsetInPart,
+                         view.size());
+    }
+  }
+  AD_CORRECTNESS_CHECK(buffer.data() == reservedBufferStart);
+  return combinedLookupData;
 }
 
 // _____________________________________________________________________________
@@ -239,53 +287,27 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "`VocabularyOnDisk::lookupBatch`");
   }};
 
-  // Uncapped (the default) or smaller than one window: the exact previous
-  // behavior, both phases in a single submission each.
-  if (batchWindow_ == 0 || indices.size() <= batchWindow_) {
-    auto offsetPairs = readOffsetPairs(*manager, indices);
-    return readStrings(*manager, offsetPairs);
+  // Read all of `indices` with one submission per phase if `batchWindow_` is
+  // unset (the default) or not smaller than `indices.size()`.
+  const size_t numIndices = indices.size();
+  if (!batchWindow_.has_value() || numIndices <= batchWindow_.value()) {
+    return VocabBatchLookupData::asResult(readWords(*manager, indices));
   }
-  // Otherwise split the batch into windows of at most `batchWindow_` reads,
-  // run both phases per window through the same exclusively owned manager,
-  // and combine the windows into one result. Combining copies the bytes once;
-  // the uncapped default path above is unaffected.
-  std::vector<std::shared_ptr<VocabBatchLookupData>> windowData;
-  size_t totalBytes = 0;
-  size_t totalViews = 0;
-  for (size_t begin = 0; begin < indices.size(); begin += batchWindow_) {
-    const size_t windowSize = std::min(batchWindow_, indices.size() - begin);
-    auto window = indices.subspan(begin, windowSize);
-    auto offsetPairs = readOffsetPairs(*manager, window);
-    auto data = readStringsData(*manager, offsetPairs);
-    totalBytes += data->buffer().size();
-    totalViews += data->views().size();
-    windowData.push_back(std::move(data));
+  // Split `indices` into windows of at most `*batchWindow_` indices, read each
+  // window via `readWords` on the exclusively owned `manager`, and copy the
+  // windows into one result via `combineLookupData`.
+  const size_t windowSize = batchWindow_.value();
+  std::vector<std::shared_ptr<VocabBatchLookupData>> windowLookupData;
+  windowLookupData.reserve((numIndices + windowSize - 1) / windowSize);
+  ql::span<const size_t> remainingIndices = indices;
+  while (!remainingIndices.empty()) {
+    const size_t numRemainingIndices = remainingIndices.size();
+    const auto window =
+        remainingIndices.first(std::min(windowSize, numRemainingIndices));
+    windowLookupData.push_back(readWords(*manager, window));
+    remainingIndices = remainingIndices.subspan(window.size());
   }
-  auto combined = std::make_shared<VocabBatchLookupData>();
-  // Reserve up front so no reallocation moves the bytes while the views below
-  // point into the combined buffer.
-  combined->buffer().reserve(totalBytes);
-  combined->views().reserve(totalViews);
-  for (const auto& data : windowData) {
-    const char* windowBase = data->buffer().data();
-    const size_t destBase = combined->buffer().size();
-    combined->buffer().insert(combined->buffer().end(), data->buffer().begin(),
-                              data->buffer().end());
-    for (std::string_view view : data->views()) {
-      // Empty views may hold a null `data()` (the window buffer is an empty
-      // `std::vector<char>`), so pointer arithmetic on them is undefined
-      // behavior. They carry no bytes, so emit a default empty view instead.
-      if (view.empty()) {
-        combined->views().emplace_back();
-        continue;
-      }
-      const size_t offsetInWindow =
-          static_cast<size_t>(view.data() - windowBase);
-      combined->views().emplace_back(
-          combined->buffer().data() + destBase + offsetInWindow, view.size());
-    }
-  }
-  return VocabBatchLookupData::asResult(std::move(combined));
+  return VocabBatchLookupData::asResult(combineLookupData(windowLookupData));
 }
 
 // _____________________________________________________________________________
@@ -353,7 +375,8 @@ void VocabularyOnDisk::open(const std::string& filename) {
   // `qlever-server --set-runtime-parameter iouring-sqpoll=true`.
   const auto ringSize =
       getRuntimeParameter<&RuntimeParameters::ioUringRingSize_>();
-  batchWindow_ = getRuntimeParameter<&RuntimeParameters::vocabBatchWindow_>();
+  batchWindow_ =
+      getRuntimeParameterAsOptional<&RuntimeParameters::vocabBatchWindow_>();
   ad_utility::IoUringSetupOptions setupOptions;
   setupOptions.useSqPoll =
       getRuntimeParameter<&RuntimeParameters::ioUringSqPoll_>();

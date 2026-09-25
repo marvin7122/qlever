@@ -12,6 +12,7 @@
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,11 +51,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
 
-  // The maximum number of reads that one `addBatch` submission carries (0
-  // means no cap). Read once from the `vocab-batch-window` runtime parameter
-  // in `open()`; a positive value splits larger `lookupBatch` calls into
+  // The maximum number of reads that one `addBatch` submission carries, or
+  // `std::nullopt` for no cap. Read once from the `vocab-batch-window` runtime
+  // parameter in `open()`. A value splits larger `lookupBatch` calls into
   // windows of that size.
-  size_t batchWindow_ = 0;
+  std::optional<size_t> batchWindow_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -105,8 +106,24 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // limit).
   VocabularyScanRange scanAll() const;
 
-  //____________________________________________________________________________
+  // Return the words at `indices` (in the order of `indices`, duplicates
+  // allowed) as a `VocabBatchLookupResult`. The result shares ownership of one
+  // contiguous buffer, and its views stay valid as long as the result (or a
+  // copy of it) is alive. Throw if `indices` is empty or contains an index
+  // that is out of range. When `batchWindow_` is set and smaller than
+  // `indices.size()`, read the words in windows of `*batchWindow_` indices and
+  // combine them via `combineLookupData`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
+
+  // Concatenate the buffers of `parts` into one new `VocabBatchLookupData` and
+  // rebase every view of `parts` onto the new buffer, so the returned data
+  // owns all the bytes its views point to and `parts` can be released. The
+  // order of the views is preserved. Empty views are emitted as default
+  // constructed `std::string_view`s. Every non-empty view of a part must lie
+  // within the buffer of that part. Return an empty `VocabBatchLookupData` for
+  // empty `parts`.
+  [[nodiscard]] static std::shared_ptr<VocabBatchLookupData> combineLookupData(
+      ql::span<const std::shared_ptr<VocabBatchLookupData>> parts);
 
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(
@@ -187,25 +204,27 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     uint64_t nextOffset_;
   };
 
-  // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
+  // Phase 1 of `readWords`: for each requested index, read its `OffsetPair`
   // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
-  std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          ql::span<const size_t> indices) const;
+  // Return one `OffsetPair` per index, in the order of `indices`.
+  [[nodiscard]] std::vector<OffsetPair> readOffsetPairs(
+      ad_utility::BatchManagerBase& manager,
+      ql::span<const size_t> indices) const;
 
-  // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
+  // Phase 2 of `readWords`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched
-  // read via `manager`, and return it as a `VocabBatchLookupResult`.
-  VocabBatchLookupResult readStrings(
+  // read via `manager`. Return the lookup data that owns this buffer, with one
+  // view per `OffsetPair` that points into the buffer.
+  [[nodiscard]] std::shared_ptr<VocabBatchLookupData> readStringsData(
       ad_utility::BatchManagerBase& manager,
       ql::span<const OffsetPair> offsetPairs) const;
 
- private:
-  // Phase 2 without the result conversion: return the owning lookup data, so
-  // the windowed `lookupBatch` path can combine several windows into one
-  // result before converting once.
-  std::shared_ptr<VocabBatchLookupData> readStringsData(
+  // Run both phases for `indices` via `manager`, one batched read each. Return
+  // the lookup data that owns the words, with one view per index in the order
+  // of `indices`.
+  [[nodiscard]] std::shared_ptr<VocabBatchLookupData> readWords(
       ad_utility::BatchManagerBase& manager,
-      ql::span<const OffsetPair> offsetPairs) const;
+      ql::span<const size_t> indices) const;
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H
