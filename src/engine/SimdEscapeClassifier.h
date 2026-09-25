@@ -35,6 +35,7 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
+#include "util/CpuFeatures.h"
 #include "util/Exception.h"
 
 namespace ad_utility::simd {
@@ -314,10 +315,11 @@ class SimdEscapeClassifier {
   [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32(
       const char* data) noexcept {
 #if defined(QLEVER_SIMD_X86)
-    return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
-#else
-    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
+    if (ad_utility::cpuHasAvx2()) {
+      return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    }
 #endif
+    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
   }
 
   // ___________________________________________________________________________

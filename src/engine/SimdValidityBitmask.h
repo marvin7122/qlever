@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
@@ -35,6 +36,7 @@
 #include "backports/span.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
+#include "util/CpuFeatures.h"
 #include "util/Exception.h"
 
 namespace ad_utility::simd {
@@ -318,6 +320,10 @@ inline char* write64DelimiterPairsScalar(char* dest, char delimiter,
 // column-level batch classification, and fast-path vectorized unbound
 // serialization.
 class SimdValidityScanner {
+  // The scans read `ValueId`s as raw 64-bit words.
+  static_assert(sizeof(ValueId) == sizeof(uint64_t) &&
+                std::is_trivially_copyable_v<ValueId>);
+
  public:
   // ___________________________________________________________________________
   // Scan a batch of exactly 64 ValueIds (512 bytes) and construct a
@@ -327,10 +333,11 @@ class SimdValidityScanner {
     AD_CONTRACT_CHECK(data != nullptr);
     const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
-    return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
-#else
-    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
+    if (ad_utility::cpuHasAvx2()) {
+      return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
+    }
 #endif
+    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
   }
 
   // ___________________________________________________________________________
@@ -339,10 +346,11 @@ class SimdValidityScanner {
       const uint64_t* data) noexcept {
     AD_CONTRACT_CHECK(data != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return ValidityBitmask64{detail::scanBatch64Avx2(data)};
-#else
-    return ValidityBitmask64{detail::scanBatch64Scalar(data)};
+    if (ad_utility::cpuHasAvx2()) {
+      return ValidityBitmask64{detail::scanBatch64Avx2(data)};
+    }
 #endif
+    return ValidityBitmask64{detail::scanBatch64Scalar(data)};
   }
 
   // ___________________________________________________________________________
@@ -352,15 +360,11 @@ class SimdValidityScanner {
     AD_CONTRACT_CHECK(data != nullptr);
     const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
-    return detail::isAllUnbound64Avx2(raw);
-#else
-    for (size_t i = 0; i < 64; ++i) {
-      if (raw[i] != 0) {
-        return false;
-      }
+    if (ad_utility::cpuHasAvx2()) {
+      return detail::isAllUnbound64Avx2(raw);
     }
-    return true;
 #endif
+    return std::all_of(raw, raw + 64, [](uint64_t bits) { return bits == 0; });
   }
 
   // ___________________________________________________________________________
@@ -429,10 +433,11 @@ class SimdValidityScanner {
                                            char delimiter = ',') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimitersAvx2(dest, delimiter);
-#else
-    return detail::write64DelimitersScalar(dest, delimiter);
+    if (ad_utility::cpuHasAvx2()) {
+      return detail::write64DelimitersAvx2(dest, delimiter);
+    }
 #endif
+    return detail::write64DelimitersScalar(dest, delimiter);
   }
 
   // ___________________________________________________________________________
@@ -442,10 +447,11 @@ class SimdValidityScanner {
                                            char delimiter = '\t') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimitersAvx2(dest, delimiter);
-#else
-    return detail::write64DelimitersScalar(dest, delimiter);
+    if (ad_utility::cpuHasAvx2()) {
+      return detail::write64DelimitersAvx2(dest, delimiter);
+    }
 #endif
+    return detail::write64DelimitersScalar(dest, delimiter);
   }
 
   // ___________________________________________________________________________
@@ -455,10 +461,11 @@ class SimdValidityScanner {
                                           char rowSeparator = '\n') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
-#else
-    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
+    if (ad_utility::cpuHasAvx2()) {
+      return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
+    }
 #endif
+    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
   }
 
   // ___________________________________________________________________________
@@ -468,10 +475,11 @@ class SimdValidityScanner {
                                           char rowSeparator = '\n') noexcept {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
-    return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
-#else
-    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
+    if (ad_utility::cpuHasAvx2()) {
+      return detail::write64DelimiterPairsAvx2(dest, delimiter, rowSeparator);
+    }
 #endif
+    return detail::write64DelimiterPairsScalar(dest, delimiter, rowSeparator);
   }
 };
 

@@ -14,6 +14,7 @@
 
 #include "../util/GTestHelpers.h"
 #include "engine/SimdEscapeClassifier.h"
+#include "util/CpuFeatures.h"
 
 using namespace ad_utility::simd;
 
@@ -197,4 +198,16 @@ TEST(SimdEscapeClassifierTest, utf8Preservation) {
   std::string utf8WithEscape = "\"München \"Düsseldorf\" Zürich\"@de";
   EXPECT_EQ(SimdEscapeClassifier::validRDFLiteralFromNormalized(utf8WithEscape),
             "\"München \\\"Düsseldorf\\\" Zürich\"@de");
+}
+
+// _____________________________________________________________________________
+// The AVX2 code paths are only taken if the running CPU supports AVX2.
+TEST(SimdEscapeClassifierTest, CpuHasAvx2MatchesRuntimeCpuCheck) {
+#if (defined(__x86_64__) || defined(__i386__)) && \
+    (defined(__GNUC__) || defined(__clang__))
+  __builtin_cpu_init();
+  EXPECT_EQ(ad_utility::cpuHasAvx2(), __builtin_cpu_supports("avx2") != 0);
+#else
+  EXPECT_FALSE(ad_utility::cpuHasAvx2());
+#endif
 }
