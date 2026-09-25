@@ -12,6 +12,10 @@
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
+#include <atomic>
+#include <chrono>
+#include <exception>
+#include <future>
 #include <thread>
 
 #include "../../util/GTestHelpers.h"
@@ -23,6 +27,8 @@
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
+#include "util/Random.h"
+#include "util/jthread.h"
 
 namespace {
 using namespace vocabulary_test;
@@ -134,39 +140,43 @@ VocabularyOnDiskHandle createExampleVocabulary() {
   return createVocabularyFromWords({"alpha", "delta", "beta", "42", "gamma"});
 }
 
-// Build a deterministic word list with varying lengths, including an empty
-// word, for the concurrency tests below.
+// _____________________________________________________________________________
+// Return `numWords` deterministic words of varying lengths, the first of which
+// is the empty word, for the concurrency tests below.
 std::vector<std::string> makeConcurrentTestWords(size_t numWords) {
-  std::vector<std::string> words;
-  words.reserve(numWords);
-  words.emplace_back("");
-  for (size_t i = 1; i < numWords; ++i) {
-    words.push_back(absl::StrCat("word", i, "_", std::string(i % 17, 'x')));
-  }
+  AD_CONTRACT_CHECK(numWords > 0);
+  std::vector<std::string> words{std::string{}};
+  ql::ranges::copy(
+      ql::views::iota(size_t{1}, numWords) | ql::views::transform([](size_t i) {
+        return absl::StrCat("word", i, "_", std::string(i % 17, 'x'));
+      }),
+      std::back_inserter(words));
   return words;
 }
 
-// Deterministic pseudo-random batches of vocabulary indices (fixed seed, so no
-// engine state is shared between threads).
+// _____________________________________________________________________________
+// Return `numBatches` batches of `batchSize` vocabulary indices each, drawn
+// from `[0, vocabSize)` with a fixed seed, so the batches are the same in every
+// run. They are generated once on the calling thread; workers only read them.
 std::vector<std::vector<size_t>> makeConcurrentTestBatches(size_t vocabSize,
                                                            size_t numBatches,
                                                            size_t batchSize) {
-  std::vector<std::vector<size_t>> batches(numBatches,
-                                           std::vector<size_t>(batchSize));
-  // 64-bit LCG with Knuth's MMIX multiplier and the PCG default increment;
-  // fixed seed, so the batches are deterministic across runs and threads.
-  uint64_t state = 0x9E3779B97F4A7C15ull;
-  for (auto& batch : batches) {
-    for (auto& idx : batch) {
-      state = state * 6364136223846793005ull + 1442695040888963407ull;
-      idx = (state >> 33) % vocabSize;
-    }
+  AD_CONTRACT_CHECK(vocabSize > 0);
+  ad_utility::SlowRandomIntGenerator<size_t> randomIndex{
+      0, vocabSize - 1, ad_utility::RandomSeed::make(42)};
+  std::vector<std::vector<size_t>> batches;
+  batches.reserve(numBatches);
+  for ([[maybe_unused]] size_t batch : ql::views::iota(size_t{0}, numBatches)) {
+    auto& indices = batches.emplace_back(batchSize);
+    ql::ranges::generate(indices, [&randomIndex] { return randomIndex(); });
   }
   return batches;
 }
 
-// Snapshot every batch via serial `lookupBatch` calls: the reference that the
-// concurrent runs below must reproduce byte-identically.
+// _____________________________________________________________________________
+// Return one snapshot per batch in `batches`, taken via serial `lookupBatch`
+// calls on the calling thread: the reference that the concurrent runs below
+// must reproduce byte-identically.
 std::vector<std::vector<std::string>> snapshotBatchesSerial(
     const VocabularyOnDisk& vocab,
     const std::vector<std::vector<size_t>>& batches) {
@@ -179,52 +189,73 @@ std::vector<std::vector<std::string>> snapshotBatchesSerial(
   return snapshots;
 }
 
-// Run `lookupBatch` concurrently: thread `t` looks up `perThreadBatches[t]` in
-// order and snapshots each result. Worker exceptions are collected into
-// `errors` so they surface as test failures instead of `std::terminate`.
-std::vector<std::vector<std::vector<std::string>>> snapshotBatchesConcurrent(
+// The per-thread snapshots of `snapshotBatchesConcurrent` together with the
+// error message of each worker (empty if the worker succeeded).
+struct ConcurrentSnapshots {
+  std::vector<std::vector<std::vector<std::string>>> snapshots_;
+  std::vector<std::string> errors_;
+};
+
+// _____________________________________________________________________________
+// Run `lookupBatch` concurrently. Thread `t` looks up `perThreadBatches[t]` in
+// order and snapshots each result. Worker exceptions are recorded in `errors_`
+// (each worker writes only its own entry), so they surface as test failures
+// instead of `std::terminate`.
+ConcurrentSnapshots snapshotBatchesConcurrent(
     const VocabularyOnDisk& vocab,
-    const std::vector<std::vector<std::vector<size_t>>>& perThreadBatches,
-    std::vector<std::string>& errors) {
+    const std::vector<std::vector<std::vector<size_t>>>& perThreadBatches) {
   const size_t numThreads = perThreadBatches.size();
-  std::vector<std::vector<std::vector<std::string>>> snapshots(numThreads);
-  errors.assign(numThreads, {});
-  std::vector<std::thread> threads;
-  threads.reserve(numThreads);
-  for (size_t t = 0; t < numThreads; ++t) {
-    threads.emplace_back([&, t] {
-      try {
-        auto& own = snapshots[t];
-        own.reserve(perThreadBatches[t].size());
-        for (const auto& batch : perThreadBatches[t]) {
-          auto result = vocab.lookupBatch(batch);
-          own.emplace_back(result->begin(), result->end());
+  ConcurrentSnapshots result;
+  result.snapshots_.resize(numThreads);
+  result.errors_.resize(numThreads);
+  {
+    // `JThread` joins on destruction, also if starting a later thread throws.
+    std::vector<ad_utility::JThread> threads;
+    threads.reserve(numThreads);
+    for (size_t t : ql::views::iota(size_t{0}, numThreads)) {
+      threads.emplace_back([&vocab, &batches = perThreadBatches[t],
+                            &threadSnapshots = result.snapshots_[t],
+                            &error = result.errors_[t]] {
+        try {
+          threadSnapshots.reserve(batches.size());
+          for (const auto& batch : batches) {
+            auto words = vocab.lookupBatch(batch);
+            threadSnapshots.emplace_back(words->begin(), words->end());
+          }
+        } catch (const std::exception& e) {
+          error = e.what();
+        } catch (...) {
+          error = "unknown exception";
         }
-      } catch (const std::exception& e) {
-        errors[t] = e.what();
-      }
-    });
+      });
+    }
   }
-  for (auto& thread : threads) {
-    thread.join();
-  }
-  return snapshots;
+  return result;
 }
 
-// Assert that no worker failed and every per-thread snapshot equals the serial
-// reference for the same batch sequence.
+// _____________________________________________________________________________
+// Assert that no worker failed and that thread `t`'s `k`-th snapshot equals
+// `expected[(t * rotationPerThread + k) % expected.size()]`, i.e. that every
+// thread reproduced the serial reference for its (possibly rotated) batch
+// order.
 void expectConcurrentSnapshotsMatchSerial(
-    const std::vector<std::vector<std::vector<std::string>>>& snapshots,
+    const ConcurrentSnapshots& concurrent,
     const std::vector<std::vector<std::string>>& expected,
-    const std::vector<std::string>& errors) {
-  for (const auto& error : errors) {
+    size_t rotationPerThread = 0) {
+  for (const auto& error : concurrent.errors_) {
     EXPECT_TRUE(error.empty()) << error;
   }
-  for (const auto& perThread : snapshots) {
-    ASSERT_EQ(perThread.size(), expected.size());
-    for (size_t i = 0; i < expected.size(); ++i) {
-      EXPECT_THAT(perThread[i], ::testing::ElementsAreArray(expected[i]))
-          << "batch " << i;
+  for (const auto& [t, threadSnapshots] :
+       ::ranges::views::enumerate(concurrent.snapshots_)) {
+    ASSERT_EQ(threadSnapshots.size(), expected.size());
+    for (const auto& [k, snapshot] :
+         ::ranges::views::enumerate(threadSnapshots)) {
+      EXPECT_THAT(snapshot,
+                  ::testing::ElementsAreArray(
+                      expected[(static_cast<size_t>(t) * rotationPerThread +
+                                static_cast<size_t>(k)) %
+                               expected.size()]))
+          << "thread " << t << " batch " << k;
     }
   }
 }
@@ -442,9 +473,11 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
   });
 }
 
+// _____________________________________________________________________________
 // Concurrent `lookupBatch` calls from many threads must return byte-identical
-// results to the serial path: each thread drives its exclusively owned ring,
-// so no two threads ever share a ring on the I/O path.
+// results to the serial path. The serial reference run already gives the test
+// thread an owned ring, so the workers use owned rings while the budget lasts
+// and the shared pool afterwards.
 TEST(VocabularyOnDisk, LookupBatchConcurrentMatchesSerial) {
   constexpr size_t numWords = 2000;
   constexpr size_t numThreads = 8;
@@ -452,33 +485,34 @@ TEST(VocabularyOnDisk, LookupBatchConcurrentMatchesSerial) {
   auto batches =
       makeConcurrentTestBatches(numWords, /*numBatches=*/32, /*batchSize=*/64);
   auto expected = snapshotBatchesSerial(*vocab, batches);
-  std::vector<std::vector<std::vector<size_t>>> perThread(numThreads, batches);
-  std::vector<std::string> errors;
-  auto snapshots = snapshotBatchesConcurrent(*vocab, perThread, errors);
-  expectConcurrentSnapshotsMatchSerial(snapshots, expected, errors);
+  std::vector<std::vector<std::vector<size_t>>> perThreadBatches(numThreads,
+                                                                 batches);
+  expectConcurrentSnapshotsMatchSerial(
+      snapshotBatchesConcurrent(*vocab, perThreadBatches), expected);
 }
 
-// Same as above, but with the synchronous `pread` fallback backend forced: the
-// per-thread plumbing (owned sync managers, pool fallback) must be correct
-// independent of the backend.
+// _____________________________________________________________________________
+// The same with the synchronous `pread` fallback backend forced, and with more
+// threads than `NUM_VOCAB_BATCH_IO_MANAGERS`, so both owned synchronous
+// managers and pooled synchronous managers serve lookups.
 TEST(VocabularyOnDisk, LookupBatchConcurrentSyncFallbackMatchesSerial) {
   constexpr size_t numWords = 1000;
-  constexpr size_t numThreads = 4;
+  const size_t numThreads = 2 * NUM_VOCAB_BATCH_IO_MANAGERS + 1;
   auto vocab = createVocabularyFromWords(makeConcurrentTestWords(numWords),
                                          /*preferIoUring=*/false);
   auto batches =
       makeConcurrentTestBatches(numWords, /*numBatches=*/16, /*batchSize=*/32);
   auto expected = snapshotBatchesSerial(*vocab, batches);
-  std::vector<std::vector<std::vector<size_t>>> perThread(numThreads, batches);
-  std::vector<std::string> errors;
-  auto snapshots = snapshotBatchesConcurrent(*vocab, perThread, errors);
-  expectConcurrentSnapshotsMatchSerial(snapshots, expected, errors);
+  std::vector<std::vector<std::vector<size_t>>> perThreadBatches(numThreads,
+                                                                 batches);
+  expectConcurrentSnapshotsMatchSerial(
+      snapshotBatchesConcurrent(*vocab, perThreadBatches), expected);
 }
 
-// Oversubscription: more threads than `NUM_VOCAB_BATCH_IO_MANAGERS`. Threads
-// without an owned ring share the pooled managers, and the per-thread rotation
-// of the batch order migrates load across threads. Everything must still match
-// the serial path.
+// _____________________________________________________________________________
+// Oversubscription: more threads than `NUM_VOCAB_BATCH_IO_MANAGERS`, and each
+// thread processes the same batches in a different (rotated) order. Everything
+// must still match the serial path.
 TEST(VocabularyOnDisk, LookupBatchOversubscribedThreadsMatchesSerial) {
   constexpr size_t numWords = 500;
   const size_t numThreads = 3 * NUM_VOCAB_BATCH_IO_MANAGERS + 1;
@@ -486,26 +520,101 @@ TEST(VocabularyOnDisk, LookupBatchOversubscribedThreadsMatchesSerial) {
   auto batches =
       makeConcurrentTestBatches(numWords, /*numBatches=*/24, /*batchSize=*/16);
   auto expected = snapshotBatchesSerial(*vocab, batches);
-  // Thread `t` looks up all batches starting at offset `t`, wrapping around.
-  std::vector<std::vector<std::vector<size_t>>> perThread(numThreads);
-  for (size_t t = 0; t < numThreads; ++t) {
-    perThread[t].reserve(batches.size());
-    for (size_t k = 0; k < batches.size(); ++k) {
-      perThread[t].push_back(batches[(t + k) % batches.size()]);
+  // Thread `t` looks up all batches starting at batch `t`, wrapping around.
+  std::vector<std::vector<std::vector<size_t>>> perThreadBatches;
+  perThreadBatches.reserve(numThreads);
+  for (size_t t : ql::views::iota(size_t{0}, numThreads)) {
+    auto& rotated = perThreadBatches.emplace_back(batches);
+    ql::ranges::rotate(rotated, rotated.begin() + t % batches.size());
+  }
+  expectConcurrentSnapshotsMatchSerial(
+      snapshotBatchesConcurrent(*vocab, perThreadBatches), expected,
+      /*rotationPerThread=*/1);
+}
+
+// _____________________________________________________________________________
+// Keep more threads than `NUM_VOCAB_BATCH_IO_MANAGERS` alive after their first
+// lookup, so that none of them can give back its ring. Exactly the budget of
+// threads owns a ring, the remaining ones are served correctly by the shared
+// pool, and every ring is released when its thread exits.
+TEST(VocabularyOnDisk, LookupBatchOwnedRingBudgetIsExactAndReleased) {
+  for (bool preferIoUring : {true, false}) {
+    const std::vector<std::string> words = makeConcurrentTestWords(300);
+    auto vocab = createVocabularyFromWords(words, preferIoUring);
+    const size_t numThreads = NUM_VOCAB_BATCH_IO_MANAGERS + 5;
+    const std::vector<size_t> indices{0, 7, 299, 42, 7};
+    std::vector<std::string> expected;
+    ql::ranges::transform(indices, std::back_inserter(expected),
+                          [&words](size_t i) { return words[i]; });
+
+    std::atomic<size_t> numDone{0};
+    std::promise<void> release;
+    std::shared_future<void> released = release.get_future().share();
+    ConcurrentSnapshots results;
+    results.snapshots_.resize(numThreads);
+    results.errors_.resize(numThreads);
+    {
+      std::vector<ad_utility::JThread> threads;
+      // Release waiting workers on every exit path, so the joins in the
+      // `JThread` destructors cannot block forever.
+      absl::Cleanup releaseWorkers{[&release, &released] {
+        if (released.wait_for(std::chrono::seconds{0}) !=
+            std::future_status::ready) {
+          release.set_value();
+        }
+      }};
+      for (size_t t : ql::views::iota(size_t{0}, numThreads)) {
+        threads.emplace_back([&, &threadSnapshots = results.snapshots_[t],
+                              &error = results.errors_[t]] {
+          try {
+            auto result = vocab->lookupBatch(indices);
+            threadSnapshots.emplace_back(result->begin(), result->end());
+          } catch (const std::exception& e) {
+            error = e.what();
+          }
+          numDone.fetch_add(1);
+          released.wait();
+        });
+      }
+      while (numDone.load() < numThreads) {
+        std::this_thread::yield();
+      }
+      // All threads are alive and have looked up once: the budget is full.
+      EXPECT_EQ(vocab->numOwnedRingsForTesting(), NUM_VOCAB_BATCH_IO_MANAGERS);
     }
+    // Each thread released its ring when it exited.
+    EXPECT_EQ(vocab->numOwnedRingsForTesting(), 0u);
+    expectConcurrentSnapshotsMatchSerial(results, {expected});
   }
-  std::vector<std::string> errors;
-  auto snapshots = snapshotBatchesConcurrent(*vocab, perThread, errors);
-  for (const auto& error : errors) {
-    EXPECT_TRUE(error.empty()) << error;
+}
+
+// _____________________________________________________________________________
+// Reopening a vocabulary discards the rings that threads own for it, and a
+// thread that used a destroyed vocabulary can use a new one without leaking
+// its old ring into the new budget.
+TEST(VocabularyOnDisk, LookupBatchOwnedRingsAfterReopenAndDestruction) {
+  const std::vector<std::string> words = makeConcurrentTestWords(100);
+  const std::vector<size_t> indices{3, 1, 99};
+  auto expectLookup = [&](const VocabularyOnDisk& vocab) {
+    auto result = vocab.lookupBatch(indices);
+    EXPECT_THAT(std::vector<std::string>(result->begin(), result->end()),
+                ::testing::ElementsAre(words[3], words[1], words[99]));
+  };
+  const std::string filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  {
+    VocabularyCreator creator{filename};
+    auto vocab = creator.createVocabulary(words);
+    expectLookup(vocab);
+    EXPECT_EQ(vocab.numOwnedRingsForTesting(), 1u);
+    vocab.open(filename, /*preferIoUring=*/false);
+    EXPECT_EQ(vocab.numOwnedRingsForTesting(), 0u);
+    expectLookup(vocab);
+    EXPECT_EQ(vocab.numOwnedRingsForTesting(), 1u);
   }
-  ASSERT_EQ(snapshots.size(), numThreads);
-  for (size_t t = 0; t < numThreads; ++t) {
-    ASSERT_EQ(snapshots[t].size(), batches.size());
-    for (size_t k = 0; k < batches.size(); ++k) {
-      EXPECT_THAT(snapshots[t][k], ::testing::ElementsAreArray(
-                                       expected[(t + k) % batches.size()]))
-          << "thread " << t << " batch " << k;
-    }
-  }
+  // The vocabulary above is destroyed while this thread still holds its ring.
+  VocabularyCreator creator{filename};
+  auto vocab = creator.createVocabulary(words);
+  EXPECT_EQ(vocab.numOwnedRingsForTesting(), 0u);
+  expectLookup(vocab);
+  EXPECT_EQ(vocab.numOwnedRingsForTesting(), 1u);
 }
