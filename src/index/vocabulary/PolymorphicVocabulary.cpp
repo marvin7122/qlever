@@ -68,11 +68,8 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   return std::visit(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
-        // NOTE: the detection uses the C++17-compatible trait instead of
-        // `if constexpr (requires { ... })`, which the CPP17 libQLever CI
-        // workflow cannot compile (see `hasLookupBatchWithBuilder`).
-        if constexpr (ad_utility::vocabulary::hasLookupBatchWithBuilder<
-                          decltype(vocab)>) {
+        if constexpr (HasArenaVocabBatchLookup<
+                          std::decay_t<decltype(vocab)>>::value) {
           vocab.lookupBatch(indices, builder);
           return std::move(builder).finalize();
         } else {
