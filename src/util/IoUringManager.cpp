@@ -90,10 +90,14 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
     params.sq_thread_idle = setupOptions.sqThreadIdleMs;
   }
   if (setupOptions.deferTaskrun) {
+#ifdef IORING_SETUP_DEFER_TASKRUN
     params.flags |= IORING_SETUP_DEFER_TASKRUN;
+#endif
   }
   if (setupOptions.singleIssuer) {
+#ifdef IORING_SETUP_SINGLE_ISSUER
     params.flags |= IORING_SETUP_SINGLE_ISSUER;
+#endif
   }
   int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
   bool usedFallbackRing = false;
