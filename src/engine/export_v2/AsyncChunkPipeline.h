@@ -15,75 +15,136 @@
 #include <exception>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include "util/Exception.h"
 
 namespace qlever::export_v2 {
 
+// Whether the export V2 code path is compiled in (CMake option
+// `QLEVER_ENABLE_EXPORT_V2`). A pipeline only runs when this compile-time
+// switch AND the runtime switch `AsyncChunkPipelineConfig::runtimeEnabled_`
+// are both on: the compile-time switch keeps default builds free of the
+// experimental path, the runtime switch lets a build that has it still use
+// the existing export without a rebuild.
 #if defined(QLEVER_ENABLE_EXPORT_V2) && QLEVER_ENABLE_EXPORT_V2
-inline constexpr bool kExportV2CompiledIn = true;
+inline constexpr bool exportV2CompiledIn = true;
 #else
-inline constexpr bool kExportV2CompiledIn = false;
+inline constexpr bool exportV2CompiledIn = false;
 #endif
 
-// A double-buffered asynchronous chunk ring, adapted from the 2-slot design
-// of PR #82. Two fixed slots alternate between the producer filling the next
-// chunk and the consumer draining the transmitted one; each completed `pop`
-// frees its slot for reuse, so the ring rotates without allocation.
-//
-// The ring performs no synchronization of its own: all methods must be called
-// from the single query worker thread (or its async event loop), which makes
-// the handoff lock-free by construction. There is no blocking either: when
-// both slots hold undrained chunks, `push` reports `PushResult::Full` and the
-// async driver suspends chunk generation until the socket drains; when the
-// ring is empty, `pop` returns `std::nullopt` and the driver suspends
-// transmission until the next chunk is produced.
-inline constexpr size_t kNumRingSlots = 2;
+// The number of slots of an `AsyncChunkPipeline`: one chunk can be
+// transmitted while the next one is produced (double buffering).
+inline constexpr size_t numRingSlots = 2;
 
+// Runtime configuration of an `AsyncChunkPipeline`, copied at construction.
 struct AsyncChunkPipelineConfig {
+  // The runtime kill switch, see `exportV2CompiledIn`. Off by default so that
+  // a default-constructed pipeline never runs.
   bool runtimeEnabled_ = false;
 };
 
-enum class PushResult { Accepted, Full, Closed };
-
-struct AsyncChunkPipelineStats {
-  size_t chunksProduced_ = 0;
-  size_t chunksConsumed_ = 0;
-  size_t chunksDiscarded_ = 0;
-  size_t bytesProduced_ = 0;
-  size_t bytesConsumed_ = 0;
+// The result of `AsyncChunkPipeline::push`.
+enum class PushResult {
+  // The chunk was stored and the caller's chunk was moved from.
+  Accepted,
+  // Transient backpressure: both slots hold undrained chunks. The caller's
+  // chunk is left untouched; retry after the next successful `pop`.
+  Full,
+  // Permanent: the pipeline is disabled, finished, failed, or cancelled. The
+  // caller's chunk is left untouched; do not retry.
+  Closed
 };
 
+// Counters of an `AsyncChunkPipeline`, returned by value as a snapshot. Sizes
+// are taken from `ChunkType::size()`, or 0 for chunk types without `size()`.
+struct AsyncChunkPipelineStats {
+  // Chunks accepted by `push`.
+  size_t chunksProduced_ = 0;
+  size_t bytesProduced_ = 0;
+  // Chunks returned by `pop`.
+  size_t chunksConsumed_ = 0;
+  size_t bytesConsumed_ = 0;
+  // Chunks dropped by `cancel` (including the implicit `cancel` of the
+  // destructor while `Running`).
+  size_t chunksDiscarded_ = 0;
+  size_t bytesDiscarded_ = 0;
+};
+
+namespace detail {
+// Whether `T` has a `size()` member function.
+template <typename T, typename = void>
+struct HasSize : std::false_type {};
+template <typename T>
+struct HasSize<T, std::void_t<decltype(std::declval<const T&>().size())>>
+    : std::true_type {};
+}  // namespace detail
+
+// A two-slot ring that hands serialized chunks from the producer
+// (serialization) to the consumer (socket transmission) of one export, so
+// that at most one chunk is produced ahead of the transmitted one and memory
+// stays bounded. Each `pop` frees its slot, so the ring rotates without
+// allocating.
+//
+// The ring performs no synchronization: all member functions must be called
+// from the thread (or the event loop) that drives the export. Nothing blocks:
+// `push` returns `PushResult::Full` when both slots are occupied, and `pop`
+// returns `std::nullopt` when no chunk is queued; the driver then suspends the
+// respective side.
+//
+// `ChunkType` must own its data (a chunk outlives the call to `push`) and be
+// nothrow move constructible, which keeps the ring consistent when a chunk is
+// moved in or out.
 template <typename ChunkType = std::string>
 class AsyncChunkPipeline {
+  static_assert(std::is_nothrow_move_constructible_v<ChunkType>,
+                "The ring relies on non-throwing moves of `ChunkType`");
+  static_assert(!std::is_pointer_v<ChunkType>, "`ChunkType` must own its data");
+
  private:
+  // The lifecycle. `Disabled` is set at construction and final. `Running`
+  // accepts chunks. `Finished` and `Failed` still hand out the queued chunks,
+  // after which `pop` reports the end (`Finished`) or rethrows the producer's
+  // exception (`Failed`). `Cancelled` has dropped all queued chunks.
   enum class State { Disabled, Running, Finished, Cancelled, Failed };
 
-  // An engaged slot holds an undrained chunk, a disengaged slot is free for
-  // the producer. The next chunk is produced into
-  // `slots_[(consume_ + filled_) % kNumRingSlots]`.
-  std::array<std::optional<ChunkType>, kNumRingSlots> slots_;
-  size_t consume_ = 0;
-  size_t filled_ = 0;
+  // An engaged slot holds an undrained chunk, a disengaged slot is free. The
+  // occupied slots are `slots_[consumeIndex_]` and the following
+  // `numFilledSlots_ - 1` slots (modulo `numRingSlots`).
+  std::array<std::optional<ChunkType>, numRingSlots> slots_;
+  size_t consumeIndex_ = 0;
+  size_t numFilledSlots_ = 0;
   State state_;
-  std::exception_ptr exception_;
+  // Non-null if and only if `state_ == State::Failed`.
+  std::exception_ptr producerFailure_;
   AsyncChunkPipelineStats stats_;
 
-  [[nodiscard]] static size_t chunkSize(const ChunkType& chunk) {
-    if constexpr (requires { chunk.size(); }) {
+  // Return the size of `chunk` for the byte counters.
+  [[nodiscard]] static size_t chunkSize(const ChunkType& chunk) noexcept {
+    if constexpr (detail::HasSize<ChunkType>::value) {
       return chunk.size();
     } else {
+      static_cast<void>(chunk);
       return 0;
     }
   }
 
- public:
-  explicit AsyncChunkPipeline(AsyncChunkPipelineConfig config = {})
-      : state_{kExportV2CompiledIn && config.runtimeEnabled_
-                   ? State::Running
-                   : State::Disabled} {}
+  void checkRingInvariants() const {
+    AD_CORRECTNESS_CHECK(consumeIndex_ < numRingSlots);
+    AD_CORRECTNESS_CHECK(numFilledSlots_ <= numRingSlots);
+  }
 
+ public:
+  // Create a pipeline that is `Running` if both kill switches are on (see
+  // `exportV2CompiledIn`) and `Disabled` otherwise.
+  explicit AsyncChunkPipeline(AsyncChunkPipelineConfig config = {}) noexcept
+      : state_{exportV2CompiledIn && config.runtimeEnabled_ ? State::Running
+                                                            : State::Disabled} {
+  }
+
+  // A pipeline belongs to exactly one export, whose producer and consumer
+  // refer to it; forbid copies and moves so it cannot be detached from them.
   AsyncChunkPipeline(const AsyncChunkPipeline&) = delete;
   AsyncChunkPipeline& operator=(const AsyncChunkPipeline&) = delete;
   AsyncChunkPipeline(AsyncChunkPipeline&&) = delete;
@@ -91,84 +152,109 @@ class AsyncChunkPipeline {
 
   ~AsyncChunkPipeline() { cancel(); }
 
-  [[nodiscard]] bool isEnabled() const { return state_ != State::Disabled; }
+  // Return whether both kill switches were on at construction. This stays
+  // `true` after `finish`, `fail`, or `cancel`; use `isRunning` to find out
+  // whether `push` can still accept chunks.
+  [[nodiscard]] bool isEnabled() const noexcept {
+    return state_ != State::Disabled;
+  }
 
-  // Store `chunk` in the next free ring slot. Returns `Full` when both slots
-  // hold undrained chunks; the async driver then suspends generation until
-  // the consumer drains a slot. Never blocks.
-  [[nodiscard]] PushResult push(ChunkType chunk) {
+  // Return whether `push` can accept chunks (possibly after a `Full`).
+  [[nodiscard]] bool isRunning() const noexcept {
+    return state_ == State::Running;
+  }
+
+  // If the pipeline is `Running` and a slot is free, move `chunk` into it and
+  // return `Accepted`. Otherwise leave `chunk` untouched and return `Closed`
+  // (not `Running`, checked first) or `Full` (both slots occupied). Do not
+  // block.
+  [[nodiscard]] PushResult push(ChunkType&& chunk) {
     if (state_ != State::Running) {
       return PushResult::Closed;
     }
-    if (filled_ == kNumRingSlots) {
+    checkRingInvariants();
+    if (numFilledSlots_ == numRingSlots) {
       return PushResult::Full;
     }
-    auto& slot = slots_[(consume_ + filled_) % kNumRingSlots];
+    auto& slot = slots_[(consumeIndex_ + numFilledSlots_) % numRingSlots];
     AD_CORRECTNESS_CHECK(!slot.has_value());
-    stats_.bytesProduced_ += chunkSize(chunk);
-    ++stats_.chunksProduced_;
+    const size_t size = chunkSize(chunk);
     slot.emplace(std::move(chunk));
-    ++filled_;
+    ++numFilledSlots_;
+    ++stats_.chunksProduced_;
+    stats_.bytesProduced_ += size;
     return PushResult::Accepted;
   }
 
-  // Return the oldest undrained chunk and free its slot for reuse. Returns no
-  // value after normal completion, cancellation, or when either kill switch
-  // disabled the pipeline. Producer failures are rethrown after already
-  // queued chunks have been consumed. Never blocks.
+  // If a chunk is queued, return the oldest one and free its slot, in every
+  // state. Otherwise rethrow the producer's exception if the pipeline is
+  // `Failed` (on every call), and return `std::nullopt` in all other states.
+  // An empty `Running` pipeline thus also returns `std::nullopt`; use
+  // `isRunning` to tell "not yet" from "never again". Do not block.
   [[nodiscard]] std::optional<ChunkType> pop() {
-    if (filled_ > 0) {
-      auto chunk = std::move(*slots_[consume_]);
-      slots_[consume_].reset();
-      consume_ = (consume_ + 1) % kNumRingSlots;
-      --filled_;
-      stats_.bytesConsumed_ += chunkSize(chunk);
+    checkRingInvariants();
+    if (numFilledSlots_ > 0) {
+      auto& slot = slots_[consumeIndex_];
+      AD_CORRECTNESS_CHECK(slot.has_value());
+      std::optional<ChunkType> oldestChunk{std::move(slot)};
+      slot.reset();
+      consumeIndex_ = (consumeIndex_ + 1) % numRingSlots;
+      --numFilledSlots_;
       ++stats_.chunksConsumed_;
-      return chunk;
+      stats_.bytesConsumed_ += chunkSize(*oldestChunk);
+      return oldestChunk;
     }
     if (state_ == State::Failed) {
-      std::rethrow_exception(exception_);
+      AD_CORRECTNESS_CHECK(producerFailure_ != nullptr);
+      std::rethrow_exception(producerFailure_);
     }
     return std::nullopt;
   }
 
-  void finish() {
+  // Report that the producer has pushed its last chunk. The queued chunks can
+  // still be popped. Do nothing if the pipeline is not `Running`.
+  void finish() noexcept {
     if (state_ == State::Running) {
       state_ = State::Finished;
     }
   }
 
-  // Report a producer failure, rethrown to the consumer by `pop` once queued
-  // chunks are drained. Calling `fail` when not `Running` is a deliberate
-  // no-op: the consumer is already done or gone, so there is nowhere to
-  // deliver the error.
-  void fail(std::exception_ptr exception) {
-    AD_CONTRACT_CHECK(exception != nullptr);
+  // Report a producer failure: `pop` rethrows `failure` once the queued chunks
+  // are drained. `failure` must not be null. Do nothing if the pipeline is not
+  // `Running`: it is disabled, or the export already ended in another way and
+  // its outcome must not change afterwards (the first failure wins).
+  void fail(std::exception_ptr failure) {
+    AD_CONTRACT_CHECK(failure != nullptr);
     if (state_ != State::Running) {
       return;
     }
-    exception_ = std::move(exception);
+    producerFailure_ = std::move(failure);
     state_ = State::Failed;
   }
 
-  // Abandon queued chunks and close the pipeline. Only discards performed
-  // here are counted in `chunksDiscarded_`; chunks still queued when the
-  // pipeline is destroyed on the `Failed`/`Finished` paths are released
-  // without being counted.
-  void cancel() {
-    if (state_ == State::Running) {
-      state_ = State::Cancelled;
-      for (auto& slot : slots_) {
-        if (slot.has_value()) {
-          slot.reset();
-          ++stats_.chunksDiscarded_;
-        }
-      }
-      filled_ = 0;
+  // Drop all queued chunks, count them as discarded, and close the pipeline.
+  // Do nothing if the pipeline is not `Running`: after `finish` or `fail` the
+  // queued chunks belong to the consumer and are released without being
+  // counted when the pipeline is destroyed.
+  void cancel() noexcept {
+    if (state_ != State::Running) {
+      return;
     }
+    state_ = State::Cancelled;
+    for (auto& slot : slots_) {
+      if (slot.has_value()) {
+        ++stats_.chunksDiscarded_;
+        stats_.bytesDiscarded_ += chunkSize(*slot);
+        slot.reset();
+      }
+    }
+    numFilledSlots_ = 0;
   }
 
-  [[nodiscard]] AsyncChunkPipelineStats stats() const { return stats_; }
+  // Return a snapshot of the counters.
+  [[nodiscard]] AsyncChunkPipelineStats stats() const noexcept {
+    return stats_;
+  }
 };
 
 }  // namespace qlever::export_v2
