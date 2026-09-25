@@ -107,7 +107,9 @@ auto makeStreamableServer(std::vector<std::string> chunks, bool useSendZC,
     // of an immediately-invoked lambda (which would dangle).
     auto generator =
         [](std::vector<std::string> chunks) -> cppcoro::generator<std::string> {
-      for (const auto& chunk : chunks) {
+      // NOTE: `chunk` must bind as a mutable ref: `Generator::yield_value`
+      // only accepts `T&` or `T&&`, never a const lvalue.
+      for (auto& chunk : chunks) {
         co_yield chunk;
       }
     }(std::move(chunks));
