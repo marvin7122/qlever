@@ -42,9 +42,11 @@ TEST(MonomorphicSerializersTest, MonomorphicTripleCsvSerialization) {
         "\"Hello, World!\"");
   });
 
+  // The literal contains `"` and `,`, so RFC 4180 quoting wraps it in quotes
+  // and doubles its own quotes.
   EXPECT_EQ(result,
-            "<http://example.org/subj>,<http://example.org/pred>,\"Hello, "
-            "World!\"\n");
+            "<http://example.org/subj>,<http://example.org/pred>,"
+            "\"\"\"Hello, World!\"\"\"\n");
 }
 
 TEST(MonomorphicSerializersTest, MonomorphicTripleTurtleSerialization) {
@@ -128,7 +130,7 @@ TEST(MonomorphicSerializersTest, DynamicRowSerializerEquivalence) {
       });
 
   EXPECT_EQ(dynamicOut, monomorphicOut);
-  EXPECT_EQ(dynamicOut, "<http://example.org/x>,\"test\",42\n");
+  EXPECT_EQ(dynamicOut, "<http://example.org/x>,\"\"\"test\"\"\",42\n");
 }
 
 // Visitor serving both `dispatchMonomorphicSerializer` call forms (see the
