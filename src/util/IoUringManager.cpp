@@ -123,35 +123,35 @@ IoUringPolicy::~IoUringPolicy() {
 
 //______________________________________________________________________________
 unsigned IoUringPolicy::fileIndexForFd(int fd) {
-  for (size_t i = 0; i < fixedFiles_.size(); ++i) {
-    if (fixedFiles_[i].ownerFd == fd) {
-      return static_cast<unsigned>(i);
-    }
+  const auto slotIndex = [this](auto it) {
+    return static_cast<unsigned>(ql::ranges::distance(fixedFiles_.begin(), it));
+  };
+  if (auto known = ql::ranges::find(fixedFiles_, fd, &FixedFile::ownerFd);
+      known != fixedFiles_.end()) {
+    return slotIndex(known);
   }
-  for (size_t i = 0; i < fixedFiles_.size(); ++i) {
-    if (fixedFiles_[i].ownerFd >= 0) {
-      continue;
-    }
-    const int duped = dup(fd);
-    if (duped < 0) {
-      AD_THROW("dup failed in IoUringManager while registering fixed file");
-    }
-    // Fill only this slot: re-registering the whole table over an already
-    // registered one fails with `EBUSY`, so update the single free slot.
-    // Other slots (and reads in flight on them) are untouched.
-    if (io_uring_register_files_update(&ring_, static_cast<unsigned>(i), &duped,
-                                       1) < 0) {
-      close(duped);
-      AD_THROW("io_uring_register_files_update failed in IoUringManager");
-    }
-    fixedFiles_[i].ownerFd = fd;
-    fixedFiles_[i].registeredFd = duped;
-    return static_cast<unsigned>(i);
+  auto freeSlot = ql::ranges::find(fixedFiles_, -1, &FixedFile::ownerFd);
+  if (freeSlot == fixedFiles_.end()) {
+    AD_THROW(
+        "IoUringPolicy supports at most two vocabulary files as fixed files; "
+        "rejecting a further descriptor instead of reading it without "
+        "fixed-file registration");
   }
-  AD_THROW(
-      "IoUringPolicy supports at most two vocabulary files as fixed files; "
-      "rejecting a further descriptor instead of reading it without fixed-file"
-      " registration");
+  const int duped = dup(fd);
+  if (duped < 0) {
+    AD_THROW("dup failed in IoUringManager while registering fixed file");
+  }
+  // Fill only this slot: re-registering the whole table over an already
+  // registered one fails with `EBUSY`, so update the single free slot.
+  // Other slots (and reads in flight on them) are untouched.
+  if (io_uring_register_files_update(&ring_, slotIndex(freeSlot), &duped, 1) <
+      0) {
+    close(duped);
+    AD_THROW("io_uring_register_files_update failed in IoUringManager");
+  }
+  freeSlot->ownerFd = fd;
+  freeSlot->registeredFd = duped;
+  return slotIndex(freeSlot);
 }
 
 //______________________________________________________________________________
