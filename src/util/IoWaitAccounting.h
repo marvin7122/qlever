@@ -301,8 +301,10 @@ inline uint64_t ticksFromStat(const std::string& stat) {
 inline void sampleWorkers() {
   // RAII handle, so `closedir` also runs if a `std::string` or stream
   // construction below throws.
-  std::unique_ptr<DIR, decltype(&closedir)> dir{opendir("/proc/self/task"),
-                                                &closedir};
+  struct DirCloser {
+    void operator()(DIR* d) const { closedir(d); }
+  };
+  std::unique_ptr<DIR, DirCloser> dir{opendir("/proc/self/task")};
   if (dir == nullptr) {
     return;
   }
