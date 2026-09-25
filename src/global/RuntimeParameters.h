@@ -245,9 +245,12 @@ struct RuntimeParameters {
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
   // Number of WHERE-result rows in one CONSTRUCT export chunk. Each chunk
-  // runs one vocabulary `lookupBatch` (offset reads, then string reads) and
-  // then formats triples. Larger values amortize `io_uring_enter`; smaller
-  // values can yield the first HTTP body bytes sooner. Must be >= 1. Default
+  // sorts its `Id`s and resolves the cache misses with one vocabulary
+  // `lookupBatch`, then formats triples. For on-disk vocabularies the lookups
+  // are blocking `pread`s in `Id` order, so a larger chunk gives denser, more
+  // sequential file offsets that the kernel readahead can serve; words held
+  // in memory (e.g. `languages-internal`) gain nothing. Smaller values can
+  // yield the first HTTP body bytes sooner. Must be >= 1. Default
   // 8192: sweep `construct-row-batch-sweep-1` (#64) measured -4.4% elapsed
   // vs 1024 at a +0.7s time-to-first-byte cost on Wikidata German-label
   // CONSTRUCT. `ConstructTripleGenerator::BATCH_SIZE` (1024) remains only
