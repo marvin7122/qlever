@@ -164,6 +164,11 @@ CPP_template(typename UnderlyingVocabulary,
           AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
           const size_t bound =
               compressionWrapper_.maxDecompressedSize(word, decoderIdx);
+          // A zero bound means an empty word, which `decompressIntoSpan` does
+          // not accept (see there).
+          if (bound == 0) {
+            return IndexAndWord{index, std::string_view{}};
+          }
           if (buffer.size() < bound) {
             buffer.resize(bound);
           }

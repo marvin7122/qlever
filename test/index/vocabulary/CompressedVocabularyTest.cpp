@@ -249,6 +249,17 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 }
 
 // _____________________________________________________________________________
+TYPED_TEST(CompressedVocabularyF, ScanAllWithEmptyWord) {
+  auto createVocab = TestFixture::createCompressedVocabulary();
+  // An empty word can have a decompression bound of zero, which must not be
+  // routed through `decompressIntoSpan`.
+  std::vector<std::string> words{"", "a", "bc"};
+  auto vocab = createVocab(words);
+  EXPECT_THAT(scanAllToVector(vocab.scanAll()),
+              ::testing::ElementsAreArray(words));
+}
+
+// _____________________________________________________________________________
 TYPED_TEST(CompressedVocabularyF, ScanAllEmptyVocabulary) {
   auto createVocab = TestFixture::createCompressedVocabulary();
   auto vocab = createVocab({});
