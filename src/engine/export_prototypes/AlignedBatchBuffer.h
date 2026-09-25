@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <type_traits>
 
 #include "backports/span.h"
