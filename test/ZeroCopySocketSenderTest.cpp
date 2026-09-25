@@ -117,3 +117,48 @@ TEST(ZeroCopySocketSenderTest, TransmissionOverSocketPair) {
 
   EXPECT_EQ(receivedData, expectedData);
 }
+
+// _____________________________________________________________________________
+TEST(ZeroCopySocketSenderTest, DestructionWithPendingSendsDeliversAll) {
+  // Destroying the sender without `flushAndDrainAll()` must submit the queued
+  // requests and reap all completions (including zero-copy notifications)
+  // instead of hanging or dropping data.
+  int sv[2];
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+  constexpr size_t numChunks = 6;
+  constexpr size_t chunkSize = 512;
+  std::vector<char> expectedData(numChunks * chunkSize);
+  for (size_t i = 0; i < expectedData.size(); ++i) {
+    expectedData[i] = static_cast<char>((i * 11 + 5) % 256);
+  }
+  std::vector<char> receivedData(expectedData.size(), 0);
+  std::thread receiverThread([&]() {
+    size_t totalReceived = 0;
+    while (totalReceived < expectedData.size()) {
+      ssize_t bytes = ::recv(sv[1], receivedData.data() + totalReceived,
+                             expectedData.size() - totalReceived, 0);
+      if (bytes <= 0) {
+        break;
+      }
+      totalReceived += static_cast<size_t>(bytes);
+    }
+  });
+  {
+    ZeroCopySenderConfig config;
+    config.ringEntries = 16;
+    config.numBuffers = 8;
+    config.bufferSizeBytes = 4096;
+    ZeroCopySocketSender sender(config);
+    for (size_t i = 0; i < numChunks; ++i) {
+      uint32_t slot = sender.acquireBuffer();
+      auto span = sender.getSlotSpan(slot);
+      std::memcpy(span.data(), expectedData.data() + (i * chunkSize),
+                  chunkSize);
+      sender.sendChunk(sv[0], slot, chunkSize);
+    }
+  }
+  receiverThread.join();
+  ::close(sv[0]);
+  ::close(sv[1]);
+  EXPECT_EQ(receivedData, expectedData);
+}

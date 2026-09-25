@@ -60,6 +60,14 @@
 
 namespace ad_utility {
 
+// `MSG_NOSIGNAL` makes a closed peer surface as a send error instead of a
+// `SIGPIPE` that terminates the process. Not every platform defines it.
+#ifdef MSG_NOSIGNAL
+inline constexpr int kSendNoSignalFlag = MSG_NOSIGNAL;
+#else
+inline constexpr int kSendNoSignalFlag = 0;
+#endif
+
 // 4KB memory page alignment constant for DMA and zero-copy kernel pinning.
 inline constexpr size_t kZeroCopyPageAlignment = 4096;
 
@@ -322,8 +330,9 @@ class ZeroCopySocketSender {
 
 #ifdef QLEVER_HAS_LIBURING_SEND_ZC
       if (ringInitialized_) {
-        // Pool exhausted: submit pending queue and drain completions
-        io_uring_submit(&ring_);
+        // Pool exhausted: submit pending queue (hard submit errors throw
+        // instead of hanging the drain below) and reap one completion.
+        submit();
         drainOneCqe();
         continue;
       }
@@ -347,11 +356,9 @@ class ZeroCopySocketSender {
     AD_CONTRACT_CHECK(bufferIndex < config_.numBuffers);
     AD_CONTRACT_CHECK(numBytes > 0);
     AD_CONTRACT_CHECK(numBytes <= config_.bufferSizeBytes);
-    // Match the synchronous fallback below: never let a closed peer kill the
-    // exporter with SIGPIPE; report the error through the CQE instead.
-#ifdef MSG_NOSIGNAL
-    flags |= MSG_NOSIGNAL;
-#endif
+    // Never let a closed peer kill the exporter with `SIGPIPE`; report the
+    // error through the CQE (or the synchronous fallback) instead.
+    flags |= kSendNoSignalFlag;
 
 #ifdef QLEVER_HAS_LIBURING_SEND_ZC
     if (!ringInitialized_) {
@@ -361,7 +368,7 @@ class ZeroCopySocketSender {
 
     // If submission ring is full, submit and reap CQEs to free ring entries
     if (numInFlightRequests_ >= config_.ringEntries) {
-      io_uring_submit(&ring_);
+      submit();
       while (numInFlightRequests_ >= config_.ringEntries) {
         drainOneCqe();
       }
@@ -410,7 +417,7 @@ class ZeroCopySocketSender {
 #ifdef QLEVER_HAS_LIBURING_SEND_ZC
     if (ringInitialized_) {
       int ret = io_uring_submit(&ring_);
-      if (ret < 0 && ret != -EAGAIN && ret != -EBUSY) {
+      if (ret < 0 && ret != -EAGAIN && ret != -EBUSY && ret != -EINTR) {
         AD_THROW(absl::StrCat("io_uring_submit failed (errno: ", -ret, ")"));
       }
     }
@@ -519,21 +526,30 @@ class ZeroCopySocketSender {
   void teardown() noexcept {
 #ifdef QLEVER_HAS_LIBURING_SEND_ZC
     if (ringInitialized_) {
-      while (numInFlightRequests_ > 0 || numInFlightBuffers_ > 0) {
+      // Submit prepared but not yet submitted SQEs: their completions would
+      // otherwise never arrive and the wait below would block forever. The
+      // return value is ignored (`noexcept`); submitted requests drain anyway.
+      io_uring_submit(&ring_);
+      // Reap with the same lifecycle as `drainOneCqe` (including the second
+      // notification CQE of `SEND_ZC`), so that no buffer is still pinned by
+      // the kernel when it is unregistered and freed below. Send errors are
+      // irrelevant during teardown and are dropped.
+      while (numInFlightRequests_ > 0) {
         io_uring_cqe* cqe = nullptr;
-        if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+        if (waitCqe(&cqe) < 0) {
+          // The ring cannot deliver completions anymore; nothing more can be
+          // reaped.
           break;
         }
+        const int res = cqe->res;
+        const unsigned int flags = cqe->flags;
+        const uint64_t reqId = io_uring_cqe_get_data64(cqe);
         io_uring_cqe_seen(&ring_, cqe);
-        // Best-effort quiescence: a SEND_ZC request produces two CQEs
-        // (transmission + buffer-release notification), so counting only
-        // requests can leave `numInFlightBuffers_ > 0` forever and hang the
-        // destructor. Drain both counters per CQE instead.
-        if (numInFlightRequests_ > 0) {
-          --numInFlightRequests_;
-        }
-        if (numInFlightBuffers_ > 0) {
-          --numInFlightBuffers_;
+        try {
+          [[maybe_unused]] auto error = handleCqe(res, flags, reqId);
+        } catch (...) {
+          // Inconsistent bookkeeping; stop instead of looping forever.
+          break;
         }
       }
 
@@ -550,10 +566,78 @@ class ZeroCopySocketSender {
 
 #ifdef QLEVER_HAS_LIBURING_SEND_ZC
   // ___________________________________________________________________________
-  // Drain a single CQE and handle zero-copy dual notification lifecycle.
+  // Wait for the next CQE. A signal interrupting the wait (`-EINTR`) is not an
+  // error, so the wait is retried. Return the (negative) result of
+  // `io_uring_wait_cqe` on any other failure.
+  int waitCqe(io_uring_cqe** cqe) {
+    int ret = 0;
+    do {
+      ret = io_uring_wait_cqe(&ring_, cqe);
+    } while (ret == -EINTR);
+    return ret;
+  }
+
+  // ___________________________________________________________________________
+  // Release the buffer slot and the in-flight accounting of `entry`.
+  void finishRequest(InFlightRequest& entry) {
+    bufferPool_.releaseSlot(entry.bufferIndex);
+    AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
+    AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
+    --numInFlightBuffers_;
+    --numInFlightRequests_;
+    entry.active = false;
+    entry.waitingForNotification = false;
+  }
+
+  // ___________________________________________________________________________
+  // Apply the bookkeeping of one CQE and return the error message of a failed
+  // or short transmission (the caller decides whether to throw it).
+  //
+  // Lifecycle: a request produces CQE 1 (the transmission result). If CQE 1
+  // has `IORING_CQE_F_MORE` set (zero-copy send), the kernel still references
+  // the buffer and delivers CQE 2 (`IORING_CQE_F_NOTIF`) once it releases it;
+  // this also holds when CQE 1 reports an error. The slot is recycled only
+  // after the last CQE of the request.
+  std::optional<std::string> handleCqe(int res, unsigned int flags,
+                                       uint64_t reqId) {
+    auto& entry = inFlightTable_[reqId % inFlightTable_.size()];
+    AD_CORRECTNESS_CHECK(entry.active);
+
+    if (entry.waitingForNotification) {
+      // CQE 2: kernel buffer release notification.
+      AD_CORRECTNESS_CHECK((flags & IORING_CQE_F_NOTIF) != 0);
+      finishRequest(entry);
+      return std::nullopt;
+    }
+
+    // CQE 1: transmission result. A short send is an error, the unsent suffix
+    // must never be dropped silently.
+    std::optional<std::string> error;
+    if (res < 0) {
+      error = absl::StrCat("io_uring send error (errno: ", -res, ")");
+    } else if (static_cast<size_t>(res) != entry.expectedBytes) {
+      error = absl::StrCat("io_uring short send (", res, " of ",
+                           entry.expectedBytes, " bytes)");
+    } else {
+      totalBytesSent_ += static_cast<size_t>(res);
+      ++totalPacketsSent_;
+    }
+
+    if ((flags & IORING_CQE_F_MORE) != 0) {
+      entry.waitingForNotification = true;
+    } else {
+      finishRequest(entry);
+    }
+    return error;
+  }
+
+  // ___________________________________________________________________________
+  // Drain a single CQE and handle the zero-copy dual notification lifecycle.
+  // Throws if the CQE reports a failed or short transmission; the bookkeeping
+  // is consistent at that point, so the sender stays usable and drainable.
   void drainOneCqe() {
     io_uring_cqe* cqe = nullptr;
-    int ret = io_uring_wait_cqe(&ring_, &cqe);
+    const int ret = waitCqe(&cqe);
     if (ret < 0) {
       AD_THROW(absl::StrCat("io_uring_wait_cqe failed (errno: ", -ret, ")"));
     }
@@ -563,66 +647,37 @@ class ZeroCopySocketSender {
     const uint64_t reqId = io_uring_cqe_get_data64(cqe);
     io_uring_cqe_seen(&ring_, cqe);
 
-    const size_t tableIdx = reqId % inFlightTable_.size();
-    auto& entry = inFlightTable_[tableIdx];
-    AD_CORRECTNESS_CHECK(entry.active);
-
-    if (entry.waitingForNotification) {
-      // CQE 2: Kernel buffer release notification (IORING_CQE_F_NOTIF).
-      // Buffer can now be safely recycled for subsequent writes.
-      bufferPool_.releaseSlot(entry.bufferIndex);
-      AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
-      AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
-      --numInFlightBuffers_;
-      --numInFlightRequests_;
-      entry.active = false;
-      entry.waitingForNotification = false;
-      return;
-    }
-
-    // CQE 1: Transmission completion result.
-    if (res < 0) {
-      // Send error occurred
-      bufferPool_.releaseSlot(entry.bufferIndex);
-      AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
-      AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
-      --numInFlightBuffers_;
-      --numInFlightRequests_;
-      entry.active = false;
-      AD_THROW(absl::StrCat("io_uring send error (res: ", res,
-                            ", errno: ", -res, ")"));
-    }
-
-    totalBytesSent_ += static_cast<size_t>(res);
-    ++totalPacketsSent_;
-
-    if (flags & IORING_CQE_F_MORE) {
-      // Kernel is holding the buffer for zero-copy DMA; wait for CQE 2 (NOTIF)
-      entry.waitingForNotification = true;
-    } else {
-      // Standard completion or synchronous copy; release buffer immediately
-      bufferPool_.releaseSlot(entry.bufferIndex);
-      AD_CORRECTNESS_CHECK(numInFlightBuffers_ > 0);
-      AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0);
-      --numInFlightBuffers_;
-      --numInFlightRequests_;
-      entry.active = false;
+    if (auto error = handleCqe(res, flags, reqId)) {
+      AD_THROW(error.value());
     }
   }
 #endif
 
-  // Synchronous send fallback.
+  // ___________________________________________________________________________
+  // Synchronous send fallback for a blocking socket. Loops until the whole
+  // chunk is sent (a `send` may transmit only a prefix) and retries when a
+  // signal interrupts it.
   void sendChunkSync(int sockfd, uint32_t bufferIndex, size_t numBytes,
                      int flags) {
     const auto slotSpan = bufferPool_.getSlotSpan(bufferIndex);
-    ssize_t bytesSent =
-        ::send(sockfd, slotSpan.data(), numBytes, flags | MSG_NOSIGNAL);
-    if (bytesSent < 0) {
-      bufferPool_.releaseSlot(bufferIndex);
-      AD_THROW(absl::StrCat("send failed (errno: ", strerror(errno), ")"));
+    size_t sent = 0;
+    while (sent < numBytes) {
+      const ssize_t n = ::send(sockfd, slotSpan.data() + sent, numBytes - sent,
+                               flags | kSendNoSignalFlag);
+      if (n < 0 && errno == EINTR) {
+        continue;
+      }
+      if (n <= 0) {
+        const int savedErrno = errno;
+        bufferPool_.releaseSlot(bufferIndex);
+        AD_THROW(n < 0 ? absl::StrCat(
+                             "send failed (errno: ", strerror(savedErrno), ")")
+                       : std::string{"send made no progress"});
+      }
+      sent += static_cast<size_t>(n);
     }
 
-    totalBytesSent_ += static_cast<size_t>(bytesSent);
+    totalBytesSent_ += numBytes;
     ++totalPacketsSent_;
     bufferPool_.releaseSlot(bufferIndex);
   }
