@@ -529,6 +529,13 @@ namespace detail {
 // Fast-path dispatch for 1-column schemas
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
+  // `Undefined` has format-specific output (empty for CSV/TSV, `UNDEF` for
+  // Turtle/N-Triples) and is rare, so it uses the dynamic serializer instead
+  // of an additional specialization.
+  if (c0 == ColumnType::Undefined) {
+    DynamicRowSerializer dynamicSerializer({c0});
+    return visitor(dynamicSerializer, std::forward<Args>(args)...);
+  }
   switch (c0) {
     case ColumnType::Iri:
       return visitor.template operator()<ColumnType::Iri>(
@@ -559,6 +566,11 @@ decltype(auto) dispatch1Col(ColumnType c0, Visitor&& visitor, Args&&... args) {
 template <typename Visitor, typename... Args>
 decltype(auto) dispatch2Col(ColumnType c0, ColumnType c1, Visitor&& visitor,
                             Args&&... args) {
+  // See `dispatch1Col` for why `Undefined` uses the dynamic serializer.
+  if (c0 == ColumnType::Undefined || c1 == ColumnType::Undefined) {
+    DynamicRowSerializer dynamicSerializer({c0, c1});
+    return visitor(dynamicSerializer, std::forward<Args>(args)...);
+  }
   auto inner = [&](auto t0) {
     switch (c1) {
       case ColumnType::Iri:

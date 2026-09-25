@@ -169,6 +169,39 @@ TEST(MonomorphicSerializersTest, SpanAndTuplePathsUsePerColumnTypes) {
 }
 
 // _____________________________________________________________________________
+// An `Undefined` column keeps its format-specific output (`UNDEF` in Turtle,
+// empty in CSV) when dispatched from a runtime schema.
+TEST(MonomorphicSerializersTest, DispatchKeepsUndefinedSemantics) {
+  const std::vector<ColumnType> schema = {ColumnType::Iri,
+                                          ColumnType::Undefined};
+  const std::array<CellValue, 2> row = {CellValue::makeIri("<http://x>"),
+                                        CellValue{}};
+  auto serializeWith = [&](auto format) {
+    constexpr ExportFormat Format = decltype(format)::value;
+    return captureOutput([&](FastExportStreamFormatter& fmt) {
+      dispatchMonomorphicSerializer(
+          schema,
+          ad_utility::OverloadCallOperator{
+              [&]<ColumnType... Types>() {
+                MonomorphicRowSerializer<Types...>::template serializeRow<
+                    Format>(fmt, ql::span<const CellValue>(row));
+              },
+              [&](DynamicRowSerializer& dynamicSerializer) {
+                dynamicSerializer.serializeRow<Format>(
+                    fmt, ql::span<const CellValue>(row));
+              }});
+    });
+  };
+
+  EXPECT_EQ(serializeWith(
+                std::integral_constant<ExportFormat, ExportFormat::Turtle>{}),
+            "<http://x> UNDEF .\n");
+  EXPECT_EQ(
+      serializeWith(std::integral_constant<ExportFormat, ExportFormat::Csv>{}),
+      "<http://x>,\n");
+}
+
+// _____________________________________________________________________________
 // Writing past the end of a caller-provided span throws instead of
 // terminating (the write functions are not `noexcept`).
 TEST(MonomorphicSerializersTest, FixedSpanFormatterOverflowThrows) {
