@@ -64,6 +64,8 @@ class PerfCounter {
     (void)config;
 #endif
   }
+  PerfCounter(const PerfCounter&) = delete;
+  PerfCounter& operator=(const PerfCounter&) = delete;
 
   ~PerfCounter() {
 #if defined(__linux__)
@@ -261,7 +263,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
     StreamingBufferWriter writer(
-        std::span<char>{destBuffer.data(), destBuffer.size()});
+        ql::span<char>{destBuffer.data(), destBuffer.size()});
 
     // Stream 256 MB buffer in chunks using non-temporal streaming stores
     // (bypasses CPU caches)

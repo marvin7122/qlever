@@ -26,7 +26,6 @@
 #include <iostream>
 #include <memory>
 #include <random>
-#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -35,7 +34,9 @@
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/Log.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 #include "util/ZeroCopySocketSender.h"
+#include "util/jthread.h"
 
 // Optional inclusion of QLever benchmark infrastructure
 #if __has_include("../benchmark/infrastructure/Benchmark.h")
@@ -173,15 +174,21 @@ class ZeroCopySenderBenchmarkRunner {
     const size_t numChunks = totalBytes_ / chunkSize_;
 
     // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    ad_utility::JThread receiverThread(
+        [recvFd = conn.recvFd(), total = totalBytes_]() {
+          std::vector<char> buf(64 * 1024);
+          size_t totalReceived = 0;
+          while (totalReceived < total) {
+            ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
+            if (n <= 0) break;
+            totalReceived += static_cast<size_t>(n);
+          }
+        });
+    // On an exception below, close the sending end first so that the receiver
+    // sees EOF and the destructor of `receiverThread` can join it.
+    auto closeSenderOnExit =
+        ad_utility::makeOnDestructionDontThrowDuringStackUnwinding(
+            [&conn]() { conn.closeSender(); });
 
     CpuTimeTimer timer;
     size_t bytesSent = 0;
@@ -223,15 +230,21 @@ class ZeroCopySenderBenchmarkRunner {
     ZeroCopySocketSender sender(config);
 
     // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    ad_utility::JThread receiverThread(
+        [recvFd = conn.recvFd(), total = totalBytes_]() {
+          std::vector<char> buf(64 * 1024);
+          size_t totalReceived = 0;
+          while (totalReceived < total) {
+            ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
+            if (n <= 0) break;
+            totalReceived += static_cast<size_t>(n);
+          }
+        });
+    // On an exception below, close the sending end first so that the receiver
+    // sees EOF and the destructor of `receiverThread` can join it.
+    auto closeSenderOnExit =
+        ad_utility::makeOnDestructionDontThrowDuringStackUnwinding(
+            [&conn]() { conn.closeSender(); });
 
     CpuTimeTimer timer;
 
@@ -266,15 +279,21 @@ class ZeroCopySenderBenchmarkRunner {
     ZeroCopySocketSender sender(config);
 
     // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    ad_utility::JThread receiverThread(
+        [recvFd = conn.recvFd(), total = totalBytes_]() {
+          std::vector<char> buf(64 * 1024);
+          size_t totalReceived = 0;
+          while (totalReceived < total) {
+            ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
+            if (n <= 0) break;
+            totalReceived += static_cast<size_t>(n);
+          }
+        });
+    // On an exception below, close the sending end first so that the receiver
+    // sees EOF and the destructor of `receiverThread` can join it.
+    auto closeSenderOnExit =
+        ad_utility::makeOnDestructionDontThrowDuringStackUnwinding(
+            [&conn]() { conn.closeSender(); });
 
     CpuTimeTimer timer;
 

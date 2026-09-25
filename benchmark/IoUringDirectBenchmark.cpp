@@ -21,7 +21,6 @@
 #include <memory>
 #include <numeric>
 #include <random>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29,6 +28,7 @@
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/Log.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 #include "util/RegisteredIoUringReader.h"
 
 // Optional inclusion of QLever benchmark infrastructure
@@ -66,6 +66,9 @@ class SimulatedVocabularyFile {
       AD_THROW("mkstemps failed to create temporary vocabulary file");
     }
     filePath_ = tempPath;
+    // Close the descriptor on every exit path, including exceptions.
+    auto closeFd = ad_utility::makeOnDestructionDontThrowDuringStackUnwinding(
+        [fd]() { ::close(fd); });
 
     std::cout << "Generating 1GB simulated vocabulary data in: " << filePath_
               << " ... " << std::flush;
@@ -74,9 +77,10 @@ class SimulatedVocabularyFile {
     void* writeBuf = nullptr;
     constexpr size_t writeChunkSize = 1024 * 1024;  // 1 MB chunks
     if (posix_memalign(&writeBuf, kDirectIoAlignment, writeChunkSize) != 0) {
-      ::close(fd);
       AD_THROW("posix_memalign failed");
     }
+    std::unique_ptr<void, decltype(&std::free)> writeBufOwner{writeBuf,
+                                                              &std::free};
 
     auto* bytePtr = static_cast<char*>(writeBuf);
     std::mt19937_64 rng(42);
@@ -92,8 +96,6 @@ class SimulatedVocabularyFile {
 
       ssize_t written = ::write(fd, writeBuf, writeChunkSize);
       if (written != static_cast<ssize_t>(writeChunkSize)) {
-        std::free(writeBuf);
-        ::close(fd);
         AD_THROW("Failed to write full chunk to simulated vocabulary file");
       }
       bytesWritten += writeChunkSize;
@@ -105,8 +107,6 @@ class SimulatedVocabularyFile {
 #else
     ::fsync(fd);
 #endif
-    ::close(fd);
-    std::free(writeBuf);
     isCreated_ = true;
     std::cout << "Done (1,073,741,824 bytes written)." << std::endl;
   }

@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "backports/span.h"
 #include "util/StreamingBufferWriter.h"
 
 using ad_utility::StreamingBufferWriter;
@@ -25,7 +26,7 @@ TEST(StreamingBufferWriterTest, BasicStreamingWriteAndFlush) {
   std::vector<char> rawBuffer(bufferSize, 0);
 
   StreamingBufferWriter writer(
-      std::span<char>{rawBuffer.data(), rawBuffer.size()});
+      ql::span<char>{rawBuffer.data(), rawBuffer.size()});
   EXPECT_EQ(writer.capacity(), bufferSize);
   EXPECT_EQ(writer.bytesWritten(), 0);
   EXPECT_TRUE(writer.empty());
@@ -86,7 +87,7 @@ TEST(StreamingBufferWriterTest, VariousSizesAndUnalignedOffsets) {
       std::fill(destMemory.begin(), destMemory.end(), 0);
 
       StreamingBufferWriter writer(
-          std::span<char>{destMemory.data() + offset, len});
+          ql::span<char>{destMemory.data() + offset, len});
       writer.write(srcMemory.data(), len);
       writer.flush();
 
@@ -114,7 +115,7 @@ TEST(StreamingBufferWriterTest, StaticStreamCopy) {
 // _____________________________________________________________________________
 TEST(StreamingBufferWriterTest, BoundsAndContractChecks) {
   std::vector<char> buffer(64, 0);
-  StreamingBufferWriter writer(std::span<char>{buffer.data(), buffer.size()});
+  StreamingBufferWriter writer(ql::span<char>{buffer.data(), buffer.size()});
 
   std::string valid32(32, 'A');
   writer.write(valid32);
