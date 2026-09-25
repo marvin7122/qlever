@@ -47,34 +47,33 @@ struct AllocationTracker {
 // Global new/delete instrumentation for allocation counting during benchmark
 // runs. The malloc/free pairing below is intentional and matched, but GCC
 // cannot see across the replaceable global operators and reports a false
-// positive -Wmismatched-new-delete at the `std::free` calls. A local
-// `#pragma GCC diagnostic ignored "-Wmismatched-new-delete"` does not cover
-// this warning (observed on GCC 11 with -Werror), so the sized-deallocation
-// overloads are deliberately omitted instead: every deallocation falls
-// through to the unsized overloads below, which perform the same
-// `malloc`/`free` pairing without triggering the warning.
-// The sanitizer runtimes provide their own global `operator new` and
-// `operator delete`, so the replacements are disabled under sanitizers, where
-// they would otherwise fail to link with "multiple definition" errors. The
-// allocation counts are then only reported as benchmark metadata (zero under
-// sanitizers), which no test depends on.
-// `__has_feature` only exists on Clang (and recent GCC); on other compilers
-// the identifier would not expand and invoking it inside `#if` fails with
-// "missing binary operator before token '('" (observed on GCC with
-// `-U__has_feature`, i.e. GCC 11/13 in CI). Probe it only where it exists.
+// positive -Wmismatched-new-delete. GCC raises it while compiling the
+// allocation call sites (via inlining), so a pragma around the `operator
+// delete` definitions alone does not cover it (observed on GCC 11 with
+// -Werror); the warning is therefore suppressed file-wide (GCC only). The
+// sized-deallocation overloads must stay: GCC's -Wsized-deallocation (part of
+// -Wextra) rejects an unsized `operator delete` without its sized partner.
+//
+// Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
+// already provide these replaceable allocation functions, so defining them
+// here causes multiple-definition link errors. Under sanitizers the
+// `heap-allocations` metadata below reads 0. Clang signals sanitizers via
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; `__has_feature` must
+// only be invoked where it is defined, so the checks are nested.
 #if defined(__has_feature)
-#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
-    __has_feature(memory_sanitizer) ||                                      \
-    __has_feature(undefined_behavior_sanitizer)
-#define QLEVER_SERIALIZER_BENCHMARK_SANITIZED 1
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
 #endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
 #endif
-#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) &&        \
-    !defined(__SANITIZE_MEMORY__) && !defined(__SANITIZE_UNDEFINED__) &&      \
-    !defined(QLEVER_SERIALIZER_BENCHMARK_SANITIZED)
-#define QLEVER_SERIALIZER_BENCHMARK_COUNT_ALLOCATIONS 1
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 #endif
-#ifdef QLEVER_SERIALIZER_BENCHMARK_COUNT_ALLOCATIONS
+
+#ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -89,6 +88,8 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
+void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+
 void* operator new[](std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -102,7 +103,9 @@ void* operator new[](std::size_t size) {
 }
 
 void operator delete[](void* ptr) noexcept { std::free(ptr); }
-#endif  // QLEVER_SERIALIZER_BENCHMARK_COUNT_ALLOCATIONS
+
+void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+#endif  // SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 
 namespace ad_benchmark {
 namespace {
@@ -293,3 +296,7 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
