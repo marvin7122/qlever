@@ -185,12 +185,49 @@ class JitBytecodeProgram {
   // Strictest rule by default, so a lowering site that forgets to set the
   // rule over-falls-back (performance) instead of diverging (correctness).
   CellRule cellRule_ = CellRule::OrderedComparison;
+  // Stack depth after `code_`, its maximum, and whether some instruction
+  // popped more values than the stack held (see `fitsInterpreterStack`).
+  size_t depth_ = 0;
+  size_t maxDepth_ = 0;
+  bool stackUnderflow_ = false;
 
  public:
   void setCellRule(CellRule rule) noexcept { cellRule_ = rule; }
   [[nodiscard]] CellRule cellRule() const noexcept { return cellRule_; }
   void addInstruction(OpCode op, int64_t arg = 0) {
     code_.push_back({op, arg});
+    const auto [pops, pushes] = stackEffect(op);
+    if (depth_ < pops) {
+      stackUnderflow_ = true;
+      return;
+    }
+    depth_ = depth_ - pops + pushes;
+    maxDepth_ = std::max(maxDepth_, depth_);
+  }
+
+  // True iff every instruction finds its operands on the stack and the stack
+  // never holds more than `MAX_STACK_SLOTS` values, so the interpreter
+  // kernels with their fixed-size stacks can execute the program.
+  [[nodiscard]] bool fitsInterpreterStack() const noexcept {
+    return !stackUnderflow_ && maxDepth_ <= MAX_STACK_SLOTS;
+  }
+
+  // The number of values `op` pops from and pushes onto the stack.
+  static constexpr std::pair<size_t, size_t> stackEffect(OpCode op) {
+    switch (op) {
+      case OpCode::LOAD_COL_INT:
+      case OpCode::LOAD_CONST_INT:
+      case OpCode::LOAD_COL_ID:
+      case OpCode::LOAD_COL_DATE:
+        return {0, 1};
+      case OpCode::IN_ID_RANGE:
+      case OpCode::YEAR_DATE:
+        return {1, 1};
+      case OpCode::RET:
+        return {0, 0};
+      default:
+        return {2, 1};
+    }
   }
 
   void addReferencedColumn(ColumnIndex col) {
@@ -218,8 +255,8 @@ class JitBytecodeProgram {
   }
 
   // Execute bytecode program over a single row's column inputs
-  [[nodiscard]] int64_t execute(
-      ql::span<const int64_t> rowColumns) const noexcept {
+  [[nodiscard]] int64_t execute(ql::span<const int64_t> rowColumns) const {
+    AD_CONTRACT_CHECK(fitsInterpreterStack());
     int64_t stack[MAX_STACK_SLOTS];
     size_t sp = 0;
 
@@ -354,8 +391,8 @@ class JitExpressionBytecodeVm {
   // of contiguous columnar memory.
   static void executeVectorMorsel(const JitBytecodeProgram& program,
                                   const int64_t* const* inputColumns,
-                                  size_t numRows,
-                                  uint64_t* outFilterMask) noexcept {
+                                  size_t numRows, uint64_t* outFilterMask) {
+    AD_CONTRACT_CHECK(program.fitsInterpreterStack());
     constexpr size_t MORSEL_SIZE = 64;
     alignas(64) int64_t stack[MAX_STACK_SLOTS][MORSEL_SIZE];
     alignas(64) uint64_t validity[MAX_STACK_SLOTS];
@@ -764,6 +801,7 @@ class JitExpressionBytecodeVm {
       const JitBytecodeProgram& program, const Table& inputTable,
       IdTableStatic<WIDTH>& resultTable,
       ad_utility::SharedCancellationHandle cancellationHandle = nullptr) {
+    AD_CONTRACT_CHECK(program.fitsInterpreterStack());
     size_t numRows = inputTable.size();
     if (numRows == 0) {
       return;
@@ -1484,6 +1522,7 @@ class JitExpressionBytecodeVm {
       const JitBytecodeProgram& program, const Table& inputTable,
       size_t inputBegin, size_t numRows, Id* output,
       ad_utility::SharedCancellationHandle cancellationHandle = nullptr) {
+    AD_CONTRACT_CHECK(program.fitsInterpreterStack());
     if (numRows == 0) {
       return;
     }

@@ -1298,3 +1298,39 @@ TEST_F(JitExpressionBytecodeVmTest, WrappingIntegerArithmetic) {
   EXPECT_EQ(modIdInt(7, -2), 1);
   EXPECT_EQ(modIdInt(std::numeric_limits<int64_t>::min(), -1), 0);
 }
+
+// _____________________________________________________________________________
+TEST_F(JitExpressionBytecodeVmTest, ProgramsMustFitTheInterpreterStack) {
+  const std::vector<int64_t> noColumns;
+  JitBytecodeProgram fits;
+  for (size_t i = 0; i < MAX_STACK_SLOTS; ++i) {
+    fits.addInstruction(OpCode::LOAD_CONST_INT, 1);
+  }
+  for (size_t i = 1; i < MAX_STACK_SLOTS; ++i) {
+    fits.addInstruction(OpCode::ADD_INT);
+  }
+  fits.addInstruction(OpCode::RET);
+  EXPECT_TRUE(fits.fitsInterpreterStack());
+  EXPECT_EQ(fits.execute(noColumns), static_cast<int64_t>(MAX_STACK_SLOTS));
+
+  // One value more than the stack holds.
+  JitBytecodeProgram tooDeep = fits;
+  tooDeep.addInstruction(OpCode::LOAD_CONST_INT, 1);
+  for (size_t i = 0; i < MAX_STACK_SLOTS; ++i) {
+    tooDeep.addInstruction(OpCode::LOAD_CONST_INT, 1);
+  }
+  EXPECT_FALSE(tooDeep.fitsInterpreterStack());
+  EXPECT_ANY_THROW((void)tooDeep.execute(noColumns));
+
+  // A binary operation without operands.
+  JitBytecodeProgram underflow;
+  underflow.addInstruction(OpCode::LOAD_CONST_INT, 1);
+  underflow.addInstruction(OpCode::ADD_INT);
+  underflow.addInstruction(OpCode::RET);
+  EXPECT_FALSE(underflow.fitsInterpreterStack());
+  EXPECT_ANY_THROW((void)underflow.execute(noColumns));
+  IdTable input = makeIdTableFromVector({{1}}, ad_utility::testing::IntId);
+  IdTableStatic<1> result{ad_utility::testing::makeAllocator()};
+  EXPECT_ANY_THROW(
+      JitExpressionBytecodeVm::executeFilter<1>(underflow, input, result));
+}
