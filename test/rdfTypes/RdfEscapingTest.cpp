@@ -42,35 +42,92 @@ TEST(RdfEscapingTest, escapeForCsv) {
   ASSERT_EQ(escapeForCsv("\""), "\"\"\"\"");
   ASSERT_EQ(escapeForCsv("a\"b"), "\"a\"\"b\"");
   ASSERT_EQ(escapeForCsv("a\"\"c"), "\"a\"\"\"\"c\"");
+  ASSERT_EQ(escapeForCsv(","), "\",\"");
+  ASSERT_EQ(escapeForCsv("\r"), "\"\r\"");
+  ASSERT_EQ(escapeForCsv("\"\"\""), "\"\"\"\"\"\"\"\"");
 }
 
 // ___________________________________________________________________________
 TEST(RdfEscapingTest, escapeForTsv) {
   ASSERT_EQ(escapeForTsv("abc"), "abc");
   ASSERT_EQ(escapeForTsv("a\nb\tc"), "a\\nb c");
+  ASSERT_EQ(escapeForTsv("a\rb"), "a\rb");
+  ASSERT_EQ(escapeForTsv("\n\n\n"), "\\n\\n\\n");
+}
+
+namespace {
+// Return the result of `appendFunction` applied to a buffer that already
+// contains `prefix:`, so that each check also verifies that the existing
+// content of the buffer is kept.
+std::string appendToPrefix(void (*appendFunction)(std::string&,
+                                                  std::string_view),
+                           std::string_view input) {
+  std::string out{"prefix:"};
+  appendFunction(out, input);
+  return out;
+}
+}  // namespace
+
+// ___________________________________________________________________________
+TEST(RdfEscapingTest, appendEscapedForCsv) {
+  const auto csv = [](std::string_view input) {
+    return appendToPrefix(appendEscapedForCsv, input);
+  };
+  // Fields without a special character are appended unchanged.
+  EXPECT_EQ(csv(""), "prefix:");
+  EXPECT_EQ(csv("abc"), "prefix:abc");
+  EXPECT_EQ(csv("a\tb"), "prefix:a\tb");
+  // Each of `,`, `\r`, `\n` and `"` on its own triggers the quoting.
+  EXPECT_EQ(csv(","), "prefix:\",\"");
+  EXPECT_EQ(csv("a\rb"), "prefix:\"a\rb\"");
+  EXPECT_EQ(csv("a\nb"), "prefix:\"a\nb\"");
+  EXPECT_EQ(csv("a\nb\rc,d"), "prefix:\"a\nb\rc,d\"");
+  // Quotes are doubled, including adjacent quotes and quotes at the borders.
+  EXPECT_EQ(csv("\""), "prefix:\"\"\"\"");
+  EXPECT_EQ(csv("a\"\"c"), "prefix:\"a\"\"\"\"c\"");
+  EXPECT_EQ(csv("\"a\""), "prefix:\"\"\"a\"\"\"");
+
+  // Consecutive calls append to the same buffer.
+  std::string out;
+  appendEscapedForCsv(out, "a,b");
+  appendEscapedForCsv(out, "c");
+  EXPECT_EQ(out, "\"a,b\"c");
+
+  // An `input` that points into `out` violates the contract.
+  AD_EXPECT_THROW_WITH_MESSAGE(appendEscapedForCsv(out, out),
+                               ::testing::HasSubstr("must not point into"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      appendEscapedForCsv(out, std::string_view{out}.substr(3)),
+      ::testing::HasSubstr("must not point into"));
+  EXPECT_EQ(out, "\"a,b\"c");
 }
 
 // ___________________________________________________________________________
-TEST(RdfEscapingTest, appendEscapedForCsvTsv) {
-  // The append variants escape like `escapeForCsv` / `escapeForTsv` and keep
-  // what is already in the caller's buffer.
-  auto csv = [](std::string_view input) {
-    std::string out{"prefix:"};
-    appendEscapedForCsv(out, input);
-    return out;
+TEST(RdfEscapingTest, appendEscapedForTsv) {
+  const auto tsv = [](std::string_view input) {
+    return appendToPrefix(appendEscapedForTsv, input);
   };
-  auto tsv = [](std::string_view input) {
-    std::string out{"prefix:"};
-    appendEscapedForTsv(out, input);
-    return out;
-  };
-  EXPECT_EQ(csv("abc"), "prefix:abc");
-  EXPECT_EQ(csv("a\nb\rc,d"), "prefix:\"a\nb\rc,d\"");
-  EXPECT_EQ(csv("\""), "prefix:\"\"\"\"");
-  EXPECT_EQ(csv("a\"\"c"), "prefix:\"a\"\"\"\"c\"");
+  // Fields without a tab or newline are appended unchanged, in particular
+  // `\r`, `,` and `"`, which are only special in CSV.
+  EXPECT_EQ(tsv(""), "prefix:");
   EXPECT_EQ(tsv("abc"), "prefix:abc");
+  EXPECT_EQ(tsv("a\rb,\""), "prefix:a\rb,\"");
+  // Tabs become spaces and newlines become the two characters `\` and `n`.
+  EXPECT_EQ(tsv("\t"), "prefix: ");
+  EXPECT_EQ(tsv("\n"), "prefix:\\n");
   EXPECT_EQ(tsv("a\nb\tc"), "prefix:a\\nb c");
   EXPECT_EQ(tsv("\t\n"), "prefix: \\n");
+
+  // Consecutive calls append to the same buffer.
+  std::string out;
+  appendEscapedForTsv(out, "a\tb");
+  appendEscapedForTsv(out, "c");
+  EXPECT_EQ(out, "a bc");
+
+  // An `input` that points into `out` violates the contract.
+  AD_EXPECT_THROW_WITH_MESSAGE(appendEscapedForTsv(out, out),
+                               ::testing::HasSubstr("must not point into"));
+  EXPECT_EQ(out, "a bc");
 }
 
 // ___________________________________________________________________________
