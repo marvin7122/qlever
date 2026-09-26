@@ -16,6 +16,7 @@
 #include <array>
 #include <charconv>
 #include <ctre-unicode.hpp>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -366,10 +367,21 @@ size_t escapingOverhead(std::string_view input,
   return overhead;
 }
 
+// __________________________________________________________________________
+// Throw if `input` points into the characters of `out`. Appending to `out` may
+// reallocate its buffer, which would invalidate such an `input`.
+void checkNoOverlap(const std::string& out, std::string_view input) {
+  std::less<const char*> isBefore;
+  AD_CONTRACT_CHECK(input.empty() || isBefore(input.data(), out.data()) ||
+                        !isBefore(input.data(), out.data() + out.size()),
+                    "The `input` of `appendEscapedForCsv` and "
+                    "`appendEscapedForTsv` must not point into `out`.");
+}
 }  // namespace
 
 // __________________________________________________________________________
 void appendEscapedForCsv(std::string& out, std::string_view input) {
+  checkNoOverlap(out, input);
   if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
     out.append(input);
     return;
@@ -392,6 +404,7 @@ std::string escapeForCsv(std::string input) {
 
 // __________________________________________________________________________
 void appendEscapedForTsv(std::string& out, std::string_view input) {
+  checkNoOverlap(out, input);
   appendWithCharReplacements(out, input, tsvReplacements);
 }
 

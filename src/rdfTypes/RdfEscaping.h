@@ -13,6 +13,7 @@
 
 #include <sstream>
 #include <string>
+#include <string_view>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "global/TypedIndex.h"
@@ -151,10 +152,19 @@ std::string escapeForCsv(std::string input);
  */
 std::string escapeForTsv(std::string input);
 
-// Append `input`, escaped like `escapeForCsv` / `escapeForTsv`, to `out`
-// without allocating a temporary per field. The existing content of `out` is
-// preserved.
+// Append `input` to `out` with the same escaping as `escapeForCsv`: if `input`
+// contains `"`, `,`, `\r` or `\n`, wrap it in quotes and double each `"`,
+// otherwise append it unchanged. Keep the existing content of `out`. Unlike
+// `escapeForCsv`, do not create a separate string for the escaped field. The
+// `input` must not point into `out`, since appending may reallocate `out`; this
+// is checked.
 void appendEscapedForCsv(std::string& out, std::string_view input);
+
+// Append `input` to `out` with the same escaping as `escapeForTsv`: replace
+// each tab by a space and each newline by the two characters `\` and `n`. Keep
+// the existing content of `out`. Unlike `escapeForTsv`, do not create a
+// separate string for the escaped field. The `input` must not point into `out`,
+// since appending may reallocate `out`; this is checked.
 void appendEscapedForTsv(std::string& out, std::string_view input);
 
 // Escape a string to be compatible with XML.
