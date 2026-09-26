@@ -2268,3 +2268,30 @@ INSTANTIATE_TEST_SUITE_P(
         LruWindowParam{5, "abcde"},
         // window 10: all duplicates are caught, 5 unique triples remain.
         LruWindowParam{10, "abcde"}));
+
+// Toggling `use-simd-escape-classifier-csv-tsv` (PR #85) switches the CSV/TSV
+// escape function between `RdfEscaping` and `SimdEscapeClassifier`, but must
+// not change the exported bytes.
+TEST(ExportQueryExecutionTrees, SimdEscapeClassifierCsvTsvProducesSameBytes) {
+  // A literal that needs escaping in both CSV (comma, quote) and TSV (tab).
+  const std::string kg = R"(<a> <b> "needs\tescaping, and \"quotes\"" .)";
+  const std::string query = "SELECT * WHERE { ?s ?p ?o }";
+  using ad_utility::MediaType;
+
+  for (MediaType format : {MediaType::csv, MediaType::tsv}) {
+    auto legacy = [&] {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::useSimdEscapeClassifierForCsvTsv_>(false);
+      return runQueryStreamableResult(kg, query, format);
+    }();
+    auto simd = [&] {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::useSimdEscapeClassifierForCsvTsv_>(true);
+      return runQueryStreamableResult(kg, query, format);
+    }();
+    EXPECT_EQ(legacy, simd);
+    // Sanity check: the literal's special character was actually escaped
+    // (the test would pass vacuously if both paths did nothing).
+    EXPECT_NE(legacy.find("needs"), std::string::npos);
+  }
+}
