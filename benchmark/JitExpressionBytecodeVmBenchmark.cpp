@@ -8,6 +8,7 @@
 
 #include <asmjit/x86.h>
 
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <memory>
@@ -82,7 +83,7 @@ class JitExpressionBytecodeVmBenchmark : public BenchmarkInterface {
       col1[i] = static_cast<int64_t>((i * 3) % 100);
     }
 
-    int64_t row[2];
+    std::array<int64_t, 2> row{};
 
     // 1. BASELINE: Virtual AST Tree Interpretation
     auto ast = std::make_unique<GtNode>(
@@ -97,7 +98,7 @@ class JitExpressionBytecodeVmBenchmark : public BenchmarkInterface {
     for (size_t i = 0; i < NUM_ROWS; ++i) {
       row[0] = col0[i];
       row[1] = col1[i];
-      astMatches += ast->evaluate(row);
+      astMatches += ast->evaluate(row.data());
     }
     auto b1 = std::chrono::high_resolution_clock::now();
     double astMs = std::chrono::duration<double, std::milli>(b1 - b0).count();
