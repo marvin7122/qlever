@@ -37,6 +37,8 @@ struct BatchEvaluationResult {
   // set of evaluated columns may be sparse: some variables in the WHERE-clause
   // (in the `IdTable`) may not appear in the CONSTRUCT template and are thus
   // not evaluated.
+  // TODO<marvin7122> Consider using a `vector` here for better cache
+  // locality, because the same variables are looked at each time.
   ad_utility::HashMap<ColumnIndex, EvaluatedVariableValues> variablesByColumn_;
   size_t numRows_ = 0;
 
