@@ -314,16 +314,16 @@ TEST(Filter, getRunLengthEvaluationColumn) {
 
   auto cleanup = setRuntimeParameterForTest<
       &RuntimeParameters::filterRunLengthEvaluation_>(true);
-  auto column = makeFilter(ltSprql(y, I(5))).getRunLengthEvaluationColumn();
-  ASSERT_TRUE(column.has_value());
-  EXPECT_EQ(column->first, y);
-  EXPECT_EQ(column->second.columnIndex_, 1u);
+  auto columnY = makeFilter(ltSprql(y, I(5))).getRunLengthEvaluationColumn();
+  ASSERT_TRUE(columnY.has_value());
+  EXPECT_EQ(columnY->first, y);
+  EXPECT_EQ(columnY->second.columnIndex_, 1u);
   // A variable that occurs twice.
-  column = makeFilter(andSprqlExpr(ltSprql(x, I(5)), gtSprql(x, I(1))))
-               .getRunLengthEvaluationColumn();
-  ASSERT_TRUE(column.has_value());
-  EXPECT_EQ(column->first, x);
-  EXPECT_EQ(column->second.columnIndex_, 0u);
+  auto columnX = makeFilter(andSprqlExpr(ltSprql(x, I(5)), gtSprql(x, I(1))))
+                     .getRunLengthEvaluationColumn();
+  ASSERT_TRUE(columnX.has_value());
+  EXPECT_EQ(columnX->first, x);
+  EXPECT_EQ(columnX->second.columnIndex_, 0u);
 
   // Two variables.
   EXPECT_EQ(makeFilter(andSprqlExpr(ltSprql(x, I(5)), gtSprql(y, I(1))))
@@ -392,7 +392,7 @@ TEST(Filter, runLengthEvaluationGivesSameResult) {
                                      : ComputationMode::FULLY_MATERIALIZED);
     IdTable table{2, ad_utility::makeUnlimitedAllocator<Id>()};
     if (result->isFullyMaterialized()) {
-      table = result->idTable().clone();
+      table.insertAtEnd(result->idTableView());
     } else {
       for (auto& pair : result->idTables()) {
         table.insertAtEnd(pair.idTable_);
