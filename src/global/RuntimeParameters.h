@@ -250,6 +250,11 @@ struct RuntimeParameters {
   // SELECTs with at most three columns take this path.
   Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
 
+  // If set, the Export V2 SELECT CSV/TSV path serializes on a dedicated
+  // producer thread that runs at most two chunks ahead of the HTTP consumer
+  // (`AsyncChunkProducer`). Output bytes are identical.
+  Bool exportV2AsyncPipeline_{false, "export-v2-async-pipeline"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
