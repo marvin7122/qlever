@@ -34,9 +34,7 @@ def _write(tmpdir: str, name: str, content: str) -> str:
 class EquivalenceOracleTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-
-    def tearDown(self) -> None:
-        self._tmp.cleanup()
+        self.addCleanup(self._tmp.cleanup)
 
     # --- RDF graph equivalence (Turtle) ---
     def test_turtle_isomorphic_reordered_and_bnodes(self):
