@@ -244,6 +244,14 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If set, the export vocabulary-lookup batch (`resolveVocabIndexIds` in
+  // `ExportIds.h`) stages its `VocabIndex` indices in a cache-line aligned
+  // `AlignedBatchBuffer` instead of a plain `std::vector<size_t>` before
+  // calling `lookupBatch`. Off by default: no measured effect on export
+  // throughput has been established (see PR #92 / `AlignedBatchBuffer.h`).
+  Bool useAlignedVocabBatchLookupBuffer_{
+      false, "use-aligned-vocab-batch-lookup-buffer"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

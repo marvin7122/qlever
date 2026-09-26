@@ -21,8 +21,10 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
+#include "engine/export_prototypes/AlignedBatchBuffer.h"
 #include "global/Constants.h"
 #include "global/Id.h"
+#include "global/RuntimeParameters.h"
 #include "index/Index.h"
 #include "index/IndexImpl.h"
 #include "index/LocalVocab.h"
@@ -284,14 +286,31 @@ void resolveVocabIndexIds(
   // NOTE: The batch is deliberately not sorted by vocabulary position: the
   // io_uring backend reorders the reads anyway, and only the synchronous
   // fallback could profit from sequential file access.
-  auto rawIndices = ::ranges::to_vector(
-      positions | ql::views::transform([&ids](size_t i) {
-        return static_cast<size_t>(ids[i].getVocabIndex().get());
-      }));
-  ArenaVocabBatchBuilder builder(rawIndices.size(),
-                                 index.getImpl().allocator());
-  auto vocabStrings =
-      index.getImpl().getVocab().lookupBatch(rawIndices, builder);
+  //
+  // The raw indices are normally staged in a plain `std::vector<size_t>`. If
+  // `use-aligned-vocab-batch-lookup-buffer` is set, they are instead staged
+  // in a 64-byte cache-line aligned `AlignedBatchBuffer` (PR #92); this is
+  // off by default because no measurable effect on export throughput has
+  // been established yet.
+  ArenaVocabBatchBuilder builder(positions.size(), index.getImpl().allocator());
+  VocabBatchLookupResult vocabStrings = [&]() -> VocabBatchLookupResult {
+    if (getRuntimeParameter<
+            &RuntimeParameters::useAlignedVocabBatchLookupBuffer_>()) {
+      qlever::export_pipeline::AlignedBatchBuffer<size_t> alignedIndices(
+          positions.size());
+      for (size_t i : positions) {
+        alignedIndices.push_back(
+            static_cast<size_t>(ids[i].getVocabIndex().get()));
+      }
+      return index.getImpl().getVocab().lookupBatch(alignedIndices.span(),
+                                                    builder);
+    }
+    auto rawIndices = ::ranges::to_vector(
+        positions | ql::views::transform([&ids](size_t i) {
+          return static_cast<size_t>(ids[i].getVocabIndex().get());
+        }));
+    return index.getImpl().getVocab().lookupBatch(rawIndices, builder);
+  }();
 
   // `vocabStrings` is in the same order as `positions`, so zip scatters each
   // looked-up string back to the position it came from.
