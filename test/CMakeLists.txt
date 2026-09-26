@@ -266,6 +266,8 @@ endif ()
 
 addLinkAndDiscoverTest(IdTableTest qlever_util)
 
+addLinkAndDiscoverTest(AdaptiveChunkSizerTest qlever_util)
+
 addLinkAndDiscoverTest(TransitivePathTest engine)
 
 addLinkAndDiscoverTest(TransitivePathGraphSearchTest engine)

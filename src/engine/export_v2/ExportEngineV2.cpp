@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "backports/algorithm.h"
+#include "engine/AdaptiveChunkSizer.h"
 #include "engine/Bind.h"
 #include "engine/CartesianProductJoin.h"
 #include "engine/ExportQueryExecutionTrees.h"
@@ -360,11 +361,21 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   result->logResultSize();
 
   constexpr uint64_t rowsPerMorsel = 8192;
+  const bool adaptiveChunkSizing =
+      getRuntimeParameter<&RuntimeParameters::exportV2AdaptiveChunkSizing_>();
+  // Only constructed (and only affects morsel sizes) when the flag is on;
+  // with the flag off every `rowsPerMorselFn` call below returns the same
+  // fixed `rowsPerMorsel`, i.e. byte-for-byte the pre-existing behavior.
+  qlever::AdaptiveChunkSizer adaptiveSizer;
+  auto rowsPerMorselFn = [&]() -> uint64_t {
+    return adaptiveChunkSizing ? adaptiveSizer.targetRowCount() : rowsPerMorsel;
+  };
   if (scheduler == nullptr) {
     // No session exists here, so nothing can revoke: serialize each plan
     // directly without checkpoints.
-    for (auto&& plan : planExportMorsels(
-             resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
+    for (auto&& plan :
+         planExportMorsels(resultBlocks(result), parsedQuery._limitOffset,
+                           std::function<uint64_t()>{rowsPerMorselFn})) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
       for (const auto& segment : plan.segments_) {
@@ -373,6 +384,9 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
             segment.block_->localVocab_, format, builder, index,
             columns.indices_, segment.begin_, segment.end_,
             columns.lattice_.columns_, monomorphicRows);
+      }
+      if (adaptiveChunkSizing) {
+        adaptiveSizer.recordChunk(builder.size(), plan.numRows_);
       }
       if (!builder.empty()) {
         co_yield std::move(builder);
@@ -406,10 +420,23 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
                                       format,
                                       !ordered,
                                       monomorphicRows};
-  for (auto&& plan : planExportMorsels(
-           resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
+  for (auto&& plan :
+       planExportMorsels(resultBlocks(result), parsedQuery._limitOffset,
+                         std::function<uint64_t()>{rowsPerMorselFn})) {
     cancellationHandle->throwIfCancelled();
+    const uint64_t morselRows = plan.numRows_;
     session.submitMorsel(runner.makeTask(std::move(plan)));
+    if (adaptiveChunkSizing) {
+      // Workers serialize asynchronously, so the actual byte count for this
+      // morsel is not known yet at planning time; approximate it with the
+      // current per-row estimate so the exponential ramp-up still advances
+      // deterministically here, the same way it does bytes-fed in the
+      // synchronous (scheduler == nullptr) path above.
+      const double estimatedBytes = adaptiveSizer.stats().averageRowBytes_ *
+                                    static_cast<double>(morselRows);
+      adaptiveSizer.recordChunk(static_cast<size_t>(estimatedBytes),
+                                morselRows);
+    }
   }
   while (session.hasMoreResults()) {
     auto builder = session.consumeNextResult();
