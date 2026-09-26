@@ -27,7 +27,17 @@
 
 using namespace ql::engine::jit;
 
-TEST(JitExpressionBytecodeVmTest, ArithmeticExpressionEvaluation) {
+// The operations (`Filter`, `Bind`) take the JIT paths only if the runtime
+// parameter `jit-expression-evaluation` is set, so it is set for all tests in
+// this file.
+class JitExpressionBytecodeVmTest : public ::testing::Test {
+  decltype(setRuntimeParameterForTest<
+           &RuntimeParameters::jitExpressionEvaluation_>(true)) cleanup_ =
+      setRuntimeParameterForTest<&RuntimeParameters::jitExpressionEvaluation_>(
+          true);
+};
+
+TEST_F(JitExpressionBytecodeVmTest, ArithmeticExpressionEvaluation) {
   // Expression: (col[0] * 2) + col[1] > 100
   JitBytecodeProgram program;
   program.addInstruction(OpCode::LOAD_COL_INT, 0);
@@ -48,7 +58,7 @@ TEST(JitExpressionBytecodeVmTest, ArithmeticExpressionEvaluation) {
   EXPECT_EQ(program.execute(row2), 0);
 }
 
-TEST(JitExpressionBytecodeVmTest, AllArithmeticAndComparisonOpcodes) {
+TEST_F(JitExpressionBytecodeVmTest, AllArithmeticAndComparisonOpcodes) {
   // Subtraction & Comparison GE: (col[0] - col[1]) >= 15
   {
     JitBytecodeProgram program;
@@ -125,7 +135,7 @@ TEST(JitExpressionBytecodeVmTest, AllArithmeticAndComparisonOpcodes) {
   }
 }
 
-TEST(JitExpressionBytecodeVmTest, VectorMorselKernelExecution) {
+TEST_F(JitExpressionBytecodeVmTest, VectorMorselKernelExecution) {
   // Test 128 rows across two 64-row vector morsels
   constexpr size_t NUM_ROWS = 128;
   std::vector<int64_t> col0(NUM_ROWS);
@@ -160,7 +170,7 @@ TEST(JitExpressionBytecodeVmTest, VectorMorselKernelExecution) {
   EXPECT_EQ(outFilterMask[1], expectedMorsel1);
 }
 
-TEST(JitExpressionBytecodeVmTest, AstLoweringAndFilterExecution) {
+TEST_F(JitExpressionBytecodeVmTest, AstLoweringAndFilterExecution) {
   using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;
 
@@ -199,7 +209,7 @@ TEST(JitExpressionBytecodeVmTest, AstLoweringAndFilterExecution) {
   EXPECT_EQ(dynamicResult, makeIdTableFromVector({{40, 30}, {45, 15}}, I));
 }
 
-TEST(JitExpressionBytecodeVmTest, FilterOperationIntegration) {
+TEST_F(JitExpressionBytecodeVmTest, FilterOperationIntegration) {
   using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;
   QueryExecutionContext* qec = ad_utility::testing::getQec();
@@ -251,7 +261,7 @@ TEST(JitExpressionBytecodeVmTest, FilterOperationIntegration) {
             makeIdTableFromVector({{10, 5}, {20, 15}, {30, 25}, {15, 8}}, I));
 }
 
-TEST(JitExpressionBytecodeVmTest, NativeAsmJitFilterCompilationAndExecution) {
+TEST_F(JitExpressionBytecodeVmTest, NativeAsmJitFilterCompilationAndExecution) {
   using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;
   QueryExecutionContext* qec = ad_utility::testing::getQec();
@@ -292,7 +302,7 @@ TEST(JitExpressionBytecodeVmTest, NativeAsmJitFilterCompilationAndExecution) {
   EXPECT_EQ(result->idTableView().size(), 100u);
 }
 
-TEST(JitExpressionBytecodeVmTest, IdEqualityAndRangeOpcodes) {
+TEST_F(JitExpressionBytecodeVmTest, IdEqualityAndRangeOpcodes) {
   const uint64_t vocabBase =
       Id::makeFromVocabIndex(VocabIndex::make(100)).getBits();
   const uint64_t lo = vocabBase;
@@ -336,7 +346,7 @@ TEST(JitExpressionBytecodeVmTest, IdEqualityAndRangeOpcodes) {
   }
 }
 
-TEST(JitExpressionBytecodeVmTest, DivisionFallsBackToLegacyEvaluation) {
+TEST_F(JitExpressionBytecodeVmTest, DivisionFallsBackToLegacyEvaluation) {
   // Regression test: the JIT backends implement truncating integer division,
   // but the legacy evaluation divides via doubles (see `DivideImpl`), so
   // programs containing `DIV_INT` must fall back. Rows where the true
@@ -382,7 +392,7 @@ TEST(JitExpressionBytecodeVmTest, DivisionFallsBackToLegacyEvaluation) {
             makeIdTableFromVector({{1, 2}, {2, 4}, {4, 2}, {1, 0}}, I));
 }
 
-TEST(JitExpressionBytecodeVmTest, FoldIntEqualityFallsBackOnDoubles) {
+TEST_F(JitExpressionBytecodeVmTest, FoldIntEqualityFallsBackOnDoubles) {
   // Regression test: a folded `?x = <int>` compares raw `ValueId` bits,
   // but the legacy evaluation compares integers and doubles numerically
   // (`1.0 == 1`). The fold must only run when no `Double` cells occur,
@@ -420,7 +430,7 @@ TEST(JitExpressionBytecodeVmTest, FoldIntEqualityFallsBackOnDoubles) {
             makeIdTableFromVector({{I(1)}, {Id::makeFromDouble(1.0)}}));
 }
 
-TEST(JitExpressionBytecodeVmTest, ArithmeticFilterFallsBackOnDoubles) {
+TEST_F(JitExpressionBytecodeVmTest, ArithmeticFilterFallsBackOnDoubles) {
   // Regression test: `FILTER(?x * 2 > 3)` with `Double` cells. The legacy
   // evaluation computes doubles, while the integer kernels yield `UNDEF`
   // for `Double` cells and would wrongly drop the `2.5` row.
@@ -453,7 +463,7 @@ TEST(JitExpressionBytecodeVmTest, ArithmeticFilterFallsBackOnDoubles) {
             makeIdTableFromVector({{I(2)}, {Id::makeFromDouble(2.5)}}));
 }
 
-TEST(JitExpressionBytecodeVmTest, BindFallsBackOnDoubles) {
+TEST_F(JitExpressionBytecodeVmTest, BindFallsBackOnDoubles) {
   // Regression test: `BIND(?x * 2 AS ?z)` with a `Double` cell. The legacy
   // evaluation materializes the double `3.0`, while the integer column
   // execution yields `UNDEF` for `Double` cells.
@@ -485,7 +495,7 @@ TEST(JitExpressionBytecodeVmTest, BindFallsBackOnDoubles) {
   EXPECT_EQ(table(1, 1), I(6));
 }
 
-TEST(JitExpressionBytecodeVmTest, ProgramPredicates) {
+TEST_F(JitExpressionBytecodeVmTest, ProgramPredicates) {
   // `containsDivision` and `hasExactIntegerSemantics` gate the JIT backends.
   JitBytecodeProgram arith;
   arith.addInstruction(OpCode::LOAD_COL_INT, 0);
@@ -518,7 +528,7 @@ TEST(JitExpressionBytecodeVmTest, ProgramPredicates) {
   EXPECT_FALSE(JitExpressionBytecodeVm::hasExactIntegerSemantics(withIdOp));
 }
 
-TEST(JitExpressionBytecodeVmTest, ScanColumnKindsAndCellRules) {
+TEST_F(JitExpressionBytecodeVmTest, ScanColumnKindsAndCellRules) {
   // Unit test for the runtime exactness guard (see `CellRule`): datatype
   // presence detection over referenced columns and the per-rule predicates.
   auto I = ad_utility::testing::IntId;
@@ -578,7 +588,7 @@ TEST(JitExpressionBytecodeVmTest, ScanColumnKindsAndCellRules) {
       CellRule::OrderedComparison, program, emptyKinds));
 }
 
-TEST(JitExpressionBytecodeVmTest, ExecuteIntColumn) {
+TEST_F(JitExpressionBytecodeVmTest, ExecuteIntColumn) {
   // Program: (?x * 2) + ?y, evaluated to a value column across morsels.
   // UNDEF and non-integer inputs propagate UNDEF, like legacy evaluation.
   auto I = ad_utility::testing::IntId;
@@ -617,7 +627,7 @@ TEST(JitExpressionBytecodeVmTest, ExecuteIntColumn) {
   }
 }
 
-TEST(JitExpressionBytecodeVmTest, BindOperationIntegration) {
+TEST_F(JitExpressionBytecodeVmTest, BindOperationIntegration) {
   // `BIND((?x * 2) + 1 AS ?z)` evaluates through `executeIntColumn`, with
   // UNDEF propagation for undefined inputs.
   using namespace sparqlExpression;
@@ -653,7 +663,7 @@ TEST(JitExpressionBytecodeVmTest, BindOperationIntegration) {
   EXPECT_EQ(table(5, 1), Id::makeUndefined());
 }
 
-TEST(JitExpressionBytecodeVmTest, BindRenamePreservesNonIntegerCells) {
+TEST_F(JitExpressionBytecodeVmTest, BindRenamePreservesNonIntegerCells) {
   // Regression test: `BIND(?x AS ?z)` is a pure copy without arithmetic. The
   // integer kernels drop non-`Int` cells to `UNDEF` (and re-encode `Bool` as
   // `Int`), while the legacy evaluation copies the cell verbatim, so the JIT
@@ -687,7 +697,7 @@ TEST(JitExpressionBytecodeVmTest, BindRenamePreservesNonIntegerCells) {
   EXPECT_EQ(table(3, 1), I(7));
 }
 
-TEST(JitExpressionBytecodeVmTest, CanExecuteAsIntColumn) {
+TEST_F(JitExpressionBytecodeVmTest, CanExecuteAsIntColumn) {
   // Unit test for the integer column execution gate (see
   // `canExecuteAsIntColumn`): computing programs tolerate every cell except
   // `Double`/`Date` (both sides yield `UNDEF`), while pure copies additionally
@@ -739,7 +749,7 @@ TEST(JitExpressionBytecodeVmTest, CanExecuteAsIntColumn) {
       computing, kindsOf(computing, doubles)));
 }
 
-TEST(JitExpressionBytecodeVmTest, AndOrLoweringWithKleeneSemantics) {
+TEST_F(JitExpressionBytecodeVmTest, AndOrLoweringWithKleeneSemantics) {
   using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;
   auto U = Id::makeUndefined();
@@ -814,7 +824,7 @@ TEST(JitExpressionBytecodeVmTest, AndOrLoweringWithKleeneSemantics) {
                                    {I(200), U}}));
 }
 
-TEST(JitExpressionBytecodeVmTest, MultiRangeOrKeepsSingleRangeRows) {
+TEST_F(JitExpressionBytecodeVmTest, MultiRangeOrKeepsSingleRangeRows) {
   // Regression test: `OR_BOOL` over several `IN_ID_RANGE` checks (as
   // emitted by `tryFoldPrefixRegex` for multiple vocabulary ranges) must
   // keep rows that match exactly one range. Each range check is invalid
@@ -851,7 +861,7 @@ TEST(JitExpressionBytecodeVmTest, MultiRangeOrKeepsSingleRangeRows) {
             makeIdTableFromVector({{V(baseA + 10)}, {V(baseB + 10)}}));
 }
 
-TEST(JitExpressionBytecodeVmTest, YearLoweringAndRule) {
+TEST_F(JitExpressionBytecodeVmTest, YearLoweringAndRule) {
   using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;
   auto U = Id::makeUndefined();
@@ -918,7 +928,7 @@ TEST(JitExpressionBytecodeVmTest, YearLoweringAndRule) {
       CellRule::YearExtraction, yearProg, doubleKinds));
 }
 
-TEST(JitExpressionBytecodeVmTest, LifespanAndDateRangeEndToEnd) {
+TEST_F(JitExpressionBytecodeVmTest, LifespanAndDateRangeEndToEnd) {
   using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;
   auto U = Id::makeUndefined();
@@ -994,7 +1004,7 @@ TEST(JitExpressionBytecodeVmTest, LifespanAndDateRangeEndToEnd) {
             makeIdTableFromVector({{D(1850, 6, 15)}, {D(1800, 1, 1)}}));
 }
 
-TEST(JitExpressionBytecodeVmTest, NativeAndFilterEndToEnd) {
+TEST_F(JitExpressionBytecodeVmTest, NativeAndFilterEndToEnd) {
   // All-`Int` conjunction: the `Filter` engages the native AsmJit backend
   // (`allInt`), which validates the `AND_BOOL` machine-code lowering.
   using namespace sparqlExpression;
@@ -1038,7 +1048,7 @@ TEST(JitExpressionBytecodeVmTest, NativeAndFilterEndToEnd) {
   EXPECT_EQ(result->idTableView()(0, 0), I(11));
 }
 
-TEST(JitExpressionBytecodeVmTest, NativeYearFilterEndToEnd) {
+TEST_F(JitExpressionBytecodeVmTest, NativeYearFilterEndToEnd) {
   // `YEAR(?d) >= 1800` over a mixed date/int column: the native AsmJit
   // backend compiles the program (no longer declining date loads) and the
   // `Filter` engages it through the relaxed `YearExtraction` gate, which
@@ -1096,7 +1106,7 @@ TEST(JitExpressionBytecodeVmTest, NativeYearFilterEndToEnd) {
   EXPECT_EQ(result->idTableView()(2, 0), D(2000, 6, 30));
 }
 
-TEST(JitExpressionBytecodeVmTest, DeeplyNestedExpressionsFallBackToLegacy) {
+TEST_F(JitExpressionBytecodeVmTest, DeeplyNestedExpressionsFallBackToLegacy) {
   using namespace sparqlExpression;
   auto I = ad_utility::testing::IntId;
 
@@ -1126,4 +1136,85 @@ TEST(JitExpressionBytecodeVmTest, DeeplyNestedExpressionsFallBackToLegacy) {
   EXPECT_FALSE(
       JitExpressionBytecodeVm::compile(*makeRightNestedAdd(64), varColMap)
           .has_value());
+}
+
+// _____________________________________________________________________________
+// `Filter` and `Bind` give the same result with `jit-expression-evaluation`
+// switched off (generic evaluation) and on (JIT paths).
+TEST(JitExpressionEvaluationParameter, SameResultWithAndWithoutJit) {
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  auto U = Id::makeUndefined();
+  auto D = [](int year, int month, int day) {
+    return Id::makeFromDate(DateYearOrDuration(Date(year, month, day)));
+  };
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  auto makeSubtree = [qec, &I, &U, &D]() {
+    IdTable input = makeIdTableFromVector({{D(1850, 6, 15), I(3)},
+                                           {D(1799, 12, 31), I(-4)},
+                                           {D(1900, 1, 1), I(7)},
+                                           {D(1800, 1, 1), U},
+                                           {I(1850), I(1)},
+                                           {U, I(0)}});
+    return std::make_shared<QueryExecutionTree>(
+        qec,
+        std::make_shared<ValuesForTesting>(qec, std::move(input),
+                                           std::vector<std::optional<Variable>>{
+                                               Variable{"?d"}, Variable{"?x"}},
+                                           false, std::vector<ColumnIndex>{},
+                                           LocalVocab{}, std::nullopt, true));
+  };
+  // FILTER(YEAR(?d) >= 1800 && YEAR(?d) < 1900)
+  auto filterResult = [&]() {
+    qec->getQueryTreeCache().clearAll();
+    auto expr = makeAndExpression(
+        std::make_unique<GreaterEqualExpression>(
+            std::array<SparqlExpression::Ptr, 2>{
+                makeYearExpression(
+                    std::make_unique<VariableExpression>(Variable{"?d"})),
+                std::make_unique<IdExpression>(I(1800))}),
+        std::make_unique<LessThanExpression>(
+            std::array<SparqlExpression::Ptr, 2>{
+                makeYearExpression(
+                    std::make_unique<VariableExpression>(Variable{"?d"})),
+                std::make_unique<IdExpression>(I(1900))}));
+    Filter filter{qec,
+                  makeSubtree(),
+                  {std::move(expr), "YEAR(?d) >= 1800 && YEAR(?d) < 1900"}};
+    return filter.getResult(false, ComputationMode::FULLY_MATERIALIZED)
+        ->idTableView()
+        .clone();
+  };
+  // BIND((?x * 2) + 1 AS ?z)
+  auto bindResult = [&]() {
+    qec->getQueryTreeCache().clearAll();
+    auto expr = makeAddExpression(
+        makeMultiplyExpression(
+            std::make_unique<VariableExpression>(Variable{"?x"}),
+            std::make_unique<IdExpression>(I(2))),
+        std::make_unique<IdExpression>(I(1)));
+    parsedQuery::Bind bind{{std::move(expr), "(?x * 2) + 1"}, Variable{"?z"}};
+    Bind bindOp{qec, makeSubtree(), std::move(bind)};
+    return bindOp.getResult(false, ComputationMode::FULLY_MATERIALIZED)
+        ->idTableView()
+        .clone();
+  };
+
+  auto filterOff = filterResult();
+  auto bindOff = bindResult();
+  EXPECT_EQ(filterOff, makeIdTableFromVector(
+                           {{D(1850, 6, 15), I(3)}, {D(1800, 1, 1), U}}));
+  EXPECT_EQ(bindOff, makeIdTableFromVector({{D(1850, 6, 15), I(3), I(7)},
+                                            {D(1799, 12, 31), I(-4), I(-7)},
+                                            {D(1900, 1, 1), I(7), I(15)},
+                                            {D(1800, 1, 1), U, U},
+                                            {I(1850), I(1), I(3)},
+                                            {U, I(0), I(1)}}));
+  {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::jitExpressionEvaluation_>(true);
+    EXPECT_EQ(filterResult(), filterOff);
+    EXPECT_EQ(bindResult(), bindOff);
+  }
+  qec->getQueryTreeCache().clearAll();
 }

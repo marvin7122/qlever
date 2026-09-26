@@ -1338,13 +1338,16 @@ TEST_F(GroupByOptimizations, hashMapOptimizationMinMaxSumIntegers) {
 
 namespace {
 // SELECT (SUM(?b * 2) AS ?s) WHERE { VALUES (?a ?b) {...} } GROUP BY ?a.
-// The aggregate child is an integer expression: the hashmap path evaluates
-// it via the JIT integer column execution, all other paths via the legacy
-// evaluation. Both must yield identical results.
-IdTable runSumOfComputedChild(bool hashMapEnabled) {
+// The aggregate child is an integer expression: with `jitEnabled`, the hashmap
+// path evaluates it via the JIT integer column execution, all other paths via
+// the legacy evaluation. All must yield identical results.
+IdTable runSumOfComputedChild(bool hashMapEnabled, bool jitEnabled = true) {
   auto cleanup =
       setRuntimeParameterForTest<&RuntimeParameters::groupByHashMapEnabled_>(
           hashMapEnabled);
+  auto cleanupJit =
+      setRuntimeParameterForTest<&RuntimeParameters::jitExpressionEvaluation_>(
+          jitEnabled);
   Variable varA = Variable{"?a"};
   Variable varB = Variable{"?b"};
   Variable varS = Variable{"?s"};
@@ -1380,8 +1383,9 @@ IdTable runSumOfComputedChild(bool hashMapEnabled) {
   aliases.push_back(Alias{std::move(sumPimpl), varS});
   GroupBy groupBy{qec, {varA}, std::move(aliases), std::move(values)};
   auto result = groupBy.getResult();
-  // `cleanup` must outlive the evaluation.
+  // `cleanup` and `cleanupJit` must outlive the evaluation.
   (void)cleanup;
+  (void)cleanupJit;
   return result->idTableView().clone();
 }
 }  // namespace
@@ -1391,6 +1395,15 @@ TEST_F(GroupByOptimizations, sumOfComputedChildHashMapPath) {
   // Group 1 (?a = 1): SUM(20, 40) = 60; group 2 (?a = 3): SUM(60, 80) = 140.
   auto i = IntId;
   EXPECT_EQ(runSumOfComputedChild(true),
+            makeIdTableFromVector({{i(1), i(60)}, {i(3), i(140)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumOfComputedChildHashMapPathWithoutJit) {
+  // With `jit-expression-evaluation` off, the hashmap path uses the legacy
+  // evaluation of the child expression and gives the same result.
+  auto i = IntId;
+  EXPECT_EQ(runSumOfComputedChild(true, false),
             makeIdTableFromVector({{i(1), i(60)}, {i(3), i(140)}}));
 }
 
@@ -1411,6 +1424,9 @@ TEST_F(GroupByOptimizations, sumOfComputedChildWithDoublesFallsBack) {
   // (hashmap on/off) must yield the legacy result.
   using namespace sparqlExpression;
   auto i = IntId;
+  auto cleanupJit =
+      setRuntimeParameterForTest<&RuntimeParameters::jitExpressionEvaluation_>(
+          true);
   for (bool hashMapEnabled : {true, false}) {
     auto cleanup =
         setRuntimeParameterForTest<&RuntimeParameters::groupByHashMapEnabled_>(
