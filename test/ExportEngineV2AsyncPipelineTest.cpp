@@ -72,10 +72,12 @@ class ExportEngineV2AsyncPipeline : public ::testing::Test {
   // `scatterGather`) for an already planned query, with the async pipeline on
   // or off. Both arms of a comparison use the same plan: the planner may
   // order the children of a cross product differently between two plannings,
-  // which changes the row order independently of the pipeline.
-  static std::vector<std::string> chunks(
-      const Planned& planned, MediaType mediaType, bool asyncPipeline,
-      bool scatterGather, ElasticExportScheduler* scheduler = nullptr) {
+  // which changes the row order independently of the pipeline. The cache is
+  // cleared so that every run streams the same lazy blocks.
+  std::vector<std::string> chunks(const Planned& planned, MediaType mediaType,
+                                  bool asyncPipeline, bool scatterGather,
+                                  ElasticExportScheduler* scheduler = nullptr) {
+    qec_->clearCacheUnpinnedOnly();
     auto cleanup =
         setRuntimeParameterForTest<&RuntimeParameters::exportV2AsyncPipeline_>(
             asyncPipeline);
