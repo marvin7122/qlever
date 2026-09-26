@@ -62,6 +62,33 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
 }
 
 // _____________________________________________________________________________
+VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
+    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+  return std::visit(
+      [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
+        // NOTE: the detection uses the C++17-compatible trait instead of
+        // `if constexpr (requires { ... })`, which the C++17 CI configurations
+        // cannot compile (see `hasLookupBatchWithBuilder`).
+        if constexpr (ad_utility::vocabulary::hasLookupBatchWithBuilder<
+                          decltype(vocab)>) {
+          vocab.lookupBatch(indices, builder);
+          return std::move(builder).finalize();
+        } else {
+          // No batched leaf: copy the single-shot words into the caller
+          // builder, so the unconditional `finalize()` above sees a
+          // populated builder.
+          auto singleShot = vocab.lookupBatch(indices);
+          AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+          for (std::string_view word : singleShot) {
+            builder.appendWord(word);
+          }
+          return std::move(builder).finalize();
+        }
+      },
+      vocab_);
+}
+
+// _____________________________________________________________________________
 VocabLookupOutput PolymorphicVocabulary::lookupBatchesStreamed(
     VocabLookupInput input) const {
   return std::visit(

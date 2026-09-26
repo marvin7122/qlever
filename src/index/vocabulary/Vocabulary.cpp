@@ -308,6 +308,29 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
 
 // _____________________________________________________________________________
 template <typename S, typename C, typename I>
+VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
+    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  // NOTE: the detection uses the C++17-compatible trait instead of
+  // `if constexpr (requires { ... })`, which the C++17 CI configurations
+  // cannot compile (see `hasLookupBatchWithBuilder`).
+  if constexpr (ad_utility::vocabulary::hasLookupBatchWithBuilder<C>) {
+    vocabulary_.lookupBatch(indices, builder);
+    return std::move(builder).finalize();
+  } else {
+    // No batched leaf: copy the single-shot words into the caller builder,
+    // so the unconditional `finalize()` below sees a populated builder.
+    auto singleShot = vocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+    for (std::string_view word : singleShot) {
+      builder.appendWord(word);
+    }
+    return std::move(builder).finalize();
+  }
+}
+
+// _____________________________________________________________________________
+template <typename S, typename C, typename I>
 VocabLookupOutput Vocabulary<S, C, I>::lookupBatchesStreamed(
     VocabLookupInput input) const {
   return vocabulary_.lookupBatchesStreamed(std::move(input));

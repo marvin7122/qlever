@@ -39,6 +39,28 @@ class UnicodeVocabulary {
     return _underlyingVocabulary.lookupBatch(indices);
   }
 
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder& builder) const {
+    AD_CONTRACT_CHECK(!indices.empty());
+    // NOTE: the detection uses the C++17-compatible trait instead of
+    // `if constexpr (requires { ... })`, which the C++17 CI configurations
+    // cannot compile (see `hasLookupBatchWithBuilder`).
+    if constexpr (ad_utility::vocabulary::hasLookupBatchWithBuilder<
+                      UnderlyingVocabulary>) {
+      _underlyingVocabulary.lookupBatch(indices, builder);
+      return std::move(builder).finalize();
+    } else {
+      // No batched leaf: copy the single-shot words into the caller builder,
+      // so the unconditional `finalize()` below sees a populated builder.
+      auto singleShot = _underlyingVocabulary.lookupBatch(indices);
+      AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
+      for (std::string_view word : singleShot) {
+        builder.appendWord(word);
+      }
+      return std::move(builder).finalize();
+    }
+  }
+
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {
     return _underlyingVocabulary.lookupBatchesStreamed(std::move(input));

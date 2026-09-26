@@ -16,6 +16,7 @@
 #include <cctype>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "global/Id.h"
 #include "index/vocabulary/StringSortComparator.h"
@@ -140,8 +141,8 @@ struct LiteralsTokenizationDelimiter {
 
 /**
  * @brief A function that can be used to tokenize and normalize a given text.
- * @warning Both params are const refs where the original objects have to be
- * kept alive during the usage of the returned object.
+ * @return The normalized words as owning strings; the result does not
+ * reference either parameter, so no lifetime constraints apply to them.
  * @param text The text to be tokenized and normalized.
  * @param localeManager The localeManager to be used for normalization.
  * @details This function can be used in the following way:
@@ -149,14 +150,16 @@ struct LiteralsTokenizationDelimiter {
  *  code;
  * }
  */
-inline auto tokenizeAndNormalizeText(std::string_view text,
-                                     const LocaleManager& localeManager) {
+inline std::vector<std::string> tokenizeAndNormalizeText(
+    std::string_view text, const LocaleManager& localeManager) {
   std::vector<std::string_view> split{
       absl::StrSplit(text, LiteralsTokenizationDelimiter{}, absl::SkipEmpty{})};
-  return ql::views::transform(std::move(split),
-                              [&localeManager](const auto& str) {
-                                return localeManager.getLowercaseUtf8(str);
-                              });
+  std::vector<std::string> result;
+  result.reserve(split.size());
+  for (const auto& str : split) {
+    result.push_back(localeManager.getLowercaseUtf8(str));
+  }
+  return result;
 }
 
 // Strip the surrounding quotes (and, for a literal with a datatype like a

@@ -188,25 +188,15 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   std::vector<uint64_t> fileOffsets(numIndices);
   for (auto&& [size, fileOffset, offsetPair] :
        ::ranges::views::zip(sizes, fileOffsets, offsetPairs)) {
-    size = offsetPair.nextOffset_ - offsetPair.offset_;
-    fileOffset = offsetPair.offset_;
+    size = offsetPair.wordSize();
+    fileOffset = offsetPair.offset();
   }
 
-  auto data = std::make_shared<VocabBatchLookupData>();
-  data->buffer().resize(::ranges::accumulate(sizes, size_t{0}));
-  data->views().resize(numIndices);
-
-  std::vector<char*> targets(numIndices);
-  size_t bufferOffset = 0;
-  for (auto&& [target, view, size] :
-       ::ranges::views::zip(targets, data->views(), sizes)) {
-    target = data->buffer().data() + bufferOffset;
-    view = std::string_view(target, size);
-    bufferOffset += size;
-  }
-
-  manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
-  return VocabBatchLookupData::asResult(std::move(data));
+  AD_CORRECTNESS_CHECK(!sizes.empty());
+  ContiguousVocabBatchBuilder builder(sizes);
+  manager.wait(
+      manager.addBatch(file_.fd(), sizes, fileOffsets, builder.targets()));
+  return std::move(builder).finalize();
 }
 
 // _____________________________________________________________________________
