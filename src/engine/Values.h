@@ -77,5 +77,6 @@ class Values : virtual public Operation {
 // Create a one-row `VALUES` clause that binds `value` to `variable`.
 std::shared_ptr<QueryExecutionTree> makeValuesForSingleValue(
     QueryExecutionContext* qec, Variable variable, TripleComponent value);
+#include "engine/Values.template"
 
 #endif  // QLEVER_SRC_ENGINE_VALUES_H

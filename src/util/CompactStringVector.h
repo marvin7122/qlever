@@ -165,6 +165,24 @@ class CompactVectorOfStrings {
 
   using const_iterator = Iterator;
 
+  // Return a read-only view of the data, regardless of whether the storage
+  // currently owns its elements or is a non-owning view. Public so batch
+  // consumers (software prefetching, zero-copy export) can address the
+  // underlying lines directly.
+  DataView dataSpan() const {
+    return std::visit(
+        [](const auto& x) -> DataView { return {x.data(), x.size()}; }, data_);
+  }
+
+  // Return a read-only view of the offsets, regardless of whether the
+  // storage currently owns its elements or is a non-owning view. See
+  // `dataSpan` for why this is public.
+  OffsetView offsetsSpan() const {
+    return std::visit(
+        [](const auto& x) -> OffsetView { return {x.data(), x.size()}; },
+        offsets_);
+  }
+
   // Allow serialization via the ad_utility::serialization interface. Note:
   // Reading always produces an object that owns its storage; use
   // `fromZeroCopyDeserializer` to obtain a non-owning, zero-copy view.
@@ -181,21 +199,6 @@ class CompactVectorOfStrings {
   }
 
  private:
-  // Return a read-only view of the data, regardless of whether the storage
-  // currently owns its elements or is a non-owning view.
-  DataView dataSpan() const {
-    return std::visit(
-        [](const auto& x) -> DataView { return {x.data(), x.size()}; }, data_);
-  }
-
-  // Return a read-only view of the offsets, regardless of whether the
-  // storage currently owns its elements or is a non-owning view.
-  OffsetView offsetsSpan() const {
-    return std::visit(
-        [](const auto& x) -> OffsetView { return {x.data(), x.size()}; },
-        offsets_);
-  }
-
   // Access the owned vector alternatives. Throws (via `std::get`) if this
   // object is currently a non-owning view, which is a programming error (a
   // zero-copy view is read-only, so `build()` must not be called on it).

@@ -1,10 +1,18 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
+
+#include <cstring>
 
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
@@ -27,6 +35,17 @@ struct DummyDecoder {
       c -= 2;
     }
     return result;
+  }
+  // The transformation preserves the length.
+  [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed) const {
+    return compressed.size();
+  }
+  [[nodiscard]] size_t decompressInto(std::string_view compressed,
+                                      ql::span<char> out) const {
+    AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(compressed));
+    std::string decompressed = decompress(compressed);
+    std::memcpy(out.data(), decompressed.data(), decompressed.size());
+    return decompressed.size();
   }
   // This class has no state, but it still needs to be serialized.
   template <typename T>
@@ -231,6 +250,17 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
     EXPECT_EQ(indexAndWord.index_, 0);
     EXPECT_EQ(indexAndWord.word_, words.at(0));
   }
+}
+
+// _____________________________________________________________________________
+// An empty word has a zero decompression bound; the scan must yield it as an
+// empty string instead of failing a contract check.
+TYPED_TEST(CompressedVocabularyF, ScanAllWithEmptyWord) {
+  auto createVocab = TestFixture::createCompressedVocabulary();
+  const std::vector<std::string> words{"", "alpha", "beta", "", "gamma"};
+  auto vocab = createVocab(words);
+  using ::testing::ElementsAreArray;
+  EXPECT_THAT(scanAllToVector(vocab.scanAll()), ElementsAreArray(words));
 }
 
 // _____________________________________________________________________________

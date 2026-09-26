@@ -1,0 +1,49 @@
+// Copyright 2026, The QLever Authors, in particular:
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
+
+// Definition of the member template `Values::writeValues`, included at the end
+// of `engine/Values.h`. The includes below make this file self-contained, so
+// that `Values.h` does not rely on the include order of its users.
+#include <absl/strings/str_join.h>
+
+#include "engine/idTable/IdTable.h"
+#include "index/LocalVocab.h"
+#include "index/TripleComponentConversions.h"
+#include "parser/TripleComponent.h"
+#include "util/Exception.h"
+#include "util/Log.h"
+
+// Write `parsedValues_` to the given result object.
+//
+// NOTE: this moves the values out of `parsedValues_` (to save a string copy
+// for those values that end up in the local vocabulary).
+template <size_t I>
+void Values::writeValues(IdTable* idTablePtr, LocalVocab* localVocab) {
+  IdTableStatic<I> idTable = std::move(*idTablePtr).toStatic<I>();
+  idTable.resize(parsedValues_._values.size());
+  size_t rowIdx = 0;
+  std::vector<size_t> numLocalVocabPerColumn(idTable.numColumns());
+  for (auto& row : parsedValues_._values) {
+    for (size_t colIdx = 0; colIdx < idTable.numColumns(); colIdx++) {
+      const TripleComponent& tc = row[colIdx];
+      // TODO<joka921> We don't want to move, but also don't want to
+      // unconditionally copy.
+      Id id = toValueId(TripleComponent{tc}, getIndex(), *localVocab);
+      idTable(rowIdx, colIdx) = id;
+      if (id.getDatatype() == Datatype::LocalVocabIndex) {
+        ++numLocalVocabPerColumn[colIdx];
+      }
+    }
+    rowIdx++;
+  }
+  AD_CORRECTNESS_CHECK(rowIdx == parsedValues_._values.size());
+  AD_LOG_INFO << "Number of tuples in VALUES clause: " << rowIdx << std::endl;
+  AD_LOG_INFO << "Number of entries in local vocabulary per column: "
+              << absl::StrJoin(numLocalVocabPerColumn, ", ") << std::endl;
+  *idTablePtr = std::move(idTable).toDynamic();
+}
