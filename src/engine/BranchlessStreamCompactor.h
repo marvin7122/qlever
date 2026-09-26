@@ -70,6 +70,39 @@ class BranchlessStreamCompactor {
 
     return outIdx;
   }
+
+  // Compact the elements `input[i]` with `keep[i] == 1` into `output` and
+  // return their number. `keep` holds only `0` and `1`, so one mask can be
+  // applied to all columns of a table. `output` must hold at least the kept
+  // elements. As long as `output` has room for four more elements, every
+  // element is written and the index is advanced only on a match, so this
+  // loop has no data-dependent branch; the remaining elements are copied with
+  // a branch.
+  static size_t compactByMask(ql::span<const Id> input,
+                              ql::span<const uint8_t> keep,
+                              ql::span<Id> output) {
+    AD_CORRECTNESS_CHECK(keep.size() == input.size());
+    const size_t n = input.size();
+    size_t outIdx = 0;
+    size_t i = 0;
+    for (; n - i >= 4 && output.size() - outIdx >= 4; i += 4) {
+      output[outIdx] = input[i];
+      outIdx += keep[i];
+      output[outIdx] = input[i + 1];
+      outIdx += keep[i + 1];
+      output[outIdx] = input[i + 2];
+      outIdx += keep[i + 2];
+      output[outIdx] = input[i + 3];
+      outIdx += keep[i + 3];
+    }
+    for (; i < n; ++i) {
+      if (keep[i]) {
+        AD_CORRECTNESS_CHECK(outIdx < output.size());
+        output[outIdx++] = input[i];
+      }
+    }
+    return outIdx;
+  }
 };
 
 }  // namespace ql::engine::vector
