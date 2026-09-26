@@ -24,10 +24,13 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <type_traits>
 #include <vector>
+
+#include "util/Log.h"
 
 namespace ad_utility::ioWait {
 
@@ -388,6 +391,7 @@ inline void startReporter() {
       return;
     }
     std::thread{[file = std::string{path}]() {
+      bool warned = false;
       while (true) {
         // Never let an exception escape this detached thread: it would call
         // `std::terminate` and kill the server over diagnostics.
@@ -399,10 +403,27 @@ inline void startReporter() {
           {
             std::ofstream out{tmp, std::ios::trunc};
             out << report() << '\n';
+            if (!out) {
+              throw std::runtime_error("cannot write " + tmp);
+            }
           }
-          std::rename(tmp.c_str(), file.c_str());
+          if (std::rename(tmp.c_str(), file.c_str()) != 0) {
+            throw std::runtime_error("cannot rename " + tmp);
+          }
+        } catch (const std::exception& e) {
+          // Diagnostics must not kill the server; retry on the next tick, but
+          // report the first failure so a broken report path is not silent.
+          if (!warned) {
+            LOG(WARN) << "io-wait report to " << file << " failed: " << e.what()
+                      << std::endl;
+            warned = true;
+          }
         } catch (...) {
-          // Diagnostics must not kill the server; retry on the next tick.
+          if (!warned) {
+            LOG(WARN) << "io-wait report to " << file
+                      << " failed with an unknown exception" << std::endl;
+            warned = true;
+          }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
       }
