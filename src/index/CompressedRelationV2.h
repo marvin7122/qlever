@@ -31,7 +31,8 @@ enum class DatatypeBitmask : uint8_t {
   Date = 1 << 4,
   BlankNode = 1 << 5,
   VocabWord = 1 << 6,
-  All = 0xFF
+  // All defined flags; bit 7 is unused.
+  All = Iri | Literal | Integer | Double | Date | BlankNode | VocabWord
 };
 
 [[nodiscard]] constexpr DatatypeBitmask operator|(DatatypeBitmask a,

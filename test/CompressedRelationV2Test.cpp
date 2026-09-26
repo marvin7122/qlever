@@ -91,3 +91,14 @@ TEST(CompressedRelationV2Test, TypedCountPruningFastPath) {
   ASSERT_EQ(result.ambiguousBlockIndices.size(), 1u);
   EXPECT_EQ(result.ambiguousBlockIndices[0], 2u);
 }
+
+// _____________________________________________________________________________
+TEST(CompressedRelationV2Test, AllContainsExactlyTheDefinedFlags) {
+  EXPECT_EQ(static_cast<uint8_t>(DatatypeBitmask::All), 0x7F);
+  for (auto flag : {DatatypeBitmask::Iri, DatatypeBitmask::Literal,
+                    DatatypeBitmask::Integer, DatatypeBitmask::Double,
+                    DatatypeBitmask::Date, DatatypeBitmask::BlankNode,
+                    DatatypeBitmask::VocabWord}) {
+    EXPECT_TRUE(hasFlag(DatatypeBitmask::All, flag));
+  }
+}
