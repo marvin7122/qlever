@@ -13,11 +13,15 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
+#include <array>
 #include <charconv>
 #include <ctre-unicode.hpp>
 #include <string>
+#include <string_view>
+#include <utility>
 
 #include "backports/StartsWithAndEndsWith.h"
+#include "backports/algorithm.h"
 #include "backports/shift.h"
 #include "backports/span.h"
 #include "util/Exception.h"
@@ -298,27 +302,70 @@ std::string unescapePrefixedIri(std::string_view literal) {
   return res;
 }
 
-// ____________________________________________________________________________
 namespace {
-// Append `input`, replacing each listed source character with `repl` in one
-// pass over the original bytes. Same semantics as a simultaneous
-// `absl::StrReplaceAll` on those pairs.
-void appendWithCharReplacements(
-    std::string& out, std::string_view input,
-    ql::span<const std::pair<char, std::string_view>> replacements) {
-  size_t start = 0;
-  for (size_t i = 0; i < input.size(); ++i) {
-    for (const auto& [from, to] : replacements) {
-      if (input[i] == from) {
-        out.append(input.data() + start, i - start);
-        out.append(to);
-        start = i + 1;
-        break;
-      }
+// A single-character escape: every occurrence of `first` in the input is
+// replaced by `second`.
+using CharReplacement = std::pair<char, std::string_view>;
+
+// The escapes applied by `escapeForCsv` inside the quotes and by
+// `escapeForTsv`. Together with `detail::csvSpecialCharsRegex` and
+// `detail::tsvSpecialCharsRegex` they define the two formats: in CSV, `,`,
+// `\r` and `\n` only trigger the quoting, and in TSV every special character is
+// replaced.
+constexpr std::array<CharReplacement, 1> csvReplacements{{{'"', "\"\""}}};
+constexpr std::array<CharReplacement, 2> tsvReplacements{
+    {{'\t', " "}, {'\n', "\\n"}}};
+
+// __________________________________________________________________________
+// Append `input` to `out` and replace each character that occurs as a key in
+// `replacements` by its value. Only the bytes of `input` are inspected, so a
+// replacement value is never escaped again. Copy the unchanged segments
+// between two special characters with a single `append` each. The keys of
+// `replacements` must be distinct.
+void appendWithCharReplacements(std::string& out, std::string_view input,
+                                ql::span<const CharReplacement> replacements) {
+  auto replacementFor = [&replacements](char c) {
+    return ql::ranges::find(replacements, c, &CharReplacement::first);
+  };
+  auto isSpecial = [&replacements, &replacementFor](char c) {
+    return replacementFor(c) != replacements.end();
+  };
+  while (!input.empty()) {
+    auto special = ql::ranges::find_if(input, isSpecial);
+    auto numUnchanged = static_cast<size_t>(special - input.begin());
+    out.append(input.substr(0, numUnchanged));
+    if (special == input.end()) {
+      return;
+    }
+    out.append(replacementFor(*special)->second);
+    input.remove_prefix(numUnchanged + 1);
+  }
+}
+
+// __________________________________________________________________________
+// Append `input` as a quoted CSV field to `out`. Call this only when `input`
+// contains a CSV special character.
+void appendQuotedForCsv(std::string& out, std::string_view input) {
+  out.push_back('"');
+  appendWithCharReplacements(out, input, csvReplacements);
+  out.push_back('"');
+}
+
+// __________________________________________________________________________
+// Return the number of bytes by which `appendWithCharReplacements` grows
+// `input` for the given `replacements`.
+size_t escapingOverhead(std::string_view input,
+                        ql::span<const CharReplacement> replacements) {
+  size_t overhead = 0;
+  for (const auto& [from, to] : replacements) {
+    if (to.size() > 1) {
+      overhead +=
+          static_cast<size_t>(ql::ranges::count(input, from)) * (to.size() - 1);
     }
   }
-  out.append(input.data() + start, input.size() - start);
+  return overhead;
 }
+
 }  // namespace
 
 // __________________________________________________________________________
@@ -327,45 +374,37 @@ void appendEscapedForCsv(std::string& out, std::string_view input) {
     out.append(input);
     return;
   }
-  static constexpr std::pair<char, std::string_view> kEscapes[] = {
-      {'"', "\"\""}};
-  out.push_back('"');
-  appendWithCharReplacements(out, input, kEscapes);
-  out.push_back('"');
+  appendQuotedForCsv(out, input);
 }
 
 // __________________________________________________________________________
 std::string escapeForCsv(std::string input) {
-  // Return the input unchanged (moved, no copy) in the common case.
+  // Without a special character the field is returned as is, which moves
+  // `input` instead of allocating a new string.
   if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
     return input;
   }
   std::string out;
-  out.reserve(input.size() + 2);
-  appendEscapedForCsv(out, input);
+  out.reserve(input.size() + 2 + escapingOverhead(input, csvReplacements));
+  appendQuotedForCsv(out, input);
   return out;
 }
 
 // __________________________________________________________________________
 void appendEscapedForTsv(std::string& out, std::string_view input) {
-  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
-    out.append(input);
-    return;
-  }
-  static constexpr std::pair<char, std::string_view> kEscapes[] = {
-      {'\t', " "}, {'\n', "\\n"}};
-  appendWithCharReplacements(out, input, kEscapes);
+  appendWithCharReplacements(out, input, tsvReplacements);
 }
 
 // __________________________________________________________________________
 std::string escapeForTsv(std::string input) {
-  // Return the input unchanged (moved, no copy) in the common case.
+  // Without a special character the field is returned as is, which moves
+  // `input` instead of allocating a new string.
   if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
     return input;
   }
   std::string out;
-  out.reserve(input.size());
-  appendEscapedForTsv(out, input);
+  out.reserve(input.size() + escapingOverhead(input, tsvReplacements));
+  appendWithCharReplacements(out, input, tsvReplacements);
   return out;
 }
 
