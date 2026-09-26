@@ -237,35 +237,13 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    // Check the contract before doing any lookup work, so an empty index
-    // list fails with a clear message instead of a confusing one from
-    // further down the call chain.
+    // Check the contract before constructing the builder, whose own
+    // `expectedSize > 0` check would otherwise fire first with a confusing
+    // message for an empty index list.
     AD_CONTRACT_CHECK(!indices.empty());
-    if constexpr (underlyingHasHoles) {
-      // Indices that are holes report a placeholder; keep the per-index path
-      // that implements that mapping.
-      return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
-    } else {
-      // Fetch the compressed words in one batch through the underlying
-      // vocabulary (an on-disk underlying vocabulary serves this from its
-      // `io_uring` ring pool), then decompress each word with the decoder for
-      // its block. The underlying lookup preserves order, so result `i`
-      // belongs to `indices[i]`, exactly like the sequential path.
-      auto compressed = underlyingVocabulary_.lookupBatch(indices);
-      auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-      data->buffer().reserve(indices.size());
-      for (size_t i = 0; i < indices.size(); ++i) {
-        data->buffer().push_back(compressionWrapper_.decompress(
-            (*compressed)[i], getDecoderIdx(indices[i])));
-      }
-      // Build the views after the buffer is complete, so no reallocation can
-      // move the bytes the views point into.
-      data->views().reserve(data->buffer().size());
-      for (const auto& word : data->buffer()) {
-        data->views().emplace_back(word);
-      }
-      return StringVectorVocabBatchLookupData::asResult(std::move(data));
-    }
+    ArenaVocabBatchBuilder builder(indices.size());
+    lookupBatch(indices, builder);
+    return std::move(builder).finalize();
   }
 
   //____________________________________________________________________________
