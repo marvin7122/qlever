@@ -36,12 +36,14 @@ using ql::engine::export_v2::ExportEngineV2;
 // More rows than one 8192-row morsel, so the export has several chunks.
 constexpr size_t kNumSubjects = 20000;
 
+// One statement per line: the parallel Turtle parser of the test index needs a
+// statement boundary (a dot followed by a newline) in every input batch.
 std::string makeKnowledgeGraph() {
   std::string kg;
   for (size_t i = 0; i < kNumSubjects; ++i) {
     absl::StrAppend(&kg, "<http://ex.org/s", i, "> <http://ex.org/n> ", i,
-                    " . <http://ex.org/s", i, "> <http://ex.org/l> \"label, ",
-                    i, "\" . ");
+                    " .\n<http://ex.org/s", i, "> <http://ex.org/l> \"label, ",
+                    i, "\" .\n");
   }
   return kg;
 }
