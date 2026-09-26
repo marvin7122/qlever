@@ -216,6 +216,15 @@ ex:b ex:q "different" .
         with mock.patch.dict(sys.modules, {"rdflib": None}):
             self.assertEqual(main(["--format", "tsv", a, a]), 2)
 
+    def test_malformed_graph_is_a_parse_error(self):
+        good = _write(self._tmp.name, "good.nt", "<urn:a> <urn:b> <urn:c> .\n")
+        bad_nt = _write(self._tmp.name, "bad.nt", "<urn:a> <urn:b> .\n")
+        bad_ttl = _write(self._tmp.name, "bad.ttl", "<urn:a> <urn:b> .\n")
+        self.assertEqual(main(["--format", "ntriples", bad_nt, good]), 2)
+        self.assertEqual(main(["--format", "turtle", bad_ttl, good]), 2)
+        self.assertEqual(
+            main(["--format", "turtle", "/nonexistent/a.ttl", good]), 2)
+
     def test_unknown_format(self):
         self.assertEqual(main(["--format", "xml", "a", "b"]), 2)
 

@@ -180,11 +180,14 @@ def _solutions_to_graph(variables: Sequence[str],
 def _check_graph(path_a: str, path_b: str, fmt: str) -> int:
     from rdflib import Graph
     from rdflib import compare
+    from rdflib.exceptions import ParserError
 
     try:
         graph_a = Graph().parse(path_a, format=_RDFLIB_FORMAT[fmt])
         graph_b = Graph().parse(path_b, format=_RDFLIB_FORMAT[fmt])
-    except Exception as exc:
+    except (OSError, UnicodeError, SyntaxError, ParserError) as exc:
+        # The Turtle parser raises `BadSyntax` (a `SyntaxError`), the
+        # N-Triples parser raises `ParserError`.
         sys.stderr.write(f"parse error: {exc}\n")
         return 2
 
