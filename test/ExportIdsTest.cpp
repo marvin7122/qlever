@@ -13,6 +13,7 @@
 #include <gmock/gmock.h>
 
 #include "engine/IndexScan.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "index/LocalVocabEntry.h"
 #include "parser/LiteralOrIri.h"
@@ -630,6 +631,38 @@ TEST(ExportIds, resolveNonVocabIndexIds) {
   check({0, 1, 2, 3});
   // A subset (`Undefined` + local literal); untouched slots stay `nullopt`.
   check({2, 3});
+}
+
+// _____________________________________________________________________________
+// `idToStringAndTypeForEncodedValue` must return byte-identical results for
+// `Bool` and `Int` regardless of `use-branchless-type-dispatcher`, since that
+// runtime parameter only changes the formatting mechanism (a LUT-based
+// `BranchlessTypeDispatcher` dispatch instead of the hand-written `switch`),
+// not the formatted output.
+TEST(ExportIds, idToStringAndTypeForEncodedValueBranchlessDispatcherFlag) {
+  auto testForBothFlagValues = [](Id id) {
+    setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(
+        false);
+    auto withoutDispatcher =
+        ql::exportIds::idToStringAndTypeForEncodedValue(id);
+    setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(true);
+    auto withDispatcher = ql::exportIds::idToStringAndTypeForEncodedValue(id);
+    setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(
+        false);
+
+    ASSERT_TRUE(withoutDispatcher.has_value());
+    ASSERT_TRUE(withDispatcher.has_value());
+    EXPECT_EQ(withoutDispatcher->first, withDispatcher->first);
+    EXPECT_STREQ(withoutDispatcher->second, withDispatcher->second);
+  };
+
+  testForBothFlagValues(Id::makeFromBool(true));
+  testForBothFlagValues(Id::makeFromBool(false));
+  testForBothFlagValues(Id::makeFromInt(0));
+  testForBothFlagValues(Id::makeFromInt(42));
+  testForBothFlagValues(Id::makeFromInt(-1337));
+  testForBothFlagValues(Id::makeFromInt(std::numeric_limits<int64_t>::max()));
+  testForBothFlagValues(Id::makeFromInt(std::numeric_limits<int64_t>::min()));
 }
 
 }  // namespace

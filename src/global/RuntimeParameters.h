@@ -244,6 +244,18 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If set, the legacy export path formats `Bool` and `Int` literals via
+  // `ql::engine::BranchlessTypeDispatcher`'s 16-entry lookup table (see
+  // `BranchlessTypeDispatcher.h`) instead of the hand-written `switch` in
+  // `ExportIds::idToStringAndTypeForEncodedValue`. Only `Bool` and `Int` are
+  // routed through the table because those are the only datatypes whose LUT
+  // formatter is byte-identical to the legacy formatter (in particular, the
+  // LUT's `Double` formatter does not special-case NaN and +-Infinity the way
+  // the legacy formatter does). Default `false` because a microbenchmark
+  // (PR #90) showed the LUT is 20.9% slower than the `if`/`else` chain
+  // despite a 5x lower branch-miss rate.
+  Bool useBranchlessTypeDispatcher_{false, "use-branchless-type-dispatcher"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
