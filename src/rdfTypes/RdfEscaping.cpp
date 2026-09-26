@@ -1,18 +1,30 @@
-// Copyright 2021, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2021 - 2026 The QLever Authors, in particular:
+//
+// 2021 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "rdfTypes/RdfEscaping.h"
 
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
+#include <array>
 #include <charconv>
 #include <ctre-unicode.hpp>
+#include <functional>
 #include <string>
+#include <string_view>
+#include <utility>
 
 #include "backports/StartsWithAndEndsWith.h"
+#include "backports/algorithm.h"
 #include "backports/shift.h"
+#include "backports/span.h"
 #include "util/Exception.h"
 #include "util/HashSet.h"
 #include "util/Log.h"
@@ -291,20 +303,126 @@ std::string unescapePrefixedIri(std::string_view literal) {
   return res;
 }
 
+namespace {
+// A single-character escape: every occurrence of `first` in the input is
+// replaced by `second`.
+using CharReplacement = std::pair<char, std::string_view>;
+
+// The escapes applied by `escapeForCsv` inside the quotes and by
+// `escapeForTsv`. Together with `detail::csvSpecialCharsRegex` and
+// `detail::tsvSpecialCharsRegex` they define the two formats: in CSV, `,`,
+// `\r` and `\n` only trigger the quoting, and in TSV every special character is
+// replaced.
+constexpr std::array<CharReplacement, 1> csvReplacements{{{'"', "\"\""}}};
+constexpr std::array<CharReplacement, 2> tsvReplacements{
+    {{'\t', " "}, {'\n', "\\n"}}};
+
+// __________________________________________________________________________
+// Append `input` to `out` and replace each character that occurs as a key in
+// `replacements` by its value. Only the bytes of `input` are inspected, so a
+// replacement value is never escaped again. Copy the unchanged segments
+// between two special characters with a single `append` each. The keys of
+// `replacements` must be distinct.
+void appendWithCharReplacements(std::string& out, std::string_view input,
+                                ql::span<const CharReplacement> replacements) {
+  auto replacementFor = [&replacements](char c) {
+    return ql::ranges::find(replacements, c, &CharReplacement::first);
+  };
+  auto isSpecial = [&replacements, &replacementFor](char c) {
+    return replacementFor(c) != replacements.end();
+  };
+  while (!input.empty()) {
+    auto special = ql::ranges::find_if(input, isSpecial);
+    auto numUnchanged = static_cast<size_t>(special - input.begin());
+    out.append(input.substr(0, numUnchanged));
+    if (special == input.end()) {
+      return;
+    }
+    out.append(replacementFor(*special)->second);
+    input.remove_prefix(numUnchanged + 1);
+  }
+}
+
+// __________________________________________________________________________
+// Append `input` as a quoted CSV field to `out`. Call this only when `input`
+// contains a CSV special character.
+void appendQuotedForCsv(std::string& out, std::string_view input) {
+  out.push_back('"');
+  appendWithCharReplacements(out, input, csvReplacements);
+  out.push_back('"');
+}
+
+// __________________________________________________________________________
+// Return the number of bytes by which `appendWithCharReplacements` grows
+// `input` for the given `replacements`.
+size_t escapingOverhead(std::string_view input,
+                        ql::span<const CharReplacement> replacements) {
+  size_t overhead = 0;
+  for (const auto& [from, to] : replacements) {
+    if (to.size() > 1) {
+      overhead +=
+          static_cast<size_t>(ql::ranges::count(input, from)) * (to.size() - 1);
+    }
+  }
+  return overhead;
+}
+
+// __________________________________________________________________________
+// Throw if `input` points into the characters of `out`. Appending to `out` may
+// reallocate its buffer, which would invalidate such an `input`.
+void checkNoOverlap(const std::string& out, std::string_view input) {
+  std::less<const char*> isBefore;
+  AD_CONTRACT_CHECK(input.empty() || isBefore(input.data(), out.data()) ||
+                        !isBefore(input.data(), out.data() + out.size()),
+                    "The `input` of `appendEscapedForCsv` and "
+                    "`appendEscapedForTsv` must not point into `out`.");
+}
+}  // namespace
+
+// __________________________________________________________________________
+void appendEscapedForCsv(std::string& out, std::string_view input) {
+  checkNoOverlap(out, input);
+  if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
+    out.append(input);
+    return;
+  }
+  appendQuotedForCsv(out, input);
+}
+
 // __________________________________________________________________________
 std::string escapeForCsv(std::string input) {
+  // Without a special character the field is returned as is, which moves
+  // `input` instead of allocating a new string.
   if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
     return input;
   }
-  return absl::StrCat("\"", absl::StrReplaceAll(input, {{"\"", "\"\""}}), "\"");
+  std::string out;
+  out.reserve(input.size() + 2 + escapingOverhead(input, csvReplacements));
+  appendQuotedForCsv(out, input);
+  return out;
+}
+
+// __________________________________________________________________________
+void appendEscapedForTsv(std::string& out, std::string_view input) {
+  checkNoOverlap(out, input);
+  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
+    out.append(input);
+    return;
+  }
+  appendWithCharReplacements(out, input, tsvReplacements);
 }
 
 // __________________________________________________________________________
 std::string escapeForTsv(std::string input) {
-  if (ctre::search<detail::tsvSpecialCharsRegex>(input)) [[unlikely]] {
-    absl::StrReplaceAll({{"\t", " "}, {"\n", "\\n"}}, &input);
+  // Without a special character the field is returned as is, which moves
+  // `input` instead of allocating a new string.
+  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
+    return input;
   }
-  return input;
+  std::string out;
+  out.reserve(input.size() + escapingOverhead(input, tsvReplacements));
+  appendWithCharReplacements(out, input, tsvReplacements);
+  return out;
 }
 
 // __________________________________________________________________________
