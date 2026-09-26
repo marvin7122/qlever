@@ -23,6 +23,7 @@ RuntimeParameters::RuntimeParameters() {
   };
 
   add(stripColumns_);
+  add(useSimdEscapeClassifierForCsvTsv_);
   add(sortEstimateCancellationFactor_);
   add(cacheMaxNumEntries_);
   add(cacheMaxSize_);

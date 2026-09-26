@@ -45,6 +45,16 @@ struct RuntimeParameters {
   // between otherwise equal queries.
   Bool stripColumns_{false, "strip-columns"};
 
+  // If set, the legacy CSV/TSV export (`ExportQueryExecutionTrees`) uses the
+  // AVX2/SSE2 `ad_utility::simd::SimdEscapeClassifier` instead of
+  // `RdfEscaping::escapeForCsv`/`escapeForTsv` to find and escape special
+  // characters. Off by default: microbenchmarks on the export workload
+  // showed the SIMD scan slower than the scalar one for the short, mostly
+  // clean CSV and Turtle literals typical of exports (only TSV scanning was
+  // consistently faster), see PR #85.
+  Bool useSimdEscapeClassifierForCsvTsv_{false,
+                                         "use-simd-escape-classifier-csv-tsv"};
+
   // If the time estimate for a sort operation is larger by more than this
   // factor than the remaining time, then the sort is canceled with a
   // timeout exception.
