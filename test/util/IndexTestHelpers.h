@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//                  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_TEST_UTIL_INDEXTESTHELPERS_H
 #define QLEVER_TEST_UTIL_INDEXTESTHELPERS_H
@@ -87,6 +93,9 @@ struct TestIndexConfig {
   // (see `IndexImpl::setSecondaryVocabForTesting`), which is what this member
   // does.
   std::optional<std::vector<std::string>> secondaryVocabWords = std::nullopt;
+  // If true, build the per-predicate HyperLogLog sketches (index setting
+  // `predicate-sketches`).
+  bool predicateSketches = false;
 
   // A very typical use case is to only specify the turtle input, and leave all
   // the other members as the default. We therefore have a dedicated constructor
@@ -98,13 +107,13 @@ struct TestIndexConfig {
   // Hashing.
   template <typename H>
   friend H AbslHashValue(H h, const TestIndexConfig& c) {
-    return H::combine(std::move(h), c.turtleInput, c.loadAllPermutations,
-                      c.usePatterns, c.usePrefixCompression,
-                      c.blocksizePermutations, c.createTextIndex,
-                      c.addWordsFromLiterals, c.contentsOfWordsFileAndDocsfile,
-                      c.parserBufferSize, c.scoringMetric, c.bAndKParam,
-                      c.indexType, c.encodedPrefixesWithoutAngleBrackets,
-                      c.addHasWordTriples, c.secondaryVocabWords);
+    return H::combine(
+        std::move(h), c.turtleInput, c.loadAllPermutations, c.usePatterns,
+        c.usePrefixCompression, c.blocksizePermutations, c.createTextIndex,
+        c.addWordsFromLiterals, c.contentsOfWordsFileAndDocsfile,
+        c.parserBufferSize, c.scoringMetric, c.bAndKParam, c.indexType,
+        c.encodedPrefixesWithoutAngleBrackets, c.addHasWordTriples,
+        c.secondaryVocabWords, c.predicateSketches);
   }
   QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR_LOCAL(
       TestIndexConfig, turtleInput, loadAllPermutations, usePatterns,
@@ -112,7 +121,7 @@ struct TestIndexConfig {
       addWordsFromLiterals, contentsOfWordsFileAndDocsfile, parserBufferSize,
       scoringMetric, bAndKParam, indexType, vocabularyType,
       encodedPrefixesWithoutAngleBrackets, addHasWordTriples,
-      secondaryVocabWords)
+      secondaryVocabWords, predicateSketches)
 };
 
 // Create a test index at the given `indexBasename` and with the given `config`.
