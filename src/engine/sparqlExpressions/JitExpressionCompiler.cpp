@@ -12,6 +12,7 @@
 #include <asmjit/core.h>
 #include <asmjit/x86.h>
 
+#include "backports/algorithm.h"
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 
@@ -23,6 +24,17 @@ namespace {
 void emitWrapToIdInt(asmjit::x86::Compiler& cc, const asmjit::x86::Gp& reg) {
   cc.shl(reg, 4);
   cc.sar(reg, 4);
+}
+
+// The position of the column `col` in `referencedCols`, `std::nullopt` if the
+// program does not reference it.
+std::optional<size_t> findReferencedColumn(
+    const std::vector<ColumnIndex>& referencedCols, int64_t col) {
+  auto it = ql::ranges::find(referencedCols, static_cast<ColumnIndex>(col));
+  if (it == referencedCols.end()) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(it - referencedCols.begin());
 }
 }  // namespace
 
@@ -53,13 +65,9 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
   // Date programs need a per-row validity flag (see `LOAD_COL_DATE`): the
   // native backend has no validity masks, and a non-`Date` cell must drop
   // the row even when later comparisons happen to hold.
-  bool hasDateLoad = false;
-  for (const auto& inst : instructions) {
-    if (inst.op == OpCode::LOAD_COL_DATE) {
-      hasDateLoad = true;
-      break;
-    }
-  }
+  const bool hasDateLoad = ql::ranges::any_of(
+      instructions,
+      [](const Instruction& inst) { return inst.op == OpCode::LOAD_COL_DATE; });
 
   auto rt = std::make_shared<asmjit::JitRuntime>();
   asmjit::CodeHolder code;
@@ -117,16 +125,13 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
   for (const auto& inst : instructions) {
     switch (inst.op) {
       case OpCode::LOAD_COL_INT: {
-        // Find which index in referencedCols corresponds to inst.arg
-        size_t colIdx = 0;
-        for (size_t i = 0; i < referencedCols.size(); ++i) {
-          if (referencedCols[i] == static_cast<ColumnIndex>(inst.arg)) {
-            colIdx = i;
-            break;
-          }
+        auto colIdx = findReferencedColumn(referencedCols, inst.arg);
+        if (!colIdx.has_value()) {
+          return std::nullopt;
         }
         asmjit::x86::Gp rawVal = cc.new_gp64("rawVal");
-        cc.mov(rawVal, asmjit::x86::qword_ptr(colBaseRegs[colIdx], idx, 3));
+        cc.mov(rawVal,
+               asmjit::x86::qword_ptr(colBaseRegs[colIdx.value()], idx, 3));
 
         // ValueId integer unpacking: 4 datatype bits, 60 value bits
         // Arithmetic shift right by 4 after shift left by 4 to sign-extend
@@ -300,15 +305,13 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
       case OpCode::LOAD_COL_ID: {
         // Like `LOAD_COL_INT`, but push the raw 64-bit `ValueId` bits
         // without integer unpacking.
-        size_t colIdx = 0;
-        for (size_t i = 0; i < referencedCols.size(); ++i) {
-          if (referencedCols[i] == static_cast<ColumnIndex>(inst.arg)) {
-            colIdx = i;
-            break;
-          }
+        auto colIdx = findReferencedColumn(referencedCols, inst.arg);
+        if (!colIdx.has_value()) {
+          return std::nullopt;
         }
         asmjit::x86::Gp rawVal = cc.new_gp64("rawId");
-        cc.mov(rawVal, asmjit::x86::qword_ptr(colBaseRegs[colIdx], idx, 3));
+        cc.mov(rawVal,
+               asmjit::x86::qword_ptr(colBaseRegs[colIdx.value()], idx, 3));
         regStack.push_back(rawVal);
         break;
       }
@@ -384,15 +387,13 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         // the date-validity flag unless the cell holds a `Date` (tag in the
         // high bits, payload below). Non-`Date` cells (including durations)
         // must drop the row, like the kernels' invalid lanes.
-        size_t colIdx = 0;
-        for (size_t i = 0; i < referencedCols.size(); ++i) {
-          if (referencedCols[i] == static_cast<ColumnIndex>(inst.arg)) {
-            colIdx = i;
-            break;
-          }
+        auto colIdx = findReferencedColumn(referencedCols, inst.arg);
+        if (!colIdx.has_value()) {
+          return std::nullopt;
         }
         asmjit::x86::Gp rawVal = cc.new_gp64("rawDate");
-        cc.mov(rawVal, asmjit::x86::qword_ptr(colBaseRegs[colIdx], idx, 3));
+        cc.mov(rawVal,
+               asmjit::x86::qword_ptr(colBaseRegs[colIdx.value()], idx, 3));
         asmjit::x86::Gp tag = cc.new_gp64("dateTag");
         cc.mov(tag, rawVal);
         cc.shr(tag, static_cast<int64_t>(ValueId::numDataBits));
