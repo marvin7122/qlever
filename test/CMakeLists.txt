@@ -600,3 +600,7 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+addLinkAndDiscoverTest(HyperLogLogSketchTest global)
+
+addLinkAndDiscoverTest(JoinCardinalityEstimatorTest global)
