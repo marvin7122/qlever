@@ -179,6 +179,13 @@ addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
 addLinkAndDiscoverTest(CacheTest)
 
+addLinkAndDiscoverTest(GTestHelpersTest)
+addLinkAndDiscoverTest(MonomorphicSerializersTest)
+addLinkAndDiscoverTest(PrefetchingBatchResolverTest)
+addLinkAndDiscoverTest(SwarDelimiterPackerTest)
+addLinkAndDiscoverTest(InPlaceHttpChunkFramingTest)
+addLinkAndDiscoverTest(AdaptiveChunkSizerTest)
+
 addLinkAndDiscoverTestSerialNoLibs(ConcurrentCacheTest)
 
 # This test also seems to use the same filenames and should be fixed.

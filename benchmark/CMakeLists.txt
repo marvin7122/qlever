@@ -36,4 +36,65 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
+
+    add_executable(SerializerMicroBenchmark SerializerMicroBenchmark.cpp)
+    linkBenchmark(SerializerMicroBenchmark engine sparqlParser qlever_util)
+
+    add_executable(ChunkStreamingBenchmark ChunkStreamingBenchmark.cpp)
+    linkBenchmark(ChunkStreamingBenchmark engine testUtil)
+
+    add_executable(IoUringDirectBenchmark IoUringDirectBenchmark.cpp)
+    linkBenchmark(IoUringDirectBenchmark engine sparqlParser qlever_util)
+
+    add_executable(StreamingBufferBenchmark StreamingBufferBenchmark.cpp)
+    linkBenchmark(StreamingBufferBenchmark engine sparqlParser qlever_util)
+
+    add_executable(PrefetchingBenchmark PrefetchingBenchmark.cpp)
+    linkBenchmark(PrefetchingBenchmark engine sparqlParser qlever_util)
+
+    addAndLinkBenchmark(FastNumberFormatterBenchmark)
+
+    add_executable(MonomorphicSerializerBenchmark MonomorphicSerializerBenchmark.cpp)
+    linkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser qlever_util)
+
+    # The allocation-counting shims in these two benchmarks pair a
+    # malloc-based global `operator new` with a free-based `operator delete`.
+    # The pairing is correct, but GCC's `-Wmismatched-new-delete` cannot see
+    # it, and the warning is issued for the whole translation unit, so it
+    # cannot be silenced with an in-source pragma. Disable it for these two
+    # files when compiling with GCC.
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        set_source_files_properties(SerializerMicroBenchmark.cpp
+                                    MonomorphicSerializerBenchmark.cpp
+            PROPERTIES COMPILE_OPTIONS -Wno-mismatched-new-delete)
+    endif()
+
+    add_executable(BranchlessDispatcherBenchmark BranchlessDispatcherBenchmark.cpp)
+    qlever_target_link_libraries(BranchlessDispatcherBenchmark benchmark engine sparqlParser qlever_util)
+
+    add_executable(ScatterGatherBenchmark ScatterGatherBenchmark.cpp)
+    linkBenchmark(ScatterGatherBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SimdEscapeBenchmark SimdEscapeBenchmark.cpp)
+    linkBenchmark(SimdEscapeBenchmark engine sparqlParser qlever_util)
+
+    addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
+    addAndLinkBenchmark(EndToEndExportBenchmark engine sparqlParser qlever_util)
+
+    add_executable(AdaptiveChunkBenchmark AdaptiveChunkBenchmark.cpp)
+    linkBenchmark(AdaptiveChunkBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SimdValidityBenchmark SimdValidityBenchmark.cpp)
+    qlever_target_link_libraries(SimdValidityBenchmark benchmark engine sparqlParser qlever_util)
+
+    add_executable(RlePrefixBenchmark RlePrefixBenchmark.cpp)
+    qlever_target_link_libraries(RlePrefixBenchmark benchmark engine sparqlParser qlever_util)
+
+    add_executable(HttpFramingBenchmark HttpFramingBenchmark.cpp)
+    linkBenchmark(HttpFramingBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SwarDelimiterBenchmark SwarDelimiterBenchmark.cpp)
+    linkBenchmark(SwarDelimiterBenchmark engine sparqlParser qlever_util)
 endif()
