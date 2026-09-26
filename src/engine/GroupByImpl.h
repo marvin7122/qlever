@@ -1,7 +1,13 @@
-// Copyright 2018 - 2024, University of Freiburg
-// Chair of Algorithms and Data Structures.
-// Authors: Florian Kramer [2018]
-//          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2018 - 2026, The QLever Authors, in particular:
+//
+// 2018        Florian Kramer, UFR
+// 2018 - 2024 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
@@ -238,6 +244,14 @@ class GroupByImpl : public Operation {
   // Compute the result for a single `COUNT(*)` aggregate with a single
   // (implicit) group.
   std::optional<IdTable> computeCountStar() const;
+
+  // `SELECT (SUM(STRLEN(?cat)) AS ?s) { { SELECT (GROUP_CONCAT(?o; SEP) AS
+  // ?cat) { ?s <p> ?o } GROUP BY ?s } }`. Algebra:
+  // Σ STRLEN(o) + (N_rows − N_groups) · STRLEN(sep). Return `std::nullopt`
+  // (fall back to the generic evaluation) if the pattern does not match, if
+  // GROUP_CONCAT would reject one of the values, or if the sum does not fit
+  // into `int64_t`.
+  std::optional<IdTable> computeSumStrlenOfGroupConcat() const;
 
   // Stores information required for substitution of an expression in an
   // expression tree.
@@ -644,6 +658,11 @@ namespace groupBy::detail {
 template <typename A>
 CPP_concept VectorOfAggregationData =
     ad_utility::SameAsAnyTypeIn<A, GroupByImpl::AggregationDataVectors>;
-}
+
+// Return `sum + factor1 * factor2`, or `std::nullopt` if the product or the
+// sum does not fit into `int64_t` (signed overflow is undefined behavior).
+std::optional<int64_t> checkedAddProduct(int64_t sum, int64_t factor1,
+                                         int64_t factor2);
+}  // namespace groupBy::detail
 
 #endif  // QLEVER_SRC_ENGINE_GROUPBYIMPL_H

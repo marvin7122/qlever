@@ -1,8 +1,14 @@
-// Copyright 2021 - 2023, University of Freiburg,
-// Chair of Algorithms and Data Structures
-// Authors: Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>
-//          Hannah Bast <bast@cs.uni-freiburg.de>
-//          Christoph Ullinger <ullingec@cs.uni-freiburg.de>
+// Copyright 2021 - 2026, The QLever Authors, in particular:
+//
+// 2021 - 2023 Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>, UFR
+// 2021 - 2023 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
+// 2021 - 2023 Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
@@ -115,6 +121,10 @@ SparqlExpression::Ptr makeStrExpression(SparqlExpression::Ptr child);
 SparqlExpression::Ptr makeIriOrUriExpression(SparqlExpression::Ptr child,
                                              SparqlExpression::Ptr baseIri);
 SparqlExpression::Ptr makeStrlenExpression(SparqlExpression::Ptr child);
+// True iff `expr` is a `STRLEN(...)` expression. Used by the
+// `SUM(STRLEN(GROUP_CONCAT(...)))` fast path, which must not accept any other
+// single-variable child (e.g. a bare variable or `YEAR(...)`).
+bool isStrlenExpression(const SparqlExpression* expr);
 SparqlExpression::Ptr makeSubstrExpression(SparqlExpression::Ptr string,
                                            SparqlExpression::Ptr start,
                                            SparqlExpression::Ptr length);

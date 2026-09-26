@@ -1,10 +1,18 @@
-// Copyright 2018, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Florian Kramer (florian.kramer@mail.uni-freiburg.de)
-//          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
+// Copyright 2018 - 2026, The QLever Authors, in particular:
+//
+// 2018 Florian Kramer <florian.kramer@mail.uni-freiburg.de>, UFR
+// 2018 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
+
+#include <limits>
 
 #include "./util/GTestHelpers.h"
 #include "./util/IdTableHelpers.h"
@@ -3459,4 +3467,132 @@ TEST(GroupBy, BlankNodeInGroupBy) {
   EXPECT_EQ(table(0, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_EQ(table(1, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_NE(table(0, 1), table(1, 1));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumStrlenOfGroupConcat) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <n> \"ab\" . <x> <n> \"c\" . <y> <n> \"de\" ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<n>"), Variable{"?o"}});
+  auto groupConcat = SparqlExpressionPimpl{
+      std::make_unique<GroupConcatExpression>(
+          false, makeVariableExpression(Variable{"?o"}), " "),
+      "GROUP_CONCAT(?o)"};
+  std::vector<Alias> innerAliases{
+      Alias{std::move(groupConcat), Variable{"?cat"}}};
+  auto inner = makeExecutionTree<GroupBy>(
+      &qec, std::vector<Variable>{Variable{"?s"}}, innerAliases, scan);
+  auto sumStrlen = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false,
+          makeStrlenExpression(makeVariableExpression(Variable{"?cat"}))),
+      "SUM(STRLEN(?cat))"};
+  std::vector<Alias> outerAliases{
+      Alias{std::move(sumStrlen), Variable{"?sum"}}};
+  GroupByImpl outer{&qec, {}, outerAliases, inner};
+  auto result = outer.computeResultOnlyForTesting(false);
+  EXPECT_THAT(result.idTableView(), matchesIdTableFromVector({{I(6)}}));
+  // The fast path must have run: if the optimizer had returned `nullopt`,
+  // the generic path would produce the same table and the test would pass
+  // without covering the new code.
+  const auto& runtimeInfo =
+      outer.getChildren().at(0)->getRootOperation()->runtimeInfo();
+  EXPECT_EQ(runtimeInfo.status_, RuntimeInformation::Status::optimizedOut);
+}
+
+// _____________________________________________________________________________
+// A non-xsd:string typed literal is rejected by GROUP_CONCAT's
+// `LiteralValueGetterWithoutStrFunction`, so its group concatenates to UNDEF,
+// which then poisons the outer SUM. STRLEN would still count the value, so the
+// fast path must bail out and defer to the generic path (result: UNDEF).
+TEST_F(GroupByOptimizations, sumStrlenOfGroupConcatTypedLiteralBailsOut) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <n> \"ab\" . <x> <n> \"c\" . <y> <n> "
+                    "\"42\"^^<http://www.w3.org/2001/XMLSchema#integer> ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<n>"), Variable{"?o"}});
+  auto groupConcat = SparqlExpressionPimpl{
+      std::make_unique<GroupConcatExpression>(
+          false, makeVariableExpression(Variable{"?o"}), " "),
+      "GROUP_CONCAT(?o)"};
+  std::vector<Alias> innerAliases{
+      Alias{std::move(groupConcat), Variable{"?cat"}}};
+  auto inner = makeExecutionTree<GroupBy>(
+      &qec, std::vector<Variable>{Variable{"?s"}}, innerAliases, scan);
+  auto sumStrlen = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false,
+          makeStrlenExpression(makeVariableExpression(Variable{"?cat"}))),
+      "SUM(STRLEN(?cat))"};
+  std::vector<Alias> outerAliases{
+      Alias{std::move(sumStrlen), Variable{"?sum"}}};
+  GroupByImpl outer{&qec, {}, outerAliases, inner};
+  auto result = outer.computeResultOnlyForTesting(false);
+  EXPECT_THAT(result.idTableView(),
+              matchesIdTableFromVector({{Id::makeUndefined()}}));
+  const auto& runtimeInfo =
+      outer.getChildren().at(0)->getRootOperation()->runtimeInfo();
+  EXPECT_NE(runtimeInfo.status_, RuntimeInformation::Status::optimizedOut);
+}
+
+// _____________________________________________________________________________
+// The fast path must also match the tree that the query planner builds for the
+// SPARQL query, not only the hand-built tree above.
+TEST_F(GroupByOptimizations, sumStrlenOfGroupConcatViaQueryPlanner) {
+  auto* qec =
+      getQec("<x> <n> \"ab\" . <x> <n> \"c\" . <y> <n> \"de\" . <y> <m> <x> .");
+  auto query =
+      "SELECT (SUM(STRLEN(?cat)) AS ?sum) { { SELECT (GROUP_CONCAT(?o; "
+      "SEPARATOR=\" \") AS ?cat) { ?s <n> ?o } GROUP BY ?s } }";
+  // The server enables `strip-columns`, which puts a `StripColumns` between
+  // the two GROUP BYs; the fast path must match with and without it.
+  for (bool stripColumns : {false, true}) {
+    auto cleanup =
+        setRuntimeParameterForTest<&RuntimeParameters::stripColumns_>(
+            stripColumns);
+    auto pq =
+        SparqlParser::parseQuery(&qec->getIndex().encodedIriManager(), query);
+    QueryPlanner qp{qec, std::make_shared<ad_utility::CancellationHandle<>>()};
+    auto tree = qp.createExecutionTree(pq);
+    auto result = tree.getResult();
+    // "ab c" and "de": 4 + 2 code points.
+    EXPECT_THAT(result->idTableView(), matchesIdTableFromVector({{I(6)}}))
+        << "stripColumns = " << stripColumns;
+    auto* child = tree.getRootOperation()->getChildren().at(0);
+    if (stripColumns) {
+      child = child->getRootOperation()->getChildren().at(0);
+    }
+    EXPECT_EQ(child->getRootOperation()->runtimeInfo().status_,
+              RuntimeInformation::Status::optimizedOut)
+        << "stripColumns = " << stripColumns << ", child "
+        << child->getRootOperation()->getDescriptor();
+  }
+}
+
+// _____________________________________________________________________________
+// The length identity accumulates `length * count` per distinct object and adds
+// `(rows - groups) * separatorLength`. Both steps must detect a result that
+// does not fit into `int64_t` so that the fast path can fall back to the
+// generic evaluation instead of running into signed overflow.
+TEST(GroupBy, checkedAddProduct) {
+  using groupBy::detail::checkedAddProduct;
+  constexpr int64_t max = std::numeric_limits<int64_t>::max();
+  constexpr int64_t min = std::numeric_limits<int64_t>::min();
+  EXPECT_THAT(checkedAddProduct(4, 3, 2), ::testing::Optional(10));
+  EXPECT_THAT(checkedAddProduct(0, 0, max), ::testing::Optional(0));
+  EXPECT_THAT(checkedAddProduct(0, max, 1), ::testing::Optional(max));
+  EXPECT_THAT(checkedAddProduct(max - 6, 3, 2), ::testing::Optional(max));
+  EXPECT_THAT(checkedAddProduct(min, 1, max), ::testing::Optional(-1));
+  // The product overflows: 2^32 * 2^31 = 2^63.
+  EXPECT_EQ(checkedAddProduct(0, int64_t{1} << 32, int64_t{1} << 31),
+            std::nullopt);
+  EXPECT_EQ(checkedAddProduct(0, max, 2), std::nullopt);
+  // The product fits, but the sum overflows.
+  EXPECT_EQ(checkedAddProduct(max - 5, 3, 2), std::nullopt);
+  EXPECT_EQ(checkedAddProduct(max, 1, 1), std::nullopt);
 }

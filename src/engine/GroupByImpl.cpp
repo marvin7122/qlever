@@ -1,7 +1,13 @@
-// Copyright 2018 - 2025, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Florian Kramer [2018 - 2020]
-//          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2018 - 2026, The QLever Authors, in particular:
+//
+// 2018 - 2020 Florian Kramer, UFR
+// 2018 - 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
@@ -9,9 +15,12 @@
 
 #include <absl/strings/str_join.h>
 
+#include <limits>
+
 #include "backports/algorithm.h"
 #include "engine/CallFixedSize.h"
 #include "engine/ExistsJoin.h"
+#include "engine/GroupBy.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
 #include "engine/LazyGroupBy.h"
@@ -22,9 +31,11 @@
 #include "engine/sparqlExpressions/ExistsExpression.h"
 #include "engine/sparqlExpressions/GroupConcatExpression.h"
 #include "engine/sparqlExpressions/LiteralExpression.h"
+#include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/sparqlExpressions/SampleExpression.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
+#include "engine/sparqlExpressions/SparqlExpressionValueGetters.h"
 #include "engine/sparqlExpressions/StdevExpression.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
@@ -36,6 +47,7 @@
 #include "util/Algorithm.h"
 #include "util/Exception.h"
 #include "util/HashSet.h"
+#include "util/StringUtils.h"
 #include "util/Timer.h"
 
 namespace groupBy::detail {
@@ -1187,6 +1199,9 @@ std::optional<IdTable> GroupByImpl::computeOptimizedGroupByIfPossible() const {
     if (auto result = computeGroupByForFullIndexScan()) {
       return result;
     }
+    if (auto result = computeSumStrlenOfGroupConcat()) {
+      return result;
+    }
   }
   if (auto result = computeGroupByForJoinWithFullScan()) {
     return result;
@@ -1968,6 +1983,241 @@ bool GroupByImpl::isVariableBoundInSubtree(const Variable& variable) const {
 std::unique_ptr<Operation> GroupByImpl::cloneImpl() const {
   return std::make_unique<GroupByImpl>(_executionContext, _groupByVariables,
                                        _aliases, _subtree->clone());
+}
+
+// _____________________________________________________________________________
+namespace {
+std::optional<Permutation::Enum> permutationWithWantedCol1(
+    const IndexScan& scan, const Variable& wantedCol1) {
+  const bool predBound = !scan.predicate().isVariable();
+  const bool subjBound = !scan.subject().isVariable();
+  const bool objBound = !scan.object().isVariable();
+  if (scan.subject().isVariable() &&
+      scan.subject().getVariable() == wantedCol1) {
+    if (predBound) {
+      return Permutation::PSO;
+    }
+    if (objBound) {
+      return Permutation::OSP;
+    }
+  } else if (scan.object().isVariable() &&
+             scan.object().getVariable() == wantedCol1) {
+    if (predBound) {
+      return Permutation::POS;
+    }
+    if (subjBound) {
+      return Permutation::SOP;
+    }
+  } else if (scan.predicate().isVariable() &&
+             scan.predicate().getVariable() == wantedCol1) {
+    if (subjBound) {
+      return Permutation::SPO;
+    }
+    if (objBound) {
+      return Permutation::OPS;
+    }
+  }
+  return std::nullopt;
+}
+
+size_t utf8Length(std::string_view s) {
+  return ad_utility::getUTF8Prefix(s, std::numeric_limits<size_t>::max()).first;
+}
+}  // namespace
+
+// _____________________________________________________________________________
+std::optional<int64_t> groupBy::detail::checkedAddProduct(int64_t sum,
+                                                          int64_t factor1,
+                                                          int64_t factor2) {
+  int64_t product = 0;
+  int64_t result = 0;
+  if (__builtin_mul_overflow(factor1, factor2, &product) ||
+      __builtin_add_overflow(sum, product, &result)) {
+    return std::nullopt;
+  }
+  return result;
+}
+
+// _____________________________________________________________________________
+std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
+  if (!_groupByVariables.empty() || _aliases.size() != 1) {
+    return std::nullopt;
+  }
+  auto* sum = dynamic_cast<const sparqlExpression::SumExpression*>(
+      _aliases.front()._expression.getPimpl());
+  if (!sum) {
+    return std::nullopt;
+  }
+  if (sum->isAggregate() ==
+      sparqlExpression::SparqlExpression::AggregateStatus::DistinctAggregate) {
+    return std::nullopt;
+  }
+  auto sumChildren = sum->children();
+  if (sumChildren.size() != 1) {
+    return std::nullopt;
+  }
+  // Only SUM(STRLEN(?cat)). A bare SUM(?cat), SUM(YEAR(?cat)), or SUM of
+  // any other expression is not the length identity.
+  if (!sparqlExpression::isStrlenExpression(sumChildren[0].get())) {
+    return std::nullopt;
+  }
+  auto strlenKids = sumChildren[0]->children();
+  if (strlenKids.size() != 1 ||
+      !strlenKids[0]->getVariableOrNullopt().has_value()) {
+    return std::nullopt;
+  }
+  auto strlenVars = sumChildren[0]->getUnaggregatedVariables();
+  if (strlenVars.size() != 1) {
+    return std::nullopt;
+  }
+  const Variable catVar = strlenVars.front();
+
+  // The server strips a subquery to its selected variables
+  // (`strip-columns`), so the inner GROUP BY can sit below a `StripColumns`.
+  // The fast path reads the index directly, so it may look through it.
+  auto* strip = dynamic_cast<StripColumns*>(_subtree->getRootOperation().get());
+  auto innerGroupOp = strip != nullptr
+                          ? strip->getChildren().at(0)->getRootOperation()
+                          : _subtree->getRootOperation();
+  auto* innerGroup = dynamic_cast<GroupBy*>(innerGroupOp.get());
+  if (!innerGroup || innerGroup->groupByVariables().size() != 1 ||
+      innerGroup->aliases().size() != 1) {
+    return std::nullopt;
+  }
+  if (innerGroup->aliases().front()._target != catVar) {
+    return std::nullopt;
+  }
+  auto* groupConcat =
+      dynamic_cast<const sparqlExpression::GroupConcatExpression*>(
+          innerGroup->aliases().front()._expression.getPimpl());
+  if (!groupConcat || groupConcat->isAggregate() ==
+                          sparqlExpression::SparqlExpression::AggregateStatus::
+                              DistinctAggregate) {
+    return std::nullopt;
+  }
+  auto gcChildren = groupConcat->children();
+  if (gcChildren.size() != 1) {
+    return std::nullopt;
+  }
+  auto concatVar = gcChildren[0]->getVariableOrNullopt();
+  if (!concatVar.has_value()) {
+    return std::nullopt;
+  }
+  const Variable groupVar = innerGroup->groupByVariables().front();
+  auto innerChildren = innerGroup->getChildren();
+  if (innerChildren.size() != 1) {
+    return std::nullopt;
+  }
+  auto* scan = dynamic_cast<const IndexScan*>(
+      innerChildren[0]->getRootOperation().get());
+  if (!scan || scan->numVariables() != 2 ||
+      !scan->graphsToFilter().areAllGraphsAllowed() ||
+      !scan->additionalVariables().empty() ||
+      !scan->getLimitOffset().isUnconstrained()) {
+    return std::nullopt;
+  }
+
+  const auto& locTriples = scan->permutation().getLocatedTriplesForPermutation(
+      locatedTriplesState());
+  if (!locTriples.isEmpty() || scan->permutation().permutationType() ==
+                                   Permutation::Type::MATERIALIZED_VIEW) {
+    return std::nullopt;
+  }
+  const auto& permutedTriple = scan->getPermutedTriple();
+  std::optional<Id> col0Id = toValueId(*permutedTriple[0], getIndex());
+  if (!col0Id.has_value()) {
+    return std::nullopt;
+  }
+
+  auto objectPerm = permutationWithWantedCol1(*scan, concatVar.value());
+  auto groupPerm = permutationWithWantedCol1(*scan, groupVar);
+  if (!objectPerm.has_value() || !groupPerm.has_value()) {
+    return std::nullopt;
+  }
+
+  const size_t numRows =
+      scan->getLimitOffset().actualSize(scan->getExactSize());
+  const auto& groupPermutation =
+      getIndex().getImpl().getPermutation(groupPerm.value());
+  auto groups = groupPermutation.getDistinctCol1IdsAndCounts(
+      col0Id.value(), cancellationHandle_, locatedTriplesState(),
+      scan->getLimitOffset());
+  const size_t numGroups = groups.numRows();
+  if (numRows < numGroups) {
+    return std::nullopt;
+  }
+
+  const auto& objectPermutation =
+      getIndex().getImpl().getPermutation(objectPerm.value());
+  auto objects = objectPermutation.getDistinctCol1IdsAndCounts(
+      col0Id.value(), cancellationHandle_, locatedTriplesState(),
+      scan->getLimitOffset());
+
+  IdTable row{scan->getResultWidth(), getExecutionContext()->getAllocator()};
+  row.emplace_back();
+  for (ColumnIndex c = 0; c < row.numColumns(); ++c) {
+    row(0, c) = Id::makeUndefined();
+  }
+  LocalVocab localVocab;
+  // The value getter only needs the index and the local vocab of the context,
+  // so one context serves all objects.
+  sparqlExpression::EvaluationContext scanCtx{
+      *getExecutionContext(),
+      innerChildren[0]->getVariableColumns(),
+      row.asStaticView<0>(),
+      getExecutionContext()->getAllocator(),
+      localVocab,
+      cancellationHandle_,
+      deadline_};
+  int64_t sumStrlen = 0;
+  for (size_t i = 0; i < objects.numRows(); ++i) {
+    // GROUP_CONCAT extracts each value with
+    // `LiteralValueGetterWithoutStrFunction`, which rejects non-xsd:string
+    // typed literals (as well as IRIs and numeric/encoded values): a single
+    // rejected value makes its whole group UNDEF, which then poisons the
+    // outer SUM. STRLEN would still count such values, so bail unless
+    // GROUP_CONCAT accepts the value exactly as it would on the generic path.
+    // For an accepted value, STRLEN counts the code points of exactly the
+    // content that GROUP_CONCAT appends, so one vocabulary lookup per distinct
+    // object yields both the check and the length.
+    auto groupConcatLiteral =
+        sparqlExpression::detail::LiteralValueGetterWithoutStrFunction{}(
+            objects(i, 0), &scanCtx);
+    if (!groupConcatLiteral.has_value()) {
+      return std::nullopt;
+    }
+    const auto length = static_cast<int64_t>(
+        utf8Length(asStringViewUnsafe(groupConcatLiteral->getContent())));
+    auto newSum = groupBy::detail::checkedAddProduct(sumStrlen, length,
+                                                     objects(i, 1).getInt());
+    if (!newSum.has_value()) {
+      return std::nullopt;
+    }
+    sumStrlen = newSum.value();
+    cancellationHandle_->throwIfCancelled();
+  }
+
+  const int64_t sepLen =
+      static_cast<int64_t>(utf8Length(groupConcat->getSeparator()));
+  auto total = groupBy::detail::checkedAddProduct(
+      sumStrlen, static_cast<int64_t>(numRows - numGroups), sepLen);
+  if (!total.has_value()) {
+    return std::nullopt;
+  }
+
+  innerChildren[0]
+      ->getRootOperation()
+      ->updateRuntimeInformationWhenOptimizedOut({});
+  innerGroup->updateRuntimeInformationWhenOptimizedOut(
+      {innerChildren[0]->getRootOperation()->getRuntimeInfoPointer()});
+  if (strip != nullptr) {
+    strip->updateRuntimeInformationWhenOptimizedOut(
+        {innerGroup->getRuntimeInfoPointer()});
+  }
+
+  IdTable table{1, getExecutionContext()->getAllocator()};
+  table.push_back({Id::makeFromInt(total.value())});
+  return table;
 }
 
 // _____________________________________________________________________________
