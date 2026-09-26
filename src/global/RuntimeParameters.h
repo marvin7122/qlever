@@ -244,6 +244,11 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // Number of words ahead that a batched lookup in an in-memory vocabulary
+  // (`VocabularyInMemory::lookupBatch`) prefetches into the CPU cache. Zero
+  // (default) disables software prefetching.
+  SizeT vocabLookupPrefetchDistance_{0, "vocab-lookup-prefetch-distance"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
