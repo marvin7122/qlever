@@ -615,7 +615,10 @@ auto testUnaryExpression = [](VectorOrExpressionResult auto const& operand,
   testNaryExpression(makeFunction, expected, operand);
 };
 
-TEST(SparqlExpression, dateOperators) {
+namespace {
+// Run the checks for the date operators. `YEAR`, `MONTH` and `DAY` take the
+// code path selected by the runtime parameter `integer-date-extraction`.
+void testDateOperators() {
   // Test `YearExpression`, `MonthExpression`, `DayExpression`,
   //  `HoursExpression`, `MinutesExpression`, `SecondsExpression` and
   //  `ToEpochExpression`.
@@ -784,6 +787,22 @@ TEST(SparqlExpression, dateOperators) {
       DateYearOrDuration(10000, DateYearOrDuration::Type::Year);
   checkStrTimezone(Ids{Id::makeFromDate(d7)}, IdOrLocalVocabEntryVec{lit("")});
   checkTimezone(Ids{Id::makeFromDate(d7)}, Ids{U});
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(SparqlExpression, dateOperators) { testDateOperators(); }
+
+// _____________________________________________________________________________
+TEST(SparqlExpression, dateOperatorsWithIntegerDateExtraction) {
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::integerDateExtraction_>(
+          true);
+  testDateOperators();
+  // The alternative `YEAR` expression must still be recognized as such.
+  auto year =
+      makeYearExpression(std::make_unique<VariableExpression>(Variable{"?x"}));
+  EXPECT_TRUE(year->isYearExpression());
 }
 
 // _____________________________________________________________________________________
