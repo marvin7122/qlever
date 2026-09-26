@@ -277,10 +277,9 @@ bool RelationalExpression<Comp>::compileToJit(
     program.addInstruction(ql::engine::jit::OpCode::CMP_GE_INT);
   } else if constexpr (Comp == Comparison::EQ) {
     program.addInstruction(ql::engine::jit::OpCode::CMP_EQ_INT);
-  } else if constexpr (Comp == Comparison::NE) {
-    program.addInstruction(ql::engine::jit::OpCode::CMP_NE_INT);
   } else {
-    return false;
+    static_assert(Comp == Comparison::NE);
+    program.addInstruction(ql::engine::jit::OpCode::CMP_NE_INT);
   }
   return true;
 }
