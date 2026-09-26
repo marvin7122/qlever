@@ -346,7 +346,7 @@ TEST(Filter, branchlessCompactionGivesSameResult) {
     auto result = filter.getResult(false, mode);
     IdTable all{3, ad_utility::makeUnlimitedAllocator<Id>()};
     if (result->isFullyMaterialized()) {
-      all = result->idTable().clone();
+      all = result->cloneIdTable();
     } else {
       for (auto& pair : result->idTables()) {
         all.insertAtEnd(pair.idTable_);
