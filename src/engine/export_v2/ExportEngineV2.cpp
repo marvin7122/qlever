@@ -39,6 +39,7 @@
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
+#include "util/InputRangeUtils.h"
 #include "util/Log.h"
 #include "util/Timer.h"
 
@@ -241,6 +242,20 @@ SelectedColumns selectedColumns(const ParsedQuery& parsedQuery,
   return columns;
 }
 
+// The blocks of `result` for `planExportMorsels`. A fully materialized result
+// (an index scan below `lazy-index-scan-max-size-materialization`, a cached
+// result) has no generator, so it is served as one block. The block is a copy
+// because morsels own their blocks and may outlive the caller's reference.
+Result::LazyResult resultBlocks(std::shared_ptr<const Result> result) {
+  if (!result->isFullyMaterialized()) {
+    return result->idTables();
+  }
+  return Result::LazyResult{ad_utility::lazySingleValueRange([result]() {
+    return Result::IdTableVocabPair{result->cloneIdTable(),
+                                    result->localVocab().clone()};
+  })};
+}
+
 // Checkpoint interval for cooperative revocation: an in-flight morsel
 // abandons its remainder at most this many rows after a new query arrives,
 // so a foreground query waits for pool threads no longer than one
@@ -349,7 +364,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     // No session exists here, so nothing can revoke: serialize each plan
     // directly without checkpoints.
     for (auto&& plan : planExportMorsels(
-             result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
+             resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
       for (const auto& segment : plan.segments_) {
@@ -392,7 +407,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
                                       !ordered,
                                       monomorphicRows};
   for (auto&& plan : planExportMorsels(
-           result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
+           resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
     session.submitMorsel(runner.makeTask(std::move(plan)));
   }
