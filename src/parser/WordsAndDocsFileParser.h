@@ -149,16 +149,14 @@ struct LiteralsTokenizationDelimiter {
  *  code;
  * }
  */
-inline std::vector<std::string> tokenizeAndNormalizeText(
-    std::string_view text, const LocaleManager& localeManager) {
+inline auto tokenizeAndNormalizeText(std::string_view text,
+                                     const LocaleManager& localeManager) {
   std::vector<std::string_view> split{
       absl::StrSplit(text, LiteralsTokenizationDelimiter{}, absl::SkipEmpty{})};
-  std::vector<std::string> result;
-  result.reserve(split.size());
-  for (const auto& str : split) {
-    result.push_back(localeManager.getLowercaseUtf8(str));
-  }
-  return result;
+  return ql::views::transform(std::move(split),
+                              [&localeManager](const auto& str) {
+                                return localeManager.getLowercaseUtf8(str);
+                              });
 }
 
 // Strip the surrounding quotes (and, for a literal with a datatype like a
