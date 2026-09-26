@@ -22,7 +22,8 @@ SELECT (tsv, csv)
   Column order does not matter. Blank nodes shared across rows are
   compared by encoding each result as an RDF graph (one blank node per
   solution, predicates are variable names) and running isomorphism.
-  An empty file is not equivalent to a header-only file.
+  An empty file is not a SELECT result (the header line is mandatory),
+  so it is a parse error; a header-only file is the empty result.
 
   TSV cells are parsed as RDF terms in Turtle syntax, as the SPARQL 1.1
   TSV format prescribes, so `1` (xsd:integer) and `"1"` (plain literal)
@@ -226,9 +227,11 @@ def _check_solutions(path_a: str, path_b: str, fmt: str) -> int:
         sys.stderr.write(f"parse error: {exc}\n")
         return 2
 
-    if header_a is None or header_b is None:
-        print("NOT equivalent (empty file is not a SELECT result)")
-        return 1
+    for path, header in ((path_a, header_a), (path_b, header_b)):
+        if header is None:
+            sys.stderr.write(
+                f"parse error: {path} is empty, a SELECT result has a header\n")
+            return 2
 
     try:
         vars_a = _header_variables(header_a)

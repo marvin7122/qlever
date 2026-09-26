@@ -102,10 +102,15 @@ ex:b ex:q "different" .
         b = _write(self._tmp.name, "b.tsv", "?o\t?s\n<o>\t<a>\n")
         self.assertEqual(main(["--format", "tsv", a, b]), 0)
 
-    def test_tsv_empty_vs_header_only(self):
+    def test_empty_file_is_a_parse_error(self):
+        # A SELECT result always has a header line, so an empty file is
+        # malformed, also when compared with itself.
         a = _write(self._tmp.name, "a.tsv", "")
         b = _write(self._tmp.name, "b.tsv", "?s\t?o\n")
-        self.assertEqual(main(["--format", "tsv", a, b]), 1)
+        self.assertEqual(main(["--format", "tsv", a, b]), 2)
+        self.assertEqual(main(["--format", "tsv", b, a]), 2)
+        self.assertEqual(main(["--format", "tsv", a, a]), 2)
+        self.assertEqual(main(["--format", "tsv", b, b]), 0)
 
     def test_turtle_duplicate_triples_are_a_set(self):
         a = _write(self._tmp.name, "a.ttl",
