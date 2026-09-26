@@ -1,6 +1,7 @@
 // Copyright 2023 - 2026 The QLever Authors, in particular:
 //
 // 2023 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -15,6 +16,7 @@
 #include "../util/GTestHelpers.h"
 #include "../util/IdTableHelpers.h"
 #include "../util/IndexTestHelpers.h"
+#include "../util/RuntimeParametersTestHelpers.h"
 #include "../util/TripleComponentTestHelpers.h"
 #include "./LazyJoinTestHelpers.h"
 #include "engine/IndexScan.h"
@@ -2299,4 +2301,54 @@ TEST(IndexScan, isDistinctBy) {
   ASSERT_TRUE(
       std::dynamic_pointer_cast<IndexScan>(strippedGraph->getRootOperation()));
   EXPECT_FALSE(strippedGraph->getRootOperation()->isDistinctBy(SC{0, 1, 2, 3}));
+}
+
+// _____________________________________________________________________________
+TEST(IndexScan, getPredicateSketch) {
+  std::string kg =
+      "<a> <p> <x> . <b> <p> <x> . <c> <p> <y> . <a> <q> <x> . <a> <q> <y> .";
+  TestIndexConfig config{kg};
+  config.predicateSketches = true;
+  auto* qec = getQec(config);
+  auto p = iri("<p>");
+  IndexScan pso{qec, Permutation::PSO,
+                SparqlTripleSimple{Var{"?s"}, p, Var{"?o"}}};
+  IndexScan pos{qec, Permutation::POS,
+                SparqlTripleSimple{Var{"?s"}, p, Var{"?o"}}};
+
+  // Without the runtime parameter, no sketches are provided.
+  EXPECT_EQ(pso.getPredicateSketch(0), nullptr);
+
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::usePredicateSketches_>(
+          true);
+  // `<p>` has the three distinct subjects `<a>, <b>, <c>` and the two distinct
+  // objects `<x>, <y>`. In PSO the subjects are in column 0, in POS they are
+  // in column 1.
+  auto estimate = [](const auto* sketch) {
+    EXPECT_NE(sketch, nullptr);
+    return sketch == nullptr ? 0 : sketch->estimateCardinality();
+  };
+  EXPECT_EQ(estimate(pso.getPredicateSketch(0)), 3u);
+  EXPECT_EQ(estimate(pso.getPredicateSketch(1)), 2u);
+  EXPECT_EQ(estimate(pos.getPredicateSketch(0)), 2u);
+  EXPECT_EQ(estimate(pos.getPredicateSketch(1)), 3u);
+  EXPECT_EQ(pso.getPredicateSketch(2), nullptr);
+
+  // Scans that do not yield all triples of a single predicate have no sketch.
+  IndexScan fixedSubject{qec, Permutation::PSO,
+                         SparqlTripleSimple{iri("<a>"), p, Var{"?o"}}};
+  EXPECT_EQ(fixedSubject.getPredicateSketch(0), nullptr);
+  IndexScan allTriples{qec, Permutation::PSO,
+                       SparqlTripleSimple{Var{"?s"}, Var{"?p"}, Var{"?o"}}};
+  EXPECT_EQ(allTriples.getPredicateSketch(0), nullptr);
+  IndexScan unknownPredicate{
+      qec, Permutation::PSO,
+      SparqlTripleSimple{Var{"?s"}, iri("<x>"), Var{"?o"}}};
+  EXPECT_EQ(unknownPredicate.getPredicateSketch(0), nullptr);
+
+  // An index that was built without the sketches provides none.
+  IndexScan withoutSketches{getQec(kg), Permutation::PSO,
+                            SparqlTripleSimple{Var{"?s"}, p, Var{"?o"}}};
+  EXPECT_EQ(withoutSketches.getPredicateSketch(0), nullptr);
 }

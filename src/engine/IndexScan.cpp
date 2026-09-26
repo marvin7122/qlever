@@ -1,6 +1,12 @@
-// Copyright 2015, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Björn Buchhold (buchhold@informatik.uni-freiburg.de)
+// Copyright 2015 - 2026 The QLever Authors, in particular:
+//
+// 2015        Björn Buchhold <buchhold@informatik.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "engine/IndexScan.h"
 
@@ -14,6 +20,7 @@
 #include "engine/MaterializedViews.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/VariableToColumnMap.h"
+#include "global/RuntimeParameters.h"
 #include "index/IndexImpl.h"
 #include "index/TripleComponentConversions.h"
 #include "parser/ParsedQuery.h"
@@ -436,6 +443,43 @@ size_t IndexScan::getCostEstimate() {
   // If we have a limit present, we only have to read the first
   // `limit + offset` elements.
   return getLimitOffset().upperBound(getSizeEstimateBeforeLimit());
+}
+
+// _____________________________________________________________________________
+const ql::index::stats::HyperLogLogSketch<>* IndexScan::getPredicateSketch(
+    ColumnIndex column) const {
+  auto permutationEnum = permutation().permutation();
+  bool scansFullPredicate = numVariables_ == 2 &&
+                            (permutationEnum == Permutation::PSO ||
+                             permutationEnum == Permutation::POS) &&
+                            graphsToFilter_.areAllGraphsAllowed() &&
+                            !scanSpecAndBlocksIsPrefiltered_ &&
+                            subject_.isVariable() && object_.isVariable();
+  if (!scansFullPredicate ||
+      !getRuntimeParameter<&RuntimeParameters::usePredicateSketches_>()) {
+    return nullptr;
+  }
+  const auto& predicateId = scanSpecAndBlocks_.scanSpec_.col0Id();
+  if (!predicateId.has_value()) {
+    return nullptr;
+  }
+  const auto* sketches =
+      getIndex().getImpl().getPredicateSketches(predicateId.value());
+  if (sketches == nullptr) {
+    return nullptr;
+  }
+  const auto& varColMap = getExternallyVisibleVariableColumns();
+  auto isInColumn = [&varColMap, column](const TripleComponent& tc) {
+    auto it = varColMap.find(tc.getVariable());
+    return it != varColMap.end() && it->second.columnIndex_ == column;
+  };
+  if (isInColumn(subject_)) {
+    return &sketches->subjects_;
+  }
+  if (isInColumn(object_)) {
+    return &sketches->objects_;
+  }
+  return nullptr;
 }
 
 // _____________________________________________________________________________

@@ -213,6 +213,9 @@ Index makeTestIndex(const std::string& indexBasename, TestIndexConfig c) {
       settingsJson["prefixes-external"] = std::vector<std::string>{""};
       settingsJson["languages-internal"] = std::vector<std::string>{""};
     }
+    if (c.predicateSketches) {
+      settingsJson["predicate-sketches"] = true;
+    }
     settingsFile << settingsJson.dump();
   }
   {

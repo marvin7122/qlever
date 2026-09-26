@@ -1,6 +1,7 @@
 //  Copyright 2026 The QLever Authors, in particular:
 //
 //  2026 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+//  2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 //  UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -26,6 +27,11 @@ constexpr inline std::string_view PERMUTATION_FILE_INFIX = ".index";
 
 // The patterns file of an index (used for `ql:has-predicate`).
 constexpr inline std::string_view PATTERNS_FILE_SUFFIX = ".index.patterns";
+
+// The optional file with the per-predicate HyperLogLog sketches of an index
+// (used for join size estimates).
+constexpr inline std::string_view PREDICATE_SKETCHES_FILE_SUFFIX =
+    ".index.predicate-sketches";
 
 // The copy of the settings file that is stored next to an index.
 constexpr inline std::string_view SETTINGS_FILE_SUFFIX = ".settings.json";

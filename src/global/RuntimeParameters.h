@@ -1,6 +1,12 @@
-//   Copyright 2024, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+// Copyright 2024 - 2026 The QLever Authors, in particular:
+//
+// 2024        Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
@@ -107,6 +113,11 @@ struct RuntimeParameters {
   SizeT serviceMaxRedirects_{1, "service-max-redirects"};
   SizeT queryPlanningBudget_{1500, "query-planning-budget"};
   Bool throwOnUnboundVariables_{false, "throw-on-unbound-variables"};
+  // If set to `true` and the index has per-predicate HyperLogLog sketches
+  // (index build setting `predicate-sketches`), index scans with a fixed
+  // predicate provide these sketches to the query planner's join size
+  // estimates.
+  Bool usePredicateSketches_{false, "use-predicate-sketches"};
 
   // Control up until which size lazy results should be cached. Caching
   // does cause significant overhead for this case.
