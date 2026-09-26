@@ -1,8 +1,13 @@
-// Copyright 2015, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Björn Buchhold (buchhold@informatik.uni-freiburg.de)
-// Co-Author: Andre Schlegel (November of 2022,
-// schlegea@informatik.uni-freiburg.de)
+// Copyright 2015 - 2026 The QLever Authors, in particular:
+//
+// 2015        Björn Buchhold <buchhold@informatik.uni-freiburg.de>, UFR
+// 2022        Andre Schlegel <schlegea@informatik.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gtest/gtest.h>
 
@@ -1082,3 +1087,52 @@ TEST(JoinTest, lazyJoinIndexScanDetails) {
 // _____________________________________________________________________________
 INSTANTIATE_TEST_SUITE_P(JoinTestWithAndWithoutKeptJoinColumn,
                          JoinTestParametrized, ::testing::Values(true, false));
+
+// _____________________________________________________________________________
+TEST(JoinTest, sizeEstimateFromPredicateSketches) {
+  // `<p1>` and `<p2>` have 40 subjects each, of which 20 are shared.
+  std::string kg;
+  for (size_t i = 0; i < 40; ++i) {
+    kg += absl::StrCat("<s", i, "> <p1> <o> .\n");
+    kg += absl::StrCat("<s", i + 20, "> <p2> <o> .\n");
+  }
+  ad_utility::testing::TestIndexConfig config{kg};
+  config.predicateSketches = true;
+  auto qec = ad_utility::testing::getQec(config);
+
+  using V = Variable;
+  auto makeJoin = [qec]() {
+    auto scan1 = ad_utility::makeExecutionTree<IndexScan>(
+        qec, Permutation::PSO,
+        SparqlTripleSimple{V{"?s"}, iri("<p1>"), V{"?o1"}});
+    auto scan2 = ad_utility::makeExecutionTree<IndexScan>(
+        qec, Permutation::PSO,
+        SparqlTripleSimple{V{"?s"}, iri("<p2>"), V{"?o2"}});
+    return ad_utility::makeExecutionTree<Join>(qec, scan1, scan2, 0, 0, true);
+  };
+  auto detailKey = "size-estimate-from-predicate-sketches";
+  auto hasSketchDetail = [detailKey](const QueryExecutionTree& join) {
+    const auto& rti = join.getRootOperation()->getRuntimeInfoPointer();
+    return rti != nullptr && rti->details_.contains(detailKey);
+  };
+
+  // Without sketches, the estimate assumes that all 40 join keys of one side
+  // occur on the other side (times the join correction factor 0.7).
+  auto joinWithoutSketches = makeJoin();
+  auto estimateWithoutSketches = joinWithoutSketches->getSizeEstimate();
+  EXPECT_NEAR(static_cast<double>(estimateWithoutSketches), 28.0, 1.0);
+  qec->getQueryTreeCache().clearAll();
+  EXPECT_EQ(joinWithoutSketches->getResult()->idTableView().size(), 20u);
+  EXPECT_FALSE(hasSketchDetail(*joinWithoutSketches));
+
+  // With sketches, the estimate uses the 20 shared join keys.
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::usePredicateSketches_>(
+          true);
+  auto joinWithSketches = makeJoin();
+  auto estimateWithSketches = joinWithSketches->getSizeEstimate();
+  EXPECT_NEAR(static_cast<double>(estimateWithSketches), 14.0, 2.0);
+  qec->getQueryTreeCache().clearAll();
+  EXPECT_EQ(joinWithSketches->getResult()->idTableView().size(), 20u);
+  EXPECT_TRUE(hasSketchDetail(*joinWithSketches));
+}

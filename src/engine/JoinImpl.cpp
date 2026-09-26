@@ -4,6 +4,7 @@
 // 2018-2026 Johannes Kalmbach (kalmbach@informatik.uni-freiburg.de), UFR
 // 2025 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 // 2026 Mark Veser (mark.veser87@gmail.com)
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -25,6 +26,7 @@
 #include "engine/JoinHelpers.h"
 #include "engine/OperationBindPushDownImpl.h"
 #include "engine/Service.h"
+#include "engine/cbo/JoinCardinalityEstimator.h"
 #include "global/Constants.h"
 #include "global/Id.h"
 #include "global/RuntimeParameters.h"
@@ -106,6 +108,9 @@ string JoinImpl::getDescriptor() const { return "Join on " + joinVar_.name(); }
 // _____________________________________________________________________________
 Result JoinImpl::computeResult(bool requestLaziness) {
   AD_LOG_DEBUG << "Getting sub-results for join result computation..." << endl;
+  if (sizeEstimateUsesSketches_) {
+    runtimeInfo().addDetail("size-estimate-from-predicate-sketches", true);
+  }
   if (left_->knownEmptyResult() || right_->knownEmptyResult()) {
     left_->getRootOperation()->updateRuntimeInformationWhenOptimizedOut();
     right_->getRootOperation()->updateRuntimeInformationWhenOptimizedOut();
@@ -249,7 +254,16 @@ void JoinImpl::computeSizeEstimateAndMultiplicities() {
       size_t(1), static_cast<size_t>(right_->getSizeEstimate() /
                                      right_->getMultiplicity(rightJoinCol_)));
 
+  // The minimum assumes that all join keys of the side with fewer distinct
+  // keys also occur on the other side (containment). If both join columns
+  // have sketches, their estimated overlap refines this upper bound.
   size_t nofDistinctInResult = std::min(nofDistinctLeft, nofDistinctRight);
+  auto sharedKeys = estimateSharedJoinKeysFromSketches();
+  sizeEstimateUsesSketches_ = sharedKeys.has_value();
+  if (sharedKeys.has_value()) {
+    nofDistinctInResult =
+        std::clamp(sharedKeys.value(), size_t{1}, nofDistinctInResult);
+  }
 
   double adaptSizeLeft =
       left_->getSizeEstimate() *
@@ -301,6 +315,24 @@ void JoinImpl::computeSizeEstimateAndMultiplicities() {
     multiplicities_.emplace_back(m);
   }
   assert(multiplicities_.size() == getResultWidth());
+}
+
+// _____________________________________________________________________________
+std::optional<size_t> JoinImpl::estimateSharedJoinKeysFromSketches() const {
+  auto getSketch =
+      [](const QueryExecutionTree& tree,
+         ColumnIndex column) -> const ql::index::stats::HyperLogLogSketch<>* {
+    auto scan =
+        std::dynamic_pointer_cast<const IndexScan>(tree.getRootOperation());
+    return scan ? scan->getPredicateSketch(column) : nullptr;
+  };
+  const auto* leftSketch = getSketch(*left_, leftJoinCol_);
+  const auto* rightSketch = getSketch(*right_, rightJoinCol_);
+  if (leftSketch == nullptr || rightSketch == nullptr) {
+    return std::nullopt;
+  }
+  return ql::engine::cbo::JoinCardinalityEstimator<>::estimateDistinctJoinKeys(
+      *leftSketch, *rightSketch);
 }
 
 // ______________________________________________________________________________

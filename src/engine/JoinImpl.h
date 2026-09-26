@@ -3,6 +3,7 @@
 // 2015-2017 Björn Buchhold (buchhold@informatik.uni-freiburg.de)
 // 2018-2026 Johannes Kalmbach (kalmbach@informatik.uni-freiburg.de), UFR
 // 2026 Mark Veser (mark.veser87@gmail.com)
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -37,6 +38,10 @@ class JoinImpl : public Operation {
 
   // If set to false, the join column will not be part of the result.
   bool keepJoinColumn_ = true;
+
+  // True if the size estimate used the HyperLogLog sketches of both join
+  // columns (see `estimateSharedJoinKeysFromSketches`).
+  bool sizeEstimateUsesSketches_ = false;
 
  public:
   // `allowSwappingChildrenOnlyForTesting` should only ever be changed by tests.
@@ -134,6 +139,12 @@ class JoinImpl : public Operation {
       const parsedQuery::Bind& bind) const override;
 
  private:
+  // If both children are index scans that provide a HyperLogLog sketch of
+  // their join column (see `IndexScan::getPredicateSketch`), return the
+  // number of join keys that both sides share, estimated by inclusion-exclusion
+  // over the two sketches. Else return `std::nullopt`.
+  std::optional<size_t> estimateSharedJoinKeysFromSketches() const;
+
   // A special implementation that is called when both children are
   // `IndexScan`s. Uses the lazy scans to only retrieve the subset of the
   // `IndexScan`s that is actually needed without fully materializing them.
