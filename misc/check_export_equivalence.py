@@ -100,18 +100,19 @@ def _load_table(path: str, fmt: str) -> Tuple[Optional[Tuple[str, ...]],
 
     A blank line is kept as a solution: for a single projected variable it
     is the solution in which that variable is unbound."""
-    # `utf-8-sig` drops a leading byte order mark, if any.
-    with open(path, encoding="utf-8-sig", newline="") as fh:
+    # `utf-8-sig` drops a leading byte order mark, if any. For TSV, only `\n`
+    # ends a line (a `\r` before it is stripped below).
+    newline = "" if fmt == "csv" else "\n"
+    with open(path, encoding="utf-8-sig", newline=newline) as fh:
         if fmt == "csv":
             rows = [tuple(row) if row else ("",) for row in csv.reader(fh)]
         else:
             # SPARQL TSV has no CSV-style quoting (tabs and newlines inside
             # literals are escaped as in Turtle), so a plain split is exact.
-            text = fh.read()
-            lines = text.split("\n")
-            if lines and lines[-1] == "":
-                lines.pop()
-            rows = [tuple(line.rstrip("\r").split("\t")) for line in lines]
+            rows = [
+                tuple(line.removesuffix("\n").removesuffix("\r").split("\t"))
+                for line in fh
+            ]
     if not rows:
         return None, []
     return rows[0], rows[1:]
