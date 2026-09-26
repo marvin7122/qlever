@@ -33,11 +33,11 @@ using ad_utility::MediaType;
 using ad_utility::export_v2::ElasticExportScheduler;
 using ql::engine::export_v2::ExportEngineV2;
 
-// More rows than one 8192-row morsel, so the export has several chunks.
-constexpr size_t kNumSubjects = 20000;
+// A small knowledge graph (the test index builder writes a few files per
+// two-triple batch); the queries below take the cross product of three scans
+// to get more rows than several 8192-row morsels (30^3 = 27000).
+constexpr size_t kNumSubjects = 30;
 
-// One statement per line: the parallel Turtle parser of the test index needs a
-// statement boundary (a dot followed by a newline) in every input batch.
 std::string makeKnowledgeGraph() {
   std::string kg;
   for (size_t i = 0; i < kNumSubjects; ++i) {
@@ -98,10 +98,12 @@ class ExportEngineV2AsyncPipeline : public ::testing::Test {
 };
 
 const std::vector<std::string> kQueries{
-    "SELECT ?s ?n WHERE { ?s <http://ex.org/n> ?n }",
-    "SELECT ?s ?l ?n WHERE { ?s <http://ex.org/l> ?l . ?s <http://ex.org/n> "
-    "?n }",
-    "SELECT ?s ?n WHERE { ?s <http://ex.org/n> ?n } LIMIT 15000 OFFSET 7",
+    "SELECT ?a ?x WHERE { ?a <http://ex.org/n> ?x . ?b <http://ex.org/n> ?y . "
+    "?c <http://ex.org/n> ?z }",
+    "SELECT ?a ?l ?y WHERE { ?a <http://ex.org/l> ?l . ?b <http://ex.org/n> ?y "
+    ". ?c <http://ex.org/n> ?z }",
+    "SELECT ?a ?x WHERE { ?a <http://ex.org/n> ?x . ?b <http://ex.org/n> ?y . "
+    "?c <http://ex.org/n> ?z } LIMIT 15000 OFFSET 7",
 };
 
 // _____________________________________________________________________________
@@ -160,7 +162,7 @@ TEST_F(ExportEngineV2AsyncPipeline, CancellationReachesConsumer) {
       planned.parsedQuery_, planned.qet_, MediaType::tsv, planned.handle_);
   auto it = generator.begin();
   ASSERT_NE(it, generator.end());
-  EXPECT_EQ(*it, "?s\t?n\n");
+  EXPECT_EQ(*it, "?a\t?x\n");
   AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(++it, ::testing::_,
                                         ad_utility::CancellationException);
 }
