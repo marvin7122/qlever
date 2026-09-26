@@ -36,4 +36,53 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
+
+    add_executable(SerializerMicroBenchmark SerializerMicroBenchmark.cpp)
+    linkBenchmark(SerializerMicroBenchmark engine sparqlParser qlever_util)
+
+    add_executable(ChunkStreamingBenchmark ChunkStreamingBenchmark.cpp)
+    linkBenchmark(ChunkStreamingBenchmark engine testUtil)
+
+    add_executable(IoUringDirectBenchmark IoUringDirectBenchmark.cpp)
+    linkBenchmark(IoUringDirectBenchmark engine sparqlParser qlever_util)
+
+    add_executable(StreamingBufferBenchmark StreamingBufferBenchmark.cpp)
+    linkBenchmark(StreamingBufferBenchmark engine sparqlParser qlever_util)
+
+    add_executable(PrefetchingBenchmark PrefetchingBenchmark.cpp)
+    linkBenchmark(PrefetchingBenchmark engine sparqlParser qlever_util)
+
+    addAndLinkBenchmark(FastNumberFormatterBenchmark)
+
+    add_executable(MonomorphicSerializerBenchmark MonomorphicSerializerBenchmark.cpp)
+    linkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser qlever_util)
+
+    add_executable(BranchlessDispatcherBenchmark BranchlessDispatcherBenchmark.cpp)
+    linkBenchmark(BranchlessDispatcherBenchmark engine sparqlParser qlever_util)
+
+    add_executable(ScatterGatherBenchmark ScatterGatherBenchmark.cpp)
+    linkBenchmark(ScatterGatherBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SimdEscapeBenchmark SimdEscapeBenchmark.cpp)
+    linkBenchmark(SimdEscapeBenchmark engine sparqlParser qlever_util)
+
+    addAndLinkBenchmark(ZeroCopySenderBenchmark qlever_util)
+    addAndLinkBenchmark(EndToEndExportBenchmark engine sparqlParser qlever_util)
+
+    add_executable(AdaptiveChunkBenchmark AdaptiveChunkBenchmark.cpp)
+    linkBenchmark(AdaptiveChunkBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SimdValidityBenchmark SimdValidityBenchmark.cpp)
+    linkBenchmark(SimdValidityBenchmark engine sparqlParser qlever_util)
+
+    add_executable(RlePrefixBenchmark RlePrefixBenchmark.cpp)
+    linkBenchmark(RlePrefixBenchmark engine sparqlParser qlever_util)
+
+    add_executable(HttpFramingBenchmark HttpFramingBenchmark.cpp)
+    linkBenchmark(HttpFramingBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SwarDelimiterBenchmark SwarDelimiterBenchmark.cpp)
+    linkBenchmark(SwarDelimiterBenchmark engine sparqlParser qlever_util)
 endif()

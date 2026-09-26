@@ -1585,6 +1585,13 @@ QueryPlanner::runDynamicProgrammingOnConnectedComponent(
   dpTab.push_back(std::move(connectedComponent));
   size_t numSeeds = findUniqueNodeIds(dpTab.back(), false);
 
+  if (numSeeds < 2) {
+    // Apply filter substitutes also in cases with less than two seeds
+    // (currently used for `SpatialJoin` with a fixed-value side).
+    applyFiltersIfPossible<FilterMode::SeedSubstitutesOnly>(dpTab.back(),
+                                                            filters);
+  }
+
   for (size_t k = 2; k <= numSeeds; ++k) {
     AD_LOG_TRACE << "Producing plans that unite " << k << " triples."
                  << std::endl;
@@ -1617,9 +1624,11 @@ QueryPlanner::runDynamicProgrammingOnConnectedComponent(
   }
   auto& result = dpTab.back();
   // Apply enforced filter substitutes (currently `SpatialJoin` with a
-  // fixed-value side). Both a connected component with a single seed and a
-  // full-cover replacement plan land in the final row without passing through
-  // a DP round that may apply substitutes, so they are handled here.
+  // fixed-value side). A full-cover replacement plan lands in the final row
+  // without passing through a DP round that may apply substitutes, so it is
+  // handled here. (Single-seed components were already handled above; the
+  // re-application is a no-op for them because the filters are marked as
+  // included.)
   applyFiltersIfPossible<FilterMode::SeedSubstitutesOnly>(result, filters);
   applyFiltersIfPossible<FilterMode::ReplaceUnfilteredNoSubstitutes>(result,
                                                                      filters);
@@ -1958,6 +1967,18 @@ std::vector<std::vector<SubtreePlan>> QueryPlanner::fillDpTab(
       result.at(0), filtersAndOptSubstitutes);
   applyTextLimitsIfPossible(result.at(0), textLimitVec, true);
   return result;
+}
+
+// _____________________________________________________________________________
+bool QueryPlanner::TripleGraph::isTextNode(size_t i) const {
+  auto it = _nodeMap.find(i);
+  if (it == _nodeMap.end()) {
+    return false;
+  }
+  const auto& triple = it->second->triple_;
+  auto predicate = triple.getSimplePredicate();
+  return predicate == CONTAINS_ENTITY_PREDICATE ||
+         predicate == CONTAINS_WORD_PREDICATE;
 }
 
 // _____________________________________________________________________________

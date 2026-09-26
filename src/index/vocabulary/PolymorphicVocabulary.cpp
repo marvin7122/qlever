@@ -62,6 +62,36 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
 }
 
 // _____________________________________________________________________________
+VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
+    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+  // An empty batch leaves the builder untouched and yields an empty result
+  // (finalizing without any appended word is an error).
+  if (indices.empty()) {
+    return {};
+  }
+  return std::visit(
+      [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
+        if constexpr (VocabSupportsBuilderLookupBatch<
+                          std::decay_t<decltype(vocab)>>::value) {
+          vocab.lookupBatch(indices, builder);
+          return std::move(builder).finalize();
+        } else {
+          // The held vocabulary has no builder-based lookup: copy the words
+          // from a regular batch lookup into `builder` and finalize it, so
+          // the caller observes the same protocol as for builder-native
+          // vocabularies (a builder finalized without any appended word is
+          // an error, and the caller finalizes nothing itself).
+          auto words = vocab.lookupBatch(indices);
+          for (std::string_view word : words) {
+            builder.appendWord(word);
+          }
+          return std::move(builder).finalize();
+        }
+      },
+      vocab_);
+}
+
+// _____________________________________________________________________________
 VocabLookupOutput PolymorphicVocabulary::lookupBatchesStreamed(
     VocabLookupInput input) const {
   return std::visit(

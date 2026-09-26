@@ -39,6 +39,33 @@ class UnicodeVocabulary {
     return _underlyingVocabulary.lookupBatch(indices);
   }
 
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
+                                     ArenaVocabBatchBuilder& builder) const {
+    // An empty batch leaves the builder untouched and yields an empty
+    // result (finalizing without any appended word is an error).
+    if (indices.empty()) {
+      return {};
+    }
+    if constexpr (VocabSupportsBuilderLookupBatch<
+                      UnderlyingVocabulary>::value) {
+      // The underlying lookup consumes `builder` (appending and finalizing
+      // it) and returns the result; forward it directly. Finalizing again
+      // here would fail on the moved-from builder.
+      return _underlyingVocabulary.lookupBatch(indices, builder);
+    } else {
+      // The underlying vocabulary has no builder-based lookup: copy the
+      // words from a regular batch lookup into `builder` and finalize it,
+      // so the caller observes the same protocol as for builder-native
+      // vocabularies (a builder finalized without any appended word is an
+      // error, and the caller finalizes nothing itself).
+      auto words = _underlyingVocabulary.lookupBatch(indices);
+      for (std::string_view word : words) {
+        builder.appendWord(word);
+      }
+      return std::move(builder).finalize();
+    }
+  }
+
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {
     return _underlyingVocabulary.lookupBatchesStreamed(std::move(input));

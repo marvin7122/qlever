@@ -10,8 +10,6 @@
 #include "engine/Operation.h"
 #include "parser/ParsedQuery.h"
 
-class TripleComponent;
-
 class Values : virtual public Operation {
   using SparqlValues = parsedQuery::SparqlValues;
 
