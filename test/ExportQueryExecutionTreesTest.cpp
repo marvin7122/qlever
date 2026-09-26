@@ -2269,12 +2269,19 @@ INSTANTIATE_TEST_SUITE_P(
         // window 10: all duplicates are caught, 5 unique triples remain.
         LruWindowParam{10, "abcde"}));
 
-// Toggling `use-simd-escape-classifier-csv-tsv` (PR #85) switches the CSV/TSV
+// Toggling `use-simd-escape-classifier-csv-tsv` (PR #85) switches the CSV
 // escape function between `RdfEscaping` and `SimdEscapeClassifier`, but must
-// not change the exported bytes.
+// not change the exported bytes. TSV export must stay unaffected by the
+// flag: `SimdEscapeClassifier::escapeForTsv` escapes `\r` and `\`
+// differently from `RdfEscaping::escapeForTsv` (found via a DBLP A/B,
+// experiments/runs/pr85-dblp-hsizeselect-tsv-ab), so it is intentionally
+// not wired for TSV.
 TEST(ExportQueryExecutionTrees, SimdEscapeClassifierCsvTsvProducesSameBytes) {
-  // A literal that needs escaping in both CSV (comma, quote) and TSV (tab).
-  const std::string kg = R"(<a> <b> "needs\tescaping, and \"quotes\"" .)";
+  // A literal that needs escaping in CSV (comma, quote), TSV (tab), and
+  // additionally contains '\r' and '\\', the two characters on which
+  // SimdEscapeClassifier::escapeForTsv diverges from RdfEscaping.
+  const std::string kg =
+      R"(<a> <b> "needs\tescaping, \\backslash, \rcarriage return, and \"quotes\"" .)";
   const std::string query = "SELECT * WHERE { ?s ?p ?o }";
   using ad_utility::MediaType;
 
