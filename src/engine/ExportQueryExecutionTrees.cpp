@@ -22,6 +22,7 @@
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
 #include "engine/ConstructTripleGenerator.h"
+#include "engine/SimdEscapeClassifier.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
@@ -513,8 +514,25 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  // Behind `use-simd-escape-classifier-csv-tsv` (default off), dispatch to
+  // the AVX2/SSE2 `SimdEscapeClassifier` (PR #85) instead of the scalar
+  // `RdfEscaping` functions. Both are `std::string(std::string)`-compatible,
+  // so `idToStringAndType` below is unchanged either way.
+  auto escapeFunction = [](std::string input) -> std::string {
+    if (getRuntimeParameter<
+            &RuntimeParameters::useSimdEscapeClassifierForCsvTsv_>()) {
+      if constexpr (format == tsv) {
+        return ad_utility::simd::SimdEscapeClassifier::escapeForTsv(input);
+      } else {
+        return ad_utility::simd::SimdEscapeClassifier::escapeForCsv(input);
+      }
+    }
+    if constexpr (format == tsv) {
+      return RdfEscaping::escapeForTsv(std::move(input));
+    } else {
+      return RdfEscaping::escapeForCsv(std::move(input));
+    }
+  };
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
