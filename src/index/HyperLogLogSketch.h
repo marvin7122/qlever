@@ -16,15 +16,19 @@
 #include <vector>
 
 #include "global/Id.h"
+#include "util/Exception.h"
+#include "util/Serializer/SerializeVector.h"
+#include "util/Serializer/Serializer.h"
 
 namespace ql::index::stats {
 
 // _____________________________________________________________________________
-// HyperLogLog++ Metadata Cardinality Sketch:
+// HyperLogLog++ Cardinality Sketch:
 // Compact sketch of NUM_REGISTERS 8-bit registers (1 KB at the default
-// Precision 10) embedded inside relation metadata to provide instantaneous
-// O(1) distinct cardinality estimates and set union cardinalities during
-// query planning.
+// Precision 10) that answers distinct cardinality estimates and set union
+// cardinalities in O(NUM_REGISTERS), independent of the number of inserted
+// values. The index builder stores one sketch per predicate and column (see
+// `PredicateSketches.h`) for the query planner.
 template <size_t Precision = 10>  // 2^10 = 1024 registers
 class HyperLogLogSketch {
  public:
@@ -81,20 +85,22 @@ class HyperLogLogSketch {
 
     for (size_t i = 0; i < NUM_REGISTERS; ++i) {
       // ldexp instead of 1.0 / (1ULL << r): the shift is undefined for
-      // r >= 64, while ldexp is well-defined over the full uint8_t register
-      // range used here as the exponent.
+      // r >= 64, which a saturated register can reach, while ldexp is
+      // well-defined over the full uint8_t register range.
       sum += std::ldexp(1.0, -static_cast<int>(registers_[i]));
       if (registers_[i] == 0) {
         zeroRegisters++;
       }
     }
 
-    // Alpha correction factor in its general form for m >= 128, with
-    // m = NUM_REGISTERS for this sketch.
-    constexpr double alpha =
-        0.7213 / (1.0 + 1.079 / static_cast<double>(NUM_REGISTERS));
-    double rawEstimate =
-        alpha * static_cast<double>(NUM_REGISTERS * NUM_REGISTERS) / sum;
+    // Bias correction alpha_m of Flajolet et al.: the general form holds for
+    // m >= 128, smaller m use the tabulated constants.
+    constexpr double m = static_cast<double>(NUM_REGISTERS);
+    constexpr double alpha = NUM_REGISTERS == 16   ? 0.673
+                             : NUM_REGISTERS == 32 ? 0.697
+                             : NUM_REGISTERS == 64 ? 0.709
+                                                   : 0.7213 / (1.0 + 1.079 / m);
+    double rawEstimate = alpha * m * m / sum;
 
     if (rawEstimate <= 2.5 * static_cast<double>(NUM_REGISTERS) &&
         zeroRegisters > 0) {
@@ -106,6 +112,20 @@ class HyperLogLogSketch {
     }
 
     return static_cast<uint64_t>(rawEstimate);
+  }
+
+  // Two sketches are equal if all their registers are equal.
+  bool operator==(const HyperLogLogSketch& other) const {
+    return registers_ == other.registers_;
+  }
+
+  // Serialize the registers. A deserialized sketch must have exactly
+  // `NUM_REGISTERS` registers, else the read throws.
+  AD_SERIALIZE_FRIEND_FUNCTION(HyperLogLogSketch) {
+    serializer | arg.registers_;
+    if constexpr (ad_utility::serialization::ReadSerializer<S>) {
+      AD_CORRECTNESS_CHECK(arg.registers_.size() == NUM_REGISTERS);
+    }
   }
 };
 

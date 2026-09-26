@@ -12,9 +12,11 @@
 
 #include "global/Id.h"
 #include "index/HyperLogLogSketch.h"
+#include "util/Serializer/ByteBufferSerializer.h"
 
 using namespace ql::index::stats;
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, AccurateDistinctEstimation) {
   HyperLogLogSketch<10> hll;
 
@@ -33,6 +35,7 @@ TEST(HyperLogLogSketchTest, AccurateDistinctEstimation) {
   EXPECT_LE(relativeError, 0.05);  // within 5%
 }
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, SketchMergeCorrectness) {
   HyperLogLogSketch<10> hll1;
   HyperLogLogSketch<10> hll2;
@@ -59,18 +62,64 @@ TEST(HyperLogLogSketchTest, SketchMergeCorrectness) {
   EXPECT_LE(relativeError, 0.05);
 }
 
-TEST(HyperLogLogSketchTest, EmptySketchReturnsZero) {
-  HyperLogLogSketch<10> hll;
-  EXPECT_EQ(hll.estimateCardinality(), 0);
+// _____________________________________________________________________________
+TEST(HyperLogLogSketchTest, SmallAndLargePrecision) {
+  // Relative estimation error for `numDistinct` distinct values.
+  auto relativeError = [](auto sketch, uint64_t numDistinct) {
+    for (uint64_t i = 0; i < numDistinct; ++i) {
+      sketch.insert(Id::fromBits(i * 31 + 7));
+    }
+    return std::abs(static_cast<double>(sketch.estimateCardinality()) -
+                    static_cast<double>(numDistinct)) /
+           static_cast<double>(numDistinct);
+  };
+  // p = 4 (16 registers) uses the tabulated alpha; its standard error is
+  // 1.04 / sqrt(16) = 26%, so only a loose bound is meaningful.
+  EXPECT_LE(relativeError(HyperLogLogSketch<4>{}, 100'000), 0.75);
+  // p = 16 (65536 registers): m * m does not fit into 32 bits; standard error
+  // 0.4%.
+  EXPECT_LE(relativeError(HyperLogLogSketch<16>{}, 1'000'000), 0.05);
 }
 
+// _____________________________________________________________________________
+TEST(HyperLogLogSketchTest, SerializationAndEquality) {
+  using namespace ad_utility::serialization;
+  HyperLogLogSketch<10> sketch;
+  for (uint64_t i = 0; i < 5'000; ++i) {
+    sketch.insert(Id::fromBits(i));
+  }
+  EXPECT_FALSE(sketch == HyperLogLogSketch<10>{});
+
+  ByteBufferWriteSerializer writer;
+  writer << sketch;
+  ByteBufferReadSerializer reader{std::move(writer).data()};
+  HyperLogLogSketch<10> read;
+  reader >> read;
+  EXPECT_EQ(read, sketch);
+  EXPECT_EQ(read.estimateCardinality(), sketch.estimateCardinality());
+
+  // A sketch with a different number of registers cannot be read.
+  ByteBufferWriteSerializer smallWriter;
+  smallWriter << HyperLogLogSketch<4>{};
+  ByteBufferReadSerializer smallReader{std::move(smallWriter).data()};
+  EXPECT_ANY_THROW(smallReader >> read);
+}
+
+// _____________________________________________________________________________
+TEST(HyperLogLogSketchTest, EmptySketchReturnsZero) {
+  HyperLogLogSketch<10> hll;
+  EXPECT_EQ(hll.estimateCardinality(), 0u);
+}
+
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, SingleElementSketch) {
   HyperLogLogSketch<10> hll;
   hll.insert(Id::fromBits(42));
   // Linear counting on a single register hit yields exactly 1.
-  EXPECT_EQ(hll.estimateCardinality(), 1);
+  EXPECT_EQ(hll.estimateCardinality(), 1u);
 }
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, MergeWithEmptySketchKeepsEstimate) {
   HyperLogLogSketch<10> hll1;
   HyperLogLogSketch<10> hll2;
@@ -82,6 +131,7 @@ TEST(HyperLogLogSketchTest, MergeWithEmptySketchKeepsEstimate) {
   EXPECT_EQ(hll1.estimateCardinality(), before);
 }
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, MergeWithIdenticalSketchIsIdempotent) {
   HyperLogLogSketch<10> hll1;
   HyperLogLogSketch<10> hll2;
@@ -94,6 +144,7 @@ TEST(HyperLogLogSketchTest, MergeWithIdenticalSketchIsIdempotent) {
   EXPECT_EQ(hll1.estimateCardinality(), before);
 }
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, LargeCardinalityEstimation) {
   HyperLogLogSketch<10> hll;
 
@@ -112,6 +163,7 @@ TEST(HyperLogLogSketchTest, LargeCardinalityEstimation) {
   EXPECT_LE(relativeError, 0.15);
 }
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, HigherPrecisionSketch) {
   HyperLogLogSketch<12> hll;
 
@@ -128,6 +180,7 @@ TEST(HyperLogLogSketchTest, HigherPrecisionSketch) {
   EXPECT_LE(relativeError, 0.15);
 }
 
+// _____________________________________________________________________________
 TEST(HyperLogLogSketchTest, DistinguishesDatatypeBits) {
   HyperLogLogSketch<10> hll;
 

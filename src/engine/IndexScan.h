@@ -1,6 +1,12 @@
-// Copyright 2015, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Björn Buchhold (buchhold@informatik.uni-freiburg.de)
+// Copyright 2015 - 2026 The QLever Authors, in particular:
+//
+// 2015        Björn Buchhold <buchhold@informatik.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_ENGINE_INDEXSCAN_H
 #define QLEVER_SRC_ENGINE_INDEXSCAN_H
@@ -9,6 +15,7 @@
 
 #include "engine/Operation.h"
 #include "index/DeltaTriples.h"
+#include "index/HyperLogLogSketch.h"
 #include "util/HashMap.h"
 
 class SparqlTriple;
@@ -106,6 +113,15 @@ class IndexScan final : public Operation {
       const override;
 
   size_t numVariables() const { return numVariables_; }
+
+  // If this scan yields all triples of one fixed predicate (two variables, no
+  // graph filter, no prefiltered blocks), the runtime parameter
+  // `use-predicate-sketches` is set, and the index has sketches for the
+  // predicate, return the HyperLogLog sketch of the subjects or the objects,
+  // depending on which of them is in `column` of the result. Else return
+  // `nullptr`.
+  const ql::index::stats::HyperLogLogSketch<>* getPredicateSketch(
+      ColumnIndex column) const;
 
   // Return the exact result size of the index scan. This is always known as it
   // can be read from the Metadata.
