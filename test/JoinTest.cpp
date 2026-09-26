@@ -229,6 +229,16 @@ TEST(JoinTest, joinTest) {
   runTestCasesForAllJoinAlgorithms(createJoinTestSet());
 };
 
+// The hash join with the `BlockedBloomFilter` in front of the hash map must
+// give the same results. Most rows of the larger inputs in
+// `createJoinTestSet()` have no join partner, so the filter rejects them.
+TEST(JoinTest, joinTestWithBloomFilter) {
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::hashJoinBloomFilter_>(
+          true);
+  runTestCasesForAllJoinAlgorithms(createJoinTestSet());
+}
+
 // Several helpers for the test cases below.
 namespace {
 
