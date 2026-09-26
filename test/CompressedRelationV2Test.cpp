@@ -17,7 +17,7 @@
 using namespace ql::index::v2;
 
 TEST(CompressedRelationV2Test, DatatypeBitmaskOperations) {
-  auto mask = DatatypeBitmask::Iri | DatatypeBitmask::Literal;
+  DatatypeBitmask mask = DatatypeBitmask::Iri | DatatypeBitmask::Literal;
   EXPECT_TRUE(hasFlag(mask, DatatypeBitmask::Iri));
   EXPECT_TRUE(hasFlag(mask, DatatypeBitmask::Literal));
   EXPECT_FALSE(hasFlag(mask, DatatypeBitmask::Integer));
