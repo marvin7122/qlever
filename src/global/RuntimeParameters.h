@@ -103,6 +103,11 @@ struct RuntimeParameters {
   Bool groupByHashMapEnabled_{false, "group-by-hash-map-enabled"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
+  // If `true`, a `FILTER` whose expression is evaluated row by row first
+  // computes the mask of the rows to keep and then copies each column with
+  // `BranchlessStreamCompactor::compactByMask`, instead of appending the kept
+  // rows one by one.
+  Bool filterBranchlessCompaction_{false, "filter-branchless-compaction"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};
   SizeT serviceMaxRedirects_{1, "service-max-redirects"};
   SizeT queryPlanningBudget_{1500, "query-planning-budget"};
