@@ -300,7 +300,7 @@ TEST(JoinTest, joinUsesHashJoinOnlyIfEnabled) {
         setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(false);
     return join();
   }();
-  EXPECT_EQ(mergeJoinResult(1, 2), ad_utility::testing::IntId(21));
+  EXPECT_EQ(mergeJoinResult(1, 2), right.idTable(1, 1));
   EXPECT_EQ(join(), mergeJoinResult);
 }
 
