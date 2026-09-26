@@ -283,15 +283,25 @@ TEST(JoinTest, joinUsesHashJoinOnlyIfEnabled) {
           true);
   EXPECT_EQ(join(), hashJoinResult);
 
-  // With an UNDEF value in a join column, the merge join is used, which
-  // matches the UNDEF with every row of the other input.
+  // With an UNDEF value in a join column, the merge join is used: the result
+  // has the same row order as with `join-use-hash-join=false`, and not the
+  // order of the hash join, which would iterate over the larger right input.
   IdTable undefLeft{2, makeAllocator()};
   undefLeft.push_back({Id::makeUndefined(), ad_utility::testing::IntId(10)});
   undefLeft.push_back(
       {ad_utility::testing::IntId(1), ad_utility::testing::IntId(11)});
+  undefLeft.push_back(
+      {ad_utility::testing::IntId(1), ad_utility::testing::IntId(12)});
   left = IdTableAndJoinColumn{std::move(undefLeft), 0};
-  right = IdTableAndJoinColumn{makeIdTableFromVector({{1, 20}, {1, 21}}), 0};
-  EXPECT_EQ(join().size(), 4u);
+  right = IdTableAndJoinColumn{
+      makeIdTableFromVector({{1, 20}, {1, 21}, {1, 22}, {1, 23}}), 0};
+  auto mergeJoinResult = [&]() {
+    auto noHashJoin =
+        setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(false);
+    return join();
+  }();
+  EXPECT_EQ(mergeJoinResult(1, 2), ad_utility::testing::IntId(21));
+  EXPECT_EQ(join(), mergeJoinResult);
 }
 
 // The hash join also works when the join column is not part of the result.
