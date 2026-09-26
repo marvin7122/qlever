@@ -22,6 +22,12 @@ using ql::engine::scalar::IntegerDateOperations;
 // the runtime parameter `integer-date-extraction` (see `makeYearExpression`
 // below).
 
+// Return the `value` as an integer `Id`, `UNDEF` if it is `std::nullopt`.
+inline Id makeIntOrUndefined(std::optional<int64_t> value) {
+  return value.has_value() ? Id::makeFromInt(value.value())
+                           : Id::makeUndefined();
+}
+
 //______________________________________________________________________________
 struct ExtractYear {
   Id operator()(std::optional<DateYearOrDuration> d) const {
@@ -33,10 +39,7 @@ struct ExtractYear {
   }
 
   Id operator()(Id id) const {
-    if (id.getDatatype() != Datatype::Date) {
-      return Id::makeUndefined();
-    }
-    return Id::makeFromInt(IntegerDateOperations::extractYear(id));
+    return makeIntOrUndefined(IntegerDateOperations::extractYear(id));
   }
 };
 
@@ -55,14 +58,7 @@ struct ExtractMonth {
   }
 
   Id operator()(Id id) const {
-    if (id.getDatatype() != Datatype::Date) {
-      return Id::makeUndefined();
-    }
-    auto month = IntegerDateOperations::extractMonth(id);
-    if (month == 0) {
-      return Id::makeUndefined();
-    }
-    return Id::makeFromInt(month);
+    return makeIntOrUndefined(IntegerDateOperations::extractMonth(id));
   }
 };
 
@@ -81,14 +77,7 @@ struct ExtractDay {
   }
 
   Id operator()(Id id) const {
-    if (id.getDatatype() != Datatype::Date) {
-      return Id::makeUndefined();
-    }
-    auto day = IntegerDateOperations::extractDay(id);
-    if (day == 0) {
-      return Id::makeUndefined();
-    }
-    return Id::makeFromInt(day);
+    return makeIntOrUndefined(IntegerDateOperations::extractDay(id));
   }
 };
 

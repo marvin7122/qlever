@@ -28,45 +28,48 @@ class IntegerDateOperations {
   // Build a date `Id`. Throws `DateOutOfRangeException` if a component is out
   // of range (for example month 13). Not constexpr, because
   // `DateYearOrDuration` has no constexpr constructor.
-  [[nodiscard]] static Id makePackedDate(int16_t year, uint8_t month,
-                                         uint8_t day, uint8_t hour = 0,
-                                         uint8_t minute = 0,
+  [[nodiscard]] static Id makePackedDate(int year, uint8_t month, uint8_t day,
+                                         uint8_t hour = 0, uint8_t minute = 0,
                                          uint8_t second = 0) {
-    return Id::makeFromDate(
-        DateYearOrDuration{Date{static_cast<int>(year), month, day, hour,
-                                minute, static_cast<double>(second)}});
+    return Id::makeFromDate(DateYearOrDuration{
+        Date{year, month, day, hour, minute, static_cast<double>(second)}});
   }
 
   // ___________________________________________________________________________
-  [[nodiscard]] static int64_t extractYear(Id dateId) noexcept {
+  // The year of `dateId`, `std::nullopt` if `dateId` is not a date.
+  [[nodiscard]] static std::optional<int64_t> extractYear(Id dateId) noexcept {
     if (dateId.getDatatype() != Datatype::Date) {
-      return 0;
+      return std::nullopt;
     }
     return dateId.getDate().getYear();
   }
 
   // ___________________________________________________________________________
-  [[nodiscard]] static int64_t extractMonth(Id dateId) noexcept {
+  // The month of `dateId`, `std::nullopt` if `dateId` is not a date or has no
+  // month (for example an `xsd:gYear`).
+  [[nodiscard]] static std::optional<int64_t> extractMonth(Id dateId) noexcept {
     if (dateId.getDatatype() != Datatype::Date) {
-      return 0;
+      return std::nullopt;
     }
-    return dateId.getDate().getMonth().value_or(0);
+    return dateId.getDate().getMonth();
   }
 
   // ___________________________________________________________________________
-  [[nodiscard]] static int64_t extractDay(Id dateId) noexcept {
+  // The day of `dateId`, `std::nullopt` if `dateId` is not a date or has no
+  // day.
+  [[nodiscard]] static std::optional<int64_t> extractDay(Id dateId) noexcept {
     if (dateId.getDatatype() != Datatype::Date) {
-      return 0;
+      return std::nullopt;
     }
-    return dateId.getDate().getDay().value_or(0);
+    return dateId.getDate().getDay();
   }
 
   // ___________________________________________________________________________
   // Write the year of each of the `inputDates` to the element of `outputYears`
-  // at the same position (0 for non-date `Id`s). `outputYears` must be at
-  // least as large as `inputDates`.
+  // at the same position (`std::nullopt` for non-date `Id`s). `outputYears`
+  // must be at least as large as `inputDates`.
   static void extractYearsBatch(ql::span<const Id> inputDates,
-                                ql::span<int64_t> outputYears) {
+                                ql::span<std::optional<int64_t>> outputYears) {
     AD_CONTRACT_CHECK(outputYears.size() >= inputDates.size());
     ql::ranges::transform(inputDates, outputYears.begin(), &extractYear);
   }

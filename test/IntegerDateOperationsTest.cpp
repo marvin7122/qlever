@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of this project.
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <vector>
@@ -35,11 +36,20 @@ TEST(IntegerDateOperationsTest, MakePackedDateRoundTrip) {
 }
 
 // _____________________________________________________________________________
-TEST(IntegerDateOperationsTest, NonDateReturnsZero) {
+TEST(IntegerDateOperationsTest, NonDateReturnsNullopt) {
   auto intId = Id::makeFromInt(42);
-  EXPECT_EQ(IntegerDateOperations::extractYear(intId), 0);
-  EXPECT_EQ(IntegerDateOperations::extractMonth(intId), 0);
-  EXPECT_EQ(IntegerDateOperations::extractDay(intId), 0);
+  EXPECT_EQ(IntegerDateOperations::extractYear(intId), std::nullopt);
+  EXPECT_EQ(IntegerDateOperations::extractMonth(intId), std::nullopt);
+  EXPECT_EQ(IntegerDateOperations::extractDay(intId), std::nullopt);
+  // Year 0 is a valid year and distinct from a non-date.
+  EXPECT_EQ(IntegerDateOperations::extractYear(
+                IntegerDateOperations::makePackedDate(0, 1, 1)),
+            0);
+  // An `xsd:gYear` has no month and no day.
+  auto yearOnly = Id::makeFromDate(DateYearOrDuration::parseGYear("2026"));
+  EXPECT_EQ(IntegerDateOperations::extractYear(yearOnly), 2026);
+  EXPECT_EQ(IntegerDateOperations::extractMonth(yearOnly), std::nullopt);
+  EXPECT_EQ(IntegerDateOperations::extractDay(yearOnly), std::nullopt);
 }
 
 // _____________________________________________________________________________
@@ -47,24 +57,23 @@ TEST(IntegerDateOperationsTest, BatchYearExtraction) {
   std::vector<Id> dates = {
       Id::makeFromDate(DateYearOrDuration{Date{1999, 12, 31, 0, 0, 0.0}}),
       Id::makeFromDate(DateYearOrDuration{Date{2000, 1, 1, 0, 0, 0.0}}),
+      Id::makeFromInt(2026),
       Id::makeFromDate(DateYearOrDuration{Date{2026, 9, 3, 0, 0, 0.0}}),
   };
 
-  std::vector<int64_t> years(dates.size(), 0);
+  std::vector<std::optional<int64_t>> years(dates.size());
   IntegerDateOperations::extractYearsBatch(dates, years);
 
-  ASSERT_EQ(years.size(), 3u);
-  EXPECT_EQ(years[0], 1999);
-  EXPECT_EQ(years[1], 2000);
-  EXPECT_EQ(years[2], 2026);
+  EXPECT_THAT(years, ::testing::ElementsAre(1999, 2000, std::nullopt, 2026));
 }
 
 // _____________________________________________________________________________
 TEST(IntegerDateOperationsTest, InvalidInputsThrow) {
-  // Month 13 is out of range for `Date`.
+  // Month 13 and year 70000 are out of range for `Date`.
   EXPECT_ANY_THROW(IntegerDateOperations::makePackedDate(2026, 13, 1));
+  EXPECT_ANY_THROW(IntegerDateOperations::makePackedDate(70000, 1, 1));
   // The output span must be at least as large as the input span.
   std::vector<Id> dates(2, IntegerDateOperations::makePackedDate(2026, 1, 1));
-  std::vector<int64_t> years(1);
+  std::vector<std::optional<int64_t>> years(1);
   EXPECT_ANY_THROW(IntegerDateOperations::extractYearsBatch(dates, years));
 }
