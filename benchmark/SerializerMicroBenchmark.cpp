@@ -49,21 +49,12 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. The malloc/free pairing below is intentional and matched, but GCC
-// cannot see across the replaceable global operators and reports a false
-// positive -Wmismatched-new-delete. GCC raises it while compiling the
-// allocation call sites (via inlining), so a pragma around the `operator
-// delete` definitions alone does not cover it (observed on GCC 11 with
-// -Werror); the warning is therefore suppressed file-wide (GCC only). The
-// sized-deallocation overloads must stay: GCC's -Wsized-deallocation (part of
-// -Wextra) rejects an unsized `operator delete` without its sized partner.
-//
-// Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
+// runs. Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
 // already provide these replaceable allocation functions, so defining them
 // here causes multiple-definition link errors. Under sanitizers the
 // `heap-allocations` metadata below reads 0. Clang signals sanitizers via
-// `__has_feature`, GCC via the `__SANITIZE_*` macros; `__has_feature` must
-// only be invoked where it is defined, so the checks are nested.
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; neither mechanism works
+// on the other compiler, so both are checked.
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
 #define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
@@ -72,6 +63,15 @@ struct AllocationTracker {
 #define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
 #endif
 
+// NOTE: the global `operator new`/`operator delete` pairs below are
+// intentionally implemented via `malloc`/`free`. GCC sees through to the
+// mismatched allocation functions and reports `-Wmismatched-new-delete`,
+// which is a false positive for replaceable global allocation functions.
+// GCC raises the warning while compiling the allocation call sites (via
+// inlining), so a pragma around the `operator delete` definitions alone does
+// not suppress it (observed failing on the gcc-11 `-Werror` leg); the warning
+// is therefore suppressed file-wide (GCC only, it is the only compiler that
+// emits it).
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
@@ -89,6 +89,9 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
+// The `operator delete` overloads intentionally pair with the `std::malloc`
+// based `operator new` overloads above; the file-wide `-Wmismatched-new-delete`
+// suppression above covers them.
 void operator delete(void* ptr) noexcept { std::free(ptr); }
 
 void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
@@ -297,6 +300,8 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 }  // namespace
 }  // namespace ad_benchmark
 
+// Closes the file-wide `-Wmismatched-new-delete` suppression opened above
+// (GCC only).
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
