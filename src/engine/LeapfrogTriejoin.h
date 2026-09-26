@@ -9,9 +9,12 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "backports/span.h"
 #include "global/Id.h"
 
@@ -40,6 +43,9 @@ class LeapfrogIterator {
 
   void next() noexcept { currentIndex_++; }
 
+  // The index of the current key in the underlying range.
+  [[nodiscard]] size_t position() const noexcept { return currentIndex_; }
+
   // Fast forward to the first key >= targetKey using binary search
   void seek(Id targetKey) noexcept {
     if (atEnd() || key() >= targetKey) {
@@ -49,6 +55,22 @@ class LeapfrogIterator {
                                sortedKeys_.end(), targetKey);
     currentIndex_ = std::distance(sortedKeys_.begin(), it);
   }
+
+  // Move past all entries that are equal to the current key. Must not be
+  // called when `atEnd()`.
+  void skipCurrentKey() noexcept {
+    auto it = std::upper_bound(sortedKeys_.begin() + currentIndex_,
+                               sortedKeys_.end(), key());
+    currentIndex_ = std::distance(sortedKeys_.begin(), it);
+  }
+};
+
+// The positions `[begin_, end_)` of one key in the range of a
+// `LeapfrogIterator`.
+struct KeyRun {
+  size_t begin_;
+  size_t end_;
+  [[nodiscard]] size_t size() const noexcept { return end_ - begin_; }
 };
 
 // _____________________________________________________________________________
@@ -57,6 +79,48 @@ class LeapfrogIterator {
 // no intermediate result tables are materialized (only the output vector).
 class LeapfrogJoin {
  public:
+  // Call `onMatch(key, runs)` for each key that is contained in all
+  // `iterators`, in ascending order of the keys. `runs[i]` holds the positions
+  // of all entries that are equal to `key` in the range of `iterators[i]`, so
+  // duplicate keys are reported once, with their multiplicities.
+  template <size_t N, typename OnMatch>
+  static void forEachCommonKey(std::array<LeapfrogIterator, N>& iterators,
+                               OnMatch&& onMatch) {
+    static_assert(N > 0);
+    if (ql::ranges::any_of(iterators, &LeapfrogIterator::atEnd)) {
+      return;
+    }
+    while (true) {
+      Id maxKey = iterators[0].key();
+      for (const auto& it : iterators) {
+        maxKey = std::max(maxKey, it.key());
+      }
+      // Leapfrog every iterator to `maxKey`. If one of them overshoots, the
+      // next round starts from its new key.
+      bool allEqual = true;
+      for (auto& it : iterators) {
+        it.seek(maxKey);
+        if (it.atEnd()) {
+          return;
+        }
+        allEqual = allEqual && it.key() == maxKey;
+      }
+      if (!allEqual) {
+        continue;
+      }
+      std::array<KeyRun, N> runs;
+      for (size_t i = 0; i < N; ++i) {
+        size_t begin = iterators[i].position();
+        iterators[i].skipCurrentKey();
+        runs[i] = KeyRun{begin, iterators[i].position()};
+      }
+      onMatch(maxKey, std::as_const(runs));
+      if (ql::ranges::any_of(iterators, &LeapfrogIterator::atEnd)) {
+        return;
+      }
+    }
+  }
+
   static std::vector<Id> intersect(std::vector<LeapfrogIterator>& iterators) {
     std::vector<Id> result;
     if (iterators.empty()) {
