@@ -176,6 +176,18 @@ ex:b ex:q "different" .
         d = _write(self._tmp.name, "d.csv", "x\n\n\n")
         self.assertEqual(main(["--format", "csv", c, d]), 1)
 
+    def test_all_unbound_solutions_with_several_variables(self):
+        # The all-unbound solution of two variables is one separator; a
+        # blank line has one cell and is a malformed row.
+        for fmt, sep in (("tsv", "\t"), ("csv", ",")):
+            one = _write(self._tmp.name, f"one.{fmt}", f"a{sep}b\n{sep}\n")
+            two = _write(self._tmp.name, f"two.{fmt}",
+                         f"a{sep}b\n{sep}\n{sep}\n")
+            blank = _write(self._tmp.name, f"blank.{fmt}", f"a{sep}b\n\n")
+            self.assertEqual(main(["--format", fmt, one, one]), 0, fmt)
+            self.assertEqual(main(["--format", fmt, one, two]), 1, fmt)
+            self.assertEqual(main(["--format", fmt, one, blank]), 2, fmt)
+
     def test_csv_compares_lexical_forms(self):
         a = _write(self._tmp.name, "a.csv", "x,y\nhttp://ex/a,1\n")
         b = _write(self._tmp.name, "b.csv", "y,x\n1,http://ex/a\n")

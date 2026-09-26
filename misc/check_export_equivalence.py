@@ -100,7 +100,9 @@ def _load_table(path: str, fmt: str) -> Tuple[Optional[Tuple[str, ...]],
     """Return (header, rows). header is None when the file is empty.
 
     A blank line is kept as a solution: for a single projected variable it
-    is the solution in which that variable is unbound."""
+    is the solution in which that variable is unbound. With n > 1 variables
+    the all-unbound solution is written as n - 1 separators (`\t` or `,`),
+    so a blank line is a malformed row there."""
     # `utf-8-sig` drops a leading byte order mark, if any. For TSV, only `\n`
     # ends a line (a `\r` before it is stripped below).
     newline = "" if fmt == "csv" else "\n"
