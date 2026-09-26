@@ -13,7 +13,9 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "engine/ConstructDeduplicator.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
 #include "util/Views.h"
@@ -118,6 +120,32 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
                       ">");
 }
 
+namespace {
+// Formats a single triple as Turtle using `FastExportStreamFormatter`
+// (zero-allocation in-buffer escaping) instead of the per-term
+// `std::string` construction in `formatTerm`. Required to produce output
+// byte-identical to the legacy Turtle branch of `formatTriple` below; only
+// used when `use-fast-export-stream-formatter` is enabled.
+std::string formatTripleFastTurtle(const EvaluatedTriple& evaluatedTriple) {
+  using ql::export_formatting::ExportFormat;
+  using ql::export_formatting::FastExportStreamFormatter;
+  // Reused across calls to avoid a fresh heap allocation per triple; grown
+  // on demand for unusually large terms.
+  static thread_local std::vector<char> buffer(4096);
+  for (;;) {
+    FastExportStreamFormatter formatter(
+        ql::span<char>(buffer.data(), buffer.size()));
+    try {
+      formatter.writeTriple(ExportFormat::Turtle, evaluatedTriple);
+    } catch (const ad_utility::Exception&) {
+      buffer.resize(buffer.size() * 2);
+      continue;
+    }
+    return std::string{formatter.currentChunk()};
+  }
+}
+}  // namespace
+
 // _____________________________________________________________________________
 std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
                          const ad_utility::MediaType& format) {
@@ -125,6 +153,12 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
   using enum ad_utility::MediaType;
   static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
   AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
+
+  if (format == turtle &&
+      getRuntimeParameter<
+          &RuntimeParameters::useFastExportStreamFormatter_>()) {
+    return formatTripleFastTurtle(evaluatedTriple);
+  }
 
   const auto& [subject, predicate, object] = evaluatedTriple;
 
