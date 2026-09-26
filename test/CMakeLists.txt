@@ -668,7 +668,9 @@ if (NOT QLEVER_ENABLE_EXPORT_V2)
 endif ()
 
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
-# range-v3 fails in IndexImpl / CompressedExternalIdTable).
+# range-v3 fails in IndexImpl / CompressedExternalIdTable). The standalone
+# `localVocab` lib (no `index` dependency) provides `LocalVocab::getWord`
+# used by the serialize path.
 # Requires the enabled pipeline (`PipelineMorselIntegration` pushes with
 # `runtimeEnabled_ = true` and expects `Accepted`).
 if (QLEVER_ENABLE_EXPORT_V2)

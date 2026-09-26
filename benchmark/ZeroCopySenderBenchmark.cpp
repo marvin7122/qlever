@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -17,6 +18,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -30,6 +32,7 @@
 #include <string_view>
 #include <thread>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "backports/span.h"
@@ -92,6 +95,38 @@ class CpuTimeTimer {
 };
 
 // _____________________________________________________________________________
+// Owns a file descriptor and closes it on destruction.
+class ScopedFd {
+ private:
+  int fd_ = -1;
+
+ public:
+  explicit ScopedFd(int fd) noexcept : fd_{fd} {}
+  ~ScopedFd() {
+    if (fd_ >= 0) {
+      ::close(fd_);
+    }
+  }
+  ScopedFd(const ScopedFd&) = delete;
+  ScopedFd& operator=(const ScopedFd&) = delete;
+
+  [[nodiscard]] int get() const noexcept { return fd_; }
+  // Give up ownership and return the descriptor.
+  [[nodiscard]] int release() noexcept { return std::exchange(fd_, -1); }
+};
+
+// _____________________________________________________________________________
+// Set an `int` socket option and throw if the kernel rejects it, so that a
+// failed tuning step cannot silently change the measured configuration.
+void setIntSocketOption(int fd, int level, int option, int value,
+                        std::string_view description) {
+  if (::setsockopt(fd, level, option, &value, sizeof(value)) != 0) {
+    AD_THROW("setsockopt " + std::string{description} +
+             " failed: " + std::strerror(errno));
+  }
+}
+
+// _____________________________________________________________________________
 // RAII wrapper managing a connected TCP loopback or socketpair endpoint.
 class SocketPairConnection {
  private:
@@ -100,8 +135,8 @@ class SocketPairConnection {
 
  public:
   SocketPairConnection() {
-    int listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listenFd < 0) {
+    ScopedFd listenFd{::socket(AF_INET, SOCK_STREAM, 0)};
+    if (listenFd.get() < 0) {
       AD_THROW("socket failed");
     }
 
@@ -110,54 +145,50 @@ class SocketPairConnection {
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port = 0;
 
-    int enable = 1;
-    ::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
-    if (::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) !=
-        0) {
-      ::close(listenFd);
+    setIntSocketOption(listenFd.get(), SOL_SOCKET, SO_REUSEADDR, 1,
+                       "SO_REUSEADDR");
+    if (::bind(listenFd.get(), reinterpret_cast<sockaddr*>(&addr),
+               sizeof(addr)) != 0) {
       AD_THROW("bind failed");
     }
 
     socklen_t addrLen = sizeof(addr);
-    if (::getsockname(listenFd, reinterpret_cast<sockaddr*>(&addr), &addrLen) !=
-        0) {
-      ::close(listenFd);
+    if (::getsockname(listenFd.get(), reinterpret_cast<sockaddr*>(&addr),
+                      &addrLen) != 0) {
       AD_THROW("getsockname failed");
     }
 
-    if (::listen(listenFd, 1) != 0) {
-      ::close(listenFd);
+    if (::listen(listenFd.get(), 1) != 0) {
       AD_THROW("listen failed");
     }
 
-    sendFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (sendFd_ < 0) {
-      ::close(listenFd);
+    ScopedFd sendFd{::socket(AF_INET, SOCK_STREAM, 0)};
+    if (sendFd.get() < 0) {
       AD_THROW("client socket failed");
     }
 
-    if (::connect(sendFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) !=
-        0) {
-      ::close(listenFd);
-      ::close(sendFd_);
+    if (::connect(sendFd.get(), reinterpret_cast<sockaddr*>(&addr),
+                  sizeof(addr)) != 0) {
       AD_THROW("connect failed");
     }
 
-    recvFd_ = ::accept(listenFd, nullptr, nullptr);
-    if (recvFd_ < 0) {
-      ::close(listenFd);
-      ::close(sendFd_);
+    ScopedFd recvFd{::accept(listenFd.get(), nullptr, nullptr)};
+    if (recvFd.get() < 0) {
       AD_THROW("accept failed");
     }
-    ::close(listenFd);
 
-    int flag = 1;
-    ::setsockopt(sendFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
-    ::setsockopt(recvFd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    setIntSocketOption(sendFd.get(), IPPROTO_TCP, TCP_NODELAY, 1,
+                       "TCP_NODELAY");
+    setIntSocketOption(recvFd.get(), IPPROTO_TCP, TCP_NODELAY, 1,
+                       "TCP_NODELAY");
+    constexpr int bufSize = 4 * 1024 * 1024;
+    setIntSocketOption(sendFd.get(), SOL_SOCKET, SO_SNDBUF, bufSize,
+                       "SO_SNDBUF");
+    setIntSocketOption(recvFd.get(), SOL_SOCKET, SO_RCVBUF, bufSize,
+                       "SO_RCVBUF");
 
-    int bufSize = 4 * 1024 * 1024;
-    ::setsockopt(sendFd_, SOL_SOCKET, SO_SNDBUF, &bufSize, sizeof(bufSize));
-    ::setsockopt(recvFd_, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
+    sendFd_ = sendFd.release();
+    recvFd_ = recvFd.release();
   }
 
   ~SocketPairConnection() { close(); }
@@ -185,6 +216,41 @@ class SocketPairConnection {
 
   [[nodiscard]] int sendFd() const noexcept { return sendFd_; }
   [[nodiscard]] int recvFd() const noexcept { return recvFd_; }
+};
+
+// _____________________________________________________________________________
+// Drains `total` bytes from a socket on a background thread. The destructor
+// shuts the socket down to wake a blocked `recv` and joins, so an exception on
+// the sending side cannot leave a joinable thread behind (`std::terminate`).
+class BackgroundReceiver {
+ private:
+  int recvFd_;
+  std::thread thread_;
+
+ public:
+  BackgroundReceiver(int recvFd, size_t total)
+      : recvFd_{recvFd}, thread_{[recvFd, total]() {
+          std::vector<char> buf(64 * 1024);
+          size_t totalReceived = 0;
+          while (totalReceived < total) {
+            ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
+            if (n <= 0) {
+              break;
+            }
+            totalReceived += static_cast<size_t>(n);
+          }
+        }} {}
+  ~BackgroundReceiver() {
+    if (thread_.joinable()) {
+      ::shutdown(recvFd_, SHUT_RDWR);
+      thread_.join();
+    }
+  }
+  BackgroundReceiver(const BackgroundReceiver&) = delete;
+  BackgroundReceiver& operator=(const BackgroundReceiver&) = delete;
+
+  // Wait until the receiver has seen all bytes or the end of the stream.
+  void join() { thread_.join(); }
 };
 
 // _____________________________________________________________________________
@@ -223,20 +289,11 @@ class ZeroCopySenderBenchmarkRunner {
   }
 
   // 1. Baseline: Synchronous send() syscall in loop
-  BenchmarkMetric runStandardSend() {
+  BenchmarkMetric runStandardSend() const {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    BackgroundReceiver receiver{conn.recvFd(), totalBytes_};
 
     CpuTimeTimer timer;
     size_t bytesSent = 0;
@@ -258,14 +315,14 @@ class ZeroCopySenderBenchmarkRunner {
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
     (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
     conn.closeSender();
-    receiverThread.join();
+    receiver.join();
 
     return calculateMetric("1. Standard send() [Baseline]", wallSec, cpuPercent,
                            bytesSent, numChunks);
   }
 
   // 2. io_uring Standard Send (Unpinned buffers)
-  BenchmarkMetric runIoUringStandardSend() {
+  BenchmarkMetric runIoUringStandardSend() const {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
 
@@ -278,16 +335,7 @@ class ZeroCopySenderBenchmarkRunner {
 
     ZeroCopySocketSender sender(config);
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    BackgroundReceiver receiver{conn.recvFd(), totalBytes_};
 
     CpuTimeTimer timer;
 
@@ -302,14 +350,14 @@ class ZeroCopySenderBenchmarkRunner {
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
     (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
     conn.closeSender();
-    receiverThread.join();
+    receiver.join();
 
     return calculateMetric("2. io_uring Standard Send (Unpinned)", wallSec,
                            cpuPercent, totalBytes_, numChunks);
   }
 
   // 3. io_uring Zero-Copy Send (IORING_OP_SEND_ZC with Registered Buffers)
-  BenchmarkMetric runIoUringZeroCopySend() {
+  BenchmarkMetric runIoUringZeroCopySend() const {
     SocketPairConnection conn;
     const size_t numChunks = totalBytes_ / chunkSize_;
 
@@ -322,16 +370,7 @@ class ZeroCopySenderBenchmarkRunner {
 
     ZeroCopySocketSender sender(config);
 
-    // Background receiver thread
-    std::thread receiverThread([recvFd = conn.recvFd(), total = totalBytes_]() {
-      std::vector<char> buf(64 * 1024);
-      size_t totalReceived = 0;
-      while (totalReceived < total) {
-        ssize_t n = ::recv(recvFd, buf.data(), buf.size(), 0);
-        if (n <= 0) break;
-        totalReceived += static_cast<size_t>(n);
-      }
-    });
+    BackgroundReceiver receiver{conn.recvFd(), totalBytes_};
 
     CpuTimeTimer timer;
 
@@ -346,7 +385,7 @@ class ZeroCopySenderBenchmarkRunner {
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
     (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
     conn.closeSender();
-    receiverThread.join();
+    receiver.join();
 
     return calculateMetric("3. io_uring SEND_ZC (Registered Fixed Buffers)",
                            wallSec, cpuPercent, totalBytes_, numChunks);
