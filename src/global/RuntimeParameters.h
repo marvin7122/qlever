@@ -250,6 +250,14 @@ struct RuntimeParameters {
   // SELECTs with at most three columns take this path.
   Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
 
+  // If set, Export V2 sizes SELECT/CONSTRUCT morsels adaptively
+  // (`AdaptiveChunkSizer`): the first morsel targets a small 64 KB buffer for
+  // low time-to-first-byte, then the target doubles on every morsel up to a
+  // 4 MB plateau for sustained throughput. Default off: morsels keep the
+  // fixed 8192-row size, and output bytes are identical either way; only the
+  // chunk boundaries (and thus the number/timing of HTTP writes) change.
+  Bool exportV2AdaptiveChunkSizing_{false, "export-v2-adaptive-chunk-sizing"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
