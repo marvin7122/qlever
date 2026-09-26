@@ -22,6 +22,7 @@ namespace ql::engine::export_v2 {
 
 namespace {
 
+// _____________________________________________________________________________
 // Yield the CSV header line and then the rows selected by `limitAndOffset`
 // from `result`, `rowsPerChunk` rows per yielded string. The header and the
 // row selection are the same as in the V1 CSV export
@@ -85,8 +86,9 @@ ExportQueryExecutionTrees::ComputeResultReturnType SelectCsvStreamer::run(
   ExportQueryExecutionTrees::compensateForLimitOffsetClause(limitAndOffset,
                                                             qet);
 
-  // This call triggers the possibly expensive computation of the query
-  // result unless the result is already cached (same as V1).
+  // Trigger the possibly expensive computation of the query result unless it
+  // is already cached, as the V1 export does in
+  // `ExportQueryExecutionTrees::selectQueryResultToStream`.
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
