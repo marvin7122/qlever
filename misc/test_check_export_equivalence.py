@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-# Copyright 2026, University of Freiburg,
-# Chair of Algorithms and Data Structures.
-# Author: Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+# Copyright 2026 The QLever Authors, in particular:
+#
+# 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+#
+# UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 """Tests for the W3C export equivalence oracle in check_export_equivalence.py.
 
@@ -133,6 +135,32 @@ ex:b ex:q "different" .
     def test_tsv_bare_word_is_rejected(self):
         a = _write(self._tmp.name, "a.tsv", "?x\nfoo\n")
         self.assertEqual(main(["--format", "tsv", a, a]), 2)
+
+    def test_tsv_malformed_iri_is_rejected(self):
+        b = _write(self._tmp.name, "b.tsv", "?x\n<http://ex/a>\n")
+        for cell in ("< >", "<http://ex/ a>", "<http://ex/{a}>"):
+            a = _write(self._tmp.name, "a.tsv", f"?x\n{cell}\n")
+            self.assertEqual(main(["--format", "tsv", a, b]), 2, cell)
+
+    def test_tsv_iri_escapes_are_decoded_verbatim(self):
+        a = _write(self._tmp.name, "a.tsv", "?x\n<ex\\u0041>\n")
+        b = _write(self._tmp.name, "b.tsv", "?x\n<exA>\n")
+        self.assertEqual(main(["--format", "tsv", a, b]), 0)
+
+    def test_tsv_cells_outside_the_term_grammar_are_rejected(self):
+        # `"x"^^` made rdflib raise an `IndexError`, `1.2.3` was read as
+        # `1.2`, and `()` as `rdf:nil`.
+        b = _write(self._tmp.name, "b.tsv", "?x\n\"x\"\n")
+        for cell in ('"x"^^', '"x"@', "1.2.3", "()", "[]", '"x"^^<a b>'):
+            a = _write(self._tmp.name, "a.tsv", f"?x\n{cell}\n")
+            self.assertEqual(main(["--format", "tsv", a, b]), 2, cell)
+
+    def test_tsv_typed_terms_are_accepted(self):
+        a = _write(self._tmp.name, "a.tsv",
+                   "?a\t?b\t?c\t?d\t?e\n"
+                   "\"x\"@en-US\t-1.5\t.5E-3\ttrue\t"
+                   "\"7\"^^<http://www.w3.org/2001/XMLSchema#int>\n")
+        self.assertEqual(main(["--format", "tsv", a, a]), 0)
 
     def test_all_unbound_solutions_keep_cardinality(self):
         a = _write(self._tmp.name, "a.tsv", "?x\n\n")

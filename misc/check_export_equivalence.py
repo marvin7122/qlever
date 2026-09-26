@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-# Copyright 2026, University of Freiburg,
-# Chair of Algorithms and Data Structures.
-# Author: Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+# Copyright 2026 The QLever Authors, in particular:
+#
+# 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+#
+# UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 """
 Export equivalence helper for QLever CONSTRUCT and SELECT outputs.
@@ -24,7 +26,8 @@ SELECT (tsv, csv)
 
   TSV cells are parsed as RDF terms in Turtle syntax, as the SPARQL 1.1
   TSV format prescribes, so `1` (xsd:integer) and `"1"` (plain literal)
-  are different values. The SPARQL 1.1 CSV format is lossy by design:
+  are different values. A cell must be exactly one IRI, literal, number,
+  boolean or blank node label; anything else is a parse error. The SPARQL 1.1 CSV format is lossy by design:
   IRIs, literals and numbers are all written as bare lexical forms. CSV
   cells are therefore compared by their lexical form only (blank node
   labels excepted), which is the strongest equivalence CSV can express.
@@ -45,6 +48,28 @@ import sys
 from typing import List, Optional, Sequence, Tuple
 
 _BNODE_LABEL = re.compile(r"^_:[A-Za-z0-9_\-]+$")
+# The Turtle term grammar a SPARQL 1.1 TSV cell may use (no prefixed names,
+# no collections, no anonymous blank nodes). Checking a cell against it
+# before handing it to rdflib guarantees that the cell is a single term.
+_UCHAR = r"\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8}"
+_ECHAR = r"\\[tbnrf\"'\\]"
+_IRIREF = rf"<(?:[^\x00-\x20<>\"{{}}|^`\\]|{_UCHAR})*>"
+_TSV_TERM = re.compile(
+    rf"""(?:
+      {_IRIREF}
+    | (?:"(?:[^"\\\n\r]|{_ECHAR}|{_UCHAR})*"
+       |'(?:[^'\\\n\r]|{_ECHAR}|{_UCHAR})*')
+      (?:@[a-zA-Z]+(?:-[a-zA-Z0-9]+)*|\^\^{_IRIREF})?
+    | [+-]?(?:[0-9]+\.[0-9]*[eE][+-]?[0-9]+
+             |\.[0-9]+[eE][+-]?[0-9]+
+             |[0-9]+[eE][+-]?[0-9]+
+             |[0-9]*\.[0-9]+
+             |[0-9]+)
+    | true | false
+    )""",
+    re.VERBOSE,
+)
+_CELL_PREDICATE = "urn:qlever:cell"
 _VAR_NS = "urn:qlever:var:"
 # Every solution carries this marker, so that an all-unbound solution
 # still contributes a triple and the multiset cardinality is preserved.
@@ -99,15 +124,23 @@ def _header_variables(header: Sequence[str]) -> List[str]:
 
 
 def _tsv_cell_to_term(cell: str):
-    from rdflib import BNode, Graph, URIRef
+    from rdflib import Graph, URIRef
 
-    if len(cell) >= 2 and cell[0] == "<" and cell[-1] == ">":
-        # Taken verbatim, so relative IRIs are not resolved against a base.
-        return URIRef(cell[1:-1])
+    if _TSV_TERM.fullmatch(cell) is None:
+        raise MalformedInput(f"cell is not a single RDF term: {cell!r}")
+    if cell[0] == "<":
+        # Taken verbatim (only `\\u`/`\\U` escapes are decoded), so relative
+        # IRIs are not resolved against a base.
+        return URIRef(
+            re.sub(_UCHAR, lambda m: chr(int(m.group()[2:], 16)), cell[1:-1]))
+    predicate = URIRef(_CELL_PREDICATE)
     graph = Graph()
-    graph.parse(data=f"_:s <urn:qlever:cell> {cell} .\n", format="turtle")
-    objects = list(graph.objects())
-    if len(graph) != 1 or len(objects) != 1 or isinstance(objects[0], BNode):
+    try:
+        graph.parse(data=f"_:s <{predicate}> {cell} .\n", format="turtle")
+    except (SyntaxError, ValueError, LookupError) as exc:
+        raise MalformedInput(f"cell is not a valid RDF term: {cell!r}") from exc
+    objects = list(graph.objects(predicate=predicate))
+    if len(graph) != 1 or len(objects) != 1:
         raise MalformedInput(f"cell is not a single RDF term: {cell!r}")
     return objects[0]
 
@@ -200,8 +233,7 @@ def _check_solutions(path_a: str, path_b: str, fmt: str) -> int:
     try:
         graph_a = _solutions_to_graph(vars_a, rows_a, fmt)
         graph_b = _solutions_to_graph(vars_b, rows_b, fmt)
-    except (MalformedInput, SyntaxError) as exc:
-        # rdflib reports a malformed TSV cell as `BadSyntax`, a `SyntaxError`.
+    except MalformedInput as exc:
         sys.stderr.write(f"parse error: {exc}\n")
         return 2
 
