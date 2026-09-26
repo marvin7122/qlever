@@ -148,6 +148,12 @@ struct RuntimeParameters {
   // false,
   // the result will be `NaN` or `infinity` respectively.
   Bool divisionByZeroIsUndef_{true, "division-by-zero-is-undef"};
+  // If set to `true`, `FILTER`, `BIND` and the child expressions of aggregates
+  // in a `GROUP BY` are evaluated by the JIT expression backends (bytecode VM,
+  // native code, index-folded string filters) where an expression can be
+  // lowered and its input cells allow it. Other expressions and inputs use the
+  // generic evaluation. The results are the same.
+  Bool jitExpressionEvaluation_{false, "jit-expression-evaluation"};
   // If set to `true`, the contained `FILTER` expressions in the query
   // try to set and apply a corresponding `PrefilterExpression` (see
   // `PrefilterExpressionIndex.h`) on its variable-related `IndexScan`

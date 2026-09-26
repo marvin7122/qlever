@@ -1820,10 +1820,13 @@ GroupByImpl::evaluateChildExpressionOfAggregateFunction(
   if (isCountStar) {
     return Id::makeFromBool(true);
   }
-  // Fast path for computed integer child expressions like `SUM(?x * ?y)`.
-  if (auto jitResult = tryEvaluateAggregateChildExpressionJit(
-          exprChildren[0].get(), evaluationContext)) {
-    return std::move(jitResult.value());
+  // Fast path for computed integer child expressions like `SUM(?x * ?y)`,
+  // only if the runtime parameter `jit-expression-evaluation` is set.
+  if (getRuntimeParameter<&RuntimeParameters::jitExpressionEvaluation_>()) {
+    if (auto jitResult = tryEvaluateAggregateChildExpressionJit(
+            exprChildren[0].get(), evaluationContext)) {
+      return std::move(jitResult.value());
+    }
   }
   return exprChildren[0]->evaluate(&evaluationContext);
 }

@@ -14,6 +14,7 @@
 #include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
+#include "global/RuntimeParameters.h"
 #include "util/ChunkedForLoop.h"
 #include "util/Exception.h"
 
@@ -188,8 +189,12 @@ IdTable Bind::computeExpressionBind(
   // column semantics (division, comparisons, ID operations, and pure copies
   // over non-integer cells, see `canExecuteAsIntColumn`) fall back to the
   // generic evaluation below.
-  auto optProgram = ql::engine::jit::JitExpressionBytecodeVm::compile(
-      *expression, _subtree->getVariableColumns());
+  // Only if the runtime parameter `jit-expression-evaluation` is set.
+  auto optProgram =
+      getRuntimeParameter<&RuntimeParameters::jitExpressionEvaluation_>()
+          ? ql::engine::jit::JitExpressionBytecodeVm::compile(
+                *expression, _subtree->getVariableColumns())
+          : std::nullopt;
   if (optProgram.has_value() &&
       ql::engine::jit::JitExpressionBytecodeVm::canExecuteAsIntColumn(
           optProgram.value(),
