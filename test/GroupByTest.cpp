@@ -712,7 +712,7 @@ TEST_F(GroupByOptimizations, hashMapOptimizationWithPrefetch) {
     qec->getQueryTreeCache().clearAll();
     GroupBy groupBy{qec, variablesOnlyX, aliases, std::move(subtree)};
     auto result = groupBy.computeResultOnlyForTesting();
-    return result.idTable().clone();
+    return result.idTableView().clone();
   };
 
   auto withoutPrefetch = computeResult(false);
