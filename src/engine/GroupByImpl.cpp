@@ -15,6 +15,7 @@
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
 #include "engine/LazyGroupBy.h"
+#include "engine/SoftwarePipelinedPrefetcher.h"
 #include "engine/Sort.h"
 #include "engine/StripColumns.h"
 #include "engine/sparqlExpressions/AggregateExpression.h"
@@ -1824,16 +1825,38 @@ IdTable GroupByImpl::createResultFromHashMap(
 // Visitor function to extract values from the result of an evaluation of
 // the child expression of an aggregate, and subsequently processing the
 // values by calling the `addValue` function of the corresponding aggregate.
+// If `prefetch` is true, the aggregation data of the row `i + d` is prefetched
+// while the row `i` is processed, because the group indices in `hashEntries`
+// are in random order and the aggregation data of many groups does not fit
+// into the cache.
 static constexpr auto makeProcessGroupsVisitor =
     [](size_t blockSize,
        const sparqlExpression::EvaluationContext* evaluationContext,
-       const std::vector<size_t>& hashEntries) {
-      return CPP_template_lambda(blockSize, evaluationContext, &hashEntries)(
-          typename T, typename A)(T && singleResult, A & aggregationDataVector)(
+       const std::vector<size_t>& hashEntries, bool prefetch) {
+      return CPP_template_lambda(blockSize, evaluationContext, &hashEntries,
+                                 prefetch)(typename T, typename A)(
+          T && singleResult, A & aggregationDataVector)(
           requires sparqlExpression::SingleExpressionResult<T> &&
           VectorOfAggregationData<A>) {
         auto generator = sparqlExpression::detail::makeGenerator(
             std::forward<T>(singleResult), blockSize, evaluationContext);
+
+        if (prefetch) {
+          std::vector<decltype(&aggregationDataVector.at(0))> aggregateDataPtrs;
+          aggregateDataPtrs.reserve(hashEntries.size());
+          for (size_t vectorOffset : hashEntries) {
+            aggregateDataPtrs.push_back(
+                &aggregationDataVector.at(vectorOffset));
+          }
+          auto value = ql::ranges::begin(generator);
+          qlever::SoftwarePipelinedPrefetcher<>::processWithPrefetch(
+              aggregateDataPtrs,
+              [&value, evaluationContext](auto* aggregateData) {
+                aggregateData->addValue(*value, evaluationContext);
+                ++value;
+              });
+          return;
+        }
 
         auto hashEntryIndex = 0;
 
@@ -1866,6 +1889,9 @@ Result GroupByImpl::computeGroupByForHashMapOptimization(
   // the other.
   ad_utility::Timer lookupTimer{ad_utility::Timer::Stopped};
   ad_utility::Timer aggregationTimer{ad_utility::Timer::Stopped};
+  const bool prefetch =
+      getRuntimeParameter<&RuntimeParameters::groupByHashMapPrefetch_>();
+  runtimeInfo().addDetail("prefetchAggregationData", prefetch);
   for (const auto& [inputTableRef, inputLocalVocabRef] : subresults) {
     const auto inputTable = inputTableRef.template asStaticView<0>();
     const LocalVocab& inputLocalVocab = inputLocalVocabRef;
@@ -1924,9 +1950,10 @@ Result GroupByImpl::computeGroupByForHashMapOptimization(
               aggregationData.getAggregationDataVariant(
                   aggregate.aggregateDataIndex_);
 
-          std::visit(makeProcessGroupsVisitor(currentBlockSize,
-                                              &evaluationContext, hashEntries),
-                     std::move(expressionResult), aggregationDataVariant);
+          std::visit(
+              makeProcessGroupsVisitor(currentBlockSize, &evaluationContext,
+                                       hashEntries, prefetch),
+              std::move(expressionResult), aggregationDataVariant);
         }
       }
       aggregationTimer.stop();
