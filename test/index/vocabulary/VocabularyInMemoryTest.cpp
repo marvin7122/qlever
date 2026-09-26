@@ -5,11 +5,11 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include "../../util/GTestHelpers.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyInMemory.h"
-#include "util/GTestHelpers.h"
-#include "util/RuntimeParametersTestHelpers.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 using Vocab = ad_utility::vocabulary::VocabularyInMemory;
 
