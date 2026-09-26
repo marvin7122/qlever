@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include "engine/RleVectorStream.h"
@@ -87,4 +88,33 @@ TEST(RleVectorStreamTest, MaterializeExactlySizedDestination) {
   EXPECT_EQ(dest[2], Id::makeFromInt(4));
   EXPECT_EQ(dest[3], Id::makeFromInt(5));
   EXPECT_EQ(dest[4], Id::makeFromInt(5));
+}
+
+// _____________________________________________________________________________
+TEST(RleVectorStreamTest, FromColumn) {
+  auto I = Id::makeFromInt;
+  std::vector<Id> column{I(1), I(1), I(1), I(2), I(3), I(3), I(1)};
+
+  auto stream = RleVectorStream::fromColumn(column, 4);
+  ASSERT_TRUE(stream.has_value());
+  EXPECT_EQ(stream->numRuns(), 4u);
+  EXPECT_EQ(stream->totalRows(), column.size());
+  std::vector<std::pair<Id, uint32_t>> runs;
+  for (const auto& run : stream->runs()) {
+    runs.emplace_back(run.value_, run.length_);
+  }
+  EXPECT_EQ(runs, (std::vector<std::pair<Id, uint32_t>>{
+                      {I(1), 3}, {I(2), 1}, {I(3), 2}, {I(1), 1}}));
+  std::vector<Id> materialized(column.size());
+  stream->materialize(materialized);
+  EXPECT_EQ(materialized, column);
+
+  // One run more than allowed.
+  EXPECT_FALSE(RleVectorStream::fromColumn(column, 3).has_value());
+
+  // An empty column has no runs, also with a limit of zero.
+  auto empty = RleVectorStream::fromColumn({}, 0);
+  ASSERT_TRUE(empty.has_value());
+  EXPECT_EQ(empty->numRuns(), 0u);
+  EXPECT_FALSE(RleVectorStream::fromColumn(column, 0).has_value());
 }

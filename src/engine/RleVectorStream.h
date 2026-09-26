@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -81,6 +82,32 @@ class RleVectorStream {
       }
     }
     totalUncompressedRows_ += length;
+  }
+
+  // Return the runs of equal consecutive `Id`s in `column`, or `std::nullopt`
+  // if `column` has more than `maxNumRuns` runs. In the latter case, `column`
+  // is only read up to the first run beyond the limit.
+  static std::optional<RleVectorStream> fromColumn(ql::span<const Id> column,
+                                                   size_t maxNumRuns) {
+    RleVectorStream stream;
+    auto runBegin = column.begin();
+    while (runBegin != column.end()) {
+      if (stream.numRuns() >= maxNumRuns) {
+        return std::nullopt;
+      }
+      const Id value = *runBegin;
+      auto runEnd = std::find_if(runBegin, column.end(),
+                                 [value](Id id) { return id != value; });
+      // `append` merges consecutive chunks of the same value.
+      for (size_t remaining = runEnd - runBegin; remaining > 0;) {
+        auto chunk =
+            static_cast<uint32_t>(std::min<size_t>(remaining, MAX_RUN_LENGTH));
+        stream.append(value, chunk);
+        remaining -= chunk;
+      }
+      runBegin = runEnd;
+    }
+    return stream;
   }
 
   // The number of runs.
