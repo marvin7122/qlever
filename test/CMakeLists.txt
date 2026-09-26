@@ -663,3 +663,9 @@ if (QLEVER_ENABLE_EXPORT_V2)
         target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     endif()
 endif ()
+
+# Byte identity of the V2 serializer with and without
+# `MonomorphicRowSerializer` against Legacy; needs a test index.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2MonomorphicTest engine sparqlParser)
+endif ()
