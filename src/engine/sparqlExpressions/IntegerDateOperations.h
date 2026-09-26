@@ -18,7 +18,7 @@
 
 namespace ql::engine::scalar {
 
-// Integer-space date helpers (Pillar 2): build a date `Id` from its components
+// Integer-space date helpers: build a date `Id` from its components
 // and read the year, month or day of a date `Id` as an integer, without going
 // through the string or `DateYearOrDuration` expression machinery. All
 // functions delegate to the `Id`/`Date` representation.
