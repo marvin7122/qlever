@@ -428,8 +428,12 @@ TEST(VocabBatchLookupData,
 TEST(VocabBatchLookupData,
      MultiSourceVocabBatchAssemblerOutOfBoundsPositionThrows) {
   ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(2);
+  // Deliberately out of bounds. `volatile` keeps the index opaque to the
+  // optimizer so `-Warray-bounds` cannot prove the violation at compile time
+  // (the `AD_CORRECTNESS_CHECK` inside still throws at runtime).
+  volatile size_t outOfBoundsPosition = 2;
   AD_EXPECT_THROW_WITH_MESSAGE(
-      assembler.assignWordAtPosition(2, "out-of-bounds"),
+      assembler.assignWordAtPosition(outOfBoundsPosition, "out-of-bounds"),
       ::testing::HasSubstr("resultPosition < assembledWordViews_.size()"));
 
   auto subBatch =

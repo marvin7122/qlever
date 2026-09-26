@@ -375,7 +375,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
 
   // Clobber the stack region a dangling SSO view would point into. Two deep
   // frames of sentinel bytes leave no plausible intact copy behind.
-  auto churn = []() { clobberStack(); };
+  auto churn = []() { clobberStack<4096>(); };
   churn();
   churn();
 
