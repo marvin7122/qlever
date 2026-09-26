@@ -586,6 +586,8 @@ class MultiSourceVocabBatchAssembler {
   // Finalize the assembled batch and return a self-contained
   // `VocabBatchLookupResult` (can be called only once).
   [[nodiscard]] VocabBatchLookupResult finalizeVocabBatchLookupResult() && {
+    AD_CORRECTNESS_CHECK(assembledWordViews_.size() ==
+                         slotFilledTracking_.size());
     AD_CORRECTNESS_CHECK(!assembledWordViews_.empty());
     AD_CORRECTNESS_CHECK(!storageOwners_.empty());
     AD_CORRECTNESS_CHECK(ql::ranges::all_of(
