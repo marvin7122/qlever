@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <deque>
 #include <exception>
 #include <functional>
@@ -47,6 +48,8 @@ enum class MorselStatus {
   Pending,    // Work submitted, awaiting execution
   Running,    // Actively executing on helper thread or primary thread
   Completed,  // Execution completed successfully; result is stored in slot
+  Failed,     // Execution threw; the exception is stored in the slot and
+              // rethrown when the coordinator consumes it
   Cancelled   // Job or morsel was cancelled
 };
 
@@ -74,6 +77,8 @@ inline std::string_view toString(MorselStatus status) noexcept {
       return "Running";
     case MorselStatus::Completed:
       return "Completed";
+    case MorselStatus::Failed:
+      return "Failed";
     case MorselStatus::Cancelled:
       return "Cancelled";
   }
@@ -199,6 +204,10 @@ class ElasticExportScheduler {
   void onForegroundQueryEnded();
 
   /// Attach non-intrusively to QueryRegistry lifecycle callbacks.
+  /// Lifetime requirement: the scheduler must outlive the registry, because
+  /// the registered callbacks capture a raw `this` and QueryRegistry offers
+  /// no removal API. Production wiring must establish this ownership order
+  /// (e.g. scheduler owned by Server with a shorter-lived registry view).
   void attachToQueryRegistry(ad_utility::websocket::QueryRegistry& registry);
 
   /// Number of active registered foreground SPARQL queries.
@@ -235,6 +244,10 @@ class ElasticExportScheduler {
   void setMaxForegroundQueriesForHelperAdmission(size_t count) noexcept {
     maxForegroundQueriesForHelperAdmission_.store(count,
                                                   std::memory_order_relaxed);
+    // Eligibility may have flipped in either direction; wake blocked
+    // enqueuers so they re-check it instead of waiting on a stale state.
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    queueNotFullCv_.notify_all();
   }
 
   [[nodiscard]] size_t maxForegroundQueriesForHelperAdmission() const noexcept {
@@ -246,7 +259,11 @@ class ElasticExportScheduler {
   void shutdown();
 
   /// Enqueue an owned morsel to the helper pool (called internally by
-  /// sessions).
+  /// sessions). Returns false without blocking when helpers are currently
+  /// ineligible or the scheduler is stopping; the coordinator then executes
+  /// the morsel on the primary path instead. The poster transport never
+  /// blocks: it hands the morsel to the pool, which drops it at execution
+  /// time if eligibility has lapsed.
   bool enqueueMorsel(OwnedMorsel morsel);
 
   /// Register an active session state for demand change notifications.
@@ -368,11 +385,15 @@ class ExportJobState final
       cv_.notify_all();
     }
 
-    // Enqueue pending morsels outside the lock
+    // Enqueue pending morsels outside the lock. Best-effort: a `false`
+    // return (helpers ineligible or stopping) leaves the morsel Pending
+    // and the coordinator runs it inline on the primary path, so the
+    // return value is intentionally ignored here.
     if (!pendingIndicesToEnqueue.empty()) {
       auto self = this->shared_from_this();
       for (size_t index : pendingIndicesToEnqueue) {
-        scheduler_->enqueueMorsel(OwnedMorsel(self, jobId_, newEpoch, index));
+        static_cast<void>(scheduler_->enqueueMorsel(
+            OwnedMorsel(self, jobId_, newEpoch, index)));
       }
     }
   }
@@ -523,9 +544,9 @@ class ExportJobState final
                         "No more submitted morsels to consume");
       index = nextSlotToConsume_++;
     } else {
-      // Completion order: a finished morsel first, else a pending one for
-      // inline execution, else a running one to wait on in the shared
-      // machine below. Anything else means nothing is consumable.
+      // Completion order: the morsel that finished first, else a pending
+      // one for inline execution, else a running one to wait on in the
+      // shared machine below. Anything else means nothing is consumable.
       size_t completed = slots_.size();
       size_t pending = slots_.size();
       size_t running = slots_.size();
@@ -533,9 +554,16 @@ class ExportJobState final
         if (slots_[i].consumed_) {
           continue;
         }
-        if (slots_[i].status_ == MorselStatus::Completed) {
-          completed = i;
-          break;
+        if (slots_[i].status_ == MorselStatus::Completed ||
+            slots_[i].status_ == MorselStatus::Failed) {
+          // Keep the earliest completion timestamp so unordered sessions
+          // emit whichever morsel completed first. Ties keep the lower
+          // slot index via the strict comparison.
+          if (completed == slots_.size() ||
+              slots_[i].profile_.completedAt_ <
+                  slots_[completed].profile_.completedAt_) {
+            completed = i;
+          }
         }
         if (slots_[i].status_ == MorselStatus::Pending &&
             pending == slots_.size()) {
@@ -561,6 +589,16 @@ class ExportJobState final
       if (cancelled_) {
         AD_THROW("Export job cancelled while awaiting result slot " +
                  std::to_string(index));
+      }
+
+      if (slots_[index].status_ == MorselStatus::Failed) {
+        AD_CORRECTNESS_CHECK(slots_[index].error_ != nullptr);
+        slots_[index].consumed_ = true;
+        auto error = std::move(slots_[index].error_);
+        // Unlock before rethrowing so a throwing consumer cannot observe a
+        // locked coordinator mutex during unwinding.
+        lock.unlock();
+        std::rethrow_exception(error);
       }
 
       if (slots_[index].status_ == MorselStatus::Completed) {
@@ -730,8 +768,11 @@ class ExportJobState final
       }
     }
     if (shouldEnqueue) {
-      scheduler_->enqueueMorsel(
-          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, *index));
+      // Best-effort offload: a rejected morsel stays Pending and the
+      // coordinator runs it inline on the primary path (see
+      // `consumeNextResult`), so the return value is intentionally ignored.
+      static_cast<void>(scheduler_->enqueueMorsel(OwnedMorsel(
+          this->shared_from_this(), jobId_, epochToSubmit, *index)));
     }
     return true;
   }
