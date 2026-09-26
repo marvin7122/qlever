@@ -298,8 +298,9 @@ std::optional<Result> ExistsJoin::tryHashSetExistsJoinIfSuitable(
         0, joinColumn.size(),
         [&](size_t i) {
           Id id = joinColumn[i];
-          bool exists = id.isUndefined() ? !rightIsEmpty
-                                         : rightHasUndef || set.contains(id);
+          bool exists = id.isUndefined()
+                            ? !rightIsEmpty
+                            : rightHasUndef || ad_utility::contains(set, id);
           existsColumn[i] = Id::makeFromBool(exists);
         },
         [this] { checkCancellation(); });
