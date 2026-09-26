@@ -127,10 +127,11 @@ class LeafletAggregator {
     return metadata.exactDistinctCol2_;
   }
 
-  // O(blocks) typed count evaluator for column `columnIndex`. A block whose
-  // types are a non-empty subset of `targetType` counts all its rows exactly,
-  // a block without any type of `targetType` is skipped, and every other block
-  // is returned as ambiguous, as it requires row-level decompression.
+  // O(blocks) typed count evaluator for column `columnIndex` (0 or 1). A
+  // block whose types are a non-empty subset of `targetType` counts all its
+  // rows exactly, a block without any type of `targetType` is skipped, and
+  // every other block is returned as ambiguous, as it requires row-level
+  // decompression.
   // `targetType` must be a non-empty set of flags: `None` matches no
   // meaningful type.
   struct TypedCountResult {
@@ -141,7 +142,8 @@ class LeafletAggregator {
   [[nodiscard]] static TypedCountResult countTypedColumn(
       ql::span<const CompressedBlockMetadataV2> blocks,
       DatatypeBitmask targetType, size_t columnIndex = 1) {
-    AD_CORRECTNESS_CHECK(targetType != DatatypeBitmask::None);
+    AD_CONTRACT_CHECK(targetType != DatatypeBitmask::None);
+    AD_CONTRACT_CHECK(columnIndex <= 1);
     TypedCountResult result;
     for (size_t i = 0; i < blocks.size(); ++i) {
       const auto& header = blocks[i].leafletHeader_;

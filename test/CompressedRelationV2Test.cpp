@@ -12,6 +12,7 @@
 
 #include "global/Id.h"
 #include "index/CompressedRelationV2.h"
+#include "util/GTestHelpers.h"
 
 using namespace ql::index::v2;
 
@@ -124,4 +125,15 @@ TEST(CompressedRelationV2Test, TypedCountWithSeveralTargetTypes) {
       blocks, DatatypeBitmask::Iri | DatatypeBitmask::Literal, 0);
   EXPECT_EQ(result.exactCount, 300u);
   EXPECT_EQ(result.ambiguousBlockIndices, (std::vector<size_t>{2}));
+}
+
+// _____________________________________________________________________________
+TEST(CompressedRelationV2Test, TypedCountContractViolations) {
+  std::vector<CompressedBlockMetadataV2> blocks(1);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      LeafletAggregator::countTypedColumn(blocks, DatatypeBitmask::None, 1),
+      ::testing::HasSubstr("targetType != DatatypeBitmask::None"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      LeafletAggregator::countTypedColumn(blocks, DatatypeBitmask::Iri, 2),
+      ::testing::HasSubstr("columnIndex <= 1"));
 }
