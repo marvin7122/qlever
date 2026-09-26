@@ -262,6 +262,13 @@ TEST(VocabularyOnDisk, ScanAllSingleWordExceedsLimit) {
   expectScanAllYields({"before", std::string(11'000'000, 'x'), "after"});
 }
 
+// Opening a vocabulary memory-maps its `.offsets` file, so offset lookups
+// are served as pointer dereferences instead of explicit I/O.
+TEST(VocabularyOnDisk, OffsetsAreMemoryMappedAfterOpen) {
+  auto vocab = createExampleVocabulary();
+  EXPECT_TRUE(vocab->offsetsAreMemoryMapped());
+}
+
 // A `lookupBatch` result must equal the individual `vocab[]` lookups for the
 // same indices, including for reordered and duplicated indices.
 TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
