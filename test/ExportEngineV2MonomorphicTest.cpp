@@ -246,7 +246,7 @@ TEST_F(ExportEngineV2Monomorphic, RuntimeParameterKeepsLegacyBytes) {
     qec_->clearCacheUnpinnedOnly();
     auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
     QueryPlanner qp{qec_, handle};
-    auto pq = parseQuery(query);
+    auto pq = ad_utility::testing::parseQuery(query);
     auto qet = qp.createExecutionTree(pq);
     std::string result;
     if (!monomorphic.has_value()) {
