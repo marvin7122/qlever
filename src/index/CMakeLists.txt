@@ -28,7 +28,7 @@ add_library(index
         IdTableUtils.cpp ExportIds.cpp LocalVocabContextImpl.cpp
         CompressedExternalIdTableSorterInstantiations.cpp
         InputFileSpecification.cpp
-        TripleComponentConversions.cpp)
+        TripleComponentConversions.cpp PredicateSketches.cpp)
 qlever_target_link_libraries(index qlever_util basicParser rdfParser vocabulary localVocab global)
 if (NOT REDUCED_FEATURE_SET_FOR_CPP17)
     target_link_libraries(index PUBLIC Boost::url)

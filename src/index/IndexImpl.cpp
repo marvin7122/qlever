@@ -1,7 +1,13 @@
-// Copyright 2014 - 2025, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Björn Buchhold <buchhold@cs.uni-freiburg.de> [2014-2017]
-//          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2014 - 2026 The QLever Authors, in particular:
+//
+// 2014 - 2017 Björn Buchhold <buchhold@cs.uni-freiburg.de>, UFR
+// 2018 - 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/IndexImpl.h"
 
@@ -1160,6 +1166,15 @@ void IndexImpl::createFromOnDiskIndex(const std::string& onDiskBase,
       usePatterns_ = false;
     }
   }
+  // The sketch file is optional, an index that was built without the
+  // `predicate-sketches` setting simply has no sketches.
+  if (ql::filesystem::exists(getPredicateSketchesFilename())) {
+    predicateSketches_ = ql::index::stats::PredicateSketches::readFromFile(
+        getPredicateSketchesFilename());
+    AD_LOG_INFO << "Loaded HyperLogLog sketches for "
+                << predicateSketches_->numPredicates() << " predicates"
+                << std::endl;
+  }
   if (persistUpdatesOnDisk) {
     setFilenamesForPersistentUpdates(true);
   }
@@ -1711,6 +1726,10 @@ void IndexImpl::readIndexBuilderSettingsFromFile() {
         << std::endl;
   }
 
+  if (j.count("predicate-sketches")) {
+    buildPredicateSketches_ = static_cast<bool>(j["predicate-sketches"]);
+  }
+
   if (j.count("parser-batch-size")) {
     parserBatchSize_ = size_t{j["parser-batch-size"]};
     AD_LOG_INFO << "Overriding setting parser-batch-size to "
@@ -1988,6 +2007,18 @@ std::string IndexImpl::getPatternFilename() const {
 }
 
 // _____________________________________________________________________________
+std::string IndexImpl::getPredicateSketchesFilename() const {
+  return absl::StrCat(onDiskBase_, PREDICATE_SKETCHES_FILE_SUFFIX);
+}
+
+// _____________________________________________________________________________
+const ql::index::stats::SubjectAndObjectSketches*
+IndexImpl::getPredicateSketches(Id predicate) const {
+  return predicateSketches_.has_value() ? predicateSketches_->get(predicate)
+                                        : nullptr;
+}
+
+// _____________________________________________________________________________
 CPP_template_def(typename... NextSorter)(requires(
     sizeof...(NextSorter) <=
     1)) void IndexImpl::createPSOAndPOSImpl(size_t numColumns,
@@ -2015,10 +2046,27 @@ CPP_template_def(typename... NextSorter)(requires(
         }
         nextAvailableIndex = std::max(nextAvailableIndex, payload + 1);
       };
+  // The per-predicate sketches are only built for the regular (not the
+  // internal) PSO and POS permutations. The callbacks see the triples in PSO
+  // order, so all triples with the same predicate are adjacent.
+  std::optional<ql::index::stats::PredicateSketches> sketches;
+  if (doWriteConfiguration && buildPredicateSketches_) {
+    sketches.emplace();
+  }
+  auto addToSketches = [&sketches](const auto& triple) {
+    if (sketches.has_value()) {
+      sketches->addTriple(triple[0], triple[1], triple[2]);
+    }
+  };
   size_t numPredicates =
       createPermutationPair(numColumns, AD_FWD(sortedTriples), *pso_, *pos_,
                             nextSorter.makePushCallback()..., countTriples,
-                            determineNextAvailableInternalGraph);
+                            determineNextAvailableInternalGraph, addToSketches);
+  if (sketches.has_value()) {
+    sketches->writeToFile(getPredicateSketchesFilename());
+    AD_LOG_INFO << "Wrote HyperLogLog sketches for "
+                << sketches->numPredicates() << " predicates" << std::endl;
+  }
   configurationJson_["num-predicates"] =
       NumNormalAndInternal::fromNormal(numPredicates);
   configurationJson_["num-triples"] =
