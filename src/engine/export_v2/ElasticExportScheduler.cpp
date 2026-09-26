@@ -1,6 +1,11 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "engine/export_v2/ElasticExportScheduler.h"
 
@@ -8,6 +13,8 @@
 #include <exception>
 #include <optional>
 #include <vector>
+
+#include "backports/algorithm.h"
 
 namespace ad_utility::export_v2 {
 
@@ -374,13 +381,7 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
   // Oldest session first means the lowest jobId, earliest in the queue on
   // ties, which preserves first-in first-out order within each session.
   auto oldestIt = [this]() {
-    auto best = pendingAdmission_.begin();
-    for (auto it = std::next(best); it != pendingAdmission_.end(); ++it) {
-      if (it->jobId() < best->jobId()) {
-        best = it;
-      }
-    }
-    return best;
+    return ql::ranges::min_element(pendingAdmission_, {}, &OwnedMorsel::jobId);
   };
   // Phase 1, even split: admit sessions still below the base share. Each
   // pass scans the pending queue once; the queue stays short in practice
