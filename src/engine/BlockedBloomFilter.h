@@ -73,10 +73,13 @@ class BlockedBloomFilter {
   }
 
   // The block that `id` maps to and the 32-bit key for the in-block
-  // positions.
+  // positions. The block index is `hi * numBlocks / 2^32` for the upper 32
+  // bits `hi` of the hash (Lemire's "fastrange"), which maps uniformly like
+  // `hi % numBlocks`, but with a multiplication instead of a 64-bit integer
+  // division. This requires `numBlocks <= 2^32`.
   std::pair<size_t, uint32_t> blockAndKey(Id id) const {
     uint64_t hash = hashId(id);
-    return {static_cast<size_t>((hash >> 32) % blocks_.size()),
+    return {static_cast<size_t>(((hash >> 32) * blocks_.size()) >> 32),
             static_cast<uint32_t>(hash)};
   }
 
@@ -98,9 +101,9 @@ class BlockedBloomFilter {
     double numBits = std::ceil(static_cast<double>(expectedElements) *
                                -std::log(falsePositiveRate) / ln2Squared);
     double numBlocks = std::ceil(numBits / BITS_PER_BLOCK);
-    // Keep the conversion to `size_t` well-defined; the allocator enforces the
-    // actual memory limit.
-    AD_CONTRACT_CHECK(numBlocks < static_cast<double>(size_t{1} << 52),
+    // `blockAndKey` needs at most 2^32 blocks (256 GiB); the allocator
+    // enforces the actual memory limit.
+    AD_CONTRACT_CHECK(numBlocks <= static_cast<double>(uint64_t{1} << 32),
                       "Too many elements for a `BlockedBloomFilter`");
     blocks_.resize(std::max(size_t{1}, static_cast<size_t>(numBlocks)));
   }
@@ -130,16 +133,18 @@ class BlockedBloomFilter {
 
   // `false` if `id` was definitely not inserted, `true` if it was inserted or
   // is a false positive.
+  // All eight bits are tested without an early exit: for keys that were not
+  // inserted, the position of the first zero bit is random, so an early exit
+  // is a mispredicted branch.
   bool contains(Id id) const {
     auto [blockIdx, key] = blockAndKey(id);
     const Block& block = blocks_[blockIdx];
+    uint32_t allSet = 1;
     for (size_t i = 0; i < BITS_PER_KEY; ++i) {
       auto [word, bit] = wordAndBit(key, i);
-      if ((block.words_[word] & (1U << bit)) == 0) {
-        return false;
-      }
+      allSet &= block.words_[word] >> bit;
     }
-    return true;
+    return (allSet & 1) != 0;
   }
 
   size_t numBlocks() const { return blocks_.size(); }
