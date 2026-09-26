@@ -24,7 +24,9 @@ except ModuleNotFoundError:
 
 def _write(tmpdir: str, name: str, content: str) -> str:
     path = os.path.join(tmpdir, name)
-    with open(path, "w", encoding="utf-8") as fh:
+    # `newline=""` writes the content byte for byte (no `\n` -> `\r\n`
+    # translation on Windows), so the CRLF tests see real CRLF files.
+    with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(content)
     return path
 
