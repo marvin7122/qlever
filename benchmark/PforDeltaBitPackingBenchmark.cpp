@@ -24,9 +24,9 @@ namespace ad_benchmark {
 // column.
 class PforDeltaBitPackingBenchmark : public BenchmarkInterface {
  public:
-  std::string name() const final { return "PforDeltaBitPacking"; }
+  std::string name() const override { return "PforDeltaBitPacking"; }
 
-  BenchmarkResults runAllBenchmarks() final {
+  BenchmarkResults runAllBenchmarks() override {
     using ql::index::compression::PforDeltaBitPacking;
     constexpr size_t BLOCK = PforDeltaBitPacking::BLOCK_SIZE;
     constexpr size_t NUM_BLOCKS = 100'000;
