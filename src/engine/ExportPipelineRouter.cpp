@@ -16,6 +16,7 @@
 
 #include "backports/algorithm.h"
 #include "parser/GraphPatternOperation.h"
+#include "parser/SparqlTriple.h"
 
 namespace ql::engine {
 
@@ -55,6 +56,71 @@ std::optional<std::string_view> getFirstParameterValue(
     return std::nullopt;
   }
   return it->second.front();
+}
+
+// _____________________________________________________________________________
+// Return true if `pattern` (recursing into plain groups) contains a `BIND`
+// operation. Used to detect scalar `SELECT` aliases, which the parser rewrites
+// to `BIND` (see `ExportPipelineRouter::hasUnsupportedConstructs`).
+bool graphPatternContainsBind(const parsedQuery::GraphPattern& pattern) {
+  namespace pq = parsedQuery;
+  return ql::ranges::any_of(pattern._graphPatterns, [](const auto& operation) {
+    if (std::holds_alternative<pq::Bind>(operation)) {
+      return true;
+    }
+    return std::holds_alternative<pq::GroupGraphPattern>(operation) &&
+           graphPatternContainsBind(
+               std::get<pq::GroupGraphPattern>(operation)._child);
+  });
+}
+
+// _____________________________________________________________________________
+// Return true if `pattern` (including its FILTER and BIND expressions and its
+// nested groups) contains anything that V2 does not support.
+bool graphPatternHasUnsupportedConstructs(
+    const parsedQuery::GraphPattern& pattern);
+
+// _____________________________________________________________________________
+// Return true if `operation` or anything nested in it is not supported by V2.
+// Only `BasicGraphPattern` without property paths, `Bind` without `EXISTS`,
+// `Values`, and plain (non-GRAPH) groups of these are supported.
+bool operationIsUnsupported(
+    const parsedQuery::GraphPatternOperation& operation) {
+  namespace pq = parsedQuery;
+  if (std::holds_alternative<pq::GroupGraphPattern>(operation)) {
+    const auto& group = std::get<pq::GroupGraphPattern>(operation);
+    return !std::holds_alternative<std::monostate>(group.graphSpec_) ||
+           graphPatternHasUnsupportedConstructs(group._child);
+  }
+  if (std::holds_alternative<pq::Bind>(operation)) {
+    // `EXISTS` carries a nested query and fails closed like a subquery.
+    return !std::get<pq::Bind>(operation)
+                ._expression.getExistsExpressions()
+                .empty();
+  }
+  if (std::holds_alternative<pq::BasicGraphPattern>(operation)) {
+    // Property paths (e.g. `?s <p>+ ?o`) need the transitive-path machinery
+    // that the V2 engine does not implement yet. Plain IRIs and predicate
+    // variables stay eligible.
+    return ql::ranges::any_of(
+        std::get<pq::BasicGraphPattern>(operation)._triples,
+        [](const SparqlTriple& triple) {
+          return std::holds_alternative<PropertyPath>(triple.p_) &&
+                 !std::get<PropertyPath>(triple.p_).isIri();
+        });
+  }
+  return !std::holds_alternative<pq::Values>(operation);
+}
+
+// _____________________________________________________________________________
+bool graphPatternHasUnsupportedConstructs(
+    const parsedQuery::GraphPattern& pattern) {
+  const bool hasFilterExists =
+      ql::ranges::any_of(pattern._filters, [](const SparqlFilter& filter) {
+        return !filter.expression_.getExistsExpressions().empty();
+      });
+  return hasFilterExists ||
+         ql::ranges::any_of(pattern._graphPatterns, &operationIsUnsupported);
 }
 
 }  // namespace
@@ -166,14 +232,34 @@ ExportEngineMode ExportPipelineRouter::fastStreamingIfEligible(
 
 // _____________________________________________________________________________
 bool ExportPipelineRouter::hasUnsupportedConstructs(const ParsedQuery& query) {
-  // The parser turns a DESCRIBE query into a CONSTRUCT query whose root graph
-  // pattern contains a `parsedQuery::Describe` operation.
-  const bool isDescribe = ql::ranges::any_of(
-      query._rootGraphPattern._graphPatterns, [](const auto& operation) {
-        return std::holds_alternative<parsedQuery::Describe>(operation);
-      });
-  return isDescribe || query.isAggregatingQuery() ||
-         !query._havingClauses.empty() || !query._orderBy.empty();
+  // Solution modifiers that require blocking operators or aggregation.
+  if (!query._groupByVariables.empty() || !query._havingClauses.empty() ||
+      !query._orderBy.empty()) {
+    return true;
+  }
+  // The V2 engine reads the implicit default graph.
+  if (!query.datasetClauses_.isUnconstrainedOrWithClause()) {
+    return true;
+  }
+  if (query.hasSelectClause()) {
+    const auto& selectClause = query.selectClause();
+    // Aliases cover aggregate select expressions and GROUP BY queries for
+    // now; DISTINCT and REDUCED require post-hoc deduplication state.
+    if (selectClause.distinct_ || selectClause.reduced_ ||
+        !selectClause.getAliases().empty()) {
+      return true;
+    }
+    // Scalar `SELECT` aliases like `SELECT (?o AS ?x)` are rewritten to
+    // `BIND` during parsing (`ParsedQuery::addSolutionModifiers`), so the
+    // check above cannot see them. Projecting a computed binding needs V2
+    // projection support that does not exist yet, hence fail closed.
+    // Plain `SELECT * ... BIND ...` stays eligible.
+    if (!selectClause.isAsterisk() &&
+        graphPatternContainsBind(query._rootGraphPattern)) {
+      return true;
+    }
+  }
+  return graphPatternHasUnsupportedConstructs(query._rootGraphPattern);
 }
 
 }  // namespace ql::engine

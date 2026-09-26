@@ -72,6 +72,12 @@ class ExportPipelineRouter {
   [[nodiscard]] static bool isEligibleForFastStreaming(
       const ParsedQuery& query);
 
+  // Return true if `query` contains constructs that V2 cannot execute yet.
+  // Fail closed: anything beyond conjunctive triple matching with FILTER, BIND,
+  // and VALUES is routed to Legacy V1, in particular DESCRIBE (which the parser
+  // turns into a CONSTRUCT query with a `parsedQuery::Describe` operation).
+  [[nodiscard]] static bool hasUnsupportedConstructs(const ParsedQuery& query);
+
   // Return the routing decision of `selectEngine` for the same arguments
   // together with a human-readable reason for logging.
   [[nodiscard]] static std::string describeDecision(
@@ -90,12 +96,6 @@ class ExportPipelineRouter {
   // Return V2 if `query` is eligible for it, and V1 otherwise.
   [[nodiscard]] static ExportEngineMode fastStreamingIfEligible(
       const ParsedQuery& query);
-
-  // Return true if `query` is a DESCRIBE query or uses aggregation, HAVING, or
-  // ORDER BY, which need the materialized grouping or sorting of Legacy V1.
-  // TODO<Marvin Stoetzel> Also exclude SERVICE clauses, subqueries, property
-  // paths, and MINUS before `selectEngine` is called from the `Server`.
-  [[nodiscard]] static bool hasUnsupportedConstructs(const ParsedQuery& query);
 };
 
 }  // namespace ql::engine
