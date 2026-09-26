@@ -58,7 +58,6 @@ class UnicodeVocabulary {
         // Fill-only protocol (e.g. `CompressedVocabulary`): the words were
         // decoded into the caller's `builder`, finalize it here.
         _underlyingVocabulary.lookupBatch(indices, builder);
-        return std::move(builder).finalize();
       } else {
         // Use the returned result: the underlying vocabulary populates
         // `builder` on its own fallback path (see `Vocabulary` and
@@ -80,6 +79,7 @@ class UnicodeVocabulary {
       }
       return std::move(builder).finalize();
     }
+    return std::move(builder).finalize();
   }
 
   //____________________________________________________________________________

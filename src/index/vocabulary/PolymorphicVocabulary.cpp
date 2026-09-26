@@ -72,23 +72,24 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
   return std::visit(
       [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
+        // `builder` must be finalized exactly once, see
+        // `UnicodeVocabulary::lookupBatch`.
         AD_CONTRACT_CHECK(!indices.empty());
         if constexpr (detail::HasLookupBatchWithBuilder_v<
                           std::decay_t<decltype(vocab)>>) {
           vocab.lookupBatch(indices, builder);
           return std::move(builder).finalize();
         } else {
-          // No batched leaf for the active alternative: reuse the
-          // single-shot batch path and copy the words into the caller's
-          // builder, so the unconditional `finalize()` above (and in
-          // further outer delegations) sees a populated builder.
+          // No batched leaf for the active alternative: copy the
+          // single-shot words into the caller's builder, so the
+          // unconditional `finalize()` below sees a populated builder.
           auto singleShot = vocab.lookupBatch(indices);
           AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
           for (std::string_view word : singleShot) {
             builder.appendWord(word);
           }
-          return std::move(builder).finalize();
         }
+        return std::move(builder).finalize();
       },
       vocab_);
 }
