@@ -50,6 +50,8 @@ if (NOT _NO_BENCHMARK)
         addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
     endif()
 
+    addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
+
     addAndLinkBenchmark(FastNumberFormatterBenchmark qlever_util)
 
     addAndLinkBenchmark(PrefixCompressorBenchmark)
