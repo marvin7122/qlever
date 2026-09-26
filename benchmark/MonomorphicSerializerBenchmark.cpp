@@ -62,14 +62,17 @@ struct AllocationTracker {
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. Disabled under ThreadSanitizer, whose runtime provides its own
-// definitions of these operators (multiple definition link error otherwise).
-// The unsized deallocation functions call `std::free` directly on memory from
-// the matching malloc-based `operator new` above. This is a legal pairing,
-// but GCC cannot prove it for pointers allocated outside this translation
-// unit (e.g. `std::locale` facets) and rejects it with
-// `-Werror=mismatched-new-delete`, hence the suppression below.
-#ifndef __SANITIZE_THREAD__
+// runs. Disabled when `QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE` is defined,
+// which the top-level CMakeLists.txt does for sanitizer builds: the sanitizer
+// runtimes (in particular AddressSanitizer and ThreadSanitizer) provide their
+// own global operator new/delete replacements that would otherwise fail the
+// link with multiple-definition errors. The sized deallocation functions
+// forward to the unsized ones. GCC's `-Wmismatched-new-delete` cannot see
+// that these replacements form matching malloc/free pairs and flags the
+// `std::free` calls once they get inlined into callers (observed with GCC 11
+// in Release with `-Werror`), so the warning is disabled locally for these
+// definitions only (see `DISABLE_MISMATCHED_NEW_DELETE_WARNINGS`).
+#ifndef QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
@@ -109,7 +112,7 @@ GCC_REENABLE_WARNINGS
 void operator delete[](void* ptr, std::size_t) noexcept {
   ::operator delete[](ptr);
 }
-#endif
+#endif  // QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
 
 namespace ad_benchmark {
 namespace {

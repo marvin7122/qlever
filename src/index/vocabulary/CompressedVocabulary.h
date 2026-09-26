@@ -237,6 +237,9 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    // Check the contract before constructing the builder, whose own
+    // `expectedSize > 0` check would otherwise fire first with a confusing
+    // message for an empty index list.
     AD_CONTRACT_CHECK(!indices.empty());
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
