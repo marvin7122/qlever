@@ -75,18 +75,10 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
         // `builder` must be finalized exactly once, see
         // `UnicodeVocabulary::lookupBatch`.
         AD_CONTRACT_CHECK(!indices.empty());
-        if constexpr (HasArenaVocabBatchLookup_v<
+        if constexpr (detail::HasLookupBatchWithBuilder_v<
                           std::decay_t<decltype(vocab)>>) {
-          using InnerResult = decltype(vocab.lookupBatch(indices, builder));
-          if constexpr (std::is_void_v<InnerResult>) {
-            // Fill-only leaf: it appended to `builder`, finalize once below.
-            vocab.lookupBatch(indices, builder);
-          } else {
-            // Inner wrapper already finalized exactly once: forward its
-            // result instead of finalizing the moved-from `builder` a
-            // second time.
-            return vocab.lookupBatch(indices, builder);
-          }
+          vocab.lookupBatch(indices, builder);
+          return std::move(builder).finalize();
         } else {
           // No batched leaf for the active alternative: copy the
           // single-shot words into the caller's builder, so the

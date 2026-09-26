@@ -21,9 +21,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -61,6 +61,9 @@ struct ZeroCopySenderConfig {
   size_t bufferSizeBytes = 64 * 1024;  // 64 KB per slot
   bool useRegisteredBuffers = true;
   bool useZeroCopy = true;
+  // Extra flags for io_uring_queue_init (e.g. IORING_SETUP_SQPOLL). Invalid
+  // flags are not fatal: initRing logs a warning and falls back to
+  // synchronous send().
   unsigned int additionalFlags = 0;
 };
 
@@ -89,6 +92,10 @@ class ZeroCopyBufferPool {
     AD_CONTRACT_CHECK(numBuffers > 0);
     AD_CONTRACT_CHECK(bufferSizeBytes > 0);
     AD_CONTRACT_CHECK((bufferSizeBytes % kZeroCopyPageAlignment) == 0);
+    // The pool size multiplication must not wrap: the pool below allocates
+    // `totalBytes_` but builds `numBuffers` iovecs over it.
+    AD_CONTRACT_CHECK(numBuffers <=
+                      std::numeric_limits<size_t>::max() / bufferSizeBytes);
 
     numBuffers_ = numBuffers;
     bufferSizeBytes_ = bufferSizeBytes;
@@ -110,8 +117,12 @@ class ZeroCopyBufferPool {
 
     auto* basePtr = static_cast<char*>(rawBuffer_);
     for (size_t i = 0; i < numBuffers_; ++i) {
-      iovecs_.push_back(iovec{.iov_base = basePtr + (i * bufferSizeBytes_),
-                              .iov_len = bufferSizeBytes_});
+      // NOTE: positional (not designated) initialization: this header must
+      // also compile as C++17, where designated initializers are unavailable.
+      iovec iov{};
+      iov.iov_base = basePtr + (i * bufferSizeBytes_);
+      iov.iov_len = bufferSizeBytes_;
+      iovecs_.push_back(iov);
       freeSlots_.push_back(static_cast<uint32_t>(numBuffers_ - 1 - i));
     }
   }
@@ -214,6 +225,16 @@ class ZeroCopyBufferPool {
 // Manages submission queue entries (SQEs), tracks dual completion queue
 // notifications (transmission completion + buffer release notification), and
 // achieves zero runtime memory allocation on the transmission fast path.
+//
+// NOT thread-safe: all public operations must be called from a single thread
+// (or serialized externally); in particular the io_uring ring must never be
+// submitted to or drained from concurrently.
+//
+// Lifecycle contract: call `flushAndDrainAll()` before destruction (or move)
+// whenever `sendChunk` was used, so that every queued SQE is submitted and
+// every in-flight request runs its full completion lifecycle. The destructor
+// only reaps already-submitted completions on a best-effort basis and cannot
+// report drain errors.
 class ZeroCopySocketSender {
  private:
   ZeroCopySenderConfig config_;
@@ -332,6 +353,9 @@ class ZeroCopySocketSender {
   void sendChunk(int sockfd, uint32_t bufferIndex, size_t numBytes,
                  int flags = 0, [[maybe_unused]] unsigned int zcFlags = 0) {
     (void)zcFlags;
+    // Suppress SIGPIPE on a closed peer for every path (the sync fallback
+    // already ORs this in; the io_uring paths receive the same flags).
+    flags |= MSG_NOSIGNAL;
     AD_CONTRACT_CHECK(sockfd >= 0);
     AD_CONTRACT_CHECK(bufferIndex < config_.numBuffers);
     AD_CONTRACT_CHECK(numBytes > 0);
@@ -376,12 +400,14 @@ class ZeroCopySocketSender {
     const size_t tableIdx = reqId % inFlightTable_.size();
     AD_CORRECTNESS_CHECK(!inFlightTable_[tableIdx].active);
 
-    inFlightTable_[tableIdx] = InFlightRequest{
-        .bufferIndex = bufferIndex,
-        .expectedBytes = numBytes,
-        .waitingForNotification = false,
-        .active = true,
-    };
+    // NOTE: positional initialization (see above): no C++20 designated
+    // initializers, this header must compile as C++17.
+    InFlightRequest request;
+    request.bufferIndex = bufferIndex;
+    request.expectedBytes = numBytes;
+    request.waitingForNotification = false;
+    request.active = true;
+    inFlightTable_[tableIdx] = request;
 
     io_uring_sqe_set_data64(sqe, reqId);
     ++numInFlightRequests_;

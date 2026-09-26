@@ -5,6 +5,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/thread_pool.hpp>
+#include <boost/asio/use_future.hpp>
 #include <boost/beast/http.hpp>
 #include <optional>
 
@@ -1037,3 +1040,39 @@ TEST(ServerTest, queryEventLogRecordsFailedStatus) {
   EXPECT_EQ(end.at("qid").get<std::string>(),
             start.at("qid").get<std::string>());
 }
+
+// _____________________________________________________________________________
+// `MockSend` dispatches on the response body type: regular responses land in
+// `response_`, scatter-gather (export-send=iovec) responses in the dedicated
+// slot read via `scatterGatherResponse()`.
+#if defined(QLEVER_ENABLE_EXPORT_V2) && \
+    !defined(QLEVER_REDUCED_FEATURE_SET_FOR_CPP17)
+namespace {
+// Run a `MockSend` invocation to completion on a single thread.
+void runMockSend(boost::asio::awaitable<void> send) {
+  namespace net = boost::asio;
+  net::thread_pool pool{1};
+  net::co_spawn(pool, std::move(send), net::use_future).get();
+  pool.join();
+}
+}  // namespace
+
+TEST(ServerMockSend, CapturesRegularResponse) {
+  Server::MockSend mockSend;
+  serverTestHelpers::ResT response;
+  response.result(boost::beast::http::status::ok);
+  runMockSend(mockSend(std::move(response)));
+  EXPECT_EQ(mockSend.response_.result(), boost::beast::http::status::ok);
+  EXPECT_FALSE(mockSend.scatterGatherResponse().has_value());
+}
+
+TEST(ServerMockSend, CapturesScatterGatherResponseSeparately) {
+  Server::MockSend mockSend;
+  Server::MockSend::ScatterGatherResponseT response;
+  response.result(boost::beast::http::status::ok);
+  runMockSend(mockSend(std::move(response)));
+  ASSERT_TRUE(mockSend.scatterGatherResponse().has_value());
+  EXPECT_EQ(mockSend.scatterGatherResponse()->result(),
+            boost::beast::http::status::ok);
+}
+#endif

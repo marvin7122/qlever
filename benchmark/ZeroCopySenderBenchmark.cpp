@@ -26,10 +26,10 @@
 #include <iostream>
 #include <memory>
 #include <random>
-#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "backports/span.h"
@@ -56,7 +56,10 @@ constexpr size_t kTotalSendSizeBytes = 100ULL * 1024ULL * 1024ULL;  // 100 MB
 constexpr size_t kChunkSizeBytes = 64 * 1024;                       // 64 KB
 
 // _____________________________________________________________________________
-// Helper to measure thread/process CPU time using POSIX clock_gettime.
+// Helper to measure the calling (sender) thread's CPU time using POSIX
+// clock_gettime. The background receiver thread's CPU time is deliberately
+// excluded: it is identical harness overhead across all paradigms, so the
+// comparison isolates sender-side cost.
 class CpuTimeTimer {
  private:
   struct timespec startCpu_ {};
@@ -210,6 +213,8 @@ class ZeroCopySenderBenchmarkRunner {
       size_t totalBytes = kTotalSendSizeBytes,
       size_t chunkSize = kChunkSizeBytes)
       : totalBytes_{totalBytes}, chunkSize_{chunkSize} {
+    // `chunkSize_ == 0` would divide by zero in every benchmark method below.
+    AD_CONTRACT_CHECK(chunkSize_ > 0);
     testPayload_.resize(chunkSize_);
     std::mt19937 rng(42);
     for (size_t i = 0; i < chunkSize_; ++i) {
@@ -251,6 +256,7 @@ class ZeroCopySenderBenchmarkRunner {
     }
 
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
+    (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
     conn.closeSender();
     receiverThread.join();
 
@@ -294,6 +300,7 @@ class ZeroCopySenderBenchmarkRunner {
 
     sender.flushAndDrainAll();
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
+    (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
     conn.closeSender();
     receiverThread.join();
 
@@ -337,6 +344,7 @@ class ZeroCopySenderBenchmarkRunner {
 
     sender.flushAndDrainAll();
     auto [wallSec, cpuSec, cpuPercent] = timer.elapsed();
+    (void)cpuSec;  // Only wall time and CPU percentage feed the metric.
     conn.closeSender();
     receiverThread.join();
 

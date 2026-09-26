@@ -79,8 +79,9 @@ TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
     EXPECT_EQ(shortString.size(), size);
   }
   // Verify that a string above the SSO threshold is not stored inside the
-  // object.
-  PmrSsoProbeString longString(64, 'y');
+  // object. Use the probed capacity instead of a hardcoded size: the inline
+  // capacity is implementation-specific and not constrained by the standard.
+  PmrSsoProbeString longString(pmrStringSsoCapacity() + 1, 'y');
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
 }
 

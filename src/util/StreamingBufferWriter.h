@@ -213,7 +213,10 @@ class StreamingBufferWriter {
   // Write raw bytes using non-temporal streaming stores.
   void write(const void* src, size_t numBytes) {
     AD_CONTRACT_CHECK(src != nullptr || numBytes == 0);
-    AD_CONTRACT_CHECK(bytesWritten_ + numBytes <= capacity_);
+    // Compare without forming `bytesWritten_ + numBytes`: the addition can
+    // wrap `size_t` for a huge `numBytes` before the comparison runs.
+    AD_CONTRACT_CHECK(bytesWritten_ <= capacity_);
+    AD_CONTRACT_CHECK(numBytes <= capacity_ - bytesWritten_);
 
     if (numBytes == 0) {
       return;

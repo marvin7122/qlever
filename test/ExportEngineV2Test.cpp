@@ -49,6 +49,34 @@ TEST(ExportEngineV2Test, SerializeTableChunkTsv) {
   EXPECT_EQ(chunk.toString(), "1\t2\n3\t4\n");
 }
 
+TEST(ExportEngineV2Test, SerializeTableChunkRendersIndexFreeDatatypes) {
+  auto allocator = makeAllocator();
+  IdTable table{3, allocator};
+  table.push_back(
+      {Id::makeFromBool(true), Id::makeFromDouble(1.5), Id::makeUndefined()});
+
+  LocalVocab localVocab;
+  ScatterGatherChunkBuilder builder;
+
+  auto chunk = serializeTableChunk(table, localVocab, RowFormat::Csv, builder);
+  EXPECT_EQ(chunk.toString(), "true,1.500000,\n");
+}
+
+TEST(ExportEngineV2Test, SerializeTableChunkRejectsIndexBackedIds) {
+  auto allocator = makeAllocator();
+  IdTable table{1, allocator};
+  table.push_back({Id::makeFromVocabIndex(VocabIndex::make(0))});
+
+  LocalVocab localVocab;
+  ScatterGatherChunkBuilder builder;
+
+  // Index-backed IDs need the index vocabulary (`index/ExportIds.h`); this
+  // lightweight serializer must fail loudly instead of emitting placeholder
+  // text.
+  EXPECT_ANY_THROW(
+      serializeTableChunk(table, localVocab, RowFormat::Csv, builder));
+}
+
 TEST(ExportEngineV2Test, PipelineMorselIntegration) {
   AsyncChunkPipeline<std::string> pipeline{
       AsyncChunkPipelineConfig{.capacity_ = 8, .runtimeEnabled_ = true}};

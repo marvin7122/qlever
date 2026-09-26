@@ -103,11 +103,11 @@ TEST(UnicodeVocabulary, ScanAllEmptyVocabulary) {
 }
 
 // _____________________________________________________________________________
-// Regression test for the fill-only batch protocol: when the underlying
-// vocabulary has no builder-taking `lookupBatch` overload (like
-// `VocabularyInMemory`), the builder-taking overload must copy the
-// single-shot words into the caller's builder instead of returning them
-// directly, so the unconditional `finalize()` sees a populated builder.
+// Regression test: when the underlying vocabulary has no builder-taking
+// `lookupBatch` overload (like `VocabularyInMemory`), the builder-taking
+// overload must copy the single-shot words into the caller's builder instead
+// of returning them directly, so the unconditional `finalize()` sees a
+// populated builder.
 TEST(UnicodeVocabulary, LookupBatchFillsCallerBuilder) {
   const std::vector<std::string> words{"alpha", "beta", "gamma"};
   auto vocab = createVocabulary(words);
