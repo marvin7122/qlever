@@ -40,6 +40,7 @@ RuntimeParameters::RuntimeParameters() {
   add(serviceMaxRedirects_);
   add(queryPlanningBudget_);
   add(throwOnUnboundVariables_);
+  add(usePredicateSketches_);
   add(cacheMaxSizeLazyResult_);
   add(websocketUpdatesEnabled_);
   add(smallIndexScanSizeEstimateDivisor_);
