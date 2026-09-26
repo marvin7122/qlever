@@ -605,4 +605,4 @@ addLinkAndDiscoverTest(HyperLogLogSketchTest global qlever_util)
 
 addLinkAndDiscoverTest(PredicateSketchesTest index)
 
-addLinkAndDiscoverTest(JoinCardinalityEstimatorTest global)
+addLinkAndDiscoverTest(JoinCardinalityEstimatorTest global qlever_util)
