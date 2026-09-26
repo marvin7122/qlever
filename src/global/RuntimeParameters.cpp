@@ -36,6 +36,7 @@ RuntimeParameters::RuntimeParameters() {
   add(useBinsearchTransitivePath_);
   add(groupByHashMapEnabled_);
   add(groupByDisableIndexScanOptimizations_);
+  add(useLeapfrogTriangleJoin_);
   add(serviceMaxValueRows_);
   add(serviceMaxRedirects_);
   add(queryPlanningBudget_);

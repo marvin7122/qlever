@@ -103,6 +103,11 @@ struct RuntimeParameters {
   Bool groupByHashMapEnabled_{false, "group-by-hash-map-enabled"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
+  // If `true`, three triples with fixed predicates whose subjects and objects
+  // are three variables that form a triangle (e.g. `?x <p> ?y . ?y <q> ?z .
+  // ?x <r> ?z`) are evaluated by one `LeapfrogTriangleJoin` of their index
+  // scans instead of a chain of binary joins.
+  Bool useLeapfrogTriangleJoin_{false, "use-leapfrog-triangle-join"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};
   SizeT serviceMaxRedirects_{1, "service-max-redirects"};
   SizeT queryPlanningBudget_{1500, "query-planning-budget"};
