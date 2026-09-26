@@ -98,6 +98,17 @@ if (QLEVER_ALL_CXX_FLAGS MATCHES "-fsanitize" OR QLEVER_BUILD_TYPE_UPPERCASE STR
 else ()
     set(QLEVER_SANITIZER_ENABLED OFF)
 endif ()
+# The allocation-counting global `operator new`/`operator delete` in some
+# export benchmarks conflict with the sanitizer runtimes (in particular
+# AddressSanitizer and ThreadSanitizer), which provide their own replacements
+# and then fail the link with multiple-definition errors. Those benchmarks
+# therefore leave the counting operators out when the macro below is defined.
+# NOTE: Compiler-macro detection (`__SANITIZE_*`, `__has_feature`) is
+# deliberately avoided: Clang predefines no `__SANITIZE_*` macros, and
+# `__has_feature` is not reliably usable with all supported compilers.
+if (QLEVER_SANITIZER_ENABLED)
+    add_compile_definitions(QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE)
+endif ()
 if (BUILD_SHARED_LIBS AND NOT APPLE AND NOT EMSCRIPTEN AND
         NOT QLEVER_SANITIZER_ENABLED)
     set(QLEVER_NO_UNDEFINED_SYMBOLS_DEFAULT ON)
@@ -704,7 +715,10 @@ include_directories(SYSTEM ${fsst_SOURCE_DIR})
 include_directories(SYSTEM ${range-v3_SOURCE_DIR}/include)
 # Only required because a lot of classes that do not explicitly link against antlr4_static use the headers.
 include_directories(SYSTEM "${antlr_SOURCE_DIR}/runtime/Cpp/runtime/src")
-target_compile_options(civetweb PRIVATE -Wno-missing-field-initializers)
+include_directories(SYSTEM "${uriparser_SOURCE_DIR}/include")
+if (TARGET civetweb)
+    target_compile_options(civetweb PRIVATE -Wno-missing-field-initializers)
+endif()
 
 message(STATUS ---)
 message(STATUS "CXX_FLAGS are : " ${CMAKE_CXX_FLAGS})

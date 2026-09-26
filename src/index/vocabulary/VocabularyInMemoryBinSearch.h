@@ -139,6 +139,11 @@ class VocabularyInMemoryBinSearch
 
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    // Like `operator[]`, report any missing index via
+    // `placeholderForMissingVocabIndex` instead of throwing: this covers both
+    // holes below `endIndex()` and indices at or past `endIndex()` (see
+    // `wordAsStringOrPlaceholder`). An empty index list remains a contract
+    // violation, as checked by `sequentialLookupBatch`.
     return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
   }
 

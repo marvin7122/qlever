@@ -10,6 +10,11 @@
 
 #include "index/vocabulary/VocabularyInternalExternal.h"
 
+#include <range/v3/view/enumerate.hpp>
+#include <string>
+#include <string_view>
+#include <utility>
+
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   auto fromInternal = internalVocab_[i];
@@ -20,39 +25,76 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 }
 
 // _____________________________________________________________________________
+// Partition input indices into internal-vocabulary hits and indices that must
+// be resolved by the external vocabulary, while keeping their positions in the
+// original input. Keeping the two groups separate allows each vocabulary to be
+// batch-looked-up independently; the stored result positions are required to
+// restore the original request order when the sub-results are assembled.
+struct IndexPartition {
+  MarkerIndicesAndPositions internalSlots_;
+  MarkerIndicesAndPositions diskSlots_;
+};
+
+// _____________________________________________________________________________
+// _____________________________________________________________________________
+static IndexPartition partitionIndicesBySource(
+    ql::span<const size_t> indices,
+    const VocabularyInMemoryBinSearch& internalVocab) {
+  IndexPartition result;
+  result.internalSlots_.reserve(indices.size());
+  result.diskSlots_.reserve(indices.size());
+
+  for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
+    const auto& fromInternal = internalVocab[idx];
+    if (fromInternal.has_value()) {
+      result.internalSlots_.addPair(idx, i);
+    } else {
+      result.diskSlots_.addPair(idx, i);
+    }
+  }
+  return result;
+}
+
+// _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  // Collect the indices that miss the internal vocabulary, so that the
-  // external vocabulary serves all of them in one batch (from its `io_uring`
-  // ring pool).
-  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-  data->buffer().resize(indices.size());
-  std::vector<size_t> missPositions;
-  std::vector<size_t> missIndices;
-  missPositions.reserve(indices.size());
-  missIndices.reserve(indices.size());
-  for (size_t i = 0; i < indices.size(); ++i) {
-    if (auto hit = internalVocab_[indices[i]]; hit.has_value()) {
-      data->buffer()[i] = std::string{hit.value()};
-    } else {
-      missPositions.push_back(i);
-      missIndices.push_back(indices[i]);
-    }
+
+  auto partition = partitionIndicesBySource(indices, internalVocab_);
+
+  // Take the fast path when all indices are resolved through the external
+  // (disk) vocabulary.
+  if (partition.internalSlots_.empty()) {
+    return externalVocab_.lookupBatch(
+        partition.diskSlots_.getUnderlyingIndices());
   }
-  if (!missIndices.empty()) {
-    auto external = externalVocab_.lookupBatch(missIndices);
-    for (size_t m = 0; m < missIndices.size(); ++m) {
-      data->buffer()[missPositions[m]] = std::string{(*external)[m]};
-    }
+
+  if (partition.diskSlots_.empty()) {
+    return internalVocab_.lookupBatch(
+        partition.internalSlots_.getUnderlyingIndices());
   }
-  // Build the views only after the buffer is complete, so that no reallocation
-  // can move the bytes the views point into.
-  data->views().reserve(data->buffer().size());
-  for (const auto& word : data->buffer()) {
-    data->views().emplace_back(word);
-  }
-  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+
+  // Handle mixed internal and external indices by assembling results from both
+  // sources.
+  MultiSourceVocabBatchAssembler assembler(indices.size());
+
+  // 1. Pass the internal sub-result to the assembler, which takes ownership of
+  // the result data so its string views remain valid, and place the values at
+  // their original request positions.
+  auto internal = internalVocab_.lookupBatch(
+      partition.internalSlots_.getUnderlyingIndices());
+  assembler.scatterSubBatchResultAtPositions(
+      std::move(internal), partition.internalSlots_.getResultPositions());
+
+  // 2. Pass the external sub-result to the assembler and retain its result data
+  // so the returned string views remain valid, placing the values at their
+  // original request positions.
+  auto disk =
+      externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
+  assembler.scatterSubBatchResultAtPositions(
+      std::move(disk), partition.diskSlots_.getResultPositions());
+
+  return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 
 // _____________________________________________________________________________
