@@ -944,7 +944,7 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
   // Expect that `request` succeeds with a `200 OK` JSON response whose field
   // `key` names the view `viewName`.
   auto expectJsonSuccess =
-      [&sendRequest](const ReqT& request, const std::string& key,
+      [&sendRequest](const ReqT& request, std::string_view key,
                      std::string_view viewName,
                      ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
         auto trace = generateLocationTrace(l);
