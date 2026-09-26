@@ -184,6 +184,11 @@ class StreamingBufferWriter {
         capacity_{other.capacity_},
         bytesWritten_{other.bytesWritten_},
         ownedBuffer_{std::move(other.ownedBuffer_)} {
+    // Re-derive the pointer from the moved buffer instead of relying on the
+    // move keeping the storage address.
+    if (ownedBuffer_.has_value()) {
+      buffer_ = ownedBuffer_->data();
+    }
     other.buffer_ = nullptr;
     other.capacity_ = 0;
     other.bytesWritten_ = 0;
@@ -195,6 +200,9 @@ class StreamingBufferWriter {
       capacity_ = other.capacity_;
       bytesWritten_ = other.bytesWritten_;
       ownedBuffer_ = std::move(other.ownedBuffer_);
+      if (ownedBuffer_.has_value()) {
+        buffer_ = ownedBuffer_->data();
+      }
 
       other.buffer_ = nullptr;
       other.capacity_ = 0;
@@ -252,7 +260,9 @@ class StreamingBufferWriter {
   }
 
   // ___________________________________________________________________________
-  // Accessors
+  // Accessors. `write` uses non-temporal stores, so the bytes exposed by
+  // `data`, `writtenSpan` and `currentWritePointer` are only guaranteed to be
+  // visible to another thread after `flush`.
   [[nodiscard]] size_t bytesWritten() const noexcept { return bytesWritten_; }
   [[nodiscard]] size_t capacity() const noexcept { return capacity_; }
   [[nodiscard]] size_t remainingCapacity() const noexcept {
