@@ -43,7 +43,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      # issue_comment events do not carry the PR head repository, so check it
+      # through the API: commands on fork PRs must not send fork content to
+      # the LLM with this repository's credentials.
+      - name: Check that the PR comes from this repository
+        id: same-repo
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          head_repo=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.repo.full_name // ""')
+          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "ok=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "PR head repository '${head_repo}' is not ${GITHUB_REPOSITORY}; skipping PR-Agent."
+            echo "ok=false" >> "${GITHUB_OUTPUT}"
+          fi
       - name: Run PR-Agent
+        if: github.event_name == 'pull_request' || steps.same-repo.outputs.ok == 'true'
         uses: the-pr-agent/pr-agent@f3b385ea2927247ddcff2fe252472380b9c8f5fc # v0.45.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
