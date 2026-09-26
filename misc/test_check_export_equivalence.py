@@ -204,6 +204,12 @@ ex:b ex:q "different" .
         b = _write(self._tmp.name, "b.tsv", "?x\n")
         self.assertEqual(main(["--format", "tsv", a, b]), 2)
 
+    def test_invalid_header_variable_is_rejected(self):
+        b = _write(self._tmp.name, "b.csv", "?x\n<a>\n")
+        for header in ("? x", "?x y", "?x?"):
+            a = _write(self._tmp.name, "a.csv", f"{header}\n<a>\n")
+            self.assertEqual(main(["--format", "csv", a, b]), 2, header)
+
     # --- Error handling ---
     def test_non_utf8_input_is_a_read_error(self):
         path = os.path.join(self._tmp.name, "a.tsv")

@@ -70,6 +70,9 @@ _TSV_TERM = re.compile(
     re.VERBOSE,
 )
 _CELL_PREDICATE = "urn:qlever:cell"
+# SPARQL 1.1 VARNAME (letters, digits, `_` and the combining characters of
+# the grammar). Every such name is also valid inside an IRI.
+_VARNAME = re.compile(r"[\w\u00B7\u0300-\u036F\u203F\u2040]+")
 _VAR_NS = "urn:qlever:var:"
 # Every solution carries this marker, so that an all-unbound solution
 # still contributes a triple and the multiset cardinality is preserved.
@@ -116,8 +119,8 @@ def _load_table(path: str, fmt: str) -> Tuple[Optional[Tuple[str, ...]],
 
 def _header_variables(header: Sequence[str]) -> List[str]:
     variables = [_normalize_var(name) for name in header]
-    if any(not name for name in variables):
-        raise MalformedInput(f"empty variable name in header {list(header)}")
+    if any(_VARNAME.fullmatch(name) is None for name in variables):
+        raise MalformedInput(f"invalid variable name in header {list(header)}")
     if len(set(variables)) != len(variables):
         raise MalformedInput(f"duplicate variable in header {list(header)}")
     return variables
