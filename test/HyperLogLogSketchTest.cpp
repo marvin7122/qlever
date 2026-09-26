@@ -12,6 +12,7 @@
 
 #include "global/Id.h"
 #include "index/HyperLogLogSketch.h"
+#include "util/Serializer/ByteBufferSerializer.h"
 
 using namespace ql::index::stats;
 
@@ -78,4 +79,28 @@ TEST(HyperLogLogSketchTest, SmallAndLargePrecision) {
   // p = 16 (65536 registers): m * m does not fit into 32 bits; standard error
   // 0.4%.
   EXPECT_LE(relativeError(HyperLogLogSketch<16>{}, 1'000'000), 0.05);
+}
+
+// _____________________________________________________________________________
+TEST(HyperLogLogSketchTest, SerializationAndEquality) {
+  using namespace ad_utility::serialization;
+  HyperLogLogSketch<10> sketch;
+  for (uint64_t i = 0; i < 5'000; ++i) {
+    sketch.insert(Id::fromBits(i));
+  }
+  EXPECT_FALSE(sketch == HyperLogLogSketch<10>{});
+
+  ByteBufferWriteSerializer writer;
+  writer << sketch;
+  ByteBufferReadSerializer reader{std::move(writer).data()};
+  HyperLogLogSketch<10> read;
+  reader >> read;
+  EXPECT_EQ(read, sketch);
+  EXPECT_EQ(read.estimateCardinality(), sketch.estimateCardinality());
+
+  // A sketch with a different number of registers cannot be read.
+  ByteBufferWriteSerializer smallWriter;
+  smallWriter << HyperLogLogSketch<4>{};
+  ByteBufferReadSerializer smallReader{std::move(smallWriter).data()};
+  EXPECT_ANY_THROW(smallReader >> read);
 }

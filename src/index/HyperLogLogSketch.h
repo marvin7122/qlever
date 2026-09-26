@@ -16,15 +16,19 @@
 #include <vector>
 
 #include "global/Id.h"
+#include "util/Exception.h"
+#include "util/Serializer/SerializeVector.h"
+#include "util/Serializer/Serializer.h"
 
 namespace ql::index::stats {
 
 // _____________________________________________________________________________
-// HyperLogLog++ Metadata Cardinality Sketch:
+// HyperLogLog++ Cardinality Sketch:
 // Compact sketch of NUM_REGISTERS 8-bit registers (1 KB at the default
-// Precision 10) embedded inside relation metadata to provide instantaneous
-// O(1) distinct cardinality estimates and set union cardinalities during
-// query planning.
+// Precision 10) that answers distinct cardinality estimates and set union
+// cardinalities in O(NUM_REGISTERS), independent of the number of inserted
+// values. The index builder stores one sketch per predicate and column (see
+// `PredicateSketches.h`) for the query planner.
 template <size_t Precision = 10>  // 2^10 = 1024 registers
 class HyperLogLogSketch {
  public:
@@ -108,6 +112,20 @@ class HyperLogLogSketch {
     }
 
     return static_cast<uint64_t>(rawEstimate);
+  }
+
+  // Two sketches are equal if all their registers are equal.
+  bool operator==(const HyperLogLogSketch& other) const {
+    return registers_ == other.registers_;
+  }
+
+  // Serialize the registers. A deserialized sketch must have exactly
+  // `NUM_REGISTERS` registers, else the read throws.
+  AD_SERIALIZE_FRIEND_FUNCTION(HyperLogLogSketch) {
+    serializer | arg.registers_;
+    if constexpr (ad_utility::serialization::ReadSerializer<S>) {
+      AD_CORRECTNESS_CHECK(arg.registers_.size() == NUM_REGISTERS);
+    }
   }
 };
 
