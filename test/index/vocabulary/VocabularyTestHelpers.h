@@ -16,7 +16,8 @@
 #include "util/Exception.h"
 
 // human-readable output for the `WordAndIndex` class within GTest.
-inline void PrintTo(const WordAndIndex& wi, std::ostream* osPtr) {
+inline void PrintTo(const ad_utility::vocabulary::WordAndIndex& wi,
+                    std::ostream* osPtr) {
   auto& os = *osPtr;
   os << "WordAndIndex :";
   if (wi.isEnd()) {
@@ -41,15 +42,18 @@ inline auto assertThatRangesAreEqual = [](const auto& a, const auto& b) {
 // A matcher for the `WordAndIndex` class. It currently ignores the
 // `previousIndex_` member, which is mostly redundant.
 constexpr auto matchWordAndIndex =
-    [](const WordAndIndex& wi) -> ::testing::Matcher<const WordAndIndex&> {
-  auto isEndMatcher =
-      AD_PROPERTY(WordAndIndex, isEnd, ::testing::Eq(wi.isEnd()));
+    [](const ad_utility::vocabulary::WordAndIndex& wi)
+    -> ::testing::Matcher<const ad_utility::vocabulary::WordAndIndex&> {
+  auto isEndMatcher = AD_PROPERTY(ad_utility::vocabulary::WordAndIndex, isEnd,
+                                  ::testing::Eq(wi.isEnd()));
   if (wi.isEnd()) {
     return isEndMatcher;
   }
-  return ::testing::AllOf(
-      isEndMatcher, AD_PROPERTY(WordAndIndex, word, ::testing::Eq(wi.word())),
-      AD_PROPERTY(WordAndIndex, index, ::testing::Eq(wi.index())));
+  return ::testing::AllOf(isEndMatcher,
+                          AD_PROPERTY(ad_utility::vocabulary::WordAndIndex,
+                                      word, ::testing::Eq(wi.word())),
+                          AD_PROPERTY(ad_utility::vocabulary::WordAndIndex,
+                                      index, ::testing::Eq(wi.index())));
 };
 
 /**
@@ -78,7 +82,7 @@ inline void testUpperAndLowerBound(const Vocab& vocab,
   ASSERT_EQ(vocab.size(), words.size());
 
   for (size_t i = 0; i < vocab.size(); ++i) {
-    WordAndIndex wi{words[i], ids[i]};
+    ad_utility::vocabulary::WordAndIndex wi{words[i], ids[i]};
     EXPECT_THAT(vocab.lower_bound(words[i], comparator), matchWordAndIndex(wi));
     auto lexicographicallySmallerWord = makeWordSmaller(words[i]);
     auto res = vocab.lower_bound(lexicographicallySmallerWord, comparator);
@@ -87,13 +91,13 @@ inline void testUpperAndLowerBound(const Vocab& vocab,
   }
 
   {
-    auto wi = WordAndIndex::end();
+    auto wi = ad_utility::vocabulary::WordAndIndex::end();
     EXPECT_THAT(vocab.lower_bound(makeWordLarger(words.back()), comparator),
                 matchWordAndIndex(wi));
   }
 
   for (size_t i = 1; i < vocab.size(); ++i) {
-    WordAndIndex wi{words[i], ids[i]};
+    ad_utility::vocabulary::WordAndIndex wi{words[i], ids[i]};
     EXPECT_THAT(vocab.upper_bound(words[i - 1], comparator),
                 matchWordAndIndex(wi));
     auto lexicographicallyLargerWord = makeWordLarger(words[i - 1]);
@@ -102,13 +106,13 @@ inline void testUpperAndLowerBound(const Vocab& vocab,
   }
 
   {
-    WordAndIndex wi{words.front(), ids[0]};
+    ad_utility::vocabulary::WordAndIndex wi{words.front(), ids[0]};
     ASSERT_THAT(vocab.upper_bound(makeWordSmaller(words.front()), comparator),
                 matchWordAndIndex(wi));
   }
 
   {
-    auto wi = WordAndIndex::end();
+    auto wi = ad_utility::vocabulary::WordAndIndex::end();
     ASSERT_THAT(vocab.upper_bound(words.back(), comparator),
                 matchWordAndIndex(wi));
   }
@@ -258,7 +262,7 @@ template <typename F, typename C>
 auto testEmptyVocabularyWithComparator(F&& createVocabulary, C comparator) {
   auto vocab = createVocabulary(std::vector<std::string>{});
   ASSERT_EQ(0u, vocab.size());
-  auto expected = WordAndIndex::end();
+  auto expected = ad_utility::vocabulary::WordAndIndex::end();
   EXPECT_THAT(vocab.lower_bound("someWord", comparator),
               matchWordAndIndex(expected));
   EXPECT_THAT(vocab.upper_bound("someWord", comparator),
@@ -279,7 +283,7 @@ auto testEmptyVocabulary(F createVocabulary) {
 template <typename Range>
 std::vector<std::string> scanAllToVector(Range&& range) {
   std::vector<std::string> result;
-  for (const IndexAndWord& indexAndWord : range) {
+  for (const ad_utility::vocabulary::IndexAndWord& indexAndWord : range) {
     result.emplace_back(indexAndWord.word_);
   }
   return result;
@@ -291,7 +295,7 @@ template <typename Range>
 std::vector<std::pair<uint64_t, std::string>> scanAllToIndexAndWordVector(
     Range&& range) {
   std::vector<std::pair<uint64_t, std::string>> result;
-  for (const IndexAndWord& indexAndWord : range) {
+  for (const ad_utility::vocabulary::IndexAndWord& indexAndWord : range) {
     result.emplace_back(indexAndWord.index_, std::string{indexAndWord.word_});
   }
   return result;
@@ -305,9 +309,9 @@ inline constexpr std::array<std::string_view, 4> defaultTestWords{
 
 // Feed `words` into an already-constructed word `writer` and `finish()` it. The
 // `words` must be sorted.
-template <typename Writer>
-void writeWordsAndFinish(
-    Writer& writer, ql::span<const std::string_view> words = defaultTestWords) {
+template <typename Writer, typename Range = ql::span<const std::string_view>>
+void writeWordsAndFinish(Writer& writer,
+                         const Range& words = defaultTestWords) {
   for (const auto& word : words) {
     writer(word, false);
   }
@@ -390,9 +394,10 @@ void testEndIndexAndGetPositionOfWord(
 // `i`.
 template <typename Vocab, typename Indices>
 void assertLookupResultMatchesVocabularyAtIndices(
-    const Vocab& vocab, const VocabBatchLookupResult& lookupResult,
+    const Vocab& vocab,
+    const ad_utility::vocabulary::VocabBatchLookupResult& lookupResult,
     const Indices& indices) {
-  ASSERT_EQ(lookupResult->size(), ql::ranges::distance(indices));
+  ASSERT_EQ(lookupResult.size(), ql::ranges::distance(indices));
 
   auto at = [&](size_t i) -> decltype(auto) {
     if constexpr (requires { vocab[i]; }) {
@@ -404,8 +409,8 @@ void assertLookupResultMatchesVocabularyAtIndices(
   };
 
   for (const auto& [resultWord, idx] :
-       ::ranges::views::zip(*lookupResult, indices)) {
-    EXPECT_EQ(resultWord, at(idx)) << " at  vocabulary index " << idx;
+       ::ranges::views::zip(lookupResult, indices)) {
+    EXPECT_EQ(resultWord, at(idx)) << " at vocabulary index " << idx;
   }
 }
 
@@ -414,7 +419,8 @@ void assertLookupResultMatchesVocabularyAtIndices(
 // batches are yielded in order.
 template <typename Vocab, typename ExpectedBatches>
 void assertStreamedLookupMatchesVocabularyAtIndices(
-    const Vocab& vocab, VocabLookupOutput& streamedResults,
+    const Vocab& vocab,
+    ad_utility::vocabulary::VocabLookupOutput& streamedResults,
     const ExpectedBatches& expectedBatches) {
   auto results = ::ranges::to_vector(streamedResults);
   ASSERT_EQ(results.size(), expectedBatches.size());
