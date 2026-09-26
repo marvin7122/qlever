@@ -50,12 +50,14 @@ TEST(VectorizedPrefixSlicerTest, TooSmallBufferAndInvalidIdThrow) {
   const auto& table = VectorizedPrefixTable::instance();
   // "http://schema.org/" has 18 bytes, the stores cover 32.
   std::array<char, 18> exact{};
-  EXPECT_ANY_THROW(static_cast<void>(
-      table.writePrefixFast(WellKnownPrefixId::SchemaOrg, exact)));
+  EXPECT_THROW(static_cast<void>(
+                   table.writePrefixFast(WellKnownPrefixId::SchemaOrg, exact)),
+               ad_utility::Exception);
   std::array<char, 32> rounded{};
   EXPECT_EQ(table.writePrefixFast(WellKnownPrefixId::SchemaOrg, rounded), 18u);
-  EXPECT_ANY_THROW(static_cast<void>(
-      table.writePrefixFast(WellKnownPrefixId::Count, rounded)));
+  EXPECT_THROW(static_cast<void>(
+                   table.writePrefixFast(WellKnownPrefixId::Count, rounded)),
+               ad_utility::Exception);
   static_assert(VectorizedPrefixTable::storeSize(18) == 32);
   static_assert(VectorizedPrefixTable::storeSize(32) == 32);
   static_assert(VectorizedPrefixTable::storeSize(33) == 48);
