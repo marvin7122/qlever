@@ -127,10 +127,12 @@ class LeafletAggregator {
     return metadata.exactDistinctCol2_;
   }
 
-  // O(blocks) typed count evaluator. Returns exact count for pure blocks
-  // and identifies ambiguous blocks that require row-level decompression.
+  // O(blocks) typed count evaluator for column `columnIndex`. A block whose
+  // types are a non-empty subset of `targetType` counts all its rows exactly,
+  // a block without any type of `targetType` is skipped, and every other block
+  // is returned as ambiguous, as it requires row-level decompression.
   // `targetType` must be a non-empty set of flags: `None` matches no
-  // meaningful type and would miscount pure-empty blocks as exact hits.
+  // meaningful type.
   struct TypedCountResult {
     uint64_t exactCount = 0;
     std::vector<size_t> ambiguousBlockIndices;
@@ -146,8 +148,8 @@ class LeafletAggregator {
       const auto mask = (columnIndex == 0) ? header.datatypeBitmaskCol0_
                                            : header.datatypeBitmaskCol1_;
 
-      if (mask == targetType) {
-        // Block is 100% composed of the target type -> add all rows directly.
+      if (mask != DatatypeBitmask::None && (mask & targetType) == mask) {
+        // Every type in the block is a target type -> add all rows directly.
         result.exactCount += blocks[i].numRows();
       } else if (!hasFlag(mask, targetType)) {
         // Block contains zero elements of the target type -> skip entirely.

@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include "global/Id.h"
 #include "index/CompressedRelationV2.h"
 
@@ -101,4 +103,25 @@ TEST(CompressedRelationV2Test, AllContainsExactlyTheDefinedFlags) {
                     DatatypeBitmask::VocabWord}) {
     EXPECT_TRUE(hasFlag(DatatypeBitmask::All, flag));
   }
+}
+
+// _____________________________________________________________________________
+TEST(CompressedRelationV2Test, TypedCountWithSeveralTargetTypes) {
+  std::vector<CompressedBlockMetadataV2> blocks(3);
+  // Only IRIs, a subset of the target types.
+  blocks[0].leafletHeader_.datatypeBitmaskCol0_ = DatatypeBitmask::Iri;
+  blocks[0].baseMetadata_.numRows_ = 100;
+  // Exactly the target types.
+  blocks[1].leafletHeader_.datatypeBitmaskCol0_ =
+      DatatypeBitmask::Iri | DatatypeBitmask::Literal;
+  blocks[1].baseMetadata_.numRows_ = 200;
+  // A target type and another type.
+  blocks[2].leafletHeader_.datatypeBitmaskCol0_ =
+      DatatypeBitmask::Literal | DatatypeBitmask::Date;
+  blocks[2].baseMetadata_.numRows_ = 400;
+
+  auto result = LeafletAggregator::countTypedColumn(
+      blocks, DatatypeBitmask::Iri | DatatypeBitmask::Literal, 0);
+  EXPECT_EQ(result.exactCount, 300u);
+  EXPECT_EQ(result.ambiguousBlockIndices, (std::vector<size_t>{2}));
 }
