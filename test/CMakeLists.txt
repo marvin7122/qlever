@@ -601,4 +601,5 @@ addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 
+addLinkAndDiscoverTest(RadixPartitionedHashJoinTest engine)
 addLinkAndDiscoverTest(BlockedBloomFilterTest global qlever_util)

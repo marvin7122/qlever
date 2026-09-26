@@ -1,6 +1,12 @@
-//   Copyright 2024, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024        Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
@@ -112,6 +118,11 @@ struct RuntimeParameters {
   // larger input without a join partner are rejected with one cache-line
   // access.
   Bool hashJoinBloomFilter_{false, "hash-join-bloom-filter"};
+  // If `true`, the hash join partitions both inputs by the hash of the join
+  // column and uses one small hash map per partition of the smaller input
+  // (`RadixPartitionedHashJoin`) instead of one hash map of the whole smaller
+  // input. The Bloom filter (`hash-join-bloom-filter`) is not used then.
+  Bool hashJoinRadixPartitioning_{false, "hash-join-radix-partitioning"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};
