@@ -61,7 +61,7 @@ class ExportEngineV2AsyncPipeline : public ::testing::Test {
     qec_->clearCacheUnpinnedOnly();
     auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
     QueryPlanner qp{qec_, handle};
-    auto pq = parseQuery(query);
+    auto pq = ad_utility::testing::parseQuery(query);
     auto qet = qp.createExecutionTree(pq);
     return {std::move(handle), std::move(pq), std::move(qet)};
   }
