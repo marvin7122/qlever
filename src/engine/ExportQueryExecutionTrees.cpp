@@ -16,6 +16,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
+#include <array>
 #include <optional>
 #include <string_view>
 
@@ -26,6 +27,7 @@
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/ConstexprUtils.h"
+#include "util/SwarDelimiterPacker.h"
 #include "util/http/MediaTypes.h"
 #include "util/views/TakeUntilInclusiveView.h"
 
@@ -515,6 +517,28 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
 
   constexpr auto& escapeFunction =
       format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+
+  // If enabled via the `use-swar-export-delimiters` runtime parameter, the
+  // single-character field separator and end-of-row newline below are
+  // emitted via `ad_utility::SwarDelimiterPacker` (a single unaligned 64-bit
+  // store into a small stack buffer) instead of as individual scalar
+  // character appends. This only changes how the byte is produced, not the
+  // byte itself; output is unaffected. Default is `false` (off), preserving
+  // the exact previous code path.
+  const bool useSwarDelimiters =
+      getRuntimeParameter<&RuntimeParameters::useSwarExportDelimiters_>();
+  std::array<char, 8> swarBuf{};
+  static const ad_utility::PackedDelimiter packedSeparator{
+      std::string_view{&separator, 1}};
+  static const ad_utility::PackedDelimiter packedNewline{
+      std::string_view{"\n", 1}};
+  auto yieldSwarPacked = [&swarBuf](const ad_utility::PackedDelimiter& delim) {
+    char* end =
+        ad_utility::SwarDelimiterPacker::writeDelim(swarBuf.data(), delim);
+    static_cast<void>(end);
+    return std::string_view{swarBuf.data(), delim.len()};
+  };
+
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
@@ -532,10 +556,18 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
           }
         }
         if (j + 1 < selectedColumnIndices.size()) {
-          STREAMABLE_YIELD(separator);
+          if (useSwarDelimiters) {
+            STREAMABLE_YIELD(yieldSwarPacked(packedSeparator));
+          } else {
+            STREAMABLE_YIELD(separator);
+          }
         }
       }
-      STREAMABLE_YIELD('\n');
+      if (useSwarDelimiters) {
+        STREAMABLE_YIELD(yieldSwarPacked(packedNewline));
+      } else {
+        STREAMABLE_YIELD('\n');
+      }
       cancellationHandle->throwIfCancelled();
     }
   }
