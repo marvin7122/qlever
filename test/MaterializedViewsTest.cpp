@@ -1,6 +1,7 @@
 // Copyright 2025 - 2026 The QLever Authors, in particular:
 //
 // 2025 - 2026 Christoph Ullinger <ullingec@informatik.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -932,23 +933,53 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
     EXPECT_THAT(res->idTableView(), matchesIdTable(expectedIdTable));
   }
 
+  // Route all HTTP sub-cases below through `handleHttpRequest` (the same entry
+  // point that `Server::run()` uses), so that handler errors are translated to
+  // HTTP error responses instead of escaping as C++ exceptions, which would
+  // abort the test binary if uncaught.
+  auto sendRequest = [this](const ReqT& request) {
+    return makeServerForTesting(testIndexBase_).handleHttpRequest(request);
+  };
+
+  // Expect that `request` succeeds with a `200 OK` JSON response whose field
+  // `key` names the view `viewName`.
+  auto expectJsonSuccess =
+      [&sendRequest](const ReqT& request, const std::string& key,
+                     std::string_view viewName,
+                     ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
+        auto trace = generateLocationTrace(l);
+        auto response = sendRequest(request);
+        EXPECT_EQ(response.result(), http::status::ok);
+        auto json = responseBodyAsJson(std::move(response));
+        ASSERT_TRUE(json.has_value());
+        ASSERT_TRUE(json.value().contains(key));
+        EXPECT_EQ(json.value()[key].get<std::string>(), viewName);
+      };
+
+  // Expect that `request` fails with the HTTP status `status` and a plain-text
+  // body that contains `message`.
+  auto expectHttpError =
+      [&sendRequest](const ReqT& request, http::status status,
+                     std::string_view message,
+                     ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
+        auto trace = generateLocationTrace(l);
+        auto response = sendRequest(request);
+        EXPECT_EQ(response.result(), status);
+        auto contentType = response.find(http::field::content_type);
+        ASSERT_NE(contentType, response.end());
+        EXPECT_TRUE(contentType->value().starts_with("text/plain"));
+        EXPECT_THAT(responseBodyToString(std::move(response.body())),
+                    ::testing::HasSubstr(message));
+      };
+
   // Write a materialized view through a simulated HTTP POST request.
   {
     clearLog();
-    auto request = makePostRequest(
-        "/?cmd=write-materialized-view&view-name=testViewFromHTTP&access-token="
-        "accessToken",
-        "application/sparql-query", simpleWriteQuery_);
-    auto response = responseBodyAsJson(
-        makeServerForTesting(testIndexBase_).process(request));
-
-    // Check HTTP response.
-    ASSERT_TRUE(response.has_value());
-    ASSERT_TRUE(response.value().contains("materialized-view-written"));
-    EXPECT_EQ(response.value()["materialized-view-written"],
-              "testViewFromHTTP");
-
-    // Check correct logging.
+    expectJsonSuccess(
+        makePostRequest("/?cmd=write-materialized-view&view-name="
+                        "testViewFromHTTP&access-token=accessToken",
+                        "application/sparql-query", simpleWriteQuery_),
+        "materialized-view-written", "testViewFromHTTP");
     EXPECT_THAT(log_.str(),
                 ::testing::HasSubstr(
                     "Materialized view \"testViewFromHTTP\" written to disk"));
@@ -957,21 +988,13 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
   // Write a materialized view through a simulated HTTP GET request.
   {
     clearLog();
-    auto request = makeGetRequest(
-        "/?cmd=write-materialized-view&view-name=testViewFromHTTP2"
-        "&access-token=accessToken"
-        "&query=SELECT%20*%20%7B%20%3Fs%20%3Fp%20%3Fo%20.%20BIND(1%"
-        "20AS%20%3Fg)%20%7D");
-    auto response = responseBodyAsJson(
-        makeServerForTesting(testIndexBase_).process(request));
-
-    // Check HTTP response.
-    ASSERT_TRUE(response.has_value());
-    ASSERT_TRUE(response.value().contains("materialized-view-written"));
-    EXPECT_EQ(response.value()["materialized-view-written"],
-              "testViewFromHTTP2");
-
-    // Check correct logging.
+    expectJsonSuccess(
+        makeGetRequest(
+            "/?cmd=write-materialized-view&view-name=testViewFromHTTP2"
+            "&access-token=accessToken"
+            "&query=SELECT%20*%20%7B%20%3Fs%20%3Fp%20%3Fo%20.%20BIND(1%"
+            "20AS%20%3Fg)%20%7D"),
+        "materialized-view-written", "testViewFromHTTP2");
     EXPECT_THAT(log_.str(),
                 ::testing::HasSubstr(
                     "Materialized view \"testViewFromHTTP2\" written to disk"));
@@ -980,88 +1003,58 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
   // Load a materialized view through a simulated HTTP GET request.
   {
     clearLog();
-    auto request = makeGetRequest(
-        "/?cmd=load-materialized-view&view-name=testViewFromHTTP2"
-        "&access-token=accessToken");
-    auto response = responseBodyAsJson(
-        makeServerForTesting(testIndexBase_).process(request));
-
-    // Check HTTP response.
-    ASSERT_TRUE(response.has_value());
-    ASSERT_TRUE(response.value().contains("materialized-view-loaded"));
-    EXPECT_EQ(response.value()["materialized-view-loaded"],
-              "testViewFromHTTP2");
-
-    // Check correct logging.
+    expectJsonSuccess(
+        makeGetRequest("/?cmd=load-materialized-view&view-name="
+                       "testViewFromHTTP2&access-token=accessToken"),
+        "materialized-view-loaded", "testViewFromHTTP2");
     EXPECT_THAT(
         log_.str(),
         ::testing::HasSubstr(
             "Loading materialized view \"testViewFromHTTP2\" from disk"));
   }
 
-  // Test error message for wrong query type.
-  {
-    auto request = makePostRequest(
-        "/?cmd=write-materialized-view&view-name=testViewFromHTTP3&"
-        "access-token=accessToken",
-        "application/sparql-update", "INSERT DATA { <a> <b> <c> }");
-    AD_EXPECT_THROW_WITH_MESSAGE(
-        responseBodyAsJson(
-            makeServerForTesting(testIndexBase_).process(request)),
-        ::testing::HasSubstr(
-            "Action 'write-materialized-view' requires a 'SELECT' query"));
-  }
+  // Test the error message for a wrong query type. Expect a `400 Bad Request`
+  // response with the message as plain-text body (same for the other error
+  // sub-cases below).
+  expectHttpError(makePostRequest("/?cmd=write-materialized-view&view-name="
+                                  "testViewFromHTTP3&access-token=accessToken",
+                                  "application/sparql-update",
+                                  "INSERT DATA { <a> <b> <c> }"),
+                  http::status::bad_request,
+                  "Action 'write-materialized-view' requires a 'SELECT' query");
 
-  // Test access token check.
-  {
-    auto request = makePostRequest(
-        "/?cmd=write-materialized-view&view-name=testViewFromHTTP3",
-        "application/sparql-query", simpleWriteQuery_);
-    expectRequiresValidAccessToken("write-materialized-view", [&] {
-      makeServerForTesting(testIndexBase_).process(request);
-    });
-  }
+  // Test the access token check.
+  expectHttpError(
+      makePostRequest(
+          "/?cmd=write-materialized-view&view-name=testViewFromHTTP3",
+          "application/sparql-query", simpleWriteQuery_),
+      http::status::forbidden,
+      "write-materialized-view requires a valid access token");
 
-  // Test check for name of the view (missing).
-  {
-    auto request = makePostRequest(
-        "/?cmd=write-materialized-view&access-token=accessToken",
-        "application/sparql-query", simpleWriteQuery_);
-    AD_EXPECT_THROW_WITH_MESSAGE(
-        responseBodyAsJson(
-            makeServerForTesting(testIndexBase_).process(request)),
-        ::testing::HasSubstr(
-            "Writing a materialized view requires a name to be set "
-            "via the 'view-name' parameter"));
-  }
+  // Test the check for the name of the view (missing).
+  expectHttpError(
+      makePostRequest("/?cmd=write-materialized-view&access-token=accessToken",
+                      "application/sparql-query", simpleWriteQuery_),
+      http::status::bad_request,
+      "Writing a materialized view requires a name to be set via the "
+      "'view-name' parameter");
 
-  // Test check for name of the view (empty).
-  {
-    auto request = makePostRequest(
-        "/?cmd=write-materialized-view&view-name=&access-token=accessToken",
-        "application/sparql-query", simpleWriteQuery_);
-    AD_EXPECT_THROW_WITH_MESSAGE(
-        responseBodyAsJson(
-            makeServerForTesting(testIndexBase_).process(request)),
-        ::testing::HasSubstr("The name for the view may not be empty"));
-  }
+  // Test the check for the name of the view (empty).
+  expectHttpError(
+      makePostRequest(
+          "/?cmd=write-materialized-view&view-name=&access-token=accessToken",
+          "application/sparql-query", simpleWriteQuery_),
+      http::status::bad_request, "The name for the view may not be empty");
 
   // Delete a materialized view through a simulated HTTP GET request.
   {
     clearLog();
     ASSERT_TRUE(ql::filesystem::exists(
         absl::StrCat(testIndexBase_, ".view.testViewFromHTTP2.viewinfo.json")));
-    auto request = makeGetRequest(
-        "/?cmd=delete-materialized-view&view-name=testViewFromHTTP2"
-        "&access-token=accessToken");
-    auto response = responseBodyAsJson(
-        makeServerForTesting(testIndexBase_).process(request));
-
-    // Check HTTP response.
-    ASSERT_TRUE(response.has_value());
-    ASSERT_TRUE(response.value().contains("materialized-view-deleted"));
-    EXPECT_EQ(response.value()["materialized-view-deleted"],
-              "testViewFromHTTP2");
+    expectJsonSuccess(
+        makeGetRequest("/?cmd=delete-materialized-view&view-name="
+                       "testViewFromHTTP2&access-token=accessToken"),
+        "materialized-view-deleted", "testViewFromHTTP2");
 
     // The view's files have been deleted.
     EXPECT_FALSE(ql::filesystem::exists(
@@ -1071,14 +1064,12 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
                     "Materialized view \"testViewFromHTTP2\" deleted"));
   }
 
-  // Test access token check for deletion.
-  {
-    auto request = makeGetRequest(
-        "/?cmd=delete-materialized-view&view-name=testViewFromHTTP");
-    expectRequiresValidAccessToken("delete-materialized-view", [&] {
-      makeServerForTesting(testIndexBase_).process(request);
-    });
-  }
+  // Test the access token check for deletion.
+  expectHttpError(
+      makeGetRequest(
+          "/?cmd=delete-materialized-view&view-name=testViewFromHTTP"),
+      http::status::forbidden,
+      "delete-materialized-view requires a valid access token");
 }
 #endif  // __EMSCRIPTEN__
 
