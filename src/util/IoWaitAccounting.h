@@ -414,14 +414,14 @@ inline void startReporter() {
           // Diagnostics must not kill the server; retry on the next tick, but
           // report the first failure so a broken report path is not silent.
           if (!warned) {
-            LOG(WARN) << "io-wait report to " << file << " failed: " << e.what()
-                      << std::endl;
+            AD_LOG_WARN << "io-wait report to " << file
+                        << " failed: " << e.what() << std::endl;
             warned = true;
           }
         } catch (...) {
           if (!warned) {
-            LOG(WARN) << "io-wait report to " << file
-                      << " failed with an unknown exception" << std::endl;
+            AD_LOG_WARN << "io-wait report to " << file
+                        << " failed with an unknown exception" << std::endl;
             warned = true;
           }
         }
