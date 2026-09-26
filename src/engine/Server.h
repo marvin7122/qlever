@@ -4,6 +4,7 @@
 // 2020 - 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2022 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
 // 2024 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -50,7 +51,14 @@ CPP_concept QueryOrUpdate =
 // Forward declaration for testing.
 namespace serverTestHelpers {
 class ServerForTesting;
-}
+}  // namespace serverTestHelpers
+
+namespace ql::engine {
+// Only needed by name in the `sendStreamableResponse` signature below; the
+// full router header stays in `Server.cpp` to keep parser/URL-parsing
+// dependencies out of this widely included header.
+enum class ExportEngineMode;
+}  // namespace ql::engine
 
 //! The HTTP Server used.
 class Server {
@@ -458,7 +466,8 @@ class Server {
       Awaitable<void> sendStreamableResponse(
           const RequestT& request, SendT& send, ad_utility::MediaType mediaType,
           const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
-          SharedCancellationHandle cancellationHandle) const;
+          SharedCancellationHandle cancellationHandle,
+          ql::engine::ExportEngineMode engineMode) const;
 
   FRIEND_TEST(MaterializedViewsTest, serverIntegration);
 

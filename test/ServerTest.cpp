@@ -1,6 +1,9 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Julian Mundhahs (mundhahj@tf.uni-freiburg.de)
+// Copyright 2024 - 2026 The QLever Authors, in particular:
+//
+// 2024 Julian Mundhahs <mundhahj@tf.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -697,6 +700,35 @@ TEST(ServerTest, handleHttpRequest) {
       responseBodyToString(std::move(response.body())),
       testing::HasSubstr("User submitted timeout was higher than what is "
                          "currently allowed by this instance (30s)"));
+}
+
+// _____________________________________________________________________________
+// Every engine selection channel must return the same bytes as the default
+// export path.
+TEST(ServerTest, exportEngineV1V2Parity) {
+  auto qec = getQec(TestIndexConfig{"<a> <b> <c> . <d> <e> <f> ."});
+  auto server = makeServerForTesting(qec->getIndex().getOnDiskBase());
+  auto makeCsvQuery = [](std::string_view target) {
+    return makeRequest(http::verb::post, target,
+                       {{http::field::content_type, "application/sparql-query"},
+                        {http::field::accept, "text/csv"}},
+                       "SELECT * WHERE { ?s ?p ?o }");
+  };
+  auto runToString = [&server](auto request) {
+    auto response = server.process(request);
+    EXPECT_THAT(response, StatusIs(http::status::ok));
+    return responseBodyToString(std::move(response.body()));
+  };
+  const std::string baseline = runToString(makeCsvQuery("/"));
+  EXPECT_THAT(runToString(makeCsvQuery("/?export-engine=v1")),
+              testing::StrEq(baseline));
+  EXPECT_THAT(runToString(makeCsvQuery("/?export-engine=v2")),
+              testing::StrEq(baseline));
+  EXPECT_THAT(runToString(makeCsvQuery("/?fast-export=true")),
+              testing::StrEq(baseline));
+  auto headerRequest = makeCsvQuery("/");
+  headerRequest.set("X-QLever-Export-Engine", "v2");
+  EXPECT_THAT(runToString(std::move(headerRequest)), testing::StrEq(baseline));
 }
 
 // _____________________________________________________________________________
