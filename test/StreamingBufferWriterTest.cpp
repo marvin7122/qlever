@@ -30,7 +30,6 @@ static_assert(std::is_nothrow_move_assignable_v<StreamingBufferWriter>);
 static_assert(!std::is_copy_constructible_v<StreamingBufferWriter>);
 static_assert(!std::is_copy_assignable_v<StreamingBufferWriter>);
 static_assert(noexcept(StreamingBufferWriter::sfence()));
-
 // _____________________________________________________________________________
 TEST(StreamingBufferWriterTest, BasicStreamingWriteAndFlush) {
   constexpr size_t bufferSize = 1024;
