@@ -23,9 +23,9 @@ namespace ad_benchmark {
 // preallocated buffer.
 class RleVectorStreamBenchmark : public BenchmarkInterface {
  public:
-  std::string name() const final { return "RleVectorStream"; }
+  std::string name() const override { return "RleVectorStream"; }
 
-  BenchmarkResults runAllBenchmarks() final {
+  BenchmarkResults runAllBenchmarks() override {
     BenchmarkResults results{};
     // 10 M rows (80 MB as a flat column) in 1,000 runs of 10,000 rows.
     constexpr size_t NUM_RUNS = 1'000;
