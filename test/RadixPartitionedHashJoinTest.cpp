@@ -6,10 +6,13 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of this project.
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <vector>
 
+#include "backports/algorithm.h"
 #include "engine/RadixPartitionedHashJoin.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
@@ -217,4 +220,107 @@ TEST(RadixPartitionedHashJoinTest, InvalidColumnIndexThrows) {
   EXPECT_THROW(RadixPartitionedHashJoin<2>::executeJoinCount(leftTable, 0,
                                                              rightTable, 5),
                ad_utility::Exception);
+}
+
+namespace {
+std::vector<Id> intKeys(const std::vector<int64_t>& values) {
+  std::vector<Id> keys;
+  for (auto value : values) {
+    keys.push_back(Id::makeFromInt(value));
+  }
+  return keys;
+}
+
+// For each probe row, the build rows with the same key according to
+// `matchRows` of `RadixPartitionedHashJoin<RadixBits>`.
+template <size_t RadixBits>
+std::vector<std::vector<size_t>> matchesPerProbeRow(
+    const std::vector<Id>& build, const std::vector<Id>& probe) {
+  auto matches = RadixPartitionedHashJoin<RadixBits>::matchRows(build, probe);
+  EXPECT_EQ(matches.ranges_.size(), probe.size());
+  std::vector<std::vector<size_t>> result;
+  for (const auto& [begin, end] : matches.ranges_) {
+    result.emplace_back(matches.buildRows_.begin() + begin,
+                        matches.buildRows_.begin() + end);
+  }
+  return result;
+}
+
+// The same by two nested loops.
+std::vector<std::vector<size_t>> naiveMatchesPerProbeRow(
+    const std::vector<Id>& build, const std::vector<Id>& probe) {
+  std::vector<std::vector<size_t>> result;
+  for (const Id& key : probe) {
+    auto& rows = result.emplace_back();
+    for (size_t row = 0; row < build.size(); ++row) {
+      if (build[row] == key) {
+        rows.push_back(row);
+      }
+    }
+  }
+  return result;
+}
+}  // namespace
+
+// `partitionColumn` keeps every row, puts it into the partition of its key,
+// and keeps the rows of a partition in ascending order.
+// _____________________________________________________________________________
+TEST(RadixPartitionedHashJoinTest, PartitionColumn) {
+  std::vector<int64_t> values;
+  for (int64_t i = 0; i < 300; ++i) {
+    values.push_back((i * 7919) % 101);
+  }
+  auto keys = intKeys(values);
+  using Join = RadixPartitionedHashJoin<3>;
+  auto partitioned = Join::partitionColumn(keys);
+  ASSERT_EQ(partitioned.bounds_.size(), Join::NUM_PARTITIONS + 1);
+  EXPECT_EQ(partitioned.bounds_.front(), 0u);
+  EXPECT_EQ(partitioned.bounds_.back(), keys.size());
+  std::vector<bool> seen(keys.size(), false);
+  for (size_t p = 0; p < Join::NUM_PARTITIONS; ++p) {
+    for (size_t i = partitioned.bounds_[p]; i < partitioned.bounds_[p + 1];
+         ++i) {
+      size_t row = partitioned.rows_[i];
+      EXPECT_EQ(partitioned.keys_[i], keys[row]);
+      EXPECT_EQ(Join::getPartitionIndex(keys[row]), p);
+      if (i > partitioned.bounds_[p]) {
+        EXPECT_LT(partitioned.rows_[i - 1], row);
+      }
+      seen[row] = true;
+    }
+  }
+  EXPECT_TRUE(ql::ranges::all_of(seen, [](bool b) { return b; }));
+}
+
+// `matchRows` finds all build rows of each probe key, in ascending order, for
+// different numbers of partitions, with duplicates on both sides.
+// _____________________________________________________________________________
+TEST(RadixPartitionedHashJoinTest, MatchRowsAgreesWithNestedLoop) {
+  std::vector<int64_t> buildValues;
+  std::vector<int64_t> probeValues;
+  for (int64_t i = 0; i < 500; ++i) {
+    buildValues.push_back((i * 31) % 97);
+    probeValues.push_back((i * 17) % 131);
+  }
+  auto build = intKeys(buildValues);
+  auto probe = intKeys(probeValues);
+  auto expected = naiveMatchesPerProbeRow(build, probe);
+  EXPECT_EQ(matchesPerProbeRow<0>(build, probe), expected);
+  EXPECT_EQ(matchesPerProbeRow<2>(build, probe), expected);
+  EXPECT_EQ(matchesPerProbeRow<6>(build, probe), expected);
+  EXPECT_EQ(matchesPerProbeRow<10>(build, probe), expected);
+}
+
+// Empty inputs and inputs without common keys.
+// _____________________________________________________________________________
+TEST(RadixPartitionedHashJoinTest, MatchRowsEmptyAndDisjoint) {
+  auto keys = intKeys({1, 2, 3});
+  auto other = intKeys({4, 5});
+  using Join = RadixPartitionedHashJoin<2>;
+  EXPECT_TRUE(Join::matchRows({}, keys).buildRows_.empty());
+  EXPECT_EQ(Join::matchRows({}, keys).ranges_.size(), 3u);
+  EXPECT_TRUE(Join::matchRows(keys, {}).ranges_.empty());
+  for (const auto& [begin, end] : Join::matchRows(keys, other).ranges_) {
+    EXPECT_EQ(begin, end);
+  }
 }
