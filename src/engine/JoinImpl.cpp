@@ -336,19 +336,29 @@ void JoinImpl::join(const IdTableView<0>& a, const IdTableView<0>& b,
   // The hash join (if enabled) replaces the merge join, but not the galloping
   // join. It iterates over the larger input, which is sorted by the join
   // column, so the result is sorted by the join column as well. It writes the
-  // columns in the final order [columns-a, non-join-columns-b], so it needs
-  // neither the row adder nor the column permutations below.
+  // columns in the order [columns-a, non-join-columns-b], so it needs neither
+  // the row adder nor the column permutations below.
   bool useGallopingJoin = (a.size() / b.size() > GALLOP_THRESHOLD ||
                            b.size() / a.size() > GALLOP_THRESHOLD);
   if (!useGallopingJoin && numUndefA == 0 && numUndefB == 0 &&
-      keepJoinColumn_ &&
       getRuntimeParameter<&RuntimeParameters::joinUseHashJoin_>()) {
     runtimeInfo().addDetail("join-algorithm", "hash");
     runtimeInfo().addDetail(
         "hash-join-bloom-filter",
         getRuntimeParameter<&RuntimeParameters::hashJoinBloomFilter_>());
-    hashJoin(a, leftJoinCol_, b, rightJoinCol_, result);
+    IdTable hashJoinResult{a.numColumns() + b.numColumns() - 1, allocator()};
+    hashJoin(a, leftJoinCol_, b, rightJoinCol_, &hashJoinResult);
     checkCancellation();
+    if (!keepJoinColumn_) {
+      std::vector<ColumnIndex> columnsWithoutJoinColumn;
+      for (ColumnIndex i = 0; i < hashJoinResult.numColumns(); ++i) {
+        if (i != leftJoinCol_) {
+          columnsWithoutJoinColumn.push_back(i);
+        }
+      }
+      hashJoinResult.setColumnSubset(columnsWithoutJoinColumn);
+    }
+    *result = std::move(hashJoinResult);
     return;
   }
 

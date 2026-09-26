@@ -294,6 +294,30 @@ TEST(JoinTest, joinUsesHashJoinOnlyIfEnabled) {
   EXPECT_EQ(join().size(), 4u);
 }
 
+// The hash join also works when the join column is not part of the result.
+TEST(JoinTest, hashJoinWithoutJoinColumn) {
+  auto left = makeIdTableFromVector({{1, 10}, {1, 11}, {2, 12}});
+  auto right = makeIdTableFromVector({{1, 20}, {3, 30}});
+  auto* qec = ad_utility::testing::getQec();
+  auto join = [&]() {
+    auto leftTree = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, left.clone(), Vars{Variable{"?x"}, Variable{"?a"}}, false,
+        std::vector<ColumnIndex>{0});
+    auto rightTree = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, right.clone(), Vars{Variable{"?x"}, Variable{"?b"}}, false,
+        std::vector<ColumnIndex>{0});
+    JoinImpl joinImpl{qec, leftTree, rightTree, 0, 0, false, false};
+    IdTable result{joinImpl.getResultWidth(), makeAllocator()};
+    joinImpl.join(left.asStaticView<0>(), right.asStaticView<0>(), &result);
+    return result;
+  };
+  auto expected = makeIdTableFromVector({{10, 20}, {11, 20}});
+  EXPECT_EQ(join(), expected);
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(true);
+  EXPECT_EQ(join(), expected);
+}
+
 // Several helpers for the test cases below.
 namespace {
 
