@@ -101,6 +101,17 @@ struct RuntimeParameters {
       1'000'000, "lazy-index-scan-max-size-materialization"};
   Bool useBinsearchTransitivePath_{true, "use-binsearch-transitive-path"};
   Bool groupByHashMapEnabled_{false, "group-by-hash-map-enabled"};
+  // If `true`, a `Join` of two fully materialized inputs without UNDEF values
+  // in the join columns uses a hash join (hash map of the smaller input,
+  // probed with the rows of the larger input) instead of the merge join. Inputs
+  // whose sizes differ by more than `GALLOP_THRESHOLD` still use the galloping
+  // join.
+  Bool joinUseHashJoin_{false, "join-use-hash-join"};
+  // If `true`, the hash join puts a `BlockedBloomFilter` of the join column of
+  // the smaller input in front of the hash map lookup, so that most rows of the
+  // larger input without a join partner are rejected with one cache-line
+  // access.
+  Bool hashJoinBloomFilter_{false, "hash-join-bloom-filter"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};

@@ -229,6 +229,105 @@ TEST(JoinTest, joinTest) {
   runTestCasesForAllJoinAlgorithms(createJoinTestSet());
 };
 
+// The hash join with the `BlockedBloomFilter` in front of the hash map must
+// give the same results. Most rows of the larger inputs in
+// `createJoinTestSet()` have no join partner, so the filter rejects them.
+TEST(JoinTest, joinTestWithBloomFilter) {
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::hashJoinBloomFilter_>(
+          true);
+  runTestCasesForAllJoinAlgorithms(createJoinTestSet());
+}
+
+// With `join-use-hash-join`, `JoinImpl::join` runs the hash join (with and
+// without the Bloom filter) for inputs without UNDEF values.
+TEST(JoinTest, joinTestRoutedThroughHashJoin) {
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(true);
+  for (bool useBloomFilter : {false, true}) {
+    auto cleanupBloomFilter =
+        setRuntimeParameterForTest<&RuntimeParameters::hashJoinBloomFilter_>(
+            useBloomFilter);
+    runTestCasesForAllJoinAlgorithms(createJoinTestSet());
+  }
+}
+
+// The merge join and the hash join order the rows with equal join values
+// differently if the right input is larger: the merge join iterates over the
+// left rows in the outer loop, the hash join over the rows of the larger
+// (right) input. This shows which algorithm `JoinImpl::join` used.
+TEST(JoinTest, joinUsesHashJoinOnlyIfEnabled) {
+  IdTableAndJoinColumn left{makeIdTableFromVector({{1, 10}, {1, 11}}), 0};
+  IdTableAndJoinColumn right{makeIdTableFromVector({{1, 20}, {1, 21}, {1, 22}}),
+                             0};
+  auto join = [&]() {
+    return useJoinFunctionOnIdTables(left, right, makeJoinLambda());
+  };
+  EXPECT_EQ(join(), makeIdTableFromVector({{1, 10, 20},
+                                           {1, 10, 21},
+                                           {1, 10, 22},
+                                           {1, 11, 20},
+                                           {1, 11, 21},
+                                           {1, 11, 22}}));
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(true);
+  auto hashJoinResult = makeIdTableFromVector({{1, 10, 20},
+                                               {1, 11, 20},
+                                               {1, 10, 21},
+                                               {1, 11, 21},
+                                               {1, 10, 22},
+                                               {1, 11, 22}});
+  EXPECT_EQ(join(), hashJoinResult);
+  auto cleanupBloomFilter =
+      setRuntimeParameterForTest<&RuntimeParameters::hashJoinBloomFilter_>(
+          true);
+  EXPECT_EQ(join(), hashJoinResult);
+
+  // With an UNDEF value in a join column, the merge join is used: the result
+  // has the same row order as with `join-use-hash-join=false`, and not the
+  // order of the hash join, which would iterate over the larger right input.
+  IdTable undefLeft{2, makeAllocator()};
+  undefLeft.push_back({Id::makeUndefined(), ad_utility::testing::IntId(10)});
+  undefLeft.push_back(
+      {ad_utility::testing::IntId(1), ad_utility::testing::IntId(11)});
+  undefLeft.push_back(
+      {ad_utility::testing::IntId(1), ad_utility::testing::IntId(12)});
+  left = IdTableAndJoinColumn{std::move(undefLeft), 0};
+  right = IdTableAndJoinColumn{
+      makeIdTableFromVector({{1, 20}, {1, 21}, {1, 22}, {1, 23}}), 0};
+  auto mergeJoinResult = [&]() {
+    auto noHashJoin =
+        setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(false);
+    return join();
+  }();
+  EXPECT_EQ(mergeJoinResult(1, 2), right.idTable(1, 1));
+  EXPECT_EQ(join(), mergeJoinResult);
+}
+
+// The hash join also works when the join column is not part of the result.
+TEST(JoinTest, hashJoinWithoutJoinColumn) {
+  auto left = makeIdTableFromVector({{1, 10}, {1, 11}, {2, 12}});
+  auto right = makeIdTableFromVector({{1, 20}, {3, 30}});
+  auto* qec = ad_utility::testing::getQec();
+  auto join = [&]() {
+    auto leftTree = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, left.clone(), Vars{Variable{"?x"}, Variable{"?a"}}, false,
+        std::vector<ColumnIndex>{0});
+    auto rightTree = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, right.clone(), Vars{Variable{"?x"}, Variable{"?b"}}, false,
+        std::vector<ColumnIndex>{0});
+    JoinImpl joinImpl{qec, leftTree, rightTree, 0, 0, false, false};
+    IdTable result{joinImpl.getResultWidth(), makeAllocator()};
+    joinImpl.join(left.asStaticView<0>(), right.asStaticView<0>(), &result);
+    return result;
+  };
+  auto expected = makeIdTableFromVector({{10, 20}, {11, 20}});
+  EXPECT_EQ(join(), expected);
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(true);
+  EXPECT_EQ(join(), expected);
+}
+
 // Several helpers for the test cases below.
 namespace {
 
