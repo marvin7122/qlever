@@ -69,14 +69,16 @@ class ExportEngineV2AsyncPipeline : public ::testing::Test {
   }
 
   // The chunks of `computeResult` (or of `computeResultChunks` with
-  // `scatterGather`), with the async pipeline on or off.
-  std::vector<std::string> chunks(const std::string& query, MediaType mediaType,
-                                  bool asyncPipeline, bool scatterGather,
-                                  ElasticExportScheduler* scheduler = nullptr) {
+  // `scatterGather`) for an already planned query, with the async pipeline on
+  // or off. Both arms of a comparison use the same plan: the planner may
+  // order the children of a cross product differently between two plannings,
+  // which changes the row order independently of the pipeline.
+  static std::vector<std::string> chunks(
+      const Planned& planned, MediaType mediaType, bool asyncPipeline,
+      bool scatterGather, ElasticExportScheduler* scheduler = nullptr) {
     auto cleanup =
         setRuntimeParameterForTest<&RuntimeParameters::exportV2AsyncPipeline_>(
             asyncPipeline);
-    auto planned = plan(query);
     EXPECT_TRUE(ExportEngineV2::canHandle(planned.parsedQuery_, planned.qet_,
                                           mediaType));
     std::vector<std::string> result;
@@ -113,9 +115,10 @@ TEST_F(ExportEngineV2AsyncPipeline, SameChunksInSameOrder) {
       for (bool scatterGather : {false, true}) {
         SCOPED_TRACE(absl::StrCat(query, " ", ad_utility::toString(mediaType),
                                   scatterGather ? " iovec" : " string"));
-        const auto expected = chunks(query, mediaType, false, scatterGather);
+        const auto planned = plan(query);
+        const auto expected = chunks(planned, mediaType, false, scatterGather);
         ASSERT_GT(expected.size(), 2);
-        EXPECT_EQ(chunks(query, mediaType, true, scatterGather), expected);
+        EXPECT_EQ(chunks(planned, mediaType, true, scatterGather), expected);
       }
     }
   }
@@ -139,8 +142,9 @@ TEST_F(ExportEngineV2AsyncPipeline, SameRowsWithScheduler) {
   };
   for (const auto& query : kQueries) {
     SCOPED_TRACE(query);
-    const auto expected = chunks(query, MediaType::tsv, false, false);
-    const auto async = chunks(query, MediaType::tsv, true, false, &scheduler);
+    const auto planned = plan(query);
+    const auto expected = chunks(planned, MediaType::tsv, false, false);
+    const auto async = chunks(planned, MediaType::tsv, true, false, &scheduler);
     if (query.find("LIMIT") != std::string::npos) {
       EXPECT_EQ(absl::StrJoin(async, ""), absl::StrJoin(expected, ""));
     } else {
