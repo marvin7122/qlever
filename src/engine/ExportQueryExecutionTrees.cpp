@@ -22,6 +22,7 @@
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
 #include "engine/ConstructTripleGenerator.h"
+#include "engine/SimdEscapeClassifier.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
@@ -513,8 +514,36 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  // Behind `use-simd-escape-classifier-csv` (default off), dispatch CSV
+  // export to the AVX2/SSE2 `SimdEscapeClassifier` (PR #85) instead of the
+  // scalar `RdfEscaping` functions. Both are
+  // `std::string(std::string)`-compatible, so `idToStringAndType` below is
+  // unchanged either way.
+  //
+  // TSV always stays on `RdfEscaping::escapeForTsv`, flag or not:
+  // `SimdEscapeClassifier::escapeForTsv` additionally escapes `\r` (to
+  // `\r`) and `\` (to `\\`), which `RdfEscaping::escapeForTsv` leaves
+  // untouched. That is a real semantic divergence in PR #85's classifier
+  // (not measurement noise) -- confirmed by a deterministic byte-count
+  // mismatch on DBLP H-size-select (Ural run
+  // experiments/runs/pr85-dblp-hsizeselect-tsv-ab, +24 bytes, same line
+  // count, reproducible across reps). Wiring TSV through it would violate
+  // the byte-identical-output requirement, so it is left out here; fixing
+  // `SimdEscapeClassifier::escapeForTsv` itself is out of scope for this
+  // wiring change and is called out on PR #85.
+  auto escapeFunction = [](std::string input) -> std::string {
+    if constexpr (format == csv) {
+      if (getRuntimeParameter<
+              &RuntimeParameters::useSimdEscapeClassifierForCsv_>()) {
+        return ad_utility::simd::SimdEscapeClassifier::escapeForCsv(input);
+      }
+    }
+    if constexpr (format == tsv) {
+      return RdfEscaping::escapeForTsv(std::move(input));
+    } else {
+      return RdfEscaping::escapeForCsv(std::move(input));
+    }
+  };
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
