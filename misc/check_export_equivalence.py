@@ -105,7 +105,10 @@ def _load_table(path: str, fmt: str) -> Tuple[Optional[Tuple[str, ...]],
     newline = "" if fmt == "csv" else "\n"
     with open(path, encoding="utf-8-sig", newline=newline) as fh:
         if fmt == "csv":
-            rows = [tuple(row) if row else ("",) for row in csv.reader(fh)]
+            rows = [
+                tuple(row) if row else ("",)
+                for row in csv.reader(fh, strict=True)
+            ]
         else:
             # SPARQL TSV has no CSV-style quoting (tabs and newlines inside
             # literals are escaped as in Turtle), so a plain split is exact.
@@ -216,8 +219,11 @@ def _check_solutions(path_a: str, path_b: str, fmt: str) -> int:
     try:
         header_a, rows_a = _load_table(path_a, fmt)
         header_b, rows_b = _load_table(path_b, fmt)
-    except (OSError, UnicodeError, csv.Error) as exc:
+    except (OSError, UnicodeError) as exc:
         sys.stderr.write(f"read error: {exc}\n")
+        return 2
+    except csv.Error as exc:
+        sys.stderr.write(f"parse error: {exc}\n")
         return 2
 
     if header_a is None or header_b is None:

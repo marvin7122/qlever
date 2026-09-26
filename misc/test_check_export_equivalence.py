@@ -217,6 +217,13 @@ ex:b ex:q "different" .
             fh.write(b"?x\n\"\xff\"\n")
         self.assertEqual(main(["--format", "tsv", path, path]), 2)
 
+    def test_malformed_csv_quoting_is_a_parse_error(self):
+        a = _write(self._tmp.name, "a.csv", "x\n\"unterminated\n")
+        with mock.patch("sys.stderr") as stderr:
+            self.assertEqual(main(["--format", "csv", a, a]), 2)
+        written = "".join(call.args[0] for call in stderr.write.call_args_list)
+        self.assertIn("parse error", written)
+
     def test_missing_rdflib_is_a_usage_error(self):
         a = _write(self._tmp.name, "a.tsv", "?x\n<a>\n")
         with mock.patch.dict(sys.modules, {"rdflib": None}):
