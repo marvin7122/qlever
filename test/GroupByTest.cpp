@@ -680,6 +680,48 @@ TEST_F(GroupByOptimizations, hashMapOptimizationLazyAndMaterializedInputs) {
 }
 
 // _____________________________________________________________________________
+// The hash map GROUP BY computes the same result with and without prefetching
+// the aggregation data (runtime parameter `group-by-hash-map-prefetch`).
+TEST_F(GroupByOptimizations, hashMapOptimizationWithPrefetch) {
+  auto cleanupHashMap =
+      setRuntimeParameterForTest<&RuntimeParameters::groupByHashMapEnabled_>(
+          true);
+  // More rows than the prefetch distance, and the groups in random order, so
+  // that the prefetching loop and the loop for the last rows are both used.
+  constexpr size_t numRows = 1000;
+  constexpr size_t numGroups = 101;
+  std::vector<std::vector<IntOrId>> rows;
+  for (size_t i = 0; i < numRows; ++i) {
+    rows.push_back(
+        {static_cast<int64_t>((i * 37) % numGroups), static_cast<int64_t>(i)});
+  }
+
+  auto computeResult = [this, &rows](bool prefetch) {
+    auto cleanupPrefetch =
+        setRuntimeParameterForTest<&RuntimeParameters::groupByHashMapPrefetch_>(
+            prefetch);
+    std::vector<IdTable> tables;
+    tables.push_back(makeIdTableFromVector(rows, I));
+    auto subtree = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, std::move(tables),
+        std::vector<std::optional<Variable>>{Variable{"?x"}, Variable{"?y"}});
+    std::vector<Alias> aliases{Alias{makeCountPimpl(varY), Variable{"?count"}},
+                               Alias{makeSumPimpl(varY), Variable{"?sum"}},
+                               Alias{makeMinPimpl(varY), Variable{"?min"}},
+                               Alias{makeAvgPimpl(varY), Variable{"?avg"}}};
+    qec->getQueryTreeCache().clearAll();
+    GroupBy groupBy{qec, variablesOnlyX, aliases, std::move(subtree)};
+    auto result = groupBy.computeResultOnlyForTesting();
+    return result.idTable().clone();
+  };
+
+  auto withoutPrefetch = computeResult(false);
+  auto withPrefetch = computeResult(true);
+  EXPECT_EQ(withoutPrefetch.numRows(), numGroups);
+  EXPECT_EQ(withPrefetch, withoutPrefetch);
+}
+
+// _____________________________________________________________________________
 // An `EXISTS` inside a `GROUP BY` alias reads from a column that is constant
 // within each group, so it has to be substituted like a grouped variable during
 // the evaluation of the alias. This test checks that this works for all three
