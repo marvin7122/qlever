@@ -11,8 +11,10 @@
 #include "engine/CallFixedSize.h"
 #include "engine/ExistsJoin.h"
 #include "engine/QueryExecutionTree.h"
+#include "engine/sparqlExpressions/JitExpressionBytecodeVm.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
+#include "global/RuntimeParameters.h"
 #include "util/ChunkedForLoop.h"
 #include "util/Exception.h"
 
@@ -180,6 +182,34 @@ Result Bind::computeResult(bool requestLaziness) {
 IdTable Bind::computeExpressionBind(
     LocalVocab* localVocab, IdTable idTable,
     const sparqlExpression::SparqlExpression* expression) const {
+  // Attempt JIT compiled evaluation for integer-valued expressions (integer
+  // arithmetic over integer inputs, e.g. `BIND(?price * ?qty AS ?total)`).
+  // This covers the `ORDER BY` sort keys and `GROUP BY` aliases that the
+  // planner lowers to `Bind`. Programs without legacy-identical integer
+  // column semantics (division, comparisons, ID operations, and pure copies
+  // over non-integer cells, see `canExecuteAsIntColumn`) fall back to the
+  // generic evaluation below.
+  // Only if the runtime parameter `jit-expression-evaluation` is set.
+  auto optProgram =
+      getRuntimeParameter<&RuntimeParameters::jitExpressionEvaluation_>()
+          ? ql::engine::jit::JitExpressionBytecodeVm::compile(
+                *expression, _subtree->getVariableColumns())
+          : std::nullopt;
+  if (optProgram.has_value() &&
+      ql::engine::jit::JitExpressionBytecodeVm::canExecuteAsIntColumn(
+          optProgram.value(),
+          ql::engine::jit::JitExpressionBytecodeVm::scanColumnKinds(
+              optProgram.value(), idTable, 0, idTable.size(),
+              cancellationHandle_))) {
+    idTable.addEmptyColumn();
+    const ColumnIndex outputColumn = idTable.numColumns() - 1;
+    ql::engine::jit::JitExpressionBytecodeVm::executeIntColumn(
+        optProgram.value(), idTable, idTable, outputColumn,
+        cancellationHandle_);
+    checkCancellation();
+    return idTable;
+  }
+
   sparqlExpression::EvaluationContext evaluationContext(
       *getExecutionContext(), _subtree->getVariableColumns(),
       idTable.asStaticView<0>(), getExecutionContext()->getAllocator(),

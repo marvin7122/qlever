@@ -62,6 +62,15 @@ class PrefixRegexExpression : public SparqlExpression {
     return child_->isDeterministic();
   }
 
+  // Accessors for index-backed compilation (e.g. the JIT string fold):
+  // the literal prefix, the filtered variable, and whether the variable
+  // is wrapped in `STR()` (which adds the `<`-prefixed range).
+  [[nodiscard]] const std::string& getPrefix() const { return prefixRegex_; }
+  [[nodiscard]] const Variable& getVariable() const { return variable_; }
+  [[nodiscard]] bool isChildStrExpression() const {
+    return childIsStrExpression_;
+  }
+
  private:
   ql::span<Ptr> childrenImpl() override;
 

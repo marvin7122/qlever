@@ -148,6 +148,12 @@ struct RuntimeParameters {
   // false,
   // the result will be `NaN` or `infinity` respectively.
   Bool divisionByZeroIsUndef_{true, "division-by-zero-is-undef"};
+  // If set to `true`, `FILTER`, `BIND` and the child expressions of aggregates
+  // in a `GROUP BY` are evaluated by the JIT expression backends (bytecode VM,
+  // native code, index-folded string filters) where an expression can be
+  // lowered and its input cells allow it. Other expressions and inputs use the
+  // generic evaluation. The results are the same.
+  Bool jitExpressionEvaluation_{false, "jit-expression-evaluation"};
   // If set to `true`, the contained `FILTER` expressions in the query
   // try to set and apply a corresponding `PrefilterExpression` (see
   // `PrefilterExpressionIndex.h`) on its variable-related `IndexScan`
@@ -237,10 +243,13 @@ struct RuntimeParameters {
                               "log-level"};
 
   // Controls deduplication of triples in CONSTRUCT query results.
-  // "false" (default): no deduplication, every triple is emitted.
-  // "global": a triple is emitted at most once across the entire result.
-  // N (positive integer): deduplicate against the N most recently seen unique
-  // triples (per template triple); bounded memory, partial deduplication.
+  // "none" (default): no duplicate tracking; every valid instantiated result
+  // triple is emitted.
+  // "full": one shared set stores the full triple keys for the whole query;
+  // repeated result triples are suppressed.
+  // "lru:<positive integer>": one shared LRU cache stores at most that many
+  // recently seen unique full triple keys; bounded memory, partial
+  // deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 

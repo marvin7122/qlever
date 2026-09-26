@@ -23,9 +23,15 @@ add_library(sparqlExpressions
         PrefilterExpressionIndex.cpp
         GeoExpression.cpp
         BlankNodeExpression.cpp
-        GroupConcatExpression.cpp)
+        GroupConcatExpression.cpp
+        JitExpressionBytecodeVm.cpp
+        JitExpressionCompiler.cpp
+        JitStringFold.cpp)
 
 qlever_target_link_libraries(sparqlExpressions qlever_util index sortPerformanceEstimator)
 if (NOT REDUCED_FEATURE_SET_FOR_CPP17)
     target_link_libraries(sparqlExpressions PUBLIC Boost::url)
+    # The native JIT backend requires AsmJit (C++20), which is unavailable in
+    # the reduced feature set for C++17 (see the root `CMakeLists.txt`).
+    target_link_libraries(sparqlExpressions PUBLIC asmjit::asmjit)
 endif()
