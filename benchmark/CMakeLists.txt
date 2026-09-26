@@ -41,5 +41,6 @@ if (NOT _NO_BENCHMARK)
     # links the infrastructure `main`.
     add_executable(RadixJoinBenchmark RadixJoinBenchmark.cpp)
     qlever_target_link_libraries(RadixJoinBenchmark engine)
+    addAndLinkBenchmark(BlockedBloomFilterBenchmark global qlever_util)
 
 endif()

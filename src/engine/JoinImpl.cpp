@@ -4,6 +4,7 @@
 // 2018-2026 Johannes Kalmbach (kalmbach@informatik.uni-freiburg.de), UFR
 // 2025 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 // 2026 Mark Veser (mark.veser87@gmail.com)
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -12,6 +13,7 @@
 
 #include "engine/JoinImpl.h"
 
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -19,6 +21,7 @@
 #include "backports/functional.h"
 #include "backports/type_traits.h"
 #include "engine/AddCombinedRowToTable.h"
+#include "engine/BlockedBloomFilter.h"
 #include "engine/CallFixedSize.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
@@ -322,6 +325,43 @@ void JoinImpl::join(const IdTableView<0>& a, const IdTableView<0>& b,
   auto joinColumnL = a.getColumn(leftJoinCol_);
   auto joinColumnR = b.getColumn(rightJoinCol_);
 
+  // The UNDEF values are right at the start, so this calculation works.
+  size_t numUndefA =
+      ql::ranges::upper_bound(joinColumnL, ValueId::makeUndefined()) -
+      joinColumnL.begin();
+  size_t numUndefB =
+      ql::ranges::upper_bound(joinColumnR, ValueId::makeUndefined()) -
+      joinColumnR.begin();
+
+  // The hash join (if enabled) replaces the merge join, but not the galloping
+  // join. It iterates over the larger input, which is sorted by the join
+  // column, so the result is sorted by the join column as well. It writes the
+  // columns in the order [columns-a, non-join-columns-b], so it needs neither
+  // the row adder nor the column permutations below.
+  bool useGallopingJoin = (a.size() / b.size() > GALLOP_THRESHOLD ||
+                           b.size() / a.size() > GALLOP_THRESHOLD);
+  if (!useGallopingJoin && numUndefA == 0 && numUndefB == 0 &&
+      getRuntimeParameter<&RuntimeParameters::joinUseHashJoin_>()) {
+    runtimeInfo().addDetail("join-algorithm", "hash");
+    runtimeInfo().addDetail(
+        "hash-join-bloom-filter",
+        getRuntimeParameter<&RuntimeParameters::hashJoinBloomFilter_>());
+    IdTable hashJoinResult{a.numColumns() + b.numColumns() - 1, allocator()};
+    hashJoin(a, leftJoinCol_, b, rightJoinCol_, &hashJoinResult);
+    checkCancellation();
+    if (!keepJoinColumn_) {
+      std::vector<ColumnIndex> columnsWithoutJoinColumn;
+      for (ColumnIndex i = 0; i < hashJoinResult.numColumns(); ++i) {
+        if (i != leftJoinCol_) {
+          columnsWithoutJoinColumn.push_back(i);
+        }
+      }
+      hashJoinResult.setColumnSubset(columnsWithoutJoinColumn);
+    }
+    *result = std::move(hashJoinResult);
+    return;
+  }
+
   auto aPermuted = a.asColumnSubsetView(joinColumnData.permutationLeft());
   auto bPermuted = b.asColumnSubsetView(joinColumnData.permutationRight());
 
@@ -334,13 +374,6 @@ void JoinImpl::join(const IdTableView<0>& a, const IdTableView<0>& b,
     rowAdder.addRow(itLeft - beginLeft, itRight - beginRight);
   };
 
-  // The UNDEF values are right at the start, so this calculation works.
-  size_t numUndefA =
-      ql::ranges::upper_bound(joinColumnL, ValueId::makeUndefined()) -
-      joinColumnL.begin();
-  size_t numUndefB =
-      ql::ranges::upper_bound(joinColumnR, ValueId::makeUndefined()) -
-      joinColumnR.begin();
   std::pair undefRangeA{joinColumnL.begin(), joinColumnL.begin() + numUndefA};
   std::pair undefRangeB{joinColumnR.begin(), joinColumnR.begin() + numUndefB};
 
@@ -428,8 +461,8 @@ Result JoinImpl::lazyJoin(std::shared_ptr<const Result> a,
 
 // ______________________________________________________________________________
 template <int L_WIDTH, int R_WIDTH, int OUT_WIDTH>
-void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
-                            const IdTable& dynB, ColumnIndex jc2,
+void JoinImpl::hashJoinImpl(const IdTableView<0>& dynA, ColumnIndex jc1,
+                            const IdTableView<0>& dynB, ColumnIndex jc2,
                             IdTable* dynRes) {
   const IdTableView<L_WIDTH> a = dynA.asStaticView<L_WIDTH>();
   const IdTableView<R_WIDTH> b = dynB.asStaticView<R_WIDTH>();
@@ -447,18 +480,28 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
 
   IdTableStatic<OUT_WIDTH> result = std::move(*dynRes).toStatic<OUT_WIDTH>();
 
+  using Filter = std::optional<ql::engine::filter::BlockedBloomFilter>;
+
   // Puts the rows of the given table into a hash map, with the value of
-  // the join column of a row as the key, and returns the hash map.
-  auto idTableToHashMap = [](const auto& table, const ColumnIndex jc) {
+  // the join column of a row as the key, and returns the hash map. Also adds
+  // each key to `filter` if it is set.
+  auto idTableToHashMap = [](const auto& table, const ColumnIndex jc,
+                             Filter& filter) {
     // This declaration works, because generic lambdas are just syntactic sugar
     // for templates.
     using Table = std::decay_t<decltype(table)>;
     ad_utility::HashMap<Id, std::vector<typename Table::row_type>> map;
     for (const auto& row : table) {
       map[row[jc]].push_back(row);
+      if (filter.has_value()) {
+        filter->insert(row[jc]);
+      }
     }
     return map;
   };
+
+  const bool useBloomFilter =
+      getRuntimeParameter<&RuntimeParameters::hashJoinBloomFilter_>();
 
   /*
    * @brief Joins the two tables, putting the result in result. Creates a cross
@@ -475,17 +518,30 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
    *  of the tables
    */
   auto performHashJoin = ad_utility::ApplyAsValueIdentity{
-      [&idTableToHashMap, &result](auto leftIsLarger, const auto& largerTable,
-                                   const ColumnIndex largerTableJoinColumn,
-                                   const auto& smallerTable,
-                                   const ColumnIndex smallerTableJoinColumn) {
-        // Put the smaller table into the hash table.
-        auto map = idTableToHashMap(smallerTable, smallerTableJoinColumn);
+      [&idTableToHashMap, &result, useBloomFilter](
+          auto leftIsLarger, const auto& largerTable,
+          const ColumnIndex largerTableJoinColumn, const auto& smallerTable,
+          const ColumnIndex smallerTableJoinColumn) {
+        // Put the smaller table into the hash table. If enabled, the
+        // `BlockedBloomFilter` of its join column rejects most keys of the
+        // larger table that have no partner with one cache-line access, before
+        // the more expensive hash map lookup.
+        Filter filter;
+        if (useBloomFilter) {
+          filter.emplace(smallerTable.size(), result.getAllocator());
+        }
+        auto map =
+            idTableToHashMap(smallerTable, smallerTableJoinColumn, filter);
 
         // Create cross product by going through the larger table.
         for (size_t i = 0; i < largerTable.size(); i++) {
+          const Id key = largerTable(i, largerTableJoinColumn);
+          if (filter.has_value() && !filter->contains(key)) {
+            continue;
+          }
+
           // Skip, if there is no matching entry for the join column.
-          auto entry = map.find(largerTable(i, largerTableJoinColumn));
+          auto entry = map.find(key);
           if (entry == map.end()) {
             continue;
           }
@@ -524,8 +580,9 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
 }
 
 // ______________________________________________________________________________
-void JoinImpl::hashJoin(const IdTable& dynA, ColumnIndex jc1,
-                        const IdTable& dynB, ColumnIndex jc2, IdTable* dynRes) {
+void JoinImpl::hashJoin(const IdTableView<0>& dynA, ColumnIndex jc1,
+                        const IdTableView<0>& dynB, ColumnIndex jc2,
+                        IdTable* dynRes) {
   ad_utility::callFixedSizeVi(
       (std::array{dynA.numColumns(), dynB.numColumns(), dynRes->numColumns()}),
       [&](auto l, auto r, auto o) {

@@ -88,8 +88,10 @@ class JoinImpl : public Operation {
    * - The normal merge join.
    * - The doGallopInnerJoin.
    * - The hashJoinImpl.
-   * Currently it only decides between doGallopInnerJoin and the standard merge
-   * join, with the merge join code directly written in the function.
+   * It uses the galloping join if the input sizes differ by more than
+   * `GALLOP_THRESHOLD`, else the hash join if the runtime parameter
+   * `join-use-hash-join` is set and the join columns contain no UNDEF values,
+   * else the merge join, which is written directly in the function.
    * TODO Move the merge join into it's own function and make this function
    * a proper switch.
    **/
@@ -116,8 +118,9 @@ class JoinImpl : public Operation {
    * @return The result is only sorted, if the bigger table is sorted.
    * Otherwise it is not sorted.
    **/
-  static void hashJoin(const IdTable& dynA, ColumnIndex jc1,
-                       const IdTable& dynB, ColumnIndex jc2, IdTable* dynRes);
+  static void hashJoin(const IdTableView<0>& dynA, ColumnIndex jc1,
+                       const IdTableView<0>& dynB, ColumnIndex jc2,
+                       IdTable* dynRes);
 
   std::string getCacheKeyImpl() const override;
   std::unique_ptr<Operation> cloneImpl() const override;
@@ -183,8 +186,8 @@ class JoinImpl : public Operation {
    * @brief The implementation of hashJoin.
    */
   template <int L_WIDTH, int R_WIDTH, int OUT_WIDTH>
-  static void hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
-                           const IdTable& dynB, ColumnIndex jc2,
+  static void hashJoinImpl(const IdTableView<0>& dynA, ColumnIndex jc1,
+                           const IdTableView<0>& dynB, ColumnIndex jc2,
                            IdTable* dynRes);
 
   // Commonly used code for the various known-to-be-empty cases.

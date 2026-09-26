@@ -101,6 +101,17 @@ struct RuntimeParameters {
       1'000'000, "lazy-index-scan-max-size-materialization"};
   Bool useBinsearchTransitivePath_{true, "use-binsearch-transitive-path"};
   Bool groupByHashMapEnabled_{false, "group-by-hash-map-enabled"};
+  // If `true`, a `Join` of two fully materialized inputs without UNDEF values
+  // in the join columns uses a hash join (hash map of the smaller input,
+  // probed with the rows of the larger input) instead of the merge join. Inputs
+  // whose sizes differ by more than `GALLOP_THRESHOLD` still use the galloping
+  // join.
+  Bool joinUseHashJoin_{false, "join-use-hash-join"};
+  // If `true`, the hash join puts a `BlockedBloomFilter` of the join column of
+  // the smaller input in front of the hash map lookup, so that most rows of the
+  // larger input without a join partner are rejected with one cache-line
+  // access.
+  Bool hashJoinBloomFilter_{false, "hash-join-bloom-filter"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};
@@ -236,18 +247,11 @@ struct RuntimeParameters {
   LogLevelParameter logLevel_{LogLevel{ad_utility::detail::defaultLogLevel},
                               "log-level"};
 
-  // Control deduplication of triples in CONSTRUCT query results.
-  // Set the mode to `none` (default) to track no duplicates and emit every
-  // valid instantiated result triple.
-  // Set the mode to `full` to store the full triple keys in one shared set
-  // for the whole query and suppress repeated result triples without blank
-  // nodes. Triples with blank nodes bypass deduplication and are always
-  // emitted.
-  // Set the mode to `lru:<positive integer>` to store at most that many
-  // recently seen unique full triple keys in one shared LRU cache. Bound
-  // memory with partial deduplication. The cache is reset once its local
-  // vocabulary exceeds a size threshold, so previously seen keys may be
-  // emitted again.
+  // Controls deduplication of triples in CONSTRUCT query results.
+  // "false" (default): no deduplication, every triple is emitted.
+  // "global": a triple is emitted at most once across the entire result.
+  // N (positive integer): deduplicate against the N most recently seen unique
+  // triples (per template triple); bounded memory, partial deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
