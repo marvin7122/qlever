@@ -32,6 +32,7 @@
 #include "engine/ResponseJson.h"
 #include "engine/SparqlProtocol.h"
 #include "engine/UpdateMetadata.h"
+#include "engine/export_v2/SelectCsvStreamer.h"
 #include "global/RuntimeParameters.h"
 #include "libqlever/Qlever.h"
 #include "parser/ParsedQuery.h"
@@ -961,16 +962,29 @@ CPP_template_def(typename RequestT, typename SendT)(
         const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
         SharedCancellationHandle cancellationHandle,
         ql::engine::ExportEngineMode engineMode) const {
-  // TODO<Marvin Stoetzel> Execute the V2 streaming engine in the V2 arm. Until
-  // then, both arms execute the V1 pipeline.
-  if (engineMode == ql::engine::ExportEngineMode::FastStreamingV2) {
-    AD_LOG_INFO << "V2 export engine requested; executing via the V1 "
-                   "implementation until the streaming engine lands."
+  // Only SELECT queries exported as CSV have a V2 executor so far; every other
+  // shape executes the V1 pipeline. The router guarantees V2 eligibility, this
+  // check narrows it to the implemented shape.
+  const auto& parsedQuery = plannedQuery.parsedQuery();
+  const auto& queryExecutionTree = plannedQuery.queryExecutionTree();
+  const bool v2Requested =
+      engineMode == ql::engine::ExportEngineMode::FastStreamingV2;
+  const bool useV2Csv = v2Requested && mediaType == MediaType::csv &&
+                        parsedQuery.hasSelectClause();
+  if (v2Requested && !useV2Csv) {
+    AD_LOG_INFO << "V2 export engine requested for an unimplemented shape; "
+                   "executing via the V1 implementation."
                 << std::endl;
   }
-  auto responseGenerator = ExportQueryExecutionTrees::computeResult(
-      plannedQuery.parsedQuery(), plannedQuery.queryExecutionTree(), mediaType,
-      requestTimer, std::move(cancellationHandle));
+  auto responseGenerator =
+      useV2Csv
+          ? ql::engine::export_v2::SelectCsvStreamer::run(
+                queryExecutionTree, parsedQuery,
+                ql::engine::export_v2::SelectCsvStreamer::defaultRowsPerChunk,
+                std::move(cancellationHandle))
+          : ExportQueryExecutionTrees::computeResult(
+                parsedQuery, queryExecutionTree, mediaType, requestTimer,
+                std::move(cancellationHandle));
 
   auto response = ad_utility::httpUtils::createOkResponse(
       std::move(responseGenerator), request, mediaType);
