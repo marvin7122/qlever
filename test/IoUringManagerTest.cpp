@@ -544,6 +544,11 @@ TEST(IoUringPolicy, thirdVocabularyFileIsRejected) {
   };
   submit(firstFd, firstBuffers, 0);
   submit(secondFd, secondBuffers, 1);
+  // The two fixed-file reads must actually read the right file's data, not
+  // just succeed: this is what the `ownerFd`/`registeredFd` slot mapping in
+  // `fileIndexForFd` is for.
+  EXPECT_EQ(firstBuffer, "AAAA");
+  EXPECT_EQ(secondBuffer, "BBBB");
   AD_EXPECT_THROW_WITH_MESSAGE(
       policy.addBatch(thirdFd, sizes, offsets, thirdBuffers, 2),
       HasSubstr("at most two vocabulary files"));
