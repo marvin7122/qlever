@@ -405,6 +405,10 @@ std::string escapeForCsv(std::string input) {
 // __________________________________________________________________________
 void appendEscapedForTsv(std::string& out, std::string_view input) {
   checkNoOverlap(out, input);
+  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
+    out.append(input);
+    return;
+  }
   appendWithCharReplacements(out, input, tsvReplacements);
 }
 
