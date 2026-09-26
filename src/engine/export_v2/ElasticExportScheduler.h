@@ -10,6 +10,7 @@
 
 #include <absl/functional/any_invocable.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -179,7 +180,14 @@ class ExportWorkSession;
 
 class ElasticExportScheduler {
  public:
+  // Dedicated std::thread workers (unit tests).
   explicit ElasticExportScheduler(size_t numThreads = 0,
+                                  size_t queueCapacity = 1024);
+  // Live V2: post CPU morsels onto Server::queryThreadPool_ so we do not
+  // create a second pool. When another query is registered, admission
+  // stops and in-flight tasks no-op; the coordinator serializes itself.
+  using WorkPoster = absl::AnyInvocable<void(absl::AnyInvocable<void()>)>;
+  explicit ElasticExportScheduler(WorkPoster poster,
                                   size_t queueCapacity = 1024);
   ~ElasticExportScheduler();
 
@@ -212,9 +220,13 @@ class ElasticExportScheduler {
     return totalActiveHelpers_.load(std::memory_order_relaxed);
   }
 
-  /// Total number of dedicated helper worker threads in this pool.
+  /// Dedicated std::thread workers. Zero when posting onto queryThreadPool_.
   [[nodiscard]] size_t workerThreadCount() const noexcept {
     return workers_.size();
+  }
+
+  [[nodiscard]] bool postsToQueryThreadPool() const noexcept {
+    return static_cast<bool>(poster_);
   }
 
   /// Bounded capacity of the helper work queue.
@@ -258,8 +270,17 @@ class ElasticExportScheduler {
 
  private:
   void workerLoop();
+  void runPostedMorsel(OwnedMorsel morsel);
+  // Run one admitted morsel under an acquired lease. Shared by `workerLoop`
+  // and `runPostedMorsel`; swallows the task's exception (already stored in
+  // the slot) so that no helper thread terminates.
+  static void runLeasedHelperTask(ExportJobStateBase* targetJobState,
+                                  size_t targetMorselIndex,
+                                  uint64_t submissionEpoch,
+                                  uint64_t leaseEpoch);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
 
+  WorkPoster poster_;
   const size_t maxQueueCapacity_;
   std::atomic<size_t> maxForegroundQueriesForHelperAdmission_{1};
   std::atomic<uint64_t> demandEpoch_{1};
@@ -291,6 +312,10 @@ class ExportJobState final
  public:
   struct Slot {
     MorselStatus status_{MorselStatus::Pending};
+    // Set once the coordinator hands the result out. Unordered sessions emit
+    // whichever morsel completes first, so consumption is tracked per slot
+    // rather than by position.
+    bool consumed_{false};
     absl::AnyInvocable<ResultType()> task_;
     std::optional<ResultType> result_;
     // Captured failure of `task_`: rethrown by `consumeNextResult` so a
@@ -427,7 +452,7 @@ class ExportJobState final
       }
     } catch (...) {
       // Convert the exception into a terminal slot state and wake the
-      // consumer: rethrowing lets `workerLoop` keep its never-escape
+      // consumer: rethrowing lets `runLeasedHelperTask` keep its never-escape
       // guarantee while `consumeNextResult` observes the stored failure
       // instead of waiting on a `Running` slot forever.
       std::lock_guard<std::mutex> lock(mutex_);
@@ -447,40 +472,45 @@ class ExportJobState final
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
     AD_CONTRACT_CHECK(task != nullptr, "Cannot submit null morsel task");
     size_t index = 0;
-    bool shouldEnqueue = false;
-    uint64_t epochToSubmit = 0;
-
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      AD_CONTRACT_CHECK(!closed_, "Cannot submit morsel to closed session");
-      AD_CONTRACT_CHECK(!cancelled_,
-                        "Cannot submit morsel to cancelled session");
-
-      index = slots_.size();
-      Slot slot;
-      slot.status_ = MorselStatus::Pending;
-      slot.task_ = std::move(task);
-      slot.profile_.morselIndex_ = index;
-      slot.profile_.submittedAt_ = std::chrono::steady_clock::now();
-      slots_.push_back(std::move(slot));
-
-      epochToSubmit = currentEpoch_.load(std::memory_order_relaxed);
-      if (state_.load(std::memory_order_relaxed) ==
-          SessionState::HelpersEligible) {
-        shouldEnqueue = true;
-      }
-    }
-
-    if (shouldEnqueue) {
-      scheduler_->enqueueMorsel(
-          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index));
-    }
+    AD_CONTRACT_CHECK(appendAndEnqueue(std::move(task), &index),
+                      "Cannot submit morsel to closed or cancelled session");
     return index;
+  }
+
+  // Soft version of `submitMorsel` for tasks that resubmit themselves (e.g.
+  // an abandoned remainder after revocation): reports `false` instead of
+  // firing when the session is closed or cancelled. The caller must drop the
+  // remainder on `false`; on cancellation the whole job is torn down anyway.
+  bool trySubmitMorsel(absl::AnyInvocable<ResultType()> task) {
+    if (task == nullptr) {
+      return false;
+    }
+    size_t index = 0;
+    return appendAndEnqueue(std::move(task), &index);
+  }
+
+  // Submission epoch for a task created now. Morsel tasks compare it against
+  // the live epoch at checkpoints to notice revocation without locking.
+  [[nodiscard]] uint64_t currentEpoch() const {
+    return currentEpoch_.load(std::memory_order_relaxed);
+  }
+
+  // Row order is significant only when the query bounds the result
+  // (LIMIT/OFFSET/export limit select a deterministic prefix). Unordered
+  // sessions emit whichever morsel completes first, which removes
+  // head-of-line blocking behind a slow morsel. Must be fixed before the
+  // first consume.
+  void setOrdered(bool ordered) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    AD_CONTRACT_CHECK(nextSlotToConsume_ == 0,
+                      "Emission order must be fixed before consuming");
+    ordered_ = ordered;
   }
 
   [[nodiscard]] bool hasMoreResults() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return nextSlotToConsume_ < slots_.size();
+    return std::any_of(slots_.begin(), slots_.end(),
+                       [](const Slot& slot) { return !slot.consumed_; });
   }
 
   [[nodiscard]] size_t totalSlots() const {
@@ -490,7 +520,8 @@ class ExportJobState final
 
   [[nodiscard]] size_t consumedSlots() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return nextSlotToConsume_;
+    return std::count_if(slots_.begin(), slots_.end(),
+                         [](const Slot& slot) { return slot.consumed_; });
   }
 
   ResultType consumeNextResult() {
@@ -498,9 +529,44 @@ class ExportJobState final
     absl::AnyInvocable<ResultType()> primaryTask;
 
     std::unique_lock<std::mutex> lock(mutex_);
-    AD_CONTRACT_CHECK(nextSlotToConsume_ < slots_.size(),
-                      "No more submitted morsels to consume");
-    index = nextSlotToConsume_++;
+    if (ordered_) {
+      AD_CONTRACT_CHECK(nextSlotToConsume_ < slots_.size(),
+                        "No more submitted morsels to consume");
+      index = nextSlotToConsume_++;
+    } else {
+      // Completion order: a finished morsel first, else a pending one for
+      // inline execution, else a running one to wait on in the shared
+      // machine below. Anything else means nothing is consumable.
+      size_t completed = slots_.size();
+      size_t pending = slots_.size();
+      size_t running = slots_.size();
+      for (size_t i = 0; i < slots_.size(); ++i) {
+        if (slots_[i].consumed_) {
+          continue;
+        }
+        if (slots_[i].status_ == MorselStatus::Completed) {
+          completed = i;
+          break;
+        }
+        if (slots_[i].status_ == MorselStatus::Pending &&
+            pending == slots_.size()) {
+          pending = i;
+        }
+        if (slots_[i].status_ == MorselStatus::Running &&
+            running == slots_.size()) {
+          running = i;
+        }
+      }
+      if (completed != slots_.size()) {
+        index = completed;
+      } else if (pending != slots_.size()) {
+        index = pending;
+      } else if (running != slots_.size()) {
+        index = running;
+      }
+      AD_CONTRACT_CHECK(index < slots_.size() && !slots_[index].consumed_,
+                        "No more submitted morsels to consume");
+    }
 
     while (true) {
       if (cancelled_) {
@@ -510,6 +576,7 @@ class ExportJobState final
 
       if (slots_[index].status_ == MorselStatus::Completed) {
         AD_CORRECTNESS_CHECK(slots_[index].result_.has_value());
+        slots_[index].consumed_ = true;
         return std::move(*slots_[index].result_);
       }
 
@@ -550,6 +617,7 @@ class ExportJobState final
           slots_[index].profile_.wallDuration_ = endWall - startWall;
           slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
           slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
+          slots_[index].consumed_ = true;
           cv_.notify_all();
           return std::move(*slots_[index].result_);
         } catch (...) {
@@ -572,14 +640,33 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Running) {
-        // Wait for running helper worker to finish CPU morsel. A `Cancelled`
-        // wakeup means the worker stored a task failure (handled above on
-        // the next loop iteration).
+        // Wait for a running helper worker to finish a CPU morsel. In
+        // unordered mode completions broadcast on this cv, so wake on any
+        // finished unconsumed slot and re-select: emitting whichever morsel
+        // is ready avoids head-of-line blocking behind the selected one.
+        // Ordered sessions preserve slot order and keep waiting. A
+        // `Cancelled` wakeup means the worker stored a task failure (handled
+        // above on the next loop iteration).
         cv_.wait(lock, [&] {
           return slots_[index].status_ == MorselStatus::Completed ||
                  slots_[index].status_ == MorselStatus::Cancelled ||
-                 cancelled_.load(std::memory_order_relaxed);
+                 cancelled_.load(std::memory_order_relaxed) ||
+                 (!ordered_ && std::any_of(slots_.begin(), slots_.end(),
+                                           [](const Slot& slot) {
+                                             return !slot.consumed_ &&
+                                                    slot.status_ ==
+                                                        MorselStatus::Completed;
+                                           }));
         });
+        if (!ordered_ && slots_[index].status_ != MorselStatus::Completed) {
+          for (size_t i = 0; i < slots_.size(); ++i) {
+            if (!slots_[i].consumed_ &&
+                slots_[i].status_ == MorselStatus::Completed) {
+              index = i;
+              break;
+            }
+          }
+        }
       }
     }
   }
@@ -629,6 +716,37 @@ class ExportJobState final
   }
 
  private:
+  // Append a Pending slot and offer it to helpers when eligible; false when
+  // closed or cancelled. Shared core of `submitMorsel` (which fires) and
+  // `trySubmitMorsel` (which reports).
+  bool appendAndEnqueue(absl::AnyInvocable<ResultType()> task, size_t* index) {
+    bool shouldEnqueue = false;
+    uint64_t epochToSubmit = 0;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (closed_ || cancelled_) {
+        return false;
+      }
+      *index = slots_.size();
+      Slot slot;
+      slot.status_ = MorselStatus::Pending;
+      slot.task_ = std::move(task);
+      slot.profile_.morselIndex_ = *index;
+      slot.profile_.submittedAt_ = std::chrono::steady_clock::now();
+      slots_.push_back(std::move(slot));
+      epochToSubmit = currentEpoch_.load(std::memory_order_relaxed);
+      if (state_.load(std::memory_order_relaxed) ==
+          SessionState::HelpersEligible) {
+        shouldEnqueue = true;
+      }
+    }
+    if (shouldEnqueue) {
+      scheduler_->enqueueMorsel(
+          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, *index));
+    }
+    return true;
+  }
+
   static std::chrono::nanoseconds getCpuDuration() noexcept {
 #if defined(__linux__)
     struct timespec ts;
@@ -652,6 +770,9 @@ class ExportJobState final
   std::condition_variable cv_;
   std::vector<Slot> slots_;
   size_t nextSlotToConsume_{0};
+  // False when row order is semantically irrelevant (no LIMIT/OFFSET/export
+  // limit): morsels emit in completion order instead of slot order.
+  bool ordered_{true};
 };
 
 // -----------------------------------------------------------------------------
@@ -682,6 +803,13 @@ class ExportWorkSession {
     return state_->jobId();
   }
 
+  // Shared ownership for morsel tasks that resubmit themselves (abandoned
+  // remainders). Keeps the state alive while any task can still observe it.
+  [[nodiscard]] std::shared_ptr<ExportJobState<ResultType>> sharedState()
+      const noexcept {
+    return state_;
+  }
+
   [[nodiscard]] SessionState state() const noexcept {
     AD_CONTRACT_CHECK(state_ != nullptr);
     return state_->state();
@@ -695,6 +823,21 @@ class ExportWorkSession {
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
     AD_CONTRACT_CHECK(state_ != nullptr);
     return state_->submitMorsel(std::move(task));
+  }
+
+  void setOrdered(bool ordered) {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    state_->setOrdered(ordered);
+  }
+
+  bool trySubmitMorsel(absl::AnyInvocable<ResultType()> task) {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    return state_->trySubmitMorsel(std::move(task));
+  }
+
+  [[nodiscard]] uint64_t currentEpoch() const {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    return state_->currentEpoch();
   }
 
   [[nodiscard]] bool hasMoreResults() const {

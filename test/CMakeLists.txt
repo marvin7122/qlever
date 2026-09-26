@@ -254,7 +254,14 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
 if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    # The `server` library is not built for Emscripten (see
+    # `src/engine/CMakeLists.txt`); the scheduler test needs no `server`
+    # symbols, so link it only where the target exists.
+    if (TARGET server)
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    else ()
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine)
+    endif ()
 endif ()
 
 addLinkAndDiscoverTest(IdTableTest qlever_util)
@@ -316,6 +323,8 @@ addLinkAndDiscoverTest(SparqlExpressionTest sparqlExpressions index engine)
 addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions index engine)
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
+
+addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
 
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
@@ -616,6 +625,10 @@ addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
 
+addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+
 # Header-only util under export_v2; do not pull testUtil/index (cluster GCC
 # range-v3 needs -fpermissive for those translation units).
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
@@ -639,12 +652,20 @@ if (NOT QLEVER_ENABLE_EXPORT_V2)
 endif ()
 
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
-# range-v3 fails in IndexImpl / CompressedExternalIdTable).
+# range-v3 fails in IndexImpl / CompressedExternalIdTable). The standalone
+# `localVocab` lib (no `index` dependency) provides `LocalVocab::getWord`
+# used by the serialize path.
 # Requires the enabled pipeline (`PipelineMorselIntegration` pushes with
 # `runtimeEnabled_ = true` and expects `Accepted`).
 if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global)
+    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global localVocab)
     if (NOT SINGLE_TEST_BINARY)
         target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     endif()
+endif ()
+
+# Byte identity of the V2 serializer with and without
+# `MonomorphicRowSerializer` against Legacy; needs a test index.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2MonomorphicTest engine sparqlParser)
 endif ()
