@@ -108,9 +108,6 @@ string JoinImpl::getDescriptor() const { return "Join on " + joinVar_.name(); }
 // _____________________________________________________________________________
 Result JoinImpl::computeResult(bool requestLaziness) {
   AD_LOG_DEBUG << "Getting sub-results for join result computation..." << endl;
-  if (sizeEstimateUsesSketches_) {
-    runtimeInfo().addDetail("size-estimate-from-predicate-sketches", true);
-  }
   if (left_->knownEmptyResult() || right_->knownEmptyResult()) {
     left_->getRootOperation()->updateRuntimeInformationWhenOptimizedOut();
     right_->getRootOperation()->updateRuntimeInformationWhenOptimizedOut();

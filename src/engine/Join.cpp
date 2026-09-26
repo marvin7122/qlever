@@ -80,6 +80,9 @@ std::unique_ptr<Operation> Join::cloneImpl() const {
 
 // _____________________________________________________________________________
 Result Join::computeResult(bool requestLaziness) {
+  if (impl_->sizeEstimateUsesSketches()) {
+    runtimeInfo().addDetail("size-estimate-from-predicate-sketches", true);
+  }
   return impl_->computeResult(requestLaziness);
 }
 

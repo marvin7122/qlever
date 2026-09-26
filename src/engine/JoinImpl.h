@@ -74,6 +74,10 @@ class JoinImpl : public Operation {
 
   void computeSizeEstimateAndMultiplicities();
 
+  // True if the size estimate used the HyperLogLog sketches of both join
+  // columns.
+  bool sizeEstimateUsesSketches() const { return sizeEstimateUsesSketches_; }
+
   float getMultiplicity(size_t col) override;
 
   std::vector<QueryExecutionTree*> getChildren() override {
