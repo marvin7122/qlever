@@ -582,6 +582,12 @@ if (ENABLE_EXPENSIVE_CHECKS)
     add_compile_definitions(AD_ENABLE_EXPENSIVE_CHECKS)
 endif ()
 
+OPTION(QLEVER_MEASURE_IO_WAIT "Compile in the io-wait storage accounting (diagnostic aid, off by default so production builds carry zero overhead)" OFF)
+if (QLEVER_MEASURE_IO_WAIT)
+    message(STATUS "Compiling in io-wait storage accounting")
+    add_compile_definitions(QLEVER_MEASURE_IO_WAIT)
+endif ()
+
 set(QUERY_CANCELLATION_MODE "ENABLED" CACHE STRING "Option to allow disabling cancellation checks partially or completely to reduce the overhead of this mechanism during query computation.")
 # Hint for cmake gui, but not actually enforced
 set_property(CACHE QUERY_CANCELLATION_MODE PROPERTY STRINGS "ENABLED" "NO_WATCH_DOG" "DISABLED")
