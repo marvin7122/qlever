@@ -28,7 +28,7 @@ auto iriV = ad_utility::testing::iriV;
 
 static auto matchTriple(const std::string& s, const std::string& p,
                         const std::string& o) {
-  auto termStr = [](const EvaluatedTerm& t) {
+  auto termStr = [](const EvaluatedTermRef& t) {
     return formatTerm(*t, /*includeDataType=*/false);
   };
   return AllOf(Field(&EvaluatedTriple::subject_, ResultOf(termStr, s)),
@@ -358,7 +358,7 @@ TEST_F(ConstructTripleGeneratorTest, cannotCancelDuringBatch) {
 }
 
 // The `IdCache` is shared across batches: for the same `Id`, the
-// `EvaluatedTerm` `shared_ptr` returned in batch 1 is pointer-identical to the
+// `EvaluatedTermRef::data_` pointer returned in batch 1 is identical to the
 // one from batch 0, proving the cache was not reset between batches.
 TEST_F(ConstructTripleGeneratorTest, idCacheIsSharedAcrossBatches) {
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
@@ -379,9 +379,10 @@ TEST_F(ConstructTripleGeneratorTest, idCacheIsSharedAcrossBatches) {
   ASSERT_EQ(collected.size(), N);
 
   // Batch 0: row 0. Batch 1: last row. Check pointer equality here.
-  const EvaluatedTerm& fromBatch0 = collected.front().subject_;
-  const EvaluatedTerm& fromBatch1 = collected.back().subject_;
-  EXPECT_EQ(fromBatch0.get(), fromBatch1.get());
+  const EvaluatedTermRef& fromBatch0 = collected.front().subject_;
+  const EvaluatedTermRef& fromBatch1 = collected.back().subject_;
+  EXPECT_EQ(fromBatch0.data_, fromBatch1.data_);
+  EXPECT_EQ(fromBatch0.keepAlive_, fromBatch1.keepAlive_);
 }
 
 // =============================================================================
