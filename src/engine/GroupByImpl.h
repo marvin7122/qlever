@@ -241,7 +241,10 @@ class GroupByImpl : public Operation {
 
   // `SELECT (SUM(STRLEN(?cat)) AS ?s) { { SELECT (GROUP_CONCAT(?o; SEP) AS
   // ?cat) { ?s <p> ?o } GROUP BY ?s } }`. Algebra:
-  // Σ STRLEN(o) + (N_rows − N_groups) · STRLEN(sep).
+  // Σ STRLEN(o) + (N_rows − N_groups) · STRLEN(sep). Return `std::nullopt`
+  // (fall back to the generic evaluation) if the pattern does not match, if
+  // GROUP_CONCAT would reject one of the values, or if the sum does not fit
+  // into `int64_t`.
   std::optional<IdTable> computeSumStrlenOfGroupConcat() const;
 
   // Stores information required for substitution of an expression in an
@@ -649,6 +652,11 @@ namespace groupBy::detail {
 template <typename A>
 CPP_concept VectorOfAggregationData =
     ad_utility::SameAsAnyTypeIn<A, GroupByImpl::AggregationDataVectors>;
-}
+
+// Return `sum + factor1 * factor2`, or `std::nullopt` if the product or the
+// sum does not fit into `int64_t` (signed overflow is undefined behavior).
+std::optional<int64_t> checkedAddProduct(int64_t sum, int64_t factor1,
+                                         int64_t factor2);
+}  // namespace groupBy::detail
 
 #endif  // QLEVER_SRC_ENGINE_GROUPBYIMPL_H

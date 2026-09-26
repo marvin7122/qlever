@@ -2020,6 +2020,19 @@ size_t utf8Length(std::string_view s) {
 }  // namespace
 
 // _____________________________________________________________________________
+std::optional<int64_t> groupBy::detail::checkedAddProduct(int64_t sum,
+                                                          int64_t factor1,
+                                                          int64_t factor2) {
+  int64_t product = 0;
+  int64_t result = 0;
+  if (__builtin_mul_overflow(factor1, factor2, &product) ||
+      __builtin_add_overflow(sum, product, &result)) {
+    return std::nullopt;
+  }
+  return result;
+}
+
+// _____________________________________________________________________________
 std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
   if (!_groupByVariables.empty() || _aliases.size() != 1) {
     return std::nullopt;
@@ -2169,14 +2182,22 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
     }
     const auto length = static_cast<int64_t>(
         utf8Length(asStringViewUnsafe(groupConcatLiteral->getContent())));
-    sumStrlen += length * objects(i, 1).getInt();
+    auto newSum = groupBy::detail::checkedAddProduct(sumStrlen, length,
+                                                     objects(i, 1).getInt());
+    if (!newSum.has_value()) {
+      return std::nullopt;
+    }
+    sumStrlen = newSum.value();
     cancellationHandle_->throwIfCancelled();
   }
 
   const int64_t sepLen =
       static_cast<int64_t>(utf8Length(groupConcat->getSeparator()));
-  const int64_t total =
-      sumStrlen + static_cast<int64_t>(numRows - numGroups) * sepLen;
+  auto total = groupBy::detail::checkedAddProduct(
+      sumStrlen, static_cast<int64_t>(numRows - numGroups), sepLen);
+  if (!total.has_value()) {
+    return std::nullopt;
+  }
 
   innerChildren[0]
       ->getRootOperation()
@@ -2189,7 +2210,7 @@ std::optional<IdTable> GroupByImpl::computeSumStrlenOfGroupConcat() const {
   }
 
   IdTable table{1, getExecutionContext()->getAllocator()};
-  table.push_back({Id::makeFromInt(total)});
+  table.push_back({Id::makeFromInt(total.value())});
   return table;
 }
 

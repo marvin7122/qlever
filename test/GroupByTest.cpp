@@ -6,6 +6,8 @@
 #include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
 
+#include <limits>
+
 #include "./util/GTestHelpers.h"
 #include "./util/IdTableHelpers.h"
 #include "./util/RuntimeParametersTestHelpers.h"
@@ -3564,4 +3566,27 @@ TEST_F(GroupByOptimizations, sumStrlenOfGroupConcatViaQueryPlanner) {
         << "stripColumns = " << stripColumns << ", child "
         << child->getRootOperation()->getDescriptor();
   }
+}
+
+// _____________________________________________________________________________
+// The length identity accumulates `length * count` per distinct object and adds
+// `(rows - groups) * separatorLength`. Both steps must detect a result that
+// does not fit into `int64_t` so that the fast path can fall back to the
+// generic evaluation instead of running into signed overflow.
+TEST(GroupBy, checkedAddProduct) {
+  using groupBy::detail::checkedAddProduct;
+  constexpr int64_t max = std::numeric_limits<int64_t>::max();
+  constexpr int64_t min = std::numeric_limits<int64_t>::min();
+  EXPECT_THAT(checkedAddProduct(4, 3, 2), ::testing::Optional(10));
+  EXPECT_THAT(checkedAddProduct(0, 0, max), ::testing::Optional(0));
+  EXPECT_THAT(checkedAddProduct(0, max, 1), ::testing::Optional(max));
+  EXPECT_THAT(checkedAddProduct(max - 6, 3, 2), ::testing::Optional(max));
+  EXPECT_THAT(checkedAddProduct(min, 1, max), ::testing::Optional(-1));
+  // The product overflows: 2^32 * 2^31 = 2^63.
+  EXPECT_EQ(checkedAddProduct(0, int64_t{1} << 32, int64_t{1} << 31),
+            std::nullopt);
+  EXPECT_EQ(checkedAddProduct(0, max, 2), std::nullopt);
+  // The product fits, but the sum overflows.
+  EXPECT_EQ(checkedAddProduct(max - 5, 3, 2), std::nullopt);
+  EXPECT_EQ(checkedAddProduct(max, 1, 1), std::nullopt);
 }
