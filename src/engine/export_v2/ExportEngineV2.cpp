@@ -404,6 +404,84 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   }
 }
 
+// The morsels of `buildSerializedMorsels` as the chunk types of the two HTTP
+// send modes: one string per morsel (`computeResult`) or the scatter-gather
+// chunk without empty ones (`computeResultChunks`).
+cppcoro::generator<std::string> serializedMorselStrings(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  for (auto builder :
+       buildSerializedMorsels(parsedQuery, qet, format,
+                              std::move(cancellationHandle), scheduler)) {
+    co_yield std::move(builder).finalizeToString();
+  }
+}
+
+cppcoro::generator<ScatterGatherChunk> serializedMorselChunks(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  for (auto builder :
+       buildSerializedMorsels(parsedQuery, qet, format,
+                              std::move(cancellationHandle), scheduler)) {
+    auto chunk = std::move(builder).finalize();
+    if (!chunk.empty()) {
+      co_yield std::move(chunk);
+    }
+  }
+}
+
+// Chunks prefetched by a dedicated producer thread (runtime parameter
+// `export-v2-async-pipeline`): `makeChunks` runs on that thread, so the
+// generator frame is created, resumed and destroyed there; the calling
+// coroutine only pops finished chunks by value.
+//
+// Deliberately a plain function, so the lambda and the thread are created
+// outside of any coroutine body. The first version (a `std::thread` and an
+// `AsyncChunkPipeline` as locals of `computeResult`, reverted in 91a9a7845)
+// failed to compile with GCC, and was also unsafe: destroying the suspended
+// generator (the client abandons the download) destroyed a joinable
+// `std::thread` without running the `catch` that joined it, which calls
+// `std::terminate`. `AsyncChunkProducer` cancels and joins in its destructor.
+constexpr size_t kAsyncPipelineCapacity = 2;
+
+template <typename ChunkType>
+using MorselChunkGenerator = cppcoro::generator<ChunkType> (*)(
+    const ParsedQuery&, const QueryExecutionTree&, RowFormat,
+    ad_utility::SharedCancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler*);
+
+template <typename ChunkType>
+std::unique_ptr<qlever::export_v2::AsyncChunkProducer<ChunkType>>
+startAsyncProducer(MorselChunkGenerator<ChunkType> makeChunks,
+                   const ParsedQuery& parsedQuery,
+                   const QueryExecutionTree& qet, RowFormat format,
+                   ad_utility::SharedCancellationHandle cancellationHandle,
+                   ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  return std::make_unique<qlever::export_v2::AsyncChunkProducer<ChunkType>>(
+      [makeChunks, &parsedQuery, &qet, format,
+       cancellationHandle = std::move(cancellationHandle), scheduler] {
+        return makeChunks(parsedQuery, qet, format, cancellationHandle,
+                          scheduler);
+      },
+      kAsyncPipelineCapacity);
+}
+
+template <typename ChunkType>
+void logAsyncPipelineStats(
+    const qlever::export_v2::AsyncChunkProducer<ChunkType>& producer) {
+  const auto stats = producer.stats();
+  AD_LOG_INFO << "ExportEngineV2 async pipeline: " << stats.chunksConsumed_
+              << " chunks, " << stats.bytesConsumed_ << " bytes, "
+              << stats.producerWaits_ << " producer waits, "
+              << stats.consumerWaits_ << " consumer waits" << std::endl;
+}
+
+bool useAsyncPipeline() {
+  return getRuntimeParameter<&RuntimeParameters::exportV2AsyncPipeline_>();
+}
+
 }  // namespace
 
 // True when every operation in the tree rooted at `operation` is one the V2
@@ -645,10 +723,21 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
   }
 
   const auto format = rowFormatFor(mediaType).value();
-  for (auto builder : buildSerializedMorsels(parsedQuery, qet, format,
-                                             cancellationHandle, scheduler)) {
-    co_yield std::move(builder).finalizeToString();
+  if (!useAsyncPipeline()) {
+    for (auto& chunk :
+         serializedMorselStrings(parsedQuery, qet, format,
+                                 std::move(cancellationHandle), scheduler)) {
+      co_yield std::move(chunk);
+    }
+    co_return;
   }
+  auto producer = startAsyncProducer<std::string>(
+      &serializedMorselStrings, parsedQuery, qet, format,
+      std::move(cancellationHandle), scheduler);
+  while (auto chunk = producer->pop()) {
+    co_yield std::move(chunk.value());
+  }
+  logAsyncPipelineStats(*producer);
 }
 
 // _____________________________________________________________________________
@@ -658,19 +747,25 @@ cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
     ad_utility::SharedCancellationHandle cancellationHandle,
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
   AD_CONTRACT_CHECK(canHandle(parsedQuery, qet, mediaType));
-  // Serialize on the caller thread. Do not spawn a producer thread here:
-  // GCC rewrites this function as a coroutine frame and rejected
-  // `std::thread` + `AsyncChunkPipeline` locals (91a9a7845). Overlap with
-  // HTTP send is `runStreamAsync` in `Server::sendStreamableResponse`.
+  // Without `export-v2-async-pipeline`, serialize on the caller thread; the
+  // overlap with the HTTP send then comes from `runStreamAsync` in
+  // `Server::sendStreamableResponse`.
   const auto format = rowFormatFor(mediaType).value();
-  for (auto builder :
-       buildSerializedMorsels(parsedQuery, qet, format,
-                              std::move(cancellationHandle), scheduler)) {
-    auto chunk = std::move(builder).finalize();
-    if (!chunk.empty()) {
+  if (!useAsyncPipeline()) {
+    for (auto& chunk :
+         serializedMorselChunks(parsedQuery, qet, format,
+                                std::move(cancellationHandle), scheduler)) {
       co_yield std::move(chunk);
     }
+    co_return;
   }
+  auto producer = startAsyncProducer<ScatterGatherChunk>(
+      &serializedMorselChunks, parsedQuery, qet, format,
+      std::move(cancellationHandle), scheduler);
+  while (auto chunk = producer->pop()) {
+    co_yield std::move(chunk.value());
+  }
+  logAsyncPipelineStats(*producer);
 }
 
 }  // namespace ql::engine::export_v2
