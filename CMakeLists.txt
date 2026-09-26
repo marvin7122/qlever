@@ -582,7 +582,7 @@ if (ENABLE_EXPENSIVE_CHECKS)
     add_compile_definitions(AD_ENABLE_EXPENSIVE_CHECKS)
 endif ()
 
-OPTION(QLEVER_MEASURE_IO_WAIT "Compile in the io-wait storage accounting (diagnostic aid for thesis measurements, off by default so production builds carry zero overhead)" OFF)
+OPTION(QLEVER_MEASURE_IO_WAIT "Compile in the io-wait storage accounting (diagnostic aid, off by default so production builds carry zero overhead)" OFF)
 if (QLEVER_MEASURE_IO_WAIT)
     message(STATUS "Compiling in io-wait storage accounting")
     add_compile_definitions(QLEVER_MEASURE_IO_WAIT)
