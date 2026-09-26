@@ -325,6 +325,33 @@ void JoinImpl::join(const IdTableView<0>& a, const IdTableView<0>& b,
   auto joinColumnL = a.getColumn(leftJoinCol_);
   auto joinColumnR = b.getColumn(rightJoinCol_);
 
+  // The UNDEF values are right at the start, so this calculation works.
+  size_t numUndefA =
+      ql::ranges::upper_bound(joinColumnL, ValueId::makeUndefined()) -
+      joinColumnL.begin();
+  size_t numUndefB =
+      ql::ranges::upper_bound(joinColumnR, ValueId::makeUndefined()) -
+      joinColumnR.begin();
+
+  // The hash join (if enabled) replaces the merge join, but not the galloping
+  // join. It iterates over the larger input, which is sorted by the join
+  // column, so the result is sorted by the join column as well. It writes the
+  // columns in the final order [columns-a, non-join-columns-b], so it needs
+  // neither the row adder nor the column permutations below.
+  bool useGallopingJoin = (a.size() / b.size() > GALLOP_THRESHOLD ||
+                           b.size() / a.size() > GALLOP_THRESHOLD);
+  if (!useGallopingJoin && numUndefA == 0 && numUndefB == 0 &&
+      keepJoinColumn_ &&
+      getRuntimeParameter<&RuntimeParameters::joinUseHashJoin_>()) {
+    runtimeInfo().addDetail("join-algorithm", "hash");
+    runtimeInfo().addDetail(
+        "hash-join-bloom-filter",
+        getRuntimeParameter<&RuntimeParameters::hashJoinBloomFilter_>());
+    hashJoin(a, leftJoinCol_, b, rightJoinCol_, result);
+    checkCancellation();
+    return;
+  }
+
   auto aPermuted = a.asColumnSubsetView(joinColumnData.permutationLeft());
   auto bPermuted = b.asColumnSubsetView(joinColumnData.permutationRight());
 
@@ -337,13 +364,6 @@ void JoinImpl::join(const IdTableView<0>& a, const IdTableView<0>& b,
     rowAdder.addRow(itLeft - beginLeft, itRight - beginRight);
   };
 
-  // The UNDEF values are right at the start, so this calculation works.
-  size_t numUndefA =
-      ql::ranges::upper_bound(joinColumnL, ValueId::makeUndefined()) -
-      joinColumnL.begin();
-  size_t numUndefB =
-      ql::ranges::upper_bound(joinColumnR, ValueId::makeUndefined()) -
-      joinColumnR.begin();
   std::pair undefRangeA{joinColumnL.begin(), joinColumnL.begin() + numUndefA};
   std::pair undefRangeB{joinColumnR.begin(), joinColumnR.begin() + numUndefB};
 
@@ -431,8 +451,8 @@ Result JoinImpl::lazyJoin(std::shared_ptr<const Result> a,
 
 // ______________________________________________________________________________
 template <int L_WIDTH, int R_WIDTH, int OUT_WIDTH>
-void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
-                            const IdTable& dynB, ColumnIndex jc2,
+void JoinImpl::hashJoinImpl(const IdTableView<0>& dynA, ColumnIndex jc1,
+                            const IdTableView<0>& dynB, ColumnIndex jc2,
                             IdTable* dynRes) {
   const IdTableView<L_WIDTH> a = dynA.asStaticView<L_WIDTH>();
   const IdTableView<R_WIDTH> b = dynB.asStaticView<R_WIDTH>();
@@ -550,8 +570,9 @@ void JoinImpl::hashJoinImpl(const IdTable& dynA, ColumnIndex jc1,
 }
 
 // ______________________________________________________________________________
-void JoinImpl::hashJoin(const IdTable& dynA, ColumnIndex jc1,
-                        const IdTable& dynB, ColumnIndex jc2, IdTable* dynRes) {
+void JoinImpl::hashJoin(const IdTableView<0>& dynA, ColumnIndex jc1,
+                        const IdTableView<0>& dynB, ColumnIndex jc2,
+                        IdTable* dynRes) {
   ad_utility::callFixedSizeVi(
       (std::array{dynA.numColumns(), dynB.numColumns(), dynRes->numColumns()}),
       [&](auto l, auto r, auto o) {

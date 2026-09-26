@@ -239,6 +239,61 @@ TEST(JoinTest, joinTestWithBloomFilter) {
   runTestCasesForAllJoinAlgorithms(createJoinTestSet());
 }
 
+// With `join-use-hash-join`, `JoinImpl::join` runs the hash join (with and
+// without the Bloom filter) for inputs without UNDEF values.
+TEST(JoinTest, joinTestRoutedThroughHashJoin) {
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(true);
+  for (bool useBloomFilter : {false, true}) {
+    auto cleanupBloomFilter =
+        setRuntimeParameterForTest<&RuntimeParameters::hashJoinBloomFilter_>(
+            useBloomFilter);
+    runTestCasesForAllJoinAlgorithms(createJoinTestSet());
+  }
+}
+
+// The merge join and the hash join order the rows with equal join values
+// differently if the right input is larger: the merge join iterates over the
+// left rows in the outer loop, the hash join over the rows of the larger
+// (right) input. This shows which algorithm `JoinImpl::join` used.
+TEST(JoinTest, joinUsesHashJoinOnlyIfEnabled) {
+  IdTableAndJoinColumn left{makeIdTableFromVector({{1, 10}, {1, 11}}), 0};
+  IdTableAndJoinColumn right{makeIdTableFromVector({{1, 20}, {1, 21}, {1, 22}}),
+                             0};
+  auto join = [&]() {
+    return useJoinFunctionOnIdTables(left, right, makeJoinLambda());
+  };
+  EXPECT_EQ(join(), makeIdTableFromVector({{1, 10, 20},
+                                           {1, 10, 21},
+                                           {1, 10, 22},
+                                           {1, 11, 20},
+                                           {1, 11, 21},
+                                           {1, 11, 22}}));
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(true);
+  auto hashJoinResult = makeIdTableFromVector({{1, 10, 20},
+                                               {1, 11, 20},
+                                               {1, 10, 21},
+                                               {1, 11, 21},
+                                               {1, 10, 22},
+                                               {1, 11, 22}});
+  EXPECT_EQ(join(), hashJoinResult);
+  auto cleanupBloomFilter =
+      setRuntimeParameterForTest<&RuntimeParameters::hashJoinBloomFilter_>(
+          true);
+  EXPECT_EQ(join(), hashJoinResult);
+
+  // With an UNDEF value in a join column, the merge join is used, which
+  // matches the UNDEF with every row of the other input.
+  IdTable undefLeft{2, makeAllocator()};
+  undefLeft.push_back({Id::makeUndefined(), ad_utility::testing::IntId(10)});
+  undefLeft.push_back(
+      {ad_utility::testing::IntId(1), ad_utility::testing::IntId(11)});
+  left = IdTableAndJoinColumn{std::move(undefLeft), 0};
+  right = IdTableAndJoinColumn{makeIdTableFromVector({{1, 20}, {1, 21}}), 0};
+  EXPECT_EQ(join().size(), 4u);
+}
+
 // Several helpers for the test cases below.
 namespace {
 
