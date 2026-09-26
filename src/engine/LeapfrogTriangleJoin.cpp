@@ -140,7 +140,7 @@ Result LeapfrogTriangleJoin::computeResult(
   }
   // The two sorted columns of each input.
   auto column = [&](size_t input, size_t level) {
-    return results[input]->idTable().getColumn(columns_[input][level]);
+    return results[input]->idTableView().getColumn(columns_[input][level]);
   };
   auto xyX = column(XY, 0);
   auto xyY = column(XY, 1);

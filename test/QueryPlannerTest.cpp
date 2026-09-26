@@ -4236,7 +4236,7 @@ TEST(QueryPlanner, leapfrogTriangleJoinComputesSameResultAsBinaryJoins) {
     auto qet = h::parseAndPlan(query, qec);
     auto result = qet.getResult();
     std::vector<std::vector<Id>> rows;
-    for (const auto& row : result->idTable()) {
+    for (const auto& row : result->idTableView()) {
       std::vector<Id> projected;
       for (const auto& var : {"?x", "?y", "?z", "?w"}) {
         projected.push_back(row[qet.getVariableColumn(Variable{var})]);

@@ -57,7 +57,7 @@ std::vector<Row> naiveTriangles(const Edge& xy, const Edge& yz,
 }
 
 // The rows of a result with three `IntId` columns.
-std::vector<Row> toRows(const IdTable& table) {
+std::vector<Row> toRows(const IdTableView<0>& table) {
   std::vector<Row> rows;
   for (const auto& row : table) {
     rows.push_back({row[0].getInt(), row[1].getInt(), row[2].getInt()});
@@ -77,7 +77,7 @@ std::vector<Row> computeTriangles(const Edge& xy, const Edge& yz,
                             V{"?y"},
                             V{"?z"}};
   auto result = join.computeResultOnlyForTesting();
-  return toRows(result.idTable());
+  return toRows(result.idTableView());
 }
 }  // namespace
 
@@ -154,7 +154,7 @@ TEST(LeapfrogTriangleJoin, columnOrderAndSorting) {
   EXPECT_EQ(dynamic_cast<const Sort*>(children[2]->getRootOperation().get()),
             nullptr);
   auto result = join.computeResultOnlyForTesting();
-  EXPECT_EQ(toRows(result.idTable()), naiveTriangles(xy, yz, xz));
+  EXPECT_EQ(toRows(result.idTableView()), naiveTriangles(xy, yz, xz));
   EXPECT_THAT(result.sortedBy(), ::testing::ElementsAre(0, 1, 2));
 }
 
