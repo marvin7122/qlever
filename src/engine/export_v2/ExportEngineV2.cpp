@@ -29,6 +29,7 @@
 #include "engine/HasPredicateScan.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
+#include "engine/SimdValidityBitmask.h"
 #include "engine/Sort.h"
 #include "engine/Values.h"
 #include "engine/export_v2/ColumnLattice.h"
@@ -79,6 +80,44 @@ std::vector<ResolvedCell> resolveColumn(const Index& index,
   constexpr bool removeQuotes = Format == RowFormat::Csv;
   return ql::exportIds::idsToStringAndType<removeQuotes>(index, ids, localVocab,
                                                          escapeCell<Format>);
+}
+
+// Same as `resolveColumn`, but for `Union`/mixed-type columns (typically
+// `OPTIONAL`/`UNION` output columns) uses `SimdValidityScanner` to skip the
+// general per-cell resolver for 64-row batches that are entirely unbound
+// (`UNDEF`) -- the common case for wide `OPTIONAL` patterns. Output is
+// byte-identical to `resolveColumn`: a batch element that is left untouched
+// defaults to `ResolvedCell{}` (`std::nullopt`), which is exactly what the
+// general resolver would have produced for an unbound `Id`.
+template <RowFormat Format>
+std::vector<ResolvedCell> resolveColumnWithValidityFastPath(
+    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab) {
+  using ad_utility::simd::SimdValidityScanner;
+  std::vector<ResolvedCell> results(ids.size());
+  size_t i = 0;
+  const size_t n = ids.size();
+  while (i + 64 <= n) {
+    if (SimdValidityScanner::isAllUnbound64(ids.data() + i)) {
+      // All 64 cells are unbound; `results[i..i+64)` already default to
+      // `std::nullopt`. Skip the general resolver for this batch.
+      i += 64;
+      continue;
+    }
+    size_t runStart = i;
+    i += 64;
+    while (i + 64 <= n &&
+           !SimdValidityScanner::isAllUnbound64(ids.data() + i)) {
+      i += 64;
+    }
+    auto sub = resolveColumn<Format>(index, ids.subspan(runStart, i - runStart),
+                                     localVocab);
+    ql::ranges::move(sub, results.begin() + static_cast<ptrdiff_t>(runStart));
+  }
+  if (i < n) {
+    auto tail = resolveColumn<Format>(index, ids.subspan(i), localVocab);
+    ql::ranges::move(tail, results.begin() + static_cast<ptrdiff_t>(i));
+  }
+  return results;
 }
 
 // The writer that `MonomorphicRowSerializer` renders into: appends to one
@@ -570,6 +609,18 @@ void ExportEngineV2::appendSerializedRows(
       for (size_t i = 0; i < n; ++i) {
         resolved[outCol][i] =
             ql::exportIds::idToStringAndTypeForEncodedValue(ids[i]);
+      }
+    } else if (colLattice == ColumnLattice::Union &&
+               getRuntimeParameter<
+                   &RuntimeParameters::exportV2SimdValidityBitmask_>()) {
+      // Union/mixed columns are where wide `OPTIONAL`/`UNION` output puts
+      // most of its unbound cells; use the SIMD validity fast path there.
+      if (format == RowFormat::Csv) {
+        resolved[outCol] = resolveColumnWithValidityFastPath<RowFormat::Csv>(
+            index, ids, localVocab);
+      } else {
+        resolved[outCol] = resolveColumnWithValidityFastPath<RowFormat::Tsv>(
+            index, ids, localVocab);
       }
     } else if (format == RowFormat::Csv) {
       resolved[outCol] = resolveColumn<RowFormat::Csv>(index, ids, localVocab);

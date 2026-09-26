@@ -69,6 +69,7 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(exportV2MonomorphicRows_);
+  add(exportV2SimdValidityBitmask_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
