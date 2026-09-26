@@ -514,7 +514,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  // Behind `use-simd-escape-classifier-csv-tsv` (default off), dispatch CSV
+  // Behind `use-simd-escape-classifier-csv` (default off), dispatch CSV
   // export to the AVX2/SSE2 `SimdEscapeClassifier` (PR #85) instead of the
   // scalar `RdfEscaping` functions. Both are
   // `std::string(std::string)`-compatible, so `idToStringAndType` below is
@@ -534,7 +534,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   auto escapeFunction = [](std::string input) -> std::string {
     if constexpr (format == csv) {
       if (getRuntimeParameter<
-              &RuntimeParameters::useSimdEscapeClassifierForCsvTsv_>()) {
+              &RuntimeParameters::useSimdEscapeClassifierForCsv_>()) {
         return ad_utility::simd::SimdEscapeClassifier::escapeForCsv(input);
       }
     }

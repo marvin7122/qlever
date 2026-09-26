@@ -55,8 +55,7 @@ struct RuntimeParameters {
   // `SimdEscapeClassifier::escapeForTsv` escapes `\r` and `\` differently
   // from `RdfEscaping::escapeForTsv` (confirmed by a byte-identical-output
   // failure on DBLP H-size-select), so it cannot be wired safely yet.
-  Bool useSimdEscapeClassifierForCsvTsv_{false,
-                                         "use-simd-escape-classifier-csv-tsv"};
+  Bool useSimdEscapeClassifierForCsv_{false, "use-simd-escape-classifier-csv"};
 
   // If the time estimate for a sort operation is larger by more than this
   // factor than the remaining time, then the sort is canceled with a

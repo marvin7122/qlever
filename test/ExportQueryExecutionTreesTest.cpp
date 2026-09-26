@@ -2269,7 +2269,7 @@ INSTANTIATE_TEST_SUITE_P(
         // window 10: all duplicates are caught, 5 unique triples remain.
         LruWindowParam{10, "abcde"}));
 
-// Toggling `use-simd-escape-classifier-csv-tsv` (PR #85) switches the CSV
+// Toggling `use-simd-escape-classifier-csv` (PR #85) switches the CSV
 // escape function between `RdfEscaping` and `SimdEscapeClassifier`, but must
 // not change the exported bytes. TSV export must stay unaffected by the
 // flag: `SimdEscapeClassifier::escapeForTsv` escapes `\r` and `\`
@@ -2288,12 +2288,12 @@ TEST(ExportQueryExecutionTrees, SimdEscapeClassifierCsvTsvProducesSameBytes) {
   for (MediaType format : {MediaType::csv, MediaType::tsv}) {
     auto legacy = [&] {
       auto cleanup = setRuntimeParameterForTest<
-          &RuntimeParameters::useSimdEscapeClassifierForCsvTsv_>(false);
+          &RuntimeParameters::useSimdEscapeClassifierForCsv_>(false);
       return runQueryStreamableResult(kg, query, format);
     }();
     auto simd = [&] {
       auto cleanup = setRuntimeParameterForTest<
-          &RuntimeParameters::useSimdEscapeClassifierForCsvTsv_>(true);
+          &RuntimeParameters::useSimdEscapeClassifierForCsv_>(true);
       return runQueryStreamableResult(kg, query, format);
     }();
     EXPECT_EQ(legacy, simd);
