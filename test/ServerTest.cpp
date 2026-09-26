@@ -8,6 +8,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <boost/beast/http.hpp>
 #include <optional>
 
@@ -703,40 +704,46 @@ TEST(ServerTest, handleHttpRequest) {
 }
 
 // _____________________________________________________________________________
-// Every engine selection channel must return the same bytes as the default
-// export path.
+// Check that every way of selecting the export engine (the `export-engine` and
+// `fast-export` parameters and the `X-QLever-Export-Engine` header) returns the
+// same CSV bytes as a request without a selection.
 TEST(ServerTest, exportEngineV1V2Parity) {
-  auto qec = getQec(TestIndexConfig{"<a> <b> <c> . <d> <e> <f> ."});
+  const auto qec = getQec(TestIndexConfig{"<a> <b> <c> . <d> <e> <f> ."});
   auto server = makeServerForTesting(qec->getIndex().getOnDiskBase());
-  auto makeCsvQuery = [](std::string_view target, std::string_view sparql) {
+  const auto makeCsvRequest = [](std::string_view target,
+                                 std::string_view sparql) {
     return makeRequest(http::verb::post, target,
                        {{http::field::content_type, "application/sparql-query"},
                         {http::field::accept, "text/csv"}},
                        std::string{sparql});
   };
-  auto runToString = [&server](auto request) {
+  const auto runToString = [&server](const auto& request) {
     auto response = server.process(request);
     EXPECT_THAT(response, StatusIs(http::status::ok));
     return responseBodyToString(std::move(response.body()));
   };
-  auto plainSelect = [&](std::string_view target) {
-    return makeCsvQuery(target, "SELECT * WHERE { ?s ?p ?o }");
+  const auto plainSelect = [&](std::string_view target) {
+    return makeCsvRequest(target, "SELECT * WHERE { ?s ?p ?o }");
   };
+  // The baseline must be the CSV result (a header line and one line per
+  // triple), so that the comparisons below cannot pass on an empty or error
+  // response.
   const std::string baseline = runToString(plainSelect("/"));
-  EXPECT_THAT(runToString(plainSelect("/?export-engine=v1")),
-              testing::StrEq(baseline));
-  EXPECT_THAT(runToString(plainSelect("/?export-engine=v2")),
-              testing::StrEq(baseline));
-  EXPECT_THAT(runToString(plainSelect("/?fast-export=true")),
-              testing::StrEq(baseline));
+  ASSERT_THAT(baseline, testing::StartsWith("s,p,o\n"));
+  ASSERT_EQ(std::count(baseline.begin(), baseline.end(), '\n'), 3);
+  for (std::string_view target :
+       {"/?export-engine=v1", "/?export-engine=v2", "/?fast-export=true"}) {
+    SCOPED_TRACE(target);
+    EXPECT_THAT(runToString(plainSelect(target)), testing::StrEq(baseline));
+  }
   auto headerRequest = plainSelect("/");
   headerRequest.set("X-QLever-Export-Engine", "v2");
-  EXPECT_THAT(runToString(std::move(headerRequest)), testing::StrEq(baseline));
+  EXPECT_THAT(runToString(headerRequest), testing::StrEq(baseline));
   // A guarded query (OPTIONAL is beyond the V2 envelope) requested with V2
   // must fall back to V1 and return identical bytes.
-  auto optionalSelect = [&](std::string_view target) {
-    return makeCsvQuery(target,
-                        "SELECT * WHERE { ?s ?p ?o OPTIONAL { ?s ?p ?o } }");
+  const auto optionalSelect = [&](std::string_view target) {
+    return makeCsvRequest(target,
+                          "SELECT * WHERE { ?s ?p ?o OPTIONAL { ?s ?p ?o } }");
   };
   const std::string optionalBaseline = runToString(optionalSelect("/"));
   EXPECT_THAT(runToString(optionalSelect("/?export-engine=v2")),
