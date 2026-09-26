@@ -27,6 +27,7 @@
 #include "engine/Join.h"
 #include "engine/JoinHelpers.h"
 #include "engine/OperationBindPushDownImpl.h"
+#include "engine/RadixPartitionedHashJoin.h"
 #include "engine/Service.h"
 #include "global/Constants.h"
 #include "global/Id.h"
@@ -346,6 +347,9 @@ void JoinImpl::join(const IdTableView<0>& a, const IdTableView<0>& b,
     runtimeInfo().addDetail(
         "hash-join-bloom-filter",
         getRuntimeParameter<&RuntimeParameters::hashJoinBloomFilter_>());
+    runtimeInfo().addDetail(
+        "hash-join-radix-partitioning",
+        getRuntimeParameter<&RuntimeParameters::hashJoinRadixPartitioning_>());
     IdTable hashJoinResult{a.numColumns() + b.numColumns() - 1, allocator()};
     hashJoin(a, leftJoinCol_, b, rightJoinCol_, &hashJoinResult);
     checkCancellation();
@@ -563,11 +567,44 @@ void JoinImpl::hashJoinImpl(const IdTableView<0>& dynA, ColumnIndex jc1,
         }
       }};
 
+  // The same join with a radix-partitioned hash table
+  // (`RadixPartitionedHashJoin`): the rows of the larger table are probed
+  // partition by partition, and the result is written in the same order as by
+  // `performHashJoin`.
+  auto performRadixPartitionedHashJoin = ad_utility::ApplyAsValueIdentity{
+      [&result](auto leftIsLarger, const auto& largerTable,
+                const ColumnIndex largerTableJoinColumn,
+                const auto& smallerTable,
+                const ColumnIndex smallerTableJoinColumn) {
+        auto matches = ql::engine::join::RadixPartitionedHashJoin<>::matchRows(
+            smallerTable.getColumn(smallerTableJoinColumn),
+            largerTable.getColumn(largerTableJoinColumn));
+        for (size_t i = 0; i < largerTable.size(); i++) {
+          const auto& [begin, end] = matches.ranges_[i];
+          for (size_t k = begin; k < end; ++k) {
+            const auto& row = smallerTable[matches.buildRows_[k]];
+            if constexpr (leftIsLarger) {
+              addCombinedRowToIdTable(largerTable[i], row,
+                                      smallerTableJoinColumn, &result);
+            } else {
+              addCombinedRowToIdTable(row, largerTable[i],
+                                      largerTableJoinColumn, &result);
+            }
+          }
+        }
+      }};
+
   // Cannot just switch a and b around because the order of
   // items in the result tuples is important.
   // Procceding with the actual hash join depended on which IdTableView
   // is bigger.
-  if (a.size() >= b.size()) {
+  const bool useRadixPartitioning =
+      getRuntimeParameter<&RuntimeParameters::hashJoinRadixPartitioning_>();
+  if (useRadixPartitioning && a.size() >= b.size()) {
+    performRadixPartitionedHashJoin.template operator()<true>(a, jc1, b, jc2);
+  } else if (useRadixPartitioning) {
+    performRadixPartitionedHashJoin.template operator()<false>(b, jc2, a, jc1);
+  } else if (a.size() >= b.size()) {
     performHashJoin.template operator()<true>(a, jc1, b, jc2);
   } else {
     performHashJoin.template operator()<false>(b, jc2, a, jc1);

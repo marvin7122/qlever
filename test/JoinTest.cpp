@@ -252,6 +252,17 @@ TEST(JoinTest, joinTestRoutedThroughHashJoin) {
   }
 }
 
+// The radix-partitioned hash join gives the same results, both when called
+// directly and when `JoinImpl::join` is routed through the hash join.
+TEST(JoinTest, joinTestWithRadixPartitionedHashJoin) {
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::hashJoinRadixPartitioning_>(true);
+  runTestCasesForAllJoinAlgorithms(createJoinTestSet());
+  auto cleanupRouting =
+      setRuntimeParameterForTest<&RuntimeParameters::joinUseHashJoin_>(true);
+  runTestCasesForAllJoinAlgorithms(createJoinTestSet());
+}
+
 // The merge join and the hash join order the rows with equal join values
 // differently if the right input is larger: the merge join iterates over the
 // left rows in the outer loop, the hash join over the rows of the larger
@@ -281,6 +292,11 @@ TEST(JoinTest, joinUsesHashJoinOnlyIfEnabled) {
   auto cleanupBloomFilter =
       setRuntimeParameterForTest<&RuntimeParameters::hashJoinBloomFilter_>(
           true);
+  EXPECT_EQ(join(), hashJoinResult);
+  // The radix-partitioned hash join writes the rows in the same order as the
+  // hash join.
+  auto cleanupRadix = setRuntimeParameterForTest<
+      &RuntimeParameters::hashJoinRadixPartitioning_>(true);
   EXPECT_EQ(join(), hashJoinResult);
 
   // With an UNDEF value in a join column, the merge join is used: the result

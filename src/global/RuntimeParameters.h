@@ -112,6 +112,11 @@ struct RuntimeParameters {
   // larger input without a join partner are rejected with one cache-line
   // access.
   Bool hashJoinBloomFilter_{false, "hash-join-bloom-filter"};
+  // If `true`, the hash join partitions both inputs by the hash of the join
+  // column and uses one small hash map per partition of the smaller input
+  // (`RadixPartitionedHashJoin`) instead of one hash map of the whole smaller
+  // input. The Bloom filter (`hash-join-bloom-filter`) is not used then.
+  Bool hashJoinRadixPartitioning_{false, "hash-join-radix-partitioning"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};

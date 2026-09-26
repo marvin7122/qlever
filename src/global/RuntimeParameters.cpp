@@ -37,6 +37,7 @@ RuntimeParameters::RuntimeParameters() {
   add(groupByHashMapEnabled_);
   add(joinUseHashJoin_);
   add(hashJoinBloomFilter_);
+  add(hashJoinRadixPartitioning_);
   add(groupByDisableIndexScanOptimizations_);
   add(serviceMaxValueRows_);
   add(serviceMaxRedirects_);
