@@ -20,8 +20,10 @@
 #include "index/Index.h"
 #include "index/LocalVocab.h"
 #include "util/CompactStringVector.h"
+#include "util/GTestHelpers.h"
 #include "util/IdTestHelpers.h"
 #include "util/IndexTestHelpers.h"
+#include "util/SoftwarePrefetch.h"
 
 using namespace ql::engine::prefetch;
 using namespace std::string_literals;
@@ -117,6 +119,48 @@ TEST(PrefetchingBatchResolver, EmptyAndBoundaryInputs) {
   std::vector<Id> ids = {ad_utility::testing::IntId(1)};
   EXPECT_NO_THROW(resolver.resolveVocabIndexIds(
       index, ids, ql::span<const size_t>{}, results));
+}
+
+// _____________________________________________________________________________
+// Boundary cases of `ad_utility::forEachWordPrefetched`: prefetch distances of
+// zero, larger than the input and `SIZE_MAX` (the look-ahead guards must not
+// wrap), a vector that was never built (no callback), and out-of-range indices
+// including `SIZE_MAX` (the correctness check must fire before any access).
+TEST(PrefetchingBatchResolver, ForEachWordPrefetchedBoundaries) {
+  CompactVectorOfStrings<char> words;
+  const std::vector<std::string> rawWords{"a", "bb", "", "dddd"};
+  words.build(rawWords);
+  const std::vector<size_t> indices{3, 2, 1, 0, 3};
+
+  for (size_t distance :
+       {size_t{0}, size_t{1}, indices.size(), indices.size() + 1, SIZE_MAX}) {
+    std::vector<std::string> resolved;
+    ad_utility::forEachWordPrefetched(
+        words, indices, distance,
+        [&resolved, &indices](size_t slot, size_t idx, std::string_view w) {
+          EXPECT_EQ(slot, resolved.size());
+          EXPECT_EQ(idx, indices[slot]);
+          resolved.emplace_back(w);
+        });
+    ASSERT_EQ(resolved.size(), indices.size()) << "distance " << distance;
+    for (size_t i = 0; i < indices.size(); ++i) {
+      EXPECT_EQ(resolved[i], rawWords[indices[i]]);
+    }
+  }
+
+  size_t numCalls = 0;
+  auto count = [&numCalls](size_t, size_t, std::string_view) { ++numCalls; };
+  ad_utility::forEachWordPrefetched(CompactVectorOfStrings<char>{}, indices, 8,
+                                    count);
+  ad_utility::forEachWordPrefetched(words, ql::span<const size_t>{}, 8, count);
+  EXPECT_EQ(numCalls, 0u);
+
+  for (size_t badIndex : {rawWords.size(), size_t{SIZE_MAX}}) {
+    const std::vector<size_t> bad{0, badIndex};
+    AD_EXPECT_THROW_WITH_MESSAGE(
+        ad_utility::forEachWordPrefetched(words, bad, 8, count),
+        ::testing::HasSubstr("curIdx"));
+  }
 }
 
 }  // namespace
