@@ -65,6 +65,10 @@ class PerfCounter {
 #endif
   }
 
+  // Owns `fd_`, so copying would close it twice.
+  PerfCounter(const PerfCounter&) = delete;
+  PerfCounter& operator=(const PerfCounter&) = delete;
+
   ~PerfCounter() {
 #if defined(__linux__)
     if (fd_ >= 0) {
@@ -128,7 +132,7 @@ class StreamingBufferBenchmark : public BenchmarkInterface {
 
   // ___________________________________________________________________________
   // Warm up vocabulary probe cache lines into L1/L2/L3 CPU caches.
-  static void warmCache(std::vector<uint32_t>& vocabData) {
+  static void warmCache(const std::vector<uint32_t>& vocabData) {
     uint64_t sum = 0;
     for (size_t i = 0; i < vocabData.size(); i += 16) {
       sum += vocabData[i];
