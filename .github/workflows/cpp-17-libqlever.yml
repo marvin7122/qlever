@@ -106,7 +106,9 @@ jobs:
           retention-days: 1
 
   build:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
+    if: >-
+      (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')) &&
+      (github.event_name != 'pull_request' || matrix.compiler-version != 11)
     needs: rewrite-using-enum
     runs-on: ubuntu-24.04
     # Ubuntu 20.04 ships Boost 1.71, the oldest version that QLever supports, in
@@ -132,8 +134,11 @@ jobs:
         # `std::filesystem`, see `backports/filesystem.h`) is used in both.
         # Fork PR profile 2026-09-25: on PRs keep only the GCC 8 entry (the
         # real C++17 build); GCC 11 + backports runs on Wolga (wolga-native).
-        exclude:
-          - compiler-version: ${{ github.event_name == 'pull_request' && 11 || 0 }}
+        # NOTE: this is an include-only matrix (no `compiler-version:` axis
+        # declared above), so a plain `exclude:` entry is invalid here and
+        # fails the whole workflow at matrix-expansion time before any `build`
+        # job is created (see job-level `if` above, which does the PR-only
+        # filtering instead).
         include:
           - compiler-version: 11
             use-keep-going: false
