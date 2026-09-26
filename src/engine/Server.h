@@ -54,9 +54,10 @@ class ServerForTesting;
 }  // namespace serverTestHelpers
 
 namespace ql::engine {
-// Only needed by name in the `sendStreamableResponse` signature below; the
-// full router header stays in `Server.cpp` to keep parser/URL-parsing
-// dependencies out of this widely included header.
+// Forward-declare the enum: the `sendStreamableResponse` declaration below
+// only names the type. The definition in `engine/ExportPipelineRouter.h` pulls
+// in the SPARQL parser and URL parsing headers, which this widely included
+// header does not need.
 enum class ExportEngineMode;
 }  // namespace ql::engine
 
@@ -460,7 +461,10 @@ class Server {
       std::optional<std::string_view> userTimeout, bool accessTokenOk) const;
 
   /// Send response for the streamable media types (tsv, csv, octet-stream,
-  /// turtle, sparqlJson, qleverJson).
+  /// turtle, sparqlJson, qleverJson). `engineMode` is the export engine that
+  /// `ExportPipelineRouter::selectEngine` chose for this request; the caller
+  /// selects it because the selection depends on the request's parameters
+  /// and headers.
   CPP_template(typename RequestT, typename SendT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<void> sendStreamableResponse(
