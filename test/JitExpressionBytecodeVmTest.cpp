@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <vector>
 
 #include "./util/RuntimeParametersTestHelpers.h"
@@ -1217,4 +1218,83 @@ TEST(JitExpressionEvaluationParameter, SameResultWithAndWithoutJit) {
     EXPECT_EQ(bindResult(), bindOff);
   }
   qec->getQueryTreeCache().clearAll();
+}
+
+// _____________________________________________________________________________
+TEST(JitExpressionEvaluationParameter,
+     IntegerOverflowWrapsLikeGenericEvaluation) {
+  // The generic evaluation stores every intermediate result as an integer
+  // `ValueId` (60 bits), so `2^40 * 2^20 = 2^60` wraps to 0. The JIT paths
+  // must wrap the same way.
+  using namespace sparqlExpression;
+  auto I = ad_utility::testing::IntId;
+  QueryExecutionContext* qec = ad_utility::testing::getQec();
+  const int64_t x = int64_t{1} << 40;
+  const int64_t y = int64_t{1} << 20;
+  auto makeSubtree = [qec, &I, x, y]() {
+    IdTable input = makeIdTableFromVector({{I(x), I(y)}, {I(3), I(4)}});
+    return std::make_shared<QueryExecutionTree>(
+        qec,
+        std::make_shared<ValuesForTesting>(qec, std::move(input),
+                                           std::vector<std::optional<Variable>>{
+                                               Variable{"?x"}, Variable{"?y"}},
+                                           false, std::vector<ColumnIndex>{},
+                                           LocalVocab{}, std::nullopt, true));
+  };
+  auto product = []() {
+    return makeMultiplyExpression(
+        std::make_unique<VariableExpression>(Variable{"?x"}),
+        std::make_unique<VariableExpression>(Variable{"?y"}));
+  };
+  // FILTER(?x * ?y > 0)
+  auto filterResult = [&]() {
+    qec->getQueryTreeCache().clearAll();
+    auto expr = std::make_unique<GreaterThanExpression>(
+        std::array<SparqlExpression::Ptr, 2>{
+            product(), std::make_unique<IdExpression>(I(0))});
+    Filter filter{qec, makeSubtree(), {std::move(expr), "?x * ?y > 0"}};
+    return filter.getResult(false, ComputationMode::FULLY_MATERIALIZED)
+        ->idTableView()
+        .clone();
+  };
+  // BIND(?x * ?y + 1 AS ?z)
+  auto bindResult = [&]() {
+    qec->getQueryTreeCache().clearAll();
+    auto expr =
+        makeAddExpression(product(), std::make_unique<IdExpression>(I(1)));
+    parsedQuery::Bind bind{{std::move(expr), "?x * ?y + 1"}, Variable{"?z"}};
+    Bind bindOp{qec, makeSubtree(), std::move(bind)};
+    return bindOp.getResult(false, ComputationMode::FULLY_MATERIALIZED)
+        ->idTableView()
+        .clone();
+  };
+
+  auto expectedFilter = makeIdTableFromVector({{I(3), I(4)}});
+  auto expectedBind =
+      makeIdTableFromVector({{I(x), I(y), I(1)}, {I(3), I(4), I(13)}});
+  EXPECT_EQ(filterResult(), expectedFilter);
+  EXPECT_EQ(bindResult(), expectedBind);
+  {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::jitExpressionEvaluation_>(true);
+    EXPECT_EQ(filterResult(), expectedFilter);
+    EXPECT_EQ(bindResult(), expectedBind);
+  }
+  qec->getQueryTreeCache().clearAll();
+}
+
+// _____________________________________________________________________________
+TEST_F(JitExpressionBytecodeVmTest, WrappingIntegerArithmetic) {
+  const int64_t max = (int64_t{1} << 59) - 1;
+  const int64_t min = -(int64_t{1} << 59);
+  EXPECT_EQ(addIdInt(2, 3), 5);
+  EXPECT_EQ(addIdInt(max, 1), min);
+  EXPECT_EQ(subIdInt(min, 1), max);
+  EXPECT_EQ(mulIdInt(int64_t{1} << 40, int64_t{1} << 20), 0);
+  EXPECT_EQ(mulIdInt(-3, 4), -12);
+  EXPECT_EQ(divIdInt(7, -2), -3);
+  EXPECT_EQ(divIdInt(min, -1), min);
+  EXPECT_EQ(divIdInt(std::numeric_limits<int64_t>::min(), -1), 0);
+  EXPECT_EQ(modIdInt(7, -2), 1);
+  EXPECT_EQ(modIdInt(std::numeric_limits<int64_t>::min(), -1), 0);
 }

@@ -17,6 +17,15 @@
 
 namespace ql::engine::jit {
 
+namespace {
+// Wrap `reg` to the 60-bit range of an integer `ValueId` (sign-extend its
+// lower 60 bits), like `wrapToIdInt` does in the bytecode VM.
+void emitWrapToIdInt(asmjit::x86::Compiler& cc, const asmjit::x86::Gp& reg) {
+  cc.shl(reg, 4);
+  cc.sar(reg, 4);
+}
+}  // namespace
+
 // _____________________________________________________________________________
 std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
     const sparqlExpression::SparqlExpression& expr,
@@ -141,6 +150,7 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         asmjit::x86::Gp res = cc.new_gp64("addRes");
         cc.mov(res, a);
         cc.add(res, b);
+        emitWrapToIdInt(cc, res);
         regStack.push_back(res);
         break;
       }
@@ -153,6 +163,7 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         asmjit::x86::Gp res = cc.new_gp64("subRes");
         cc.mov(res, a);
         cc.sub(res, b);
+        emitWrapToIdInt(cc, res);
         regStack.push_back(res);
         break;
       }
@@ -165,6 +176,7 @@ std::optional<JitCompiledExpression> JitExpressionCompiler::compile(
         asmjit::x86::Gp res = cc.new_gp64("mulRes");
         cc.mov(res, a);
         cc.imul(res, b);
+        emitWrapToIdInt(cc, res);
         regStack.push_back(res);
         break;
       }

@@ -149,6 +149,31 @@ inline int64_t decodeYearOrZeroForNative(uint64_t rawBits) {
   return decodeYearFromDateBits(rawBits).value_or(0);
 }
 
+// Integer arithmetic with the semantics of the generic evaluation, which
+// stores every intermediate result as an integer `ValueId`: the result is
+// computed modulo 2^64 (no undefined behavior on overflow) and then wrapped
+// to the 60-bit range of an integer `ValueId`, like `Id::makeFromInt` does.
+inline int64_t wrapToIdInt(uint64_t bits) noexcept {
+  return Id::makeFromInt(static_cast<int64_t>(bits)).getInt();
+}
+inline int64_t addIdInt(int64_t a, int64_t b) noexcept {
+  return wrapToIdInt(static_cast<uint64_t>(a) + static_cast<uint64_t>(b));
+}
+inline int64_t subIdInt(int64_t a, int64_t b) noexcept {
+  return wrapToIdInt(static_cast<uint64_t>(a) - static_cast<uint64_t>(b));
+}
+inline int64_t mulIdInt(int64_t a, int64_t b) noexcept {
+  return wrapToIdInt(static_cast<uint64_t>(a) * static_cast<uint64_t>(b));
+}
+// Truncating division and remainder for `b != 0`. `b == -1` is handled
+// separately, because `INT64_MIN / -1` overflows.
+inline int64_t divIdInt(int64_t a, int64_t b) noexcept {
+  return b == -1 ? subIdInt(0, a) : wrapToIdInt(static_cast<uint64_t>(a / b));
+}
+inline int64_t modIdInt(int64_t a, int64_t b) noexcept {
+  return b == -1 ? 0 : a % b;
+}
+
 class JitBytecodeProgram {
  private:
   std::vector<Instruction> code_;
@@ -209,31 +234,31 @@ class JitBytecodeProgram {
         case OpCode::ADD_INT: {
           int64_t b = stack[--sp];
           int64_t a = stack[--sp];
-          stack[sp++] = a + b;
+          stack[sp++] = addIdInt(a, b);
           break;
         }
         case OpCode::SUB_INT: {
           int64_t b = stack[--sp];
           int64_t a = stack[--sp];
-          stack[sp++] = a - b;
+          stack[sp++] = subIdInt(a, b);
           break;
         }
         case OpCode::MUL_INT: {
           int64_t b = stack[--sp];
           int64_t a = stack[--sp];
-          stack[sp++] = a * b;
+          stack[sp++] = mulIdInt(a, b);
           break;
         }
         case OpCode::DIV_INT: {
           int64_t b = stack[--sp];
           int64_t a = stack[--sp];
-          stack[sp++] = (b != 0) ? (a / b) : 0;
+          stack[sp++] = (b != 0) ? divIdInt(a, b) : 0;
           break;
         }
         case OpCode::MOD_INT: {
           int64_t b = stack[--sp];
           int64_t a = stack[--sp];
-          stack[sp++] = (b != 0) ? (a % b) : 0;
+          stack[sp++] = (b != 0) ? modIdInt(a, b) : 0;
           break;
         }
         case OpCode::CMP_GT_INT: {
@@ -369,7 +394,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] + stack[bIdx][i];
+              stack[sp][i] = addIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -382,7 +407,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] - stack[bIdx][i];
+              stack[sp][i] = subIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -395,7 +420,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] * stack[bIdx][i];
+              stack[sp][i] = mulIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -411,7 +436,7 @@ class JitExpressionBytecodeVm {
             for (size_t i = 0; i < batchSize; ++i) {
               int64_t b = stack[bIdx][i];
               if (b != 0) {
-                stack[sp][i] = stack[aIdx][i] / b;
+                stack[sp][i] = divIdInt(stack[aIdx][i], b);
                 divMask |= (1ULL << i);
               } else {
                 stack[sp][i] = 0;
@@ -431,7 +456,7 @@ class JitExpressionBytecodeVm {
             for (size_t i = 0; i < batchSize; ++i) {
               int64_t b = stack[bIdx][i];
               if (b != 0) {
-                stack[sp][i] = stack[aIdx][i] % b;
+                stack[sp][i] = modIdInt(stack[aIdx][i], b);
                 modMask |= (1ULL << i);
               } else {
                 stack[sp][i] = 0;
@@ -796,7 +821,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] + stack[bIdx][i];
+              stack[sp][i] = addIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -809,7 +834,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] - stack[bIdx][i];
+              stack[sp][i] = subIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -822,7 +847,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] * stack[bIdx][i];
+              stack[sp][i] = mulIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -838,7 +863,7 @@ class JitExpressionBytecodeVm {
             for (size_t i = 0; i < batchSize; ++i) {
               int64_t b = stack[bIdx][i];
               if (b != 0) {
-                stack[sp][i] = stack[aIdx][i] / b;
+                stack[sp][i] = divIdInt(stack[aIdx][i], b);
                 divMask |= (1ULL << i);
               } else {
                 stack[sp][i] = 0;
@@ -858,7 +883,7 @@ class JitExpressionBytecodeVm {
             for (size_t i = 0; i < batchSize; ++i) {
               int64_t b = stack[bIdx][i];
               if (b != 0) {
-                stack[sp][i] = stack[aIdx][i] % b;
+                stack[sp][i] = modIdInt(stack[aIdx][i], b);
                 modMask |= (1ULL << i);
               } else {
                 stack[sp][i] = 0;
@@ -1513,7 +1538,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] + stack[bIdx][i];
+              stack[sp][i] = addIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -1526,7 +1551,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] - stack[bIdx][i];
+              stack[sp][i] = subIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -1539,7 +1564,7 @@ class JitExpressionBytecodeVm {
             size_t aIdx = sp;
 #pragma GCC unroll 8
             for (size_t i = 0; i < batchSize; ++i) {
-              stack[sp][i] = stack[aIdx][i] * stack[bIdx][i];
+              stack[sp][i] = mulIdInt(stack[aIdx][i], stack[bIdx][i]);
             }
             validity[sp] = validity[aIdx] & validity[bIdx];
             sp++;
@@ -1555,7 +1580,7 @@ class JitExpressionBytecodeVm {
             for (size_t i = 0; i < batchSize; ++i) {
               int64_t b = stack[bIdx][i];
               if (b != 0) {
-                stack[sp][i] = stack[aIdx][i] / b;
+                stack[sp][i] = divIdInt(stack[aIdx][i], b);
                 divMask |= (1ULL << i);
               } else {
                 stack[sp][i] = 0;
@@ -1575,7 +1600,7 @@ class JitExpressionBytecodeVm {
             for (size_t i = 0; i < batchSize; ++i) {
               int64_t b = stack[bIdx][i];
               if (b != 0) {
-                stack[sp][i] = stack[aIdx][i] % b;
+                stack[sp][i] = modIdInt(stack[aIdx][i], b);
                 modMask |= (1ULL << i);
               } else {
                 stack[sp][i] = 0;
