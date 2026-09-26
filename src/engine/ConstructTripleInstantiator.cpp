@@ -158,6 +158,59 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
 }
 
 // _____________________________________________________________________________
+std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
+                            const ad_utility::MediaType& format,
+                            RleConstructTripleCache& cache) {
+  using enum ad_utility::MediaType;
+  static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
+  AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
+
+  const auto& [subject, predicate, object] = evaluatedTriple;
+  const bool includeDataType = (format == ntriples);
+
+  // RLE prefix constant folding: reuse the previous row's formatted
+  // subject/predicate string when the `EvaluatedTerm` is pointer-identical
+  // to the last row's (guaranteed for repeated `Id`s within a batch by
+  // `ConstructBatchEvaluator`'s `IdCache`), instead of reformatting it.
+  std::string s;
+  if (cache.lastSubject_ == subject.get()) {
+    s = cache.cachedSubject_;
+  } else {
+    s = formatTerm(*subject, includeDataType);
+    cache.lastSubject_ = subject.get();
+    cache.cachedSubject_ = s;
+  }
+  std::string p;
+  if (cache.lastPredicate_ == predicate.get()) {
+    p = cache.cachedPredicate_;
+  } else {
+    p = formatTerm(*predicate, includeDataType);
+    cache.lastPredicate_ = predicate.get();
+    cache.cachedPredicate_ = p;
+  }
+  std::string o = formatTerm(*object, includeDataType);
+
+  if (format == turtle || format == ntriples) {
+    if (ql::starts_with(o, '"')) {
+      return absl::StrCat(
+          s, " ", p, " ",
+          RdfEscaping::validRDFLiteralFromNormalized(std::move(o)), " .\n");
+    }
+    return absl::StrCat(s, " ", p, " ", o, " .\n");
+  } else if (format == csv) {
+    return absl::StrCat(RdfEscaping::escapeForCsv(std::move(s)), ",",
+                        RdfEscaping::escapeForCsv(std::move(p)), ",",
+                        RdfEscaping::escapeForCsv(std::move(o)), "\n");
+  } else if (format == tsv) {
+    return absl::StrCat(RdfEscaping::escapeForTsv(std::move(s)), "\t",
+                        RdfEscaping::escapeForTsv(std::move(p)), "\t",
+                        RdfEscaping::escapeForTsv(std::move(o)), "\n");
+  } else {
+    AD_FAIL();  // unreachable
+  }
+}
+
+// _____________________________________________________________________________
 StringTriple createStringTriple(const EvaluatedTriple& evaluatedTriple,
                                 bool includeDataType) {
   const auto& [subject, predicate, object] = evaluatedTriple;
