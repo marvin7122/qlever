@@ -1,6 +1,7 @@
-// Copyright 2025, University of Freiburg
+// Copyright 2025 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
-// Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #ifndef QLEVER_SRC_ENGINE_EXISTSJOIN_H
 #define QLEVER_SRC_ENGINE_EXISTSJOIN_H
@@ -108,6 +109,14 @@ class ExistsJoin : public Operation {
   // implementation first tries `tryRightIndexNestedLoopJoinIfSuitable` and then
   // `tryLeftIndexNestedLoopJoinIfSuitable`.
   std::optional<Result> tryIndexNestedLoopJoinIfSuitable(bool requestLaziness);
+
+  // Hash semijoin for a single join column whose right input is a `Sort`:
+  // skip that `Sort`, collect the join values of the unsorted right input in
+  // a hash set, and look up every left row (lazy or fully materialized). The
+  // order of the left input is kept. Handles UNDEF values on both sides.
+  // Returns `std::nullopt` if there are several join columns or the right
+  // input is not a `Sort`.
+  std::optional<Result> tryHashSetExistsJoinIfSuitable(bool requestLaziness);
 
   Result computeResult(bool requestLaziness) override;
 

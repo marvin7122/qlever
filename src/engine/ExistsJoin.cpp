@@ -1,6 +1,7 @@
-// Copyright 2025, University of Freiburg
+// Copyright 2025 - 2026, University of Freiburg
 // Chair of Algorithms and Data Structures
-// Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #include "engine/ExistsJoin.h"
 
@@ -13,6 +14,7 @@
 #include "engine/sparqlExpressions/ExistsExpression.h"
 #include "engine/sparqlExpressions/SparqlExpression.h"
 #include "util/ChunkedForLoop.h"
+#include "util/HashSet.h"
 #include "util/JoinAlgorithms/IndexNestedLoopJoin.h"
 #include "util/JoinAlgorithms/JoinAlgorithms.h"
 #include "util/VectorWithMemoryLimit.h"
@@ -115,6 +117,10 @@ Result ExistsJoin::computeResult(bool requestLaziness) {
     if (auto res = tryIndexNestedLoopJoinIfSuitable(requestLaziness)) {
       return std::move(res).value();
     }
+  }
+
+  if (auto res = tryHashSetExistsJoinIfSuitable(requestLaziness)) {
+    return std::move(res).value();
   }
 
   // The lazy exists join implementation does only work if there's just a single
@@ -233,6 +239,88 @@ Result ExistsJoin::computeResult(bool requestLaziness) {
   // The added column only contains Boolean values, and adds no new words to the
   // local vocabulary, so we can use the local vocab from `leftRes`.
   return {std::move(result), resultSortedOn(), leftRes->getSharedLocalVocab()};
+}
+
+// _____________________________________________________________________________
+std::optional<Result> ExistsJoin::tryHashSetExistsJoinIfSuitable(
+    bool requestLaziness) {
+  // Only for a single join column whose right input is sorted by a `Sort`
+  // that the merge-based algorithms would need. The index nested loop joins
+  // (tried before) already skip this `Sort` when the join columns are
+  // statically known to be defined, so this covers the remaining case.
+  auto sort = std::dynamic_pointer_cast<Sort>(right_->getRootOperation());
+  if (joinColumns_.size() != 1 || !sort) {
+    return std::nullopt;
+  }
+  const ColumnIndex leftJoinColumn = joinColumns_.at(0)[0];
+  const ColumnIndex rightJoinColumn = joinColumns_.at(0)[1];
+
+  // A `Sort` only permutes rows, so the join column of its child has the same
+  // index. Collect the join values of the unsorted right input in a hash set,
+  // which counts against the memory limit of the query.
+  auto rightRes = qlever::joinHelpers::computeResultSkipChild(sort, true);
+  ad_utility::HashSetWithMemoryLimit<Id> rightJoinValues{allocator()};
+  bool rightIsEmpty = true;
+  bool rightHasUndef = false;
+  auto addRightBlock = [&](const IdTableView<0>& block) {
+    auto column = block.getColumn(rightJoinColumn);
+    rightIsEmpty = rightIsEmpty && column.empty();
+    ad_utility::chunkedForLoop<qlever::joinHelpers::CHUNK_SIZE>(
+        0, column.size(),
+        [&](size_t i) {
+          Id id = column[i];
+          if (id.isUndefined()) {
+            rightHasUndef = true;
+          } else {
+            rightJoinValues.insert(id);
+          }
+        },
+        [this] { checkCancellation(); });
+  };
+  if (rightRes->isFullyMaterialized()) {
+    addRightBlock(rightRes->idTableView());
+  } else {
+    for (const auto& pair : rightRes->idTables()) {
+      addRightBlock(pair.idTable_.asStaticView<0>());
+    }
+  }
+
+  // A left row has a match iff its value occurs on the right, or an UNDEF on
+  // either side meets a non-empty other side (UNDEF matches every value).
+  auto leftRes = left_->getResult(requestLaziness);
+  auto addColumn = [this, leftJoinColumn, set = std::move(rightJoinValues),
+                    rightIsEmpty, rightHasUndef](IdTable& idTable) {
+    // Take both column views only after adding the column.
+    idTable.addEmptyColumn();
+    auto joinColumn = idTable.getColumn(leftJoinColumn);
+    auto existsColumn = idTable.getColumn(idTable.numColumns() - 1);
+    ad_utility::chunkedForLoop<qlever::joinHelpers::CHUNK_SIZE>(
+        0, joinColumn.size(),
+        [&](size_t i) {
+          Id id = joinColumn[i];
+          bool exists = id.isUndefined() ? !rightIsEmpty
+                                         : rightHasUndef || set.contains(id);
+          existsColumn[i] = Id::makeFromBool(exists);
+        },
+        [this] { checkCancellation(); });
+  };
+  if (leftRes->isFullyMaterialized()) {
+    IdTable result = leftRes->cloneIdTable();
+    addColumn(result);
+    return Result{std::move(result), resultSortedOn(),
+                  leftRes->getSharedLocalVocab()};
+  }
+  return Result{
+      Result::LazyResult{
+          leftRes->idTables() |
+          ql::views::transform([leftRes, addColumn = std::move(addColumn)](
+                                   Result::IdTableVocabPair& pair) {
+            // Keep `leftRes` alive until the lazy result is consumed.
+            (void)leftRes;
+            addColumn(pair.idTable_);
+            return std::move(pair);
+          })},
+      resultSortedOn()};
 }
 
 // _____________________________________________________________________________
