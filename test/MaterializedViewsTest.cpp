@@ -941,21 +941,23 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
     return makeServerForTesting(testIndexBase_).handleHttpRequest(request);
   };
 
-  // Expect that `request` yields a JSON response whose field `key` names the
-  // view `viewName`.
+  // Expect that `request` succeeds with a `200 OK` JSON response whose field
+  // `key` names the view `viewName`.
   auto expectJsonSuccess =
       [&sendRequest](const ReqT& request, const std::string& key,
                      std::string_view viewName,
                      ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
         auto trace = generateLocationTrace(l);
-        auto json = responseBodyAsJson(sendRequest(request));
+        auto response = sendRequest(request);
+        EXPECT_EQ(response.result(), http::status::ok);
+        auto json = responseBodyAsJson(std::move(response));
         ASSERT_TRUE(json.has_value());
         ASSERT_TRUE(json.value().contains(key));
         EXPECT_EQ(json.value()[key].get<std::string>(), viewName);
       };
 
-  // Expect that `request` fails with the HTTP status `status` and a body that
-  // contains `message`.
+  // Expect that `request` fails with the HTTP status `status` and a plain-text
+  // body that contains `message`.
   auto expectHttpError =
       [&sendRequest](const ReqT& request, http::status status,
                      std::string_view message,
@@ -963,6 +965,9 @@ TEST_F(MaterializedViewsTest, serverIntegration) {
         auto trace = generateLocationTrace(l);
         auto response = sendRequest(request);
         EXPECT_EQ(response.result(), status);
+        auto contentType = response.find(http::field::content_type);
+        ASSERT_NE(contentType, response.end());
+        EXPECT_TRUE(contentType->value().starts_with("text/plain"));
         EXPECT_THAT(responseBodyToString(std::move(response.body())),
                     ::testing::HasSubstr(message));
       };
