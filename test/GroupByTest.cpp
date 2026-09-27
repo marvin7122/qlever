@@ -1,7 +1,8 @@
-// Copyright 2018, University of Freiburg,
+// Copyright 2018 - 2026, University of Freiburg,
 // Chair of Algorithms and Data Structures.
 // Authors: Florian Kramer (florian.kramer@mail.uni-freiburg.de)
 //          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 #include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
@@ -1698,9 +1699,10 @@ TEST_F(GroupByOptimizations, computeGroupByForSingleIndexScan) {
   testFailure(variablesOnlyX, aliasesCountX, xyzScanSortedByX);
 
   // Must (currently) have exactly one alias that is a count.
-  // A distinct count is only supported if the triple has three variables.
+  // A distinct count over a three-variable triple is answered from metadata;
+  // a distinct count over a two-variable scan with a bound column is answered
+  // from the relation metadata as well (see below).
   testFailure(emptyVariables, emptyAliases, xyzScanSortedByX);
-  testFailure(emptyVariables, aliasesCountDistinctX, xyScan);
   testFailure(emptyVariables, aliasesXAsV, xyzScanSortedByX);
 
   // `chooseInterface == true` means "use the dedicated
@@ -1744,6 +1746,26 @@ TEST_F(GroupByOptimizations, computeGroupByForSingleIndexScan) {
     // The test index currently consists of six distinct subjects:
     // <x>, <y>, <z>, <a>, <b> and <c>.
     ASSERT_THAT(optional, optionalHasTable({{I(6)}}));
+  }
+  {
+    // A distinct count over a two-variable scan with a bound column is
+    // answered from the relation metadata: `?x <label> ?y` has the two
+    // distinct subjects `<x>` and `<z>`.
+    auto groupBy =
+        GroupByImpl{qec, emptyVariables, aliasesCountDistinctX, xyScan};
+    ASSERT_THAT(groupBy.computeGroupByForSingleIndexScan(),
+                optionalHasTable({{I(2)}}));
+  }
+  {
+    // Same scan, but counting the objects: all five `<label>` objects are
+    // different.
+    auto groupBy =
+        GroupByImpl{qec, emptyVariables,
+                    std::vector<Alias>{
+                        Alias{makeCountPimpl(varY, true), Variable{"?count"}}},
+                    xyScan};
+    ASSERT_THAT(groupBy.computeGroupByForSingleIndexScan(),
+                optionalHasTable({{I(5)}}));
   }
 }
 
@@ -3459,4 +3481,164 @@ TEST(GroupBy, BlankNodeInGroupBy) {
   EXPECT_EQ(table(0, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_EQ(table(1, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_NE(table(0, 1), table(1, 1));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanColumnOne) {
+  // `?s <label3> ?o` with `COUNT(DISTINCT ?o)`: two-variable scan with bound
+  // predicate. The counted variable ?o is column 1 of the scan's permutation
+  // (POS), so the new metadata fast path answers it directly.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <label3> <a> . <x> <label3> <b> . <y> <label3> <a> ."))};
+  auto qec = ctx.makeQec();
+
+  // SELECT (COUNT(DISTINCT ?o) AS ?count) WHERE { ?s <label3> ?o }
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::POS,
+      SparqlTripleSimple{Variable{"?s"}, iri("<label3>"), Variable{"?o"}});
+  Variable varO{"?o"};
+  auto countDistinctOPimpl = SparqlExpressionPimpl{
+      std::make_unique<CountExpression>(
+          true, std::make_unique<VariableExpression>(varO)),
+      "COUNT(DISTINCT ?o)"};
+  std::vector<Alias> aliases{
+      Alias{std::move(countDistinctOPimpl), Variable{"?count"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+
+  // The relation contains the distinct objects <a> and <b> -> count = 2.
+  auto result = groupBy.computeResultOnlyForTesting(false);
+  EXPECT_EQ(result.idTableView(), makeIdTableFromVector({{I(2)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanColumnTwo) {
+  // `?s <label3> ?o` with `COUNT(DISTINCT ?s)`: the counted variable ?s is
+  // column 2 of the POS permutation, so the helper must select the PSO
+  // permutation (where ?s is column 1) to answer from the relation metadata.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <label3> <a> . <x> <label3> <b> . <y> <label3> <a> ."))};
+  auto qec = ctx.makeQec();
+
+  // SELECT (COUNT(DISTINCT ?s) AS ?count) WHERE { ?s <label3> ?o }
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::POS,
+      SparqlTripleSimple{Variable{"?s"}, iri("<label3>"), Variable{"?o"}});
+  Variable varS{"?s"};
+  auto countDistinctSPimpl = SparqlExpressionPimpl{
+      std::make_unique<CountExpression>(
+          true, std::make_unique<VariableExpression>(varS)),
+      "COUNT(DISTINCT ?s)"};
+  std::vector<Alias> aliases{
+      Alias{std::move(countDistinctSPimpl), Variable{"?count"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+
+  // The relation contains the distinct subjects <x> and <y> -> count = 2.
+  auto result = groupBy.computeResultOnlyForTesting(false);
+  EXPECT_EQ(result.idTableView(), makeIdTableFromVector({{I(2)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanBoundObject) {
+  // `?s ?p <a>` with `COUNT(DISTINCT ?p)`, scanned in OSP: the counted
+  // variable ?p is column 2, so the helper must select OPS (where ?p is
+  // column 1). The data has three distinct subjects but only two distinct
+  // predicates for <a>, so counting the wrong column is detected.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <p1> <a> . <y> <p1> <a> . <z> <p1> <a> . <x> <p2> <a> ."))};
+  auto qec = ctx.makeQec();
+
+  // SELECT (COUNT(DISTINCT ?p) AS ?count) WHERE { ?s ?p <a> }
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::OSP,
+      SparqlTripleSimple{Variable{"?s"}, Variable{"?p"}, iri("<a>")});
+  Variable varP{"?p"};
+  auto countDistinctPPimpl = SparqlExpressionPimpl{
+      std::make_unique<CountExpression>(
+          true, std::make_unique<VariableExpression>(varP)),
+      "COUNT(DISTINCT ?p)"};
+  std::vector<Alias> aliases{
+      Alias{std::move(countDistinctPPimpl), Variable{"?count"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+
+  auto result = groupBy.computeResultOnlyForTesting(false);
+  EXPECT_EQ(result.idTableView(), makeIdTableFromVector({{I(2)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanSubjectBoundObject) {
+  // `?s ?p <a>` with `COUNT(DISTINCT ?s)`, scanned in OPS: the counted
+  // variable ?s is column 2, so the helper must select OSP (where ?s is
+  // column 1). The data has three distinct subjects but only two distinct
+  // predicates for <a>, so counting the wrong column is detected.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <p1> <a> . <y> <p1> <a> . <z> <p1> <a> . <x> <p2> <a> ."))};
+  auto qec = ctx.makeQec();
+
+  // SELECT (COUNT(DISTINCT ?s) AS ?count) WHERE { ?s ?p <a> }
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::OPS,
+      SparqlTripleSimple{Variable{"?s"}, Variable{"?p"}, iri("<a>")});
+  Variable varS{"?s"};
+  auto countDistinctSPimpl = SparqlExpressionPimpl{
+      std::make_unique<CountExpression>(
+          true, std::make_unique<VariableExpression>(varS)),
+      "COUNT(DISTINCT ?s)"};
+  std::vector<Alias> aliases{
+      Alias{std::move(countDistinctSPimpl), Variable{"?count"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+
+  auto result = groupBy.computeResultOnlyForTesting(false);
+  EXPECT_EQ(result.idTableView(), makeIdTableFromVector({{I(3)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanObjectBoundSubject) {
+  // `<x> ?p ?o` with `COUNT(DISTINCT ?o)`, scanned in SPO: the counted
+  // variable ?o is column 2, so the helper must select SOP (where ?o is
+  // column 1). The data has three distinct predicates but only two distinct
+  // objects for <x>, so counting the wrong column is detected.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <p1> <a> . <x> <p2> <a> . <x> <p3> <b> . <y> <p1> <c> ."))};
+  auto qec = ctx.makeQec();
+
+  // SELECT (COUNT(DISTINCT ?o) AS ?count) WHERE { <x> ?p ?o }
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::SPO,
+      SparqlTripleSimple{iri("<x>"), Variable{"?p"}, Variable{"?o"}});
+  Variable varO{"?o"};
+  auto countDistinctOPimpl = SparqlExpressionPimpl{
+      std::make_unique<CountExpression>(
+          true, std::make_unique<VariableExpression>(varO)),
+      "COUNT(DISTINCT ?o)"};
+  std::vector<Alias> aliases{
+      Alias{std::move(countDistinctOPimpl), Variable{"?count"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+
+  auto result = groupBy.computeResultOnlyForTesting(false);
+  EXPECT_EQ(result.idTableView(), makeIdTableFromVector({{I(2)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, distinctCountTwoVariableScanEmptyRelation) {
+  // `?s <notInVocab> ?o` where the predicate is not in the vocabulary: the
+  // scan is empty, so the implicit group by yields a single row with count 0.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <label3> <a> . <x> <label3> <b> . <y> <label3> <a> ."))};
+  auto qec = ctx.makeQec();
+
+  // SELECT (COUNT(DISTINCT ?o) AS ?count) WHERE { ?s <notInVocab> ?o }
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::POS,
+      SparqlTripleSimple{Variable{"?s"}, iri("<notInVocab>"), Variable{"?o"}});
+  Variable varO{"?o"};
+  auto countDistinctOPimpl = SparqlExpressionPimpl{
+      std::make_unique<CountExpression>(
+          true, std::make_unique<VariableExpression>(varO)),
+      "COUNT(DISTINCT ?o)"};
+  std::vector<Alias> aliases{
+      Alias{std::move(countDistinctOPimpl), Variable{"?count"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+
+  auto result = groupBy.computeResultOnlyForTesting(false);
+  EXPECT_EQ(result.idTableView(), makeIdTableFromVector({{I(0)}}));
 }
