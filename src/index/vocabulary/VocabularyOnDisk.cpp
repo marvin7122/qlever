@@ -177,7 +177,7 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
-  readBatchCached(*manager, offsetsFile_.fd(), sizes, fileOffsets, targets);
+  readBatchCached(manager, offsetsFile_.fd(), sizes, fileOffsets, targets);
   return offsetPairs;
 }
 
@@ -209,7 +209,7 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     bufferOffset += size;
   }
 
-  readBatchCached(*manager, file_.fd(), sizes, fileOffsets, targets);
+  readBatchCached(manager, file_.fd(), sizes, fileOffsets, targets);
   return VocabBatchLookupData::asResult(std::move(data));
 }
 
@@ -219,7 +219,7 @@ void VocabularyOnDisk::readBatchCached(ad_utility::BatchManagerBase& manager,
                                        ql::span<const uint64_t> fileOffsets,
                                        ql::span<char*> targets) const {
   using ad_utility::vocab::VocabBlockCache;
-  constexpr uint64_t blockSize = VocabBlockCache::BLOCK_SIZE;
+  constexpr uint64_t blockSize = VocabBlockCache::kBlockSize;
   size_t numCacheBlocks =
       getRuntimeParameter<&RuntimeParameters::vocabBlockCacheSize_>();
   struct stat fileId {};

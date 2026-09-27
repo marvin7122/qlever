@@ -30,7 +30,7 @@ namespace ad_utility::vocab {
 // deliberately not even an API to invalidate entries).
 //
 // Design:
-// * Fixed pool of `BLOCK_SIZE` (4 KiB) slots, each aligned for `O_DIRECT` via
+// * Fixed pool of `kBlockSize` (4 KiB) slots, each aligned for `O_DIRECT` via
 //   `posix_memalign`.
 // * Tag index keyed by `(device, inode, block number)`; the device+inode pair
 //   identifies the underlying file, so entries from different vocabularies
@@ -46,7 +46,7 @@ class VocabBlockCache {
  public:
   // The size of one cache slot in bytes. Matches the common filesystem block
   // and `O_DIRECT` alignment granularity.
-  static constexpr size_t BLOCK_SIZE = 4096;
+  static constexpr size_t kBlockSize = 4096;
 
   // Create a cache with `numBlocks` slots. `0` means "no storage": `lookup`
   // always misses and `insert` is a no-op.
@@ -66,11 +66,11 @@ class VocabBlockCache {
   void resize(size_t numBlocks);
 
   // If block `blockNo` of the file identified by `(dev, ino)` is cached,
-  // return a pointer to its `BLOCK_SIZE` bytes (valid until the next `insert`
+  // return a pointer to its `kBlockSize` bytes (valid until the next `insert`
   // or `resize` on this instance) and set its clock reference bit. Return
   // `nullptr` on a miss.
   const char* lookup(dev_t dev, ino_t ino, uint64_t blockNo);
-  // Store `BLOCK_SIZE` bytes from `data` under the given key, overwriting any
+  // Store `kBlockSize` bytes from `data` under the given key, overwriting any
   // previous entry for the same key. If the cache is full, evict the block
   // designated by the clock hand. No-op when `capacity() == 0`.
   void insert(dev_t dev, ino_t ino, uint64_t blockNo, const char* data);
@@ -98,7 +98,7 @@ class VocabBlockCache {
   void clear();
 
   std::vector<Slot> slots_;
-  // Single aligned chunk of `capacity() * BLOCK_SIZE` bytes (or `nullptr`).
+  // Single aligned chunk of `capacity() * kBlockSize` bytes (or `nullptr`).
   char* storage_ = nullptr;
   // Clock-hand position for eviction.
   size_t hand_ = 0;

@@ -25,7 +25,7 @@
 
 namespace {
 using ad_utility::vocab::VocabBlockCache;
-constexpr size_t blockSize = VocabBlockCache::BLOCK_SIZE;
+constexpr size_t blockSize = VocabBlockCache::kBlockSize;
 
 // Fill a block with deterministic content derived from `seed`.
 std::array<char, blockSize> makeBlockData(uint64_t seed) {

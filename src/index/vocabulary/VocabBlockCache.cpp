@@ -77,14 +77,14 @@ void VocabBlockCache::resize(size_t numBlocks) {
     return;
   }
   void* storage = nullptr;
-  if (::posix_memalign(&storage, BLOCK_SIZE, numBlocks * BLOCK_SIZE) != 0) {
+  if (::posix_memalign(&storage, kBlockSize, numBlocks * kBlockSize) != 0) {
     AD_THROW("Failed to allocate " + std::to_string(numBlocks) + " blocks of " +
-             std::to_string(BLOCK_SIZE) +
+             std::to_string(kBlockSize) +
              " bytes for the vocabulary block cache");
   }
   storage_ = static_cast<char*>(storage);
   for (size_t i = 0; i < numBlocks; ++i) {
-    slots_[i].data_ = storage_ + i * BLOCK_SIZE;
+    slots_[i].data_ = storage_ + i * kBlockSize;
   }
 }
 
@@ -120,7 +120,7 @@ void VocabBlockCache::insert(dev_t dev, ino_t ino, uint64_t blockNo,
   }
   // Overwrite the existing entry for an immutable file re-read.
   if (Slot* slot = findSlot(dev, ino, blockNo)) {
-    std::memcpy(slot->data_, data, BLOCK_SIZE);
+    std::memcpy(slot->data_, data, kBlockSize);
     slot->referenced_ = true;
     return;
   }
@@ -143,7 +143,7 @@ void VocabBlockCache::insert(dev_t dev, ino_t ino, uint64_t blockNo,
   slot.blockNo_ = blockNo;
   slot.occupied_ = true;
   slot.referenced_ = true;
-  std::memcpy(slot.data_, data, BLOCK_SIZE);
+  std::memcpy(slot.data_, data, kBlockSize);
   hand_ = (hand_ + 1) % slots_.size();
 }
 
