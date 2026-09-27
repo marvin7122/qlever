@@ -320,6 +320,8 @@ class ElasticExportScheduler {
   void postReadyBatch(std::vector<OwnedMorsel> batch);
   // Build the closure for a posted morsel; completion decrements the share
   // accounting and admits waiting morsels, including on the throwing path.
+  // The original morsel exception takes precedence over a completion-path
+  // failure (e.g. a throwing poster while reposting drained morsels).
   absl::AnyInvocable<void()> makePostedWork(OwnedMorsel morsel);
   // Completion path shared by the success and throwing continuations:
   // decrement under the lock, then post newly admittable morsels without it.
