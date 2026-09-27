@@ -7,9 +7,12 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <exception>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -27,13 +30,13 @@ TEST(AsyncChunkPipelineTest, RuntimeKillSwitchLeavesPipelineClosed) {
   AsyncChunkPipeline<std::string> pipeline{{.runtimeEnabled_ = false}};
   EXPECT_FALSE(pipeline.isEnabled());
   EXPECT_EQ(pipeline.push("ignored"), PushResult::Closed);
-  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
+  AD_EXPECT_NULLOPT(pipeline.pop());
 }
 
 TEST(AsyncChunkPipelineTest, EmptyCompletedPipelineReturnsNoChunk) {
   AsyncChunkPipeline<std::string> pipeline{{.runtimeEnabled_ = true}};
   pipeline.finish();
-  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
+  AD_EXPECT_NULLOPT(pipeline.pop());
 }
 
 TEST(AsyncChunkPipelineTest, MovesChunksWithoutCopyingTheirBuffer) {
@@ -43,7 +46,7 @@ TEST(AsyncChunkPipelineTest, MovesChunksWithoutCopyingTheirBuffer) {
   const auto* allocation = chunk.get();
 
   EXPECT_EQ(pipeline.push(std::move(chunk)), PushResult::Accepted);
-  auto received = pipeline.pop();
+  const auto received = pipeline.pop();
 
   ASSERT_TRUE(received.has_value());
   EXPECT_EQ(received->get(), allocation);
@@ -57,7 +60,7 @@ TEST(AsyncChunkPipelineTest, CompletionDrainsQueuedChunksInOrder) {
   pipeline.finish();
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"first"});
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"second"});
-  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
+  AD_EXPECT_NULLOPT(pipeline.pop());
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
 }
 
@@ -73,7 +76,7 @@ TEST(AsyncChunkPipelineTest, FullRingSignalsBackpressureWithoutBlocking) {
   EXPECT_EQ(pipeline.push("third"), PushResult::Accepted);
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"second"});
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"third"});
-  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
+  AD_EXPECT_NULLOPT(pipeline.pop());
 }
 
 TEST(AsyncChunkPipelineTest, SlotsAlternateAcrossWraparound) {
@@ -81,10 +84,11 @@ TEST(AsyncChunkPipelineTest, SlotsAlternateAcrossWraparound) {
   // Rotate the ring several times so both slot indices wrap around and the
   // freed slot is reused on every iteration.
   for (int i = 0; i < 5; ++i) {
-    const std::string chunk = "chunk-" + std::to_string(i);
-    ASSERT_EQ(pipeline.push(std::string{chunk}), PushResult::Accepted)
+    std::string chunk = "chunk-" + std::to_string(i);
+    const std::string expected = chunk;
+    ASSERT_EQ(pipeline.push(std::move(chunk)), PushResult::Accepted)
         << "iteration " << i;
-    EXPECT_EQ(pipeline.pop(), std::optional<std::string>{chunk})
+    EXPECT_EQ(pipeline.pop(), std::optional<std::string>{expected})
         << "iteration " << i;
   }
   EXPECT_EQ(pipeline.stats().chunksProduced_, 5);
@@ -98,7 +102,7 @@ TEST(AsyncChunkPipelineTest, CancellationDiscardsBothSlots) {
 
   pipeline.cancel();
 
-  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
+  AD_EXPECT_NULLOPT(pipeline.pop());
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
   EXPECT_EQ(pipeline.stats().chunksDiscarded_, 2);
 }
@@ -107,7 +111,7 @@ TEST(AsyncChunkPipelineTest, CancellationReleasesQueuedBuffer) {
   AsyncChunkPipeline<std::shared_ptr<std::string>> pipeline{
       {.runtimeEnabled_ = true}};
   auto chunk = std::make_shared<std::string>("payload");
-  std::weak_ptr<std::string> lifetime = chunk;
+  const std::weak_ptr<std::string> lifetime = chunk;
   ASSERT_EQ(pipeline.push(std::move(chunk)), PushResult::Accepted);
 
   pipeline.cancel();
@@ -120,10 +124,11 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
   ASSERT_EQ(pipeline.push("before-error"), PushResult::Accepted);
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"producer failed"}));
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"before-error"});
-  // Use a lambda to discard the nodiscard return value while still checking
-  // the exception
-  EXPECT_THROW([&] { static_cast<void>(pipeline.pop()); }(),
-               std::runtime_error);
+  // `static_cast<void>` discards the `[[nodiscard]]` return value while the
+  // helper checks the exception message.
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(static_cast<void>(pipeline.pop()),
+                                        ::testing::StrEq("producer failed"),
+                                        std::runtime_error);
 }
 
 TEST(AsyncChunkPipelineTest, FailAfterFinishIsNoOp) {
@@ -132,7 +137,7 @@ TEST(AsyncChunkPipelineTest, FailAfterFinishIsNoOp) {
   pipeline.finish();
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"too late"}));
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"only"});
-  EXPECT_FALSE(static_cast<bool>(pipeline.pop().has_value()));
+  AD_EXPECT_NULLOPT(pipeline.pop());
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
 }
 
@@ -149,12 +154,9 @@ TEST(AsyncChunkPipelineTest, SecondFailKeepsFirstException) {
   AsyncChunkPipeline<std::string> pipeline{{.runtimeEnabled_ = true}};
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"first"}));
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"second"}));
-  try {
-    static_cast<void>(pipeline.pop());
-    FAIL() << "pop must rethrow the recorded failure";
-  } catch (const std::runtime_error& e) {
-    EXPECT_STREQ(e.what(), "first");
-  }
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(static_cast<void>(pipeline.pop()),
+                                        ::testing::StrEq("first"),
+                                        std::runtime_error);
 }
 
 TEST(AsyncChunkPipelineTest, DefaultConstructedPipelineIsDisabled) {
@@ -168,8 +170,8 @@ TEST(AsyncChunkPipelineTest, DefaultConstructedPipelineIsDisabled) {
   std::string chunk = "kept";
   EXPECT_EQ(pipeline.push(std::move(chunk)), PushResult::Closed);
   EXPECT_EQ(chunk, "kept");
-  EXPECT_FALSE(pipeline.pop().has_value());
-  auto stats = pipeline.stats();
+  AD_EXPECT_NULLOPT(pipeline.pop());
+  const auto stats = pipeline.stats();
   EXPECT_EQ(stats.chunksProduced_, 0);
   EXPECT_EQ(stats.chunksConsumed_, 0);
   EXPECT_EQ(stats.chunksDiscarded_, 0);
@@ -180,7 +182,7 @@ TEST(AsyncChunkPipelineTest, IsRunningTracksLifecycleWhileIsEnabledStays) {
   EXPECT_TRUE(pipeline.isEnabled());
   EXPECT_TRUE(pipeline.isRunning());
   // An empty running pipeline has no chunk yet but is not over.
-  EXPECT_FALSE(pipeline.pop().has_value());
+  AD_EXPECT_NULLOPT(pipeline.pop());
   EXPECT_TRUE(pipeline.isRunning());
   pipeline.finish();
   EXPECT_TRUE(pipeline.isEnabled());
@@ -217,19 +219,22 @@ TEST(AsyncChunkPipelineTest, FailureDrainsBothSlotsThenRethrowsRepeatedly) {
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"first"});
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"second"});
   for (int i = 0; i < 2; ++i) {
-    EXPECT_THROW([&] { static_cast<void>(pipeline.pop()); }(),
-                 std::runtime_error);
+    AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(static_cast<void>(pipeline.pop()),
+                                          ::testing::StrEq("producer failed"),
+                                          std::runtime_error);
   }
   // A failed export cannot be cancelled afterwards.
   pipeline.cancel();
-  EXPECT_THROW([&] { static_cast<void>(pipeline.pop()); }(),
-               std::runtime_error);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(static_cast<void>(pipeline.pop()),
+                                        ::testing::StrEq("producer failed"),
+                                        std::runtime_error);
   EXPECT_EQ(pipeline.stats().chunksDiscarded_, 0);
 }
 
 TEST(AsyncChunkPipelineTest, FailRequiresAnException) {
   AsyncChunkPipeline<std::string> pipeline{{.runtimeEnabled_ = true}};
-  EXPECT_ANY_THROW(pipeline.fail(nullptr));
+  AD_EXPECT_THROW_WITH_MESSAGE(pipeline.fail(nullptr),
+                               ::testing::HasSubstr("failure != nullptr"));
   EXPECT_TRUE(pipeline.isRunning());
 }
 
@@ -237,13 +242,13 @@ TEST(AsyncChunkPipelineTest, CancelOfEmptyPipelineCloses) {
   AsyncChunkPipeline<std::string> pipeline{{.runtimeEnabled_ = true}};
   pipeline.cancel();
   EXPECT_FALSE(pipeline.isRunning());
-  EXPECT_FALSE(pipeline.pop().has_value());
+  AD_EXPECT_NULLOPT(pipeline.pop());
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
   EXPECT_EQ(pipeline.stats().chunksDiscarded_, 0);
   // Late `fail` and a second `cancel` are no-ops.
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"too late"}));
   pipeline.cancel();
-  EXPECT_FALSE(pipeline.pop().has_value());
+  AD_EXPECT_NULLOPT(pipeline.pop());
 }
 
 TEST(AsyncChunkPipelineTest, CancellationCountsDiscardedBytes) {
