@@ -719,6 +719,7 @@ TEST(ServerTest, exportEngineV1V2Parity) {
   const auto runToString = [&server](const auto& request) {
     auto response = server.process(request);
     EXPECT_THAT(response, StatusIs(http::status::ok));
+    EXPECT_THAT(response, ContentTypeIs("text/csv"));
     return responseBodyToString(std::move(response.body()));
   };
   // The baseline must be the CSV result (a header line and one line per
