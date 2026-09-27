@@ -1,11 +1,19 @@
-// Copyright 2025, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Christoph Ullinger <ullingec@cs.uni-freiburg.de>
+// Copyright 2025 - 2026, The QLever Authors, in particular:
+//
+// 2025        Christoph Ullinger <ullingec@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gmock/gmock.h>
 
+#include <array>
 #include <variant>
 
+#include "VocabularyTestHelpers.h"
 #include "backports/StartsWithAndEndsWith.h"
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
@@ -451,6 +459,43 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
                                      P{sv.addMarker(1, 0), "\"xyz\""},
                                      P{sv.addMarker(0, 1), "\"abc\""},
                                      P{sv.addMarker(1, 1), "\"axyz\""}));
+}
+
+// _____________________________________________________________________________
+TEST(Vocabulary, SplitVocabularyLookupBatchMatchesItemAt) {
+  // Mixed markers, reordered indices, and a duplicate must match `operator[]`.
+  TwoSplitVocabulary sv;
+  const std::string vocabFilename =
+      absl::StrCat(gtestCurrentTestName(), ".dat");
+  auto ww = sv.makeDiskWriterPtr(vocabFilename);
+  (*ww)("\"\"", true);
+  (*ww)("\"abc\"", true);
+  (*ww)("\"axyz\"", true);
+  (*ww)("\"xyz\"", true);
+  ww->finish();
+  sv.readFromFile(vocabFilename);
+
+  const std::array<size_t, 6> indices{
+      static_cast<size_t>(sv.addMarker(1, 0)),
+      static_cast<size_t>(sv.addMarker(0, 1)),
+      static_cast<size_t>(sv.addMarker(1, 1)),
+      static_cast<size_t>(sv.addMarker(0, 0)),
+      static_cast<size_t>(sv.addMarker(1, 0)),
+      static_cast<size_t>(sv.addMarker(0, 1)),
+  };
+  auto result = sv.lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(sv, result,
+                                                                indices);
+  EXPECT_THROW(sv.lookupBatch(ql::span<const size_t>{}), ad_utility::Exception);
+
+  const std::array<size_t, 3> oneMarker{
+      static_cast<size_t>(sv.addMarker(0, 1)),
+      static_cast<size_t>(sv.addMarker(0, 0)),
+      static_cast<size_t>(sv.addMarker(0, 1)),
+  };
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      sv, sv.lookupBatch(oneMarker), oneMarker);
+  sv.close();
 }
 
 // _____________________________________________________________________________
