@@ -644,4 +644,42 @@ TEST(FormatTripleRle, CsvEscapingStillAppliedOnCacheHit) {
             formatTripleRle(triple2, ad_utility::MediaType::csv, cache));
 }
 
+// _____________________________________________________________________________
+// The byte-identity contract also holds for `tsv` and `ntriples`, including
+// the `^^<datatype>` qualification of typed literals in `ntriples` output.
+// Each triple is formatted twice so the second call exercises the cache.
+TEST(FormatTripleRle, TsvAndNTriplesByteIdentical) {
+  auto subject = makeTerm("<http://s>");
+  auto predicate = makeTerm("<http://p>");
+  RleConstructTripleCache cache;
+  for (auto format :
+       {ad_utility::MediaType::tsv, ad_utility::MediaType::ntriples}) {
+    auto triple =
+        EvaluatedTriple{subject, predicate, makeTerm("\"42\"", XSD_INT_TYPE)};
+    EXPECT_EQ(formatTriple(triple, format),
+              formatTripleRle(triple, format, cache))
+        << "format = " << ad_utility::toString(format);
+    // Second call with the same instances: subject/predicate come from the
+    // cache, the typed literal is re-qualified.
+    EXPECT_EQ(formatTriple(triple, format),
+              formatTripleRle(triple, format, cache))
+        << "format = " << ad_utility::toString(format);
+  }
+}
+
+// _____________________________________________________________________________
+// A turtle literal object on a cache-hit row still passes through literal
+// escaping; the cached subject/predicate strings are spliced in unchanged.
+TEST(FormatTripleRle, TurtleLiteralEscapingAppliedOnCacheHit) {
+  auto subject = makeTerm("<http://s>");
+  auto predicate = makeTerm("<http://p>");
+  RleConstructTripleCache cache;
+  auto triple1 = EvaluatedTriple{subject, predicate, makeTerm("\"hello\"")};
+  auto triple2 = EvaluatedTriple{subject, predicate, makeTerm("\"wor\\\"ld\"")};
+  EXPECT_EQ(formatTriple(triple1, ad_utility::MediaType::turtle),
+            formatTripleRle(triple1, ad_utility::MediaType::turtle, cache));
+  EXPECT_EQ(formatTriple(triple2, ad_utility::MediaType::turtle),
+            formatTripleRle(triple2, ad_utility::MediaType::turtle, cache));
+}
+
 }  // namespace

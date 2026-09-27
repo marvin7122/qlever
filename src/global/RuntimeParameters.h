@@ -100,7 +100,8 @@ struct RuntimeParameters {
   SizeT lazyIndexScanMaxSizeMaterialization_{
       1'000'000, "lazy-index-scan-max-size-materialization"};
   Bool useBinsearchTransitivePath_{true, "use-binsearch-transitive-path"};
-  // Enables RLE prefix constant folding (see `RlePrefixCompressor.h`) in the
+  // Enables RLE prefix constant folding (see `formatTripleRle` in
+  // `engine/ConstructTripleInstantiator.h`) in the
   // CONSTRUCT triple export loop: repeated consecutive subject/predicate
   // terms in a sorted result stream are formatted once and spliced into
   // subsequent rows instead of being re-formatted per row. Default off,

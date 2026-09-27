@@ -172,20 +172,22 @@ std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
   // subject/predicate string when the `EvaluatedTerm` is pointer-identical
   // to the last row's (guaranteed for repeated `Id`s within a batch by
   // `ConstructBatchEvaluator`'s `IdCache`), instead of reformatting it.
+  // `shared_ptr` comparison is pointer comparison, and the owning handles
+  // in the cache keep the previous row's terms alive across batches.
   std::string s;
-  if (cache.lastSubject_ == subject.get()) {
+  if (cache.lastSubject_ == subject) {
     s = cache.cachedSubject_;
   } else {
     s = formatTerm(*subject, includeDataType);
-    cache.lastSubject_ = subject.get();
+    cache.lastSubject_ = subject;
     cache.cachedSubject_ = s;
   }
   std::string p;
-  if (cache.lastPredicate_ == predicate.get()) {
+  if (cache.lastPredicate_ == predicate) {
     p = cache.cachedPredicate_;
   } else {
     p = formatTerm(*predicate, includeDataType);
-    cache.lastPredicate_ = predicate.get();
+    cache.lastPredicate_ = predicate;
     cache.cachedPredicate_ = p;
   }
   std::string o = formatTerm(*object, includeDataType);

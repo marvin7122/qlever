@@ -68,16 +68,20 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
                          const ad_utility::MediaType& format);
 
 // Per-stream cache used by `formatTripleRle` to implement RLE prefix
-// constant folding (see `engine/RlePrefixCompressor.h`) over the CONSTRUCT
-// triple export loop: `ConstructBatchEvaluator`'s `IdCache` already returns
-// the same `EvaluatedTerm` (shared_ptr) instance for equal `Id`s within a
+// constant folding (see `formatTripleRle` below) over the CONSTRUCT triple
+// export loop: `ConstructBatchEvaluator`'s `IdCache` already returns the
+// same `EvaluatedTerm` (shared_ptr) instance for equal `Id`s within a
 // batch, so a run of consecutive rows with an identical subject or
 // predicate carries pointer-identical `EvaluatedTermData`. This cache
 // remembers the last formatted subject/predicate string per pointer and
-// lets `formatTripleRle` skip re-formatting them.
+// lets `formatTripleRle` skip re-formatting them. The handles are owning:
+// the cache outlives individual batches (it folds runs across batch
+// boundaries), while a batch's triples only own their `EvaluatedTerm`s
+// until the batch is consumed, so raw pointers would dangle. Consume this
+// cache single-threaded in a single pass; do not share it across threads.
 struct RleConstructTripleCache {
-  const EvaluatedTermData* lastSubject_ = nullptr;
-  const EvaluatedTermData* lastPredicate_ = nullptr;
+  EvaluatedTerm lastSubject_ = nullptr;
+  EvaluatedTerm lastPredicate_ = nullptr;
   std::string cachedSubject_;
   std::string cachedPredicate_;
 };
