@@ -14,6 +14,8 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -61,12 +63,28 @@ struct IsStreamableBodyResponse<
 inline void sendBytesViaZeroCopySocket(int sockfd, ZeroCopySocketSender& sender,
                                        const char* data, size_t size) {
   AD_CONTRACT_CHECK(sockfd >= 0);
+  AD_CONTRACT_CHECK(data != nullptr || size == 0);
   while (size > 0) {
     uint32_t slot = sender.acquireBuffer();
     auto span = sender.getSlotSpan(slot);
+    // The pool guarantees non-empty spans (`bufferSizeBytes > 0`), so `n >
+    // 0` and the loop always makes progress.
+    AD_CORRECTNESS_CHECK(!span.empty());
     const size_t n = std::min(size, span.size());
     std::memcpy(span.data(), data, n);
-    sender.sendChunk(sockfd, slot, n);
+    try {
+      sender.sendChunk(sockfd, slot, n);
+    } catch (...) {
+      // `sendChunk` can throw before the slot is tracked as in-flight (the
+      // synchronous fallback releases the slot itself on its error paths,
+      // the ring path only tracks the slot after all throwing calls), so an
+      // untracked slot would stay marked in-use and exhaust the pool.
+      // Release it here only if it is still in-use, then rethrow.
+      if (sender.bufferPool().isSlotInUse(slot)) {
+        sender.bufferPool().releaseSlot(slot);
+      }
+      throw;
+    }
     data += n;
     size -= n;
   }

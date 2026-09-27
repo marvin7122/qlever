@@ -128,6 +128,11 @@ class ZeroCopyBufferPool {
       AD_THROW(
           "posix_memalign failed to allocate zero-copy pinned buffer pool");
     }
+    // RAII guard: the allocations below may throw, and the destructor does
+    // not run for a partially constructed object, so `rawBuffer_` would leak
+    // without it. Released once the pool is fully built.
+    std::unique_ptr<void, decltype(&std::free)> bufferGuard(rawBuffer_,
+                                                            &std::free);
 
     // Pre-fault memory pages before registration to avoid soft page faults
     // during async DMA transmission.
@@ -147,6 +152,7 @@ class ZeroCopyBufferPool {
       iovecs_.push_back(iov);
       freeSlots_.push_back(static_cast<uint32_t>(numBuffers_ - 1 - i));
     }
+    bufferGuard.release();
   }
 
   ~ZeroCopyBufferPool() {
