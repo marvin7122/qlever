@@ -100,6 +100,9 @@ template <typename ChunkType = std::string>
 class AsyncChunkPipeline {
   static_assert(std::is_nothrow_move_constructible_v<ChunkType>,
                 "The ring relies on non-throwing moves of `ChunkType`");
+  static_assert(std::is_nothrow_destructible_v<ChunkType>,
+                "Chunks are destroyed in the `noexcept` `cancel` and in the "
+                "destructor, so their destruction must not throw");
   static_assert(!std::is_pointer_v<ChunkType>, "`ChunkType` must own its data");
 
  private:
@@ -196,12 +199,15 @@ class AsyncChunkPipeline {
     if (numFilledSlots_ > 0) {
       auto& slot = slots_[consumeIndex_];
       AD_CORRECTNESS_CHECK(slot.has_value());
+      // Measure before mutating the ring: a throwing `size()` then leaves
+      // the queued chunk untouched.
+      const size_t bytes = chunkSize(*slot);
       std::optional<ChunkType> oldestChunk{std::move(slot)};
       slot.reset();
       consumeIndex_ = (consumeIndex_ + 1) % numRingSlots;
       --numFilledSlots_;
       ++stats_.chunksConsumed_;
-      stats_.bytesConsumed_ += chunkSize(*oldestChunk);
+      stats_.bytesConsumed_ += bytes;
       return oldestChunk;
     }
     if (state_ == State::Failed) {
