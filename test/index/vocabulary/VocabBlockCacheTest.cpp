@@ -16,12 +16,12 @@
 #include <vector>
 
 #include "../../util/GTestHelpers.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "global/RuntimeParameters.h"
 #include "index/vocabulary/VocabBlockCache.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
-#include "../../util/RuntimeParametersTestHelpers.h"
 
 namespace {
 using ad_utility::vocab::VocabBlockCache;
