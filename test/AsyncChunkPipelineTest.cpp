@@ -77,6 +77,9 @@ TEST(AsyncChunkPipelineTest, FullRingSignalsBackpressureWithoutBlocking) {
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"second"});
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"third"});
   AD_EXPECT_NULLOPT(pipeline.pop());
+  EXPECT_EQ(pipeline.stats().bytesProduced_, 16);
+  EXPECT_EQ(pipeline.stats().bytesConsumed_, 16);
+  EXPECT_EQ(pipeline.stats().bytesDiscarded_, 0);
 }
 
 TEST(AsyncChunkPipelineTest, SlotsAlternateAcrossWraparound) {
@@ -93,6 +96,9 @@ TEST(AsyncChunkPipelineTest, SlotsAlternateAcrossWraparound) {
   }
   EXPECT_EQ(pipeline.stats().chunksProduced_, 5);
   EXPECT_EQ(pipeline.stats().chunksConsumed_, 5);
+  EXPECT_EQ(pipeline.stats().bytesProduced_, 35);
+  EXPECT_EQ(pipeline.stats().bytesConsumed_, 35);
+  EXPECT_EQ(pipeline.stats().bytesDiscarded_, 0);
 }
 
 TEST(AsyncChunkPipelineTest, CancellationDiscardsBothSlots) {
@@ -105,6 +111,7 @@ TEST(AsyncChunkPipelineTest, CancellationDiscardsBothSlots) {
   AD_EXPECT_NULLOPT(pipeline.pop());
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
   EXPECT_EQ(pipeline.stats().chunksDiscarded_, 2);
+  EXPECT_EQ(pipeline.stats().bytesDiscarded_, 11);
 }
 
 TEST(AsyncChunkPipelineTest, CancellationReleasesQueuedBuffer) {
@@ -124,6 +131,8 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
   ASSERT_EQ(pipeline.push("before-error"), PushResult::Accepted);
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"producer failed"}));
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"before-error"});
+  EXPECT_EQ(pipeline.stats().bytesProduced_, 12);
+  EXPECT_EQ(pipeline.stats().bytesConsumed_, 0);
   // `static_cast<void>` discards the `[[nodiscard]]` return value while the
   // helper checks the exception message.
   AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(static_cast<void>(pipeline.pop()),
@@ -175,6 +184,9 @@ TEST(AsyncChunkPipelineTest, DefaultConstructedPipelineIsDisabled) {
   EXPECT_EQ(stats.chunksProduced_, 0);
   EXPECT_EQ(stats.chunksConsumed_, 0);
   EXPECT_EQ(stats.chunksDiscarded_, 0);
+  EXPECT_EQ(stats.bytesProduced_, 0);
+  EXPECT_EQ(stats.bytesConsumed_, 0);
+  EXPECT_EQ(stats.bytesDiscarded_, 0);
 }
 
 TEST(AsyncChunkPipelineTest, IsRunningTracksLifecycleWhileIsEnabledStays) {
@@ -229,6 +241,9 @@ TEST(AsyncChunkPipelineTest, FailureDrainsBothSlotsThenRethrowsRepeatedly) {
                                         ::testing::StrEq("producer failed"),
                                         std::runtime_error);
   EXPECT_EQ(pipeline.stats().chunksDiscarded_, 0);
+  EXPECT_EQ(pipeline.stats().bytesProduced_, 11);
+  EXPECT_EQ(pipeline.stats().bytesConsumed_, 11);
+  EXPECT_EQ(pipeline.stats().bytesDiscarded_, 0);
 }
 
 TEST(AsyncChunkPipelineTest, FailRequiresAnException) {
@@ -245,6 +260,9 @@ TEST(AsyncChunkPipelineTest, CancelOfEmptyPipelineCloses) {
   AD_EXPECT_NULLOPT(pipeline.pop());
   EXPECT_EQ(pipeline.push("late"), PushResult::Closed);
   EXPECT_EQ(pipeline.stats().chunksDiscarded_, 0);
+  EXPECT_EQ(pipeline.stats().bytesProduced_, 0);
+  EXPECT_EQ(pipeline.stats().bytesConsumed_, 0);
+  EXPECT_EQ(pipeline.stats().bytesDiscarded_, 0);
   // Late `fail` and a second `cancel` are no-ops.
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"too late"}));
   pipeline.cancel();
