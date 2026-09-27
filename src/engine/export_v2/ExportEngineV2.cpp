@@ -552,12 +552,9 @@ void ExportEngineV2::appendSerializedRows(
         latticeTrivial || (!ids.empty() && !isVocabLike(ids[0].getDatatype()));
     if (uniformEncoded && !latticeTrivial) {
       const Datatype dt = ids[0].getDatatype();
-      for (Id id : ids) {
-        if (id.getDatatype() != dt) {
-          uniformEncoded = false;
-          break;
-        }
-      }
+      uniformEncoded = std::all_of(ids.begin(), ids.end(), [dt](Id id) {
+        return id.getDatatype() == dt;
+      });
     }
     if (monomorphic && uniformEncoded) {
       if (auto type = directColumnType(ids[0].getDatatype())) {

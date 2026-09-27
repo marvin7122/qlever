@@ -544,7 +544,12 @@ class ExportJobState final
         if (slots_[i].consumed_) {
           continue;
         }
-        if (slots_[i].status_ == MorselStatus::Completed) {
+        if (slots_[i].status_ == MorselStatus::Completed ||
+            slots_[i].status_ == MorselStatus::Cancelled) {
+          // Prioritize any terminal state: a `Cancelled` slot carries the
+          // stored task failure, which the loop below rethrows. Without
+          // this, a lone `Cancelled` slot would fall through to the
+          // contract check instead of surfacing the original exception.
           completed = i;
           break;
         }
@@ -651,17 +656,20 @@ class ExportJobState final
           return slots_[index].status_ == MorselStatus::Completed ||
                  slots_[index].status_ == MorselStatus::Cancelled ||
                  cancelled_.load(std::memory_order_relaxed) ||
-                 (!ordered_ && std::any_of(slots_.begin(), slots_.end(),
-                                           [](const Slot& slot) {
-                                             return !slot.consumed_ &&
-                                                    slot.status_ ==
-                                                        MorselStatus::Completed;
-                                           }));
+                 (!ordered_ &&
+                  std::any_of(
+                      slots_.begin(), slots_.end(), [](const Slot& slot) {
+                        return !slot.consumed_ &&
+                               (slot.status_ == MorselStatus::Completed ||
+                                slot.status_ == MorselStatus::Cancelled);
+                      }));
         });
-        if (!ordered_ && slots_[index].status_ != MorselStatus::Completed) {
+        if (!ordered_ && slots_[index].status_ != MorselStatus::Completed &&
+            slots_[index].status_ != MorselStatus::Cancelled) {
           for (size_t i = 0; i < slots_.size(); ++i) {
             if (!slots_[i].consumed_ &&
-                slots_[i].status_ == MorselStatus::Completed) {
+                (slots_[i].status_ == MorselStatus::Completed ||
+                 slots_[i].status_ == MorselStatus::Cancelled)) {
               index = i;
               break;
             }

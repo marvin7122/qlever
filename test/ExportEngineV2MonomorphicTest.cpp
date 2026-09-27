@@ -113,7 +113,7 @@ void expectIdenticalBytes(
     const IdTable& table, const LocalVocab& localVocab, const Index& index,
     const Selected& selected, size_t windowSize,
     ql::span<const ColumnLattice> lattice = {},
-    ad_utility::source_location l = ad_utility::source_location::current()) {
+    ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
   auto trace = generateLocationTrace(l);
   const size_t numRows = table.numRows();
   std::vector<std::pair<size_t, size_t>> windows{{0, numRows}};
