@@ -9,6 +9,7 @@
 
 #include "index/vocabulary/VocabBlockCache.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -61,30 +62,34 @@ VocabBlockCache& VocabBlockCache::operator=(VocabBlockCache&& other) noexcept {
 
 // _____________________________________________________________________________
 size_t VocabBlockCache::size() const {
-  size_t occupied = 0;
-  for (const auto& slot : slots_) {
-    occupied += slot.occupied_ ? 1 : 0;
-  }
-  return occupied;
+  return std::count_if(slots_.begin(), slots_.end(),
+                       [](const Slot& slot) { return slot.occupied_; });
 }
 
 // _____________________________________________________________________________
 void VocabBlockCache::resize(size_t numBlocks) {
-  clear();
-  slots_.resize(numBlocks);
-  hand_ = 0;
-  if (numBlocks == 0) {
-    return;
+  // Guard the allocation-size multiplication: an unchecked wrap would
+  // allocate an undersized chunk and corrupt the heap on the first `insert`.
+  if (numBlocks > SIZE_MAX / kBlockSize) {
+    AD_THROW("vocabulary block cache size " + std::to_string(numBlocks) +
+             " blocks would overflow the allocation size");
   }
-  void* storage = nullptr;
-  if (::posix_memalign(&storage, kBlockSize, numBlocks * kBlockSize) != 0) {
+  // Allocate the new chunk before touching `slots_`, so a failed
+  // allocation leaves the object empty (strong guarantee) instead of
+  // sized-but-storageless.
+  void* raw = nullptr;
+  if (numBlocks > 0 &&
+      ::posix_memalign(&raw, kBlockSize, numBlocks * kBlockSize) != 0) {
     AD_THROW("Failed to allocate " + std::to_string(numBlocks) + " blocks of " +
              std::to_string(kBlockSize) +
              " bytes for the vocabulary block cache");
   }
-  storage_ = static_cast<char*>(storage);
+  clear();
+  storage_.reset(static_cast<char*>(raw));
+  slots_.resize(numBlocks);
+  hand_ = 0;
   for (size_t i = 0; i < numBlocks; ++i) {
-    slots_[i].data_ = storage_ + i * kBlockSize;
+    slots_[i].data_ = storage_.get() + i * kBlockSize;
   }
 }
 
@@ -149,7 +154,7 @@ void VocabBlockCache::insert(dev_t dev, ino_t ino, uint64_t blockNo,
 
 // _____________________________________________________________________________
 void VocabBlockCache::clear() {
-  ::free(std::exchange(storage_, nullptr));
+  storage_.reset();
   slots_.clear();
   slots_.shrink_to_fit();
   hand_ = 0;
