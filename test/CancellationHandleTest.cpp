@@ -1,8 +1,12 @@
-//   Copyright 2023, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+// Copyright 2023 - 2026 The QLever Authors, in particular:
 //
+// 2023 - 2026 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
@@ -438,12 +442,11 @@ TEST(CancellationHandle, verifyWatchDogEndsEarlyIfCancelled) {
   handle.cancel(MANUAL);
 
   handle.startWatchDog();
-  // Wait until the watchdog thread has observed the cancellation and exited.
-  // A fixed sleep is not sufficient here: on slow or heavily loaded machines
+  // Do not rely on a fixed sleep here: on slow or heavily loaded machines
   // (for example sanitizer builds on shared CI runners) the thread might not
-  // be scheduled within a few milliseconds. It would then observe the
-  // `WAITING_FOR_CHECK` state assigned below instead of the cancellation and
-  // transition it to `CHECK_WINDOW_MISSED`.
+  // be scheduled within a few milliseconds. Ensure the thread has observed
+  // the cancellation before assigning `WAITING_FOR_CHECK` below, otherwise
+  // it will transition the state to `CHECK_WINDOW_MISSED`.
   handle.watchDogThread_.join();
 
   handle.cancellationState_ = WAITING_FOR_CHECK;
