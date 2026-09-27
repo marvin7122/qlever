@@ -965,8 +965,8 @@ CPP_template_def(typename RequestT, typename SendT)(
   // Only SELECT queries exported as CSV have a V2 executor so far; every other
   // shape executes the V1 pipeline. The router guarantees V2 eligibility, this
   // check narrows it to the implemented shape.
-  const auto& parsedQuery = plannedQuery.parsedQuery();
-  const auto& queryExecutionTree = plannedQuery.queryExecutionTree();
+  const auto& parsedQuery{plannedQuery.parsedQuery()};
+  const auto& queryExecutionTree{plannedQuery.queryExecutionTree()};
   const bool v2Requested =
       engineMode == ql::engine::ExportEngineMode::FastStreamingV2;
   const bool useV2Csv = v2Requested && mediaType == MediaType::csv &&

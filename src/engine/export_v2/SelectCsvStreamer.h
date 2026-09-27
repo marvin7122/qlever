@@ -23,16 +23,19 @@ namespace ql::engine::export_v2 {
 // string instead of yielding every cell and separator separately.
 class SelectCsvStreamer {
  public:
+  // Same cancellation contract as `ExportQueryExecutionTrees::computeResult`,
+  // so the entry point takes cancellation like the V1 export path.
   using CancellationHandle = ad_utility::SharedCancellationHandle;
 
   static constexpr size_t defaultRowsPerChunk = 8192;
 
-  // Compute the result of `qet` and return it as CSV, with the header line
-  // derived from the SELECT clause of `parsedQuery` and the LIMIT and OFFSET
-  // of `parsedQuery` applied. `parsedQuery` must be a SELECT query that
-  // `ExportPipelineRouter` routes to V2, and `rowsPerChunk` must be positive.
-  // As for `ExportQueryExecutionTrees::computeResult`, `qet` and `parsedQuery`
-  // must outlive the returned generator. Cancellation is checked after every
+  // Compute the result of `qet` and return it as a stream of CSV `std::string`
+  // chunks, with the header line derived from the SELECT clause of
+  // `parsedQuery` and the LIMIT and OFFSET of `parsedQuery` applied.
+  // `parsedQuery` must be a SELECT query that `ExportPipelineRouter` routes
+  // to V2, and `rowsPerChunk` must be positive. As for
+  // `ExportQueryExecutionTrees::computeResult`, `qet` and `parsedQuery` must
+  // outlive the returned generator. Cancellation is checked after every
   // chunk.
   static ExportQueryExecutionTrees::ComputeResultReturnType run(
       const QueryExecutionTree& qet, const ParsedQuery& parsedQuery,

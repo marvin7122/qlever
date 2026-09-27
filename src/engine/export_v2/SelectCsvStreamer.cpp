@@ -26,7 +26,9 @@ namespace {
 // Yield the CSV header line and then the rows selected by `limitAndOffset`
 // from `result`, `rowsPerChunk` rows per yielded string. The header and the
 // row selection are the same as in the V1 CSV export
-// (`ExportQueryExecutionTrees::selectQueryResultToStream`).
+// (`ExportQueryExecutionTrees::selectQueryResultToStream`). The yielded
+// strings concatenate to the full CSV response; no yielded value is a
+// sentinel.
 STREAMABLE_GENERATOR_TYPE streamChunks(
     const QueryExecutionTree& qet,
     const parsedQuery::SelectClause& selectClause,
@@ -35,8 +37,8 @@ STREAMABLE_GENERATOR_TYPE streamChunks(
     SelectCsvStreamer::CancellationHandle cancellationHandle,
     [[maybe_unused]] STREAMABLE_YIELDER_TYPE streamableYielder) {
   // In the CSV format, the variables don't include the question mark.
-  std::vector<std::string> variables =
-      selectClause.getSelectedVariablesAsStrings();
+  std::vector<std::string> variables{
+      selectClause.getSelectedVariablesAsStrings()};
   ql::ranges::for_each(
       variables, [](std::string& variable) { variable = variable.substr(1); });
   STREAMABLE_YIELD(absl::StrJoin(variables, ","));
@@ -46,7 +48,7 @@ STREAMABLE_GENERATOR_TYPE streamChunks(
       qet.getQec()->getIndex(),
       qet.selectedVariablesToColumnIndices(selectClause, true)};
   std::string chunk;
-  uint64_t resultSize = 0;
+  uint64_t resultSize{0};
   for (const auto& [tableWithVocab, rows] :
        ExportQueryExecutionTrees::getRowIndices(limitAndOffset, *result,
                                                 resultSize)) {
@@ -89,7 +91,7 @@ ExportQueryExecutionTrees::ComputeResultReturnType SelectCsvStreamer::run(
   // Trigger the possibly expensive computation of the query result unless it
   // is already cached, as the V1 export does in
   // `ExportQueryExecutionTrees::selectQueryResultToStream`.
-  std::shared_ptr<const Result> result = qet.getResult(true);
+  std::shared_ptr<const Result> result{qet.getResult(true)};
   result->logResultSize();
 
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
@@ -98,7 +100,8 @@ ExportQueryExecutionTrees::ComputeResultReturnType SelectCsvStreamer::run(
       rowsPerChunk, std::move(cancellationHandle), streamableYielder);
 
   // Same conversion as at the end of
-  // `ExportQueryExecutionTrees::computeResult`.
+  // `ExportQueryExecutionTrees::computeResult`. The lambda yields the CSV
+  // output chunks unchanged; empty strings have no sentinel meaning.
   return [](auto range) -> cppcoro::generator<std::string> {
     for (auto&& csvChunk : range) {
       co_yield csvChunk;
