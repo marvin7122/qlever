@@ -89,7 +89,15 @@ struct PackedDelimiter {
   [[nodiscard]] constexpr size_t size() const noexcept { return len_; }
   [[nodiscard]] constexpr bool empty() const noexcept { return len_ == 0; }
 
-  constexpr bool operator==(const PackedDelimiter&) const noexcept = default;
+  // Manual equality, kept C++17-compatible: a defaulted `operator==` and
+  // the rewritten `operator!=` it synthesizes require C++20, but QLever
+  // still builds in C++17 mode, see `cpp-17-libqlever.yml`).
+  constexpr bool operator==(const PackedDelimiter& other) const noexcept {
+    return pattern_ == other.pattern_ && len_ == other.len_;
+  }
+  constexpr bool operator!=(const PackedDelimiter& other) const noexcept {
+    return !(*this == other);
+  }
 
   // Unpack delimiter sequence into an std::string
   [[nodiscard]] std::string toString() const {
