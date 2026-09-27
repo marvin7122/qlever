@@ -121,6 +121,7 @@ scanChunkAvx2(const char* data) {
 
 [[nodiscard]] inline bool supportsAvx2() {
 #if defined(__GNUC__) || defined(__clang__)
+  __builtin_cpu_init();
   static const bool result = __builtin_cpu_supports("avx2");
   return result;
 #else
