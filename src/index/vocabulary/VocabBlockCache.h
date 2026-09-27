@@ -37,8 +37,9 @@ namespace ad_utility::vocab {
 // * Tag index keyed by `(device, inode, block number)`; the device+inode pair
 //   identifies the underlying file, so entries from different vocabularies
 //   never alias.
-// * Clock-hand eviction: each slot carries a reference bit that `lookup` sets
-//   and eviction clears, so frequently reused blocks survive.
+// * Clock-hand eviction: each slot carries a reference bit that `lookup` (and
+//   re-insertion of the same key) sets and eviction clears, so frequently
+//   reused blocks survive over merely inserted ones.
 // * Per-thread sharding: each thread owns its shard (see
 //   `threadLocalVocabBlockCache`), so the lookup path takes no locks.
 //
@@ -88,7 +89,8 @@ class VocabBlockCache {
     ino_t ino_ = 0;
     uint64_t blockNo_ = 0;
     bool occupied_ = false;
-    // Clock reference bit: set by `lookup` and `insert`, cleared by eviction.
+    // Clock reference bit: set by `lookup` and by overwrite-insert of an
+    // existing key, cleared by eviction. Fresh inserts start cleared.
     bool referenced_ = false;
     // Points into `storage_`, `nullptr` when `capacity() == 0`.
     char* data_ = nullptr;

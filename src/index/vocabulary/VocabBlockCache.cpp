@@ -147,7 +147,10 @@ void VocabBlockCache::insert(dev_t dev, ino_t ino, uint64_t blockNo,
   slot.ino_ = ino;
   slot.blockNo_ = blockNo;
   slot.occupied_ = true;
-  slot.referenced_ = true;
+  // Fresh inserts start unreferenced: only `lookup` (and overwrite-insert of
+  // an existing key) sets the bit, so an explicitly re-referenced block wins
+  // the next eviction sweep over a merely inserted one.
+  slot.referenced_ = false;
   std::memcpy(slot.data_, data, kBlockSize);
   hand_ = (hand_ + 1) % slots_.size();
 }
