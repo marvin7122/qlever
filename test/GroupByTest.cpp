@@ -1,8 +1,10 @@
-// Copyright 2018, University of Freiburg,
+// Copyright 2018 - 2026, University of Freiburg,
 // Chair of Algorithms and Data Structures.
 // Authors: Florian Kramer (florian.kramer@mail.uni-freiburg.de)
 //          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
+//          Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
 
@@ -3459,4 +3461,356 @@ TEST(GroupBy, BlankNodeInGroupBy) {
   EXPECT_EQ(table(0, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_EQ(table(1, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_NE(table(0, 1), table(1, 1));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxTwoVariableScan) {
+  // MIN/MAX of the object of `?s <label3> ?o` from the sorted distinct
+  // object IDs (POS). Vocab order is lexicographic: <a> < <b> < <c>.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <label3> <b> . <x> <label3> <c> . <y> <label3> <a> ."))};
+  auto qec = ctx.makeQec();
+  const auto getId = makeGetId(*ctx.index_);
+  const auto idA = getId("<a>");
+  const auto idC = getId("<c>");
+
+  const auto makeGroupBy = [&](SparqlExpressionPimpl expr) {
+    auto scan = makeExecutionTree<IndexScan>(
+        &qec, Permutation::Enum::PSO,
+        SparqlTripleSimple{Variable{"?s"}, iri("<label3>"), Variable{"?o"}});
+    std::vector<Alias> aliases{Alias{std::move(expr), Variable{"?out"}}};
+    return GroupByImpl{&qec, {}, std::move(aliases), std::move(scan)};
+  };
+
+  EXPECT_THAT(makeGroupBy(makeMinPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{idA}}));
+  EXPECT_THAT(makeGroupBy(makeMaxPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{idC}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxEmptyRelation) {
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex("<x> <other> <a> ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<missing>"), Variable{"?o"}});
+  std::vector<Alias> aliases{
+      Alias{makeMinPimpl(Variable{"?o"}), Variable{"?out"}}};
+  GroupByImpl groupBy{&qec, {}, std::move(aliases), std::move(scan)};
+  // `<missing>` is not in the vocabulary, so the fast path leaves the query to
+  // the general path, which yields `UNDEF`. An empty relation of an IRI that is
+  // in the vocabulary is covered by `minMaxFromIndexBoundsEmptyRelation`.
+  EXPECT_FALSE(groupBy.computeMinMaxForSingleIndexScan().has_value());
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{Id::makeUndefined()}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxNegativeIntegers) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <n> -1 . <x> <n> 0 . <x> <n> 1 ."))};
+  auto qec = ctx.makeQec();
+  auto scanMin = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<n>"), Variable{"?o"}});
+  auto scanMax = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<n>"), Variable{"?o"}});
+  GroupByImpl minBy{&qec,
+                    {},
+                    {Alias{makeMinPimpl(Variable{"?o"}), Variable{"?out"}}},
+                    std::move(scanMin)};
+  GroupByImpl maxBy{&qec,
+                    {},
+                    {Alias{makeMaxPimpl(Variable{"?o"}), Variable{"?out"}}},
+                    std::move(scanMax)};
+  EXPECT_THAT(minBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(-1)}}));
+  EXPECT_THAT(maxBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(1)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxMixedTypesMatchesGeneralPath) {
+  // Ints sort before vocab IDs in index order. Incompatible datatypes are
+  // ordered by datatype (like the general `MIN`/`MAX` path), so `MIN` is the
+  // smallest Int and `MAX` is the IRI. The second half pins the general path
+  // (index-scan optimizations disabled) to the same results.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <m> <b> . <x> <m> 1 . <x> <m> 2 ."))};
+  auto qec = ctx.makeQec();
+  const auto getId = makeGetId(*ctx.index_);
+  const auto makeGroupBy = [&](SparqlExpressionPimpl expr) {
+    auto scan = makeExecutionTree<IndexScan>(
+        &qec, Permutation::Enum::PSO,
+        SparqlTripleSimple{Variable{"?s"}, iri("<m>"), Variable{"?o"}});
+    std::vector<Alias> aliases{Alias{std::move(expr), Variable{"?out"}}};
+    return GroupByImpl{&qec, {}, std::move(aliases), std::move(scan)};
+  };
+
+  EXPECT_THAT(makeGroupBy(makeMinPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{I(1)}}));
+  EXPECT_THAT(makeGroupBy(makeMaxPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{getId("<b>")}}));
+
+  const auto disableOptimizations = setRuntimeParameterForTest<
+      &RuntimeParameters::groupByDisableIndexScanOptimizations_>(true);
+  EXPECT_THAT(makeGroupBy(makeMinPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{I(1)}}));
+  EXPECT_THAT(makeGroupBy(makeMaxPimpl(Variable{"?o"}))
+                  .computeResultOnlyForTesting(false)
+                  .idTableView(),
+              matchesIdTableFromVector({{getId("<b>")}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxTwoVariableScanAllPermutations) {
+  // Every (bound column, aggregated variable) combination is answered by the
+  // fast path from the permutation that stores the aggregated variable in
+  // column 1. Each expected value differs from the extremum of the other
+  // variable of the scan, so a wrong permutation is detected. Vocab order is
+  // lexicographic: <a> < <b> < <c> < <p1> < <p2> < <x> < <y>.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <p1> <a> . <x> <p2> <b> . <y> <p1> <c> . <y> <p2> <a> ."))};
+  auto qec = ctx.makeQec();
+  const auto getId = makeGetId(*ctx.index_);
+  const Variable s{"?s"};
+  const Variable p{"?p"};
+  const Variable o{"?o"};
+
+  const auto expectMinMax = [&](Permutation::Enum scanPermutation,
+                                SparqlTripleSimple triple,
+                                SparqlExpressionPimpl aggregate,
+                                std::string_view expected) {
+    auto scan =
+        makeExecutionTree<IndexScan>(&qec, scanPermutation, std::move(triple));
+    std::vector<Alias> aliases{Alias{std::move(aggregate), Variable{"?out"}}};
+    GroupByImpl groupBy{&qec, {}, std::move(aliases), std::move(scan)};
+    EXPECT_THAT(groupBy.computeMinMaxForSingleIndexScan(),
+                optionalHasTable({{getId(std::string{expected})}}));
+  };
+
+  // `?s <p1> ?o`: PSO for `?s`, POS for `?o`.
+  expectMinMax(Permutation::PSO, {s, iri("<p1>"), o}, makeMinPimpl(s), "<x>");
+  expectMinMax(Permutation::PSO, {s, iri("<p1>"), o}, makeMaxPimpl(o), "<c>");
+  // `<x> ?p ?o`: SPO for `?p`, SOP for `?o`.
+  expectMinMax(Permutation::SPO, {iri("<x>"), p, o}, makeMinPimpl(p), "<p1>");
+  expectMinMax(Permutation::SPO, {iri("<x>"), p, o}, makeMaxPimpl(o), "<b>");
+  // `?s ?p <a>`: OSP for `?s`, OPS for `?p`.
+  expectMinMax(Permutation::OPS, {s, p, iri("<a>")}, makeMaxPimpl(s), "<y>");
+  expectMinMax(Permutation::OSP, {s, p, iri("<a>")}, makeMaxPimpl(p), "<p2>");
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxTwoVariableScanNotApplicable) {
+  // Shapes that the `MIN`/`MAX` fast path must leave to the general path.
+  QecWrapper ctx{
+      std::make_shared<Index>(makeTestIndex("<x> <p1> <a> . <y> <p1> <c> ."))};
+  auto qec = ctx.makeQec();
+  const Variable s{"?s"};
+  const Variable o{"?o"};
+  const auto makeScan = [&]() {
+    return makeExecutionTree<IndexScan>(&qec, Permutation::PSO,
+                                        SparqlTripleSimple{s, iri("<p1>"), o});
+  };
+  const auto expectNotApplicable =
+      [&](std::vector<Variable> groupByVariables, std::vector<Alias> aliases,
+          std::shared_ptr<QueryExecutionTree> scan) {
+        GroupByImpl groupBy{&qec, std::move(groupByVariables),
+                            std::move(aliases), std::move(scan)};
+        EXPECT_FALSE(groupBy.computeMinMaxForSingleIndexScan().has_value());
+      };
+
+  // An explicit `GROUP BY`.
+  expectNotApplicable({s}, {Alias{makeMinPimpl(o), Variable{"?out"}}},
+                      makeScan());
+  // More than one alias.
+  {
+    std::vector<Alias> aliases;
+    aliases.emplace_back(makeMinPimpl(o), Variable{"?min"});
+    aliases.emplace_back(makeMaxPimpl(o), Variable{"?max"});
+    expectNotApplicable({}, std::move(aliases), makeScan());
+  }
+  // An aggregate other than `MIN`/`MAX`.
+  expectNotApplicable({}, {Alias{makeAvgPimpl(o), Variable{"?out"}}},
+                      makeScan());
+  // A variable that is not bound by the scan.
+  expectNotApplicable(
+      {}, {Alias{makeMinPimpl(Variable{"?unbound"}), Variable{"?out"}}},
+      makeScan());
+  // A `LIMIT` on the scan.
+  {
+    auto scan = makeScan();
+    scan->applyLimitOffset({1, 0});
+    expectNotApplicable({}, {Alias{makeMinPimpl(o), Variable{"?out"}}},
+                        std::move(scan));
+  }
+  // A scan with three variables or with only one variable (both are rejected
+  // by the precondition that is shared with `computeGroupByObjectWithCount`).
+  expectNotApplicable(
+      {}, {Alias{makeMinPimpl(o), Variable{"?out"}}},
+      makeExecutionTree<IndexScan>(&qec, Permutation::SPO,
+                                   SparqlTripleSimple{s, Variable{"?p"}, o}));
+  expectNotApplicable({}, {Alias{makeMinPimpl(s), Variable{"?out"}}},
+                      makeExecutionTree<IndexScan>(
+                          &qec, Permutation::POS,
+                          SparqlTripleSimple{s, iri("<p1>"), iri("<a>")}));
+}
+
+namespace {
+// The result of `MIN(?o)` (`isMin`) or `MAX(?o)` over the scan
+// `?s <predicate> ?o`, computed by the `MIN`/`MAX` fast path (`fastPath_`,
+// `std::nullopt` if the fast path does not apply) and by the general path with
+// all index-scan optimizations disabled (`generalPath_`).
+struct MinMaxFastAndGeneralPath {
+  std::optional<IdTable> fastPath_;
+  IdTable generalPath_;
+};
+
+MinMaxFastAndGeneralPath computeMinMaxOnBothPaths(QueryExecutionContext& qec,
+                                                  std::string_view predicate,
+                                                  bool isMin) {
+  const Variable o{"?o"};
+  auto makeGroupBy = [&]() {
+    auto scan = makeExecutionTree<IndexScan>(
+        &qec, Permutation::Enum::PSO,
+        SparqlTripleSimple{Variable{"?s"}, iri(predicate), o});
+    std::vector<Alias> aliases{
+        Alias{isMin ? GroupByOptimizations::makeMinPimpl(o)
+                    : GroupByOptimizations::makeMaxPimpl(o),
+              Variable{"?out"}}};
+    return GroupByImpl{&qec, {}, std::move(aliases), std::move(scan)};
+  };
+  auto fastPath = makeGroupBy().computeMinMaxForSingleIndexScan();
+  const auto disableOptimizations = setRuntimeParameterForTest<
+      &RuntimeParameters::groupByDisableIndexScanOptimizations_>(true);
+  auto generalPath =
+      makeGroupBy().computeResultOnlyForTesting(false).cloneIdTable();
+  return {std::move(fastPath), std::move(generalPath)};
+}
+
+// Expect that the fast path answers `MIN(?o)` and `MAX(?o)` over
+// `?s <predicate> ?o` with `expectedMin` and `expectedMax`, and that the
+// general path yields the same results.
+void expectFastPathMatchesGeneralPath(
+    QueryExecutionContext& qec, std::string_view predicate, Id expectedMin,
+    Id expectedMax, ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
+  auto trace = generateLocationTrace(l);
+  for (auto [isMin, expected] :
+       {std::pair{true, expectedMin}, std::pair{false, expectedMax}}) {
+    const auto [fastPath, generalPath] =
+        computeMinMaxOnBothPaths(qec, predicate, isMin);
+    EXPECT_THAT(fastPath, optionalHasTable({{expected}}));
+    EXPECT_THAT(generalPath, matchesIdTableFromVector({{expected}}));
+  }
+}
+
+// Expect that the fast path does not answer `MIN(?o)` or `MAX(?o)` over
+// `?s <predicate> ?o` (because the index order of the values may differ from
+// the `MIN`/`MAX` order), and that the general path yields `expectedMin` and
+// `expectedMax`.
+void expectFallbackToGeneralPath(
+    QueryExecutionContext& qec, std::string_view predicate, Id expectedMin,
+    Id expectedMax, ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
+  auto trace = generateLocationTrace(l);
+  for (auto [isMin, expected] :
+       {std::pair{true, expectedMin}, std::pair{false, expectedMax}}) {
+    const auto [fastPath, generalPath] =
+        computeMinMaxOnBothPaths(qec, predicate, isMin);
+    EXPECT_FALSE(fastPath.has_value());
+    EXPECT_THAT(generalPath, matchesIdTableFromVector({{expected}}));
+  }
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxFromIndexBoundsStrings) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <str> \"beta\" . <y> <str> \"alpha\" . "
+                    "<z> <str> \"gamma\" . <z> <str> \"alpha\" ."))};
+  auto qec = ctx.makeQec();
+  const auto getId = makeGetId(*ctx.index_);
+  expectFastPathMatchesGeneralPath(qec, "<str>", getId("\"alpha\""),
+                                   getId("\"gamma\""));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxFromIndexBoundsNumbers) {
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<a> <intPos> 3 . <b> <intPos> 10 . <c> <intPos> 7 . "
+      "<a> <intNeg> -3 . <b> <intNeg> -10 . <c> <intNeg> -7 . "
+      "<a> <intMixedSign> -2 . <b> <intMixedSign> 5 . "
+      "<a> <doublePos> 0.5 . <b> <doublePos> 10.25 . <c> <doublePos> 2.0 . "
+      "<a> <doubleNeg> -0.5 . <b> <doubleNeg> -2.5 . "
+      "<a> <doubleMixedSign> -1.5 . <b> <doubleMixedSign> 1.5 ."))};
+  auto qec = ctx.makeQec();
+  // Within one sign, the index order of `Int`s and of non-negative `Double`s
+  // is the order of their values.
+  expectFastPathMatchesGeneralPath(qec, "<intPos>", I(3), I(10));
+  expectFastPathMatchesGeneralPath(qec, "<intNeg>", I(-10), I(-3));
+  expectFastPathMatchesGeneralPath(qec, "<doublePos>", D(0.5), D(10.25));
+  // Negative `Int`s are stored after the non-negative ones, and negative
+  // `Double`s after the positive ones and in reverse order.
+  expectFallbackToGeneralPath(qec, "<intMixedSign>", I(-2), I(5));
+  expectFallbackToGeneralPath(qec, "<doubleNeg>", D(-2.5), D(-0.5));
+  expectFallbackToGeneralPath(qec, "<doubleMixedSign>", D(-1.5), D(1.5));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxFromIndexBoundsMixedTypesFallBack) {
+  // All `Int`s are stored before all `Double`s, but the general path compares
+  // them by value. Incompatible datatypes are ordered by datatype.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<a> <intAndDouble> 5 . <b> <intAndDouble> 0.5 . "
+                    "<a> <numberAndIri> 1 . <b> <numberAndIri> <c> ."))};
+  auto qec = ctx.makeQec();
+  const auto getId = makeGetId(*ctx.index_);
+  expectFallbackToGeneralPath(qec, "<intAndDouble>", D(0.5), I(5));
+  expectFallbackToGeneralPath(qec, "<numberAndIri>", I(1), getId("<c>"));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxFromIndexBoundsEmptyRelation) {
+  // `<q>` is in the vocabulary, but no triple has it as its predicate.
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex("<x> <p> <q> ."))};
+  auto qec = ctx.makeQec();
+  expectFastPathMatchesGeneralPath(qec, "<q>", Id::makeUndefined(),
+                                   Id::makeUndefined());
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, minMaxFromIndexBoundsSeveralBlocks) {
+  // A relation that spans several blocks, so its first and its last value are
+  // stored in different blocks. The values are inserted in an order that
+  // differs from the index order.
+  std::string turtle;
+  for (int i : {17, 3, 42, 25, 8, 31, 0, 12, 39, 20, 5, 28}) {
+    absl::StrAppend(&turtle, "<s", i, "> <many> \"v",
+                    absl::Dec(i, absl::kZeroPad2), "\" . <s", i,
+                    "> <other> \"w\" . ");
+  }
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(turtle))};
+  auto qec = ctx.makeQec();
+  const auto getId = makeGetId(*ctx.index_);
+
+  const auto& pos = ctx.index_->getImpl().getPermutation(Permutation::POS);
+  ASSERT_GE(
+      pos.getScanSpecAndBlocks(
+             ScanSpecification{getId("<many>"), std::nullopt, std::nullopt},
+             qec.locatedTriplesState())
+          .sizeBlockMetadata_,
+      2u);
+  expectFastPathMatchesGeneralPath(qec, "<many>", getId("\"v00\""),
+                                   getId("\"v42\""));
 }
