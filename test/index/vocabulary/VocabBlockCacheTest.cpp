@@ -21,7 +21,7 @@
 #include "index/vocabulary/VocabBlockCache.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
-#include "util/RuntimeParametersTestHelpers.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 
 namespace {
 using ad_utility::vocab::VocabBlockCache;
