@@ -220,6 +220,7 @@ ad_utility::BatchReadOptions VocabularyOnDisk::batchReadOptions(
   if (options.useRegisteredBuffers &&
       ad_utility::useDirectIoForVocabularyReads.load(
           std::memory_order_relaxed)) {
+    AD_CORRECTNESS_CHECK(directIoFiles_ != nullptr);
     auto& files = *directIoFiles_;
     std::call_once(files.opened_, [&files]() {
       auto openDirect = [](auto& file, const std::string& name) {

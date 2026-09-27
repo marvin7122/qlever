@@ -173,6 +173,7 @@ class PinnedArena {
     AD_CONTRACT_CHECK(numSlots > 0);
     AD_CONTRACT_CHECK(slotSizeBytes > 0);
     AD_CONTRACT_CHECK(isBlockAligned(slotSizeBytes));
+    AD_CONTRACT_CHECK(numSlots <= SIZE_MAX / slotSizeBytes);
 
     slotSize_ = slotSizeBytes;
     numSlots_ = numSlots;

@@ -56,7 +56,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     ad_utility::export_prototypes::DirectIoFile words_;
     ad_utility::export_prototypes::DirectIoFile offsets_;
   };
-  std::unique_ptr<DirectIoFiles> directIoFiles_;
+  mutable std::unique_ptr<DirectIoFiles> directIoFiles_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
