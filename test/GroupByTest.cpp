@@ -3460,3 +3460,112 @@ TEST(GroupBy, BlankNodeInGroupBy) {
   EXPECT_EQ(table(1, 1).getDatatype(), Datatype::BlankNodeIndex);
   EXPECT_NE(table(0, 1), table(1, 1));
 }
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumYearOverDistinctValues) {
+  QecWrapper ctx{std::make_shared<Index>(makeTestIndex(
+      "<x> <published> \"1999\"^^<http://www.w3.org/2001/XMLSchema#gYear> . "
+      "<y> <published> \"2001\"^^<http://www.w3.org/2001/XMLSchema#gYear> . "
+      "<z> <published> \"1999\"^^<http://www.w3.org/2001/XMLSchema#gYear> ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<published>"), Variable{"?o"}});
+  Variable varO{"?o"};
+  auto sumYear = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false, makeYearExpression(makeVariableExpression(varO))),
+      "SUM(YEAR(?o))"};
+  std::vector<Alias> aliases{Alias{std::move(sumYear), Variable{"?sum"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(5999)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumStrlenOverDistinctValues) {
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <label> \"ab\" . <y> <label> \"abc\" . "
+                    "<z> <label> \"ab\" ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<label>"), Variable{"?o"}});
+  Variable varO{"?o"};
+  auto sumStrlen = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false, makeStrlenExpression(makeVariableExpression(varO))),
+      "SUM(STRLEN(?o))"};
+  std::vector<Alias> aliases{Alias{std::move(sumStrlen), Variable{"?sum"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(7)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumStrStartsOverDistinctValues) {
+  // A bool-valued `f` counts via 0/1, like `NumericValueGetter` on the generic
+  // path: "ab" is true twice, "abc" is true once, "xb" is false once.
+  QecWrapper ctx{std::make_shared<Index>(
+      makeTestIndex("<x> <label> \"ab\" . <y> <label> \"abc\" . "
+                    "<z> <label> \"ab\" . <w> <label> \"xb\" ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<label>"), Variable{"?o"}});
+  Variable varO{"?o"};
+  auto sumStrStarts = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false, makeStrStartsExpression(
+                     makeVariableExpression(varO),
+                     std::make_unique<StringLiteralExpression>(lit("a")))),
+      "SUM(STRSTARTS(?o, \"a\"))"};
+  std::vector<Alias> aliases{Alias{std::move(sumStrStarts), Variable{"?sum"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(3)}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumYearPoisonedByUndef) {
+  // `YEAR` of a plain string is UNDEF, and one UNDEF poisons the SUM, exactly
+  // like the generic `SumExpression` (`AggregateExpression.sum` covers
+  // `{I(3), U} -> U`).
+  QecWrapper ctx{
+      std::make_shared<Index>(makeTestIndex("<x> <published> \"notadate\" ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<published>"), Variable{"?o"}});
+  Variable varO{"?o"};
+  auto sumYear = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false, makeYearExpression(makeVariableExpression(varO))),
+      "SUM(YEAR(?o))"};
+  std::vector<Alias> aliases{Alias{std::move(sumYear), Variable{"?sum"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{Id::makeUndefined()}}));
+}
+
+// _____________________________________________________________________________
+TEST_F(GroupByOptimizations, sumOverEmptyInput) {
+  // No triple uses the predicate, so the scan is empty and the SUM of the
+  // empty group is 0 (`SumExpression::resultForEmptyGroup`, also covered as
+  // `{} -> I(0)` by `AggregateExpression.sum`).
+  QecWrapper ctx{
+      std::make_shared<Index>(makeTestIndex("<x> <label> \"ab\" ."))};
+  auto qec = ctx.makeQec();
+  auto scan = makeExecutionTree<IndexScan>(
+      &qec, Permutation::Enum::PSO,
+      SparqlTripleSimple{Variable{"?s"}, iri("<published>"), Variable{"?o"}});
+  Variable varO{"?o"};
+  auto sumYear = SparqlExpressionPimpl{
+      std::make_unique<SumExpression>(
+          false, makeYearExpression(makeVariableExpression(varO))),
+      "SUM(YEAR(?o))"};
+  std::vector<Alias> aliases{Alias{std::move(sumYear), Variable{"?sum"}}};
+  GroupByImpl groupBy{&qec, {}, aliases, scan};
+  EXPECT_THAT(groupBy.computeResultOnlyForTesting(false).idTableView(),
+              matchesIdTableFromVector({{I(0)}}));
+}
