@@ -218,7 +218,7 @@ class IoUringPolicy {
 
   // The vocabulary path that uses this policy serves exactly two stable
   // files (the offsets file and the word-data file).
-  static constexpr size_t kNumFixedFiles = 2;
+  static constexpr size_t NUM_FIXED_FILES = 2;
 
   // One fixed-file slot: the descriptor seen by `addBatch` (`ownerFd`, never
   // closed here) and the `dup`ed descriptor handed to the ring
@@ -230,9 +230,9 @@ class IoUringPolicy {
     int registeredFd = -1;
   };
 
-  // The (at most) `kNumFixedFiles` distinct files seen by `addBatch`, in
+  // The (at most) `NUM_FIXED_FILES` distinct files seen by `addBatch`, in
   // registration order. Empty slots hold `FixedFile{}`.
-  std::array<FixedFile, kNumFixedFiles> fixedFiles_;
+  std::array<FixedFile, NUM_FIXED_FILES> fixedFiles_;
 
   // Return the fixed-file slot for `fd`, registering (and `dup`ing) it on
   // first use. Throws when every slot is taken by another descriptor, so a
@@ -271,7 +271,7 @@ class IoUringPolicy {
   // CQE, and submit the next wave. Do not drain one CQE and immediately
   // submit one SQE: that is one `io_uring_enter` per read. Read `i` reads
   // `numBytesToRead[i]` bytes from the file registered for `fd` (see
-  // `kNumFixedFiles`) at `offsets[i]` into `buffers[i]`. Every read uses
+  // `NUM_FIXED_FILES`) at `offsets[i]` into `buffers[i]`. Every read uses
   // `IOSQE_FIXED_FILE`, so the kernel skips the per-request file-table lookup.
   // The caller owns `buffers` until `wait(handle)` returns. Track the reads
   // under `handle` for `wait()`.
