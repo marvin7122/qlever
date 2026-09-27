@@ -36,8 +36,17 @@ ElasticExportScheduler::ElasticExportScheduler(size_t threadCount,
   }
 
   workers_.reserve(threadCount);
-  for (size_t i = 0; i < threadCount; ++i) {
-    workers_.emplace_back(&ElasticExportScheduler::workerLoop, this);
+  try {
+    for (size_t i = 0; i < threadCount; ++i) {
+      workers_.emplace_back(&ElasticExportScheduler::workerLoop, this);
+    }
+  } catch (...) {
+    // A failed construction never runs the destructor, but `workers_` (a
+    // fully constructed subobject) is destroyed, and destroying a joinable
+    // `std::thread` calls `std::terminate`. Shut down first: it wakes the
+    // already-started workers and joins them.
+    shutdown();
+    throw;
   }
 }
 
@@ -111,16 +120,17 @@ void ElasticExportScheduler::propagateDemandChange(
   std::vector<std::shared_ptr<ExportJobStateBase>> aliveSessions;
   {
     std::lock_guard<std::mutex> lock(sessionsMutex_);
-    sessions_.erase(
-        std::remove_if(sessions_.begin(), sessions_.end(),
-                       [&aliveSessions](const auto& weak) {
-                         if (auto shared = weak.lock()) {
-                           aliveSessions.push_back(std::move(shared));
-                           return false;
-                         }
-                         return true;
-                       }),
-        sessions_.end());
+    // Explicit loop (not `std::remove_if` with a side-effecting predicate):
+    // keep the live sessions and drop the expired ones.
+    std::vector<std::weak_ptr<ExportJobStateBase>> kept;
+    kept.reserve(sessions_.size());
+    for (auto& weak : sessions_) {
+      if (auto shared = weak.lock()) {
+        aliveSessions.push_back(shared);
+        kept.push_back(std::move(weak));
+      }
+    }
+    sessions_ = std::move(kept);
   }
 
   for (auto& session : aliveSessions) {
