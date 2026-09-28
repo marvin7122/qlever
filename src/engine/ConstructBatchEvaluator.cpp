@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "util/FiberIoScheduler.h"
 #include "util/FiberIoStats.h"
@@ -177,8 +178,11 @@ void resolveColumnsInWaves(const Index& index, const LocalVocab& localVocab,
     if (resolvable.empty()) {
       continue;
     }
-    if (resolvable.size() == 1) {
-      resolveColumnMisses(index, localVocab, *resolvable[0]);
+    if (resolvable.size() == 1 ||
+        !getRuntimeParameter<&RuntimeParameters::exportConstructFibers_>()) {
+      for (ColumnWork* work : resolvable) {
+        resolveColumnMisses(index, localVocab, *work);
+      }
       continue;
     }
     std::vector<std::function<void()>> bodies;

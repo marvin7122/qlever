@@ -446,7 +446,7 @@ endif ()
 
 ### Counters of the fiber scheduling and the `io_uring` waits, logged once per
 ### CONSTRUCT export (see `src/util/FiberIoStats.h`). For measurements only.
-option(FIBER_IO_STATS "Count fiber switches and io_uring waits and log them per CONSTRUCT export" OFF)
+option(FIBER_IO_STATS "Count fiber switches and io_uring waits and log them per CONSTRUCT export" ON)
 if (FIBER_IO_STATS)
     MESSAGE(STATUS "FIBER_IO_STATS is ON, fiber and io_uring wait counters are compiled in")
     add_compile_definitions(QLEVER_FIBER_IO_STATS)

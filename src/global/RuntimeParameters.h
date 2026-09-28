@@ -268,6 +268,10 @@ struct RuntimeParameters {
   // the emitted bytes are identical either way.
   Bool exportFiberOverlap_{false, "export-fiber-overlap"};
 
+  // Measurement switch: resolve the vocabulary misses of the columns of a
+  // CONSTRUCT batch as fibers ("true", default) or one after the other.
+  Bool exportConstructFibers_{true, "export-construct-fibers"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
