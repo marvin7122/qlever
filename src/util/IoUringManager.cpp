@@ -159,6 +159,39 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
+void detail::registerEmptyFixedFileTable(io_uring& ring, size_t numSlots) {
+  const std::vector<int> noFiles(numSlots, -1);
+  const int ret = io_uring_register_files(&ring, noFiles.data(),
+                                          static_cast<unsigned>(numSlots));
+  if (ret < 0) {
+    AD_THROW("io_uring_register_files failed in IoUringManager for " +
+             std::to_string(numSlots) + " slots (error " +
+             std::to_string(-ret) + "); fixed files are required");
+  }
+}
+
+//______________________________________________________________________________
+int detail::installFixedFile(io_uring& ring, unsigned slot, int registeredFd) {
+  if constexpr (IO_URING_STATS_ENABLED) {
+    recordIoUringFilesUpdate();
+  }
+  return io_uring_register_files_update(&ring, slot, &registeredFd, 1);
+}
+
+//______________________________________________________________________________
+void detail::prepareFixedFileRead(io_uring_sqe& sqe, unsigned slot,
+                                  char* target, size_t numBytes,
+                                  uint64_t fileOffset) {
+  io_uring_prep_read(&sqe, static_cast<int>(slot), target,
+                     static_cast<unsigned>(numBytes),
+                     static_cast<__u64>(fileOffset));
+  sqe.flags |= IOSQE_FIXED_FILE;
+  if constexpr (IO_URING_STATS_ENABLED) {
+    recordIoUringSqe(true);
+  }
+}
+
+//______________________________________________________________________________
 IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
@@ -178,17 +211,13 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // to synchronous reads) instead of failing the first `addBatch`. The table
   // stays registered for the ring's lifetime; real descriptors fill its free
   // slots lazily via `IORING_REGISTER_FILES_UPDATE`.
-  std::array<int, IoUringPolicy::NUM_FIXED_FILES> noFiles;
-  noFiles.fill(-1);
-  const int registerRet = io_uring_register_files(
-      &ring_, noFiles.data(), static_cast<unsigned>(noFiles.size()));
-  if (registerRet < 0) {
+  try {
+    detail::registerEmptyFixedFileTable(ring_, NUM_FIXED_FILES);
+  } catch (...) {
     // The destructor does not run when the constructor throws, so release the
     // queues here; otherwise the failed construction leaks them.
     io_uring_queue_exit(&ring_);
-    AD_THROW("io_uring_register_files failed in IoUringManager for " +
-             std::to_string(noFiles.size()) + " slots (error " +
-             std::to_string(-registerRet) + "); fixed files are required");
+    throw;
   }
 }
 
@@ -242,14 +271,9 @@ void IoUringPolicy::addBatch(int fd,
   auto prepareOne = [&](size_t i) {
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     AD_CORRECTNESS_CHECK(sqe != nullptr);
-    io_uring_prep_read(sqe, static_cast<int>(fileIndex),
-                       targetBufferPerRequest[i],
-                       static_cast<unsigned>(numBytesToReadPerRequest[i]),
-                       static_cast<__u64>(fileOffsetPerRequest[i]));
-    sqe->flags |= IOSQE_FIXED_FILE;
-    if constexpr (IO_URING_STATS_ENABLED) {
-      detail::recordIoUringSqe(true);
-    }
+    detail::prepareFixedFileRead(*sqe, fileIndex, targetBufferPerRequest[i],
+                                 numBytesToReadPerRequest[i],
+                                 fileOffsetPerRequest[i]);
     const uint64_t requestId = nextRequestIdToAssign_++;
     inFlightReadsByRequestId_[requestId] =
         InFlightRead{handle, numBytesToReadPerRequest[i]};

@@ -905,4 +905,61 @@ TEST(IoUringStats, countsFixedFileReadsAndTableUpdates) {
   }
 }
 #endif
+
+#ifdef QLEVER_HAS_IO_URING
+// A ring that the kernel rejects: its descriptor is invalid, so every
+// registration on it fails, also on hosts without a usable `io_uring`.
+io_uring makeRejectedRing() {
+  io_uring ring{};
+  ring.ring_fd = -1;
+  return ring;
+}
+
+// A failed registration of the empty fixed-file table throws with the number
+// of slots and the kernel's error code.
+TEST(IoUringFixedFiles, registerEmptyTableThrowsWhenTheKernelRejectsIt) {
+  io_uring ring = makeRejectedRing();
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      ad_utility::detail::registerEmptyFixedFileTable(ring, 2),
+      AllOf(HasSubstr("io_uring_register_files failed"),
+            HasSubstr("for 2 slots (error ")));
+}
+
+// A failed slot update returns the negative error code, and `FixedFileSlots`
+// then throws, closes its duplicate and leaves the slot free.
+TEST(IoUringFixedFiles, installIntoARejectedRingFails) {
+  auto [tmp, fd] = makeTempFile("AAAA");
+  io_uring ring = makeRejectedRing();
+  const ad_utility::IoUringStats before = ad_utility::ioUringStatsSnapshot();
+  EXPECT_LT(ad_utility::detail::installFixedFile(ring, 0, fd), 0);
+  ad_utility::FixedFileSlots slots{[&ring](unsigned slot, int registeredFd) {
+    return ad_utility::detail::installFixedFile(ring, slot, registeredFd);
+  }};
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      slots.slotFor(fd), HasSubstr("io_uring_register_files_update failed"));
+  EXPECT_EQ(slots.numUsedSlots(), 0u);
+  const ad_utility::IoUringStats delta =
+      ad_utility::ioUringStatsSnapshot() - before;
+  EXPECT_EQ(delta.filesUpdateCalls,
+            ad_utility::IO_URING_STATS_ENABLED ? 2u : 0u);
+}
+
+// A fixed-file read addresses the slot (not a descriptor) and carries
+// `IOSQE_FIXED_FILE`.
+TEST(IoUringFixedFiles, prepareFixedFileReadAddressesTheSlot) {
+  std::array<char, 16> target{};
+  io_uring_sqe sqe{};
+  const ad_utility::IoUringStats before = ad_utility::ioUringStatsSnapshot();
+  ad_utility::detail::prepareFixedFileRead(sqe, 1, target.data(), 8, 4096);
+  EXPECT_EQ(sqe.opcode, IORING_OP_READ);
+  EXPECT_EQ(sqe.fd, 1);
+  EXPECT_NE(sqe.flags & IOSQE_FIXED_FILE, 0);
+  EXPECT_EQ(sqe.addr, reinterpret_cast<uint64_t>(target.data()));
+  EXPECT_EQ(sqe.len, 8u);
+  EXPECT_EQ(sqe.off, 4096u);
+  const ad_utility::IoUringStats delta =
+      ad_utility::ioUringStatsSnapshot() - before;
+  EXPECT_EQ(delta.fixedFileSqes, ad_utility::IO_URING_STATS_ENABLED ? 1u : 0u);
+}
+#endif
 }  // namespace

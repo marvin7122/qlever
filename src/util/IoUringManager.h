@@ -262,6 +262,29 @@ class FixedFileSlots {
   static void defaultClose(int fd);
 };
 
+#ifdef QLEVER_HAS_IO_URING
+namespace detail {
+// The fixed-file steps of `IoUringPolicy`, on the ring (or SQE) passed in. A
+// test can thus run them against a ring that the kernel rejects (their error
+// paths) and on a stack SQE, also on hosts without a usable `io_uring`.
+
+// Register a fixed-file table of `numSlots` empty slots (`-1`) for `ring`
+// (`IORING_REGISTER_FILES`). Throw with the kernel's error code if that fails;
+// `ring` itself is not torn down.
+void registerEmptyFixedFileTable(io_uring& ring, size_t numSlots);
+
+// Install `registeredFd` into slot `slot` of the fixed-file table of `ring`
+// (`IORING_REGISTER_FILES_UPDATE`). Return a non-negative value on success and
+// a negative `errno` value on failure, like `FixedFileSlots::InstallFunction`.
+int installFixedFile(io_uring& ring, unsigned slot, int registeredFd);
+
+// Prepare `sqe` as a read of `numBytes` bytes at `fileOffset` into `target`
+// from fixed-file slot `slot` (`IOSQE_FIXED_FILE`).
+void prepareFixedFileRead(io_uring_sqe& sqe, unsigned slot, char* target,
+                          size_t numBytes, uint64_t fileOffset);
+}  // namespace detail
+#endif
+
 // Persistent io_uring manager that accepts multiple named batches of indices to
 // be read from the underlying storage medium, submits all SQEs in `addBatch`
 // (blocking if the ring is full), and lets the caller block on a specific batch
@@ -327,10 +350,7 @@ class IoUringPolicy {
   // over an already registered one fails with `EBUSY`, and updating one slot
   // leaves the other slots (and reads in flight on them) untouched.
   FixedFileSlots fixedFileSlots_{[this](unsigned slot, int registeredFd) {
-    if constexpr (IO_URING_STATS_ENABLED) {
-      detail::recordIoUringFilesUpdate();
-    }
-    return io_uring_register_files_update(&ring_, slot, &registeredFd, 1);
+    return detail::installFixedFile(ring_, slot, registeredFd);
   }};
 
   // Reap every CQE that is already ready. Does not block.
