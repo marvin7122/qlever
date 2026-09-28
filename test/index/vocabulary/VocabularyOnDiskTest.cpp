@@ -290,7 +290,7 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
         &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(false);
   }};
   auto withFastPath = vocab->lookupBatch(indices);
-  EXPECT_THAT(*withFastPath, ::testing::ElementsAreArray(*withoutFastPath));
+  EXPECT_THAT(withFastPath, ::testing::ElementsAreArray(withoutFastPath));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       *vocab, withFastPath, indices);
 }
@@ -555,8 +555,8 @@ TEST(VocabularyOnDisk, NvmePassthroughIsByteIdentical) {
         pageCacheFastPath);
     for (const auto& indices : batches) {
       auto result = vocab->lookupBatch(indices);
-      ASSERT_EQ(result->size(), indices.size());
-      for (const auto& [word, index] : ::ranges::views::zip(*result, indices)) {
+      ASSERT_EQ(result.size(), indices.size());
+      for (const auto& [word, index] : ::ranges::views::zip(result, indices)) {
         EXPECT_EQ(word, words[index]) << "at index " << index;
       }
     }
