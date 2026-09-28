@@ -186,19 +186,6 @@ VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
 }
 
 // _____________________________________________________________________________
-void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
-                                          int fd,
-                                          ql::span<const size_t> numBytes,
-                                          ql::span<const uint64_t> offsets,
-                                          ql::span<char*> buffers,
-                                          ql::span<const size_t> positions) {
-  if (auto handle = submitThroughManager(manager, fd, numBytes, offsets,
-                                         buffers, positions)) {
-    manager.wait(handle.value());
-  }
-}
-
-// _____________________________________________________________________________
 VocabularyOnDisk::PendingOffsetRead VocabularyOnDisk::submitOffsetPairs(
     ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
     bool pageCacheFastPath) const {
@@ -293,11 +280,15 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
 }
 
 // _____________________________________________________________________________
-VocabBatchLookupResult VocabularyOnDisk::readStrings(
-    ad_utility::BatchManagerBase& manager,
-    ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath) const {
-  // Read the string data. String `i` starts at `offset_` with length
-  // `nextOffset_ - offset_`; the strings are packed contiguously into `buffer`.
+std::optional<ad_utility::BatchManagerBase::BatchHandle>
+VocabularyOnDisk::submitStrings(ad_utility::BatchManagerBase& manager,
+                                ql::span<const OffsetPair> offsetPairs,
+                                std::vector<char>& buffer,
+                                ql::span<std::string_view> views,
+                                bool pageCacheFastPath) const {
+  AD_CORRECTNESS_CHECK(offsetPairs.size() == views.size());
+  // String `i` starts at `offset_` with length `nextOffset_ - offset_`; the
+  // strings are packed contiguously into `buffer`.
   const size_t numIndices = offsetPairs.size();
   std::vector<size_t> sizes(numIndices);
   std::vector<uint64_t> fileOffsets(numIndices);
@@ -307,26 +298,34 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     fileOffset = offsetPair.offset_;
   }
 
-  auto data = std::make_shared<VocabBatchLookupData>();
-  data->buffer().resize(::ranges::accumulate(sizes, size_t{0}));
-  data->views().resize(numIndices);
-
+  buffer.resize(::ranges::accumulate(sizes, size_t{0}));
   std::vector<char*> targets(numIndices);
   size_t bufferOffset = 0;
   for (auto&& [target, view, size] :
-       ::ranges::views::zip(targets, data->views(), sizes)) {
-    target = data->buffer().data() + bufferOffset;
+       ::ranges::views::zip(targets, views, sizes)) {
+    target = buffer.data() + bufferOffset;
     view = std::string_view(target, size);
     bufferOffset += size;
   }
 
-  if (pageCacheFastPath) {
-    auto missed =
-        ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets, targets);
-    readThroughManager(manager, file_.fd(), sizes, fileOffsets, targets,
-                       missed);
-  } else {
-    manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
+  if (!pageCacheFastPath) {
+    return manager.addBatch(file_.fd(), sizes, fileOffsets, targets);
+  }
+  auto missed =
+      ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets, targets);
+  return submitThroughManager(manager, file_.fd(), sizes, fileOffsets, targets,
+                              missed);
+}
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyOnDisk::readStrings(
+    ad_utility::BatchManagerBase& manager,
+    ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath) const {
+  auto data = std::make_shared<VocabBatchLookupData>();
+  data->views().resize(offsetPairs.size());
+  if (auto handle = submitStrings(manager, offsetPairs, data->buffer(),
+                                  data->views(), pageCacheFastPath)) {
+    manager.wait(handle.value());
   }
   return VocabBatchLookupData::asResult(std::move(data));
 }

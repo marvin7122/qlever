@@ -247,13 +247,15 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // `preadv2` with `RWF_NOWAIT`.
   static bool pageCacheFastPathIsEnabled();
 
-  // Read `numBytes[i]` bytes at `offsets[i]` of `fd` into `buffers[i]` for
-  // every `i` in `positions` through `manager` and wait for them.
-  static void readThroughManager(ad_utility::BatchManagerBase& manager, int fd,
-                                 ql::span<const size_t> numBytes,
-                                 ql::span<const uint64_t> offsets,
-                                 ql::span<char*> buffers,
-                                 ql::span<const size_t> positions);
+  // Submit the phase-2 reads for `offsetPairs` without waiting for them: pack
+  // the words contiguously into `buffer` (which is resized here) and point
+  // `views[i]` at word `i`. With `pageCacheFastPath`, the words that are in the
+  // page cache are read synchronously as in `readStrings`. Return the handle of
+  // the submitted batch, or `std::nullopt` if no read had to be submitted.
+  std::optional<ad_utility::BatchManagerBase::BatchHandle> submitStrings(
+      ad_utility::BatchManagerBase& manager,
+      ql::span<const OffsetPair> offsetPairs, std::vector<char>& buffer,
+      ql::span<std::string_view> views, bool pageCacheFastPath) const;
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H
