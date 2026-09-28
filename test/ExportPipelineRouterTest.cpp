@@ -195,6 +195,51 @@ TEST(ExportPipelineRouterTest, UnsupportedConstructsFallBackToV1) {
   EXPECT_EQ(ExportPipelineRouter::selectEngine(
                 parse("SELECT * WHERE { ?s ?p ?o } ORDER BY ?s"), params),
             ExportEngineMode::LegacyV1);
+
+  // HAVING filters on grouped results.
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                parse("SELECT ?s (COUNT(?o) AS ?c) WHERE { ?s ?p ?o } "
+                      "GROUP BY ?s HAVING (COUNT(?o) > 1)"),
+                params),
+            ExportEngineMode::LegacyV1);
+}
+
+// _____________________________________________________________________________
+TEST(ExportPipelineRouterTest, UnsupportedGraphPatternsFallBackToV1) {
+  ParamValueMap params;
+  params["fast-export"] = {"1"};
+
+  // Federated SERVICE queries run on a remote endpoint.
+  auto serviceQuery = parse(
+      "SELECT * WHERE { SERVICE <http://example.org/endpoint> { ?s ?p ?o } }");
+  EXPECT_FALSE(ExportPipelineRouter::isEligibleForFastStreaming(serviceQuery));
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(serviceQuery, params),
+            ExportEngineMode::LegacyV1);
+
+  // Subqueries need nested result materialization.
+  EXPECT_EQ(
+      ExportPipelineRouter::selectEngine(
+          parse("SELECT * WHERE { { SELECT ?s WHERE { ?s ?p ?o } } }"), params),
+      ExportEngineMode::LegacyV1);
+
+  // Property paths need transitive traversal.
+  EXPECT_EQ(
+      ExportPipelineRouter::selectEngine(
+          parse("SELECT * WHERE { ?s <http://example.org/pred>+ ?o }"), params),
+      ExportEngineMode::LegacyV1);
+
+  // MINUS needs set difference over materialized results.
+  EXPECT_EQ(
+      ExportPipelineRouter::selectEngine(
+          parse("SELECT * WHERE { ?s ?p ?o MINUS { ?s ?p ?o } }"), params),
+      ExportEngineMode::LegacyV1);
+
+  // Unsupported constructs are also found inside nested groups.
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                parse("SELECT * WHERE { ?s ?p ?o OPTIONAL { "
+                      "SERVICE <http://example.org/endpoint> { ?s ?p ?o } } }"),
+                params),
+            ExportEngineMode::LegacyV1);
 }
 
 // _____________________________________________________________________________
