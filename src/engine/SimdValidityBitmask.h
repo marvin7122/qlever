@@ -208,7 +208,7 @@ namespace detail {
 // (undefined ValueId), and _mm256_movemask_pd extracts the 4-bit comparison
 // mask.
 [[nodiscard]] QLEVER_AVX2_TARGET inline uint64_t scanBatch64Avx2(
-    const uint64_t* data) noexcept {
+    const void* data) noexcept {
   const __m256i zero = _mm256_setzero_si256();
   const auto* ptr = reinterpret_cast<const __m256i*>(data);
   uint64_t resultMask = 0;
@@ -226,7 +226,7 @@ namespace detail {
 
 // AVX2 fast test for all-unbound (all 64 values == 0) via bitwise OR reduction.
 [[nodiscard]] QLEVER_AVX2_TARGET inline bool isAllUnbound64Avx2(
-    const uint64_t* data) noexcept {
+    const void* data) noexcept {
   const auto* ptr = reinterpret_cast<const __m256i*>(data);
   __m256i or0 =
       _mm256_or_si256(_mm256_loadu_si256(ptr + 0), _mm256_loadu_si256(ptr + 1));
@@ -279,6 +279,17 @@ QLEVER_AVX2_TARGET inline char* write64DelimiterPairsAvx2(
 
 #endif  // QLEVER_SIMD_X86
 
+// Portable scalar fallback for scanning 64 `ValueId`s.
+[[nodiscard]] inline uint64_t scanBatch64Scalar(const ValueId* data) noexcept {
+  uint64_t mask = 0;
+  for (size_t i = 0; i < 64; ++i) {
+    if (data[i].getBits() != 0) {
+      mask |= (1ULL << i);
+    }
+  }
+  return mask;
+}
+
 // Portable scalar fallback for scanning 64 64-bit values.
 [[nodiscard]] inline uint64_t scanBatch64Scalar(const uint64_t* data) noexcept {
   uint64_t mask = 0;
@@ -325,18 +336,19 @@ class SimdValidityScanner {
   // Scan a batch of exactly 64 ValueIds (512 bytes) and construct a
   // ValidityBitmask64.
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
-      const ValueId* data) noexcept {
+      const ValueId* data) {
     AD_CONTRACT_CHECK(data != nullptr);
-    // `ValueId` is a standard-layout class whose first (and only) member is
-    // the underlying `uint64_t`, so it is pointer-interconvertible with it
-    // and this access is well-defined.
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
+    // The AVX2 kernel reads the bytes of the `ValueId`s through `__m256i`
+    // loads, which may alias any type; the scalar fallback uses `getBits()`.
+    // An undefined `ValueId` is the all-zero bit pattern.
+    static_assert(sizeof(ValueId) == sizeof(uint64_t));
+    AD_EXPENSIVE_CHECK(ValueId::makeUndefined().getBits() == 0);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
-      return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
+      return ValidityBitmask64{detail::scanBatch64Avx2(data)};
     }
 #endif
-    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
+    return ValidityBitmask64{detail::scanBatch64Scalar(data)};
   }
 
   // ___________________________________________________________________________
@@ -354,21 +366,14 @@ class SimdValidityScanner {
 
   // ___________________________________________________________________________
   // Fast check whether all 64 ValueIds in the batch are unbound (all zero).
-  [[nodiscard]] static inline bool isAllUnbound64(
-      const ValueId* data) noexcept {
+  [[nodiscard]] static inline bool isAllUnbound64(const ValueId* data) {
     AD_CONTRACT_CHECK(data != nullptr);
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
-      return detail::isAllUnbound64Avx2(raw);
+      return detail::isAllUnbound64Avx2(data);
     }
 #endif
-    for (size_t i = 0; i < 64; ++i) {
-      if (raw[i] != 0) {
-        return false;
-      }
-    }
-    return true;
+    return detail::scanBatch64Scalar(data) == 0;
   }
 
   // ___________________________________________________________________________
