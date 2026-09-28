@@ -227,6 +227,16 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // If set to true, `VocabularyOnDisk::lookupBatch` first reads the vocabulary
+  // words (and their offsets) that are in the page cache with non-blocking
+  // `preadv2(RWF_NOWAIT)` calls (adjacent ranges coalesced into one call) and
+  // submits only the remaining reads to its `io_uring` ring. A read that hits
+  // the page cache then costs a share of one syscall instead of an `io_uring`
+  // submission and completion; a read that misses costs one extra failed
+  // syscall per run of adjacent ranges.
+  Bool vocabularyIouringPageCacheFastPath_{
+      false, "vocabulary-iouring-page-cache-fast-path"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.
