@@ -45,6 +45,17 @@ struct RuntimeParameters {
   // between otherwise equal queries.
   Bool stripColumns_{false, "strip-columns"};
 
+  // If set, the CSV and TSV export of SELECT results escapes the cells with
+  // the vectorized `ad_utility::simd::SimdEscapeClassifier` instead of
+  // `RdfEscaping::escapeForCsv`/`escapeForTsv`. The output is the same.
+  Bool useSimdEscapeClassifierCsvTsv_{false,
+                                      "use-simd-escape-classifier-csv-tsv"};
+
+  // If set, `stream_generator` (the buffer behind the Turtle, CSV and TSV
+  // export) copies the yielded strings into its buffer with non-temporal
+  // (cache-bypassing) stores instead of `std::memcpy`.
+  Bool useNonTemporalExportBuffer_{false, "use-non-temporal-export-buffer"};
+
   // If the time estimate for a sort operation is larger by more than this
   // factor than the remaining time, then the sort is canceled with a
   // timeout exception.
@@ -101,6 +112,11 @@ struct RuntimeParameters {
       1'000'000, "lazy-index-scan-max-size-materialization"};
   Bool useBinsearchTransitivePath_{true, "use-binsearch-transitive-path"};
   Bool groupByHashMapEnabled_{false, "group-by-hash-map-enabled"};
+  // Use the branchless integer-to-ASCII formatter from `util/FastIntToString.h`
+  // instead of `std::to_string` when serializing `xsd:int` literal values
+  // during export. Defaults to `false` (existing behavior), so it has to be
+  // enabled explicitly.
+  Bool fastIntToStringForExport_{false, "fast-int-to-string-for-export"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};
@@ -116,13 +132,6 @@ struct RuntimeParameters {
   // Control if websockets are enable to post live query updates, and if they
   // are control the throttle of how many request can be sent at once.
   Bool websocketUpdatesEnabled_{true, "websocket-updates-enabled"};
-
-  // If set, the legacy export streaming buffer (`stream_generator`, used by
-  // the Turtle/CSV/TSV export paths) copies yielded chunks into its
-  // aggregation buffer using non-temporal (cache-bypassing) stores instead of
-  // `std::memcpy`. Off by default; only large export responses that would
-  // otherwise evict hot vocabulary/index data from the cache benefit.
-  Bool useNonTemporalExportBuffer_{false, "use-non-temporal-export-buffer"};
   Duration<std::chrono::milliseconds> websocketUpdateInterval_{
       std::chrono::milliseconds(50), "websocket-update-interval"};
   // When the result of an index scan is smaller than a single block, then
@@ -250,6 +259,13 @@ struct RuntimeParameters {
   // triples (per template triple); bounded memory, partial deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
+
+  // If set to `true`, CONSTRUCT query export of Turtle formats the
+  // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
+  // formatting) instead of the legacy per-term `std::string` construction
+  // in `formatTerm`/`formatTriple`. Output is required to be byte-identical
+  // to the legacy path; default `false` keeps master's behaviour unchanged.
+  Bool useFastExportStreamFormatter_{false, "use-fast-export-stream-formatter"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE

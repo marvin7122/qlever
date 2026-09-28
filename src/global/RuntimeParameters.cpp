@@ -23,6 +23,8 @@ RuntimeParameters::RuntimeParameters() {
   };
 
   add(stripColumns_);
+  add(useSimdEscapeClassifierCsvTsv_);
+  add(useNonTemporalExportBuffer_);
   add(sortEstimateCancellationFactor_);
   add(cacheMaxNumEntries_);
   add(cacheMaxSize_);
@@ -35,6 +37,7 @@ RuntimeParameters::RuntimeParameters() {
   add(lazyIndexScanMaxSizeMaterialization_);
   add(useBinsearchTransitivePath_);
   add(groupByHashMapEnabled_);
+  add(fastIntToStringForExport_);
   add(groupByDisableIndexScanOptimizations_);
   add(serviceMaxValueRows_);
   add(serviceMaxRedirects_);
@@ -42,7 +45,6 @@ RuntimeParameters::RuntimeParameters() {
   add(throwOnUnboundVariables_);
   add(cacheMaxSizeLazyResult_);
   add(websocketUpdatesEnabled_);
-  add(useNonTemporalExportBuffer_);
   add(smallIndexScanSizeEstimateDivisor_);
   add(zeroCostEstimateForCachedSubtree_);
   add(requestBodyLimit_);
@@ -69,6 +71,7 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(useFastExportStreamFormatter_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
