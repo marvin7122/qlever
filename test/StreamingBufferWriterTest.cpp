@@ -167,9 +167,9 @@ TEST(StreamingBufferWriterTest, StaticStreamCopy) {
   std::vector<char> src(testSize);
   std::vector<char> dest(testSize, 0);
 
-  for (size_t i = 0; i < testSize; ++i) {
-    src[i] = static_cast<char>(i % 251);
-  }
+  std::generate(src.begin(), src.end(), [i = size_t{0}]() mutable {
+    return static_cast<char>(i++ % 251);
+  });
 
   StreamingBufferWriter::streamCopy(dest.data(), src.data(), testSize);
   EXPECT_EQ(src, dest);
