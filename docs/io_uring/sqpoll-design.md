@@ -37,10 +37,15 @@ that for the submission path.
 1. Replace `io_uring_queue_init` with `io_uring_queue_init_params` in
    `IoUringPolicy::IoUringPolicy`, so the ring accepts a `struct
    io_uring_params` with explicit setup flags.
-2. Set `IORING_SETUP_SQPOLL` and pin the kernel poller with `SQ_AFF` by
-   assigning `sq_thread_cpu` to a fixed core. Set `sq_thread_idle` to
-   2000 ms, so the poller stays awake across the gaps within one query
-   but sleeps between queries.
+2. Set `IORING_SETUP_SQPOLL`. All SQPoll rings of the process attach to
+   one kernel poller (`IORING_SETUP_ATTACH_WQ` on a process-wide ring),
+   the poller is not pinned (`SQ_AFF` only if a CPU is configured), and
+   `sq_thread_idle` is 1 ms. The first version gave every ring of the
+   vocabulary pool its own poller, all pinned to CPU 0, awake for 2000 ms:
+   the eight pollers time-shared one core, a submission waited for its
+   ring's poller to be scheduled (mean blocking wait 72 us -> 1,038 us on
+   a cold Wikidata CONSTRUCT), and SQPoll made every ring-reaching query
+   1.7x to 4.3x slower.
 3. Implement fallback when the kernel denies SQPoll. If the params call
    fails with `-EPERM` (missing `CAP_SYS_NICE`) or `-EINVAL` (kernel
    without SQPoll support), retry with `flags = 0` and log the downgrade.
@@ -87,8 +92,9 @@ only and changes nothing about completion polling.
 Implemented in `src/util/IoUringManager.{h,cpp}`: `IoUringSetupOptions`
 (defaults preserve the plain ring), `IoUringPolicy(unsigned, const
 IoUringSetupOptions&)` via `io_uring_queue_init_params` with
-`IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF` and `sq_thread_idle` from the
-options, fallback to a plain ring on `-EPERM`/`-EINVAL`, and
+`IORING_SETUP_SQPOLL` (plus `IORING_SETUP_ATTACH_WQ` to one shared poller,
+and `IORING_SETUP_SQ_AFF` only for a configured CPU) and `sq_thread_idle`
+from the options, fallback to a plain ring on `-EPERM`/`-EINVAL`, and
 `IoUringPolicy::sqPollAvailable()` as the feature probe.
 `IORING_SETUP_DEFER_TASKRUN` and `IORING_SETUP_SINGLE_ISSUER` are plumbed
 as opt-in flags, default off, pending the Wikidata-truthy benchmark.
