@@ -187,7 +187,7 @@ std::vector<std::vector<std::string>> snapshotBatchesSerial(
   snapshots.reserve(batches.size());
   for (const auto& batch : batches) {
     auto result = vocab.lookupBatch(batch);
-    snapshots.emplace_back(result->begin(), result->end());
+    snapshots.emplace_back(result.begin(), result.end());
   }
   return snapshots;
 }
@@ -224,7 +224,7 @@ ConcurrentSnapshots snapshotBatchesConcurrent(
           threadSnapshots.reserve(batches.size());
           for (const auto& batch : batches) {
             auto words = vocab.lookupBatch(batch);
-            threadSnapshots.emplace_back(words->begin(), words->end());
+            threadSnapshots.emplace_back(words.begin(), words.end());
           }
         } catch (const std::exception& e) {
           error = e.what();
@@ -595,7 +595,7 @@ TEST(VocabularyOnDisk, LookupBatchOwnedRingBudgetIsExactAndReleased) {
                               &error = results.errors_[t]] {
           try {
             auto result = vocab->lookupBatch(indices);
-            threadSnapshots.emplace_back(result->begin(), result->end());
+            threadSnapshots.emplace_back(result.begin(), result.end());
           } catch (const std::exception& e) {
             error = e.what();
           }
@@ -624,7 +624,7 @@ TEST(VocabularyOnDisk, LookupBatchOwnedRingsAfterReopenAndDestruction) {
   const std::vector<size_t> indices{3, 1, 99};
   auto expectLookup = [&](const VocabularyOnDisk& vocab) {
     auto result = vocab.lookupBatch(indices);
-    EXPECT_THAT(std::vector<std::string>(result->begin(), result->end()),
+    EXPECT_THAT(std::vector<std::string>(result.begin(), result.end()),
                 ::testing::ElementsAre(words[3], words[1], words[99]));
   };
   const std::string filename = absl::StrCat(gtestCurrentTestName(), ".dat");
