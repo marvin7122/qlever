@@ -109,6 +109,8 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
   EXPECT_EQ(buffer[1], ' ');
   EXPECT_EQ(buffer[2], '<');
   EXPECT_EQ(std::string_view(buffer.data(), 3), "> <");
+  // The dynamic overload writes exactly `len` bytes: the rest is untouched.
+  EXPECT_EQ(std::string_view(buffer.data() + 3, 29), std::string(29, 'X'));
 
   // Test writing 4-byte delimiter
   buffer.fill('Z');
@@ -117,6 +119,7 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
       SwarDelimiterPacker::TRIPLE_O_IRI_END.len());
   EXPECT_EQ(next, buffer.data() + 4);
   EXPECT_EQ(std::string_view(buffer.data(), 4), "> .\n");
+  EXPECT_EQ(std::string_view(buffer.data() + 4, 28), std::string(28, 'Z'));
 
   // Test writing 1-byte delimiter
   buffer.fill('Y');
@@ -124,11 +127,13 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
                                            SwarDelimiterPacker::TSV_TAB, 1);
   EXPECT_EQ(next, buffer.data() + 1);
   EXPECT_EQ(buffer[0], '\t');
+  EXPECT_EQ(std::string_view(buffer.data() + 1, 31), std::string(31, 'Y'));
 
-  // Test writing 0-byte delimiter (no pointer advance)
+  // Test writing 0-byte delimiter (no pointer advance, nothing written)
   buffer.fill('W');
   next = SwarDelimiterPacker::writeDelim64(buffer.data(), 0, 0);
   EXPECT_EQ(next, buffer.data());
+  EXPECT_EQ(std::string_view(buffer.data(), 32), std::string(32, 'W'));
 
   // Test writing full 8-byte pattern
   buffer.fill('A');
@@ -198,11 +203,21 @@ TEST(SwarDelimiterPackerTest, WriteDelim32And16) {
       buffer.data(), packDelimPattern32("> .\n"), 4);
   EXPECT_EQ(next32, buffer.data() + 4);
   EXPECT_EQ(std::string_view(buffer.data(), 4), "> .\n");
+  EXPECT_EQ(std::string_view(buffer.data() + 4, 12), std::string(12, '0'));
 
+  buffer.fill('0');
   char* next16 = SwarDelimiterPacker::writeDelim16(
       buffer.data(), packDelimPattern16("\r\n"), 2);
   EXPECT_EQ(next16, buffer.data() + 2);
   EXPECT_EQ(std::string_view(buffer.data(), 2), "\r\n");
+  EXPECT_EQ(std::string_view(buffer.data() + 2, 14), std::string(14, '0'));
+
+  // A shorter length than the pattern writes only that many bytes.
+  buffer.fill('0');
+  next16 = SwarDelimiterPacker::writeDelim16(buffer.data(),
+                                             packDelimPattern16("\r\n"), 1);
+  EXPECT_EQ(next16, buffer.data() + 1);
+  EXPECT_EQ(std::string_view(buffer.data(), 16), "\r" + std::string(15, '0'));
 }
 
 // _____________________________________________________________________________
