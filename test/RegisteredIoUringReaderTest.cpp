@@ -12,7 +12,9 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -884,12 +886,27 @@ TEST(RegisteredIoUringReaderFakeRing, RegisteredFilesAndBuffers) {
   EXPECT_THROW(std::ignore = reader->submitBatch(wrongTarget),
                ad_utility::Exception);
 
+  // `bufferOffset + numBytes` must not wrap around in 32 bits: this range ends
+  // far behind a one-block buffer, although the 32-bit sum is one block. The
+  // target is only compared, never written (the batch is rejected first).
+  const uint32_t lastBlockOffset =
+      std::numeric_limits<uint32_t>::max() - numBytes + 1;
+  iovec oneBlock{arena.getSlotSpan(0).data(), kDirectIoBlockSize};
+  reader->registerBuffers(ql::span<const iovec>{&oneBlock, 1});
+  auto* wrappedTarget = reinterpret_cast<char*>(
+      reinterpret_cast<uintptr_t>(oneBlock.iov_base) + lastBlockOffset);
+  std::vector<BlockReadRequest> wrappingRange{BlockReadRequest{
+      0, 0, 0, lastBlockOffset, 2 * numBytes, wrappedTarget, false}};
+  EXPECT_THROW(std::ignore = reader->submitBatch(wrappingRange),
+               ad_utility::Exception);
+
   reader->unregisterFiles();
   reader->unregisterBuffers();
   EXPECT_FALSE(reader->isFilesRegistered());
   EXPECT_FALSE(reader->isBuffersRegistered());
   EXPECT_EQ(state->numUnregisterFiles, 2u);
-  EXPECT_EQ(state->numUnregisterBuffers, 2u);
+  // Three registrations of buffers, each replaced or unregistered once.
+  EXPECT_EQ(state->numUnregisterBuffers, 3u);
 }
 
 // _____________________________________________________________________________

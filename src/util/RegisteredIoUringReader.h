@@ -591,7 +591,9 @@ class BasicRegisteredIoUringReader {
         AD_CONTRACT_CHECK(req.destination ==
                           static_cast<char*>(buffer.iov_base) +
                               req.bufferOffset);
-        AD_CONTRACT_CHECK(req.bufferOffset + req.numBytes <= buffer.iov_len);
+        // Widen before adding: two `uint32_t` values can wrap around.
+        AD_CONTRACT_CHECK(size_t{req.bufferOffset} + size_t{req.numBytes} <=
+                          buffer.iov_len);
       }
     }
     inFlightByBatchId_[batchId] = requests.size();
