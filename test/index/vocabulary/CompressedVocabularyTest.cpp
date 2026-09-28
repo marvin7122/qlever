@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
@@ -10,6 +16,8 @@
 #include "backports/algorithm.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/PrefixCompressor.h"
+#include "index/vocabulary/StringSortComparator.h"
+#include "index/vocabulary/UnicodeVocabulary.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
@@ -27,6 +35,20 @@ struct DummyDecoder {
       c -= 2;
     }
     return result;
+  }
+  // The transformation preserves the length, so the decompressed size is
+  // exactly the compressed size.
+  [[nodiscard]] static size_t maxDecompressedSize(std::string_view compressed) {
+    return compressed.size();
+  }
+  // Decompress `compressed` into `out`, which must hold at least
+  // `maxDecompressedSize(compressed)` bytes. Return the bytes written.
+  [[nodiscard]] static size_t decompressInto(std::string_view compressed,
+                                             ql::span<char> out) {
+    for (size_t i = 0; i < compressed.size(); ++i) {
+      out[i] = static_cast<char>(compressed[i] - 2);
+    }
+    return compressed.size();
   }
   // This class has no state, but it still needs to be serialized.
   template <typename T>
@@ -494,4 +516,30 @@ TEST(CompressedVocabularyWithHoles, nonAscendingIndicesThrow) {
   for (size_t i = 0; i < numWords; ++i) {
     EXPECT_EQ(vocab[indices.at(i)], words.at(i)) << "at position " << i;
   }
+}
+
+// _____________________________________________________________________________
+// `CompressedVocabulary::lookupBatch(indices, builder)` returns `void`; the
+// builder-aware `UnicodeVocabulary::lookupBatch` must finalize the builder
+// instead of returning that call.
+TEST(CompressedVocabulary, LookupBatchWithBuilderThroughUnicodeVocabulary) {
+  using Compressed =
+      CompressedVocabulary<VocabularyOnDisk, DummyCompressionWrapper, 4>;
+  const std::string filename = gtestCurrentTestName();
+  UnicodeVocabulary<Compressed, SimpleStringComparator> vocab{
+      SimpleStringComparator{"en", "US", false}};
+  auto& underlying = vocab.getUnderlyingVocabulary();
+  {
+    auto writerPtr = underlying.makeDiskWriterPtr(filename);
+    for (std::string_view word : {"alpha", "beta", "gamma"}) {
+      (*writerPtr)(word, false);
+    }
+    writerPtr->finish();
+  }
+  underlying.open(filename);
+
+  const std::vector<size_t> indices{2, 0, 1};
+  ArenaVocabBatchBuilder builder{indices.size()};
+  auto result = vocab.lookupBatch(indices, builder);
+  EXPECT_THAT(result, ::testing::ElementsAre("gamma", "alpha", "beta"));
 }
