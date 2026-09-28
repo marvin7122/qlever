@@ -171,6 +171,20 @@ struct VocabBlockCacheCounters {
 };
 inline VocabBlockCacheCounters vocabBlockCacheCounters;
 
+// A snapshot of `vocabBlockCacheCounters`.
+struct VocabBlockCacheCounts {
+  uint64_t hits_ = 0;
+  uint64_t inFlightHits_ = 0;
+  uint64_t misses_ = 0;
+  uint64_t inserts_ = 0;
+  uint64_t evictions_ = 0;
+  static VocabBlockCacheCounts now();
+};
+
+// Log the cache activity since `before` (e.g. of one export), unless there
+// was none (the cache is disabled or no vocabulary word was read).
+void logVocabBlockCacheActivitySince(const VocabBlockCacheCounts& before);
+
 }  // namespace ad_utility::vocab
 
 #endif  // QLEVER_SRC_UTIL_VOCABBLOCKCACHE_H

@@ -216,4 +216,19 @@ TEST(VocabBlockCache, LargerBlockSize) {
   EXPECT_ANY_THROW(cache.resize(3, blockSize + 512));
 }
 
+// The snapshot of the process-wide counters sees their increments; logging
+// the activity since a snapshot must not throw (also without any activity).
+TEST(VocabBlockCache, CounterSnapshots) {
+  using ad_utility::vocab::VocabBlockCacheCounts;
+  auto before = VocabBlockCacheCounts::now();
+  ad_utility::vocab::logVocabBlockCacheActivitySince(before);
+  ad_utility::vocab::vocabBlockCacheCounters.hits_ += 3;
+  ad_utility::vocab::vocabBlockCacheCounters.misses_ += 2;
+  auto after = VocabBlockCacheCounts::now();
+  EXPECT_EQ(after.hits_ - before.hits_, 3u);
+  EXPECT_EQ(after.misses_ - before.misses_, 2u);
+  EXPECT_EQ(after.inserts_, before.inserts_);
+  EXPECT_NO_THROW(ad_utility::vocab::logVocabBlockCacheActivitySince(before));
+}
+
 }  // namespace

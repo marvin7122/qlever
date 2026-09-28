@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "util/Exception.h"
+#include "util/Log.h"
 
 namespace ad_utility::vocab {
 
@@ -176,6 +177,29 @@ VocabBlockCache& threadLocalVocabBlockCache(size_t numBlocks,
     cache.resize(numBlocks, blockSize);
   }
   return cache;
+}
+
+// _____________________________________________________________________________
+VocabBlockCacheCounts VocabBlockCacheCounts::now() {
+  const auto& c = vocabBlockCacheCounters;
+  return {c.hits_.load(), c.inFlightHits_.load(), c.misses_.load(),
+          c.inserts_.load(), c.evictions_.load()};
+}
+
+// _____________________________________________________________________________
+void logVocabBlockCacheActivitySince(const VocabBlockCacheCounts& before) {
+  const auto now = VocabBlockCacheCounts::now();
+  const uint64_t hits = now.hits_ - before.hits_;
+  const uint64_t inFlightHits = now.inFlightHits_ - before.inFlightHits_;
+  const uint64_t misses = now.misses_ - before.misses_;
+  if (hits + inFlightHits + misses == 0) {
+    return;
+  }
+  AD_LOG_INFO << "Vocabulary block cache: " << hits << " hits, " << inFlightHits
+              << " in-flight hits, " << misses << " misses, "
+              << now.inserts_ - before.inserts_ << " inserts, "
+              << now.evictions_ - before.evictions_ << " evictions"
+              << std::endl;
 }
 
 }  // namespace ad_utility::vocab
