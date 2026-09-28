@@ -12,6 +12,7 @@
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -23,7 +24,6 @@
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
 #include "util/Serializer/Serializer.h"
-#include "util/ThreadSafeQueue.h"
 
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
 // are ascending, but not (necessarily) contiguous. If the strings are sorted,
@@ -45,10 +45,39 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
 
-  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
-  mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>
-      ioManagers_;
+  // Pool of persistent `BatchIoManager`s for `lookupBatch`. `acquire` never
+  // blocks: when every pooled manager is taken, it creates a new one, which
+  // `release` then keeps in the pool. A blocking pool could deadlock: the
+  // fibers of one CONSTRUCT batch (`ConstructBatchEvaluator`) each hold a
+  // manager while they yield, so a fiber blocking in the pool stalls its
+  // siblings, and two threads could each hold managers while waiting for one
+  // of the other's. The pool therefore grows to the peak number of
+  // concurrent lookups.
+  class IoManagerPool {
+   public:
+    // Create `initialSize` managers up front.
+    explicit IoManagerPool(size_t initialSize);
+
+    // Take an idle manager, or create a new one if there is none.
+    std::unique_ptr<ad_utility::BatchManagerBase> acquire();
+
+    // Return a manager obtained from `acquire`.
+    void release(std::unique_ptr<ad_utility::BatchManagerBase> manager);
+
+    // The number of managers created so far (idle or in use).
+    size_t numManagers() const;
+
+   private:
+    std::unique_ptr<ad_utility::BatchManagerBase> makeManager();
+
+    mutable std::mutex mutex_;
+    std::vector<std::unique_ptr<ad_utility::BatchManagerBase>> idle_;
+    size_t numManagers_ = 0;
+    // Cleared by `makeBatchManager` once creating an io_uring manager failed,
+    // so later managers use the fallback directly.
+    bool preferIoUring_ = true;
+  };
+  mutable std::unique_ptr<IoManagerPool> ioManagers_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -108,6 +137,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
+
+  // The number of pooled I/O managers created so far, idle or in use (see
+  // `IoManagerPool`). Zero before `open`.
+  size_t numIoManagers() const {
+    return ioManagers_ ? ioManagers_->numManagers() : 0;
+  }
 
   // Default constructor for an empty vocabulary.
   VocabularyOnDisk() = default;

@@ -295,13 +295,13 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
 
-  auto manager = ioManagers_->pop().value();
+  auto manager = ioManagers_->acquire();
   // Return the `manager` to the pool on every exit path (including exceptions,
   // e.g. an out-of-range index in phase 1), so we never leak an `IoManager`
   // (and its io_uring buffers) out of the pool.
   absl::Cleanup returnManager{[this, &manager]() {
     ad_utility::terminateIfThrows(
-        [this, &manager]() { ioManagers_->push(std::move(manager)); },
+        [this, &manager]() { ioManagers_->release(std::move(manager)); },
         "returning the `IoManager` to the pool in "
         "`VocabularyOnDisk::lookupBatch`");
   }};
@@ -372,12 +372,47 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
-  ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>(
-      NUM_VOCAB_BATCH_IO_MANAGERS);
-  bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
+  ioManagers_ = std::make_unique<IoManagerPool>(NUM_VOCAB_BATCH_IO_MANAGERS);
+}
+
+// _____________________________________________________________________________
+VocabularyOnDisk::IoManagerPool::IoManagerPool(size_t initialSize) {
+  idle_.reserve(initialSize);
+  for (size_t i = 0; i < initialSize; ++i) {
+    idle_.push_back(makeManager());
   }
+}
+
+// _____________________________________________________________________________
+std::unique_ptr<ad_utility::BatchManagerBase>
+VocabularyOnDisk::IoManagerPool::makeManager() {
+  ++numManagers_;
+  return ad_utility::makeBatchManager(preferIoUring_);
+}
+
+// _____________________________________________________________________________
+std::unique_ptr<ad_utility::BatchManagerBase>
+VocabularyOnDisk::IoManagerPool::acquire() {
+  std::lock_guard lock{mutex_};
+  if (idle_.empty()) {
+    return makeManager();
+  }
+  auto manager = std::move(idle_.back());
+  idle_.pop_back();
+  return manager;
+}
+
+// _____________________________________________________________________________
+void VocabularyOnDisk::IoManagerPool::release(
+    std::unique_ptr<ad_utility::BatchManagerBase> manager) {
+  AD_CORRECTNESS_CHECK(manager != nullptr);
+  std::lock_guard lock{mutex_};
+  idle_.push_back(std::move(manager));
+}
+
+// _____________________________________________________________________________
+size_t VocabularyOnDisk::IoManagerPool::numManagers() const {
+  std::lock_guard lock{mutex_};
+  return numManagers_;
 }

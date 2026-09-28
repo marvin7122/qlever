@@ -16,8 +16,10 @@
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
+#include "util/FiberIoScheduler.h"
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
@@ -291,6 +293,40 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
   EXPECT_THAT(withFastPath, ::testing::ElementsAreArray(withoutFastPath));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       *vocab, withFastPath, indices);
+}
+
+// More lookups than the pool has managers may be in flight at once: the
+// fibers of one CONSTRUCT batch each hold a manager while they yield. A
+// fiber that finds the pool empty gets a new manager instead of blocking the
+// thread (which would stall the siblings that hold the managers). With fiber
+// support, the lookups below overlap; without it, they run one after the
+// other. Either way every result is correct and the pool keeps its managers.
+TEST(VocabularyOnDisk, MoreConcurrentFiberLookupsThanPooledManagers) {
+  auto vocab = createExampleVocabulary();
+  EXPECT_EQ(vocab->numIoManagers(), NUM_VOCAB_BATCH_IO_MANAGERS);
+  const size_t numLookups = 2 * NUM_VOCAB_BATCH_IO_MANAGERS + 1;
+  std::vector<std::vector<size_t>> indices(numLookups);
+  std::vector<VocabBatchLookupResult> results(numLookups);
+  std::vector<std::function<void()>> bodies;
+  for (size_t i = 0; i < numLookups; ++i) {
+    indices[i] = {i % vocab->size(), (i + 2) % vocab->size()};
+    bodies.emplace_back([&vocab, &indices, &results, i]() {
+      results[i] = vocab->lookupBatch(indices[i]);
+    });
+  }
+  ad_utility::FiberIoScheduler::runAsFibers(std::move(bodies));
+  for (size_t i = 0; i < numLookups; ++i) {
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, results[i], indices[i]);
+  }
+  const size_t numManagers = vocab->numIoManagers();
+  EXPECT_GE(numManagers, NUM_VOCAB_BATCH_IO_MANAGERS);
+  EXPECT_LE(numManagers, numLookups);
+  // All managers are back in the pool; a later lookup creates no new one.
+  auto result = vocab->lookupBatch(indices[0]);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
+                                                                indices[0]);
+  EXPECT_EQ(vocab->numIoManagers(), numManagers);
 }
 
 // An empty batch is an invalid request and must throw.
