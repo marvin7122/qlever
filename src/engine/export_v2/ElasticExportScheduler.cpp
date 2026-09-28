@@ -317,15 +317,28 @@ absl::AnyInvocable<void()> ElasticExportScheduler::makePostedWork(
     OwnedMorsel morsel) {
   const uint64_t jobId = morsel.jobId();
   return [this, jobId, morsel = std::move(morsel)]() mutable {
+    // Capture the morsel failure first: `onPostedMorselFinished` drains and
+    // reposts pending morsels, and a throwing poster on that path must not
+    // replace the original morsel exception.
+    std::exception_ptr morselException;
     try {
       runPostedMorsel(std::move(morsel));
     } catch (...) {
-      // Account completion before propagating: shares must not clog on
-      // throwing tasks. Propagation semantics stay unchanged.
+      morselException = std::current_exception();
+    }
+    try {
+      // Account completion exactly once on every path, so shares cannot clog
+      // on throwing tasks.
       onPostedMorselFinished(jobId);
+    } catch (...) {
+      if (morselException != nullptr) {
+        std::rethrow_exception(morselException);
+      }
       throw;
     }
-    onPostedMorselFinished(jobId);
+    if (morselException != nullptr) {
+      std::rethrow_exception(morselException);
+    }
   };
 }
 
@@ -388,18 +401,18 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
   // (admission fills every free share eagerly), so a per-session index is
   // future work for proven load.
   while (totalOutstanding_ < max && !pendingAdmission_.empty()) {
-    auto best = pendingAdmission_.end();
-    for (auto it = pendingAdmission_.begin(); it != pendingAdmission_.end();
-         ++it) {
-      const size_t committed = committedOutstandingUnsafe(it->jobId());
-      if (committed >= share) {
-        continue;
-      }
-      if (best == pendingAdmission_.end() || it->jobId() < best->jobId()) {
-        best = it;
-      }
-    }
-    if (best == pendingAdmission_.end()) {
+    // Lowest jobId among the sessions still below the base share: sessions
+    // at or above the share sort after every below-share session, so a
+    // single `min_element` pass replaces the hand-written best-tracking loop
+    // with identical selection.
+    auto best = ql::ranges::min_element(
+        pendingAdmission_, std::less<>{},
+        [this, share](const OwnedMorsel& morsel) {
+          return std::pair(committedOutstandingUnsafe(morsel.jobId()) >= share,
+                           morsel.jobId());
+        });
+    if (best == pendingAdmission_.end() ||
+        committedOutstandingUnsafe(best->jobId()) >= share) {
       break;
     }
     admitIt(best);
