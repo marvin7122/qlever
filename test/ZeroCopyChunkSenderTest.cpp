@@ -191,7 +191,7 @@ TEST(ZeroCopyChunkSender, PartialSendIsResubmittedBeforeTheNextChunk) {
   ZeroCopyChunkSender sender{std::move(backend), 3};
   sender.sendChunk("hello world");
   const std::string first = framed("hello world");
-  // Only 6 bytes (size line "b\r\n" + "hel") went out.
+  // Only 6 bytes (the size line "b\r\n" and the first 3 body bytes) went out.
   state->events_ = {sent(0, 6)};
   state->onWait_ = [&]() {
     const auto& last = state->submissions_.back();
