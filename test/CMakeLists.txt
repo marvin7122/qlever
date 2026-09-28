@@ -175,6 +175,8 @@ addLinkAndDiscoverTest(VariableCounterTest sparqlParser engine)
 
 addLinkAndDiscoverTest(StringUtilsTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(SwarDelimiterPackerTest)
+
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
