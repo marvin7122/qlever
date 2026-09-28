@@ -34,6 +34,9 @@ if (NOT _NO_BENCHMARK)
     # replacing the global operator new), for ad-freiburg/qlever#3523.
     add_executable(PrefixCompressorLengthBenchmark PrefixCompressorLengthBenchmark.cpp)
     qlever_target_link_libraries(PrefixCompressorLengthBenchmark qlever_util compilationInfo gtest)
+    # Keep liburing in DT_NEEDED like the other bin-cache binaries (the
+    # build-binaries packaging step checks it), although nothing here uses it.
+    target_link_options(PrefixCompressorLengthBenchmark PRIVATE "LINKER:--no-as-needed")
 
     addAndLinkBenchmark(JoinAlgorithmBenchmark testUtil memorySize)
 
