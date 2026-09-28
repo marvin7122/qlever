@@ -135,7 +135,16 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
     params.flags |= IORING_SETUP_SINGLE_ISSUER;
 #endif
   }
-  int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+  // Under SQPoll, give the ring `ringSize_` headroom entries on top while the
+  // in-flight cap in `addBatch` stays `ringSize_`. The poll thread publishes
+  // the submission-queue head only after it has handed off a batch of entries,
+  // so a slot freed by a just-reaped completion may not be visible to this
+  // thread yet, and `io_uring_get_sqe` would return `nullptr` although fewer
+  // than `ringSize_` reads are in flight. With the headroom the ring cannot
+  // fill up before the cap does. (Draining and retrying instead was tried and
+  // hung under cancellation.) The extra entries cost a few kilobytes.
+  const unsigned entries = setupOptions.useSqPoll ? 2 * ringSize_ : ringSize_;
+  int ret = io_uring_queue_init_params(entries, &ring_, &params);
   bool usedFallbackRing = false;
   if (ret == -EPERM || ret == -EINVAL) {
     // The kernel denied the requested setup (missing `CAP_SYS_NICE` for the
@@ -256,8 +265,9 @@ void IoUringPolicy::addBatch(int fd,
       }
     }
 
-    // Claim the next free SQE. The check above guarantees a slot is available,
-    // so `io_uring_get_sqe` must not return `nullptr` here.
+    // Claim the next free SQE. The check above guarantees a slot is available
+    // (under SQPoll thanks to the ring headroom, see the constructor), so
+    // `io_uring_get_sqe` must not return `nullptr` here.
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     AD_CORRECTNESS_CHECK(sqe != nullptr);
 
