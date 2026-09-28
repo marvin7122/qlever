@@ -12,9 +12,11 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #if defined(__linux__)
@@ -54,7 +56,15 @@ char* copyLiteral(char* out, const char (&literal)[N]) {
 }
 
 // _____________________________________________________________________________
-// Linux perf_event hardware branch counter tracker.
+// The branch counts measured between `HardwarePerfCounter::start` and `stop`.
+struct BranchCounts {
+  uint64_t branches_ = 0;
+  uint64_t misses_ = 0;
+};
+
+// _____________________________________________________________________________
+// Linux perf_event hardware branch counter tracker. It owns two file
+// descriptors and is therefore neither copyable nor movable.
 class HardwarePerfCounter {
  private:
 #if defined(__linux__)
@@ -83,6 +93,9 @@ class HardwarePerfCounter {
     isSupported_ = (branchFd_ >= 0 && missFd_ >= 0);
 #endif
   }
+
+  HardwarePerfCounter(const HardwarePerfCounter&) = delete;
+  HardwarePerfCounter& operator=(const HardwarePerfCounter&) = delete;
 
   ~HardwarePerfCounter() {
 #if defined(__linux__)
@@ -114,27 +127,26 @@ class HardwarePerfCounter {
 #endif
   }
 
-  void stop(uint64_t& branchCount, uint64_t& missCount) noexcept {
+  // Stop counting and return the counts since `start` (zeros if the counters
+  // are unavailable or cannot be read).
+  BranchCounts stop() noexcept {
+    BranchCounts counts;
 #if defined(__linux__)
     if (isSupported_) {
       ioctl(branchFd_, PERF_EVENT_IOC_DISABLE, 0);
       ioctl(missFd_, PERF_EVENT_IOC_DISABLE, 0);
-      ssize_t r1 = read(branchFd_, &branchCount, sizeof(uint64_t));
-      ssize_t r2 = read(missFd_, &missCount, sizeof(uint64_t));
-      if (r1 != static_cast<ssize_t>(sizeof(uint64_t))) {
-        branchCount = 0;
+      uint64_t value = 0;
+      if (read(branchFd_, &value, sizeof(value)) ==
+          static_cast<ssize_t>(sizeof(value))) {
+        counts.branches_ = value;
       }
-      if (r2 != static_cast<ssize_t>(sizeof(uint64_t))) {
-        missCount = 0;
+      if (read(missFd_, &value, sizeof(value)) ==
+          static_cast<ssize_t>(sizeof(value))) {
+        counts.misses_ = value;
       }
-    } else {
-      branchCount = 0;
-      missCount = 0;
     }
-#else
-    branchCount = 0;
-    missCount = 0;
 #endif
+    return counts;
   }
 };
 
@@ -142,7 +154,7 @@ class HardwarePerfCounter {
 // Baseline 1: Standard switch-based branching dispatcher.
 struct BranchingSwitchDispatcher {
   static char* dispatchTermFormat(ValueId id, std::string_view rawTerm,
-                                  char* out) noexcept {
+                                  char* out) {
     switch (id.getDatatype()) {
       case Datatype::Undefined:
         return out;
@@ -243,7 +255,7 @@ struct BranchingSwitchDispatcher {
 // Baseline 2: Chained if-else branching dispatcher.
 struct BranchingIfElseDispatcher {
   static char* dispatchTermFormat(ValueId id, std::string_view rawTerm,
-                                  char* out) noexcept {
+                                  char* out) {
     const Datatype dt = id.getDatatype();
     if (dt == Datatype::VocabIndex || dt == Datatype::LocalVocabIndex ||
         dt == Datatype::SecondaryVocabIndex || dt == Datatype::EncodedVal) {
@@ -325,10 +337,18 @@ struct BranchingIfElseDispatcher {
 // _____________________________________________________________________________
 // Benchmark dataset generator for mixed RDF distribution.
 // 50% IRIs, 30% Literals, 10% Blank Nodes, 10% Integers.
+// `rawTerms_` points into the strings of `stringStorage_`. Moving the vectors
+// keeps the strings where they are, copying does not, so copies are deleted.
 struct BenchmarkDataset {
   std::vector<ValueId> ids_;
   std::vector<std::string> stringStorage_;
   std::vector<std::string_view> rawTerms_;
+
+  BenchmarkDataset() = default;
+  BenchmarkDataset(BenchmarkDataset&&) = default;
+  BenchmarkDataset& operator=(BenchmarkDataset&&) = default;
+  BenchmarkDataset(const BenchmarkDataset&) = delete;
+  BenchmarkDataset& operator=(const BenchmarkDataset&) = delete;
 
   static BenchmarkDataset generate(size_t numTerms, uint32_t seed = 42) {
     BenchmarkDataset ds;
@@ -383,12 +403,11 @@ struct BenchmarkResult {
 };
 
 template <typename Dispatcher>
-BenchmarkResult runBenchmark(const std::string& name,
-                             const BenchmarkDataset& ds,
+BenchmarkResult runBenchmark(std::string_view name, const BenchmarkDataset& ds,
                              ql::span<char> outputBuffer,
                              HardwarePerfCounter& perf, size_t iterations = 5) {
   if (ds.ids_.empty()) {
-    return BenchmarkResult{name, 0.0, 0.0, 0.0, 0, 0, 0.0, 0.0, 0};
+    return BenchmarkResult{std::string{name}, 0.0, 0.0, 0.0, 0, 0, 0.0, 0.0, 0};
   }
   // Warmup
   Dispatcher::dispatchBatchTermFormat(ds.ids_, ds.rawTerms_, outputBuffer);
@@ -406,13 +425,11 @@ BenchmarkResult runBenchmark(const std::string& name,
                                                        outputBuffer);
 
     auto t1 = std::chrono::high_resolution_clock::now();
-    uint64_t branches = 0;
-    uint64_t misses = 0;
-    perf.stop(branches, misses);
+    const BranchCounts counts = perf.stop();
 
     totalMs += std::chrono::duration<double, std::milli>(t1 - t0).count();
-    totalBranches += branches;
-    totalMisses += misses;
+    totalBranches += counts.branches_;
+    totalMisses += counts.misses_;
   }
 
   // Fold every written byte into the sink so the timed formatting loops
@@ -437,12 +454,12 @@ BenchmarkResult runBenchmark(const std::string& name,
                                     : 0.0;
   double missesPerTerm = static_cast<double>(avgMisses) / totalTerms;
 
-  return BenchmarkResult{name,      avgMs,         mTermsPerSec,
-                         nsPerTerm, avgBranches,   avgMisses,
-                         missRate,  missesPerTerm, bytesWritten};
+  return BenchmarkResult{std::string{name}, avgMs,         mTermsPerSec,
+                         nsPerTerm,         avgBranches,   avgMisses,
+                         missRate,          missesPerTerm, bytesWritten};
 }
 
-void printResults(const std::vector<BenchmarkResult>& results) {
+void printResults(ql::span<const BenchmarkResult> results) {
   std::cout << "\n============================================================="
                "===========================================\n";
   std::cout
@@ -500,10 +517,20 @@ void printResults(const std::vector<BenchmarkResult>& results) {
 int main(int argc, char** argv) {
   size_t numTerms = 5'000'000;
   if (argc > 1) {
-    numTerms = std::stoull(argv[1]);
+    const std::string_view arg{argv[1]};
+    auto [ptr, ec] =
+        std::from_chars(arg.data(), arg.data() + arg.size(), numTerms);
+    if (ec != std::errc{} || ptr != arg.data() + arg.size()) {
+      std::cerr << "The number of terms must be a positive integer.\n";
+      return 1;
+    }
   }
-  if (numTerms == 0) {
-    std::cerr << "Number of terms must be greater than 0.\n";
+  // The output buffer holds `maxBytesPerTerm` bytes per term.
+  constexpr size_t maxNumTerms =
+      std::numeric_limits<size_t>::max() / maxBytesPerTerm;
+  if (numTerms == 0 || numTerms > maxNumTerms) {
+    std::cerr << "The number of terms must be between 1 and " << maxNumTerms
+              << ".\n";
     return 1;
   }
 
