@@ -1,12 +1,16 @@
 name: OpenCodeReview (fan-out project rules)
 
 on:
-  # `synchronize` included per owner request: the fan-out review runs on
-  # every push. Note it takes hours on large diffs and `cancel-in-progress`
-  # below cancels the stale run on the next push, so actively developed PRs
-  # consume extra runner time by design.
+  # Cost control (2026-09-28): the fan-out review no longer runs per push.
+  # `synchronize`/`opened` were removed; the expensive review runs only when
+  # every other check on the head SHA is green, observed via `check_suite`
+  # completion plus the gate step below, or on manual `/open-code-review-fanout`
+  # comment. `cancel-in-progress` still drops a running review when a newer
+  # event for the same PR arrives.
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [reopened, ready_for_review]
+  check_suite:
+    types: [completed]
   issue_comment:
     types: [created]
 
@@ -16,13 +20,14 @@ permissions:
   issues: write
 
 concurrency:
-  group: ocr-fanout-project-rules-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  group: ocr-fanout-project-rules-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_suite.pull_requests[0].number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   review-fanout-project-rules:
     if: >-
       github.event_name == 'pull_request_target' ||
+      github.event_name == 'check_suite' ||
       (github.event.issue.pull_request &&
        github.event.comment.user.type != 'Bot' &&
        (github.event.comment.author_association == 'MEMBER' ||
@@ -58,6 +63,64 @@ jobs:
             });
             core.setOutput('base_ref', pr.base.ref);
             core.setOutput('head_sha', pr.head.sha);
+      # Cost gate for `check_suite` events: run the expensive fan-out review
+      # only when every other check on the PR head SHA is green. Skipped-out
+      # early: suites with no PR, stale suites (new push since), still-running
+      # checks (a later suite completion re-evaluates), any non-green
+      # conclusion, and SHAs the fan-out already covered (breaks the
+      # self-trigger loop: our own completion fires `check_suite` too).
+      # Manual `/open-code-review-fanout` comments bypass this gate.
+      - name: Gate on all-green CI
+        id: gate
+        if: github.event_name == 'check_suite'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const suite = context.payload.check_suite;
+            const prs = suite.pull_requests || [];
+            if (!prs.length) {
+              core.setOutput('proceed', 'false');
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prs[0].number,
+            });
+            const headSha = pr.head.sha;
+            core.setOutput('pr_number', String(prs[0].number));
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('head_sha', headSha);
+            if (headSha !== suite.head_sha) {
+              core.setOutput('proceed', 'false');
+              return;
+            }
+            const all = [];
+            for (let page = 1; page <= 5; page++) {
+              const { data } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: headSha,
+                per_page: 100,
+                page,
+              });
+              all.push(...data.check_runs);
+              if (data.check_runs.length < 100) break;
+            }
+            const own = all.filter((c) => c.name === 'review-fanout-project-rules');
+            if (own.some((c) => c.status === 'completed')) {
+              core.setOutput('proceed', 'false');
+              return;
+            }
+            const others = all.filter((c) => c.name !== 'review-fanout-project-rules');
+            if (others.some((c) => c.status !== 'completed')) {
+              core.setOutput('proceed', 'false');
+              return;
+            }
+            const bad = others.filter(
+              (c) => c.conclusion !== 'success' && c.conclusion !== 'skipped' && c.conclusion !== 'neutral'
+            );
+            core.setOutput('proceed', bad.length ? 'false' : 'true');
       - name: Isolate npm prefix for this run
         run: |
           prefix="${RUNNER_TEMP}/ocr-npm-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -86,6 +149,7 @@ jobs:
             ~/.npm
           key: ocr-build-linux-x64-48cc191fc147f0b4642e9658717805f6a3dfefa5-40f1582b2485089dde7abd97c1529aa768e1baff
       - name: Review pull request with fan-out project rules
+        if: github.event_name != 'check_suite' || steps.gate.outputs.proceed == 'true'
         uses: marvin7122/open-code-review@34ed9d2925e550cf7edb97f3751c6cada6f89d9c
         with:
           # Deliberately the job-scoped GITHUB_TOKEN, not an App installation
@@ -101,13 +165,13 @@ jobs:
           # {"thinking": {"type": "disabled"}}, so send an empty object
           # (same override as ocr-review.yml).
           llm_extra_body: '{}'
-          base_ref: ${{ steps.pr-context.outputs.base_ref }}
-          head_sha: ${{ steps.pr-context.outputs.head_sha }}
+          base_ref: ${{ steps.pr-context.outputs.base_ref || steps.gate.outputs.base_ref }}
+          head_sha: ${{ steps.pr-context.outputs.head_sha || steps.gate.outputs.head_sha }}
           ocr_install_from: source
           fan_out_project_rules: 'true'
           rule: .opencodereview/rule.json
           review_concurrency: '1'
-          effort: high
+          effort: low
           sticky_summary: 'false'
           incremental: 'true'
           upload_artifacts: 'true'
@@ -141,6 +205,7 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           OCR_POSTER_LABEL: OCR fan-out
+          OCR_PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -150,7 +215,7 @@ jobs:
             const linkMarker = '<!-- ocr-run-link -->';
             const label = process.env.OCR_POSTER_LABEL || 'OpenCodeReview';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
-            const number = context.payload.pull_request?.number || context.issue.number;
+            const number = context.payload.pull_request?.number || context.issue?.number || process.env.OCR_PR_NUMBER || '';
             if (!number) return;
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
