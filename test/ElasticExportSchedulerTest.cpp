@@ -807,6 +807,40 @@ TEST(ElasticExportSchedulerTest, RemainderSlotGoesToOldestSession) {
   }
 }
 
+TEST(ElasticExportSchedulerTest,
+     MorselExceptionTakesPrecedenceOverPosterFailure) {
+  // A poster that defers the first morsel but fails on every later post:
+  // the completion path (drain + repost of the waiting morsel) then throws
+  // while a morsel exception is already in flight. The posted closure must
+  // surface the original morsel failure, not the poster failure.
+  DeferredPoster deferred;
+  size_t posts = 0;
+  ElasticExportScheduler scheduler(
+      [&deferred, &posts](absl::AnyInvocable<void()> work) {
+        if (++posts > 1) {
+          throw std::runtime_error("poster failure");
+        }
+        deferred.post(std::move(work));
+      },
+      64);
+  scheduler.setMaxConcurrentMorsels(1);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  session.submitMorsel(
+      []() -> std::string { throw std::runtime_error("original failure"); });
+  session.submitMorsel([]() -> std::string { return "waiting"; });
+  ASSERT_EQ(deferred.totalPosted_, 1u);
+
+  // The draining repost throws "poster failure" inside the completion path;
+  // the original morsel failure must win.
+  AD_EXPECT_THROW_WITH_MESSAGE(std::move(deferred.posted_.front())(),
+                               ::testing::HasSubstr("original failure"));
+  // The slot still carries the stored failure for the consumer.
+  AD_EXPECT_THROW_WITH_MESSAGE(session.consumeNextResult(),
+                               ::testing::HasSubstr("original failure"));
+}
+
 TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
   ElasticExportScheduler scheduler([](absl::AnyInvocable<void()>) {}, 64);
   EXPECT_THROW(scheduler.setMaxConcurrentMorsels(0), ad_utility::Exception);
