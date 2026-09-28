@@ -17,6 +17,7 @@
 #include <array>
 #include <deque>
 
+#include "backports/algorithm.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
@@ -354,8 +355,96 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   }};
 
   const bool pageCacheFastPath = pageCacheFastPathIsEnabled();
+  const size_t pipelineDepth = getRuntimeParameter<
+      &RuntimeParameters::vocabularyIouringPipelineDepth_>();
+  if (pipelineDepth >= 2) {
+    return lookupBatchPipelined(*manager, indices, pipelineDepth,
+                                PIPELINE_SUB_BATCH_SIZE, pageCacheFastPath);
+  }
   auto offsetPairs = readOffsetPairs(*manager, indices, pageCacheFastPath);
   return readStrings(*manager, offsetPairs, pageCacheFastPath);
+}
+
+namespace {
+// The result of a lookup that was read in sub-batches: the words of each
+// sub-batch are packed into their own buffer, because the word reads of a
+// sub-batch are submitted as soon as its offsets are known, before the total
+// size of all words is known.
+struct SubBatchedLookupData
+    : VocabLookupDataCommonBase<std::vector<std::vector<char>>> {};
+}  // namespace
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyOnDisk::lookupBatchPipelined(
+    ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
+    size_t pipelineDepth, size_t subBatchSize, bool pageCacheFastPath) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  AD_CONTRACT_CHECK(pipelineDepth > 0 && subBatchSize > 0);
+  // Check every index before the first read is submitted, so that an
+  // out-of-range index throws while no read is in flight.
+  AD_CONTRACT_CHECK(ql::ranges::all_of(
+      indices, [this](size_t index) { return index < size(); }));
+
+  const size_t numSubBatches =
+      (indices.size() + subBatchSize - 1) / subBatchSize;
+  auto subBatch = [&indices, subBatchSize](size_t i) {
+    const size_t begin = i * subBatchSize;
+    return indices.subspan(begin,
+                           std::min(subBatchSize, indices.size() - begin));
+  };
+
+  auto data = std::make_shared<SubBatchedLookupData>();
+  // Both vectors are sized once here and never resized below: the word reads
+  // target the inner buffers, and `views` point into them.
+  data->buffer().resize(numSubBatches);
+  data->views().resize(indices.size());
+  const auto views = ql::span<std::string_view>{data->views()};
+
+  std::deque<PendingOffsetRead> pendingOffsetReads;
+  std::vector<ad_utility::BatchManagerBase::BatchHandle> pendingWordReads;
+  // If anything below throws, wait for all reads that are still in flight
+  // before their target buffers (in `pendingOffsetReads` and `data`) die.
+  // Waiting for a batch that already completed returns immediately.
+  absl::Cleanup drainReads{[&manager, &pendingOffsetReads,
+                            &pendingWordReads]() {
+    ad_utility::terminateIfThrows(
+        [&]() {
+          for (const auto& pending : pendingOffsetReads) {
+            if (pending.handle_.has_value()) {
+              manager.wait(pending.handle_.value());
+            }
+          }
+          for (auto handle : pendingWordReads) {
+            manager.wait(handle);
+          }
+        },
+        "draining in-flight reads in `VocabularyOnDisk::lookupBatchPipelined`");
+  }};
+
+  size_t numSubmitted = 0;
+  for (size_t i = 0; i < numSubBatches; ++i) {
+    // Keep the offset reads of up to `pipelineDepth` sub-batches in flight.
+    for (; numSubmitted < std::min(numSubBatches, i + pipelineDepth);
+         ++numSubmitted) {
+      pendingOffsetReads.push_back(submitOffsetPairs(
+          manager, subBatch(numSubmitted), pageCacheFastPath));
+    }
+    auto offsetPairs = waitOffsetPairs(manager, pendingOffsetReads.front());
+    pendingOffsetReads.pop_front();
+    // Submit the word reads of sub-batch `i` without waiting for them, so they
+    // overlap with the offset reads of the following sub-batches.
+    if (auto handle =
+            submitStrings(manager, offsetPairs, data->buffer()[i],
+                          views.subspan(i * subBatchSize, offsetPairs.size()),
+                          pageCacheFastPath)) {
+      pendingWordReads.push_back(handle.value());
+    }
+  }
+  for (auto handle : pendingWordReads) {
+    manager.wait(handle);
+  }
+  pendingWordReads.clear();
+  return SubBatchedLookupData::asResult(std::move(data));
 }
 
 // _____________________________________________________________________________

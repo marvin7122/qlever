@@ -11,6 +11,8 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <gtest/gtest_prod.h>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -100,7 +102,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // limit).
   VocabularyScanRange scanAll() const;
 
-  //____________________________________________________________________________
+  // Look up the words at `indices` (in this order) with two batched reads
+  // through a pooled `io_uring` manager: first the offsets of the words, then
+  // the words. If the runtime parameter `vocabulary-iouring-pipeline-depth` is
+  // at least `2`, the two phases overlap (see `lookupBatchPipelined`).
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
@@ -256,6 +261,24 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
       ad_utility::BatchManagerBase& manager,
       ql::span<const OffsetPair> offsetPairs, std::vector<char>& buffer,
       ql::span<std::string_view> views, bool pageCacheFastPath) const;
+
+  // The number of indices per sub-batch in `lookupBatchPipelined`. Half of the
+  // default ring size of `ad_utility::BatchManager` (256), so that at the
+  // pipeline depth `2` the offset reads in flight fill one ring.
+  static constexpr size_t PIPELINE_SUB_BATCH_SIZE = 128;
+
+  // `lookupBatch` for a pipeline depth of at least `2`: split `indices` into
+  // sub-batches of `subBatchSize` indices and keep the offset reads of up to
+  // `pipelineDepth` sub-batches in flight on `manager`. The word reads of a
+  // sub-batch are submitted as soon as its offsets are known and are only
+  // waited for at the end, so they overlap with the offset reads of the
+  // following sub-batches instead of starting after all offsets are read.
+  VocabBatchLookupResult lookupBatchPipelined(
+      ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
+      size_t pipelineDepth, size_t subBatchSize, bool pageCacheFastPath) const;
+
+  FRIEND_TEST(VocabularyOnDisk, LookupBatchPipelinedBoundsOffsetReadsInFlight);
+  FRIEND_TEST(VocabularyOnDisk, LookupBatchPipelinedDrainsReadsOnException);
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H
