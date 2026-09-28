@@ -543,8 +543,7 @@ TEST(ElasticExportSchedulerTest,
 // Test 10c: SetOrdered Rejects a Change After an Unordered Consume
 // -----------------------------------------------------------------------------
 
-TEST(ElasticExportSchedulerTest,
-     SetOrderedRejectsChangeAfterUnorderedConsume) {
+TEST(ElasticExportSchedulerTest, SetOrderedRejectsChangeAfterUnorderedConsume) {
   // Regression test: `nextSlotToConsume_ == 0` alone does not catch this,
   // because unordered consumption never advances `nextSlotToConsume_`.
   ElasticExportScheduler scheduler(2, 64);
