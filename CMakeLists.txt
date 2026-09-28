@@ -376,7 +376,7 @@ else ()
 endif ()
 
 ### Allocation counting (for measurements only)
-option(QLEVER_COUNT_ALLOCATIONS "Replace the global operator new by a counting version and log the number of allocations and allocated bytes of every export (see src/util/AllocationCounter.h). For measurements only, adds two atomic increments to every allocation." OFF)
+option(QLEVER_COUNT_ALLOCATIONS "Replace the global operator new by a counting version and log the number of allocations and allocated bytes of every export (see src/util/AllocationCounter.h). For measurements only, adds two atomic increments to every allocation." ON)
 if (QLEVER_COUNT_ALLOCATIONS)
     MESSAGE(STATUS "QLEVER_COUNT_ALLOCATIONS is ON, heap allocations are counted")
     add_compile_definitions(QLEVER_COUNT_ALLOCATIONS)
