@@ -139,6 +139,25 @@ TEST(SwarDelimiterPackerTest, WriteDelim64Dynamic) {
 }
 
 // _____________________________________________________________________________
+TEST(SwarDelimiterPackerTest, ViolatedPreconditionsThrow) {
+  // The store functions check their preconditions with `AD_CONTRACT_CHECK`,
+  // so a violation must surface as an exception, not as `std::terminate`.
+  std::array<char, 8> buffer{};
+  EXPECT_ANY_THROW(
+      static_cast<void>(SwarDelimiterPacker::writeDelim64(nullptr, 0, 1)));
+  EXPECT_ANY_THROW(static_cast<void>(
+      SwarDelimiterPacker::writeDelim64(buffer.data(), 0, 9)));
+  EXPECT_ANY_THROW(
+      static_cast<void>(SwarDelimiterPacker::writeDelim64<1>(nullptr, 0)));
+  EXPECT_ANY_THROW(static_cast<void>(
+      SwarDelimiterPacker::writeDelim32(buffer.data(), 0, 5)));
+  EXPECT_ANY_THROW(static_cast<void>(
+      SwarDelimiterPacker::writeDelim16(buffer.data(), 0, 3)));
+  EXPECT_ANY_THROW(static_cast<void>(SwarDelimiterPacker::writeDelim(
+      nullptr, SwarDelimiterPacker::TRIPLE_S_TO_P_IRI)));
+}
+
+// _____________________________________________________________________________
 TEST(SwarDelimiterPackerTest, WriteDelim64Template) {
   std::array<char, 32> buffer;
   buffer.fill('X');
