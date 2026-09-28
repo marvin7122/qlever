@@ -551,19 +551,16 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   // be retained as `overflow_` across a `STREAMABLE_YIELD` suspension and
   // then be overwritten by the next delimiter.
   std::array<char, 8> swarBuf{};
-  static const ad_utility::PackedDelimiter packedSeparator{
-      std::string_view{&separator, 1}};
-  static const ad_utility::PackedDelimiter packedNewline{
-      std::string_view{"\n", 1}};
-  const auto yieldSwarPacked =
-      [&swarBuf](const ad_utility::PackedDelimiter& delim) {
-        // Both delimiters used here are single bytes; the packer still runs so
-        // this path exercises `writeDelim` end to end.
-        AD_CONTRACT_CHECK(delim.len() == 1);
-        [[maybe_unused]] const auto* end =
-            ad_utility::SwarDelimiterPacker::writeDelim(swarBuf.data(), delim);
-        return swarBuf[0];
-      };
+  static constexpr uint64_t packedSeparator =
+      ad_utility::packDelimPattern(std::string_view{&separator, 1});
+  static constexpr uint64_t packedNewline = ad_utility::packDelimPattern("\n");
+  const auto yieldSwarPacked = [&swarBuf](uint64_t pattern) {
+    // One unaligned 8-byte store; `swarBuf` has room for all 8 bytes.
+    [[maybe_unused]] const char* end =
+        ad_utility::SwarDelimiterPacker::writeDelim64<1>(swarBuf.data(),
+                                                         pattern);
+    return swarBuf[0];
+  };
 
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
