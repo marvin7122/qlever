@@ -7,6 +7,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -64,6 +65,27 @@ TEST(RuntimeParameters, lazyIndexScanNumThreadsIsStrictlyPositive) {
       std::runtime_error);
   EXPECT_NO_THROW(params.setFromAssignment("lazy-index-scan-num-threads=1"));
   EXPECT_EQ(params.lazyIndexScanNumThreads_.get(), 1u);
+}
+
+// The NVMe passthrough parameters default to "off", and the namespace id must
+// be a nonzero 32-bit value.
+TEST(RuntimeParameters, vocabularyNvmePassthroughParameters) {
+  RuntimeParameters params;
+  EXPECT_FALSE(params.vocabularyNvmePassthrough_.get());
+  EXPECT_EQ(params.vocabularyNvmeNamespaceId_.get(), 1u);
+  EXPECT_EQ(params.vocabularyNvmeMaxGapBlocks_.get(), 32u);
+  EXPECT_EQ(params.vocabularyNvmeMaxBufferedMedianGap_.get().getBytes(),
+            128u * 1024);
+  for (std::string_view value : {"0", "4294967296"}) {
+    AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+        params.setFromAssignment(
+            absl::StrCat("vocabulary-nvme-namespace-id=", value)),
+        HasSubstr("vocabulary-nvme-namespace-id"), std::runtime_error);
+  }
+  params.setFromAssignment("vocabulary-nvme-namespace-id=4294967295");
+  EXPECT_EQ(params.vocabularyNvmeNamespaceId_.get(), 4294967295u);
+  params.setFromAssignment("vocabulary-nvme-passthrough=true");
+  EXPECT_TRUE(params.vocabularyNvmePassthrough_.get());
 }
 
 // Test that `getKeys` and `toMap` (the building blocks of
