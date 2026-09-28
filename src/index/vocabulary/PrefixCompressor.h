@@ -188,18 +188,10 @@ class PrefixCompressor {
   [[nodiscard]] std::string decompress(std::string_view compressedWord) const {
     AD_CONTRACT_CHECK(!compressedWord.empty());
     const auto prefixIdx = prefixIndex(compressedWord);
-    // `decompressIntoWithIndex` writes exactly `decompressedSizeWithIndex`
-    // bytes. With C++23 library support `resize_and_overwrite` therefore skips
-    // zero-filling the string; the C++17 fallback zero-fills it first.
-    std::string decompressedWord;
-    ql::resize_and_overwrite(
-        decompressedWord,
-        decompressedSizeWithIndex(compressedWord.size() - 1, prefixIdx),
-        [&](char* buf, size_t count) {
-          return decompressIntoWithIndex(compressedWord, prefixIdx,
-                                         ql::span<char>{buf, count});
-        });
-    return decompressedWord;
+    if (prefixIdx.has_value()) {
+      return prefixToCode_[*prefixIdx] + compressedWord.substr(1);
+    }
+    return std::string(compressedWord.substr(1));
   }
 
   // ___________________________________________________________________________
