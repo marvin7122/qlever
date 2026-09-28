@@ -18,6 +18,11 @@
 
 #include "util/Exception.h"
 
+// The packed patterns are stored with `memcpy` from an integer, so the bytes
+// land in the intended order only on a little-endian host.
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+              "SwarDelimiterPacker requires a little-endian target");
+
 namespace ad_utility {
 
 // _____________________________________________________________________________
