@@ -321,6 +321,11 @@ ad_utility::BatchReadOptions VocabularyOnDisk::batchReadOptions(
     });
     options.directIoFd =
         forOffsetsFile ? files.offsets_.fd() : files.words_.fd();
+    options.blockCacheNumBlocks =
+        ad_utility::vocabularyBlockCacheNumBlocks.load(
+            std::memory_order_relaxed);
+    options.directIoBlockSize =
+        ad_utility::vocabularyDirectIoBlockSize.load(std::memory_order_relaxed);
   }
   return options;
 }
@@ -331,9 +336,9 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   AD_CONTRACT_CHECK(!indices.empty());
 
   auto manager = ioManagers_->pop().value();
-  // Return the `manager` to the pool on every exit path (including exceptions,
-  // e.g. an out-of-range index in phase 1), so we never leak an `IoManager`
-  // (and its io_uring buffers) out of the pool.
+  // Return the `manager` to the pool on every exit path (including
+  // exceptions, e.g. an out-of-range index in phase 1), so we never leak an
+  // `IoManager` (and its io_uring buffers) out of the pool.
   absl::Cleanup returnManager{[this, &manager]() {
     ad_utility::terminateIfThrows(
         [this, &manager]() { ioManagers_->push(std::move(manager)); },
