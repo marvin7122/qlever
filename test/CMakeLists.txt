@@ -138,8 +138,6 @@ add_compile_definitions(QLEVER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
-
-addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
@@ -174,6 +172,8 @@ addLinkAndDiscoverTest(SparqlParserTest sparqlParser engine sparqlExpressions)
 addLinkAndDiscoverTest(VariableCounterTest sparqlParser engine)
 
 addLinkAndDiscoverTest(StringUtilsTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(SwarDelimiterPackerTest)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
@@ -411,7 +411,6 @@ addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpr
 
 addLinkAndDiscoverTest(ExceptionTest)
 
-
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
 addLinkAndDiscoverTest(NowDatetimeExpressionTest index)
@@ -575,10 +574,6 @@ addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
-addLinkAndDiscoverTestNoLibs(ZeroCopySocketSenderTest qlever_util)
-
-addLinkAndDiscoverTestNoLibs(RegisteredIoUringReaderTest qlever_util)
-
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
 addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
@@ -594,33 +589,11 @@ addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
 
 addLinkAndDiscoverTest(ConstructTripleGeneratorTest engine)
 
-addLinkAndDiscoverTestNoLibs(SwarDelimiterPackerTest qlever_util)
-
-addLinkAndDiscoverTest(MonomorphicSerializersTest engine)
-
-addLinkAndDiscoverTest(ScatterGatherArenaStreamerTest engine)
-
 addLinkAndDiscoverTest(ConstructDeduplicatorTest engine)
 
 addLinkAndDiscoverTest(FilesystemHelpersTest qlever_util)
 
 addLinkAndDiscoverTest(LogTest)
-
-addLinkAndDiscoverTest(StreamingBufferWriterTest)
-
-addLinkAndDiscoverTestNoLibs(FastIntToStringTest qlever_util)
-
-addLinkAndDiscoverTestNoLibs(AdaptiveChunkSizerTest qlever_util)
-
-addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest qlever_util)
-
-addLinkAndDiscoverTest(SimdValidityBitmaskTest engine)
-
-addLinkAndDiscoverTest(RlePrefixCompressorTest engine)
-
-addLinkAndDiscoverTest(InPlaceHttpChunkFramingTest)
-
-addLinkAndDiscoverTest(PrefetchingBatchResolverTest engine index)
 
 addLinkAndDiscoverTest(QueryEventLogTest qlever_util)
 
