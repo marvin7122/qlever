@@ -79,29 +79,30 @@ bool graphPatternHasUnsupportedOperation(
   return ql::ranges::any_of(
       pattern._graphPatterns,
       [](const parsedQuery::GraphPatternOperation& operation) {
-        return std::visit(
-            [](const auto& op) -> bool {
-              using T = std::decay_t<decltype(op)>;
-              if constexpr (std::is_same_v<T, parsedQuery::Service> ||
-                            std::is_same_v<T, parsedQuery::Subquery> ||
-                            std::is_same_v<T, parsedQuery::TransPath> ||
-                            std::is_same_v<T, parsedQuery::Minus>) {
-                return true;
-              } else if constexpr (std::is_same_v<
-                                       T, parsedQuery::GroupGraphPattern> ||
-                                   std::is_same_v<T, parsedQuery::Optional>) {
-                return graphPatternHasUnsupportedOperation(op._child);
-              } else if constexpr (std::is_same_v<T, parsedQuery::Union>) {
-                return graphPatternHasUnsupportedOperation(op._child1) ||
-                       graphPatternHasUnsupportedOperation(op._child2);
-              } else if constexpr (std::is_same_v<
-                                       T, parsedQuery::BasicGraphPattern>) {
-                return ql::ranges::any_of(op._triples, tripleHasPropertyPath);
-              } else {
-                return false;
-              }
-            },
-            operation);
+        // `GraphPatternOperation::visit` casts to the underlying
+        // `std::variant`; `std::visit` on the derived type does not compile
+        // with GCC 8 (C++17 build).
+        return operation.visit([](const auto& op) -> bool {
+          using T = std::decay_t<decltype(op)>;
+          if constexpr (std::is_same_v<T, parsedQuery::Service> ||
+                        std::is_same_v<T, parsedQuery::Subquery> ||
+                        std::is_same_v<T, parsedQuery::TransPath> ||
+                        std::is_same_v<T, parsedQuery::Minus>) {
+            return true;
+          } else if constexpr (std::is_same_v<T,
+                                              parsedQuery::GroupGraphPattern> ||
+                               std::is_same_v<T, parsedQuery::Optional>) {
+            return graphPatternHasUnsupportedOperation(op._child);
+          } else if constexpr (std::is_same_v<T, parsedQuery::Union>) {
+            return graphPatternHasUnsupportedOperation(op._child1) ||
+                   graphPatternHasUnsupportedOperation(op._child2);
+          } else if constexpr (std::is_same_v<T,
+                                              parsedQuery::BasicGraphPattern>) {
+            return ql::ranges::any_of(op._triples, tripleHasPropertyPath);
+          } else {
+            return false;
+          }
+        });
       });
 }
 
