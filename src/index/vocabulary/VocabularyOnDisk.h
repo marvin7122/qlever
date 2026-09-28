@@ -69,7 +69,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // `open()` also sees the state initialized before it.
     std::atomic<bool> preferIoUring_{true};
   };
-  mutable std::shared_ptr<ThreadRingBudget> threadRingBudget_{
+  std::shared_ptr<ThreadRingBudget> threadRingBudget_{
       std::make_shared<ThreadRingBudget>()};
 
   // This suffix is appended to the filename of the main file, in order to get
