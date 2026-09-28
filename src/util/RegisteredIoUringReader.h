@@ -311,22 +311,117 @@ struct RegisteredReaderConfig {
 };
 
 // _____________________________________________________________________________
-// Deep Module: RegisteredIoUringReader
-//
-// Encapsulates kernel fixed-file table registration (`IORING_REGISTER_FILES`),
-// fixed-buffer DMA page-pinning (`IORING_REGISTER_BUFFERS`), Direct I/O
-// alignment enforcement (`O_DIRECT`), submission queue batching, and completion
-// queue reaping behind a clean, zero-bookkeeping interface.
-class RegisteredIoUringReader {
+// One read for a `Ring` (see `BasicRegisteredIoUringReader`): read `numBytes`
+// at `fileOffset` of `fd` into `destination`. With `fixedFile`, `fd` is an
+// index into the registered file table; with `fixedBuffer`, `destination`
+// lies in the registered buffer `bufferIndex`. `userData` comes back with
+// the completion.
+struct RingRead {
+  int fd = -1;
+  char* destination = nullptr;
+  unsigned numBytes = 0;
+  uint64_t fileOffset = 0;
+  bool fixedFile = false;
+  bool fixedBuffer = false;
+  int bufferIndex = 0;
+  uint64_t userData = 0;
+};
+
+// The completion of a `RingRead`: bytes read or `-errno`, and its `userData`.
+struct RingCompletion {
+  int result = 0;
+  uint64_t userData = 0;
+};
+
+// _____________________________________________________________________________
+// The `Ring` of `RegisteredIoUringReader`: a thin adapter over liburing. All
+// functions return `0` or a negative `errno` like liburing. Without liburing
+// `init` fails, so the reader uses its synchronous fallback.
+class LiburingRing {
+#ifdef QLEVER_HAS_LIBURING
+  io_uring ring_{};
+#endif
+
+ public:
+  int init([[maybe_unused]] unsigned entries, [[maybe_unused]] unsigned flags) {
+#ifdef QLEVER_HAS_LIBURING
+    return io_uring_queue_init(entries, &ring_, flags);
+#else
+    return -ENOSYS;
+#endif
+  }
+#ifdef QLEVER_HAS_LIBURING
+  void exit() noexcept { io_uring_queue_exit(&ring_); }
+  int registerFiles(ql::span<const int> fds) {
+    return io_uring_register_files(&ring_, fds.data(),
+                                   static_cast<unsigned>(fds.size()));
+  }
+  void unregisterFiles() noexcept { io_uring_unregister_files(&ring_); }
+  int registerBuffers(ql::span<const iovec> iovecs) {
+    return io_uring_register_buffers(&ring_, iovecs.data(),
+                                     static_cast<unsigned>(iovecs.size()));
+  }
+  void unregisterBuffers() noexcept { io_uring_unregister_buffers(&ring_); }
+  // Prepare `read`; return false if the submission queue is full.
+  bool prepare(const RingRead& read) {
+    io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    if (sqe == nullptr) {
+      return false;
+    }
+    if (read.fixedBuffer) {
+      io_uring_prep_read_fixed(sqe, read.fd, read.destination, read.numBytes,
+                               read.fileOffset, read.bufferIndex);
+    } else {
+      io_uring_prep_read(sqe, read.fd, read.destination, read.numBytes,
+                         read.fileOffset);
+    }
+    sqe->flags |= read.fixedFile ? IOSQE_FIXED_FILE : 0;
+    // The pointer-sized `user_data` helper exists in every liburing version.
+    io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(read.userData));
+    return true;
+  }
+  int submit() { return io_uring_submit(&ring_); }
+  // Wait for and consume one completion.
+  int waitCompletion(RingCompletion& completion) {
+    io_uring_cqe* cqe = nullptr;
+    int ret = io_uring_wait_cqe(&ring_, &cqe);
+    if (ret == 0) {
+      completion.result = cqe->res;
+      completion.userData =
+          reinterpret_cast<uint64_t>(io_uring_cqe_get_data(cqe));
+      io_uring_cqe_seen(&ring_, cqe);
+    }
+    return ret;
+  }
+#else
+  // Never called: `init` fails, so the reader never uses the ring.
+  void exit() noexcept {}
+  int registerFiles(ql::span<const int>) { return -ENOSYS; }
+  void unregisterFiles() noexcept {}
+  int registerBuffers(ql::span<const iovec>) { return -ENOSYS; }
+  void unregisterBuffers() noexcept {}
+  bool prepare(const RingRead&) { return false; }
+  int submit() { return -ENOSYS; }
+  int waitCompletion(RingCompletion&) { return -ENOSYS; }
+#endif
+};
+
+// _____________________________________________________________________________
+// Batch reader over an io_uring `Ring` (`LiburingRing` in production, a fake
+// in the tests) with optional registered files (`IORING_REGISTER_FILES`),
+// registered fixed buffers (`IORING_REGISTER_BUFFERS` with
+// `IORING_OP_READ_FIXED`) and `O_DIRECT` alignment checks. If the ring cannot
+// be initialized, every batch is read synchronously with `pread` on the
+// calling thread. Not thread-safe.
+template <typename Ring>
+class BasicRegisteredIoUringReader {
  public:
   using BatchId = uint64_t;
 
  private:
   RegisteredReaderConfig config_;
-#ifdef QLEVER_HAS_LIBURING
-  io_uring ring_{};
+  Ring ring_{};
   bool ringInitialized_ = false;
-#endif
   bool filesRegistered_ = false;
   bool buffersRegistered_ = false;
 
@@ -342,201 +437,148 @@ class RegisteredIoUringReader {
   };
   ad_utility::HashMap<uint64_t, InFlightMeta> inFlightByReqId_;
   ad_utility::HashMap<BatchId, size_t> inFlightByBatchId_;
-  // Results of the batches that were read synchronously in `submitBatch`
-  // (no ring), handed out by `waitBatch`.
-  ad_utility::HashMap<BatchId, BatchResult> syncBatchResults_;
+  // The (partial) result of every batch that `waitBatch` has not yet handed
+  // out, and the first error of a batch. Completions of any batch can be
+  // reaped while another batch is submitted or awaited.
+  ad_utility::HashMap<BatchId, BatchResult> results_;
+  ad_utility::HashMap<BatchId, std::string> errors_;
   uint64_t nextReqId_ = 0;
 
  public:
-  explicit RegisteredIoUringReader(
-      RegisteredReaderConfig config = RegisteredReaderConfig{})
-      : config_{config} {
-    initRing();
+  explicit BasicRegisteredIoUringReader(
+      RegisteredReaderConfig config = RegisteredReaderConfig{},
+      Ring ring = Ring{})
+      : config_{config}, ring_{std::move(ring)} {
+    AD_CONTRACT_CHECK(config_.ringEntries > 0);
+    int ret = ring_.init(config_.ringEntries, config_.additionalFlags);
+    ringInitialized_ = ret >= 0;
+    if (!ringInitialized_) {
+      AD_LOG_WARN << "io_uring_queue_init failed: errno " << -ret
+                  << ", falling back to synchronous I/O\n";
+    }
   }
 
-  ~RegisteredIoUringReader() { teardown(); }
+  ~BasicRegisteredIoUringReader() { teardown(); }
 
-  RegisteredIoUringReader(const RegisteredIoUringReader&) = delete;
-  RegisteredIoUringReader& operator=(const RegisteredIoUringReader&) = delete;
+  BasicRegisteredIoUringReader(const BasicRegisteredIoUringReader&) = delete;
+  BasicRegisteredIoUringReader& operator=(const BasicRegisteredIoUringReader&) =
+      delete;
 
-  RegisteredIoUringReader(RegisteredIoUringReader&& other) noexcept
+  BasicRegisteredIoUringReader(BasicRegisteredIoUringReader&& other) noexcept
       : config_{other.config_},
-#ifdef QLEVER_HAS_LIBURING
-        ring_{other.ring_},
-        ringInitialized_{other.ringInitialized_},
-#endif
-        filesRegistered_{other.filesRegistered_},
-        buffersRegistered_{other.buffersRegistered_},
+        ring_{std::move(other.ring_)},
+        ringInitialized_{std::exchange(other.ringInitialized_, false)},
+        filesRegistered_{std::exchange(other.filesRegistered_, false)},
+        buffersRegistered_{std::exchange(other.buffersRegistered_, false)},
         registeredFds_{std::move(other.registeredFds_)},
         registeredIovecs_{std::move(other.registeredIovecs_)},
-        numInFlightRequests_{other.numInFlightRequests_},
+        numInFlightRequests_{std::exchange(other.numInFlightRequests_, 0)},
         nextBatchId_{other.nextBatchId_},
         inFlightByReqId_{std::move(other.inFlightByReqId_)},
         inFlightByBatchId_{std::move(other.inFlightByBatchId_)},
-        syncBatchResults_{std::move(other.syncBatchResults_)},
-        nextReqId_{other.nextReqId_} {
-#ifdef QLEVER_HAS_LIBURING
-    other.ringInitialized_ = false;
-#endif
-    other.filesRegistered_ = false;
-    other.buffersRegistered_ = false;
-    other.numInFlightRequests_ = 0;
-  }
+        results_{std::move(other.results_)},
+        errors_{std::move(other.errors_)},
+        nextReqId_{other.nextReqId_} {}
 
-  RegisteredIoUringReader& operator=(RegisteredIoUringReader&& other) noexcept {
+  BasicRegisteredIoUringReader& operator=(
+      BasicRegisteredIoUringReader&& other) noexcept {
     if (this != &other) {
       teardown();
       config_ = other.config_;
-#ifdef QLEVER_HAS_LIBURING
-      ring_ = other.ring_;
-      ringInitialized_ = other.ringInitialized_;
-      other.ringInitialized_ = false;
-#endif
-      filesRegistered_ = other.filesRegistered_;
-      buffersRegistered_ = other.buffersRegistered_;
+      ring_ = std::move(other.ring_);
+      ringInitialized_ = std::exchange(other.ringInitialized_, false);
+      filesRegistered_ = std::exchange(other.filesRegistered_, false);
+      buffersRegistered_ = std::exchange(other.buffersRegistered_, false);
       registeredFds_ = std::move(other.registeredFds_);
       registeredIovecs_ = std::move(other.registeredIovecs_);
-      numInFlightRequests_ = other.numInFlightRequests_;
+      numInFlightRequests_ = std::exchange(other.numInFlightRequests_, 0);
       nextBatchId_ = other.nextBatchId_;
       inFlightByReqId_ = std::move(other.inFlightByReqId_);
       inFlightByBatchId_ = std::move(other.inFlightByBatchId_);
-      syncBatchResults_ = std::move(other.syncBatchResults_);
+      results_ = std::move(other.results_);
+      errors_ = std::move(other.errors_);
       nextReqId_ = other.nextReqId_;
-
-      other.filesRegistered_ = false;
-      other.buffersRegistered_ = false;
-      other.numInFlightRequests_ = 0;
     }
     return *this;
   }
 
   // ___________________________________________________________________________
-  // IORING_REGISTER_FILES: Pre-register open file descriptors into the kernel
-  // io_uring file table, eliminating fget()/fput() locking overhead per I/O.
+  // IORING_REGISTER_FILES: register `fds` in the ring's fixed file table, so
+  // that a read need not look up its descriptor. `BlockReadRequest::fileIndex`
+  // then indexes `fds`. Throws without a live ring or if the kernel refuses.
   void registerFiles(ql::span<const int> fds) {
     AD_CONTRACT_CHECK(!fds.empty());
-
-#ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
       AD_THROW("io_uring is not initialized");
     }
-
-    if (filesRegistered_) {
-      unregisterFiles();
-    }
-
+    unregisterFiles();
     registeredFds_.assign(fds.begin(), fds.end());
-    int ret = io_uring_register_files(
-        &ring_, registeredFds_.data(),
-        static_cast<unsigned int>(registeredFds_.size()));
+    int ret = ring_.registerFiles(registeredFds_);
     if (ret < 0) {
       registeredFds_.clear();
       AD_THROW(
           absl::StrCat("io_uring_register_files failed (errno: ", -ret, ")"));
     }
     filesRegistered_ = true;
-#else
-    registeredFds_.assign(fds.begin(), fds.end());
-    filesRegistered_ = true;
-#endif
   }
 
   void unregisterFiles() noexcept {
-#ifdef QLEVER_HAS_LIBURING
-    if (ringInitialized_ && filesRegistered_) {
-      io_uring_unregister_files(&ring_);
+    if (filesRegistered_) {
+      ring_.unregisterFiles();
       filesRegistered_ = false;
       registeredFds_.clear();
     }
-#else
-    filesRegistered_ = false;
-    registeredFds_.clear();
-#endif
   }
 
   // ___________________________________________________________________________
-  // IORING_REGISTER_BUFFERS: Pre-register and page-pin PMR arena buffers for
-  // direct zero-copy DMA, eliminating get_user_pages() and TLB shootdowns.
+  // IORING_REGISTER_BUFFERS: pin `iovecs` once, so that fixed reads into them
+  // (`IORING_OP_READ_FIXED`) need no per-read page pinning. Throws without a
+  // live ring or if the kernel refuses (e.g. `RLIMIT_MEMLOCK`).
   void registerBuffers(ql::span<const iovec> iovecs) {
     AD_CONTRACT_CHECK(!iovecs.empty());
-
-#ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
       AD_THROW("io_uring is not initialized");
     }
-
-    if (buffersRegistered_) {
-      unregisterBuffers();
-    }
-
+    unregisterBuffers();
     registeredIovecs_.assign(iovecs.begin(), iovecs.end());
-    int ret = io_uring_register_buffers(
-        &ring_, registeredIovecs_.data(),
-        static_cast<unsigned int>(registeredIovecs_.size()));
+    int ret = ring_.registerBuffers(registeredIovecs_);
     if (ret < 0) {
       registeredIovecs_.clear();
       AD_THROW(
           absl::StrCat("io_uring_register_buffers failed (errno: ", -ret, ")"));
     }
     buffersRegistered_ = true;
-#else
-    registeredIovecs_.assign(iovecs.begin(), iovecs.end());
-    buffersRegistered_ = true;
-#endif
   }
 
   void unregisterBuffers() noexcept {
-#ifdef QLEVER_HAS_LIBURING
-    if (ringInitialized_ && buffersRegistered_) {
-      io_uring_unregister_buffers(&ring_);
+    if (buffersRegistered_) {
+      ring_.unregisterBuffers();
       buffersRegistered_ = false;
       registeredIovecs_.clear();
     }
-#else
-    buffersRegistered_ = false;
-    registeredIovecs_.clear();
-#endif
   }
 
   // ___________________________________________________________________________
-  // Submit a batch of block read requests to the kernel.
-  // Supports registered files, registered fixed buffers, and Direct I/O.
+  // Submit a batch of block reads and return its id for `waitBatch` (`0` for
+  // an empty batch). Without a ring, the batch is read here synchronously.
   [[nodiscard]] BatchId submitBatch(ql::span<const BlockReadRequest> requests) {
     if (requests.empty()) {
       return 0;
     }
-
     const BatchId batchId = nextBatchId_++;
-
-#ifdef QLEVER_HAS_LIBURING
     if (!ringInitialized_) {
-      // Synchronous fallback if ring is not available
-      syncBatchResults_[batchId] = submitBatchSync(requests);
+      results_[batchId] = submitBatchSync(requests);
       return batchId;
     }
-
-    inFlightByBatchId_[batchId] = requests.size();
-
+    const bool fixedFiles = filesRegistered_ && config_.useRegisteredFiles;
+    const bool fixedBuffers =
+        buffersRegistered_ && config_.useRegisteredBuffers;
+    // Validate the whole batch before anything is submitted.
     for (const auto& req : requests) {
-      // If submission queue is saturated, flush and drain completions to free
-      // slots
-      if (numInFlightRequests_ >= config_.ringEntries) {
-        io_uring_submit(&ring_);
-        while (numInFlightRequests_ >= config_.ringEntries) {
-          drainOneCqe();
-        }
-      }
-
-      io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-      AD_CORRECTNESS_CHECK(sqe != nullptr);
-
-      int targetFd = static_cast<int>(req.fileIndex);
-      if (filesRegistered_ && config_.useRegisteredFiles) {
+      if (fixedFiles) {
         AD_CONTRACT_CHECK(req.fileIndex < registeredFds_.size());
-        targetFd = static_cast<int>(req.fileIndex);
       }
-
-      if (buffersRegistered_ && config_.useRegisteredBuffers) {
+      if (fixedBuffers) {
         AD_CONTRACT_CHECK(req.bufferIndex < registeredIovecs_.size());
         // The target must be the given range of the registered buffer.
         const iovec& buffer = registeredIovecs_[req.bufferIndex];
@@ -544,74 +586,64 @@ class RegisteredIoUringReader {
                           static_cast<char*>(buffer.iov_base) +
                               req.bufferOffset);
         AD_CONTRACT_CHECK(req.bufferOffset + req.numBytes <= buffer.iov_len);
-        // Fixed buffer read with kernel page-pinning
-        io_uring_prep_read_fixed(sqe, targetFd, req.destination, req.numBytes,
-                                 req.fileOffset, req.bufferIndex);
-      } else {
-        // Standard unpinned read
-        io_uring_prep_read(sqe, targetFd, req.destination, req.numBytes,
-                           req.fileOffset);
       }
-
-      if (filesRegistered_ && config_.useRegisteredFiles) {
-        sqe->flags |= IOSQE_FIXED_FILE;
-      }
-
+    }
+    inFlightByBatchId_[batchId] = requests.size();
+    results_[batchId] = BatchResult{};
+    for (const auto& req : requests) {
       const uint64_t reqId = nextReqId_++;
+      RingRead read{static_cast<int>(req.fileIndex),
+                    req.destination,
+                    req.numBytes,
+                    req.fileOffset,
+                    fixedFiles,
+                    fixedBuffers,
+                    static_cast<int>(req.bufferIndex),
+                    reqId};
+      // With the ring full, submit and reap completions until an entry frees.
+      while (numInFlightRequests_ >= config_.ringEntries) {
+        submitRing();
+        drainOneCompletion();
+      }
+      while (!ring_.prepare(read)) {
+        submitRing();
+        AD_CORRECTNESS_CHECK(numInFlightRequests_ > 0,
+                             "io_uring submission queue is full");
+        drainOneCompletion();
+      }
       inFlightByReqId_[reqId] = InFlightMeta{batchId, req.numBytes};
-      // Store the id in the pointer-sized `user_data` field, which every
-      // liburing version provides; the `*_data64` helpers need a liburing
-      // newer than the distro one in the gcc11 CI image.
-      io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(reqId));
       ++numInFlightRequests_;
     }
-
-    io_uring_submit(&ring_);
-#else
-    syncBatchResults_[batchId] = submitBatchSync(requests);
-#endif
-
+    submitRing();
     return batchId;
   }
 
   // ___________________________________________________________________________
-  // Block until all reads belonging to `batchId` have completed.
+  // Block until all reads of `batchId` have completed and return their result.
+  // An unknown id (or `0`) yields an empty result. Throws on an I/O error or a
+  // short read of the batch; all its reads are reaped first, so the reader
+  // stays usable.
   BatchResult waitBatch(BatchId batchId) {
-    if (batchId == 0) {
-      return BatchResult{0, 0, true};
+    while (inFlightByBatchId_.contains(batchId)) {
+      drainOneCompletion();
     }
-    // A batch that was read synchronously has already completed.
-    if (auto it = syncBatchResults_.find(batchId);
-        it != syncBatchResults_.end()) {
-      BatchResult result = it->second;
-      syncBatchResults_.erase(it);
-      return result;
+    auto it = results_.find(batchId);
+    if (it == results_.end()) {
+      return BatchResult{};
     }
-
-#ifdef QLEVER_HAS_LIBURING
-    if (!ringInitialized_) {
-      return BatchResult{0, 0, true};
+    BatchResult result = it->second;
+    results_.erase(it);
+    if (auto error = errors_.find(batchId); error != errors_.end()) {
+      std::string message = std::move(error->second);
+      errors_.erase(error);
+      AD_THROW(message);
     }
-
-    size_t completed = 0;
-    size_t totalBytes = 0;
-
-    while (inFlightByBatchId_.find(batchId) != inFlightByBatchId_.end()) {
-      auto [bytesRead, bId] = drainOneCqe();
-      if (bId == batchId) {
-        ++completed;
-        totalBytes += bytesRead;
-      }
-    }
-
-    return BatchResult{completed, totalBytes, true};
-#else
-    return BatchResult{0, 0, true};
-#endif
+    return result;
   }
 
   // ___________________________________________________________________________
-  // Synchronous pread fallback (supporting both Direct I/O and buffered I/O).
+  // Synchronous `pread` of `dest.size()` bytes at `offset` (`O_DIRECT`
+  // alignment is checked if `directIo`). Throws on an error or short read.
   static void readSync(int fd, uint64_t offset, ql::span<char> dest,
                        bool directIo = true) {
     AD_CONTRACT_CHECK(fd >= 0);
@@ -621,7 +653,6 @@ class RegisteredIoUringReader {
       AD_CONTRACT_CHECK(isBlockAligned(dest.size()));
       AD_CONTRACT_CHECK(isPointerAligned(dest.data()));
     }
-
     ssize_t bytesRead =
         ::pread(fd, dest.data(), dest.size(), static_cast<off_t>(offset));
     if (bytesRead < 0) {
@@ -632,6 +663,9 @@ class RegisteredIoUringReader {
     }
   }
 
+  [[nodiscard]] bool isRingInitialized() const noexcept {
+    return ringInitialized_;
+  }
   [[nodiscard]] bool isFilesRegistered() const noexcept {
     return filesRegistered_;
   }
@@ -641,101 +675,81 @@ class RegisteredIoUringReader {
   [[nodiscard]] size_t inFlightCount() const noexcept {
     return numInFlightRequests_;
   }
+  [[nodiscard]] Ring& ring() noexcept { return ring_; }
 
  private:
-  void initRing() {
-#ifdef QLEVER_HAS_LIBURING
-    int ret = io_uring_queue_init(config_.ringEntries, &ring_,
-                                  config_.additionalFlags);
-    if (ret < 0) {
-      ringInitialized_ = false;
-      AD_LOG_WARN << "io_uring_queue_init failed: errno " << -ret
-                  << ", falling back to synchronous I/O\n";
-    } else {
-      ringInitialized_ = true;
+  void submitRing() {
+    int ret = ring_.submit();
+    if (ret < 0 && ret != -EAGAIN && ret != -EBUSY) {
+      AD_THROW(absl::StrCat("io_uring_submit failed (errno: ", -ret, ")"));
     }
-#endif
   }
 
+  // Reap in-flight reads, unregister, and release the ring.
   void teardown() noexcept {
-#ifdef QLEVER_HAS_LIBURING
-    if (ringInitialized_) {
-      while (numInFlightRequests_ > 0) {
-        io_uring_cqe* cqe = nullptr;
-        if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
-          break;
-        }
-        io_uring_cqe_seen(&ring_, cqe);
-        --numInFlightRequests_;
-      }
-      unregisterBuffers();
-      unregisterFiles();
-      io_uring_queue_exit(&ring_);
-      ringInitialized_ = false;
+    if (!ringInitialized_) {
+      return;
     }
-#else
+    RingCompletion completion;
+    while (numInFlightRequests_ > 0 && ring_.waitCompletion(completion) == 0) {
+      --numInFlightRequests_;
+    }
     unregisterBuffers();
     unregisterFiles();
-#endif
+    ring_.exit();
+    ringInitialized_ = false;
   }
 
-#ifdef QLEVER_HAS_LIBURING
-  std::pair<size_t, BatchId> drainOneCqe() {
-    io_uring_cqe* cqe = nullptr;
-    int ret = io_uring_wait_cqe(&ring_, &cqe);
+  // Wait for one completion and account for it in the result (or the error)
+  // of its batch.
+  void drainOneCompletion() {
+    RingCompletion completion;
+    int ret = ring_.waitCompletion(completion);
     if (ret < 0) {
       AD_THROW(absl::StrCat("io_uring_wait_cqe failed (errno: ", -ret, ")"));
     }
-
-    const int res = cqe->res;
-    const uint64_t reqId = cqe->user_data;
-    io_uring_cqe_seen(&ring_, cqe);
     --numInFlightRequests_;
-
-    auto it = inFlightByReqId_.find(reqId);
+    auto it = inFlightByReqId_.find(completion.userData);
     AD_CORRECTNESS_CHECK(it != inFlightByReqId_.end());
     const InFlightMeta meta = it->second;
     inFlightByReqId_.erase(it);
-
-    if (res < 0) {
-      AD_THROW(absl::StrCat("io_uring CQE error (res: ", res, ", errno: ", -res,
-                            ")"));
-    }
-    if (static_cast<size_t>(res) != meta.expectedBytes) {
-      AD_THROW(absl::StrCat("io_uring short read: expected ",
-                            meta.expectedBytes, " got ", res));
-    }
-
     auto batchIt = inFlightByBatchId_.find(meta.batchId);
     AD_CORRECTNESS_CHECK(batchIt != inFlightByBatchId_.end());
     if (--batchIt->second == 0) {
       inFlightByBatchId_.erase(batchIt);
     }
-
-    return {static_cast<size_t>(res), meta.batchId};
+    const int res = completion.result;
+    if (res < 0) {
+      errors_.try_emplace(meta.batchId, absl::StrCat("io_uring read failed "
+                                                     "(errno: ",
+                                                     -res, ")"));
+    } else if (static_cast<size_t>(res) != meta.expectedBytes) {
+      errors_.try_emplace(meta.batchId,
+                          absl::StrCat("io_uring short read: expected ",
+                                       meta.expectedBytes, " got ", res));
+    } else {
+      auto& result = results_[meta.batchId];
+      ++result.requestsCompleted;
+      result.totalBytesRead += static_cast<size_t>(res);
+    }
   }
-#endif
 
   // Read all `requests` with `pread` and return their result. `readSync`
   // throws on a failed or short read.
   BatchResult submitBatchSync(ql::span<const BlockReadRequest> requests) {
     BatchResult result;
     for (const auto& req : requests) {
-      // Like the ring path, interpret `fileIndex` as an index into the
-      // registered files only if registered files are in use.
-      int targetFd = static_cast<int>(req.fileIndex);
-      if (filesRegistered_ && config_.useRegisteredFiles &&
-          req.fileIndex < registeredFds_.size()) {
-        targetFd = registeredFds_[req.fileIndex];
-      }
-      readSync(targetFd, req.fileOffset, {req.destination, req.numBytes},
-               config_.useDirectIo);
+      readSync(static_cast<int>(req.fileIndex), req.fileOffset,
+               {req.destination, req.numBytes}, config_.useDirectIo);
       ++result.requestsCompleted;
       result.totalBytesRead += req.numBytes;
     }
     return result;
   }
 };
+
+// The production reader.
+using RegisteredIoUringReader = BasicRegisteredIoUringReader<LiburingRing>;
 
 }  // namespace ad_utility::export_prototypes
 

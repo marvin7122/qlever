@@ -12,12 +12,15 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <deque>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <type_traits>
 #include <vector>
 
 #include "./util/FileTestHelpers.h"
+#include "./util/GTestHelpers.h"
 #include "util/Exception.h"
 #include "util/RegisteredIoUringReader.h"
 
@@ -420,10 +423,7 @@ TEST(RegisteredIoUringReader, SubmitEmptyBatch) {
   EXPECT_TRUE(empty.success);
 }
 
-// Without liburing there is no ring, so waiting on an unknown batch id is a
-// defined empty result. With a live ring this would block forever, hence the
-// guard.
-#ifndef QLEVER_HAS_LIBURING
+// Waiting on an unknown batch id is a defined empty result.
 TEST(RegisteredIoUringReader, WaitUnknownBatchIsEmpty) {
   RegisteredIoUringReader reader;
   BatchResult result = reader.waitBatch(42);
@@ -431,7 +431,6 @@ TEST(RegisteredIoUringReader, WaitUnknownBatchIsEmpty) {
   EXPECT_EQ(result.totalBytesRead, 0u);
   EXPECT_TRUE(result.success);
 }
-#endif
 
 // _____________________________________________________________________________
 // End-to-end batch read through raw fds. This exercises the synchronous
@@ -631,10 +630,8 @@ TEST(RegisteredIoUringReader, RegisteredFilesIgnoredWhenFlagOff) {
   reader.unregisterFiles();
 }
 
-// Only compiled with liburing: assert the error path when the ring failed to
-// initialize (e.g. seccomp-blocked io_uring). Registration must throw and
-// leave the reader unregistered rather than crash or half-register.
-#ifdef QLEVER_HAS_LIBURING
+// Registration throws without a live ring (no liburing, or io_uring blocked
+// e.g. by seccomp) and leaves the reader unregistered.
 TEST(RegisteredIoUringReader, RegisterThrowsWithoutLiveRing) {
   auto [tmpFile, cleanup] = makeTempFileWithContent(kDirectIoBlockSize);
   DirectIoFile file{tmpFile.string(), false};
@@ -664,7 +661,6 @@ TEST(RegisteredIoUringReader, RegisterThrowsWithoutLiveRing) {
     reader.unregisterBuffers();
   }
 }
-#endif
 
 // _____________________________________________________________________________
 TEST(RegisteredIoUringReader, MoveSemantics) {
@@ -691,4 +687,388 @@ TEST(RegisteredIoUringReader, MoveSemantics) {
   BatchResult result = other.waitBatch(other.submitBatch(requests));
   EXPECT_EQ(result.requestsCompleted, 1u);
   expectContent(ql::span<const char>{buffer.data(), buffer.size()}, 0);
+}
+
+// _____________________________________________________________________________
+// Tests of the ring code paths with a fake ring, so that they run on every
+// host (the CI containers have no usable io_uring).
+namespace {
+
+// State of a `FakeRing`, shared with the test while the reader owns the ring.
+struct FakeRingState {
+  int initResult = 0;
+  int registerFilesResult = 0;
+  int registerBuffersResult = 0;
+  int submitResult = 0;
+  int waitResult = 0;
+  // Reads that `prepare` accepts before the next `submit`.
+  size_t submissionQueueCapacity = 1000;
+  // Result overrides by the `n`-th prepared read (`-errno` or a byte count).
+  ad_utility::HashMap<size_t, int> resultOverrides;
+
+  std::vector<int> registeredFds;
+  size_t numRegisterFiles = 0, numUnregisterFiles = 0;
+  size_t numRegisterBuffers = 0, numUnregisterBuffers = 0;
+  size_t numExits = 0, numSubmits = 0;
+  std::vector<RingRead> prepared;  // All prepared reads, in order.
+  std::deque<RingRead> queued;     // Prepared, not yet submitted.
+  std::deque<RingCompletion> completions;
+};
+
+// A ring that performs the submitted reads with `pread` and delivers their
+// completions in submission order.
+class FakeRing {
+ public:
+  std::shared_ptr<FakeRingState> state_ = std::make_shared<FakeRingState>();
+
+  int init(unsigned, unsigned) { return state_->initResult; }
+  void exit() noexcept { ++state_->numExits; }
+  int registerFiles(ql::span<const int> fds) {
+    ++state_->numRegisterFiles;
+    if (state_->registerFilesResult == 0) {
+      state_->registeredFds.assign(fds.begin(), fds.end());
+    }
+    return state_->registerFilesResult;
+  }
+  void unregisterFiles() noexcept { ++state_->numUnregisterFiles; }
+  int registerBuffers(ql::span<const iovec>) {
+    ++state_->numRegisterBuffers;
+    return state_->registerBuffersResult;
+  }
+  void unregisterBuffers() noexcept { ++state_->numUnregisterBuffers; }
+  bool prepare(const RingRead& read) {
+    if (state_->queued.size() >= state_->submissionQueueCapacity) {
+      return false;
+    }
+    state_->prepared.push_back(read);
+    state_->queued.push_back(read);
+    return true;
+  }
+  int submit() {
+    ++state_->numSubmits;
+    if (state_->submitResult < 0) {
+      return state_->submitResult;
+    }
+    while (!state_->queued.empty()) {
+      RingRead read = state_->queued.front();
+      state_->queued.pop_front();
+      const size_t number = state_->prepared.size() - state_->queued.size() - 1;
+      int fd = read.fixedFile ? state_->registeredFds.at(read.fd) : read.fd;
+      int res;
+      if (auto it = state_->resultOverrides.find(number);
+          it != state_->resultOverrides.end()) {
+        res = it->second;
+      } else {
+        res = static_cast<int>(::pread(fd, read.destination, read.numBytes,
+                                       static_cast<off_t>(read.fileOffset)));
+      }
+      state_->completions.push_back(RingCompletion{res, read.userData});
+    }
+    return 0;
+  }
+  int waitCompletion(RingCompletion& completion) {
+    if (state_->waitResult < 0) {
+      return state_->waitResult;
+    }
+    if (state_->completions.empty()) {
+      // A real ring would block here.
+      return -ETIME;
+    }
+    completion = state_->completions.front();
+    state_->completions.pop_front();
+    return 0;
+  }
+};
+
+using FakeReader = BasicRegisteredIoUringReader<FakeRing>;
+
+// A reader over a fresh `FakeRing`, and the ring's state.
+auto makeFakeReader(RegisteredReaderConfig config = {}) {
+  FakeRing ring;
+  auto state = ring.state_;
+  return std::make_pair(std::make_unique<FakeReader>(config, std::move(ring)),
+                        state);
+}
+
+// Buffered (unaligned) requests of `numBytes` at `offsets` into `buffer`.
+std::vector<BlockReadRequest> bufferedRequests(
+    int fd, const std::vector<size_t>& offsets, uint32_t numBytes,
+    std::vector<char>& buffer) {
+  buffer.assign(offsets.size() * numBytes, 0);
+  std::vector<BlockReadRequest> requests;
+  for (size_t i = 0; i < offsets.size(); ++i) {
+    requests.emplace_back(static_cast<uint32_t>(fd), offsets[i], 0, 0, numBytes,
+                          buffer.data() + i * numBytes, false);
+  }
+  return requests;
+}
+
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(RegisteredIoUringReaderFakeRing, PlainReadsRoundtrip) {
+  auto [tmpFile, cleanup] = makeTempFileWithContent(10'000);
+  DirectIoFile file{tmpFile.string(), false};
+  auto [reader, state] = makeFakeReader();
+  ASSERT_TRUE(reader->isRingInitialized());
+  std::vector<char> buffer;
+  auto requests = bufferedRequests(file.fd(), {5, 3000, 9000}, 100, buffer);
+  BatchResult result = reader->waitBatch(reader->submitBatch(requests));
+  EXPECT_EQ(result.requestsCompleted, 3u);
+  EXPECT_EQ(result.totalBytesRead, 300u);
+  expectContent(ql::span<const char>{buffer.data(), 100}, 5);
+  expectContent(ql::span<const char>{buffer.data() + 100, 100}, 3000);
+  expectContent(ql::span<const char>{buffer.data() + 200, 100}, 9000);
+  EXPECT_EQ(reader->inFlightCount(), 0u);
+  for (const auto& read : state->prepared) {
+    EXPECT_FALSE(read.fixedFile);
+    EXPECT_FALSE(read.fixedBuffer);
+  }
+}
+
+// _____________________________________________________________________________
+TEST(RegisteredIoUringReaderFakeRing, RegisteredFilesAndBuffers) {
+  auto [tmpFile, cleanup] = makeTempFileWithContent(2 * kDirectIoBlockSize);
+  DirectIoFile file{tmpFile.string(), false};
+  RegisteredReaderConfig config;
+  config.useDirectIo = false;
+  auto [reader, state] = makeFakeReader(config);
+  const int fd = file.fd();
+  reader->registerFiles(ql::span<const int>{&fd, 1});
+  PinnedArena arena{2};
+  reader->registerBuffers(arena.iovecs());
+  EXPECT_TRUE(reader->isFilesRegistered());
+  EXPECT_TRUE(reader->isBuffersRegistered());
+  // Registering again replaces the previous registration.
+  reader->registerFiles(ql::span<const int>{&fd, 1});
+  reader->registerBuffers(arena.iovecs());
+  EXPECT_EQ(state->numUnregisterFiles, 1u);
+  EXPECT_EQ(state->numUnregisterBuffers, 1u);
+
+  const auto numBytes = static_cast<uint32_t>(kDirectIoBlockSize);
+  std::vector<BlockReadRequest> requests{
+      BlockReadRequest{0, kDirectIoBlockSize, 1, 0, numBytes,
+                       arena.getSlotSpan(1).data()},
+      BlockReadRequest{0, 0, 0, 0, numBytes, arena.getSlotSpan(0).data()}};
+  BatchResult result = reader->waitBatch(reader->submitBatch(requests));
+  EXPECT_EQ(result.requestsCompleted, 2u);
+  expectContent(arena.getSlotSpan(1), kDirectIoBlockSize);
+  expectContent(arena.getSlotSpan(0), 0);
+  ASSERT_EQ(state->prepared.size(), 2u);
+  EXPECT_TRUE(state->prepared[0].fixedFile);
+  EXPECT_TRUE(state->prepared[0].fixedBuffer);
+  EXPECT_EQ(state->prepared[0].bufferIndex, 1);
+
+  // Out-of-range indices and a destination outside its buffer are rejected.
+  std::vector<BlockReadRequest> badFile{
+      BlockReadRequest{1, 0, 0, 0, numBytes, arena.getSlotSpan(0).data()}};
+  EXPECT_THROW(std::ignore = reader->submitBatch(badFile),
+               ad_utility::Exception);
+  std::vector<BlockReadRequest> badBuffer{
+      BlockReadRequest{0, 0, 2, 0, numBytes, arena.getSlotSpan(0).data()}};
+  EXPECT_THROW(std::ignore = reader->submitBatch(badBuffer),
+               ad_utility::Exception);
+  std::vector<BlockReadRequest> wrongTarget{
+      BlockReadRequest{0, 0, 0, 0, numBytes, arena.getSlotSpan(1).data()}};
+  EXPECT_THROW(std::ignore = reader->submitBatch(wrongTarget),
+               ad_utility::Exception);
+
+  reader->unregisterFiles();
+  reader->unregisterBuffers();
+  EXPECT_FALSE(reader->isFilesRegistered());
+  EXPECT_FALSE(reader->isBuffersRegistered());
+  EXPECT_EQ(state->numUnregisterFiles, 2u);
+  EXPECT_EQ(state->numUnregisterBuffers, 2u);
+}
+
+// _____________________________________________________________________________
+TEST(RegisteredIoUringReaderFakeRing, RegisteredFilesIgnoredWhenFlagOff) {
+  auto [tmpFile, cleanup] = makeTempFileWithContent(1000);
+  DirectIoFile file{tmpFile.string(), false};
+  RegisteredReaderConfig config;
+  config.useRegisteredFiles = false;
+  config.useRegisteredBuffers = false;
+  auto [reader, state] = makeFakeReader(config);
+  const int fd = file.fd();
+  reader->registerFiles(ql::span<const int>{&fd, 1});
+  std::vector<char> buffer;
+  auto requests = bufferedRequests(fd, {10}, 20, buffer);
+  EXPECT_EQ(reader->waitBatch(reader->submitBatch(requests)).requestsCompleted,
+            1u);
+  EXPECT_FALSE(state->prepared.at(0).fixedFile);
+  expectContent(ql::span<const char>{buffer.data(), 20}, 10);
+}
+
+// _____________________________________________________________________________
+TEST(RegisteredIoUringReaderFakeRing, RegistrationFailuresThrow) {
+  auto [reader, state] = makeFakeReader();
+  state->registerFilesResult = -ENOMEM;
+  state->registerBuffersResult = -EPERM;
+  const int fd = 0;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      reader->registerFiles(ql::span<const int>{&fd, 1}),
+      ::testing::HasSubstr("io_uring_register_files failed"));
+  EXPECT_FALSE(reader->isFilesRegistered());
+  PinnedArena arena{1};
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      reader->registerBuffers(arena.iovecs()),
+      ::testing::HasSubstr("io_uring_register_buffers failed"));
+  EXPECT_FALSE(reader->isBuffersRegistered());
+}
+
+// _____________________________________________________________________________
+// A small ring: submitting more reads than ring entries reaps completions
+// while the batch is submitted, and a full submission queue is flushed.
+TEST(RegisteredIoUringReaderFakeRing, SmallRingAndFullSubmissionQueue) {
+  auto [tmpFile, cleanup] = makeTempFileWithContent(10'000);
+  DirectIoFile file{tmpFile.string(), false};
+  RegisteredReaderConfig config;
+  config.ringEntries = 2;
+  auto [reader, state] = makeFakeReader(config);
+  state->submissionQueueCapacity = 1;
+  std::vector<char> buffer;
+  auto requests =
+      bufferedRequests(file.fd(), {0, 100, 200, 300, 400}, 50, buffer);
+  BatchResult result = reader->waitBatch(reader->submitBatch(requests));
+  EXPECT_EQ(result.requestsCompleted, 5u);
+  EXPECT_GT(state->numSubmits, 2u);
+  for (size_t i = 0; i < 5; ++i) {
+    expectContent(ql::span<const char>{buffer.data() + i * 50, 50}, i * 100);
+  }
+  // A queue that accepts nothing while no read is in flight is a bug.
+  state->submissionQueueCapacity = 0;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      std::ignore = reader->submitBatch(requests),
+      ::testing::HasSubstr("submission queue is full"));
+}
+
+// _____________________________________________________________________________
+// A failed and a short read make `waitBatch` of their batch throw after all
+// its reads were reaped; other batches, including one whose submission
+// reaped the failed completion, are unaffected.
+TEST(RegisteredIoUringReaderFakeRing, ReadErrorsAreReportedPerBatch) {
+  auto [tmpFile, cleanup] = makeTempFileWithContent(10'000);
+  DirectIoFile file{tmpFile.string(), false};
+  RegisteredReaderConfig config;
+  config.ringEntries = 2;
+  auto [reader, state] = makeFakeReader(config);
+  state->resultOverrides[1] = -EIO;
+  std::vector<char> bufferA;
+  auto requestsA = bufferedRequests(file.fd(), {0, 100}, 50, bufferA);
+  auto batchA = reader->submitBatch(requestsA);
+  // Batch B needs both ring entries, so its submission reaps batch A.
+  std::vector<char> bufferB;
+  auto requestsB = bufferedRequests(file.fd(), {1000, 2000, 3000}, 50, bufferB);
+  auto batchB = reader->submitBatch(requestsB);
+  EXPECT_EQ(reader->waitBatch(batchB).requestsCompleted, 3u);
+  AD_EXPECT_THROW_WITH_MESSAGE(reader->waitBatch(batchA),
+                               ::testing::HasSubstr("read failed"));
+  // The error is reported once.
+  EXPECT_EQ(reader->waitBatch(batchA).requestsCompleted, 0u);
+
+  state->resultOverrides[5] = 7;  // A short read.
+  std::vector<char> bufferC;
+  auto requestsC = bufferedRequests(file.fd(), {0}, 50, bufferC);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      reader->waitBatch(reader->submitBatch(requestsC)),
+      ::testing::HasSubstr("short read: expected 50 got 7"));
+  EXPECT_EQ(reader->inFlightCount(), 0u);
+}
+
+// _____________________________________________________________________________
+TEST(RegisteredIoUringReaderFakeRing, SubmitAndWaitFailures) {
+  auto [tmpFile, cleanup] = makeTempFileWithContent(1000);
+  DirectIoFile file{tmpFile.string(), false};
+  auto [reader, state] = makeFakeReader();
+  std::vector<char> buffer;
+  auto requests = bufferedRequests(file.fd(), {0}, 10, buffer);
+  // `EAGAIN` and `EBUSY` from submit are transient and tolerated.
+  state->submitResult = -EAGAIN;
+  auto batch = reader->submitBatch(requests);
+  state->submitResult = -EINVAL;
+  AD_EXPECT_THROW_WITH_MESSAGE(std::ignore = reader->submitBatch(requests),
+                               ::testing::HasSubstr("io_uring_submit failed"));
+  state->submitResult = 0;
+  state->waitResult = -EINTR;
+  AD_EXPECT_THROW_WITH_MESSAGE(reader->waitBatch(batch),
+                               ::testing::HasSubstr("io_uring_wait_cqe"));
+  state->waitResult = 0;
+}
+
+// _____________________________________________________________________________
+// Destruction reaps the reads in flight, unregisters and releases the ring;
+// a moved-from reader releases nothing.
+TEST(RegisteredIoUringReaderFakeRing, TeardownAndMove) {
+  auto [tmpFile, cleanup] = makeTempFileWithContent(1000);
+  DirectIoFile file{tmpFile.string(), false};
+  auto [reader, state] = makeFakeReader();
+  const int fd = file.fd();
+  reader->registerFiles(ql::span<const int>{&fd, 1});
+  PinnedArena arena{1};
+  reader->registerBuffers(arena.iovecs());
+  FakeReader moved{std::move(*reader)};
+  EXPECT_FALSE(reader->isRingInitialized());
+  EXPECT_TRUE(moved.isRingInitialized());
+  reader.reset();
+  EXPECT_EQ(state->numExits, 0u);
+
+  RegisteredReaderConfig bufferedConfig;
+  bufferedConfig.useRegisteredFiles = false;
+  bufferedConfig.useRegisteredBuffers = false;
+  FakeReader other{bufferedConfig, FakeRing{}};
+  auto otherState = other.ring().state_;
+  other = std::move(moved);
+  // The move assignment released the ring of `other`.
+  EXPECT_EQ(otherState->numExits, 1u);
+  other.unregisterFiles();
+  other.unregisterBuffers();
+  std::vector<char> buffer;
+  auto requests = bufferedRequests(fd, {0, 10}, 5, buffer);
+  [[maybe_unused]] auto batch = other.submitBatch(requests);
+  EXPECT_EQ(other.inFlightCount(), 2u);
+  // Self-move assignment is a no-op.
+  auto& alias = other;
+  other = std::move(alias);
+  EXPECT_EQ(other.inFlightCount(), 2u);
+  { FakeReader last{std::move(other)}; }
+  EXPECT_EQ(state->numExits, 1u);
+  EXPECT_TRUE(state->completions.empty());
+  EXPECT_EQ(state->numUnregisterFiles, 1u);
+  EXPECT_EQ(state->numUnregisterBuffers, 1u);
+}
+
+// _____________________________________________________________________________
+TEST(RegisteredIoUringReaderFakeRing, InitFailureFallsBackToSync) {
+  auto [tmpFile, cleanup] = makeTempFileWithContent(1000);
+  DirectIoFile file{tmpFile.string(), false};
+  FakeRing ring;
+  ring.state_->initResult = -ENOSYS;
+  auto state = ring.state_;
+  RegisteredReaderConfig config;
+  config.useDirectIo = false;
+  FakeReader reader{config, std::move(ring)};
+  EXPECT_FALSE(reader.isRingInitialized());
+  std::vector<char> buffer;
+  auto requests = bufferedRequests(file.fd(), {3}, 30, buffer);
+  EXPECT_EQ(reader.waitBatch(reader.submitBatch(requests)).requestsCompleted,
+            1u);
+  expectContent(ql::span<const char>{buffer.data(), 30}, 3);
+  EXPECT_TRUE(state->prepared.empty());
+}
+
+// _____________________________________________________________________________
+TEST(RegisteredIoUringReader, PinnedArenaConstDataAndMoveIntoEmpty) {
+  PinnedArena arena{1};
+  const PinnedArena& constArena = arena;
+  EXPECT_EQ(constArena.data(), arena.data());
+  PinnedArena empty{std::move(arena)};
+  PinnedArena target{1};
+  // Move-assign from an empty arena, then back.
+  target = std::move(arena);
+  EXPECT_EQ(target.data(), nullptr);
+  target = std::move(empty);
+  EXPECT_NE(target.data(), nullptr);
+  auto& alias = target;
+  target = std::move(alias);
+  EXPECT_NE(target.data(), nullptr);
 }
