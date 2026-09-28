@@ -12,9 +12,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "parser/ParsedQuery.h"
-#include "util/http/UrlParser.h"
+#include "util/HashMap.h"
 
 namespace ql::engine {
 
@@ -55,7 +56,12 @@ enum class ExplicitEngineRequest { None, WantV1, WantV2 };
 // `exportHeader` beyond the call.
 class ExportPipelineRouter {
  public:
-  using ParamValueMap = ad_utility::url_parser::ParamValueMap;
+  // Same type as `ad_utility::url_parser::ParamValueMap`, spelled out so that
+  // this header does not include `util/http/UrlParser.h`, which needs
+  // `boost/url.hpp`. That header is missing in the C++17 (reduced feature
+  // set) build, which compiles this file as part of the `engine` library.
+  using ParamValueMap =
+      ad_utility::HashMap<std::string, std::vector<std::string>>;
 
   // Return the export engine mode for `query`, given the request's URL
   // `parameters`, the value of the `X-QLever-Export-Engine` header (if any),
