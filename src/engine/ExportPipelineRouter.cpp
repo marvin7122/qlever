@@ -59,62 +59,75 @@ std::optional<std::string_view> getFirstParameterValue(
 }
 
 // _____________________________________________________________________________
-// Return true if `pattern` (recursing into plain groups) contains a `BIND`
-// operation. Used to detect scalar `SELECT` aliases, which the parser rewrites
-// to `BIND` (see `ExportPipelineRouter::hasUnsupportedConstructs`).
-bool graphPatternContainsBind(const parsedQuery::GraphPattern& pattern) {
+// Return true if `pattern` (recursing into nested groups) contains a `BIND`
+// operation. Use it to detect scalar `SELECT` aliases, which the parser
+// rewrites to `BIND` (see `ExportPipelineRouter::hasUnsupportedConstructs`).
+bool graphPatternContainsBind(
+    const parsedQuery::GraphPattern& pattern) noexcept {
   namespace pq = parsedQuery;
   return ql::ranges::any_of(pattern._graphPatterns, [](const auto& operation) {
-    if (std::holds_alternative<pq::Bind>(operation)) {
-      return true;
-    }
-    return std::holds_alternative<pq::GroupGraphPattern>(operation) &&
-           graphPatternContainsBind(
-               std::get<pq::GroupGraphPattern>(operation)._child);
+    return std::holds_alternative<pq::Bind>(operation) ||
+           (std::holds_alternative<pq::GroupGraphPattern>(operation) &&
+            graphPatternContainsBind(
+                std::get<pq::GroupGraphPattern>(operation)._child));
   });
 }
 
 // _____________________________________________________________________________
-// Return true if `pattern` (including its FILTER and BIND expressions and its
-// nested groups) contains anything that V2 does not support.
+// Return true if `pattern` (including `EXISTS` inside its `FILTER` and `BIND`
+// expressions, and its nested groups) contains anything that V2 does not
+// support. Plain `FILTER`/`BIND` without `EXISTS` stay eligible.
 bool graphPatternHasUnsupportedConstructs(
     const parsedQuery::GraphPattern& pattern);
 
 // _____________________________________________________________________________
+// TODO<Marvin Stoetzel>: support OPTIONAL, UNION, MINUS, SERVICE, subqueries,
+// GRAPH, DESCRIBE, and proper property paths in V2 (currently fail closed to
+// V1).
 // Return true if `operation` or anything nested in it is not supported by V2.
-// Only `BasicGraphPattern` without property paths, `Bind` without `EXISTS`,
-// `Values`, and plain (non-GRAPH) groups of these are supported.
+// Only `BasicGraphPattern` without proper property paths, `Bind` without
+// `EXISTS`, `Values`, and plain (non-`GRAPH`) groups of these are supported.
 bool operationIsUnsupported(
     const parsedQuery::GraphPatternOperation& operation) {
   namespace pq = parsedQuery;
   if (std::holds_alternative<pq::GroupGraphPattern>(operation)) {
     const auto& group = std::get<pq::GroupGraphPattern>(operation);
+    // A plain group holds `std::monostate` in `graphSpec_`; anything else is
+    // a GRAPH clause, which needs named-graph routing that V2 lacks.
     return !std::holds_alternative<std::monostate>(group.graphSpec_) ||
            graphPatternHasUnsupportedConstructs(group._child);
   }
   if (std::holds_alternative<pq::Bind>(operation)) {
-    // `EXISTS` carries a nested query and fails closed like a subquery.
+    // Reject `EXISTS`: it carries a nested query, so fail closed like a
+    // subquery.
     return !std::get<pq::Bind>(operation)
                 ._expression.getExistsExpressions()
                 .empty();
   }
   if (std::holds_alternative<pq::BasicGraphPattern>(operation)) {
-    // Property paths (e.g. `?s <p>+ ?o`) need the transitive-path machinery
-    // that the V2 engine does not implement yet. Plain IRIs and predicate
-    // variables stay eligible.
+    // Reject any proper property path (not just transitive closure): V2 does
+    // not implement the path machinery yet. Plain IRIs
+    // (`PropertyPath::isIri()`, which also wraps simple IRIs via `fromIri`)
+    // and predicate variables stay eligible.
     return ql::ranges::any_of(
         std::get<pq::BasicGraphPattern>(operation)._triples,
         [](const SparqlTriple& triple) {
+          // `Variable` predicates never match this branch and stay eligible.
           return std::holds_alternative<PropertyPath>(triple.p_) &&
                  !std::get<PropertyPath>(triple.p_).isIri();
         });
   }
+  // Fail-closed allowlist: `Values` is the only other supported operation, so
+  // everything else (OPTIONAL, UNION, MINUS, SERVICE, subqueries, DESCRIBE,
+  // text/spatial search, ...) is routed to V1, including future alternatives.
   return !std::holds_alternative<pq::Values>(operation);
 }
 
 // _____________________________________________________________________________
 bool graphPatternHasUnsupportedConstructs(
     const parsedQuery::GraphPattern& pattern) {
+  // Reject `EXISTS` in filters just like in `Bind` above: it carries a
+  // nested query that V2 cannot evaluate.
   const bool hasFilterExists =
       ql::ranges::any_of(pattern._filters, [](const SparqlFilter& filter) {
         return !filter.expression_.getExistsExpressions().empty();
@@ -232,28 +245,35 @@ ExportEngineMode ExportPipelineRouter::fastStreamingIfEligible(
 
 // _____________________________________________________________________________
 bool ExportPipelineRouter::hasUnsupportedConstructs(const ParsedQuery& query) {
-  // Solution modifiers that require blocking operators or aggregation.
+  // Reject solution modifiers that require blocking operators or aggregation
+  // (`ParsedQuery::_groupByVariables`, `_havingClauses`, `_orderBy`).
   if (!query._groupByVariables.empty() || !query._havingClauses.empty() ||
       !query._orderBy.empty()) {
     return true;
   }
-  // The V2 engine reads the implicit default graph.
+  // V2 only reads the implicit default graph: reject `FROM`/`FROM NAMED`
+  // (`DatasetClauses::isUnconstrainedOrWithClause()` is false). A `WITH`
+  // clause stays eligible (it counts as unconstrained).
   if (!query.datasetClauses_.isUnconstrainedOrWithClause()) {
     return true;
   }
   if (query.hasSelectClause()) {
     const auto& selectClause = query.selectClause();
-    // Aliases cover aggregate select expressions and GROUP BY queries for
-    // now; DISTINCT and REDUCED require post-hoc deduplication state.
+    // TODO<Marvin Stoetzel>: support `DISTINCT`/`REDUCED` deduplication and
+    // `SELECT`-expression projection in V2.
+    // Aliases cover aggregate `SELECT` expressions and `GROUP BY` queries for
+    // now; `DISTINCT` and `REDUCED` require post-hoc deduplication state.
     if (selectClause.distinct_ || selectClause.reduced_ ||
         !selectClause.getAliases().empty()) {
       return true;
     }
-    // Scalar `SELECT` aliases like `SELECT (?o AS ?x)` are rewritten to
-    // `BIND` during parsing (`ParsedQuery::addSolutionModifiers`), so the
-    // check above cannot see them. Projecting a computed binding needs V2
-    // projection support that does not exist yet, hence fail closed.
-    // Plain `SELECT * ... BIND ...` stays eligible.
+    // Only scalar aliases without `GROUP BY` are rewritten to `BIND` during
+    // parsing (`ParsedQuery::addSolutionModifiers` appends them to the root
+    // graph pattern); grouped/aggregate aliases stay in `getAliases()` and
+    // are rejected above. Projecting any computed `BIND` (alias-derived or
+    // user-written) with an explicit projection (`!isAsterisk()`) needs V2
+    // projection support that does not exist yet, hence fail closed. Plain
+    // `SELECT * ... BIND ...` (without `EXISTS`) stays eligible.
     if (!selectClause.isAsterisk() &&
         graphPatternContainsBind(query._rootGraphPattern)) {
       return true;

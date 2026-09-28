@@ -73,9 +73,12 @@ class ExportPipelineRouter {
       const ParsedQuery& query);
 
   // Return true if `query` contains constructs that V2 cannot execute yet.
-  // Fail closed: anything beyond conjunctive triple matching with FILTER, BIND,
-  // and VALUES is routed to Legacy V1, in particular DESCRIBE (which the parser
-  // turns into a CONSTRUCT query with a `parsedQuery::Describe` operation).
+  // Fail closed: anything beyond conjunctive triple matching over plain
+  // `BasicGraphPattern` (no proper property paths), `FILTER`/`BIND` without
+  // `EXISTS`, and `VALUES` in plain (non-`GRAPH`) groups is routed to Legacy
+  // V1. This includes solution modifiers (`GROUP BY`, `HAVING`, `ORDER BY`,
+  // `DISTINCT`, `REDUCED`, aliases, scalar aliases rewritten to `BIND`),
+  // constrained datasets (`FROM`/`FROM NAMED`), and in particular DESCRIBE.
   [[nodiscard]] static bool hasUnsupportedConstructs(const ParsedQuery& query);
 
   // Return the routing decision of `selectEngine` for the same arguments
