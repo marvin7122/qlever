@@ -27,6 +27,7 @@
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
+#include "util/AllocationCounter.h"
 #include "util/ConstexprUtils.h"
 #include "util/http/MediaTypes.h"
 #include "util/views/TakeUntilInclusiveView.h"
@@ -930,8 +931,16 @@ ExportQueryExecutionTrees::computeResult(
           compute, mediaType);
 
   return [](auto range) -> cppcoro::generator<std::string> {
+    namespace allocationCounter = ad_utility::allocationCounter;
+    [[maybe_unused]] const auto countsAtStart = allocationCounter::current();
     for (auto&& item : range) {
       co_yield item;
+    }
+    if constexpr (allocationCounter::enabled) {
+      const auto counts = allocationCounter::current() - countsAtStart;
+      AD_LOG_INFO << "Heap allocations during the export: "
+                  << counts.numAllocations_ << " (" << counts.numBytes_
+                  << " bytes)" << std::endl;
     }
   }(convertStreamGeneratorForChunkedTransfer(std::move(inner)));
 
