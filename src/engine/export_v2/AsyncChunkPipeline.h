@@ -79,6 +79,18 @@ struct HasSize : std::false_type {};
 template <typename T>
 struct HasSize<T, std::void_t<decltype(std::declval<const T&>().size())>>
     : std::true_type {};
+
+// Whether calling `size()` on a const `T&` is `noexcept`. True for types
+// without `size()` (the `if constexpr` discards the lookup, so this stays
+// well-formed for sizeless chunk types like `unique_ptr`).
+template <typename T>
+constexpr bool hasNothrowSize() {
+  if constexpr (HasSize<T>::value) {
+    return noexcept(std::declval<const T&>().size());
+  } else {
+    return true;
+  }
+}
 }  // namespace detail
 
 // A two-slot ring that hands serialized chunks from the producer
@@ -106,8 +118,7 @@ class AsyncChunkPipeline {
                 "Chunks are destroyed in the `noexcept` `cancel` and in the "
                 "destructor, so their destruction must not throw");
   static_assert(!std::is_pointer_v<ChunkType>, "`ChunkType` must own its data");
-  static_assert(!detail::HasSize<ChunkType>::value ||
-                    noexcept(std::declval<const ChunkType&>().size()),
+  static_assert(detail::hasNothrowSize<ChunkType>(),
                 "`ChunkType::size()` runs in `noexcept` contexts and must "
                 "not throw");
 
