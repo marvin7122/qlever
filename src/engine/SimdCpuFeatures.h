@@ -21,7 +21,10 @@ namespace ad_utility::simd {
 // implementation as the fallback. Result is cached process-wide; the check
 // itself costs one predictable branch per call.
 [[nodiscard]] inline bool cpuSupportsAvx2() noexcept {
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__AVX2__)
+  // AVX2 enabled globally: the compilation baseline guarantees support.
+  return true;
+#elif defined(__GNUC__) || defined(__clang__)
   static const bool supported = [] {
     __builtin_cpu_init();
     return __builtin_cpu_supports("avx2") != 0;
