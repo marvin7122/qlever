@@ -54,10 +54,10 @@ class ServerForTesting;
 }  // namespace serverTestHelpers
 
 namespace ql::engine {
-// Forward-declare the enum: the `sendStreamableResponse` declaration below
-// only names the type. The definition in `engine/ExportPipelineRouter.h` pulls
-// in the SPARQL parser and URL parsing headers, which this widely included
-// header does not need.
+// Forward-declare the enum because `sendStreamableResponse` below only names
+// the type. Keep the definition from `engine/ExportPipelineRouter.h` out of
+// this widely included header, since it pulls in the SPARQL parser and URL
+// parsing headers.
 enum class ExportEngineMode;
 }  // namespace ql::engine
 

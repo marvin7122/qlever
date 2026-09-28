@@ -195,6 +195,51 @@ TEST(ExportPipelineRouterTest, UnsupportedConstructsFallBackToV1) {
   EXPECT_EQ(ExportPipelineRouter::selectEngine(
                 parse("SELECT * WHERE { ?s ?p ?o } ORDER BY ?s"), params),
             ExportEngineMode::LegacyV1);
+
+  // HAVING filters on grouped results.
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                parse("SELECT ?s (COUNT(?o) AS ?c) WHERE { ?s ?p ?o } "
+                      "GROUP BY ?s HAVING (COUNT(?o) > 1)"),
+                params),
+            ExportEngineMode::LegacyV1);
+}
+
+// _____________________________________________________________________________
+TEST(ExportPipelineRouterTest, UnsupportedGraphPatternsFallBackToV1) {
+  ParamValueMap params;
+  params["fast-export"] = {"1"};
+
+  // Federated SERVICE queries run on a remote endpoint.
+  auto serviceQuery = parse(
+      "SELECT * WHERE { SERVICE <http://example.org/endpoint> { ?s ?p ?o } }");
+  EXPECT_FALSE(ExportPipelineRouter::isEligibleForFastStreaming(serviceQuery));
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(serviceQuery, params),
+            ExportEngineMode::LegacyV1);
+
+  // Subqueries need nested result materialization.
+  EXPECT_EQ(
+      ExportPipelineRouter::selectEngine(
+          parse("SELECT * WHERE { { SELECT ?s WHERE { ?s ?p ?o } } }"), params),
+      ExportEngineMode::LegacyV1);
+
+  // Property paths need transitive traversal.
+  EXPECT_EQ(
+      ExportPipelineRouter::selectEngine(
+          parse("SELECT * WHERE { ?s <http://example.org/pred>+ ?o }"), params),
+      ExportEngineMode::LegacyV1);
+
+  // MINUS needs set difference over materialized results.
+  EXPECT_EQ(
+      ExportPipelineRouter::selectEngine(
+          parse("SELECT * WHERE { ?s ?p ?o MINUS { ?s ?p ?o } }"), params),
+      ExportEngineMode::LegacyV1);
+
+  // Unsupported constructs are also found inside nested groups.
+  EXPECT_EQ(ExportPipelineRouter::selectEngine(
+                parse("SELECT * WHERE { ?s ?p ?o OPTIONAL { "
+                      "SERVICE <http://example.org/endpoint> { ?s ?p ?o } } }"),
+                params),
+            ExportEngineMode::LegacyV1);
 }
 
 // _____________________________________________________________________________
@@ -244,8 +289,11 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
 
 // _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, EligibleShapesSelectV2) {
-  auto expectV2 = [](std::string_view sparql) {
-    auto query = parse(sparql);
+  // Verify that plain conjunctive shapes stay eligible for V2: each case pins
+  // one allowed construct (`*` projection, plain `FILTER`, plain `BIND`,
+  // `VALUES`, plain nested group) against its ineligible counterpart below.
+  const auto expectV2 = [](std::string_view sparql) {
+    const auto query = parse(sparql);
     EXPECT_FALSE(ExportPipelineRouter::hasUnsupportedConstructs(query))
         << sparql;
     ParamValueMap params;
@@ -259,12 +307,14 @@ TEST(ExportPipelineRouterTest, EligibleShapesSelectV2) {
   expectV2("SELECT * WHERE { ?s ?p ?o BIND(?o AS ?x) }");
   expectV2("SELECT * WHERE { VALUES ?s { <http://example.org/a> } ?s ?p ?o }");
   expectV2("SELECT * WHERE { { ?s ?p ?o } ?s ?p ?o }");
+  // A plain `BIND` nested in a group stays eligible under `SELECT *`.
+  expectV2("SELECT * WHERE { { ?s ?p ?o BIND(?o AS ?x) } }");
 }
 
 // _____________________________________________________________________________
 TEST(ExportPipelineRouterTest, UnsupportedConstructsFailClosedToV1) {
-  auto expectV1 = [](std::string_view sparql) {
-    auto query = parse(sparql);
+  const auto expectV1 = [](std::string_view sparql) {
+    const auto query = parse(sparql);
     EXPECT_TRUE(ExportPipelineRouter::hasUnsupportedConstructs(query))
         << sparql;
     ParamValueMap params;
@@ -273,24 +323,42 @@ TEST(ExportPipelineRouterTest, UnsupportedConstructsFailClosedToV1) {
               ExportEngineMode::LegacyV1)
         << sparql;
   };
-  // Operations beyond plain matching.
+  // Verify that graph operations beyond plain matching fail closed to V1.
   expectV1(
       "SELECT * WHERE { SERVICE <http://example.org/sparql> { ?s ?p ?o } }");
   expectV1("SELECT * WHERE { ?s ?p ?o MINUS { ?a ?b ?c } }");
   expectV1("SELECT * WHERE { { SELECT ?s WHERE { ?s ?p ?o } } }");
+  // A proper property path needs path machinery that V2 lacks.
   expectV1("SELECT * WHERE { ?s <http://example.org/p>+ ?o }");
+  // `EXISTS` carries a nested query, in `FILTER` and in `BIND`.
   expectV1("SELECT * WHERE { ?s ?p ?o FILTER EXISTS { ?s ?p ?o } }");
+  expectV1("SELECT * WHERE { ?s ?p ?o BIND(EXISTS { ?s ?p ?o } AS ?x) }");
   expectV1("SELECT * WHERE { ?s ?p ?o OPTIONAL { ?s ?p ?o } }");
   expectV1("SELECT * WHERE { { ?s ?p ?o } UNION { ?a ?b ?c } }");
+  // GRAPH needs named-graph routing that V2 lacks.
   expectV1("SELECT * WHERE { GRAPH <http://example.org/g> { ?s ?p ?o } }");
-  // Solution modifiers and select expressions.
+  // Unsupported constructs nested inside a plain group fail closed too.
+  expectV1("SELECT * WHERE { { ?s ?p ?o OPTIONAL { ?a ?b ?c } } }");
+  expectV1("SELECT * WHERE { { ?s ?p ?o FILTER EXISTS { ?s ?p ?o } } }");
+  // Verify that solution modifiers and select expressions fail closed to V1.
   expectV1("SELECT ?s WHERE { ?s ?p ?o } GROUP BY ?s");
   expectV1("SELECT ?s WHERE { ?s ?p ?o } GROUP BY ?s HAVING(COUNT(?o) > 1)");
   expectV1("SELECT * WHERE { ?s ?p ?o } ORDER BY ?s");
+  // `DISTINCT` and `REDUCED` need deduplication state that V2 lacks.
   expectV1("SELECT DISTINCT * WHERE { ?s ?p ?o }");
+  expectV1("SELECT REDUCED * WHERE { ?s ?p ?o }");
+  // Scalar aliases are rewritten to `BIND` and need V2 projection support.
   expectV1("SELECT (?o AS ?x) WHERE { ?s ?p ?o }");
+  expectV1("SELECT (?o AS ?x) WHERE { { ?s ?p ?o } }");
+  // A computed `BIND` under an explicit projection fails closed, even when
+  // user-written rather than alias-derived.
+  expectV1("SELECT ?s WHERE { ?s ?p ?o BIND(?o AS ?x) }");
+  expectV1("SELECT ?s WHERE { { ?s ?p ?o BIND(?o AS ?x) } }");
+  // `FROM` and `FROM NAMED` constrain the dataset that V2 does not handle.
   expectV1("SELECT * FROM <http://example.org/g> WHERE { ?s ?p ?o }");
-  // DESCRIBE is parsed as CONSTRUCT with a `Describe` operation.
+  expectV1("SELECT * FROM NAMED <http://example.org/g> WHERE { ?s ?p ?o }");
+  // Note that `DESCRIBE` parses to a `CONSTRUCT` query holding a
+  // `parsedQuery::Describe` operation; verify it fails closed to V1.
   expectV1("DESCRIBE ?s WHERE { ?s ?p ?o }");
 }
 
