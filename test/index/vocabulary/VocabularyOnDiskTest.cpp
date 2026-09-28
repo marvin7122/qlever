@@ -385,7 +385,7 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedDepthOneEqualsOldPath) {
   auto collectWords = [](VocabLookupOutput streamed) {
     std::vector<std::vector<std::string>> words;
     for (const auto& result : streamed) {
-      words.emplace_back(result->begin(), result->end());
+      words.emplace_back(result.begin(), result.end());
     }
     return words;
   };
@@ -537,7 +537,9 @@ TEST(VocabularyOnDisk, LookupBatchPipelineDepthMatchesSequential) {
         auto pipelineDepth = setRuntimeParameterForTest<
             &RuntimeParameters::vocabularyIouringPipelineDepth_>(depth);
         auto pipelined = vocab->lookupBatch(indices);
-        EXPECT_THAT(*pipelined, ::testing::ElementsAreArray(*sequential))
+        EXPECT_THAT(
+            std::vector<std::string_view>(pipelined.begin(), pipelined.end()),
+            ::testing::ElementsAreArray(sequential.begin(), sequential.end()))
             << "depth " << depth << ", " << numIndices << " indices";
       }
     }
