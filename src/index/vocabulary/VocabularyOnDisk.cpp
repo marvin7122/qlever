@@ -326,10 +326,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
   // harmless). A failed mapping is not an error: the lookup paths below
   // transparently fall back to positioned and ring I/O.
   static_assert(sizeof(Offset) == 8);
-  if (offsetsMapping_.map(offsetsFile_.fd(), numOffsets * sizeof(Offset))) {
-    ::madvise(const_cast<void*>(offsetsMapping_.data()), offsetsMapping_.size(),
-              MADV_RANDOM);
-  } else {
+  if (!offsetsMapping_.map(offsetsFile_.fd(), numOffsets * sizeof(Offset))) {
     AD_LOG_WARN << "Could not memory-map the vocabulary offsets file, "
                    "falling back to explicit I/O for offset lookups.\n";
   }
