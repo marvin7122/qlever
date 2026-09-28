@@ -721,4 +721,22 @@ TEST(FormatTripleRle, TurtleLiteralEscapingAppliedOnCacheHit) {
             formatTripleRle(triple2, ad_utility::MediaType::turtle, cache));
 }
 
+// _____________________________________________________________________________
+// The cached subject and predicate are escaped for one format. Reusing the
+// cache with another format must not reuse those strings: "a,b" is quoted in
+// CSV but not in TSV.
+TEST(FormatTripleRle, FormatChangeInvalidatesCache) {
+  auto subject = makeTerm("a,b");
+  auto predicate = makeTerm("<http://p>");
+  auto triple = EvaluatedTriple{subject, predicate, makeTerm("<http://o>")};
+  RleConstructTripleCache cache;
+  for (auto format :
+       {ad_utility::MediaType::csv, ad_utility::MediaType::tsv,
+        ad_utility::MediaType::csv, ad_utility::MediaType::turtle}) {
+    EXPECT_EQ(formatTriple(triple, format),
+              formatTripleRle(triple, format, cache))
+        << "format = " << ad_utility::toString(format);
+  }
+}
+
 }  // namespace
