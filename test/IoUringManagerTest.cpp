@@ -843,6 +843,22 @@ TEST(IoUringStats, differenceIsPerField) {
   EXPECT_EQ(delta.filesUpdateCalls, 2u);
 }
 
+// Each recording function adds one to its own count of the snapshot. The call
+// sites only record in builds with `QLEVER_IOURING_STATS`, but the functions
+// themselves count in every build.
+TEST(IoUringStats, recordingFunctionsCountIntoTheSnapshot) {
+  const ad_utility::IoUringStats before = ad_utility::ioUringStatsSnapshot();
+  ad_utility::detail::recordIoUringSqe(true);
+  ad_utility::detail::recordIoUringSqe(true);
+  ad_utility::detail::recordIoUringSqe(false);
+  ad_utility::detail::recordIoUringFilesUpdate();
+  const ad_utility::IoUringStats delta =
+      ad_utility::ioUringStatsSnapshot() - before;
+  EXPECT_EQ(delta.fixedFileSqes, 2u);
+  EXPECT_EQ(delta.plainFdSqes, 1u);
+  EXPECT_EQ(delta.filesUpdateCalls, 1u);
+}
+
 #ifdef QLEVER_HAS_IO_URING
 // With `-DQLEVER_IOURING_STATS=ON`, every read of the fixed-file policy counts
 // as one `IOSQE_FIXED_FILE` submission and every newly registered file as one
