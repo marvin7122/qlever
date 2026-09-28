@@ -7,8 +7,6 @@
 #include "global/RuntimeParameters.h"
 #include "util/SoftwarePrefetch.h"
 
-namespace ad_utility::vocabulary {
-
 using std::string;
 
 // _____________________________________________________________________________
@@ -36,7 +34,7 @@ VocabBatchLookupResult VocabularyInMemory::lookupBatch(
   const size_t prefetchDistance =
       getRuntimeParameter<&RuntimeParameters::vocabLookupPrefetchDistance_>();
   if (prefetchDistance == 0) {
-    return sequentialLookupBatch(*this, indices);
+    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
   }
   AD_CONTRACT_CHECK(!indices.empty());
   std::vector<std::string> words(indices.size());
@@ -45,6 +43,5 @@ VocabBatchLookupResult VocabularyInMemory::lookupBatch(
       [&words](size_t i, size_t, std::string_view word) {
         words[i] = std::string{word};
       });
-  return makeStringVectorVocabBatchLookupResult(std::move(words));
+  return StringVectorVocabBatchLookupData::fromWords(std::move(words));
 }
-}  // namespace ad_utility::vocabulary
