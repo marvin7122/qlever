@@ -314,7 +314,7 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
         &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(false);
   }};
   auto withFastPath = vocab->lookupBatch(indices);
-  EXPECT_THAT(*withFastPath, ::testing::ElementsAreArray(*withoutFastPath));
+  EXPECT_THAT(withFastPath, ::testing::ElementsAreArray(withoutFastPath));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       *vocab, withFastPath, indices);
 }

@@ -195,7 +195,9 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // read via `manager`, and return it as a `VocabBatchLookupResult`. With
   // `pageCacheFastPath`, the words that are in the page cache are read with
   // `readPageCacheHits` (adjacent words in one call), and only the others go
-  // through `manager`.
+  // through `manager`. `offsetPairs` must be non-empty (guaranteed by
+  // `lookupBatch`, which rejects empty input; the `ContiguousVocabBatchBuilder`
+  // requires it).
   VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
                                      ql::span<const OffsetPair> offsetPairs,
                                      bool pageCacheFastPath) const;

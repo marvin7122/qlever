@@ -36,4 +36,10 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
+
+    addAndLinkBenchmark(PrefixCompressorBenchmark)
+
+    addAndLinkBenchmark(VocabBatchLookupBenchmark vocabulary)
+
 endif()
