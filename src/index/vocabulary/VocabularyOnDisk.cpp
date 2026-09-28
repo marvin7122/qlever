@@ -399,7 +399,7 @@ void VocabularyOnDisk::readWordsWithNvmePassthrough(
 void VocabularyOnDisk::logNvmePassthroughCounters() const {
   const uint64_t numBatches =
       nvme_->numPassthroughBatches_ + nvme_->numBufferedBatches_;
-  if (numBatches % 1024 != 0) {
+  if (numBatches % 64 != 0) {
     return;
   }
   std::string histogram;
