@@ -160,6 +160,11 @@ struct SyncIoPolicy {
                                uint64_t fileOffset);
 };
 
+// Return the number of reads submitted with `IOSQE_FIXED_FILE` by all
+// `IoUringPolicy` objects of this process since startup (always 0 in builds
+// without io_uring). Used to log per request that the fixed-file path ran.
+uint64_t numFixedFileReadsSubmitted();
+
 // Persistent io_uring manager that accepts multiple named batches of indices to
 // be read from the underlying storage medium, submits all SQEs in `addBatch`
 // (blocking if the ring is full), and lets the caller block on a specific batch

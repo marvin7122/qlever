@@ -12,6 +12,7 @@
 
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <stdexcept>
@@ -21,6 +22,15 @@
 #include "util/Log.h"
 
 namespace ad_utility {
+
+namespace {
+std::atomic<uint64_t> fixedFileReadsSubmitted{0};
+}  // namespace
+
+//______________________________________________________________________________
+uint64_t numFixedFileReadsSubmitted() {
+  return fixedFileReadsSubmitted.load(std::memory_order_relaxed);
+}
 
 //______________________________________________________________________________
 void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
@@ -210,6 +220,7 @@ void IoUringPolicy::addBatch(int fd,
                        static_cast<unsigned>(numBytesToRead),
                        static_cast<__u64>(fileOffset));
     sqe->flags |= IOSQE_FIXED_FILE;
+    fixedFileReadsSubmitted.fetch_add(1, std::memory_order_relaxed);
 
     // Tag the SQE with a unique request id and record its metadata (the batch
     // it belongs to and how many bytes it should read). io_uring copies the

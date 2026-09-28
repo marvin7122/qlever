@@ -36,6 +36,7 @@
 #include "parser/SparqlParser.h"
 #include "util/AsioHelpers.h"
 #include "util/Exception.h"
+#include "util/IoUringManager.h"
 #include "util/MemorySize/MemorySize.h"
 #include "util/ParseableDuration.h"
 #include "util/QueryEventLog.h"
@@ -1111,6 +1112,8 @@ CPP_template_def(typename RequestT, typename SendT)(
 
   // This actually processes the query and sends the result in the
   // requested format.
+  const uint64_t fixedFileReadsBefore =
+      ad_utility::numFixedFileReadsSubmitted();
   co_await sendStreamableResponse(request, AD_FWD(send), mediaType,
                                   plannedQuery.value(), requestTimer,
                                   cancellationHandle);
@@ -1118,6 +1121,8 @@ CPP_template_def(typename RequestT, typename SendT)(
   // was computed.
   AD_LOG_INFO << "Done processing query and sending result"
               << ", total time was " << requestTimer.msecs().count() << " ms"
+              << ", io_uring fixed-file reads submitted: "
+              << ad_utility::numFixedFileReadsSubmitted() - fixedFileReadsBefore
               << std::endl;
   metrics_->sparqlOperationDuration_->Record(
       static_cast<double>(requestTimer.msecs().count()),
