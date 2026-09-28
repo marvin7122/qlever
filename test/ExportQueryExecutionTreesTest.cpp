@@ -2006,10 +2006,8 @@ TEST(ExportQueryExecutionTrees, EncodedIriManagerUsage) {
   std::string query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o";
 
   // Create test configuration with EncodedIriManager
-  auto encodedIriManager =
-      std::make_shared<ad_utility::vocabulary::EncodedIriManager>(
-          std::vector<std::string>{"http://example.org/",
-                                   "http://test.com/id/"});
+  auto encodedIriManager = std::make_shared<EncodedIriManager>(
+      std::vector<std::string>{"http://example.org/", "http://test.com/id/"});
 
   ad_utility::testing::TestIndexConfig config{kg};
   config.encodedPrefixesWithoutAngleBrackets =
@@ -2269,17 +2267,12 @@ INSTANTIATE_TEST_SUITE_P(
         // window 10: all duplicates are caught, 5 unique triples remain.
         LruWindowParam{10, "abcde"}));
 
-// Toggling `use-simd-escape-classifier-csv` (PR #85) switches the CSV
-// escape function between `RdfEscaping` and `SimdEscapeClassifier`, but must
-// not change the exported bytes. TSV export must stay unaffected by the
-// flag: `SimdEscapeClassifier::escapeForTsv` escapes `\r` and `\`
-// differently from `RdfEscaping::escapeForTsv` (found via a DBLP A/B,
-// experiments/runs/pr85-dblp-hsizeselect-tsv-ab), so it is intentionally
-// not wired for TSV.
+// _____________________________________________________________________________
+// `use-simd-escape-classifier-csv-tsv` switches the CSV and TSV cell escaping
+// from `RdfEscaping` to `SimdEscapeClassifier`; the exported bytes must not
+// change. The literal contains the special characters of both formats plus
+// `\r` and `\`, which are special in CSV but not in TSV.
 TEST(ExportQueryExecutionTrees, SimdEscapeClassifierCsvTsvProducesSameBytes) {
-  // A literal that needs escaping in CSV (comma, quote), TSV (tab), and
-  // additionally contains '\r' and '\\', the two characters on which
-  // SimdEscapeClassifier::escapeForTsv diverges from RdfEscaping.
   const std::string kg =
       R"(<a> <b> "needs\tescaping, \\backslash, \rcarriage return, and \"quotes\"" .)";
   const std::string query = "SELECT * WHERE { ?s ?p ?o }";
@@ -2288,17 +2281,15 @@ TEST(ExportQueryExecutionTrees, SimdEscapeClassifierCsvTsvProducesSameBytes) {
   for (MediaType format : {MediaType::csv, MediaType::tsv}) {
     auto legacy = [&] {
       auto cleanup = setRuntimeParameterForTest<
-          &RuntimeParameters::useSimdEscapeClassifierForCsv_>(false);
+          &RuntimeParameters::useSimdEscapeClassifierCsvTsv_>(false);
       return runQueryStreamableResult(kg, query, format);
     }();
     auto simd = [&] {
       auto cleanup = setRuntimeParameterForTest<
-          &RuntimeParameters::useSimdEscapeClassifierForCsv_>(true);
+          &RuntimeParameters::useSimdEscapeClassifierCsvTsv_>(true);
       return runQueryStreamableResult(kg, query, format);
     }();
     EXPECT_EQ(legacy, simd);
-    // Sanity check: the literal's special character was actually escaped
-    // (the test would pass vacuously if both paths did nothing).
     EXPECT_NE(legacy.find("needs"), std::string::npos);
   }
 }

@@ -514,34 +514,21 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  // Behind `use-simd-escape-classifier-csv` (default off), dispatch CSV
-  // export to the AVX2/SSE2 `SimdEscapeClassifier` (PR #85) instead of the
-  // scalar `RdfEscaping` functions. Both are
-  // `std::string(std::string)`-compatible, so `idToStringAndType` below is
-  // unchanged either way.
-  //
-  // TSV always stays on `RdfEscaping::escapeForTsv`, flag or not:
-  // `SimdEscapeClassifier::escapeForTsv` additionally escapes `\r` (to
-  // `\r`) and `\` (to `\\`), which `RdfEscaping::escapeForTsv` leaves
-  // untouched. That is a real semantic divergence in PR #85's classifier
-  // (not measurement noise) -- confirmed by a deterministic byte-count
-  // mismatch on DBLP H-size-select (Ural run
-  // experiments/runs/pr85-dblp-hsizeselect-tsv-ab, +24 bytes, same line
-  // count, reproducible across reps). Wiring TSV through it would violate
-  // the byte-identical-output requirement, so it is left out here; fixing
-  // `SimdEscapeClassifier::escapeForTsv` itself is out of scope for this
-  // wiring change and is called out on PR #85.
-  auto escapeFunction = [](std::string input) -> std::string {
-    if constexpr (format == csv) {
-      if (getRuntimeParameter<
-              &RuntimeParameters::useSimdEscapeClassifierForCsv_>()) {
-        return ad_utility::simd::SimdEscapeClassifier::escapeForCsv(input);
-      }
-    }
+  // With `use-simd-escape-classifier-csv-tsv`, the cells are escaped by the
+  // vectorized `SimdEscapeClassifier` instead of the `RdfEscaping` functions.
+  // Both produce the same bytes. The parameter is read once per export.
+  const bool useSimdEscapeClassifier =
+      getRuntimeParameter<&RuntimeParameters::useSimdEscapeClassifierCsvTsv_>();
+  auto escapeFunction = [useSimdEscapeClassifier](std::string input) {
+    using ad_utility::simd::SimdEscapeClassifier;
     if constexpr (format == tsv) {
-      return RdfEscaping::escapeForTsv(std::move(input));
+      return useSimdEscapeClassifier
+                 ? SimdEscapeClassifier::escapeForTsv(input)
+                 : RdfEscaping::escapeForTsv(std::move(input));
     } else {
-      return RdfEscaping::escapeForCsv(std::move(input));
+      return useSimdEscapeClassifier
+                 ? SimdEscapeClassifier::escapeForCsv(input)
+                 : RdfEscaping::escapeForCsv(std::move(input));
     }
   };
   uint64_t resultSize = 0;

@@ -45,17 +45,11 @@ struct RuntimeParameters {
   // between otherwise equal queries.
   Bool stripColumns_{false, "strip-columns"};
 
-  // If set, the legacy CSV export (`ExportQueryExecutionTrees`) uses the
-  // AVX2/SSE2 `ad_utility::simd::SimdEscapeClassifier` instead of
-  // `RdfEscaping::escapeForCsv` to find and escape special characters. Off
-  // by default: microbenchmarks on the export workload showed the SIMD scan
-  // slower than the scalar one for the short, mostly clean CSV literals
-  // typical of exports, see PR #85. TSV export always uses
-  // `RdfEscaping::escapeForTsv`, regardless of this flag:
-  // `SimdEscapeClassifier::escapeForTsv` escapes `\r` and `\` differently
-  // from `RdfEscaping::escapeForTsv` (confirmed by a byte-identical-output
-  // failure on DBLP H-size-select), so it cannot be wired safely yet.
-  Bool useSimdEscapeClassifierForCsv_{false, "use-simd-escape-classifier-csv"};
+  // If set, the CSV and TSV export of SELECT results escapes the cells with
+  // the vectorized `ad_utility::simd::SimdEscapeClassifier` instead of
+  // `RdfEscaping::escapeForCsv`/`escapeForTsv`. The output is the same.
+  Bool useSimdEscapeClassifierCsvTsv_{false,
+                                      "use-simd-escape-classifier-csv-tsv"};
 
   // If the time estimate for a sort operation is larger by more than this
   // factor than the remaining time, then the sort is canceled with a
@@ -113,6 +107,11 @@ struct RuntimeParameters {
       1'000'000, "lazy-index-scan-max-size-materialization"};
   Bool useBinsearchTransitivePath_{true, "use-binsearch-transitive-path"};
   Bool groupByHashMapEnabled_{false, "group-by-hash-map-enabled"};
+  // Use the branchless integer-to-ASCII formatter from `util/FastIntToString.h`
+  // instead of `std::to_string` when serializing `xsd:int` literal values
+  // during export. Defaults to `false` (existing behavior), so it has to be
+  // enabled explicitly.
+  Bool fastIntToStringForExport_{false, "fast-int-to-string-for-export"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};
@@ -255,6 +254,13 @@ struct RuntimeParameters {
   // triples (per template triple); bounded memory, partial deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
+
+  // If set to `true`, CONSTRUCT query export of Turtle formats the
+  // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
+  // formatting) instead of the legacy per-term `std::string` construction
+  // in `formatTerm`/`formatTriple`. Output is required to be byte-identical
+  // to the legacy path; default `false` keeps master's behaviour unchanged.
+  Bool useFastExportStreamFormatter_{false, "use-fast-export-stream-formatter"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
