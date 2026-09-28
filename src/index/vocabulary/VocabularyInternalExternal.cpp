@@ -10,7 +10,7 @@
 
 #include "index/vocabulary/VocabularyInternalExternal.h"
 
-#include "util/Algorithm.h"
+#include "backports/algorithm.h"
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
