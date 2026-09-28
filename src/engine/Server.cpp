@@ -1066,6 +1066,13 @@ CPP_template_def(typename RequestT, typename SendT)(
                         "response: "
                      << e.what() << std::endl;
         metrics_->sparqlErrors_->Add(1, {SparqlErrorType::systemError});
+      } catch (const std::exception& e) {
+        // Mirror the generic response path below: never propagate an
+        // exception from a partially written stream, log it and account it
+        // instead.
+        AD_LOG_ERROR << e.what() << std::endl;
+        metrics_->sparqlErrors_->Add(1,
+                                     {SparqlErrorType::sendStreamableResponse});
       }
       co_return;
     }

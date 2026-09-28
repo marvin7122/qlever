@@ -34,6 +34,7 @@
 #include "engine/export_v2/ColumnLattice.h"
 #include "engine/export_v2/ExportMorselPlanner.h"
 #include "engine/export_v2/MonomorphicSerializers.h"
+#include "engine/export_v2/SimdEscapeClassifier.h"
 #include "global/Id.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
