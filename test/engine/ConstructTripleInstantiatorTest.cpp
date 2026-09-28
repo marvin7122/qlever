@@ -11,7 +11,6 @@
 #include <gtest/gtest.h>
 
 #include "../util/GTestHelpers.h"
-#include "../util/RuntimeParametersTestHelpers.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
@@ -409,9 +408,9 @@ TEST(FormatTriple, TurtleLiteralObject) {
 }
 
 // _____________________________________________________________________________
-// The `use-fast-export-stream-formatter` runtime parameter switches Turtle
-// export to `FastExportStreamFormatter`. It must be byte-identical to the
-// legacy path for a representative mix of terms: plain IRIs, literals,
+// `formatTripleAsTurtleWithFastFormatter` (used for the Turtle export with
+// `use-fast-export-stream-formatter`) must be byte-identical to the legacy
+// path for a representative mix of terms: plain IRIs, literals,
 // literals needing escaping, and numeric short forms.
 TEST(FormatTriple, FastExportStreamFormatterMatchesLegacyTurtle) {
   const std::vector<EvaluatedTriple> triples{
@@ -438,11 +437,9 @@ TEST(FormatTriple, FastExportStreamFormatterMatchesLegacyTurtle) {
         formatTriple(triple, ad_utility::MediaType::turtle));
   }
 
-  auto cleanup = setRuntimeParameterForTest<
-      &RuntimeParameters::useFastExportStreamFormatter_>(true);
   for (size_t i = 0; i < triples.size(); ++i) {
     EXPECT_EQ(legacyOutputs[i],
-              formatTriple(triples[i], ad_utility::MediaType::turtle));
+              formatTripleAsTurtleWithFastFormatter(triples[i]));
   }
 }
 
