@@ -20,7 +20,7 @@
 #include "parser/SparqlParser.h"
 
 using namespace ql::engine;
-using ad_utility::url_parser::ParamValueMap;
+using ParamValueMap = ExportPipelineRouter::ParamValueMap;
 
 namespace {
 
