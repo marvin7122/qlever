@@ -22,7 +22,9 @@
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
+#include "engine/AdaptiveChunkSizer.h"
 #include "engine/ConstructTripleGenerator.h"
+#include "engine/SimdEscapeClassifier.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
@@ -515,8 +517,23 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  // With `use-simd-escape-classifier-csv-tsv`, the cells are escaped by the
+  // vectorized `SimdEscapeClassifier` instead of the `RdfEscaping` functions.
+  // Both produce the same bytes. The parameter is read once per export.
+  const bool useSimdEscapeClassifier =
+      getRuntimeParameter<&RuntimeParameters::useSimdEscapeClassifierCsvTsv_>();
+  auto escapeFunction = [useSimdEscapeClassifier](std::string input) {
+    using ad_utility::simd::SimdEscapeClassifier;
+    if constexpr (format == tsv) {
+      return useSimdEscapeClassifier
+                 ? SimdEscapeClassifier::escapeForTsv(input)
+                 : RdfEscaping::escapeForTsv(std::move(input));
+    } else {
+      return useSimdEscapeClassifier
+                 ? SimdEscapeClassifier::escapeForCsv(input)
+                 : RdfEscaping::escapeForCsv(std::move(input));
+    }
+  };
 
   // If enabled via the `use-swar-export-delimiters` runtime parameter, the
   // single-character field separator and end-of-row newline below are
@@ -849,6 +866,18 @@ ExportQueryExecutionTrees::convertStreamGeneratorForChunkedTransfer(
     STREAMABLE_GENERATOR_TYPE streamGenerator) {
   using namespace ad_utility;
   using LoopControl = ad_utility::LoopControl<std::string>;
+  // With `adaptive-export-chunk-size`, the first chunk is small (64 KiB) and
+  // the chunk size doubles after every chunk up to the generator's buffer size,
+  // so that the client receives the first bytes before a full buffer has been
+  // formatted. Without it, every chunk has the full buffer size.
+  std::optional<qlever::export_streaming::AdaptiveChunkSizer> chunkSizer;
+  if (getRuntimeParameter<&RuntimeParameters::adaptiveExportChunkSize_>()) {
+    constexpr size_t maxChunkBytes = STREAMABLE_GENERATOR_TYPE::bufferSize;
+    constexpr size_t initialChunkBytes =
+        std::min(size_t{64} << 10, maxChunkBytes);
+    chunkSizer.emplace(initialChunkBytes, maxChunkBytes);
+    streamGenerator.setChunkCapacity(chunkSizer->currentChunkBytes());
+  }
   // Immediately throw any exceptions that occur during the computation of the
   // first block outside the actual generator. That way we get a proper HTTP
   // response with error status codes etc. at least for those exceptions.
@@ -856,6 +885,7 @@ ExportQueryExecutionTrees::convertStreamGeneratorForChunkedTransfer(
   auto it = streamGenerator.begin();
   return InputRangeTypeErased(InputRangeFromLoopControlGet(
       [it = std::move(it), streamGenerator = std::move(streamGenerator),
+       chunkSizer = std::move(chunkSizer),
        exceptionMessage = std::optional<std::string>(std::nullopt)]() mutable {
         // TODO<joka921, RobinTF> Think of a better way to propagate and log
         // those errors. We can additionally send them via the
@@ -867,6 +897,11 @@ ExportQueryExecutionTrees::convertStreamGeneratorForChunkedTransfer(
 
         try {
           std::string output{*it};
+          if (chunkSizer.has_value()) {
+            // The row count is unknown at this level, only the bytes count.
+            chunkSizer->recordChunk(output.size(), 0);
+            streamGenerator.setChunkCapacity(chunkSizer->currentChunkBytes());
+          }
           ++it;
           return LoopControl::yieldValue(std::move(output));
         } catch (const std::exception& e) {

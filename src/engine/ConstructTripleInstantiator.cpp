@@ -11,9 +11,13 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <cstring>
+
 #include "backports/StartsWithAndEndsWith.h"
 #include "engine/ConstructDeduplicator.h"
+#include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
 #include "util/Views.h"
@@ -118,6 +122,48 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
                       ">");
 }
 
+namespace {
+// Upper bound on the number of bytes that `FastExportStreamFormatter` writes
+// for `term` in Turtle: escaping at most doubles the characters of the term
+// string, and a fully qualified literal adds its datatype and at most six
+// delimiter characters (`"`, `"^^<`, `>`).
+size_t turtleTermSizeUpperBound(const EvaluatedTermData& term) {
+  size_t bound = 2 * term.rdfTermString_.size() + 6;
+  if (term.rdfTermDataType_ != nullptr) {
+    bound += std::strlen(term.rdfTermDataType_);
+  }
+  return bound;
+}
+
+// Formats a single triple as Turtle using `FastExportStreamFormatter`
+// (in-buffer escaping) instead of the per-term `std::string` construction in
+// `formatTerm`. Produces output byte-identical to the legacy Turtle branch of
+// `formatTriple` below; only used when `use-fast-export-stream-formatter` is
+// enabled.
+std::string formatTripleFastTurtle(const EvaluatedTriple& evaluatedTriple) {
+  using ql::export_formatting::ExportFormat;
+  using ql::export_formatting::FastExportStreamFormatter;
+  const auto& [subject, predicate, object] = evaluatedTriple;
+  AD_CONTRACT_CHECK(subject != nullptr && predicate != nullptr &&
+                    object != nullptr);
+  // Two separating spaces and the trailing " .\n".
+  const size_t sizeBound = turtleTermSizeUpperBound(*subject) +
+                           turtleTermSizeUpperBound(*predicate) +
+                           turtleTermSizeUpperBound(*object) + 5;
+  // Reused across calls to avoid a heap allocation per triple. It is sized to
+  // the upper bound before formatting, so the fixed-span formatter can never
+  // run out of space.
+  static thread_local std::vector<char> buffer;
+  if (buffer.size() < sizeBound) {
+    buffer.resize(sizeBound);
+  }
+  FastExportStreamFormatter formatter(
+      ql::span<char>(buffer.data(), buffer.size()));
+  formatter.writeTriple(ExportFormat::Turtle, evaluatedTriple);
+  return std::string{formatter.currentChunk()};
+}
+}  // namespace
+
 // _____________________________________________________________________________
 std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
                          const ad_utility::MediaType& format) {
@@ -125,6 +171,12 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
   using enum ad_utility::MediaType;
   static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
   AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
+
+  if (format == turtle &&
+      getRuntimeParameter<
+          &RuntimeParameters::useFastExportStreamFormatter_>()) {
+    return formatTripleFastTurtle(evaluatedTriple);
+  }
 
   const auto& [subject, predicate, object] = evaluatedTriple;
 
@@ -144,6 +196,61 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
     }
     return absl::StrCat(s, " ", p, " ", o, " .\n");
 
+  } else if (format == csv) {
+    return absl::StrCat(RdfEscaping::escapeForCsv(std::move(s)), ",",
+                        RdfEscaping::escapeForCsv(std::move(p)), ",",
+                        RdfEscaping::escapeForCsv(std::move(o)), "\n");
+  } else if (format == tsv) {
+    return absl::StrCat(RdfEscaping::escapeForTsv(std::move(s)), "\t",
+                        RdfEscaping::escapeForTsv(std::move(p)), "\t",
+                        RdfEscaping::escapeForTsv(std::move(o)), "\n");
+  } else {
+    AD_FAIL();  // unreachable
+  }
+}
+
+// _____________________________________________________________________________
+std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
+                            const ad_utility::MediaType& format,
+                            RleConstructTripleCache& cache) {
+  using enum ad_utility::MediaType;
+  static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
+  AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
+
+  const auto& [subject, predicate, object] = evaluatedTriple;
+  const bool includeDataType = (format == ntriples);
+
+  // RLE prefix constant folding: reuse the previous row's formatted
+  // subject/predicate string when the `EvaluatedTerm` is pointer-identical
+  // to the last row's (guaranteed for repeated `Id`s within a batch by
+  // `ConstructBatchEvaluator`'s `IdCache`), instead of reformatting it.
+  // `shared_ptr` comparison is pointer comparison, and the owning handles
+  // in the cache keep the previous row's terms alive across batches.
+  std::string s;
+  if (cache.lastSubject_ == subject) {
+    s = cache.cachedSubject_;
+  } else {
+    s = formatTerm(*subject, includeDataType);
+    cache.lastSubject_ = subject;
+    cache.cachedSubject_ = s;
+  }
+  std::string p;
+  if (cache.lastPredicate_ == predicate) {
+    p = cache.cachedPredicate_;
+  } else {
+    p = formatTerm(*predicate, includeDataType);
+    cache.lastPredicate_ = predicate;
+    cache.cachedPredicate_ = p;
+  }
+  std::string o = formatTerm(*object, includeDataType);
+
+  if (format == turtle || format == ntriples) {
+    if (ql::starts_with(o, '"')) {
+      return absl::StrCat(
+          s, " ", p, " ",
+          RdfEscaping::validRDFLiteralFromNormalized(std::move(o)), " .\n");
+    }
+    return absl::StrCat(s, " ", p, " ", o, " .\n");
   } else if (format == csv) {
     return absl::StrCat(RdfEscaping::escapeForCsv(std::move(s)), ",",
                         RdfEscaping::escapeForCsv(std::move(p)), ",",

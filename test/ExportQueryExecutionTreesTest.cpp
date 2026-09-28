@@ -17,6 +17,7 @@
 #include "util/ParseableDuration.h"
 #include "util/ParsedQueryTestHelpers.h"
 #include "util/RuntimeParametersTestHelpers.h"
+#include "util/Views.h"
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
@@ -2001,6 +2002,49 @@ TEST(ExportQueryExecutionTrees, convertGeneratorForChunkedTransfer) {
 }
 
 // _____________________________________________________________________________
+// With `adaptive-export-chunk-size`, the chunked transfer starts with a 64 KiB
+// chunk and doubles the chunk size after every chunk up to the 1 MiB buffer of
+// the `stream_generator`. The concatenated bytes are the same as without it.
+TEST(ExportQueryExecutionTrees, adaptiveExportChunkSize) {
+  using S = ad_utility::streams::stream_generator;
+  EXPECT_FALSE(
+      getRuntimeParameter<&RuntimeParameters::adaptiveExportChunkSize_>());
+  constexpr size_t KiB = size_t{1} << 10;
+  // 3 MiB of output, yielded in pieces that do not align with chunk borders.
+  auto generate = []() -> S {
+    std::string piece;
+    for (size_t i : ad_utility::integerRange(size_t{3} * 1024)) {
+      piece.assign(KiB, static_cast<char>('a' + i % 26));
+      co_yield std::string_view{piece}.substr(0, 1000);
+      co_yield std::string_view{piece}.substr(1000);
+    }
+  };
+  auto chunkSizesAndBytes = [&generate]() {
+    std::vector<size_t> sizes;
+    std::string bytes;
+    for (const std::string& chunk :
+         ExportQueryExecutionTrees::convertStreamGeneratorForChunkedTransfer(
+             generate())) {
+      sizes.push_back(chunk.size());
+      bytes.append(chunk);
+    }
+    return std::pair{std::move(sizes), std::move(bytes)};
+  };
+
+  auto [fixedSizes, fixedBytes] = chunkSizesAndBytes();
+  EXPECT_THAT(fixedSizes, ElementsAre(1024 * KiB, 1024 * KiB, 1024 * KiB));
+
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::adaptiveExportChunkSize_>(
+          true);
+  auto [adaptiveSizes, adaptiveBytes] = chunkSizesAndBytes();
+  EXPECT_THAT(adaptiveSizes,
+              ElementsAre(64 * KiB, 128 * KiB, 256 * KiB, 512 * KiB, 1024 * KiB,
+                          1024 * KiB, 64 * KiB));
+  EXPECT_EQ(adaptiveBytes, fixedBytes);
+}
+
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, compensateForLimitOffsetClause) {
   auto* qec = ad_utility::testing::getQec();
 
@@ -2294,3 +2338,30 @@ INSTANTIATE_TEST_SUITE_P(
         LruWindowParam{5, "abcde"},
         // window 10: all duplicates are caught, 5 unique triples remain.
         LruWindowParam{10, "abcde"}));
+
+// _____________________________________________________________________________
+// `use-simd-escape-classifier-csv-tsv` switches the CSV and TSV cell escaping
+// from `RdfEscaping` to `SimdEscapeClassifier`; the exported bytes must not
+// change. The literal contains the special characters of both formats plus
+// `\r` and `\`, which are special in CSV but not in TSV.
+TEST(ExportQueryExecutionTrees, SimdEscapeClassifierCsvTsvProducesSameBytes) {
+  const std::string kg =
+      R"(<a> <b> "needs\tescaping, \\backslash, \rcarriage return, and \"quotes\"" .)";
+  const std::string query = "SELECT * WHERE { ?s ?p ?o }";
+  using ad_utility::MediaType;
+
+  for (MediaType format : {MediaType::csv, MediaType::tsv}) {
+    auto legacy = [&] {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::useSimdEscapeClassifierCsvTsv_>(false);
+      return runQueryStreamableResult(kg, query, format);
+    }();
+    auto simd = [&] {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::useSimdEscapeClassifierCsvTsv_>(true);
+      return runQueryStreamableResult(kg, query, format);
+    }();
+    EXPECT_EQ(legacy, simd);
+    EXPECT_NE(legacy.find("needs"), std::string::npos);
+  }
+}
