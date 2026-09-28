@@ -38,4 +38,8 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(SparqlExpressionBenchmark engine testUtil gtest gmock)
 
+    addAndLinkBenchmark(CompressedVocabularyLookupBenchmark vocabulary)
+
+    addAndLinkBenchmark(FsstDecodeAbBenchmark fsst)
+
 endif()
