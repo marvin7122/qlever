@@ -207,4 +207,15 @@ TEST(StreamingBufferWriterTest, MoveSemantics) {
   // writer1 was moved from
   EXPECT_EQ(writer1.capacity(), 0);
   EXPECT_EQ(writer1.bytesWritten(), 0);
+  EXPECT_FALSE(writer1.isOwner());
+  EXPECT_TRUE(writer1.remainingSpan().empty());
+
+  StreamingBufferWriter writer3(64);
+  writer3 = std::move(writer2);
+  EXPECT_TRUE(writer3.isOwner());
+  EXPECT_EQ(writer3.capacity(), 256);
+  EXPECT_EQ(std::string_view(writer3.data(), 10), "Hello Move");
+  EXPECT_EQ(writer3.currentWritePointer(), writer3.data() + 10);
+  EXPECT_FALSE(writer2.isOwner());
+  EXPECT_EQ(writer2.data(), nullptr);
 }
