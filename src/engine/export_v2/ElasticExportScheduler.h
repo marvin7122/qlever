@@ -1,6 +1,11 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #pragma once
 
@@ -142,8 +147,8 @@ class ExportWorkLease {
 // -----------------------------------------------------------------------------
 // Forward declarations for Session and Scheduler
 // -----------------------------------------------------------------------------
-// `ExportJobStateBase` and `OwnedMorsel` live in ExportJobState.h so the
-// scheduler header only coordinates admission, not job identity.
+// Keep `ExportJobStateBase` and `OwnedMorsel` in `ExportJobState.h`.
+// The typed `ExportJobState<ResultType>` stays here until extracted.
 
 template <typename ResultType>
 class ExportWorkSession;
@@ -429,15 +434,10 @@ class ExportJobState final
       cv_.notify_all();
     }
 
-    // Enqueue pending morsels outside the lock. Best-effort: a `false`
-    // return (helpers ineligible or stopping) leaves the morsel Pending
-    // and the coordinator runs it inline on the primary path, so the
-    // return value is intentionally ignored here.
+    // Enqueue pending morsels outside the lock (see `tryOffloadMorsel`).
     if (!pendingIndicesToEnqueue.empty()) {
-      auto self = this->shared_from_this();
       for (size_t index : pendingIndicesToEnqueue) {
-        static_cast<void>(
-            scheduler_->enqueueMorsel(OwnedMorsel(self, newEpoch, index)));
+        tryOffloadMorsel(index, newEpoch);
       }
     }
   }
@@ -787,6 +787,14 @@ class ExportJobState final
   }
 
  private:
+  // Offer one morsel to the helper pool. Best-effort: a rejected morsel
+  // stays Pending and the coordinator runs it inline on the primary path
+  // (see `consumeNextResult`), so the return value is intentionally ignored.
+  void tryOffloadMorsel(size_t index, uint64_t epoch) {
+    static_cast<void>(scheduler_->enqueueMorsel(
+        OwnedMorsel(this->shared_from_this(), epoch, index)));
+  }
+
   // Append a Pending slot and offer it to helpers when eligible; false when
   // closed or cancelled. Shared core of `submitMorsel` (which fires) and
   // `trySubmitMorsel` (which reports).
@@ -812,11 +820,7 @@ class ExportJobState final
       }
     }
     if (shouldEnqueue) {
-      // Best-effort offload: a rejected morsel stays Pending and the
-      // coordinator runs it inline on the primary path (see
-      // `consumeNextResult`), so the return value is intentionally ignored.
-      static_cast<void>(scheduler_->enqueueMorsel(
-          OwnedMorsel(this->shared_from_this(), epochToSubmit, *index)));
+      tryOffloadMorsel(*index, epochToSubmit);
     }
     return true;
   }

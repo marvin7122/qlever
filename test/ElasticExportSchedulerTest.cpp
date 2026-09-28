@@ -838,7 +838,7 @@ TEST(ElasticExportSchedulerTest, OwnedMorselDerivesJobIdFromState) {
   EXPECT_EQ(morsel.jobId(), 42u);
   EXPECT_EQ(morsel.submissionEpoch_, 7u);
   EXPECT_EQ(morsel.morselIndex_, 3u);
-  EXPECT_EQ(morsel.jobState_, state);
+  EXPECT_EQ(morsel.jobState(), state);
 }
 
 TEST(ElasticExportSchedulerTest, OwnedMorselNullStateThrows) {
