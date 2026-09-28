@@ -249,6 +249,12 @@ struct RuntimeParameters {
   Bool vocabularyIouringPageCacheFastPath_{
       true, "vocabulary-iouring-page-cache-fast-path"};
 
+  // BENCH ONLY (branch bench/nowait8-hitcount): `posix_fadvise(POSIX_FADV_RANDOM)`
+  // on the on-disk vocabulary files before each batched lookup (disables
+  // kernel readahead beyond the requested ranges).
+  Bool vocabularyBenchFadviseRandom_{false,
+                                     "vocabulary-bench-fadvise-random"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

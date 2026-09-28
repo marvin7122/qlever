@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <atomic>
 #include <vector>
 
 #include "backports/algorithm.h"
@@ -263,6 +264,29 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
 // False once `readPageCacheHits` found that `RWF_NOWAIT` is not supported, or
 // if it is not available at compile time.
 bool pageCacheFastPathIsSupported();
+
+// BENCH ONLY (branch bench/nowait8-hitcount, not part of any PR): process-wide
+// counters of the page-cache fast path, printed to stderr as a
+// `FASTPATH_STATS` line (cumulative) at most every 200 ms while they change.
+struct FastPathBenchStats {
+  std::atomic<uint64_t> lookupBatchCalls{0};
+  std::atomic<uint64_t> offsetPairs{0};      // requested offset pairs
+  std::atomic<uint64_t> offsetPairHits{0};   // served by preadv2
+  std::atomic<uint64_t> offsetPairsRing{0};  // submitted to the ring
+  std::atomic<uint64_t> offsetRuns{0};
+  std::atomic<uint64_t> offsetRunHits{0};
+  std::atomic<uint64_t> words{0};
+  std::atomic<uint64_t> wordHits{0};
+  std::atomic<uint64_t> wordsRing{0};
+  std::atomic<uint64_t> wordBytes{0};
+  std::atomic<uint64_t> wordHitBytes{0};
+  std::atomic<uint64_t> preadvCalls{0};
+  std::atomic<uint64_t> preadvFull{0};     // every read of the run served
+  std::atomic<uint64_t> preadvEagain{0};   // returned -1 / EAGAIN
+  std::atomic<uint64_t> preadvPartial{0};  // returned fewer bytes than the run
+  std::atomic<uint64_t> fadviseCalls{0};
+};
+FastPathBenchStats& fastPathBenchStats();
 
 // Build a batch manager. When io_uring is compiled in and the runtime flag
 // `preferIoUring` is set, try to build an `IoUringManager`. If its setup

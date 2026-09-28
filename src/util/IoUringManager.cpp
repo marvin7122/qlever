@@ -14,6 +14,10 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <mutex>
+#include <thread>
 #include <cerrno>
 #include <climits>
 #include <stdexcept>
@@ -50,6 +54,52 @@ namespace {
 std::atomic<bool> pageCacheFastPathSupported{true};
 #endif
 }  // namespace
+
+//______________________________________________________________________________
+// BENCH ONLY, see `FastPathBenchStats`.
+FastPathBenchStats& fastPathBenchStats() {
+  static FastPathBenchStats stats;
+  static std::once_flag reporterStarted;
+  std::call_once(reporterStarted, [] {
+    std::thread([] {
+      uint64_t lastCalls = 0;
+      while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        auto& s = stats;
+        const uint64_t calls = s.lookupBatchCalls.load();
+        if (calls == lastCalls) {
+          continue;
+        }
+        lastCalls = calls;
+        std::fprintf(
+            stderr,
+            "FASTPATH_STATS calls=%llu offsetPairs=%llu offsetPairHits=%llu "
+            "offsetPairsRing=%llu offsetRuns=%llu offsetRunHits=%llu "
+            "words=%llu wordHits=%llu wordsRing=%llu wordBytes=%llu "
+            "wordHitBytes=%llu preadvCalls=%llu preadvFull=%llu "
+            "preadvEagain=%llu preadvPartial=%llu fadviseCalls=%llu\n",
+            (unsigned long long)calls,
+            (unsigned long long)s.offsetPairs.load(),
+            (unsigned long long)s.offsetPairHits.load(),
+            (unsigned long long)s.offsetPairsRing.load(),
+            (unsigned long long)s.offsetRuns.load(),
+            (unsigned long long)s.offsetRunHits.load(),
+            (unsigned long long)s.words.load(),
+            (unsigned long long)s.wordHits.load(),
+            (unsigned long long)s.wordsRing.load(),
+            (unsigned long long)s.wordBytes.load(),
+            (unsigned long long)s.wordHitBytes.load(),
+            (unsigned long long)s.preadvCalls.load(),
+            (unsigned long long)s.preadvFull.load(),
+            (unsigned long long)s.preadvEagain.load(),
+            (unsigned long long)s.preadvPartial.load(),
+            (unsigned long long)s.fadviseCalls.load());
+        std::fflush(stderr);
+      }
+    }).detach();
+  });
+  return stats;
+}
 
 //______________________________________________________________________________
 bool pageCacheFastPathIsSupported() {
@@ -102,6 +152,21 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
                        "vocabulary files; reading them without the "
                        "page-cache fast path"
                     << std::endl;
+      }
+    }
+    {
+      auto& st = fastPathBenchStats();
+      st.preadvCalls.fetch_add(1, std::memory_order_relaxed);
+      size_t runBytes = 0;
+      for (size_t k = runBegin; k < runEnd; ++k) {
+        runBytes += numBytes[k];
+      }
+      if (numBytesRead < 0) {
+        st.preadvEagain.fetch_add(1, std::memory_order_relaxed);
+      } else if (static_cast<size_t>(numBytesRead) >= runBytes) {
+        st.preadvFull.fetch_add(1, std::memory_order_relaxed);
+      } else {
+        st.preadvPartial.fetch_add(1, std::memory_order_relaxed);
       }
     }
     // Reads that were read completely are served, the others (from the first

@@ -17,7 +17,10 @@
 #include <array>
 
 #include "global/Constants.h"
+#include <fcntl.h>
+
 #include "global/RuntimeParameters.h"
+#include "util/IoUringManager.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -201,7 +204,10 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
+  auto& benchStats = ad_utility::fastPathBenchStats();
+  benchStats.offsetPairs.fetch_add(numIndices, std::memory_order_relaxed);
   if (!pageCacheFastPath) {
+    benchStats.offsetPairsRing.fetch_add(numIndices, std::memory_order_relaxed);
     manager.wait(
         manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
     return offsetPairs;
@@ -251,6 +257,13 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
       offsetPairs[i] = OffsetPair{runStart[i - begin], runStart[i - begin + 1]};
     }
   }
+  benchStats.offsetRuns.fetch_add(numRuns, std::memory_order_relaxed);
+  benchStats.offsetRunHits.fetch_add(numRuns - missedRuns.size(),
+                                     std::memory_order_relaxed);
+  benchStats.offsetPairHits.fetch_add(numIndices - missedPositions.size(),
+                                      std::memory_order_relaxed);
+  benchStats.offsetPairsRing.fetch_add(missedPositions.size(),
+                                       std::memory_order_relaxed);
   readThroughManager(manager, offsetsFile_.fd(), sizes, fileOffsets, targets,
                      missedPositions);
   return offsetPairs;
@@ -280,12 +293,30 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   // stay alive until `wait` returns.
   auto targets = builder.targets();
   ql::span<char*> targetSpan{targets};
+  auto& benchStats = ad_utility::fastPathBenchStats();
+  const size_t benchNumWords = sizes.size();
+  size_t benchBytes = 0;
+  for (size_t b : sizes) {
+    benchBytes += b;
+  }
+  benchStats.words.fetch_add(benchNumWords, std::memory_order_relaxed);
+  benchStats.wordBytes.fetch_add(benchBytes, std::memory_order_relaxed);
   if (pageCacheFastPath) {
     auto missed = ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets,
                                                 targetSpan);
+    size_t benchMissedBytes = 0;
+    for (size_t i : missed) {
+      benchMissedBytes += sizes[i];
+    }
+    benchStats.wordHits.fetch_add(benchNumWords - missed.size(),
+                                  std::memory_order_relaxed);
+    benchStats.wordsRing.fetch_add(missed.size(), std::memory_order_relaxed);
+    benchStats.wordHitBytes.fetch_add(benchBytes - benchMissedBytes,
+                                      std::memory_order_relaxed);
     readThroughManager(manager, file_.fd(), sizes, fileOffsets, targetSpan,
                        missed);
   } else {
+    benchStats.wordsRing.fetch_add(benchNumWords, std::memory_order_relaxed);
     manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targetSpan));
   }
   return std::move(builder).finalize();
@@ -311,6 +342,15 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
       getRuntimeParameter<
           &RuntimeParameters::vocabularyIouringPageCacheFastPath_>() &&
       ad_utility::pageCacheFastPathIsSupported();
+  ad_utility::fastPathBenchStats().lookupBatchCalls.fetch_add(
+      1, std::memory_order_relaxed);
+  if (getRuntimeParameter<
+          &RuntimeParameters::vocabularyBenchFadviseRandom_>()) {
+    ::posix_fadvise(file_.fd(), 0, 0, POSIX_FADV_RANDOM);
+    ::posix_fadvise(offsetsFile_.fd(), 0, 0, POSIX_FADV_RANDOM);
+    ad_utility::fastPathBenchStats().fadviseCalls.fetch_add(
+        1, std::memory_order_relaxed);
+  }
   auto offsetPairs = readOffsetPairs(*manager, indices, pageCacheFastPath);
   return readStrings(*manager, offsetPairs, pageCacheFastPath);
 }
