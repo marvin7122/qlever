@@ -6,8 +6,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_UTIL_EXPORT_PROTOTYPES_REGISTEREDIOURINGREADER_H
-#define QLEVER_SRC_UTIL_EXPORT_PROTOTYPES_REGISTEREDIOURINGREADER_H
+#ifndef QLEVER_SRC_UTIL_REGISTEREDIOURINGREADER_H
+#define QLEVER_SRC_UTIL_REGISTEREDIOURINGREADER_H
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -67,6 +68,11 @@ inline constexpr size_t kDirectIoAlignment = 4096;
   return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0;
 }
 
+// The message of the current `errno`. Unlike `strerror`, this is thread-safe.
+inline std::string errnoMessage() {
+  return std::system_category().message(errno);
+}
+
 // _____________________________________________________________________________
 // RAII wrapper for an open file descriptor with Direct I/O (O_DIRECT) support.
 class DirectIoFile {
@@ -105,10 +111,11 @@ class DirectIoFile {
     return *this;
   }
 
+  // Open `path`. On failure this throws and the object is closed (as after
+  // `close()`), whatever it held before.
   void open(std::string_view path, bool useDirectIo, bool readOnly = true) {
     close();
-    path_ = std::string(path);
-    isDirect_ = useDirectIo;
+    std::string pathString{path};
 
     int flags = readOnly ? O_RDONLY : O_RDWR;
 #ifdef O_DIRECT
@@ -120,31 +127,40 @@ class DirectIoFile {
     flags |= O_NOATIME;
 #endif
 
-    fd_ = ::open(path_.c_str(), flags);
+    int fd = ::open(pathString.c_str(), flags);
 #ifdef O_NOATIME
     // `O_NOATIME` is only permitted for the owner of the file.
-    if (fd_ < 0 && errno == EPERM) {
-      fd_ = ::open(path_.c_str(), flags & ~O_NOATIME);
+    if (fd < 0 && errno == EPERM) {
+      fd = ::open(pathString.c_str(), flags & ~O_NOATIME);
     }
 #endif
-    if (fd_ < 0) {
-      AD_THROW(absl::StrCat("Failed to open file: ", path_,
-                            " (errno: ", strerror(errno), ")"));
+    if (fd < 0) {
+      AD_THROW(absl::StrCat("Failed to open file: ", pathString, " (",
+                            errnoMessage(), ")"));
     }
 
     struct stat st {};
-    if (::fstat(fd_, &st) != 0) {
-      close();
-      AD_THROW(absl::StrCat("Failed to stat file: ", path_));
+    if (::fstat(fd, &st) != 0) {
+      const std::string message = errnoMessage();
+      ::close(fd);
+      AD_THROW(absl::StrCat("Failed to stat file: ", pathString, " (", message,
+                            ")"));
     }
+    fd_ = fd;
+    isDirect_ = useDirectIo;
     fileSize_ = static_cast<uint64_t>(st.st_size);
+    path_ = std::move(pathString);
   }
 
+  // Close the file (if open) and reset the object to its default state.
   void close() noexcept {
     if (fd_ >= 0) {
       ::close(fd_);
       fd_ = -1;
     }
+    isDirect_ = false;
+    fileSize_ = 0;
+    path_.clear();
   }
 
   [[nodiscard]] int fd() const noexcept { return fd_; }
@@ -159,7 +175,11 @@ class DirectIoFile {
 // Guarantees 4KB page alignment for Direct I/O and zero-copy DMA pinning.
 class PinnedArena {
  private:
-  void* rawBuffer_ = nullptr;
+  // Releases a buffer from `posix_memalign`.
+  struct FreeDeleter {
+    void operator()(char* buffer) const noexcept { std::free(buffer); }
+  };
+  std::unique_ptr<char, FreeDeleter> buffer_;
   size_t totalBytes_ = 0;
   size_t slotSize_ = 0;
   size_t numSlots_ = 0;
@@ -182,30 +202,22 @@ class PinnedArena {
     AD_CONTRACT_CHECK(numSlots <=
                       std::numeric_limits<size_t>::max() / slotSizeBytes);
     totalBytes_ = numSlots * slotSizeBytes;
-    // Reserve before allocating the arena: a throwing `reserve` after
-    // `posix_memalign` would leak the arena (the destructor does not run for
-    // an object whose constructor throws). The `push_back`s below do not throw.
     iovecs_.reserve(numSlots_);
 
-    int ret = posix_memalign(&rawBuffer_, kDirectIoAlignment, totalBytes_);
-    if (ret != 0 || rawBuffer_ == nullptr) {
+    void* allocated = nullptr;
+    int ret = posix_memalign(&allocated, kDirectIoAlignment, totalBytes_);
+    if (ret != 0 || allocated == nullptr) {
       AD_THROW("posix_memalign failed to allocate pinned buffer arena");
     }
+    buffer_.reset(static_cast<char*>(allocated));
 
     // Zero out memory to pre-fault pages before kernel DMA registration.
-    std::memset(rawBuffer_, 0, totalBytes_);
+    std::memset(buffer_.get(), 0, totalBytes_);
 
-    auto* basePtr = static_cast<char*>(rawBuffer_);
+    char* basePtr = buffer_.get();
     for (size_t i = 0; i < numSlots_; ++i) {
       iovecs_.push_back(
           iovec{.iov_base = basePtr + (i * slotSize_), .iov_len = slotSize_});
-    }
-  }
-
-  ~PinnedArena() {
-    if (rawBuffer_ != nullptr) {
-      std::free(rawBuffer_);
-      rawBuffer_ = nullptr;
     }
   }
 
@@ -213,7 +225,7 @@ class PinnedArena {
   PinnedArena& operator=(const PinnedArena&) = delete;
 
   PinnedArena(PinnedArena&& other) noexcept
-      : rawBuffer_{std::exchange(other.rawBuffer_, nullptr)},
+      : buffer_{std::move(other.buffer_)},
         totalBytes_{std::exchange(other.totalBytes_, 0)},
         slotSize_{std::exchange(other.slotSize_, 0)},
         numSlots_{std::exchange(other.numSlots_, 0)},
@@ -221,10 +233,7 @@ class PinnedArena {
 
   PinnedArena& operator=(PinnedArena&& other) noexcept {
     if (this != &other) {
-      if (rawBuffer_ != nullptr) {
-        std::free(rawBuffer_);
-      }
-      rawBuffer_ = std::exchange(other.rawBuffer_, nullptr);
+      buffer_ = std::move(other.buffer_);
       totalBytes_ = std::exchange(other.totalBytes_, 0);
       slotSize_ = std::exchange(other.slotSize_, 0);
       numSlots_ = std::exchange(other.numSlots_, 0);
@@ -236,22 +245,19 @@ class PinnedArena {
   [[nodiscard]] size_t numSlots() const noexcept { return numSlots_; }
   [[nodiscard]] size_t slotSize() const noexcept { return slotSize_; }
   [[nodiscard]] size_t totalBytes() const noexcept { return totalBytes_; }
-  [[nodiscard]] char* data() noexcept { return static_cast<char*>(rawBuffer_); }
-  [[nodiscard]] const char* data() const noexcept {
-    return static_cast<const char*>(rawBuffer_);
-  }
+  [[nodiscard]] char* data() noexcept { return buffer_.get(); }
+  [[nodiscard]] const char* data() const noexcept { return buffer_.get(); }
 
   // Access a specific block slot as a span.
   [[nodiscard]] ql::span<char> getSlotSpan(size_t slotIndex) {
     AD_CONTRACT_CHECK(slotIndex < numSlots_);
-    auto* slotPtr = static_cast<char*>(rawBuffer_) + (slotIndex * slotSize_);
+    char* slotPtr = buffer_.get() + (slotIndex * slotSize_);
     return {slotPtr, slotSize_};
   }
 
   [[nodiscard]] ql::span<const char> getSlotSpan(size_t slotIndex) const {
     AD_CONTRACT_CHECK(slotIndex < numSlots_);
-    const auto* slotPtr =
-        static_cast<const char*>(rawBuffer_) + (slotIndex * slotSize_);
+    const char* slotPtr = buffer_.get() + (slotIndex * slotSize_);
     return {slotPtr, slotSize_};
   }
 
@@ -473,12 +479,12 @@ class BasicRegisteredIoUringReader {
         registeredFds_{std::move(other.registeredFds_)},
         registeredIovecs_{std::move(other.registeredIovecs_)},
         numInFlightRequests_{std::exchange(other.numInFlightRequests_, 0)},
-        nextBatchId_{other.nextBatchId_},
+        nextBatchId_{std::exchange(other.nextBatchId_, 1)},
         inFlightByReqId_{std::move(other.inFlightByReqId_)},
         inFlightByBatchId_{std::move(other.inFlightByBatchId_)},
         results_{std::move(other.results_)},
         errors_{std::move(other.errors_)},
-        nextReqId_{other.nextReqId_} {}
+        nextReqId_{std::exchange(other.nextReqId_, 0)} {}
 
   BasicRegisteredIoUringReader& operator=(
       BasicRegisteredIoUringReader&& other) noexcept {
@@ -492,12 +498,12 @@ class BasicRegisteredIoUringReader {
       registeredFds_ = std::move(other.registeredFds_);
       registeredIovecs_ = std::move(other.registeredIovecs_);
       numInFlightRequests_ = std::exchange(other.numInFlightRequests_, 0);
-      nextBatchId_ = other.nextBatchId_;
+      nextBatchId_ = std::exchange(other.nextBatchId_, 1);
       inFlightByReqId_ = std::move(other.inFlightByReqId_);
       inFlightByBatchId_ = std::move(other.inFlightByBatchId_);
       results_ = std::move(other.results_);
       errors_ = std::move(other.errors_);
-      nextReqId_ = other.nextReqId_;
+      nextReqId_ = std::exchange(other.nextReqId_, 0);
     }
     return *this;
   }
@@ -585,7 +591,9 @@ class BasicRegisteredIoUringReader {
         AD_CONTRACT_CHECK(req.destination ==
                           static_cast<char*>(buffer.iov_base) +
                               req.bufferOffset);
-        AD_CONTRACT_CHECK(req.bufferOffset + req.numBytes <= buffer.iov_len);
+        // Widen before adding: two `uint32_t` values can wrap around.
+        AD_CONTRACT_CHECK(size_t{req.bufferOffset} + size_t{req.numBytes} <=
+                          buffer.iov_len);
       }
     }
     inFlightByBatchId_[batchId] = requests.size();
@@ -656,7 +664,7 @@ class BasicRegisteredIoUringReader {
     ssize_t bytesRead =
         ::pread(fd, dest.data(), dest.size(), static_cast<off_t>(offset));
     if (bytesRead < 0) {
-      AD_THROW(absl::StrCat("pread failed (errno: ", strerror(errno), ")"));
+      AD_THROW(absl::StrCat("pread failed (", errnoMessage(), ")"));
     }
     if (static_cast<size_t>(bytesRead) != dest.size()) {
       AD_THROW("pread read fewer bytes than requested");
@@ -753,4 +761,4 @@ using RegisteredIoUringReader = BasicRegisteredIoUringReader<LiburingRing>;
 
 }  // namespace ad_utility::export_prototypes
 
-#endif  // QLEVER_SRC_UTIL_EXPORT_PROTOTYPES_REGISTEREDIOURINGREADER_H
+#endif  // QLEVER_SRC_UTIL_REGISTEREDIOURINGREADER_H
