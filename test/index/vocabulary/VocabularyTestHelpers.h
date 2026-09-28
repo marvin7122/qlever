@@ -9,11 +9,13 @@
 #include <gmock/gmock.h>
 
 #include <array>
+#include <string>
 
 #include "../../util/GTestHelpers.h"
 #include "backports/span.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
+#include "util/File.h"
 
 // human-readable output for the `WordAndIndex` class within GTest.
 inline void PrintTo(const WordAndIndex& wi, std::ostream* osPtr) {
@@ -305,9 +307,9 @@ inline constexpr std::array<std::string_view, 4> defaultTestWords{
 
 // Feed `words` into an already-constructed word `writer` and `finish()` it. The
 // `words` must be sorted.
-template <typename Writer>
-void writeWordsAndFinish(
-    Writer& writer, ql::span<const std::string_view> words = defaultTestWords) {
+template <typename Writer, typename Range = ql::span<const std::string_view>>
+void writeWordsAndFinish(Writer& writer,
+                         const Range& words = defaultTestWords) {
   for (const auto& word : words) {
     writer(word, false);
   }
@@ -392,7 +394,7 @@ template <typename Vocab, typename Indices>
 void assertLookupResultMatchesVocabularyAtIndices(
     const Vocab& vocab, const VocabBatchLookupResult& lookupResult,
     const Indices& indices) {
-  ASSERT_EQ(lookupResult->size(), ql::ranges::distance(indices));
+  ASSERT_EQ(lookupResult.size(), ql::ranges::distance(indices));
 
   auto at = [&](size_t i) -> decltype(auto) {
     if constexpr (requires { vocab[i]; }) {
@@ -404,8 +406,8 @@ void assertLookupResultMatchesVocabularyAtIndices(
   };
 
   for (const auto& [resultWord, idx] :
-       ::ranges::views::zip(*lookupResult, indices)) {
-    EXPECT_EQ(resultWord, at(idx)) << " at  vocabulary index " << idx;
+       ::ranges::views::zip(lookupResult, indices)) {
+    EXPECT_EQ(resultWord, at(idx)) << " at vocabulary index " << idx;
   }
 }
 
@@ -424,6 +426,42 @@ void assertStreamedLookupMatchesVocabularyAtIndices(
     assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
   }
 }
+
+// RAII guard that owns the on-disk files of a `SplitVocabulary` for the
+// given base filename and deletes them when it goes out of scope, even when
+// an assertion fails or an exception is thrown.
+//
+// The owned paths are derived from the vocabulary's own split-filename
+// function (`SplitVocabulary::splitFilenameFunction_`), the same function
+// the implementation uses to name the underlying files, so they can never
+// drift from the implementation. For example, a two-way split owns `{base,
+// base.a}` and a three-way split owns `{base.a, base.b, base.c}`.
+//
+// The guard must be destroyed after the vocabulary is closed: declare it
+// before the vocabulary, so that reverse destruction order deletes the files
+// last. Deleting a file that was never created is a silent no-op.
+template <typename SplitVocabulary>
+class ScopedSplitVocabularyFiles {
+ public:
+  explicit ScopedSplitVocabularyFiles(const std::string& filename)
+      : filenames_{SplitVocabulary::splitFilenameFunction_(filename)} {}
+
+  ScopedSplitVocabularyFiles(const ScopedSplitVocabularyFiles&) = delete;
+  ScopedSplitVocabularyFiles& operator=(const ScopedSplitVocabularyFiles&) =
+      delete;
+  ScopedSplitVocabularyFiles(ScopedSplitVocabularyFiles&&) = delete;
+  ScopedSplitVocabularyFiles& operator=(ScopedSplitVocabularyFiles&&) = delete;
+
+  ~ScopedSplitVocabularyFiles() {
+    for (const auto& path : filenames_) {
+      ad_utility::deleteFile(path, false);
+    }
+  }
+
+ private:
+  // The underlying filenames, exactly as the vocabulary derives them.
+  std::array<std::string, SplitVocabulary::numberOfVocabs> filenames_;
+};
 
 }  // namespace vocabulary_test
 

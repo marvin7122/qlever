@@ -32,8 +32,10 @@
 #include <exception>
 #include <sstream>
 
+#include "global/RuntimeParameters.h"
 #include "util/CompilerWarnings.h"
 #include "util/Exception.h"
+#include "util/StreamingBufferWriter.h"
 #include "util/TypeTraits.h"
 #endif
 
@@ -67,9 +69,19 @@ class stream_generator_promise {
   std::array<char, BUFFER_SIZE> data_;
   size_t currentIndex_ = 0;
   static_assert(BUFFER_SIZE > 0, "Buffer size must be greater than zero");
+  // The number of bytes after which a chunk is handed to the consumer. It is
+  // at most `BUFFER_SIZE` and only changes at a chunk boundary, see
+  // `setChunkCapacity`.
+  size_t capacity_ = BUFFER_SIZE;
+  // The capacity that becomes active when the next chunk starts.
+  size_t nextCapacity_ = BUFFER_SIZE;
   // Temporarily store data that didn't fit into the buffer so far.
   std::string_view overflow_;
   std::exception_ptr exception_;
+  // Set whenever a non-temporal store was used to write into `data_` since
+  // the last fence. Checked (and cleared) in `value()` so that the buffer's
+  // contents are guaranteed visible before they are handed to the consumer.
+  bool pendingNonTemporalFence_ = false;
 
  public:
   using value_type = std::string_view;
@@ -91,16 +103,17 @@ class stream_generator_promise {
   suspend_sometimes yield_value(std::string_view value) noexcept {
     if (isBufferLargeEnough(value)) {
       if (!value.empty()) {
-        std::memcpy(data_.data() + currentIndex_, value.data(), value.size());
+        copyIntoBuffer(data_.data() + currentIndex_, value.data(),
+                       value.size());
       }
       currentIndex_ += value.size();
       overflow_ = {};
-      // Only suspend if we reached the maximum capacity exactly.
-      return suspend_sometimes{currentIndex_ == BUFFER_SIZE};
+      // Only suspend if we reached the capacity exactly.
+      return suspend_sometimes{currentIndex_ == capacity_};
     }
-    size_t fittingSize = BUFFER_SIZE - currentIndex_;
-    std::memcpy(data_.data() + currentIndex_, value.data(), fittingSize);
-    currentIndex_ = BUFFER_SIZE;
+    size_t fittingSize = capacity_ - currentIndex_;
+    copyIntoBuffer(data_.data() + currentIndex_, value.data(), fittingSize);
+    currentIndex_ = capacity_;
     overflow_ = value.substr(fittingSize);
     return suspend_sometimes{true};
   }
@@ -127,14 +140,31 @@ class stream_generator_promise {
   // buffer still has capacity after this, false otherwise.
   bool commitOverflow() noexcept {
     currentIndex_ = 0;
+    capacity_ = nextCapacity_;
     return yield_value(overflow_).await_ready();
+  }
+
+  // Set the number of bytes after which the following chunks are handed to the
+  // consumer (at most `BUFFER_SIZE`). The new capacity applies to the next
+  // chunk that is started, so a chunk that is currently being filled keeps its
+  // size.
+  void setChunkCapacity(size_t capacity) {
+    AD_CONTRACT_CHECK(capacity > 0 && capacity <= BUFFER_SIZE);
+    nextCapacity_ = capacity;
+    if (currentIndex_ == 0 && overflow_.empty()) {
+      capacity_ = capacity;
+    }
   }
 
   void unhandled_exception() { exception_ = std::current_exception(); }
 
   constexpr void return_void() const noexcept {}
 
-  reference_type value() const noexcept {
+  reference_type value() noexcept {
+    if (pendingNonTemporalFence_) {
+      ad_utility::StreamingBufferWriter::sfence();
+      pendingNonTemporalFence_ = false;
+    }
     return std::string_view{data_.data(), currentIndex_};
   }
 
@@ -152,7 +182,23 @@ class stream_generator_promise {
   // Return true if the buffer still has enough capacity remaining to copy
   // `value` in its entirety.
   bool isBufferLargeEnough(std::string_view value) const {
-    return currentIndex_ + value.size() <= BUFFER_SIZE;
+    return currentIndex_ + value.size() <= capacity_;
+  }
+
+  // Copy `count` bytes from `src` to `dest` (both inside `data_`). Behind the
+  // `use-non-temporal-export-buffer` runtime parameter (off by default), this
+  // uses non-temporal (cache-bypassing) stores so that large export buffers
+  // don't evict hot vocabulary/index data from the cache; `value()` then
+  // fences before handing the buffer to the consumer. Off, this is a plain
+  // `memcpy`.
+  void copyIntoBuffer(char* dest, const char* src, size_t count) {
+    if (::getRuntimeParameter<
+            &RuntimeParameters::useNonTemporalExportBuffer_>()) {
+      ad_utility::StreamingBufferWriter::streamCopyNoFence(dest, src, count);
+      pendingNonTemporalFence_ = true;
+    } else {
+      std::memcpy(dest, src, count);
+    }
   }
 };
 
@@ -242,6 +288,7 @@ class [[nodiscard]] basic_stream_generator {
   using promise_type = detail::stream_generator_promise<BUFFER_SIZE>;
   using iterator = detail::stream_generator_iterator<BUFFER_SIZE>;
   using value_type = typename iterator::value_type;
+  static constexpr size_t bufferSize = BUFFER_SIZE;
 
  private:
   std::coroutine_handle<promise_type> coroutine_ = nullptr;
@@ -282,6 +329,15 @@ class [[nodiscard]] basic_stream_generator {
 
   detail::stream_generator_sentinel end() noexcept {
     return detail::stream_generator_sentinel{};
+  }
+
+  // Hand chunks of `capacity` bytes (at most `BUFFER_SIZE`) to the consumer
+  // instead of chunks of `BUFFER_SIZE` bytes. Called before `begin()`, it
+  // determines the size of the first chunk; called while iterating, it
+  // determines the size of the chunks after the current one.
+  void setChunkCapacity(size_t capacity) {
+    AD_CONTRACT_CHECK(coroutine_ != nullptr);
+    coroutine_.promise().setChunkCapacity(capacity);
   }
 
  private:
