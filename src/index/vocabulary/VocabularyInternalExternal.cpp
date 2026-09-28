@@ -25,38 +25,28 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  // Collect the indices that miss the internal vocabulary, so that the
-  // external vocabulary serves all of them in one batch (from its `io_uring`
-  // ring pool).
-  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-  data->buffer().resize(indices.size());
+  // The result owns no string bytes: words cached in the internal vocabulary
+  // are views into its RAM, and all misses are served in one external batch
+  // (from its `io_uring` ring pool), whose views are re-arranged into place.
+  auto data = std::make_shared<BorrowedVocabBatchLookupData>();
+  auto& views = data->views();
+  views.resize(indices.size());
   std::vector<size_t> missPositions;
   std::vector<size_t> missIndices;
   missPositions.reserve(indices.size());
   missIndices.reserve(indices.size());
-  for (size_t i = 0; i < indices.size(); ++i) {
-    if (auto hit = internalVocab_[indices[i]]; hit.has_value()) {
-      data->buffer()[i] = std::string{hit.value()};
+  for (auto [position, index] : ::ranges::views::enumerate(indices)) {
+    if (auto hit = internalVocab_[index]; hit.has_value()) {
+      views[position] = hit.value();
     } else {
-      missPositions.push_back(i);
-      missIndices.push_back(indices[i]);
+      missPositions.push_back(position);
+      missIndices.push_back(index);
     }
   }
   if (!missIndices.empty()) {
-    auto external = externalVocab_.lookupBatch(missIndices);
-    AD_CONTRACT_CHECK(external->size() == missIndices.size());
-    for (const auto& [position, word] :
-         ::ranges::views::zip(missPositions, *external)) {
-      data->buffer()[position] = std::string{word};
-    }
+    data->borrowFrom(externalVocab_.lookupBatch(missIndices), missPositions);
   }
-  // Build the views only after the buffer is complete, so that no reallocation
-  // can move the bytes the views point into.
-  data->views().reserve(data->buffer().size());
-  for (const auto& word : data->buffer()) {
-    data->views().emplace_back(word);
-  }
-  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+  return BorrowedVocabBatchLookupData::asResult(std::move(data));
 }
 
 // _____________________________________________________________________________

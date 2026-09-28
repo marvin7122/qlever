@@ -153,3 +153,65 @@ TEST(VocabularyInternalExternal, LookupBatch) {
                              "epsilon", "alpha", "zeta", "gamma", "beta"));
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
+
+// _____________________________________________________________________________
+TEST(VocabularyInternalExternal, LookupBatchDoesNotCopyWords) {
+  // Words longer than the small-string buffer, so a copy would be visible as a
+  // new allocation. Odd indices are cached in the internal vocabulary, even
+  // indices are only stored in the external vocabulary.
+  std::vector<std::string> words;
+  for (char c : std::string_view{"abcdef"}) {
+    words.push_back(std::string(40, c));
+  }
+  auto vocab = createVocabulary("LookupBatchNoCopy")(words);
+  std::vector<size_t> indices{3, 0, 3, 5, 1, 4, 0, 5, 2, 1};
+  auto result = vocab.lookupBatch(indices);
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+
+  // Hits in the internal vocabulary are views directly into its storage.
+  std::vector<std::string_view> missViews;
+  for (auto [view, index] : ::ranges::views::zip(*result, indices)) {
+    if (auto internal = vocab.internalVocab()[index]; internal.has_value()) {
+      EXPECT_EQ(view.data(), internal.value().data());
+    } else {
+      missViews.push_back(view);
+    }
+  }
+  // The misses are views into the one buffer that the external batch lookup
+  // filled (contiguously, in the order of the misses), not copies of it.
+  ASSERT_EQ(missViews.size(), 4u);
+  for (auto [previous, next] :
+       ::ranges::views::zip(missViews, missViews | ::ranges::views::drop(1))) {
+    EXPECT_EQ(previous.data() + previous.size(), next.data());
+  }
+}
+
+// _____________________________________________________________________________
+TEST(VocabularyInternalExternal, LookupBatchKeepsExternalBatchAlive) {
+  const std::vector<std::string> words{"alpha", "beta",    "gamma",
+                                       "delta", "epsilon", "zeta"};
+  auto vocab = createVocabulary("LookupBatchAlive")(words);
+  // Only misses of the internal vocabulary (even indices): the result consists
+  // of borrowed views of the external batch only.
+  std::vector<size_t> missesOnly{4, 2, 0, 2};
+  auto result = vocab.lookupBatch(missesOnly);
+  // Further lookups (which reuse the pooled I/O managers of the external
+  // vocabulary) do not touch the storage that `result` borrows.
+  for (size_t i = 0; i < 10; ++i) {
+    std::vector<size_t> other{0, 2, 4, 1, 3, 5};
+    auto otherResult = vocab.lookupBatch(other);
+    EXPECT_THAT(*otherResult,
+                ::testing::ElementsAre("alpha", "gamma", "epsilon", "beta",
+                                       "delta", "zeta"));
+  }
+  // A copy of the result shares the borrowed storage; the original handle can
+  // be dropped.
+  auto copy = result;
+  result.reset();
+  EXPECT_THAT(*copy,
+              ::testing::ElementsAre("epsilon", "gamma", "alpha", "gamma"));
+  // Hits only: no external batch is borrowed.
+  std::vector<size_t> hitsOnly{5, 1};
+  auto hitsResult = vocab.lookupBatch(hitsOnly);
+  EXPECT_THAT(*hitsResult, ::testing::ElementsAre("zeta", "beta"));
+}
