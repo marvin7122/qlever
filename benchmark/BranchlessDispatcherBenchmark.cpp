@@ -38,6 +38,11 @@ namespace {
 // the formatting work being measured.
 volatile size_t gFormattedBytesSink = 0;
 
+// Upper bound on the output of one term of the generated dataset (the longest
+// is an IRI of about 40 bytes with its delimiters, or an integer with its
+// datatype suffix).
+constexpr size_t maxBytesPerTerm = 128;
+
 // _____________________________________________________________________________
 // Copy a string literal into `out` without a magic length: `sizeof` counts
 // the terminator, so `N - 1` is exactly the payload size.
@@ -220,15 +225,17 @@ struct BranchingSwitchDispatcher {
     }
   }
 
+  // `out` must hold `maxBytesPerTerm` bytes per term.
   static size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
-      char* out) noexcept {
-    char* curr = out;
-    const size_t numTerms = ids.size();
-    for (size_t i = 0; i < numTerms; ++i) {
+      ql::span<char> out) {
+    AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
+    AD_CONTRACT_CHECK(out.size() / maxBytesPerTerm >= ids.size());
+    char* curr = out.data();
+    for (size_t i = 0; i < ids.size(); ++i) {
       curr = dispatchTermFormat(ids[i], rawTerms[i], curr);
     }
-    return static_cast<size_t>(curr - out);
+    return static_cast<size_t>(curr - out.data());
   }
 };
 
@@ -301,15 +308,17 @@ struct BranchingIfElseDispatcher {
     return out;
   }
 
+  // `out` must hold `maxBytesPerTerm` bytes per term.
   static size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
-      char* out) noexcept {
-    char* curr = out;
-    const size_t numTerms = ids.size();
-    for (size_t i = 0; i < numTerms; ++i) {
+      ql::span<char> out) {
+    AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
+    AD_CONTRACT_CHECK(out.size() / maxBytesPerTerm >= ids.size());
+    char* curr = out.data();
+    for (size_t i = 0; i < ids.size(); ++i) {
       curr = dispatchTermFormat(ids[i], rawTerms[i], curr);
     }
-    return static_cast<size_t>(curr - out);
+    return static_cast<size_t>(curr - out.data());
   }
 };
 
@@ -376,14 +385,13 @@ struct BenchmarkResult {
 template <typename Dispatcher>
 BenchmarkResult runBenchmark(const std::string& name,
                              const BenchmarkDataset& ds,
-                             std::vector<char>& outputBuffer,
+                             ql::span<char> outputBuffer,
                              HardwarePerfCounter& perf, size_t iterations = 5) {
   if (ds.ids_.empty()) {
     return BenchmarkResult{name, 0.0, 0.0, 0.0, 0, 0, 0.0, 0.0, 0};
   }
   // Warmup
-  Dispatcher::dispatchBatchTermFormat(ds.ids_, ds.rawTerms_,
-                                      outputBuffer.data());
+  Dispatcher::dispatchBatchTermFormat(ds.ids_, ds.rawTerms_, outputBuffer);
 
   double totalMs = 0.0;
   uint64_t totalBranches = 0;
@@ -395,7 +403,7 @@ BenchmarkResult runBenchmark(const std::string& name,
     auto t0 = std::chrono::high_resolution_clock::now();
 
     bytesWritten = Dispatcher::dispatchBatchTermFormat(ds.ids_, ds.rawTerms_,
-                                                       outputBuffer.data());
+                                                       outputBuffer);
 
     auto t1 = std::chrono::high_resolution_clock::now();
     uint64_t branches = 0;
@@ -503,8 +511,7 @@ int main(int argc, char** argv) {
             << " terms...\n";
   auto dataset = BenchmarkDataset::generate(numTerms);
 
-  // Output buffer: 128 bytes per formatted term.
-  std::vector<char> outputBuffer(numTerms * 128);
+  std::vector<char> outputBuffer(numTerms * maxBytesPerTerm);
 
   HardwarePerfCounter perf;
   if (perf.isSupported()) {
