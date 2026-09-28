@@ -148,8 +148,8 @@ TEST(VocabularyInternalExternal, LookupBatch) {
   auto vocab = createVocabulary("LookupBatch")(words);
   std::vector<size_t> indices{3, 0, 3, 5, 1, 4, 0, 5, 2, 1};
   auto result = vocab.lookupBatch(indices);
-  EXPECT_THAT((*result), ::testing::ElementsAre(
-                             "delta", "alpha", "delta", "zeta", "beta",
-                             "epsilon", "alpha", "zeta", "gamma", "beta"));
+  EXPECT_THAT(result, ::testing::ElementsAre("delta", "alpha", "delta", "zeta",
+                                             "beta", "epsilon", "alpha", "zeta",
+                                             "gamma", "beta"));
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
