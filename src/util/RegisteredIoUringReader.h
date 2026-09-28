@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -67,6 +68,11 @@ inline constexpr size_t kDirectIoAlignment = 4096;
   return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0;
 }
 
+// The message of the current `errno`. Unlike `strerror`, this is thread-safe.
+inline std::string errnoMessage() {
+  return std::system_category().message(errno);
+}
+
 // _____________________________________________________________________________
 // RAII wrapper for an open file descriptor with Direct I/O (O_DIRECT) support.
 class DirectIoFile {
@@ -105,10 +111,11 @@ class DirectIoFile {
     return *this;
   }
 
+  // Open `path`. On failure this throws and the object is closed (as after
+  // `close()`), whatever it held before.
   void open(std::string_view path, bool useDirectIo, bool readOnly = true) {
     close();
-    path_ = std::string(path);
-    isDirect_ = useDirectIo;
+    std::string pathString{path};
 
     int flags = readOnly ? O_RDONLY : O_RDWR;
 #ifdef O_DIRECT
@@ -120,31 +127,40 @@ class DirectIoFile {
     flags |= O_NOATIME;
 #endif
 
-    fd_ = ::open(path_.c_str(), flags);
+    int fd = ::open(pathString.c_str(), flags);
 #ifdef O_NOATIME
     // `O_NOATIME` is only permitted for the owner of the file.
-    if (fd_ < 0 && errno == EPERM) {
-      fd_ = ::open(path_.c_str(), flags & ~O_NOATIME);
+    if (fd < 0 && errno == EPERM) {
+      fd = ::open(pathString.c_str(), flags & ~O_NOATIME);
     }
 #endif
-    if (fd_ < 0) {
-      AD_THROW(absl::StrCat("Failed to open file: ", path_,
-                            " (errno: ", strerror(errno), ")"));
+    if (fd < 0) {
+      AD_THROW(absl::StrCat("Failed to open file: ", pathString, " (",
+                            errnoMessage(), ")"));
     }
 
     struct stat st {};
-    if (::fstat(fd_, &st) != 0) {
-      close();
-      AD_THROW(absl::StrCat("Failed to stat file: ", path_));
+    if (::fstat(fd, &st) != 0) {
+      const std::string message = errnoMessage();
+      ::close(fd);
+      AD_THROW(absl::StrCat("Failed to stat file: ", pathString, " (", message,
+                            ")"));
     }
+    fd_ = fd;
+    isDirect_ = useDirectIo;
     fileSize_ = static_cast<uint64_t>(st.st_size);
+    path_ = std::move(pathString);
   }
 
+  // Close the file (if open) and reset the object to its default state.
   void close() noexcept {
     if (fd_ >= 0) {
       ::close(fd_);
       fd_ = -1;
     }
+    isDirect_ = false;
+    fileSize_ = 0;
+    path_.clear();
   }
 
   [[nodiscard]] int fd() const noexcept { return fd_; }
@@ -656,7 +672,7 @@ class BasicRegisteredIoUringReader {
     ssize_t bytesRead =
         ::pread(fd, dest.data(), dest.size(), static_cast<off_t>(offset));
     if (bytesRead < 0) {
-      AD_THROW(absl::StrCat("pread failed (errno: ", strerror(errno), ")"));
+      AD_THROW(absl::StrCat("pread failed (", errnoMessage(), ")"));
     }
     if (static_cast<size_t>(bytesRead) != dest.size()) {
       AD_THROW("pread read fewer bytes than requested");

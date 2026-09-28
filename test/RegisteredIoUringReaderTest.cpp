@@ -284,6 +284,17 @@ TEST(RegisteredIoUringReader, DirectIoFileOpenCloseAndMove) {
   EXPECT_TRUE(file.isOpen());
   EXPECT_EQ(file.size(), 100u);
 
+  // A failed reopen leaves the object closed, with nothing of the previous
+  // file (size, path, `O_DIRECT` flag) left over.
+  auto [missingFile, missingCleanup] =
+      ad_utility::testing::filenameForTesting();
+  EXPECT_THROW(file.open(missingFile.string(), true), ad_utility::Exception);
+  EXPECT_FALSE(file.isOpen());
+  EXPECT_EQ(file.size(), 0u);
+  EXPECT_TRUE(file.path().empty());
+  EXPECT_FALSE(file.isDirect());
+  file.open(tmpFile.string(), false);
+
   // The move constructor transfers ownership; the source is closed.
   DirectIoFile moved{std::move(file)};
   EXPECT_FALSE(file.isOpen());
