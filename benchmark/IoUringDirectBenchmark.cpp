@@ -273,7 +273,8 @@ class IoUringDirectBenchmark : public BenchmarkInterface {
     for (const BatchOrder order :
          {BatchOrder::FileOrder, BatchOrder::Shuffled}) {
       ResultGroup& strategyGroup = results.addGroup(absl::StrCat(
-          "4 KiB block reads of a 1 GiB file, batches in ",
+          kBlockSizeBytes >> 10, " KiB block reads of a ", kFileSizeBytes >> 30,
+          " GiB file, batches in ",
           order == BatchOrder::FileOrder ? "file order" : "shuffled order"));
       for (const ReadStrategy& strategy : kReadStrategies) {
         size_t numBytesRead = 0;
