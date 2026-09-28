@@ -226,7 +226,8 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
       const size_t live = liveSessionCount_.load(std::memory_order_relaxed);
       const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
       const size_t share = fairShareUnsafe(live);
-      const size_t committed = committedOutstandingUnsafe(morsel.jobId_);
+      const uint64_t jobId = morsel.jobId();
+      const size_t committed = committedOutstandingUnsafe(jobId);
       // Even split with a progress floor of one: below-share sessions post
       // immediately while total capacity allows, the rest wait first-in
       // first-out in pendingAdmission_.
@@ -234,7 +235,7 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
         // Reserve the share atomically with the decision: a concurrent
         // enqueuer must see the reservation, and `postReady` below must
         // not count the morsel a second time.
-        accountOutstandingUnsafe(morsel.jobId_);
+        accountOutstandingUnsafe(jobId);
         toPost.emplace(std::move(morsel));
       } else {
         pendingAdmission_.push_back(std::move(morsel));
@@ -280,7 +281,7 @@ void ElasticExportScheduler::accountOutstandingUnsafe(uint64_t jobId) {
 void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
   // Never holds `queueMutex_` here (see `enqueueMorsel`): `poster_` may run
   // the closure inline, and its completion path takes `queueMutex_` again.
-  const uint64_t jobId = morsel.jobId_;
+  const uint64_t jobId = morsel.jobId();
   try {
     poster_(makePostedWork(std::move(morsel)));
   } catch (...) {
@@ -315,7 +316,7 @@ void ElasticExportScheduler::postReadyBatch(std::vector<OwnedMorsel> batch) {
 
 absl::AnyInvocable<void()> ElasticExportScheduler::makePostedWork(
     OwnedMorsel morsel) {
-  const uint64_t jobId = morsel.jobId_;
+  const uint64_t jobId = morsel.jobId();
   return [this, jobId, morsel = std::move(morsel)]() mutable {
     // Capture the morsel failure first: `onPostedMorselFinished` drains and
     // reposts pending morsels, and a throwing poster on that path must not
@@ -382,19 +383,19 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
   pendingAdmission_.erase(
       std::remove_if(
           pendingAdmission_.begin(), pendingAdmission_.end(),
-          [](const OwnedMorsel& m) { return m.jobState_->isCancelled(); }),
+          [](const OwnedMorsel& m) { return m.jobState()->isCancelled(); }),
       pendingAdmission_.end());
   // Admit one pending morsel and account it as outstanding.
   auto admitIt = [this, &readyToPost](auto it) {
     OwnedMorsel morsel = std::move(*it);
     pendingAdmission_.erase(it);
-    accountOutstandingUnsafe(morsel.jobId_);
+    accountOutstandingUnsafe(morsel.jobId());
     readyToPost.push_back(std::move(morsel));
   };
   // Oldest session first means the lowest jobId, earliest in the queue on
   // ties, which preserves first-in first-out order within each session.
   auto oldestIt = [this]() {
-    return ql::ranges::min_element(pendingAdmission_, {}, &OwnedMorsel::jobId_);
+    return ql::ranges::min_element(pendingAdmission_, {}, &OwnedMorsel::jobId);
   };
   // Phase 1, even split: admit sessions still below the base share. Each
   // pass scans the pending queue once; the queue stays short in practice
@@ -408,11 +409,11 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
     auto best = ql::ranges::min_element(
         pendingAdmission_, std::less<>{},
         [this, share](const OwnedMorsel& morsel) {
-          return std::pair(committedOutstandingUnsafe(morsel.jobId_) >= share,
-                           morsel.jobId_);
+          return std::pair(committedOutstandingUnsafe(morsel.jobId()) >= share,
+                           morsel.jobId());
         });
     if (best == pendingAdmission_.end() ||
-        committedOutstandingUnsafe(best->jobId_) >= share) {
+        committedOutstandingUnsafe(best->jobId()) >= share) {
       break;
     }
     admitIt(best);
@@ -431,10 +432,12 @@ void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
       !isHelperAdmissionEligibleUnsafe()) {
     return;
   }
-  auto targetJobState = std::move(morsel.jobState_);
+  // Read the scalar fields before moving the state out: reading a
+  // moved-from `morsel` afterwards would rely on move internals.
   const size_t targetMorselIndex = morsel.morselIndex_;
   const uint64_t submissionEpoch = morsel.submissionEpoch_;
-  const uint64_t jobId = morsel.jobId_;
+  const uint64_t jobId = morsel.jobId();
+  auto targetJobState = std::move(morsel).extractJobState();
   const uint64_t leaseEpoch = demandEpoch_.load(std::memory_order_relaxed);
   const uint64_t leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
   totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
@@ -504,10 +507,12 @@ void ElasticExportScheduler::workerLoop() {
       queue_.pop_front();
       queueNotFullCv_.notify_one();
 
-      targetJobState = std::move(morsel.jobState_);
+      // Read the scalar fields before moving the state out: reading a
+      // moved-from `morsel` afterwards would rely on move internals.
       targetMorselIndex = morsel.morselIndex_;
       submissionEpoch = morsel.submissionEpoch_;
-      jobId = morsel.jobId_;
+      jobId = morsel.jobId();
+      targetJobState = std::move(morsel).extractJobState();
 
       leaseEpoch = demandEpoch_.load(std::memory_order_relaxed);
       leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);

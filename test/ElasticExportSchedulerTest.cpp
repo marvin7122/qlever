@@ -577,7 +577,16 @@ TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
   // Slot 2 should still return 100
   EXPECT_EQ(session.consumeNextResult(), 100);
 
-  // Verify lease accounting did not leak
+  // Verify lease accounting did not leak. Workers destroy their leases as
+  // they finish loop iterations, which can lag behind the coordinator
+  // consuming the final result, so wait briefly for quiescence instead of
+  // asserting an instantaneous zero.
+  const auto quiescenceDeadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (scheduler.activeHelperCount() != 0u &&
+         std::chrono::steady_clock::now() < quiescenceDeadline) {
+    std::this_thread::yield();
+  }
   EXPECT_EQ(scheduler.activeHelperCount(), 0u);
 }
 
@@ -844,4 +853,37 @@ TEST(ElasticExportSchedulerTest,
 TEST(ElasticExportSchedulerTest, SetMaxConcurrentMorselsZeroThrows) {
   ElasticExportScheduler scheduler([](absl::AnyInvocable<void()>) {}, 64);
   EXPECT_THROW(scheduler.setMaxConcurrentMorsels(0), ad_utility::Exception);
+}
+
+// -----------------------------------------------------------------------------
+// ExportJobState module: identity is derived, never passed
+// -----------------------------------------------------------------------------
+
+namespace {
+// Minimal ExportJobStateBase with a fixed id for module-level tests.
+struct FixedIdJobState : ExportJobStateBase {
+  explicit FixedIdJobState(uint64_t jobId) : jobId_{jobId} {}
+  [[nodiscard]] uint64_t jobId() const noexcept override { return jobId_; }
+  void onDemandChanged(size_t, uint64_t) override {}
+  void onHelperLeaseAcquired(uint64_t) override {}
+  void onHelperLeaseReleased(uint64_t) override {}
+  void executeHelperTask(size_t, uint64_t) override {}
+  [[nodiscard]] bool isCancelled() const noexcept override { return false; }
+
+ private:
+  uint64_t jobId_;
+};
+}  // namespace
+
+TEST(ElasticExportSchedulerTest, OwnedMorselDerivesJobIdFromState) {
+  auto state = std::make_shared<FixedIdJobState>(42);
+  OwnedMorsel morsel(state, 7, 3);
+  EXPECT_EQ(morsel.jobId(), 42u);
+  EXPECT_EQ(morsel.submissionEpoch_, 7u);
+  EXPECT_EQ(morsel.morselIndex_, 3u);
+  EXPECT_EQ(morsel.jobState(), state);
+}
+
+TEST(ElasticExportSchedulerTest, OwnedMorselNullStateThrows) {
+  EXPECT_THROW(OwnedMorsel(nullptr, 0, 0), ad_utility::Exception);
 }
