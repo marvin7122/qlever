@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 
+#include "backports/algorithm.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
@@ -367,13 +368,8 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
       // Drop rings of destroyed vocabularies before creating a new one, so
       // that a thread that churns through short-lived vocabularies does not
       // accumulate idle rings (and file descriptors) until thread exit.
-      for (auto jt = ownedRings.begin(); jt != ownedRings.end();) {
-        if (jt->first.expired()) {
-          jt = ownedRings.erase(jt);
-        } else {
-          ++jt;
-        }
-      }
+      ql::erase_if(ownedRings,
+                   [](const auto& entry) { return entry.first.expired(); });
       // Probe once per thread, so that a failed `io_uring_queue_init` degrades
       // only this thread's ring to the synchronous fallback.
       bool preferIoUring = threadRingBudget_->preferIoUring_.load();
