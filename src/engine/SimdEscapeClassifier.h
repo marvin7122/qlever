@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -442,9 +443,22 @@ class SimdEscapeClassifier {
   }
 
   // ___________________________________________________________________________
+  // The maximal number of bytes that `copyAndEscape<Format>` writes for an
+  // input of `inputSize` bytes: every input byte becomes at most two bytes,
+  // for `Xml` at most six (`&quot;`, `&apos;`).
+  template <EscapeFormat Format>
+  [[nodiscard]] static size_t maxEscapedSize(size_t inputSize) {
+    constexpr size_t maxBytesPerChar = Format == EscapeFormat::Xml ? 6 : 2;
+    AD_CONTRACT_CHECK(inputSize <=
+                      std::numeric_limits<size_t>::max() / maxBytesPerChar);
+    return inputSize * maxBytesPerChar;
+  }
+
+  // ___________________________________________________________________________
   // High-performance branchless copier and escape serializer.
   // Fast path copies 32-byte chunks with zero per-character checks when mask is
-  // 0. Returns pointer past the last written byte in `dest`.
+  // 0. Returns pointer past the last written byte in `dest`. `dest` must hold
+  // at least `maxEscapedSize<Format>(input.size())` bytes; this is not checked.
   template <EscapeFormat Format>
   static inline char* copyAndEscape(std::string_view input,
                                     char* dest) noexcept {

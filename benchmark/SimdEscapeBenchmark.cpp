@@ -430,9 +430,9 @@ class SimdEscapeBenchmark : public BenchmarkInterface {
       // SIMD Fast-Path Direct Buffer Copying (Turtle zero temporary string
       // allocations)
       {
-        // Turtle escaping expands each byte to at most two; size the
-        // buffer from the input with margin instead of a magic constant.
-        std::vector<char> outputBuffer(dataset_.totalBytes * 2 + 1024);
+        std::vector<char> outputBuffer(
+            SimdEscapeClassifier::maxEscapedSize<EscapeFormat::Turtle>(
+                dataset_.totalBytes));
         size_t totalOutputBytes = 0;
         const auto start = std::chrono::high_resolution_clock::now();
         auto& m = group.addMeasurement(
