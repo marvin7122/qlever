@@ -14,6 +14,7 @@
 #include <algorithm>
 
 #include "util/ExceptionHandling.h"
+#include "util/Log.h"
 
 namespace ad_utility::export_v2 {
 
@@ -54,18 +55,21 @@ ElasticExportScheduler::ElasticExportScheduler(size_t threadCount,
 ElasticExportScheduler::~ElasticExportScheduler() { shutdown(); }
 
 // _____________________________________________________________________________
-void ElasticExportScheduler::shutdown() {
+void ElasticExportScheduler::shutdown() noexcept {
   // Seq-cst exchange; all readers use acquire loads, which synchronize with
   // this store once observed. Only the first call joins the workers.
   if (!stopping_.exchange(true)) {
-    {
-      std::lock_guard<std::mutex> lock(queueMutex_);
-      workAvailableCv_.notify_all();
-      queueNotFullCv_.notify_all();
-    }
+    ad_utility::terminateIfThrows(
+        [this] {
+          std::lock_guard<std::mutex> lock(queueMutex_);
+          workAvailableCv_.notify_all();
+          queueNotFullCv_.notify_all();
+        },
+        "Waking the export helper workers during shutdown");
     for (auto& worker : workers_) {
       if (worker.joinable()) {
-        worker.join();
+        ad_utility::terminateIfThrows([&worker] { worker.join(); },
+                                      "Joining an export helper worker");
       }
     }
   }
@@ -291,7 +295,19 @@ void ElasticExportScheduler::workerLoop() {
             },
             "Releasing an export job helper lease");
       };
-      targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
+      // Only an internal `AD_CORRECTNESS_CHECK` failure can throw here
+      // (user task exceptions are captured into the slot in `runSlot`).
+      // Log the diagnostic before unwinding: both lease cleanups above
+      // still release their slots during unwinding, and the exception then
+      // terminates the worker, as in `TaskQueue::function_for_thread`.
+      try {
+        targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
+      } catch (...) {
+        AD_LOG_ERROR << "ElasticExportScheduler worker caught an exception "
+                        "from executeHelperTask; terminating the worker"
+                     << std::endl;
+        throw;
+      }
     }
   }
 }
