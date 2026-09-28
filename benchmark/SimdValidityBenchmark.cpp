@@ -62,6 +62,11 @@ class HardwarePerfCounter {
 #endif
   }
 
+  // The counter exclusively owns its two file descriptors, which the
+  // destructor closes; a copy would close them twice.
+  HardwarePerfCounter(const HardwarePerfCounter&) = delete;
+  HardwarePerfCounter& operator=(const HardwarePerfCounter&) = delete;
+
   ~HardwarePerfCounter() {
 #if defined(__linux__)
     if (branchFd_ >= 0) ::close(branchFd_);

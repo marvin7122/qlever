@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -34,6 +33,7 @@
 #define QLEVER_SSE2_TARGET
 #endif
 
+#include "absl/numeric/bits.h"
 #include "backports/span.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
@@ -65,27 +65,27 @@ class ValidityBitmask64 {
   }
 
   // Row-level query and manipulation
-  [[nodiscard]] bool isRowValid(size_t index) const noexcept {
+  [[nodiscard]] bool isRowValid(size_t index) const {
     AD_EXPENSIVE_CHECK(index < 64);
     return (mask_ & (1ULL << index)) != 0;
   }
 
-  [[nodiscard]] bool isRowUnbound(size_t index) const noexcept {
+  [[nodiscard]] bool isRowUnbound(size_t index) const {
     AD_EXPENSIVE_CHECK(index < 64);
     return (mask_ & (1ULL << index)) == 0;
   }
 
-  void setRowValid(size_t index) noexcept {
+  void setRowValid(size_t index) {
     AD_CONTRACT_CHECK(index < 64);
     mask_ |= (1ULL << index);
   }
 
-  void setRowUnbound(size_t index) noexcept {
+  void setRowUnbound(size_t index) {
     AD_CONTRACT_CHECK(index < 64);
     mask_ &= ~(1ULL << index);
   }
 
-  void setRow(size_t index, bool isValid) noexcept {
+  void setRow(size_t index, bool isValid) {
     AD_CONTRACT_CHECK(index < 64);
     if (isValid) {
       mask_ |= (1ULL << index);
@@ -112,23 +112,23 @@ class ValidityBitmask64 {
   }
 
   [[nodiscard]] constexpr size_t countValid() const noexcept {
-    return static_cast<size_t>(std::popcount(mask_));
+    return static_cast<size_t>(absl::popcount(mask_));
   }
 
   [[nodiscard]] constexpr size_t countUnbound() const noexcept {
-    return 64 - static_cast<size_t>(std::popcount(mask_));
+    return 64 - static_cast<size_t>(absl::popcount(mask_));
   }
 
   [[nodiscard]] constexpr uint64_t rawMask() const noexcept { return mask_; }
 
   // Returns the index of the first unbound row (0..63), or 64 if all are valid.
   [[nodiscard]] constexpr size_t firstUnboundIndex() const noexcept {
-    return static_cast<size_t>(std::countr_one(mask_));
+    return static_cast<size_t>(absl::countr_one(mask_));
   }
 
   // Returns the index of the first valid row (0..63), or 64 if all are unbound.
   [[nodiscard]] constexpr size_t firstValidIndex() const noexcept {
-    return mask_ == 0ULL ? 64 : static_cast<size_t>(std::countr_zero(mask_));
+    return mask_ == 0ULL ? 64 : static_cast<size_t>(absl::countr_zero(mask_));
   }
 
   // Iteration helpers over set/unset bits
@@ -136,7 +136,7 @@ class ValidityBitmask64 {
   void forEachValid(Func&& func) const {
     uint64_t remaining = mask_;
     while (remaining != 0) {
-      size_t idx = static_cast<size_t>(std::countr_zero(remaining));
+      size_t idx = static_cast<size_t>(absl::countr_zero(remaining));
       func(idx);
       remaining &= (remaining - 1);  // Clear lowest set bit
     }
@@ -146,7 +146,7 @@ class ValidityBitmask64 {
   void forEachUnbound(Func&& func) const {
     uint64_t remaining = ~mask_;
     while (remaining != 0) {
-      size_t idx = static_cast<size_t>(std::countr_zero(remaining));
+      size_t idx = static_cast<size_t>(absl::countr_zero(remaining));
       func(idx);
       remaining &= (remaining - 1);  // Clear lowest set bit
     }
@@ -208,7 +208,7 @@ namespace detail {
 // (undefined ValueId), and _mm256_movemask_pd extracts the 4-bit comparison
 // mask.
 [[nodiscard]] QLEVER_AVX2_TARGET inline uint64_t scanBatch64Avx2(
-    const uint64_t* data) noexcept {
+    const void* data) noexcept {
   const __m256i zero = _mm256_setzero_si256();
   const auto* ptr = reinterpret_cast<const __m256i*>(data);
   uint64_t resultMask = 0;
@@ -226,7 +226,7 @@ namespace detail {
 
 // AVX2 fast test for all-unbound (all 64 values == 0) via bitwise OR reduction.
 [[nodiscard]] QLEVER_AVX2_TARGET inline bool isAllUnbound64Avx2(
-    const uint64_t* data) noexcept {
+    const void* data) noexcept {
   const auto* ptr = reinterpret_cast<const __m256i*>(data);
   __m256i or0 =
       _mm256_or_si256(_mm256_loadu_si256(ptr + 0), _mm256_loadu_si256(ptr + 1));
@@ -279,6 +279,17 @@ QLEVER_AVX2_TARGET inline char* write64DelimiterPairsAvx2(
 
 #endif  // QLEVER_SIMD_X86
 
+// Portable scalar fallback for scanning 64 `ValueId`s.
+[[nodiscard]] inline uint64_t scanBatch64Scalar(const ValueId* data) noexcept {
+  uint64_t mask = 0;
+  for (size_t i = 0; i < 64; ++i) {
+    if (data[i].getBits() != 0) {
+      mask |= (1ULL << i);
+    }
+  }
+  return mask;
+}
+
 // Portable scalar fallback for scanning 64 64-bit values.
 [[nodiscard]] inline uint64_t scanBatch64Scalar(const uint64_t* data) noexcept {
   uint64_t mask = 0;
@@ -325,24 +336,25 @@ class SimdValidityScanner {
   // Scan a batch of exactly 64 ValueIds (512 bytes) and construct a
   // ValidityBitmask64.
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
-      const ValueId* data) noexcept {
+      const ValueId* data) {
     AD_CONTRACT_CHECK(data != nullptr);
-    // `ValueId` is a standard-layout class whose first (and only) member is
-    // the underlying `uint64_t`, so it is pointer-interconvertible with it
-    // and this access is well-defined.
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
+    // The AVX2 kernel reads the bytes of the `ValueId`s through `__m256i`
+    // loads, which may alias any type; the scalar fallback uses `getBits()`.
+    // An undefined `ValueId` is the all-zero bit pattern.
+    static_assert(sizeof(ValueId) == sizeof(uint64_t));
+    AD_EXPENSIVE_CHECK(ValueId::makeUndefined().getBits() == 0);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
-      return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
+      return ValidityBitmask64{detail::scanBatch64Avx2(data)};
     }
 #endif
-    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
+    return ValidityBitmask64{detail::scanBatch64Scalar(data)};
   }
 
   // ___________________________________________________________________________
   // Scan a batch of exactly 64 uint64_t raw values.
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
-      const uint64_t* data) noexcept {
+      const uint64_t* data) {
     AD_CONTRACT_CHECK(data != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -354,26 +366,19 @@ class SimdValidityScanner {
 
   // ___________________________________________________________________________
   // Fast check whether all 64 ValueIds in the batch are unbound (all zero).
-  [[nodiscard]] static inline bool isAllUnbound64(
-      const ValueId* data) noexcept {
+  [[nodiscard]] static inline bool isAllUnbound64(const ValueId* data) {
     AD_CONTRACT_CHECK(data != nullptr);
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
-      return detail::isAllUnbound64Avx2(raw);
+      return detail::isAllUnbound64Avx2(data);
     }
 #endif
-    for (size_t i = 0; i < 64; ++i) {
-      if (raw[i] != 0) {
-        return false;
-      }
-    }
-    return true;
+    return detail::scanBatch64Scalar(data) == 0;
   }
 
   // ___________________________________________________________________________
   // Fast check whether all 64 ValueIds in the batch are valid (none are zero).
-  [[nodiscard]] static inline bool isAllValid64(const ValueId* data) noexcept {
+  [[nodiscard]] static inline bool isAllValid64(const ValueId* data) {
     return scanBatch64(data).allValid();
   }
 
@@ -381,7 +386,7 @@ class SimdValidityScanner {
   // Scan an arbitrary span of ValueIds (up to 64 elements).
   // Bits at index >= data.size() are set to 0 (unbound).
   [[nodiscard]] static inline ValidityBitmask64 scanBatch(
-      ql::span<const ValueId> data) noexcept {
+      ql::span<const ValueId> data) {
     AD_CONTRACT_CHECK(data.size() <= 64);
     if (data.size() == 64) {
       return scanBatch64(data.data());
@@ -398,9 +403,8 @@ class SimdValidityScanner {
   // ___________________________________________________________________________
   // Scan an entire column of ValueIds into a destination span of
   // ValidityBitmask64. Returns the number of 64-row bitmask blocks written.
-  static inline size_t scanColumn(
-      ql::span<const ValueId> column,
-      ql::span<ValidityBitmask64> outBitmasks) noexcept {
+  static inline size_t scanColumn(ql::span<const ValueId> column,
+                                  ql::span<ValidityBitmask64> outBitmasks) {
     const size_t numRows = column.size();
     const size_t numFullBatches = numRows / 64;
     const size_t totalBatches = (numRows + 63) / 64;
@@ -433,8 +437,7 @@ class SimdValidityScanner {
   // ___________________________________________________________________________
   // Vectorized store writing 64 CSV delimiter tokens (e.g. ',') with zero cell
   // checks. Returns the pointer past the last written byte (dest + 64).
-  static inline char* writeUnboundBatchCsv(char* dest,
-                                           char delimiter = ',') noexcept {
+  static inline char* writeUnboundBatchCsv(char* dest, char delimiter = ',') {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -447,8 +450,7 @@ class SimdValidityScanner {
   // ___________________________________________________________________________
   // Vectorized store writing 64 TSV delimiter tokens (e.g. '\t') with zero cell
   // checks. Returns the pointer past the last written byte (dest + 64).
-  static inline char* writeUnboundBatchTsv(char* dest,
-                                           char delimiter = '\t') noexcept {
+  static inline char* writeUnboundBatchTsv(char* dest, char delimiter = '\t') {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -462,7 +464,7 @@ class SimdValidityScanner {
   // Vectorized store writing 64 pairs of (delimiter, rowSeparator) = 128 bytes
   // for CSV export with newline terminators (e.g. ',\n').
   static inline char* writeUnboundRowsCsv(char* dest, char delimiter = ',',
-                                          char rowSeparator = '\n') noexcept {
+                                          char rowSeparator = '\n') {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -476,7 +478,7 @@ class SimdValidityScanner {
   // Vectorized store writing 64 pairs of (delimiter, rowSeparator) = 128 bytes
   // for TSV export with newline terminators (e.g. '\t\n').
   static inline char* writeUnboundRowsTsv(char* dest, char delimiter = '\t',
-                                          char rowSeparator = '\n') noexcept {
+                                          char rowSeparator = '\n') {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -489,22 +491,22 @@ class SimdValidityScanner {
 
 // _____________________________________________________________________________
 // Free convenience wrapper functions
-inline char* writeUnboundBatchCsv(char* dest, char delimiter = ',') noexcept {
+inline char* writeUnboundBatchCsv(char* dest, char delimiter = ',') {
   return SimdValidityScanner::writeUnboundBatchCsv(dest, delimiter);
 }
 
-inline char* writeUnboundBatchTsv(char* dest, char delimiter = '\t') noexcept {
+inline char* writeUnboundBatchTsv(char* dest, char delimiter = '\t') {
   return SimdValidityScanner::writeUnboundBatchTsv(dest, delimiter);
 }
 
 inline char* writeUnboundRowsCsv(char* dest, char delimiter = ',',
-                                 char rowSeparator = '\n') noexcept {
+                                 char rowSeparator = '\n') {
   return SimdValidityScanner::writeUnboundRowsCsv(dest, delimiter,
                                                   rowSeparator);
 }
 
 inline char* writeUnboundRowsTsv(char* dest, char delimiter = '\t',
-                                 char rowSeparator = '\n') noexcept {
+                                 char rowSeparator = '\n') {
   return SimdValidityScanner::writeUnboundRowsTsv(dest, delimiter,
                                                   rowSeparator);
 }
