@@ -16,6 +16,7 @@
 #include <absl/strings/str_format.h>
 
 #include "backports/StartsWithAndEndsWith.h"
+#include "engine/BranchlessTypeDispatcher.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "index/vocabulary/EncodedIriManager.h"
@@ -267,8 +268,26 @@ idToStringAndTypeForEncodedValue(Id id) {
         return std::pair{std::move(out), XSD_DECIMAL_TYPE};
       }();
     case Bool:
+      if (getRuntimeParameter<
+              &RuntimeParameters::useBranchlessTypeDispatcher_>()) {
+        std::array<char, 8> buf;
+        const size_t size =
+            ql::engine::BranchlessTypeDispatcher::dispatchTermFormat(
+                id, {}, buf,
+                ql::engine::BranchlessTypeDispatcher::rawVocabLut());
+        return std::pair{std::string(buf.data(), size), XSD_BOOLEAN_TYPE};
+      }
       return std::pair{std::string{id.getBoolLiteral()}, XSD_BOOLEAN_TYPE};
     case Int:
+      if (getRuntimeParameter<
+              &RuntimeParameters::useBranchlessTypeDispatcher_>()) {
+        std::array<char, 24> buf;
+        const size_t size =
+            ql::engine::BranchlessTypeDispatcher::dispatchTermFormat(
+                id, {}, buf,
+                ql::engine::BranchlessTypeDispatcher::rawVocabLut());
+        return std::pair{std::string(buf.data(), size), XSD_INT_TYPE};
+      }
       if (getRuntimeParameter<
               &RuntimeParameters::fastIntToStringForExport_>()) {
         return std::pair{ad_utility::formatIntToString(id.getInt()),
