@@ -492,14 +492,15 @@ TYPED_TEST(IoUringManagerTest, RegisteredBuffersWithDirectIo) {
 namespace {
 // The block cache counters, to measure one test step by their differences.
 struct BlockCacheCounts {
-  uint64_t hits_, misses_, inserts_;
+  uint64_t hits_, inFlightHits_, misses_, inserts_;
   static BlockCacheCounts now() {
     const auto& c = ad_utility::vocab::vocabBlockCacheCounters;
-    return {c.hits_.load(), c.misses_.load(), c.inserts_.load()};
+    return {c.hits_.load(), c.inFlightHits_.load(), c.misses_.load(),
+            c.inserts_.load()};
   }
   BlockCacheCounts operator-(const BlockCacheCounts& other) const {
-    return {hits_ - other.hits_, misses_ - other.misses_,
-            inserts_ - other.inserts_};
+    return {hits_ - other.hits_, inFlightHits_ - other.inFlightHits_,
+            misses_ - other.misses_, inserts_ - other.inserts_};
   }
 };
 
@@ -604,6 +605,59 @@ TYPED_TEST(IoUringManagerTest, DirectIoBlockCacheEvicts) {
     auto again = BlockCacheCounts::now() - before;
     EXPECT_EQ(again.hits_, 2u);
     EXPECT_EQ(again.misses_, 0u);
+  }
+}
+
+// Within one batch, a request for a block whose read is still in flight (not
+// the directly preceding request, so it cannot join the open read) is copied
+// from that read's slot instead of reading the block again. This includes the
+// short last block of the file, which is never inserted into the cache.
+TYPED_TEST(IoUringManagerTest, DirectIoBlockCacheJoinsInFlightReads) {
+  constexpr size_t block = ad_utility::export_prototypes::kDirectIoBlockSize;
+  std::string content;
+  for (size_t i = 0; i < 2 * block + 100; ++i) {
+    content.push_back(static_cast<char>('a' + (i * 13) % 26));
+  }
+  auto [tmp, fd] = makeTempFile(content);
+  ad_utility::export_prototypes::DirectIoFile directFile;
+  try {
+    directFile.open(absl::StrCat(gtestCurrentTestName(), ".tmp"), true);
+  } catch (const std::exception& e) {
+    GTEST_SKIP() << "O_DIRECT is not supported here: " << e.what();
+  }
+  TypeParam manager(16);
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers = true;
+  options.directIoFd = directFile.fd();
+  // A capacity that no other test uses, so that this thread's cache starts
+  // empty.
+  options.blockCacheNumBlocks = 23;
+  constexpr bool usesCache =
+      !std::is_same_v<TypeParam,
+                      ad_utility::BatchManager<ad_utility::SyncIoPolicy>>;
+
+  auto before = BlockCacheCounts::now();
+  // Blocks 0, 1, 0 (in flight), 1 (joins the open read), 2 (short), 0 (in
+  // flight), 2 (joins the open read, within the bytes the short read
+  // returns).
+  readAndCheck(manager, fd, content,
+               {{0, 4},
+                {block + 1, 4},
+                {8, 4},
+                {block + 9, 4},
+                {2 * block + 10, 5},
+                {100, 7},
+                {2 * block + 50, 50}},
+               options);
+  auto delta = BlockCacheCounts::now() - before;
+  if (usesCache) {
+    EXPECT_EQ(delta.hits_, 0u);
+    EXPECT_EQ(delta.misses_, 3u);
+    EXPECT_EQ(delta.inFlightHits_, 2u);
+    // The short last block is not cached.
+    EXPECT_EQ(delta.inserts_, 2u);
+  } else {
+    EXPECT_EQ(delta.hits_ + delta.inFlightHits_ + delta.misses_, 0u);
   }
 }
 

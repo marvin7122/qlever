@@ -133,6 +133,7 @@ void VocabBlockCache::insert(dev_t dev, ino_t ino, uint64_t blockNo,
   Slot& slot = slots_[hand_];
   if (slot.occupied_) {
     ++numEvictions_;
+    vocabBlockCacheCounters.evictions_.fetch_add(1, std::memory_order_relaxed);
     slotOfKey_.erase(Key{slot.dev_, slot.ino_, slot.blockNo_});
   }
   slotOfKey_[Key{dev, ino, blockNo}] = hand_;

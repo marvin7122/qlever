@@ -178,6 +178,20 @@ void IoUringPolicy::trackSqe(io_uring_sqe* sqe, const InFlightRead& read) {
 }
 
 //______________________________________________________________________________
+void IoUringPolicy::releaseCacheInsert(uint32_t slot) {
+  auto& cacheInsert = cacheInsertPerSlot_[slot];
+  if (!cacheInsert.has_value()) {
+    return;
+  }
+  auto it = pendingBlockSlot_.find(
+      BlockKey{cacheInsert->dev, cacheInsert->ino, cacheInsert->blockNo});
+  if (it != pendingBlockSlot_.end() && it->second == slot) {
+    pendingBlockSlot_.erase(it);
+  }
+  cacheInsert.reset();
+}
+
+//______________________________________________________________________________
 uint32_t IoUringPolicy::acquireSlot() {
   // Every slot that is not free belongs to an in-flight read, whose completion
   // frees it.
@@ -268,14 +282,28 @@ void IoUringPolicy::addBatch(int fd,
           counters.hits_.fetch_add(1, std::memory_order_relaxed);
           return true;
         }
+        // The block is being read for this batch: copy from that read's slot
+        // when it completes.
+        auto pending = pendingBlockSlot_.find(
+            BlockKey{directFileId.st_dev, directFileId.st_ino, blockNo});
+        if (pending != pendingBlockSlot_.end() &&
+            cacheInsertPerSlot_[pending->second]->batchHandle == handle) {
+          copiesPerSlot_[pending->second].push_back(
+              CopyFromSlot{targetBuf, fileOffset - blockBegin, numBytesToRead});
+          counters.inFlightHits_.fetch_add(1, std::memory_order_relaxed);
+          return true;
+        }
         counters.misses_.fetch_add(1, std::memory_order_relaxed);
       }
       submitOpenDirectRead();
       open = OpenDirectRead{acquireSlot(), blockBegin, blockEnd, 0};
       if (cache != nullptr) {
+        const uint64_t blockNo = blockBegin / block;
         cacheInsertPerSlot_[open->slot] =
-            CacheInsert{directFileId.st_dev, directFileId.st_ino,
-                        blockBegin / block, options.blockCacheNumBlocks};
+            CacheInsert{directFileId.st_dev, directFileId.st_ino, blockNo,
+                        options.blockCacheNumBlocks, handle};
+        pendingBlockSlot_[BlockKey{directFileId.st_dev, directFileId.st_ino,
+                                   blockNo}] = open->slot;
       }
     }
     const size_t offsetInSlot = fileOffset - open->blockBegin;
@@ -290,7 +318,7 @@ void IoUringPolicy::addBatch(int fd,
   absl::Cleanup releaseOpenDirectRead{[this, &openDirectRead]() {
     if (openDirectRead.has_value()) {
       copiesPerSlot_[openDirectRead->slot].clear();
-      cacheInsertPerSlot_[openDirectRead->slot].reset();
+      releaseCacheInsert(openDirectRead->slot);
       freeSlots_.push_back(openDirectRead->slot);
     }
   }};
@@ -377,8 +405,17 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
   // read, or 0 at end of file) means we read fewer bytes than expected, which
   // we treat as an error.
   const bool failed = numBytesRead < 0;
-  const bool tooShort =
+  bool tooShort =
       !failed && static_cast<size_t>(numBytesRead) < inFlightRead.minNumBytes;
+  // Requests can join a pending `O_DIRECT` read after it was submitted (see
+  // `pendingBlockSlot_`), so check each copy against the bytes read.
+  if (!failed && !tooShort && inFlightRead.slot != kNoSlot) {
+    tooShort = ql::ranges::any_of(copiesPerSlot_[inFlightRead.slot],
+                                  [numBytesRead](const auto& copy) {
+                                    return copy.offsetInSlot + copy.numBytes >
+                                           static_cast<size_t>(numBytesRead);
+                                  });
+  }
   // A read into a slot of the registered arena: copy the requested bytes to
   // their targets and free the slot (also on error, before throwing).
   if (inFlightRead.slot != kNoSlot) {
@@ -401,7 +438,7 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
       }
     }
     copies.clear();
-    cacheInsert.reset();
+    releaseCacheInsert(inFlightRead.slot);
     freeSlots_.push_back(inFlightRead.slot);
   }
   if (failed) {

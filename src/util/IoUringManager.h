@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -292,8 +293,19 @@ class IoUringPolicy {
     ino_t ino;
     uint64_t blockNo;
     size_t cacheNumBlocks;
+    BatchHandle batchHandle;
   };
   std::vector<std::optional<CacheInsert>> cacheInsertPerSlot_;
+
+  // The slot of every such read that has not completed yet, by block
+  // (device, inode, block number). A later request of the same batch for a
+  // pending block is copied out of that slot when the read completes, so a
+  // block is read once per batch even if its requests are not consecutive.
+  using BlockKey = std::tuple<dev_t, ino_t, uint64_t>;
+  ad_utility::HashMap<BlockKey, uint32_t> pendingBlockSlot_;
+
+  // Forget the pending cache insert of `slot` (if any), see above.
+  void releaseCacheInsert(uint32_t slot);
 
   // Return true if the registered arena is available, registering it first
   // if this has not been tried yet. Registration is only attempted while no

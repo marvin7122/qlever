@@ -150,13 +150,17 @@ VocabBlockCache& threadLocalVocabBlockCache(size_t numBlocks);
 
 // Process-wide counters of the block cache in front of the `O_DIRECT`
 // vocabulary reads (see `BatchReadOptions::blockCacheNumBlocks`): requests
-// served from a cached block, block reads issued because the block was not
-// cached, and blocks inserted after such a read. Monotonic; callers log
-// differences (e.g. per export).
+// served from a cached block, requests that joined a read of their block that
+// was still in flight for the same batch, block reads issued because the block
+// was neither cached nor in flight, blocks inserted after such a read, and
+// cached blocks evicted to make room. Monotonic; callers log differences (e.g.
+// per export).
 struct VocabBlockCacheCounters {
   std::atomic<uint64_t> hits_{0};
+  std::atomic<uint64_t> inFlightHits_{0};
   std::atomic<uint64_t> misses_{0};
   std::atomic<uint64_t> inserts_{0};
+  std::atomic<uint64_t> evictions_{0};
 };
 inline VocabBlockCacheCounters vocabBlockCacheCounters;
 

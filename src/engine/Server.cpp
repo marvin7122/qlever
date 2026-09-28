@@ -976,17 +976,24 @@ CPP_template_def(typename RequestT, typename SendT)(
   // report this export's share (see `vocab-block-cache-size`).
   const auto& cacheCounters = ad_utility::vocab::vocabBlockCacheCounters;
   const uint64_t cacheHitsBefore = cacheCounters.hits_.load();
+  const uint64_t cacheInFlightHitsBefore = cacheCounters.inFlightHits_.load();
   const uint64_t cacheMissesBefore = cacheCounters.misses_.load();
   const uint64_t cacheInsertsBefore = cacheCounters.inserts_.load();
+  const uint64_t cacheEvictionsBefore = cacheCounters.evictions_.load();
   absl::Cleanup logBlockCache{[&]() {
     if (ad_utility::useDirectIoForVocabularyReads.load() &&
         ad_utility::vocabularyBlockCacheNumBlocks.load() > 0) {
       AD_LOG_INFO << "Vocabulary block cache for this export: "
                   << cacheCounters.hits_.load() - cacheHitsBefore << " hits, "
+                  << cacheCounters.inFlightHits_.load() -
+                         cacheInFlightHitsBefore
+                  << " in-flight hits, "
                   << cacheCounters.misses_.load() - cacheMissesBefore
                   << " misses, "
                   << cacheCounters.inserts_.load() - cacheInsertsBefore
-                  << " inserts" << std::endl;
+                  << " inserts, "
+                  << cacheCounters.evictions_.load() - cacheEvictionsBefore
+                  << " evictions" << std::endl;
     }
   }};
   try {
