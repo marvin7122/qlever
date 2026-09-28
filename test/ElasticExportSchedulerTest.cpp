@@ -540,6 +540,34 @@ TEST(ElasticExportSchedulerTest,
 }
 
 // -----------------------------------------------------------------------------
+// Test 10c: SetOrdered Rejects a Change After an Unordered Consume
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest,
+     SetOrderedRejectsChangeAfterUnorderedConsume) {
+  // Regression test: `nextSlotToConsume_ == 0` alone does not catch this,
+  // because unordered consumption never advances `nextSlotToConsume_`.
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  session.setOrdered(false);
+  session.submitMorsel([]() { return std::string{"a"}; });
+  session.submitMorsel([]() { return std::string{"b"}; });
+
+  EXPECT_TRUE(session.hasMoreResults());
+  session.consumeNextResult();
+  EXPECT_EQ(session.consumedSlots(), 1u);
+
+  // The invariant "fixed before first consume" must still be enforced once
+  // any slot has been consumed, ordered or not.
+  EXPECT_THROW(session.setOrdered(true), ad_utility::Exception);
+
+  session.consumeNextResult();
+  scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
 // Test 11: TrySubmitMorsel Reports Instead Of Firing
 // -----------------------------------------------------------------------------
 

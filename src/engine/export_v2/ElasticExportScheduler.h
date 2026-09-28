@@ -502,15 +502,19 @@ class ExportJobState final
   // first consume.
   void setOrdered(bool ordered) {
     std::lock_guard<std::mutex> lock(mutex_);
-    AD_CONTRACT_CHECK(nextSlotToConsume_ == 0,
+    // `nextSlotToConsume_ == 0` alone does not catch unordered sessions:
+    // `consumeNextResult()` never advances `nextSlotToConsume_` while
+    // `ordered_` is false, so it stays 0 across any number of unordered
+    // consumes. Check `consumedCount_` instead, which is updated on every
+    // consume regardless of mode.
+    AD_CONTRACT_CHECK(consumedCount_ == 0,
                       "Emission order must be fixed before consuming");
     ordered_ = ordered;
   }
 
   [[nodiscard]] bool hasMoreResults() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return std::any_of(slots_.begin(), slots_.end(),
-                       [](const Slot& slot) { return !slot.consumed_; });
+    return consumedCount_ < slots_.size();
   }
 
   [[nodiscard]] size_t totalSlots() const {
@@ -520,8 +524,7 @@ class ExportJobState final
 
   [[nodiscard]] size_t consumedSlots() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return std::count_if(slots_.begin(), slots_.end(),
-                         [](const Slot& slot) { return slot.consumed_; });
+    return consumedCount_;
   }
 
   ResultType consumeNextResult() {
@@ -582,6 +585,7 @@ class ExportJobState final
       if (slots_[index].status_ == MorselStatus::Completed) {
         AD_CORRECTNESS_CHECK(slots_[index].result_.has_value());
         slots_[index].consumed_ = true;
+        ++consumedCount_;
         return std::move(*slots_[index].result_);
       }
 
@@ -623,6 +627,7 @@ class ExportJobState final
           slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
           slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
           slots_[index].consumed_ = true;
+          ++consumedCount_;
           cv_.notify_all();
           return std::move(*slots_[index].result_);
         } catch (...) {
@@ -778,6 +783,11 @@ class ExportJobState final
   std::condition_variable cv_;
   std::vector<Slot> slots_;
   size_t nextSlotToConsume_{0};
+  // Number of slots with `consumed_ == true`. Kept alongside `slots_`
+  // (updated wherever `consumed_` is set) so `hasMoreResults()` and
+  // `consumedSlots()` are O(1) instead of scanning all slots on every call
+  // of the `while (hasMoreResults()) consumeNextResult()` driver loop.
+  size_t consumedCount_{0};
   // False when row order is semantically irrelevant (no LIMIT/OFFSET/export
   // limit): morsels emit in completion order instead of slot order.
   bool ordered_{true};
