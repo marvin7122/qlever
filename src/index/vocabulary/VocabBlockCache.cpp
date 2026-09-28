@@ -33,13 +33,8 @@ VocabBlockCache::VocabBlockCache(VocabBlockCache&& other) noexcept
       numHits_{std::exchange(other.numHits_, 0)},
       numMisses_{std::exchange(other.numMisses_, 0)},
       numEvictions_{std::exchange(other.numEvictions_, 0)} {
-  // The moved-from slots keep dangling `data_` pointers, but they are never
-  // dereferenced: the moved-from instance has no storage anymore, and any
-  // `resize` reassigns all pointers. Still, clear them for hygiene.
-  for (auto& slot : other.slots_) {
-    slot.data_ = nullptr;
-    slot.occupied_ = false;
-  }
+  // The moved-from `other` transferred its storage above; its slots are only
+  // ever destroyed, cleared, or reassigned afterwards, never dereferenced.
 }
 
 // _____________________________________________________________________________
@@ -52,10 +47,6 @@ VocabBlockCache& VocabBlockCache::operator=(VocabBlockCache&& other) noexcept {
     numHits_ = std::exchange(other.numHits_, 0);
     numMisses_ = std::exchange(other.numMisses_, 0);
     numEvictions_ = std::exchange(other.numEvictions_, 0);
-    for (auto& slot : other.slots_) {
-      slot.data_ = nullptr;
-      slot.occupied_ = false;
-    }
   }
   return *this;
 }
@@ -74,9 +65,9 @@ void VocabBlockCache::resize(size_t numBlocks) {
     AD_THROW("vocabulary block cache size " + std::to_string(numBlocks) +
              " blocks would overflow the allocation size");
   }
-  // Allocate the new chunk before touching `slots_`, so a failed
-  // allocation leaves the object empty (strong guarantee) instead of
-  // sized-but-storageless.
+  // Build the new state in locals first and only commit once every
+  // potentially throwing step succeeded, so a failed allocation keeps the
+  // previous content untouched (strong guarantee).
   void* raw = nullptr;
   if (numBlocks > 0 &&
       ::posix_memalign(&raw, kBlockSize, numBlocks * kBlockSize) != 0) {
@@ -84,13 +75,16 @@ void VocabBlockCache::resize(size_t numBlocks) {
              std::to_string(kBlockSize) +
              " bytes for the vocabulary block cache");
   }
-  clear();
-  storage_.reset(static_cast<char*>(raw));
-  slots_.resize(numBlocks);
-  hand_ = 0;
+  std::unique_ptr<char[], FreeDeleter> newStorage{static_cast<char*>(raw)};
+  std::vector<Slot> newSlots;
+  newSlots.resize(numBlocks);
   for (size_t i = 0; i < numBlocks; ++i) {
-    slots_[i].data_ = storage_.get() + i * kBlockSize;
+    newSlots[i].data_ = newStorage.get() + i * kBlockSize;
   }
+  clear();
+  storage_ = std::move(newStorage);
+  slots_ = std::move(newSlots);
+  hand_ = 0;
 }
 
 // _____________________________________________________________________________
