@@ -189,6 +189,8 @@ class ScatterGatherChunk {
     if (totalBytes_ == 0) {
       return result;
     }
+    // TODO(C++23): `resize_and_overwrite` to skip value-initialization;
+    // every byte below is overwritten by non-temporal stores.
     result.resize(totalBytes_);
     char* dest = result.data();
     for (const auto& segment : segments_) {

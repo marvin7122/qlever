@@ -194,6 +194,9 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Construct an owning writer with a 64-byte aligned internal buffer.
+  // TODO: allocate uninitialized storage (e.g. reserve + uninitialized
+  // resize); `vector(size)` value-initializes N bytes that `write()`
+  // immediately overwrites with non-temporal stores.
   explicit StreamingBufferWriter(size_t initialCapacity)
       : capacity_{initialCapacity}, bytesWritten_{0} {
     ownedBuffer_.emplace(initialCapacity);
@@ -275,7 +278,12 @@ class StreamingBufferWriter {
 
   // ___________________________________________________________________________
   // Retarget the writer to a new caller-provided buffer span.
-  void reset(std::span<char> newBuffer) noexcept {
+  void reset(std::span<char> newBuffer) {
+    // `std::span` permits `data() == nullptr` with `size() > 0`; enforce
+    // the class invariant (`buffer_ == nullptr` implies `capacity_ == 0`)
+    // that the zero-capacity accessor guards rely on, mirroring the
+    // constructors.
+    AD_CONTRACT_CHECK(newBuffer.data() != nullptr || newBuffer.size() == 0);
     ownedBuffer_.reset();
     buffer_ = newBuffer.data();
     capacity_ = newBuffer.size();

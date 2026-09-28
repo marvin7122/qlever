@@ -182,3 +182,15 @@ TEST(StreamingBufferWriterTest, StreamCopyRejectsOverlappingRanges) {
   EXPECT_NO_THROW(
       StreamingBufferWriter::streamCopy(buffer.data(), buffer.data(), 64));
 }
+
+// _____________________________________________________________________________
+// `reset` to a span with `data() == nullptr` and `size() > 0` would break
+// the class invariant (`buffer_ == nullptr` implies `capacity_ == 0`), so
+// the contract fires instead of building a corrupt writer.
+TEST(StreamingBufferWriterTest, ResetRejectsNullSpanWithPositiveSize) {
+  std::vector<char> buffer(64, 0);
+  StreamingBufferWriter writer(std::span<char>{buffer.data(), buffer.size()});
+  std::span<char> bad{static_cast<char*>(nullptr), static_cast<size_t>(5)};
+  EXPECT_THROW(writer.reset(bad), ad_utility::Exception);
+  EXPECT_EQ(writer.capacity(), 64u);
+}

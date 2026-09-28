@@ -65,9 +65,14 @@ class PerfCounter {
 #endif
   }
 
-  // Owns `fd_`, so copying would close it twice.
+  // Owns `fd_`, so copying would close it twice. The deleted copies
+  // implicitly delete the moves as well; the explicit declarations pin the
+  // type as immobile so a future move (e.g. into a container) fails to
+  // compile instead of double-closing `fd_`.
   PerfCounter(const PerfCounter&) = delete;
   PerfCounter& operator=(const PerfCounter&) = delete;
+  PerfCounter(PerfCounter&&) = delete;
+  PerfCounter& operator=(PerfCounter&&) = delete;
 
   ~PerfCounter() {
 #if defined(__linux__)
@@ -86,6 +91,8 @@ class PerfCounter {
 #endif
   }
 
+  // Returns the event count, or 0 when the counter is unsupported or the
+  // read fails; callers record 0 as "no measurement" for those runs.
   uint64_t stop() {
 #if defined(__linux__)
     if (enabled_) {
@@ -98,8 +105,6 @@ class PerfCounter {
 #endif
     return 0;
   }
-
-  [[nodiscard]] bool isSupported() const noexcept { return enabled_; }
 };
 
 // _____________________________________________________________________________
