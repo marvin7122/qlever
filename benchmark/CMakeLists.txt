@@ -63,4 +63,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(PolymorphicVocabLookupBatchEndToEndBenchmark vocabulary)
 
+    addAndLinkBenchmark(QueueHandoffMicroBenchmark qlever_util)
+
 endif()
