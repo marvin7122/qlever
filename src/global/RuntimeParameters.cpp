@@ -69,6 +69,9 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(ioUringAdaptiveBatchEnabled_);
+  add(ioUringAdaptiveBatchMinSize_);
+  add(ioUringAdaptiveBatchMaxSize_);
   add(vocabularyIouringPageCacheFastPath_);
 
   // Propagate runtime log level changes immediately to the global atomic in
@@ -96,6 +99,8 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  ioUringAdaptiveBatchMinSize_.setParameterConstraint(mustBeStrictlyPositive);
+  ioUringAdaptiveBatchMaxSize_.setParameterConstraint(mustBeStrictlyPositive);
 }
 
 // _____________________________________________________________________________
