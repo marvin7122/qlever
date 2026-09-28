@@ -6,585 +6,289 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+// Per-read overhead of the strategies of `RegisteredIoUringReader`: `pread`
+// through the page cache or with `O_DIRECT`, and `io_uring` with plain
+// descriptors and buffers, with registered files, and with registered files
+// plus registered buffers. Every strategy reads the same 1 GiB file in 4 KiB
+// blocks, once in file order and once with the batches shuffled.
+
+#include <absl/strings/str_cat.h>
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
-#include <chrono>
+#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
-#include <iomanip>
-#include <iostream>
+#include <filesystem>
 #include <memory>
-#include <numeric>
 #include <random>
-#include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
 
+#include "../benchmark/infrastructure/Benchmark.h"
 #include "backports/span.h"
 #include "util/Exception.h"
-#include "util/Log.h"
 #include "util/RegisteredIoUringReader.h"
-
-// Optional inclusion of QLever benchmark infrastructure
-#if __has_include("../benchmark/infrastructure/Benchmark.h")
-#include "../benchmark/infrastructure/Benchmark.h"
-#define QLEVER_HAS_BENCHMARK_INFRASTRUCTURE 1
-#endif
 
 namespace ad_benchmark {
 namespace {
 
-using namespace ad_utility::export_prototypes;
+using ad_utility::export_prototypes::BatchResult;
+using ad_utility::export_prototypes::BlockReadRequest;
+using ad_utility::export_prototypes::DirectIoFile;
+using ad_utility::export_prototypes::kDirectIoAlignment;
+using ad_utility::export_prototypes::kDirectIoBlockSize;
+using ad_utility::export_prototypes::PinnedArena;
+using ad_utility::export_prototypes::RegisteredIoUringReader;
+using ad_utility::export_prototypes::RegisteredReaderConfig;
 
-// 1 GB simulated vocabulary file constants:
-constexpr size_t kTotalFileSizeBytes = 1024ULL * 1024ULL * 1024ULL;  // 1 GB
-constexpr size_t kBlockSizeBytes = 4096;                             // 4 KB
-constexpr size_t kDefaultBatchBlocks = 256;  // 1 MB per batch (256 * 4KB)
+// The file is larger than the CPU caches, so every read touches memory, and
+// small enough for a temporary directory.
+constexpr size_t kFileSizeBytes = size_t{1} << 30;
+// Every read is one `O_DIRECT` block, the unit of a vocabulary block read.
+constexpr size_t kBlockSizeBytes = kDirectIoBlockSize;
+// A batch is 1 MiB. The ring has room for two batches, so a batch never waits
+// for a free submission entry.
+constexpr size_t kBlocksPerBatch = 256;
+constexpr unsigned kRingEntries = 2 * kBlocksPerBatch;
+constexpr size_t kBatchSizeBytes = kBlocksPerBatch * kBlockSizeBytes;
+static_assert(kFileSizeBytes % kBatchSizeBytes == 0,
+              "every batch lies completely inside the file");
+constexpr size_t kNumBatches = kFileSizeBytes / kBatchSizeBytes;
 
-// _____________________________________________________________________________
-// Helper to generate a 1GB simulated vocabulary binary file on disk.
-class SimulatedVocabularyFile {
- private:
-  std::string filePath_;
-  bool isCreated_ = false;
+// The message of the current `errno`. Unlike `strerror`, this is thread-safe.
+std::string errnoMessage() { return std::system_category().message(errno); }
 
- public:
-  explicit SimulatedVocabularyFile(
-      std::string_view pathTemplate = "/tmp/qlever_vocab_sim_XXXXXX.bin") {
-    // `mkstemps` needs a mutable, null-terminated buffer.
-    std::string tempPath{pathTemplate};
-    int fd = mkstemps(tempPath.data(), 4);
-    if (fd < 0) {
-      AD_THROW("mkstemps failed to create temporary vocabulary file");
-    }
-    filePath_ = std::move(tempPath);
-    // Mark created before any throwing allocation below so the destructor
-    // unlinks the temporary file when the constructor throws.
-    isCreated_ = true;
-
-    std::cout << "Generating 1GB simulated vocabulary data in: " << filePath_
-              << " ... " << std::flush;
-
-    // Allocate 4KB aligned write buffer
-    void* writeBuf = nullptr;
-    constexpr size_t writeChunkSize = 1024 * 1024;  // 1 MB chunks
-    if (posix_memalign(&writeBuf, kDirectIoAlignment, writeChunkSize) != 0) {
-      ::close(fd);
-      AD_THROW("posix_memalign failed");
-    }
-
-    auto* bytePtr = static_cast<char*>(writeBuf);
-    std::mt19937_64 rng(42);
-
-    // Populate with simulated vocabulary entries: prefix IDs, string tokens,
-    // offsets
-    size_t bytesWritten = 0;
-    while (bytesWritten < kTotalFileSizeBytes) {
-      for (size_t i = 0; i < writeChunkSize; i += sizeof(uint64_t)) {
-        uint64_t val = rng();
-        std::memcpy(bytePtr + i, &val, sizeof(uint64_t));
-      }
-
-      ssize_t written = ::write(fd, writeBuf, writeChunkSize);
-      if (written != static_cast<ssize_t>(writeChunkSize)) {
-        std::free(writeBuf);
-        ::close(fd);
-        AD_THROW("Failed to write full chunk to simulated vocabulary file");
-      }
-      bytesWritten += writeChunkSize;
-    }
-
-    // `fdatasync` is Linux-specific; macOS only provides `fsync`.
-#ifdef __APPLE__
-    int syncRes = ::fsync(fd);
-#else
-    int syncRes = ::fdatasync(fd);
-#endif
-    if (syncRes != 0) {
-      int syncErrno = errno;
-      std::free(writeBuf);
-      ::close(fd);
-      AD_THROW(std::string("Failed to sync simulated vocabulary file: ") +
-               std::strerror(syncErrno));
-    }
-    if (::close(fd) != 0) {
-      int closeErrno = errno;
-      std::free(writeBuf);
-      AD_THROW(std::string("Failed to close simulated vocabulary file: ") +
-               std::strerror(closeErrno));
-    }
-    std::free(writeBuf);
-    std::cout << "Done (" << kTotalFileSizeBytes << " bytes written)."
-              << std::endl;
-  }
-
-  ~SimulatedVocabularyFile() {
-    if (isCreated_ && !filePath_.empty()) {
-      ::unlink(filePath_.c_str());
-    }
-  }
-
-  SimulatedVocabularyFile(const SimulatedVocabularyFile&) = delete;
-  SimulatedVocabularyFile& operator=(const SimulatedVocabularyFile&) = delete;
-
-  [[nodiscard]] const std::string& path() const noexcept { return filePath_; }
+// Owner of a buffer from `posix_memalign`.
+struct FreeDeleter {
+  void operator()(char* buffer) const noexcept { std::free(buffer); }
 };
+using AlignedBuffer = std::unique_ptr<char, FreeDeleter>;
 
-// _____________________________________________________________________________
-// Benchmark result metrics struct.
-struct BenchmarkMetric {
-  std::string name;
-  double elapsedSeconds = 0.0;
-  double throughputMBs = 0.0;
-  double throughputGBs = 0.0;
-  double iops = 0.0;
-  double speedupVsBaseline = 1.0;
-};
-
-// _____________________________________________________________________________
-// Benchmark test harness evaluating I/O paradigms across the 1GB simulated
-// dataset.
-class IoUringDirectBenchmarkRunner {
- private:
-  std::string filePath_;
-  size_t batchBlocks_ = kDefaultBatchBlocks;
-
- public:
-  explicit IoUringDirectBenchmarkRunner(
-      std::string filePath, size_t batchBlocks = kDefaultBatchBlocks)
-      : filePath_{std::move(filePath)}, batchBlocks_{batchBlocks} {}
-
-  // 1. Baseline: Synchronous pread() with standard page cache
-  BenchmarkMetric runSyncPread(bool randomAccess = false) const {
-    DirectIoFile file(filePath_, /*useDirectIo=*/false);
-    AD_CONTRACT_CHECK(file.isOpen());
-
-    PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        RegisteredIoUringReader::readSync(file.fd(), blockOffset,
-                                          bufferArena.getSlotSpan(i),
-                                          /*directIo=*/false);
-        totalBytes += kBlockSizeBytes;
-      }
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("1. Sync pread (Page Cache)", startTime, endTime,
-                           totalBytes);
+// Allocate `numBytes` bytes aligned for `O_DIRECT`.
+AlignedBuffer allocateAlignedBuffer(size_t numBytes) {
+  void* buffer = nullptr;
+  if (posix_memalign(&buffer, kDirectIoAlignment, numBytes) != 0) {
+    AD_THROW(absl::StrCat("posix_memalign failed for ", numBytes, " bytes"));
   }
-
-  // 2. Synchronous pread() with Direct I/O (O_DIRECT)
-  BenchmarkMetric runSyncDirectPread(bool randomAccess = false) const {
-    DirectIoFile file(filePath_, /*useDirectIo=*/true);
-    AD_CONTRACT_CHECK(file.isOpen());
-
-    PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        RegisteredIoUringReader::readSync(file.fd(), blockOffset,
-                                          bufferArena.getSlotSpan(i),
-                                          /*directIo=*/true);
-        totalBytes += kBlockSizeBytes;
-      }
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("2. Sync pread (O_DIRECT)", startTime, endTime,
-                           totalBytes);
-  }
-
-  // 3. io_uring Standard (Unpinned buffers & Unregistered files)
-  BenchmarkMetric runIoUringUnpinned(bool randomAccess = false) const {
-    DirectIoFile file(filePath_, /*useDirectIo=*/false);
-    AD_CONTRACT_CHECK(file.isOpen());
-
-    RegisteredReaderConfig config;
-    config.ringEntries = 512;
-    config.useDirectIo = false;
-    config.useRegisteredFiles = false;
-    config.useRegisteredBuffers = false;
-
-    RegisteredIoUringReader reader(config);
-    PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-    std::vector<BlockReadRequest> requests(batchBlocks_);
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        requests[i] = BlockReadRequest(file.fd(), blockOffset, /*bufIndex=*/0,
-                                       /*bufOffset=*/0, kBlockSizeBytes,
-                                       bufferArena.getSlotSpan(i).data(),
-                                       /*requireDirectIoAlignment=*/false);
-      }
-
-      auto batchId = reader.submitBatch(requests);
-      auto res = reader.waitBatch(batchId);
-      totalBytes += res.totalBytesRead;
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("3. io_uring (Unpinned + Unregistered)", startTime,
-                           endTime, totalBytes);
-  }
-
-  // 4. io_uring with O_DIRECT (Unpinned buffers)
-  BenchmarkMetric runIoUringDirectUnpinned(bool randomAccess = false) const {
-    DirectIoFile file(filePath_, /*useDirectIo=*/true);
-    AD_CONTRACT_CHECK(file.isOpen());
-
-    RegisteredReaderConfig config;
-    config.ringEntries = 512;
-    config.useDirectIo = true;
-    config.useRegisteredFiles = false;
-    config.useRegisteredBuffers = false;
-
-    RegisteredIoUringReader reader(config);
-    PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-    std::vector<BlockReadRequest> requests(batchBlocks_);
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        requests[i] = BlockReadRequest(file.fd(), blockOffset, /*bufIndex=*/0,
-                                       /*bufOffset=*/0, kBlockSizeBytes,
-                                       bufferArena.getSlotSpan(i).data(),
-                                       /*requireDirectIoAlignment=*/true);
-      }
-
-      auto batchId = reader.submitBatch(requests);
-      auto res = reader.waitBatch(batchId);
-      totalBytes += res.totalBytesRead;
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("4. io_uring O_DIRECT (Unpinned)", startTime,
-                           endTime, totalBytes);
-  }
-
-  // 5. io_uring with Registered Files (IORING_REGISTER_FILES) + Unpinned
-  // Buffers
-  BenchmarkMetric runIoUringRegisteredFiles(bool randomAccess = false) const {
-    DirectIoFile file(filePath_, /*useDirectIo=*/true);
-    AD_CONTRACT_CHECK(file.isOpen());
-
-    RegisteredReaderConfig config;
-    config.ringEntries = 512;
-    config.useDirectIo = true;
-    config.useRegisteredFiles = true;
-    config.useRegisteredBuffers = false;
-
-    RegisteredIoUringReader reader(config);
-    int fd = file.fd();
-    reader.registerFiles({&fd, 1});
-
-    PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-    std::vector<BlockReadRequest> requests(batchBlocks_);
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        requests[i] = BlockReadRequest(
-            /*fileIndex=*/0, blockOffset, /*bufIndex=*/0, /*bufOffset=*/0,
-            kBlockSizeBytes, bufferArena.getSlotSpan(i).data(),
-            /*requireDirectIoAlignment=*/true);
-      }
-
-      auto batchId = reader.submitBatch(requests);
-      auto res = reader.waitBatch(batchId);
-      totalBytes += res.totalBytesRead;
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric("5. io_uring (Registered Files + O_DIRECT)",
-                           startTime, endTime, totalBytes);
-  }
-
-  // 6. io_uring Fully Registered: IORING_REGISTER_FILES +
-  // IORING_REGISTER_BUFFERS + O_DIRECT
-  BenchmarkMetric runIoUringFullyRegistered(bool randomAccess = false) const {
-    DirectIoFile file(filePath_, /*useDirectIo=*/true);
-    AD_CONTRACT_CHECK(file.isOpen());
-
-    RegisteredReaderConfig config;
-    config.ringEntries = 512;
-    config.useDirectIo = true;
-    config.useRegisteredFiles = true;
-    config.useRegisteredBuffers = true;
-
-    RegisteredIoUringReader reader(config);
-    int fd = file.fd();
-    reader.registerFiles({&fd, 1});
-
-    PinnedArena bufferArena(batchBlocks_, kBlockSizeBytes);
-    reader.registerBuffers(bufferArena.iovecs());
-
-    std::vector<uint64_t> offsets = generateOffsets(randomAccess);
-    const size_t numBatches = offsets.size();
-    std::vector<BlockReadRequest> requests(batchBlocks_);
-
-    auto startTime = std::chrono::steady_clock::now();
-    size_t totalBytes = 0;
-
-    for (size_t b = 0; b < numBatches; ++b) {
-      uint64_t baseOffset = offsets[b];
-      for (size_t i = 0; i < batchBlocks_; ++i) {
-        uint64_t blockOffset = baseOffset + (i * kBlockSizeBytes);
-        if (blockOffset + kBlockSizeBytes > kTotalFileSizeBytes) {
-          blockOffset = 0;
-        }
-        // Zero-copy DMA fixed buffer request
-        requests[i] = BlockReadRequest(
-            /*fileIndex=*/0, blockOffset,
-            /*bufferIndex=*/static_cast<uint32_t>(i),
-            /*bufferOffset=*/0, kBlockSizeBytes,
-            bufferArena.getSlotSpan(i).data(),
-            /*requireDirectIoAlignment=*/true);
-      }
-
-      auto batchId = reader.submitBatch(requests);
-      auto res = reader.waitBatch(batchId);
-      totalBytes += res.totalBytesRead;
-    }
-
-    auto endTime = std::chrono::steady_clock::now();
-    return calculateMetric(
-        "6. io_uring (Fully Registered Files+Buffers+O_DIRECT)", startTime,
-        endTime, totalBytes);
-  }
-
- private:
-  std::vector<uint64_t> generateOffsets(bool randomAccess) const {
-    const size_t batchSizeBytes = batchBlocks_ * kBlockSizeBytes;
-    const size_t numBatches = kTotalFileSizeBytes / batchSizeBytes;
-    std::vector<uint64_t> offsets(numBatches);
-
-    for (size_t i = 0; i < numBatches; ++i) {
-      offsets[i] = i * batchSizeBytes;
-    }
-
-    if (randomAccess) {
-      std::mt19937_64 rng(1337);
-      std::shuffle(offsets.begin(), offsets.end(), rng);
-    }
-
-    return offsets;
-  }
-
-  BenchmarkMetric calculateMetric(
-      std::string_view name, std::chrono::steady_clock::time_point startTime,
-      std::chrono::steady_clock::time_point endTime, size_t totalBytes) const {
-    std::chrono::duration<double> elapsed = endTime - startTime;
-    double elapsedSec = elapsed.count();
-    double mbRead = static_cast<double>(totalBytes) / (1024.0 * 1024.0);
-    double gbRead =
-        static_cast<double>(totalBytes) / (1024.0 * 1024.0 * 1024.0);
-    double totalBlocks = static_cast<double>(totalBytes) / kBlockSizeBytes;
-
-    BenchmarkMetric m;
-    m.name = std::string(name);
-    m.elapsedSeconds = elapsedSec;
-    m.throughputMBs = mbRead / elapsedSec;
-    m.throughputGBs = gbRead / elapsedSec;
-    m.iops = totalBlocks / elapsedSec;
-    return m;
-  }
-};
-
-// _____________________________________________________________________________
-// Formatter for benchmark results table (only used by the standalone entry
-// point below; the registered infrastructure benchmark reports JSON instead).
-#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
-void printResultsTable(std::string_view accessMode,
-                       std::vector<BenchmarkMetric>& results) {
-  if (results.empty()) return;
-
-  double baselineThroughput = results[0].throughputMBs;
-  for (auto& r : results) {
-    r.speedupVsBaseline = r.throughputMBs / baselineThroughput;
-  }
-
-  std::cout << "\n============================================================="
-               "===========================\n";
-  std::cout << "  BENCHMARK: 1GB Simulated Vocabulary Scan (" << accessMode
-            << ")\n";
-  std::cout << "  Dataset: 1,073,741,824 bytes | Block Size: 4 KB | Total "
-               "Blocks: 262,144\n";
-  std::cout << "==============================================================="
-               "=========================\n";
-  std::cout << std::left << std::setw(50) << "I/O Paradigm" << std::right
-            << std::setw(12) << "Time (s)" << std::setw(14) << "MB/s"
-            << std::setw(12) << "GB/s" << std::setw(14) << "IOPS"
-            << std::setw(12) << "Speedup" << "\n";
-  std::cout << "---------------------------------------------------------------"
-               "-------------------------\n";
-
-  for (const auto& r : results) {
-    std::cout << std::left << std::setw(50) << r.name << std::right
-              << std::fixed << std::setprecision(3) << std::setw(12)
-              << r.elapsedSeconds << std::setw(14) << r.throughputMBs
-              << std::setw(12) << r.throughputGBs << std::fixed
-              << std::setprecision(0) << std::setw(14) << r.iops << std::fixed
-              << std::setprecision(2) << std::setw(11) << r.speedupVsBaseline
-              << "x\n";
-  }
-  std::cout << "==============================================================="
-               "=========================\n\n";
+  return AlignedBuffer{static_cast<char*>(buffer)};
 }
-#endif  // QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
+
+// A temporary file of `kFileSizeBytes` pseudo-random bytes that is deleted
+// when this object is destroyed. Construction writes and syncs the whole
+// file, so create it once per benchmark run. Every reader of the file must
+// be done before the destructor runs.
+class TemporaryRandomFile {
+  std::string path_;
+
+ public:
+  TemporaryRandomFile() {
+    // `mkstemp` replaces the trailing `XXXXXX` with a unique suffix.
+    path_ = (std::filesystem::temp_directory_path() /
+             "qlever-iouring-benchmark-XXXXXX")
+                .string();
+    const int descriptor = mkstemp(path_.data());
+    if (descriptor < 0) {
+      AD_THROW(
+          absl::StrCat("mkstemp failed for ", path_, ": ", errnoMessage()));
+    }
+    try {
+      fill(descriptor);
+    } catch (...) {
+      ::close(descriptor);
+      std::filesystem::remove(path_);
+      throw;
+    }
+    if (::close(descriptor) != 0) {
+      const std::string message = errnoMessage();
+      std::filesystem::remove(path_);
+      AD_THROW(absl::StrCat("close failed for ", path_, ": ", message));
+    }
+  }
+
+  // A failed removal leaves a file in the temporary directory; a destructor
+  // cannot report it, so the error code is ignored on purpose.
+  ~TemporaryRandomFile() {
+    std::error_code ignored;
+    std::filesystem::remove(path_, ignored);
+  }
+
+  TemporaryRandomFile(const TemporaryRandomFile&) = delete;
+  TemporaryRandomFile& operator=(const TemporaryRandomFile&) = delete;
+  TemporaryRandomFile(TemporaryRandomFile&&) = delete;
+  TemporaryRandomFile& operator=(TemporaryRandomFile&&) = delete;
+
+  const std::string& path() const { return path_; }
+
+ private:
+  // Write `kFileSizeBytes` pseudo-random bytes (fixed seed, so every run reads
+  // the same content) in chunks of one batch, then flush them to the device.
+  static void fill(int descriptor) {
+    const AlignedBuffer chunk = allocateAlignedBuffer(kBatchSizeBytes);
+    ql::span<uint64_t> chunkWords{reinterpret_cast<uint64_t*>(chunk.get()),
+                                  kBatchSizeBytes / sizeof(uint64_t)};
+    std::mt19937_64 randomWords{42};
+    for (size_t batch = 0; batch < kNumBatches; ++batch) {
+      std::generate(chunkWords.begin(), chunkWords.end(),
+                    [&randomWords] { return randomWords(); });
+      const ssize_t numBytesWritten =
+          ::write(descriptor, chunk.get(), kBatchSizeBytes);
+      if (numBytesWritten != static_cast<ssize_t>(kBatchSizeBytes)) {
+        AD_THROW(absl::StrCat("write of the benchmark file failed: ",
+                              errnoMessage()));
+      }
+    }
+    if (::fsync(descriptor) != 0) {
+      AD_THROW(
+          absl::StrCat("fsync of the benchmark file failed: ", errnoMessage()));
+    }
+  }
+};
+
+// One way to read the file.
+struct ReadStrategy {
+  std::string_view label;
+  bool directIo;
+  // `false`: one synchronous `pread` per block. `true`: one `io_uring` batch
+  // of `kBlocksPerBatch` reads at a time.
+  bool useRing;
+  bool registeredFiles;
+  bool registeredBuffers;
+};
+
+constexpr std::array<ReadStrategy, 6> kReadStrategies{{
+    {"pread, page cache", false, false, false, false},
+    {"pread, O_DIRECT", true, false, false, false},
+    {"io_uring, page cache", false, true, false, false},
+    {"io_uring, O_DIRECT", true, true, false, false},
+    {"io_uring, O_DIRECT, registered file", true, true, true, false},
+    {"io_uring, O_DIRECT, registered file and buffers", true, true, true, true},
+}};
+
+enum class BatchOrder { FileOrder, Shuffled };
+
+// The start offset of every batch, in file order or shuffled with a fixed
+// seed, so that every strategy reads the batches in the same order.
+std::vector<uint64_t> batchStartOffsets(BatchOrder order) {
+  std::vector<uint64_t> offsets(kNumBatches);
+  uint64_t nextOffset = 0;
+  std::generate(offsets.begin(), offsets.end(), [&nextOffset] {
+    return std::exchange(nextOffset, nextOffset + kBatchSizeBytes);
+  });
+  if (order == BatchOrder::Shuffled) {
+    std::mt19937_64 shuffleEngine{1337};
+    std::shuffle(offsets.begin(), offsets.end(), shuffleEngine);
+  }
+  return offsets;
+}
+
+// Read the whole file at `path` with `strategy`, in batches in `order`, and
+// return the number of bytes read. Every block of a batch goes to its own
+// slot of one arena, so all strategies write to the same aligned memory
+// (`O_DIRECT` and registered buffers need that alignment; the others do not
+// mind it). Only one batch is in flight at a time, as in a vocabulary lookup
+// that needs a batch's words before it continues.
+size_t readFile(const ReadStrategy& strategy, BatchOrder order,
+                const std::string& path) {
+  const DirectIoFile benchmarkFile{path, strategy.directIo};
+  PinnedArena blockSlots{kBlocksPerBatch, kBlockSizeBytes};
+  const std::vector<uint64_t> batchOffsets = batchStartOffsets(order);
+  size_t numBytesRead = 0;
+
+  if (!strategy.useRing) {
+    for (const uint64_t batchOffset : batchOffsets) {
+      for (size_t block = 0; block < kBlocksPerBatch; ++block) {
+        RegisteredIoUringReader::readSync(
+            benchmarkFile.fd(), batchOffset + block * kBlockSizeBytes,
+            blockSlots.getSlotSpan(block), strategy.directIo);
+        numBytesRead += kBlockSizeBytes;
+      }
+    }
+    return numBytesRead;
+  }
+
+  RegisteredReaderConfig readerConfig;
+  readerConfig.ringEntries = kRingEntries;
+  readerConfig.useDirectIo = strategy.directIo;
+  readerConfig.useRegisteredFiles = strategy.registeredFiles;
+  readerConfig.useRegisteredBuffers = strategy.registeredBuffers;
+  RegisteredIoUringReader reader{readerConfig};
+  // Without a ring the reader silently falls back to `pread`, which would
+  // measure the wrong strategy.
+  if (!reader.isRingInitialized()) {
+    AD_THROW(absl::StrCat("io_uring is not available, cannot measure \"",
+                          strategy.label, "\""));
+  }
+  const int descriptor = benchmarkFile.fd();
+  if (strategy.registeredFiles) {
+    reader.registerFiles(ql::span<const int>{&descriptor, 1});
+  }
+  if (strategy.registeredBuffers) {
+    reader.registerBuffers(blockSlots.iovecs());
+  }
+  // With a registered file, a request names its slot in the file table (the
+  // only one, `0`); otherwise it names the descriptor itself.
+  const auto fileIndex =
+      static_cast<uint32_t>(strategy.registeredFiles ? 0 : descriptor);
+
+  std::vector<BlockReadRequest> requests;
+  requests.reserve(kBlocksPerBatch);
+  for (const uint64_t batchOffset : batchOffsets) {
+    requests.clear();
+    for (size_t block = 0; block < kBlocksPerBatch; ++block) {
+      // Block `block` of the batch goes to arena slot `block`, which is also
+      // registered buffer `block` (see `PinnedArena::iovecs`).
+      requests.emplace_back(fileIndex, batchOffset + block * kBlockSizeBytes,
+                            static_cast<uint32_t>(block), 0, kBlockSizeBytes,
+                            blockSlots.getSlotSpan(block).data(),
+                            strategy.directIo);
+    }
+    const BatchResult batchResult =
+        reader.waitBatch(reader.submitBatch(requests));
+    numBytesRead += batchResult.totalBytesRead;
+  }
+  return numBytesRead;
+}
 
 }  // namespace
 
-#ifdef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
-// Integration into QLever's Benchmark Framework
+// The page-cache strategies read the file warm (it was just written), the
+// `O_DIRECT` ones read it from the device. The groups therefore compare the
+// per-read overhead of the strategies, not device throughput.
 class IoUringDirectBenchmark : public BenchmarkInterface {
  public:
-  std::string name() const final {
-    return "io_uring Registered Files, Fixed Buffers, and O_DIRECT Vocabulary "
-           "Scan";
+  std::string name() const override {
+    return "io_uring registered files, registered buffers and O_DIRECT";
   }
 
-  BenchmarkResults runAllBenchmarks() final {
+  BenchmarkResults runAllBenchmarks() override {
     BenchmarkResults results;
-    auto& group = results.addGroup("1GB Vocabulary I/O Strategies");
-
-    SimulatedVocabularyFile vocabFile;
-    IoUringDirectBenchmarkRunner runner(vocabFile.path());
-
-    group.addMeasurement("1. Sync pread (Page Cache)", [&]() {
-      return runner.runSyncPread().elapsedSeconds;
-    });
-    group.addMeasurement("2. Sync pread (O_DIRECT)", [&]() {
-      return runner.runSyncDirectPread().elapsedSeconds;
-    });
-    group.addMeasurement("3. io_uring (Unpinned)", [&]() {
-      return runner.runIoUringUnpinned().elapsedSeconds;
-    });
-    group.addMeasurement("4. io_uring (O_DIRECT)", [&]() {
-      return runner.runIoUringDirectUnpinned().elapsedSeconds;
-    });
-    group.addMeasurement("5. io_uring (Registered Files)", [&]() {
-      return runner.runIoUringRegisteredFiles().elapsedSeconds;
-    });
-    group.addMeasurement("6. io_uring (Fully Registered DMA)", [&]() {
-      return runner.runIoUringFullyRegistered().elapsedSeconds;
-    });
-
+    const TemporaryRandomFile benchmarkFile;
+    for (const BatchOrder order :
+         {BatchOrder::FileOrder, BatchOrder::Shuffled}) {
+      ResultGroup& strategyGroup = results.addGroup(absl::StrCat(
+          "4 KiB block reads of a 1 GiB file, batches in ",
+          order == BatchOrder::FileOrder ? "file order" : "shuffled order"));
+      for (const ReadStrategy& strategy : kReadStrategies) {
+        size_t numBytesRead = 0;
+        ResultEntry& measurement =
+            strategyGroup.addMeasurement(std::string{strategy.label}, [&] {
+              numBytesRead = readFile(strategy, order, benchmarkFile.path());
+            });
+        AD_CORRECTNESS_CHECK(numBytesRead == kFileSizeBytes);
+        measurement.metadata().addKeyValuePair("bytesRead", numBytesRead);
+      }
+    }
     return results;
   }
 };
 
 AD_REGISTER_BENCHMARK(IoUringDirectBenchmark);
-#endif
 
 }  // namespace ad_benchmark
-
-#ifndef QLEVER_HAS_BENCHMARK_INFRASTRUCTURE
-// Standalone executable entry point
-int main(int argc, char** argv) {
-  std::cout
-      << "=================================================================\n";
-  std::cout << " QLever Export Prototype: Registered io_uring & Direct I/O "
-               "Benchmark\n";
-  std::cout
-      << "=================================================================\n";
-
-  try {
-    ad_benchmark::SimulatedVocabularyFile vocabFile;
-    ad_benchmark::IoUringDirectBenchmarkRunner runner(vocabFile.path());
-
-    // 1. Sequential Sweep Benchmark
-    std::cout << "\n>>> Running Sequential 1GB Vocabulary Block Sweep <<<\n";
-    std::vector<ad_benchmark::BenchmarkMetric> seqResults;
-    seqResults.push_back(runner.runSyncPread(/*randomAccess=*/false));
-    seqResults.push_back(runner.runSyncDirectPread(/*randomAccess=*/false));
-    seqResults.push_back(runner.runIoUringUnpinned(/*randomAccess=*/false));
-    seqResults.push_back(
-        runner.runIoUringDirectUnpinned(/*randomAccess=*/false));
-    seqResults.push_back(
-        runner.runIoUringRegisteredFiles(/*randomAccess=*/false));
-    seqResults.push_back(
-        runner.runIoUringFullyRegistered(/*randomAccess=*/false));
-    ad_benchmark::printResultsTable("Sequential Sweep", seqResults);
-
-    // 2. Random Batch Access Benchmark
-    std::cout
-        << "\n>>> Running Random Access 1GB Vocabulary Block Lookup <<<\n";
-    std::vector<ad_benchmark::BenchmarkMetric> randResults;
-    randResults.push_back(runner.runSyncPread(/*randomAccess=*/true));
-    randResults.push_back(runner.runSyncDirectPread(/*randomAccess=*/true));
-    randResults.push_back(runner.runIoUringUnpinned(/*randomAccess=*/true));
-    randResults.push_back(
-        runner.runIoUringDirectUnpinned(/*randomAccess=*/true));
-    randResults.push_back(
-        runner.runIoUringRegisteredFiles(/*randomAccess=*/true));
-    randResults.push_back(
-        runner.runIoUringFullyRegistered(/*randomAccess=*/true));
-    ad_benchmark::printResultsTable("Random Access Lookup", randResults);
-
-  } catch (const std::exception& e) {
-    std::cerr << "Benchmark failed with exception: " << e.what() << std::endl;
-    return 1;
-  }
-
-  return 0;
-}
-#endif
