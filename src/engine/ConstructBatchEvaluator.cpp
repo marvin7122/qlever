@@ -159,31 +159,33 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
   }
 
   // Phase B in waves of concurrent fibers, so one thread keeps several
-  // lookup batches in flight (design step 1). Each in-flight column pops one
-  // I/O manager from the pool, and `pop()` blocks once the pool is empty, so
-  // a wave holds at most `NUM_VOCAB_BATCH_IO_MANAGERS` columns: more
-  // concurrent fibers than managers would deadlock the thread. A lone
-  // resolvable column skips fibers (no overlap possible, avoid the setup).
+  // lookup batches in flight (design step 1). Only columns with misses take
+  // part. A wave holds at most `NUM_VOCAB_BATCH_IO_MANAGERS` columns, the
+  // number of I/O managers the vocabulary creates up front: each in-flight
+  // column holds one of them, and the pool creates more on demand instead of
+  // blocking, so the bound only limits the number of rings and fiber stacks
+  // per batch. A lone resolvable column skips fibers (no overlap possible,
+  // avoid the setup).
+  std::vector<size_t> resolvable;
+  for (size_t i = 0; i < columns.size(); ++i) {
+    if (!columns[i].missIds_.empty()) {
+      resolvable.push_back(i);
+    }
+  }
   constexpr size_t kMaxConcurrentColumns = NUM_VOCAB_BATCH_IO_MANAGERS;
-  for (size_t begin = 0; begin < columns.size();
+  static_assert(kMaxConcurrentColumns >= 1);
+  for (size_t begin = 0; begin < resolvable.size();
        begin += kMaxConcurrentColumns) {
-    const size_t end = std::min(begin + kMaxConcurrentColumns, columns.size());
-    std::vector<size_t> resolvable;
-    for (size_t i = begin; i < end; ++i) {
-      if (!columns[i].missIds_.empty()) {
-        resolvable.push_back(i);
-      }
-    }
-    if (resolvable.empty()) {
-      continue;
-    }
-    if (resolvable.size() == 1) {
-      resolveColumnMisses(index, localVocab, columns[resolvable[0]]);
+    const size_t end =
+        std::min(begin + kMaxConcurrentColumns, resolvable.size());
+    if (end - begin == 1) {
+      resolveColumnMisses(index, localVocab, columns[resolvable[begin]]);
       continue;
     }
     std::vector<std::function<void()>> bodies;
-    bodies.reserve(resolvable.size());
-    for (size_t i : resolvable) {
+    bodies.reserve(end - begin);
+    for (size_t i :
+         ql::span<const size_t>{resolvable}.subspan(begin, end - begin)) {
       bodies.emplace_back([&index, &localVocab, &columns, i]() {
         resolveColumnMisses(index, localVocab, columns[i]);
       });
