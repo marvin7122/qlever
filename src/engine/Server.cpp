@@ -36,6 +36,7 @@
 #include "parser/SparqlParser.h"
 #include "util/AsioHelpers.h"
 #include "util/Exception.h"
+#include "util/IoUringManager.h"
 #include "util/MemorySize/MemorySize.h"
 #include "util/ParseableDuration.h"
 #include "util/QueryEventLog.h"
@@ -1111,6 +1112,9 @@ CPP_template_def(typename RequestT, typename SendT)(
 
   // This actually processes the query and sends the result in the
   // requested format.
+  [[maybe_unused]] const ad_utility::IoUringStats ioUringStatsBefore =
+      ad_utility::IO_URING_STATS_ENABLED ? ad_utility::ioUringStatsSnapshot()
+                                         : ad_utility::IoUringStats{};
   co_await sendStreamableResponse(request, AD_FWD(send), mediaType,
                                   plannedQuery.value(), requestTimer,
                                   cancellationHandle);
@@ -1119,6 +1123,14 @@ CPP_template_def(typename RequestT, typename SendT)(
   AD_LOG_INFO << "Done processing query and sending result"
               << ", total time was " << requestTimer.msecs().count() << " ms"
               << std::endl;
+  if constexpr (ad_utility::IO_URING_STATS_ENABLED) {
+    const ad_utility::IoUringStats stats =
+        ad_utility::ioUringStatsSnapshot() - ioUringStatsBefore;
+    AD_LOG_INFO << "io_uring submissions of this query: " << stats.fixedFileSqes
+                << " reads with IOSQE_FIXED_FILE, " << stats.plainFdSqes
+                << " reads with a plain descriptor, " << stats.filesUpdateCalls
+                << " fixed-file table updates" << std::endl;
+  }
   metrics_->sparqlOperationDuration_->Record(
       static_cast<double>(requestTimer.msecs().count()),
       {OperationType::query});

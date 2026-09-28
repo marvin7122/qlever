@@ -12,12 +12,38 @@
 
 #include <unistd.h>
 
+#include <atomic>
 #include <stdexcept>
 
 #include "util/Exception.h"
 #include "util/Log.h"
 
 namespace ad_utility {
+
+namespace {
+// The counters behind `ioUringStatsSnapshot`; see `IoUringStats`.
+std::atomic<uint64_t> numFixedFileSqes{0};
+std::atomic<uint64_t> numPlainFdSqes{0};
+std::atomic<uint64_t> numFilesUpdateCalls{0};
+}  // namespace
+
+//______________________________________________________________________________
+IoUringStats ioUringStatsSnapshot() {
+  return {numFixedFileSqes.load(std::memory_order_relaxed),
+          numPlainFdSqes.load(std::memory_order_relaxed),
+          numFilesUpdateCalls.load(std::memory_order_relaxed)};
+}
+
+//______________________________________________________________________________
+void detail::recordIoUringSqe(bool fixedFile) {
+  (fixedFile ? numFixedFileSqes : numPlainFdSqes)
+      .fetch_add(1, std::memory_order_relaxed);
+}
+
+//______________________________________________________________________________
+void detail::recordIoUringFilesUpdate() {
+  numFilesUpdateCalls.fetch_add(1, std::memory_order_relaxed);
+}
 
 //______________________________________________________________________________
 void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
@@ -131,6 +157,9 @@ void IoUringPolicy::addBatch(int fd,
     io_uring_prep_read(sqe, fd, targetBuf,
                        static_cast<unsigned>(numBytesToRead),
                        static_cast<__u64>(fileOffset));
+    if constexpr (IO_URING_STATS_ENABLED) {
+      detail::recordIoUringSqe(false);
+    }
 
     // Tag the SQE with a unique request id and record its metadata (the batch
     // it belongs to and how many bytes it should read). io_uring copies the
