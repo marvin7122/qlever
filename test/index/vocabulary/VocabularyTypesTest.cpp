@@ -1,4 +1,4 @@
-// Copyright 2026 The QLever Authors, in particular:
+// Copyright 2026, The QLever Authors, in particular:
 //
 // 2026 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
@@ -6,7 +6,13 @@
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <absl/functional/function_ref.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <array>
+#include <cstring>
+#include <string>
+#include <vector>
 
 #include "../../util/GTestHelpers.h"
 #include "index/vocabulary/VocabularyTypes.h"
@@ -38,6 +44,17 @@ class WordWriterNoFinish : public WordWriterBase {
   uint64_t operator()(std::string_view, bool) override { return 0; }
   void finishImpl() override {}
 };
+
+// Build a batch-lookup result that owns `words` as strings.
+VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
+    std::vector<std::string> words) {
+  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+  data->buffer() = std::move(words);
+  for (const auto& word : data->buffer()) {
+    data->views().emplace_back(word);
+  }
+  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+}
 }  // namespace
 
 // _____________________________________________________________________________
@@ -60,6 +77,7 @@ TEST(VocabularyTypes, verifyWordWriterBaseDestructorBehavesAsExpected) {
   });
 }
 
+// _____________________________________________________________________________
 // `asResult` exposes the span over the filled views, and the returned aliasing
 // shared_ptr keeps the backing buffer/views alive after the original owning
 // shared_ptr is dropped (the whole point of the aliasing shared_ptr).
@@ -71,21 +89,86 @@ TEST(VocabBatchLookupData, AsResultExposesViewsAndKeepsDataAlive) {
 
   VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
 
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "bar");
+  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "bar"));
 
   // Drop our reference; the aliasing shared_ptr must keep the data alive.
   data.reset();
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "bar");
+  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "bar"));
 }
 
+// _____________________________________________________________________________
 // An empty lookup result is valid: no views, empty span.
 TEST(VocabBatchLookupData, AsResultEmpty) {
   auto data = std::make_shared<VocabBatchLookupData>();
   VocabBatchLookupResult result = VocabBatchLookupData::asResult(data);
   EXPECT_TRUE(result->empty());
+}
+
+// _____________________________________________________________________________
+// Verify that an owning string batch exposes all input words as valid views.
+TEST(VocabBatchLookupData, MakeStringVectorResultKeepsViewsValid) {
+  auto result = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
+
+  EXPECT_THAT(*result, ::testing::ElementsAre("alpha", "beta"));
+}
+
+// _____________________________________________________________________________
+// Verify that scattering preserves input order and retains the child batch
+// owner.
+TEST(VocabBatchLookupData, ScatterBatchResultRetainsOwner) {
+  auto first = makeStringVectorVocabBatchLookupResult({"alpha", "beta"});
+  auto second = makeStringVectorVocabBatchLookupResult({"gamma"});
+  const char* alphaData = (*first)[0].data();
+  const char* gammaData = (*second)[0].data();
+
+  std::vector<std::string_view> viewsInInputOrder(3);
+  std::vector<VocabBatchOwner> owners;
+  const std::array<size_t, 2> firstPositions{2, 0};
+  const std::array<size_t, 1> secondPositions{1};
+  scatterVocabBatchLookupResult(std::move(first), firstPositions,
+                                viewsInInputOrder, owners);
+  scatterVocabBatchLookupResult(std::move(second), secondPositions,
+                                viewsInInputOrder, owners);
+
+  auto result =
+      keepAliveVocabBatch(std::move(owners), std::move(viewsInInputOrder));
+  EXPECT_THAT(*result, ::testing::ElementsAre("beta", "gamma", "alpha"));
+  EXPECT_EQ((*result)[2].data(), alphaData);
+  EXPECT_EQ((*result)[1].data(), gammaData);
+}
+
+// _____________________________________________________________________________
+// Verify that keeping child batches alive preserves their original string
+// storage.
+TEST(VocabBatchLookupData, KeepAliveVocabBatchDoesNotCopyBytes) {
+  auto firstOwner = std::make_shared<StringVectorVocabBatchLookupData>();
+  firstOwner->buffer() = {"alpha", "beta"};
+  firstOwner->views() = {firstOwner->buffer()[0], firstOwner->buffer()[1]};
+  auto first = StringVectorVocabBatchLookupData::asResult(firstOwner);
+
+  auto secondOwner = std::make_shared<StringVectorVocabBatchLookupData>();
+  secondOwner->buffer() = {"gamma"};
+  secondOwner->views() = {secondOwner->buffer()[0]};
+  auto second = StringVectorVocabBatchLookupData::asResult(secondOwner);
+
+  const char* alphaData = (*first)[0].data();
+  const char* gammaData = (*second)[0].data();
+  std::vector<std::string_view> mixed{(*first)[0], (*second)[0], (*first)[1]};
+  std::vector<VocabBatchOwner> owners{std::move(first), std::move(second)};
+  firstOwner.reset();
+  secondOwner.reset();
+
+  auto result = keepAliveVocabBatch(std::move(owners), std::move(mixed));
+  EXPECT_THAT(*result, ::testing::ElementsAre("alpha", "gamma", "beta"));
+  EXPECT_EQ((*result)[0].data(), alphaData);
+  EXPECT_EQ((*result)[1].data(), gammaData);
+}
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, KeepAliveRequiresAnOwner) {
+  std::vector<std::string_view> views{"orphan"};
+  AD_EXPECT_THROW_WITH_MESSAGE(keepAliveVocabBatch({}, std::move(views)),
+                               ::testing::HasSubstr("owners"));
 }
 
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
@@ -115,15 +198,12 @@ TEST(PmrVocabBatchLookupData, PmrAsResultPointerStableAcrossAppends) {
   EXPECT_EQ(firstView, "foo");
 
   VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
-  ASSERT_EQ(result->size(), 2u);
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "barbaz");
+  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "barbaz"));
 
   // The aliasing shared_ptr keeps the resource (and thus its allocations)
   // alive.
   data.reset();
-  EXPECT_EQ((*result)[0], "foo");
-  EXPECT_EQ((*result)[1], "barbaz");
+  EXPECT_THAT(*result, ::testing::ElementsAre("foo", "barbaz"));
 }
 
 // An empty pmr lookup result is valid: no views, empty span (matches the
@@ -133,6 +213,35 @@ TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
   data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>();
   VocabBatchLookupResult result = PmrVocabBatchLookupData::asResult(data);
   EXPECT_TRUE(result->empty());
+}
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, ScatterBatchResultSizeMismatchThrows) {
+  auto batch = makeStringVectorVocabBatchLookupResult({"only-one"});
+  std::vector<std::string_view> views(2);
+  std::vector<VocabBatchOwner> owners;
+  const std::array<size_t, 2> positions{0, 1};
+  // Two positions but one word in the batch.
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      scatterVocabBatchLookupResult(std::move(batch), positions, views, owners),
+      ::testing::HasSubstr("result->size() == resultPositions.size()"));
+}
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, MakePmrResultKeepsViewsAlive) {
+  auto buffer = std::make_unique<ql::pmr::monotonic_buffer_resource>();
+  auto* resource = buffer.get();
+  auto allocCopy = [&](std::string_view word) {
+    char* p = static_cast<char*>(resource->allocate(word.size()));
+    std::memcpy(p, word.data(), word.size());
+    return std::string_view{p, word.size()};
+  };
+  std::vector<std::string_view> views{allocCopy("one"), allocCopy("two")};
+  const char* firstData = views[0].data();
+  auto result =
+      makePmrVocabBatchLookupResult(std::move(buffer), std::move(views));
+  EXPECT_THAT(*result, ::testing::ElementsAre("one", "two"));
+  EXPECT_EQ((*result)[0].data(), firstData);
 }
 
 namespace {
