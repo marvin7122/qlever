@@ -49,7 +49,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
       words[position] = std::string{word};
     }
   }
-  return makeStringVectorVocabBatchLookupResult(std::move(words));
+  return StringVectorVocabBatchLookupData::fromWords(std::move(words));
 }
 
 // _____________________________________________________________________________
