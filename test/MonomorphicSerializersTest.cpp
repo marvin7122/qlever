@@ -73,12 +73,12 @@ class RecordingWriter {
     if constexpr (std::is_floating_point_v<Value>) {
       // No floating-point `std::to_chars` on macOS before 13.3; the
       // ostringstream default formatting matches the expected output.
-      std::ostringstream stream;
+      std::ostringstream stream{};
       stream << value;
       output_ += stream.str();
       return;
     }
-    std::array<char, 64> buffer;
+    std::array<char, 64> buffer{};
     const auto [end, error] =
         std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
     ASSERT_EQ(error, std::errc{});
@@ -130,6 +130,7 @@ TEST(MonomorphicSerializersTest, BooleanRendersStoredIdLiteral) {
         std::pair{Id::makeFromBool(true), "true\n"},
         std::pair{Id::makeBoolFromZeroOrOne(false), "0\n"},
         std::pair{Id::makeBoolFromZeroOrOne(true), "1\n"}}) {
+    SCOPED_TRACE(expected);
     RecordingWriter writer;
     Serializer::serializeRow<RowFormat::Csv>(writer, id);
     EXPECT_EQ(writer.output(), expected);

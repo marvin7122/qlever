@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
@@ -18,6 +19,7 @@
 
 #include "backports/concepts.h"
 #include "global/Id.h"
+#include "util/Exception.h"
 
 namespace ql::engine::export_v2 {
 
@@ -69,19 +71,24 @@ struct CellWriter {
                       Type == ColumnType::String,
                   "Only Iri, Literal, BlankNode, and String columns accept a "
                   "string argument");
-    const std::string_view string{value};
+    const std::string_view content{value};
     if constexpr (Format == RowFormat::Csv) {
-      writer.writeEscapedCsv(string);
+      writer.writeEscapedCsv(content);
     } else if constexpr (Format == RowFormat::Tsv) {
-      writer.writeEscapedTsv(string);
+      writer.writeEscapedTsv(content);
     } else if constexpr (Type == ColumnType::Iri) {
-      writer.writeIri(string);
+      writer.writeIri(content);
     } else if constexpr (Type == ColumnType::Literal) {
       // The N-Triples literal escapes are a subset of the Turtle ones, so one
       // writer operation serves both formats.
-      writer.writeEscapedTurtleLiteral(string);
+      writer.writeEscapedTurtleLiteral(content);
     } else {
-      writer.writeRaw(string);
+      // The `static_assert` above only admits `BlankNode` and `String` here:
+      // both are emitted raw in RDF formats (blank-node labels and plain
+      // strings need no escaping).
+      static_assert(Type == ColumnType::BlankNode || Type == ColumnType::String,
+                    "Only BlankNode and String columns reach the raw RDF path");
+      writer.writeRaw(content);
     }
   }
 
@@ -103,6 +110,9 @@ struct CellWriter {
   static void write(Writer& writer, Id id) {
     static_assert(Type == ColumnType::Boolean,
                   "Only a Boolean column accepts an Id argument");
+    // `getBoolLiteral` decodes the low bits without checking the datatype,
+    // so reject a non-Boolean `Id` here instead of rendering garbage.
+    AD_CONTRACT_CHECK(id.getDatatype() == Datatype::Bool);
     writer.writeRaw(id.getBoolLiteral());
   }
 
@@ -134,6 +144,10 @@ void writeDelimiter(Writer& writer) {
   } else if constexpr (Format == RowFormat::Tsv) {
     writer.writeChar('\t');
   } else {
+    // Triples are space-separated; a future `RowFormat` must add its
+    // delimiter here instead of silently taking the RDF one.
+    static_assert(isRdfFormat<Format>,
+                  "Only Csv, Tsv, Turtle, and NTriples are supported");
     writer.writeChar(' ');
   }
 }
@@ -141,7 +155,9 @@ void writeDelimiter(Writer& writer) {
 template <RowFormat Format, typename Writer>
 void writeTerminator(Writer& writer) {
   if constexpr (isRdfFormat<Format>) {
-    writer.writeRaw(" .\n");
+    // Length-aware view: `writeRaw` takes a `string_view`, so a literal
+    // would pay a `strlen` scan on every RDF row.
+    writer.writeRaw(std::string_view{" .\n", 3});
   } else {
     writer.writeChar('\n');
   }
@@ -152,7 +168,7 @@ void writeTerminator(Writer& writer) {
 // message at the call site instead of deep inside `CellWriter`.
 template <typename Writer>
 CPP_requires(HasWriterOpsRequires,
-             requires(Writer& writer, char c, std::string_view s, int i,
+             requires(Writer& writer, char c, std::string_view s, int64_t i,
                       double d)(writer.writeChar(c), writer.writeRaw(s),
                                 writer.writeEscapedCsv(s),
                                 writer.writeEscapedTsv(s),
@@ -174,6 +190,10 @@ class MonomorphicRowSerializer {
  public:
   static_assert(sizeof...(ColumnTypes) > 0,
                 "A row serializer needs at least one column");
+
+  // Stateless utility with only static members: never instantiate.
+  MonomorphicRowSerializer() = delete;
+  MonomorphicRowSerializer(const MonomorphicRowSerializer&) = delete;
 
   // The schema as values, e.g. for a caller that checks at runtime that a
   // result table matches the instantiation it is about to use.
