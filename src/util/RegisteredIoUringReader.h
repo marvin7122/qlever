@@ -720,8 +720,8 @@ class RegisteredIoUringReader {
       // Like the ring path, interpret `fileIndex` as an index into the
       // registered files only if registered files are in use.
       int targetFd = static_cast<int>(req.fileIndex);
-      if (filesRegistered_ && config_.useRegisteredFiles &&
-          req.fileIndex < registeredFds_.size()) {
+      if (filesRegistered_ && config_.useRegisteredFiles) {
+        AD_CONTRACT_CHECK(req.fileIndex < registeredFds_.size());
         targetFd = registeredFds_[req.fileIndex];
       }
       readSync(targetFd, req.fileOffset, {req.destination, req.numBytes},
