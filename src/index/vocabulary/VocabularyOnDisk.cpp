@@ -289,8 +289,7 @@ VocabularyOnDisk::submitStrings(ad_utility::BatchManagerBase& manager,
                                 bool pageCacheFastPath) const {
   AD_CORRECTNESS_CHECK(offsetPairs.size() == views.size());
   // String `i` starts at `offset_` with length `nextOffset_ - offset_`; the
-  // strings are packed contiguously into `buffer`.
-  const size_t numIndices = offsetPairs.size();
+  // strings are packed contiguously into `buffer`.  const size_t numIndices = offsetPairs.size();
   std::vector<size_t> sizes(numIndices);
   std::vector<uint64_t> fileOffsets(numIndices);
   for (auto&& [size, fileOffset, offsetPair] :
@@ -326,9 +325,8 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   data->views().resize(offsetPairs.size());
   if (auto handle = submitStrings(manager, offsetPairs, data->buffer(),
                                   data->views(), pageCacheFastPath)) {
-    manager.wait(handle.value());
-  }
-  return VocabBatchLookupData::asResult(std::move(data));
+    manager.wait(handle.value());  }
+  return std::move(builder).finalize();
 }
 
 // _____________________________________________________________________________
