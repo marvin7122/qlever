@@ -10,6 +10,7 @@
 
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "./util/GTestHelpers.h"
@@ -225,4 +226,33 @@ TEST(SimdEscapeClassifierTest, utf8Preservation) {
   std::string utf8WithEscape = "\"München \"Düsseldorf\" Zürich\"@de";
   EXPECT_EQ(SimdEscapeClassifier::validRDFLiteralFromNormalized(utf8WithEscape),
             "\"München \\\"Düsseldorf\\\" Zürich\"@de");
+}
+
+// ___________________________________________________________________________
+// An input that consists only of characters with the longest escape reaches
+// `maxEscapedSize` exactly, also across the 32-byte SIMD chunks.
+TEST(SimdEscapeClassifierTest, copyAndEscapeWorstCaseFitsMaxEscapedSize) {
+  auto check = [](auto format, std::string_view input,
+                  std::string_view longestEscape) {
+    constexpr EscapeFormat Format = decltype(format)::value;
+    const size_t maxSize =
+        SimdEscapeClassifier::maxEscapedSize<Format>(input.size());
+    std::string output(maxSize, '\0');
+    char* end =
+        SimdEscapeClassifier::copyAndEscape<Format>(input, output.data());
+    EXPECT_EQ(static_cast<size_t>(end - output.data()), maxSize);
+    for (size_t i = 0; i < input.size(); ++i) {
+      EXPECT_EQ(output.substr(i * longestEscape.size(), longestEscape.size()),
+                longestEscape);
+    }
+  };
+  const std::string quotes(70, '"');
+  check(std::integral_constant<EscapeFormat, EscapeFormat::Xml>{}, quotes,
+        "&quot;");
+  check(std::integral_constant<EscapeFormat, EscapeFormat::Turtle>{}, quotes,
+        "\\\"");
+  check(std::integral_constant<EscapeFormat, EscapeFormat::CsvQuote>{}, quotes,
+        "\"\"");
+  check(std::integral_constant<EscapeFormat, EscapeFormat::Tsv>{},
+        std::string(70, '\n'), "\\n");
 }
