@@ -13,6 +13,7 @@
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "global/RuntimeParameters.h"
 
 namespace qlever::constructExport {
 
@@ -154,6 +155,20 @@ ConstructTripleGenerator::generateFormattedTriples(
       evaluateTables(templateTriples, variableColumns, std::move(rowIndices),
                      rowOffset, config);
 
+  // With `use-rle-prefix-construct-export`, a subject or predicate that
+  // repeats from one triple to the next is formatted only once (see
+  // `formatTripleRle`). One cache is shared by the whole output stream, so runs
+  // continue across batch boundaries.
+  const bool useRle =
+      getRuntimeParameter<&RuntimeParameters::useRlePrefixConstructExport_>();
+  if (useRle) {
+    auto transformer = [mediaType, cache = RleConstructTripleCache{}](
+                           const EvaluatedTriple& triple) mutable {
+      return formatTripleRle(triple, mediaType, cache);
+    };
+    return InputRangeTypeErased(std::move(evaluatedTriples) |
+                                ql::views::transform(std::move(transformer)));
+  }
   auto transformer = [mediaType](const EvaluatedTriple& triple) {
     return formatTriple(triple, mediaType);
   };

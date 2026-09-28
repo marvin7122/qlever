@@ -11,6 +11,7 @@
 #define QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEINSTANTIATOR_H
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,32 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType);
 // format `format`.
 std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
                          const ad_utility::MediaType& format);
+
+// Per-stream cache of `formatTripleRle`. The `ConstructBatchEvaluator`'s
+// `IdCache` hands out the same `EvaluatedTerm` (`shared_ptr`) for equal `Id`s,
+// so consecutive rows with the same subject or predicate (a run in a result
+// sorted by subject) carry the same pointer. The cache keeps the subject and
+// predicate of the previous row, formatted and escaped for `format_`, together
+// with owning handles: the cache lives across batches, while a batch only owns
+// its terms until it is consumed, so raw pointers could dangle (and a freed
+// address could be reused by a different term). Use one cache per output
+// stream, single-threaded.
+struct RleConstructTripleCache {
+  std::optional<ad_utility::MediaType> format_;
+  EvaluatedTerm lastSubject_ = nullptr;
+  EvaluatedTerm lastPredicate_ = nullptr;
+  std::string cachedSubject_;
+  std::string cachedPredicate_;
+};
+
+// Same bytes as `formatTriple` (without `use-fast-export-stream-formatter`).
+// A subject or predicate that is the same `EvaluatedTerm` as in the previous
+// call is taken from `cache` instead of being formatted, escaped and copied
+// again. Used by the CONSTRUCT export when `use-rle-prefix-construct-export`
+// is set.
+std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
+                            const ad_utility::MediaType& format,
+                            RleConstructTripleCache& cache);
 
 // Creates a `StringTriple` object. Needed for backwards compatibility with
 // `ExportQueryExecutionTrees::constructQueryResultBindingsToQLeverJSON`

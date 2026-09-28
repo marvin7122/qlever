@@ -209,6 +209,69 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
   }
 }
 
+namespace {
+// Return the subject or predicate `term` formatted for `format`, as
+// `formatTriple` would write it. The formatted string is kept in `cached`
+// together with the owning handle `last`; if `term` is the same
+// `EvaluatedTerm` instance as in the previous call, the kept string is
+// returned without formatting, escaping or copying it again.
+const std::string& formatTermCached(const EvaluatedTerm& term,
+                                    const ad_utility::MediaType& format,
+                                    EvaluatedTerm& last, std::string& cached) {
+  using enum ad_utility::MediaType;
+  if (last != term) {
+    std::string formatted = formatTerm(*term, format == ntriples);
+    if (format == csv) {
+      formatted = RdfEscaping::escapeForCsv(std::move(formatted));
+    } else if (format == tsv) {
+      formatted = RdfEscaping::escapeForTsv(std::move(formatted));
+    }
+    cached = std::move(formatted);
+    last = term;
+  }
+  return cached;
+}
+}  // namespace
+
+// _____________________________________________________________________________
+std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
+                            const ad_utility::MediaType& format,
+                            RleConstructTripleCache& cache) {
+  using enum ad_utility::MediaType;
+  static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
+  AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
+
+  // The cached strings are already escaped for one format.
+  if (cache.format_ != format) {
+    cache = RleConstructTripleCache{};
+    cache.format_ = format;
+  }
+
+  const auto& [subject, predicate, object] = evaluatedTriple;
+  const std::string& s = formatTermCached(subject, format, cache.lastSubject_,
+                                          cache.cachedSubject_);
+  const std::string& p = formatTermCached(
+      predicate, format, cache.lastPredicate_, cache.cachedPredicate_);
+  std::string o = formatTerm(*object, format == ntriples);
+
+  if (format == turtle || format == ntriples) {
+    if (ql::starts_with(o, '"')) {
+      return absl::StrCat(
+          s, " ", p, " ",
+          RdfEscaping::validRDFLiteralFromNormalized(std::move(o)), " .\n");
+    }
+    return absl::StrCat(s, " ", p, " ", o, " .\n");
+  } else if (format == csv) {
+    return absl::StrCat(s, ",", p, ",", RdfEscaping::escapeForCsv(std::move(o)),
+                        "\n");
+  } else if (format == tsv) {
+    return absl::StrCat(s, "\t", p, "\t",
+                        RdfEscaping::escapeForTsv(std::move(o)), "\n");
+  } else {
+    AD_FAIL();  // unreachable
+  }
+}
+
 // _____________________________________________________________________________
 StringTriple createStringTriple(const EvaluatedTriple& evaluatedTriple,
                                 bool includeDataType) {
