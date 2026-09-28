@@ -146,22 +146,6 @@ const SqPollExperiment& sqPollExperiment() {
   return experiment;
 }
 
-// MEASUREMENT ONLY: the fd of one process-wide SQPoll ring that every other
-// SQPoll ring attaches to with `IORING_SETUP_ATTACH_WQ`, so they share its
-// poll thread. Created on first use with `templateParams`; -1 on failure.
-int sharedSqPollRingFd(const io_uring_params& templateParams) {
-  static io_uring anchor{};
-  static const int fd = [&templateParams] {
-    io_uring_params params = templateParams;
-    params.flags &= ~IORING_SETUP_ATTACH_WQ;
-    const int ret = io_uring_queue_init_params(8, &anchor, &params);
-    AD_LOG_INFO << "SQPoll experiment: shared poll ring setup returned " << ret
-                << std::endl;
-    return ret == 0 ? anchor.ring_fd : -1;
-  }();
-  return fd;
-}
-
 // Return `preferredCpu` when it is in this process's affinity mask, otherwise
 // the first CPU in the mask. Falls back to `preferredCpu` when the mask
 // cannot be read; the kernel setup then reports the error as before.
@@ -309,13 +293,6 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
       } else {
         params.flags &= ~IORING_SETUP_SQ_AFF;
         params.sq_thread_cpu = 0;
-      }
-    }
-    if (experiment.shared) {
-      const int sharedFd = sharedSqPollRingFd(params);
-      if (sharedFd >= 0) {
-        params.flags |= IORING_SETUP_ATTACH_WQ;
-        params.wq_fd = static_cast<__u32>(sharedFd);
       }
     }
   }
