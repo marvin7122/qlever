@@ -541,6 +541,7 @@ class ExportJobState final
       size_t completed = slots_.size();
       size_t pending = slots_.size();
       size_t running = slots_.size();
+      size_t cancelled = slots_.size();
       for (size_t i = 0; i < slots_.size(); ++i) {
         if (slots_[i].consumed_) {
           continue;
@@ -557,6 +558,10 @@ class ExportJobState final
             running == slots_.size()) {
           running = i;
         }
+        if (slots_[i].status_ == MorselStatus::Cancelled &&
+            cancelled == slots_.size()) {
+          cancelled = i;
+        }
       }
       if (completed != slots_.size()) {
         index = completed;
@@ -564,6 +569,11 @@ class ExportJobState final
         index = pending;
       } else if (running != slots_.size()) {
         index = running;
+      } else if (cancelled != slots_.size()) {
+        // A cancelled slot is only reachable when the whole job was
+        // cancelled; selecting it routes into the `cancelled_` check below,
+        // which throws instead of tripping the contract check.
+        index = cancelled;
       }
       AD_CONTRACT_CHECK(index < slots_.size() && !slots_[index].consumed_,
                         "No more submitted morsels to consume");
@@ -591,22 +601,37 @@ class ExportJobState final
         slots_[index].profile_.executedByHelper_ = false;
         primaryTask = std::move(slots_[index].task_);
 
+        // Like `executeHelperTask`, a throwing primary task must fail the
+        // job: otherwise the slot stays `Running` with `task_` moved out and
+        // consumers wait on it forever. `failMorselAndCancelJob` locks
+        // internally, so the lock must be released on this path (it is: the
+        // `unlock()` above ran before the `try`).
         lock.unlock();
-        auto startCpu = getCpuDuration();
-        ResultType result = primaryTask();
-        auto endCpu = getCpuDuration();
-        auto endWall = std::chrono::steady_clock::now();
-        lock.lock();
-
-        slots_[index].result_ = std::move(result);
-        slots_[index].status_ = MorselStatus::Completed;
-        slots_[index].profile_.completedAt_ = endWall;
-        slots_[index].profile_.wallDuration_ = endWall - startWall;
-        slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
-        slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
-        slots_[index].consumed_ = true;
-        cv_.notify_all();
-        return std::move(*slots_[index].result_);
+        try {
+          auto startCpu = getCpuDuration();
+          ResultType result = primaryTask();
+          auto endCpu = getCpuDuration();
+          auto endWall = std::chrono::steady_clock::now();
+          lock.lock();
+          slots_[index].result_ = std::move(result);
+          slots_[index].status_ = MorselStatus::Completed;
+          slots_[index].profile_.completedAt_ = endWall;
+          slots_[index].profile_.wallDuration_ = endWall - startWall;
+          slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
+          slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
+          slots_[index].consumed_ = true;
+          cv_.notify_all();
+          return std::move(*slots_[index].result_);
+        } catch (...) {
+          // The lock is released here, so failing the job (which locks
+          // internally) is safe. Loop around: `cancelled_` is now set, so
+          // the next iteration throws instead of hanging on this slot.
+          AD_LOG_ERROR << "Export primary task for morsel " << index
+                       << " threw; cancelling export job." << std::endl;
+          failMorselAndCancelJob(index);
+          lock.lock();
+          continue;
+        }
       }
 
       if (slots_[index].status_ == MorselStatus::Running) {
