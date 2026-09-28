@@ -10,14 +10,77 @@
 
 #include "util/IoUringManager.h"
 
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
+#include <sched.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <cstring>
 #include <stdexcept>
 
 #include "util/Exception.h"
 #include "util/Log.h"
 
 namespace ad_utility {
+
+#ifdef QLEVER_HAS_IO_URING
+namespace {
+// Return `preferredCpu` when it is in this process's affinity mask, otherwise
+// the first CPU in the mask. Falls back to `preferredCpu` when the mask
+// cannot be read; the kernel setup then reports the error as before.
+// The descriptor of the process-wide ring whose SQPoll thread every SQPoll
+// ring with `shareSqPollThread` attaches to, or a negative value if that ring
+// cannot be set up. It is created on first use with the SQPoll parameters of
+// the first such ring (CPU and idle time) and lives until the process ends,
+// so no attached ring can outlive its poller. A tiny ring: only its poll
+// thread is used, no reads are submitted to it.
+int sharedSqPollRingFd(const io_uring_params& sqPollParams) {
+  static const int fd = [&sqPollParams]() {
+    static io_uring pollerRing{};
+    io_uring_params params{};
+    params.flags =
+        sqPollParams.flags & (IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF);
+    params.sq_thread_cpu = sqPollParams.sq_thread_cpu;
+    params.sq_thread_idle = sqPollParams.sq_thread_idle;
+    const int ret = io_uring_queue_init_params(8, &pollerRing, &params);
+    if (ret < 0) {
+      AD_LOG_WARN << "The shared SQPoll ring could not be set up ("
+                  << std::strerror(-ret)
+                  << "); every SQPoll ring gets its own poll thread"
+                  << std::endl;
+      return ret;
+    }
+    AD_LOG_INFO << "io_uring SQPoll: all SQPoll rings share one kernel poll "
+                   "thread (idle "
+                << params.sq_thread_idle << " ms, "
+                << ((params.flags & IORING_SETUP_SQ_AFF)
+                        ? absl::StrCat("pinned to CPU ", params.sq_thread_cpu)
+                        : std::string{"not pinned"})
+                << ")" << std::endl;
+    return pollerRing.ring_fd;
+  }();
+  return fd;
+}
+
+unsigned firstCpuInAffinityOr(unsigned preferredCpu) {
+  cpu_set_t affinity;
+  CPU_ZERO(&affinity);
+  if (sched_getaffinity(0, sizeof(affinity), &affinity) != 0) {
+    return preferredCpu;
+  }
+  if (CPU_ISSET(preferredCpu, &affinity)) {
+    return preferredCpu;
+  }
+  for (unsigned cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+    if (CPU_ISSET(cpu, &affinity)) {
+      return cpu;
+    }
+  }
+  return preferredCpu;
+}
+}  // namespace
+#endif  // QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
 void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
@@ -56,7 +119,14 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+IoUringPolicy::IoUringPolicy(unsigned ringSize)
+    : IoUringPolicy(ringSize, IoUringSetupOptions{}) {}
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize,
+                             const IoUringSetupOptions& setupOptions)
+    : ringSize_(ringSize) {
+  AD_CORRECTNESS_CHECK(ringSize > 0);
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
   // submission queue. liburing rounds the requested size up to a power of two,
@@ -64,10 +134,139 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // a conservative (lower) bound for the "ring full" check below. See
   // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
   // details.
-  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
-  if (ret < 0) {
-    AD_THROW("io_uring_queue_init failed in IoUringManager");
+  const bool wantsSpecialSetup = setupOptions.useSqPoll ||
+                                 setupOptions.deferTaskrun ||
+                                 setupOptions.singleIssuer;
+  if (!wantsSpecialSetup) {
+    int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
+    if (ret < 0) {
+      AD_THROW("io_uring_queue_init failed in IoUringManager");
+    }
+    return;
   }
+  struct io_uring_params params {};
+  if (setupOptions.useSqPoll) {
+    params.flags |= IORING_SETUP_SQPOLL;
+    if (setupOptions.sqThreadCpu.has_value()) {
+      const unsigned configuredCpu = setupOptions.sqThreadCpu.value();
+      params.flags |= IORING_SETUP_SQ_AFF;
+      // Pin the poll thread to a CPU in this process's affinity mask: the
+      // configured CPU may be offline or isolated, in which case the kernel
+      // would deny the setup with `-EINVAL`.
+      params.sq_thread_cpu = firstCpuInAffinityOr(configuredCpu);
+      if (params.sq_thread_cpu != configuredCpu) {
+        AD_LOG_WARN << "SQPoll CPU " << configuredCpu
+                    << " is not in this process's affinity mask; pinning the "
+                       "poll thread to CPU "
+                    << params.sq_thread_cpu << " instead" << std::endl;
+      }
+    }
+    params.sq_thread_idle = setupOptions.sqThreadIdleMs;
+  }
+  if (setupOptions.deferTaskrun) {
+#ifdef IORING_SETUP_DEFER_TASKRUN
+    params.flags |= IORING_SETUP_DEFER_TASKRUN;
+#endif
+  }
+  if (setupOptions.singleIssuer) {
+#ifdef IORING_SETUP_SINGLE_ISSUER
+    params.flags |= IORING_SETUP_SINGLE_ISSUER;
+#endif
+  }
+  // Under SQPoll, give the ring `ringSize_` headroom entries on top while the
+  // in-flight cap in `addBatch` stays `ringSize_`. The poll thread publishes
+  // the submission-queue head only after it has handed off a batch of entries,
+  // so a slot freed by a just-reaped completion may not be visible to this
+  // thread yet, and `io_uring_get_sqe` would return `nullptr` although fewer
+  // than `ringSize_` reads are in flight. With the headroom the ring cannot
+  // fill up before the cap does. (Draining and retrying instead was tried and
+  // hung under cancellation.) The extra entries cost a few kilobytes.
+  const unsigned entries = setupOptions.useSqPoll ? 2 * ringSize_ : ringSize_;
+  int ret = -EINVAL;
+  if (setupOptions.useSqPoll && setupOptions.shareSqPollThread) {
+    if (const int pollerFd = sharedSqPollRingFd(params); pollerFd >= 0) {
+      io_uring_params attached = params;
+      attached.flags |= IORING_SETUP_ATTACH_WQ;
+      attached.wq_fd = static_cast<__u32>(pollerFd);
+      ret = io_uring_queue_init_params(entries, &ring_, &attached);
+      if (ret < 0) {
+        AD_LOG_WARN << "Attaching an io_uring to the shared SQPoll thread "
+                       "failed ("
+                    << std::strerror(-ret)
+                    << "); this ring gets its own poll thread" << std::endl;
+      }
+    }
+  }
+  if (ret < 0) {
+    ret = io_uring_queue_init_params(entries, &ring_, &params);
+  }
+  bool usedFallbackRing = false;
+  if (ret == -EPERM || ret == -EINVAL) {
+    // The kernel denied the requested setup (missing `CAP_SYS_NICE` for the
+    // SQPoll thread, or a kernel without support for one of the flags).
+    // Fall back to a plain ring so the lookup path keeps working; the outer
+    // `makeBatchManager` still falls back to `SyncIoPolicy` when even the
+    // plain setup fails.
+    AD_LOG_WARN << "io_uring setup with special flags denied ("
+                << std::strerror(-ret)
+                << "); falling back to a plain ring without SQPoll"
+                << std::endl;
+    params = {};
+    ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+    usedFallbackRing = true;
+  }
+  if (ret < 0) {
+    AD_THROW(absl::StrCat(
+        "io_uring_queue_init_params failed in IoUringManager (",
+        usedFallbackRing ? "plain fallback ring after the special setup was "
+                           "denied"
+                         : "setup with special flags",
+        "): ", std::strerror(-ret)));
+  }
+  // Report SQPoll only when the kernel granted the requested setup. After the
+  // fallback above no poll thread exists, even though SQPoll was requested.
+  sqPollEnabled_ = setupOptions.useSqPoll && !usedFallbackRing;
+}
+
+//______________________________________________________________________________
+bool IoUringPolicy::sqPollAvailable() {
+  // Probe each CPU in this process's affinity mask instead of hardcoding CPU
+  // 0: on systems where CPU 0 is offline or isolated, the probe would fail
+  // even though SQPoll works elsewhere.
+  cpu_set_t affinity;
+  CPU_ZERO(&affinity);
+  if (sched_getaffinity(0, sizeof(affinity), &affinity) != 0) {
+    return false;
+  }
+  for (unsigned cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+    if (!CPU_ISSET(cpu, &affinity)) {
+      continue;
+    }
+    struct io_uring probe {};
+    struct io_uring_params params {};
+    // Request the poll thread, pinned to `cpu`, with a short idle timeout so
+    // a granted poller sleeps again almost immediately after the probe.
+    params.flags = IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF;
+    params.sq_thread_cpu = cpu;
+    params.sq_thread_idle = 10;
+    // A tiny ring keeps the probe cheap; 8 is below liburing's minimum and
+    // gets rounded up.
+    const int ret = io_uring_queue_init_params(8, &probe, &params);
+    if (ret != 0) {
+      // No ring was created, so there is nothing to release.
+      if (ret == -EPERM) {
+        // Missing `CAP_SYS_NICE`: no CPU will be granted a poller.
+        return false;
+      }
+      continue;
+    }
+    // The guard releases the probe ring when this scope exits, so the
+    // early return below cannot leak it even if more control flow is added
+    // later.
+    absl::Cleanup probeGuard{[&probe] { io_uring_queue_exit(&probe); }};
+    return true;
+  }
+  return false;
 }
 
 //______________________________________________________________________________
@@ -121,8 +320,9 @@ void IoUringPolicy::addBatch(int fd,
       }
     }
 
-    // Claim the next free SQE. The check above guarantees a slot is available,
-    // so `io_uring_get_sqe` must not return `nullptr` here.
+    // Claim the next free SQE. The check above guarantees a slot is available
+    // (under SQPoll thanks to the ring headroom, see the constructor), so
+    // `io_uring_get_sqe` must not return `nullptr` here.
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     AD_CORRECTNESS_CHECK(sqe != nullptr);
 

@@ -14,6 +14,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <memory>
 #include <sstream>
@@ -609,4 +611,210 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
 #endif
   expectManagerWorks(*manager);
 }
+
+// `makeBatchManager` forwards the ring size and the setup options to the
+// selected policy. Default options keep the plain ring; either way the
+// returned manager must serve reads.
+TEST(MakeBatchManager, forwardsRingSizeAndSetupOptions) {
+  bool preferIoUring = true;
+  ad_utility::IoUringSetupOptions options;
+  auto manager = ad_utility::makeBatchManager(preferIoUring, 64, options);
+  ASSERT_NE(manager, nullptr);
+  expectManagerWorks(*manager);
+}
+
+#ifdef QLEVER_HAS_IO_URING
+// The setup options default to the current behavior: no SQPoll and neither
+// opt-in flag, so existing callers keep a plain ring unless they ask for more.
+TEST(IoUringSetupOptions, defaultsPreservePlainRing) {
+  ad_utility::IoUringSetupOptions options;
+  EXPECT_FALSE(options.useSqPoll);
+  EXPECT_FALSE(options.deferTaskrun);
+  EXPECT_FALSE(options.singleIssuer);
+  // With SQPoll requested: one shared, unpinned poller with a short idle time.
+  EXPECT_TRUE(options.shareSqPollThread);
+  EXPECT_FALSE(options.sqThreadCpu.has_value());
+  EXPECT_EQ(options.sqThreadIdleMs, 1u);
+}
+
+// A default-constructed policy keeps the plain setup path and reports SQPoll
+// as disabled.
+TEST(SqPollSetup, defaultPolicyHasNoSqPoll) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  ad_utility::IoUringPolicy policy(16);
+  EXPECT_FALSE(policy.sqPollEnabled());
+}
+
+// The feature probe never throws: it reports whether the running kernel
+// grants an SQPoll ring, so callers can skip cleanly where it is denied (for
+// example, without `CAP_SYS_NICE` inside Docker).
+TEST(SqPollFeatureDetection, probeDoesNotThrow) {
+  bool available = false;
+  EXPECT_NO_THROW(available = ad_utility::IoUringPolicy::sqPollAvailable());
+  // No assertion on the value itself: both outcomes are environment-dependent.
+  (void)available;
+}
+
+// Requesting SQPoll must never break the lookup path. Where the kernel grants
+// it, the policy reports `sqPollEnabled()` and serves reads through the poll
+// thread. Where the kernel denies it (`-EPERM`/`-EINVAL`), the constructor
+// falls back in a defined order (SQPoll first, plain ring second;
+// `SyncIoPolicy` remains the outer fallback in `makeBatchManager`) and the
+// reads still complete.
+TEST(SqPollSetup, sqPollRequestStillServesReads) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  // A short idle timeout keeps a granted poller from lingering after the test.
+  options.sqThreadIdleMs = 10;
+  ad_utility::IoUringPolicy policy(16, options);
+  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
+    EXPECT_FALSE(policy.sqPollEnabled());
+  }
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  std::string first(4, '\0');
+  std::string second(4, '\0');
+  std::vector<size_t> numBytes{4, 4};
+  std::vector<uint64_t> fileOffsets{0, 4};
+  std::vector<char*> buffers{first.data(), second.data()};
+  policy.addBatch(fd, numBytes, fileOffsets, buffers, 0);
+  policy.wait(0);
+  EXPECT_THAT((std::vector<std::string>{first, second}),
+              ::testing::ElementsAre("AAAA", "BBBB"));
+}
+
+// The number of SQPoll kernel threads (`iou-sqp-<pid>`) of this process.
+size_t numSqPollThreads() {
+  size_t count = 0;
+  for (const auto& task :
+       std::filesystem::directory_iterator("/proc/self/task")) {
+    std::ifstream comm{task.path() / "comm"};
+    std::string name;
+    std::getline(comm, name);
+    count += name.rfind("iou-sqp", 0) == 0 ? 1 : 0;
+  }
+  return count;
+}
+
+// With `shareSqPollThread` (the default), all SQPoll rings of the process
+// attach to one poll thread, so a second and third ring add no poller.
+// Without it, every ring gets its own. Both variants serve reads.
+TEST(SqPollSetup, sqPollRingsShareOnePollThread) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
+    GTEST_SKIP() << "SQPoll setup denied, fallback covered by plain tests";
+  }
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  auto expectServesReads = [fd](ad_utility::IoUringPolicy& policy) {
+    std::string first(4, '\0');
+    std::string second(4, '\0');
+    std::vector<size_t> numBytes{4, 4};
+    std::vector<uint64_t> fileOffsets{0, 4};
+    std::vector<char*> buffers{first.data(), second.data()};
+    policy.addBatch(fd, numBytes, fileOffsets, buffers, 0);
+    policy.wait(0);
+    EXPECT_THAT((std::vector<std::string>{first, second}),
+                ::testing::ElementsAre("AAAA", "BBBB"));
+  };
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  {
+    // The first shared ring may create the process-wide poller itself.
+    ad_utility::IoUringPolicy first(16, options);
+    ASSERT_TRUE(first.sqPollEnabled());
+    const size_t pollersWithOneRing = numSqPollThreads();
+    ad_utility::IoUringPolicy second(16, options);
+    ad_utility::IoUringPolicy third(16, options);
+    EXPECT_TRUE(second.sqPollEnabled());
+    EXPECT_TRUE(third.sqPollEnabled());
+    EXPECT_EQ(numSqPollThreads(), pollersWithOneRing);
+    expectServesReads(second);
+    expectServesReads(third);
+  }
+  options.shareSqPollThread = false;
+  const size_t pollersBefore = numSqPollThreads();
+  ad_utility::IoUringPolicy own1(16, options);
+  ad_utility::IoUringPolicy own2(16, options);
+  EXPECT_EQ(numSqPollThreads(), pollersBefore + 2);
+  expectServesReads(own1);
+  expectServesReads(own2);
+}
+
+// Request `deferTaskrun` and `singleIssuer` without SQPoll, alone and
+// together. Whether the kernel grants the flags or denies them (`-EINVAL`, for
+// example `deferTaskrun` without `singleIssuer`) and the constructor falls
+// back to a plain ring, the policy must serve reads and report no SQPoll.
+TEST(SqPollSetup, optInFlagsWithoutSqPollStillServeReads) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  auto expectServesReads = [](bool deferTaskrun, bool singleIssuer) {
+    ad_utility::IoUringSetupOptions options;
+    options.deferTaskrun = deferTaskrun;
+    options.singleIssuer = singleIssuer;
+    ad_utility::IoUringPolicy policy(16, options);
+    EXPECT_FALSE(policy.sqPollEnabled());
+    auto [tmp, fd] = makeTempFile("AAAABBBB");
+    std::string first(4, '\0');
+    std::string second(4, '\0');
+    std::vector<size_t> numBytes{4, 4};
+    std::vector<uint64_t> fileOffsets{0, 4};
+    std::vector<char*> buffers{first.data(), second.data()};
+    policy.addBatch(fd, numBytes, fileOffsets, buffers, 0);
+    policy.wait(0);
+    EXPECT_THAT((std::vector<std::string>{first, second}),
+                ::testing::ElementsAre("AAAA", "BBBB"));
+  };
+  expectServesReads(true, false);
+  expectServesReads(false, true);
+  expectServesReads(true, true);
+}
+
+// An SQPoll ring must serve a batch larger than the ring exactly like a plain
+// ring. With SQPoll, the poll thread publishes the submission-queue head only
+// after handing off a batch of entries, so without headroom
+// `io_uring_get_sqe` returned `nullptr` although fewer than `ringSize` reads
+// were in flight, and `addBatch` failed on `sqe != nullptr` (observed at ring
+// size 256). Run batches of eight rings' worth of reads at several ring sizes,
+// repeatedly, so the ring is refilled many times while the poller runs.
+TEST(SqPollSetup, sqPollBatchLargerThanRing) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
+    GTEST_SKIP() << "SQPoll setup denied, fallback covered by plain tests";
+  }
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  options.sqThreadIdleMs = 10;
+  constexpr size_t CHUNKSIZE = 4;
+  for (unsigned ringSize : {16u, 64u, 256u}) {
+    ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(ringSize,
+                                                                options);
+    for (size_t repetition = 0; repetition < 10; ++repetition) {
+      SequentialReadScenarioForTesting scenario;
+      for (size_t i = 0; i < 8 * size_t{ringSize}; ++i) {
+        scenario.addRead(
+            std::string(CHUNKSIZE, static_cast<char>('A' + (i % 26))));
+      }
+      auto [tmp, fd] = makeTempFile(scenario.content());
+      manager.wait(scenario.submitTo(manager, fd));
+      EXPECT_THAT(scenario.results(),
+                  ::testing::ElementsAreArray(scenario.expected()))
+          << "ring size " << ringSize << ", repetition " << repetition;
+    }
+  }
+}
+#endif
 }  // namespace

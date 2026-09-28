@@ -14,6 +14,7 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 
 #include "backports/algorithm.h"
@@ -66,6 +67,37 @@ class BatchManagerBase {
   virtual void wait(BatchHandle handle) = 0;
 };
 
+// Setup options for `IoUringPolicy` (plain data, no liburing dependency, so
+// both policies and the factories below can use it in every build).
+// The defaults preserve the current behavior: a plain ring without
+// kernel-side polling. Set `useSqPoll` to let a kernel poll thread take over
+// submission, so the application thread pays no `io_uring_enter` syscall per
+// submitted batch while the poller stays awake. `sqThreadIdleMs` bounds how
+// long the poller stays awake after the last submission. The two opt-in flags
+// below default to `false`.
+// `singleIssuer` is only sound while exactly one thread ever submits to a
+// ring, which holds because `IoUringPolicy` is single-threaded use only.
+struct IoUringSetupOptions {
+  bool useSqPoll = false;
+  // All SQPoll rings of the process share one kernel poll thread
+  // (`IORING_SETUP_ATTACH_WQ`). With one poller per ring, the pollers of the
+  // ring pool competed for CPU time and a submission waited until its ring's
+  // poller was scheduled again.
+  bool shareSqPollThread = true;
+  // CPU to pin the SQPoll thread to (`IORING_SETUP_SQ_AFF`); unpinned by
+  // default, so the scheduler can keep the poller off the submitting thread's
+  // CPU. A configured CPU that is not in this process's affinity mask (e.g.
+  // offline or isolated) is remapped to the first CPU in the mask instead of
+  // letting the kernel deny the setup.
+  std::optional<unsigned> sqThreadCpu;
+  // The poller sleeps after this many milliseconds without a submission and is
+  // woken by the next one. A short timeout keeps an idle poller from burning a
+  // CPU between the batches of a query.
+  unsigned sqThreadIdleMs = 1;
+  bool deferTaskrun = false;
+  bool singleIssuer = false;
+};
+
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
 // Vocabulary to the `Policy`, which must satisfy the `ReadPolicy` concept
@@ -84,7 +116,9 @@ class BatchManager final : public BatchManagerBase {
  public:
   using BatchHandle = typename BatchManagerBase::BatchHandle;
 
-  explicit BatchManager(unsigned ringSize = 256) : policy_(ringSize) {}
+  explicit BatchManager(unsigned ringSize = 256,
+                        const IoUringSetupOptions& setupOptions = {})
+      : policy_(ringSize, setupOptions) {}
 
   BatchManager(const BatchManager&) = delete;
   BatchManager& operator=(const BatchManager&) = delete;
@@ -132,6 +166,12 @@ struct SyncIoPolicy {
   // void.
   explicit SyncIoPolicy(unsigned ringSize = 256) { (void)ringSize; }
 
+  // Same, accepting (and ignoring) the io_uring setup options, so generic
+  // code can construct either policy uniformly (see `BatchManager`).
+  explicit SyncIoPolicy(unsigned ringSize, const IoUringSetupOptions&) {
+    (void)ringSize;
+  }
+
   ~SyncIoPolicy() = default;
   SyncIoPolicy(const SyncIoPolicy&) = delete;
   SyncIoPolicy& operator=(const SyncIoPolicy&) = delete;
@@ -173,6 +213,10 @@ class IoUringPolicy {
  private:
   io_uring ring_{};
   unsigned ringSize_;
+  // Whether the ring was actually set up with `IORING_SETUP_SQPOLL`. Stays
+  // `false` when SQPoll was not requested, or when the kernel denied it and
+  // the constructor fell back to a plain ring.
+  bool sqPollEnabled_ = false;
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
@@ -213,7 +257,25 @@ class IoUringPolicy {
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
+  // Same, but with explicit setup flags (SQPoll and the evaluated opt-ins).
+  // When any of `useSqPoll`, `deferTaskrun` or `singleIssuer` is requested but
+  // the kernel denies the setup (`-EPERM` for a missing `CAP_SYS_NICE`,
+  // `-EINVAL` on kernels without support for one of the flags), the
+  // constructor logs a warning and falls back to a plain ring without any of
+  // these flags; `sqPollEnabled()` then reports `false`. Any other setup
+  // failure still throws, and `makeBatchManager` keeps its existing
+  // `SyncIoPolicy` fallback for that case.
+  IoUringPolicy(unsigned ringSize, const IoUringSetupOptions& setupOptions);
   ~IoUringPolicy();
+
+  // Whether this policy's ring runs an SQPoll kernel poll thread.
+  bool sqPollEnabled() const { return sqPollEnabled_; }
+
+  // Feature probe: return `true` iff the running kernel grants an SQPoll
+  // ring. Never throws; returns `false` when the kernel denies setup or
+  // liburing reports any error. Tests use this to skip cleanly where SQPoll
+  // is unavailable.
+  static bool sqPollAvailable();
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain
@@ -244,11 +306,13 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
+    bool& preferIoUring, unsigned ringSize = 256,
+    const IoUringSetupOptions& setupOptions = {}) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize);
+      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize,
+                                                           setupOptions);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
@@ -261,7 +325,7 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 #else
   preferIoUring = false;
 #endif
-  return std::make_unique<BatchManager<SyncIoPolicy>>(ringSize);
+  return std::make_unique<BatchManager<SyncIoPolicy>>(ringSize, setupOptions);
 }
 
 }  // namespace ad_utility
