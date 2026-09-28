@@ -8,6 +8,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#define QLEVER_VOCAB_POOL_COUNTERS 1
 #include "index/vocabulary/VocabularyOnDisk.h"
 
 #include <absl/cleanup/cleanup.h>
@@ -21,6 +22,7 @@
 #include "backports/algorithm.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
+#include "index/vocabulary/VocabPoolCounters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -398,6 +400,7 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   // which preserves the two-phase ordering without a lock on the I/O path.
   if (ad_utility::BatchManagerBase* manager = threadLocalManager();
       manager != nullptr) {
+    ad_utility::vocabPoolCounters::recordOwnedCall();
     return lookupBatchVia(*manager, indices);
   }
 
@@ -405,8 +408,14 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   // return it on every exit path (including exceptions, e.g. an out-of-range
   // index in phase 1), so we never leak a manager (and its io_uring buffers)
   // out of the pool.
+  namespace pc = ad_utility::vocabPoolCounters;
+  auto popStart = pc::now();
   auto manager = ioManagers_->pop().value();
-  absl::Cleanup returnManager{[this, &manager]() {
+  auto popEnd = pc::now();
+  pc::recordCheckout(popStart, popEnd);
+  absl::Cleanup returnManager{[this, &manager, popEnd]() {
+    ad_utility::vocabPoolCounters::recordHold(
+        popEnd, ad_utility::vocabPoolCounters::now());
     ad_utility::terminateIfThrows(
         [this, &manager]() { ioManagers_->push(std::move(manager)); },
         "returning the `IoManager` to the pool in "
