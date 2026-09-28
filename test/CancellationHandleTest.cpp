@@ -438,8 +438,12 @@ TEST(CancellationHandle, verifyWatchDogEndsEarlyIfCancelled) {
   handle.cancel(MANUAL);
 
   handle.startWatchDog();
-  // Wait for Watchdog to start
-  std::this_thread::sleep_for(5ms);
+  // Do not rely on a fixed sleep here: on slow or heavily loaded machines
+  // (for example sanitizer builds on shared CI runners) the thread might not
+  // be scheduled within a few milliseconds. Ensure the thread has observed
+  // the cancellation before assigning `WAITING_FOR_CHECK` below, otherwise
+  // it will transition the state to `CHECK_WINDOW_MISSED`.
+  handle.watchDogThread_.join();
 
   handle.cancellationState_ = WAITING_FOR_CHECK;
 

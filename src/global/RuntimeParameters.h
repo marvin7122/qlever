@@ -237,6 +237,36 @@ struct RuntimeParameters {
   Bool vocabularyIouringPageCacheFastPath_{
       false, "vocabulary-iouring-page-cache-fast-path"};
 
+  // NVMe passthrough for the words file of an on-disk vocabulary (see
+  // `VocabularyOnDisk` and `util/NvmePassthrough.h`). If set when an index is
+  // loaded, and the words file is an NVMe generic character device
+  // (`/dev/ngXnY` holding the words file image from LBA 0 on), batch lookups
+  // whose words are far apart are read with native NVMe commands through
+  // `io_uring` (`IORING_OP_URING_CMD`), bypassing the page cache and the block
+  // layer. All other reads of the words file go through the block device of
+  // the same namespace (`/dev/nvmeXnY`). On a regular words file, the same
+  // routing and coalescing is applied, but every read is a plain read. Only
+  // read when the index is loaded; off by default.
+  Bool vocabularyNvmePassthrough_{false, "vocabulary-nvme-passthrough"};
+
+  // The NVMe namespace id of the device that holds the words file, see
+  // `vocabulary-nvme-passthrough`. Must match the id that the device reports.
+  SizeT vocabularyNvmeNamespaceId_{1, "vocabulary-nvme-namespace-id"};
+
+  // For `vocabulary-nvme-passthrough`: the largest gap (in 512-byte blocks)
+  // between two words of a batch that is read as part of one NVMe command
+  // instead of starting a new command. A command covers at most 256 blocks
+  // (128 KiB).
+  SizeT vocabularyNvmeMaxGapBlocks_{32, "vocabulary-nvme-max-gap-blocks"};
+
+  // For `vocabulary-nvme-passthrough`: a batch of word reads whose median gap
+  // between consecutive words (in file order) is at most this size is read
+  // through the buffered block device, where readahead serves several words
+  // per device read; a batch with larger gaps is read with NVMe passthrough.
+  MemorySizeParameter vocabularyNvmeMaxBufferedMedianGap_{
+      ad_utility::MemorySize::bytes(128 * 1024),
+      "vocabulary-nvme-max-buffered-median-gap"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.
