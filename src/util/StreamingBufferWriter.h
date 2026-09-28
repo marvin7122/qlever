@@ -89,8 +89,15 @@ class StreamingBufferWriter {
     // ranges may overlap). A self-copy (`dest == src`) is well-defined.
     const auto destBegin = reinterpret_cast<uintptr_t>(dest);
     const auto srcBegin = reinterpret_cast<uintptr_t>(src);
-    AD_CONTRACT_CHECK(dest == src || destBegin + count <= srcBegin ||
-                      srcBegin + count <= destBegin);
+    // Overlap check via subtraction of the already-ordered pair instead of
+    // `low + count <= high`: that addition wraps when `low` is close to
+    // `UINTPTR_MAX`, which would let an overlapping range pass the
+    // contract. Subtracting the smaller address from the larger one cannot
+    // overflow (both are unsigned and the subtrahend is <= the minuend).
+    const bool noOverlap = destBegin <= srcBegin
+                               ? (srcBegin - destBegin) >= count
+                               : (destBegin - srcBegin) >= count;
+    AD_CONTRACT_CHECK(dest == src || noOverlap);
 
     auto* destPtr = static_cast<char*>(dest);
     const auto* srcPtr = static_cast<const char*>(src);
@@ -168,7 +175,12 @@ class StreamingBufferWriter {
       : buffer_{destinationBuffer.data()},
         capacity_{destinationBuffer.size()},
         bytesWritten_{0},
-        ownedBuffer_{std::nullopt} {}
+        ownedBuffer_{std::nullopt} {
+    // `std::span` does not prevent `size() > 0 && data() == nullptr`; keep
+    // the same invariant as the pointer+capacity constructor below so
+    // `buffer_ == nullptr` never coexists with `capacity_ > 0`.
+    AD_CONTRACT_CHECK(buffer_ != nullptr || capacity_ == 0);
+  }
 
   // ___________________________________________________________________________
   // Construct a writer wrapping a caller-provided memory pointer and capacity.
@@ -302,8 +314,16 @@ class StreamingBufferWriter {
     }
     return buffer_ + bytesWritten_;
   }
-  [[nodiscard]] char* data() noexcept { return buffer_; }
-  [[nodiscard]] const char* data() const noexcept { return buffer_; }
+  [[nodiscard]] char* data() noexcept {
+    // Consistent with `currentWritePointer`/`writtenSpan`/`remainingSpan`:
+    // a zero-capacity writer (e.g. `StreamingBufferWriter(size_t{0})`)
+    // exposes `nullptr` rather than a dangling or zero-size-allocation
+    // pointer from `buffer_` directly.
+    return capacity_ == 0 ? nullptr : buffer_;
+  }
+  [[nodiscard]] const char* data() const noexcept {
+    return capacity_ == 0 ? nullptr : buffer_;
+  }
 
   [[nodiscard]] std::span<const char> writtenSpan() const noexcept {
     if (capacity_ == 0) {
