@@ -135,19 +135,6 @@ idToStringAndTypeForEncodedValue(Id id);
 LiteralOrIri encodedIdToLiteralOrIri(Id id, const IndexImpl& index);
 
 namespace detail {
-// The string form of each `qlever::export_pipeline::WellKnownPrefixId`, in
-// enum order, used to match an IRI's content against the entries of the
-// `VectorizedPrefixTable`.
-inline constexpr std::array<std::string_view, 7> kWellKnownIriPrefixStrings{
-    "http://www.wikidata.org/entity/",
-    "http://www.wikidata.org/prop/direct/",
-    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-    "http://www.w3.org/2000/01/rdf-schema#",
-    "http://www.w3.org/2002/07/owl#",
-    "http://schema.org/",
-    "http://www.w3.org/2001/XMLSchema#",
-};
-
 // If the `use-vectorized-prefix-export` runtime parameter is enabled and
 // `full` begins (at byte `offset`, to allow for a leading `<`) with one of
 // the well-known IRI prefixes, materialize `full` into a new string using
@@ -162,9 +149,10 @@ inline std::optional<std::string> tryFastCopyKnownPrefixIri(
   std::string_view content = full.substr(offset);
   using qlever::export_pipeline::VectorizedPrefixTable;
   using qlever::export_pipeline::WellKnownPrefixId;
+  using qlever::export_pipeline::wellKnownPrefixStrings;
   const auto& table = VectorizedPrefixTable::instance();
-  for (size_t i = 0; i < kWellKnownIriPrefixStrings.size(); ++i) {
-    std::string_view prefix = kWellKnownIriPrefixStrings[i];
+  for (size_t i = 0; i < wellKnownPrefixStrings.size(); ++i) {
+    std::string_view prefix = wellKnownPrefixStrings[i];
     if (!ql::starts_with(content, prefix)) {
       continue;
     }
