@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,6 +32,8 @@
 #define QLEVER_AVX2_TARGET
 #define QLEVER_SSE2_TARGET
 #endif
+
+#include <absl/numeric/bits.h>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/span.h"
@@ -64,11 +67,11 @@ class ChunkEscapeMask32 {
   [[nodiscard]] constexpr uint32_t rawMask() const noexcept { return mask_; }
 
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
-    return mask_ == 0 ? 32u : static_cast<uint32_t>(std::countr_zero(mask_));
+    return mask_ == 0 ? 32u : static_cast<uint32_t>(absl::countr_zero(mask_));
   }
 
   [[nodiscard]] constexpr uint32_t countEscapes() const noexcept {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 };
 
@@ -88,11 +91,11 @@ class ChunkEscapeMask16 {
   [[nodiscard]] constexpr uint16_t rawMask() const noexcept { return mask_; }
 
   [[nodiscard]] constexpr uint32_t firstEscapeIndex() const noexcept {
-    return mask_ == 0 ? 16u : static_cast<uint32_t>(std::countr_zero(mask_));
+    return mask_ == 0 ? 16u : static_cast<uint32_t>(absl::countr_zero(mask_));
   }
 
   [[nodiscard]] constexpr uint32_t countEscapes() const noexcept {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 };
 
@@ -424,9 +427,22 @@ class SimdEscapeClassifier {
   }
 
   // ___________________________________________________________________________
+  // The maximal number of bytes that `copyAndEscape<Format>` writes for an
+  // input of `inputSize` bytes: every input byte becomes at most two bytes,
+  // for `Xml` at most six (`&quot;`, `&apos;`).
+  template <EscapeFormat Format>
+  [[nodiscard]] static size_t maxEscapedSize(size_t inputSize) {
+    constexpr size_t maxBytesPerChar = Format == EscapeFormat::Xml ? 6 : 2;
+    AD_CONTRACT_CHECK(inputSize <=
+                      std::numeric_limits<size_t>::max() / maxBytesPerChar);
+    return inputSize * maxBytesPerChar;
+  }
+
+  // ___________________________________________________________________________
   // High-performance branchless copier and escape serializer.
   // Fast path copies 32-byte chunks with zero per-character checks when mask is
-  // 0. Returns pointer past the last written byte in `dest`.
+  // 0. Returns pointer past the last written byte in `dest`. `dest` must hold
+  // at least `maxEscapedSize<Format>(input.size())` bytes; this is not checked.
   template <EscapeFormat Format>
   static inline char* copyAndEscape(std::string_view input,
                                     char* dest) noexcept {
@@ -449,7 +465,7 @@ class SimdEscapeClassifier {
       // Escape characters present: process clean sub-slices and escapes
       uint32_t current = 0;
       while (mask != 0) {
-        uint32_t next = static_cast<uint32_t>(std::countr_zero(mask));
+        uint32_t next = static_cast<uint32_t>(absl::countr_zero(mask));
         uint32_t cleanLen = next - current;
         if (cleanLen > 0) {
           std::memcpy(dest, ptr + current, cleanLen);

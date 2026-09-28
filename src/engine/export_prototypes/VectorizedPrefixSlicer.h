@@ -42,6 +42,20 @@ enum class WellKnownPrefixId : uint8_t {
 };
 
 // _____________________________________________________________________________
+// The string of each `WellKnownPrefixId`, indexed by its value.
+inline constexpr std::array<std::string_view,
+                            static_cast<size_t>(WellKnownPrefixId::Count)>
+    wellKnownPrefixStrings{
+        "http://www.wikidata.org/entity/",
+        "http://www.wikidata.org/prop/direct/",
+        "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+        "http://www.w3.org/2000/01/rdf-schema#",
+        "http://www.w3.org/2002/07/owl#",
+        "http://schema.org/",
+        "http://www.w3.org/2001/XMLSchema#",
+    };
+
+// _____________________________________________________________________________
 // Vectorized Prefix Table: Aligns common IRI prefixes to 16-byte boundaries so
 // they can be copied into chunk buffers using 1-3 SSE2/AVX instructions.
 class VectorizedPrefixTable {
@@ -57,18 +71,9 @@ class VectorizedPrefixTable {
 
  public:
   VectorizedPrefixTable() {
-    initEntry(WellKnownPrefixId::WikidataEntity,
-              "http://www.wikidata.org/entity/");
-    initEntry(WellKnownPrefixId::WikidataDirectProp,
-              "http://www.wikidata.org/prop/direct/");
-    initEntry(WellKnownPrefixId::RdfSyntax,
-              "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-    initEntry(WellKnownPrefixId::RdfsSchema,
-              "http://www.w3.org/2000/01/rdf-schema#");
-    initEntry(WellKnownPrefixId::OwlOntology, "http://www.w3.org/2002/07/owl#");
-    initEntry(WellKnownPrefixId::SchemaOrg, "http://schema.org/");
-    initEntry(WellKnownPrefixId::XmlSchema,
-              "http://www.w3.org/2001/XMLSchema#");
+    for (size_t i = 0; i < wellKnownPrefixStrings.size(); ++i) {
+      initEntry(static_cast<WellKnownPrefixId>(i), wellKnownPrefixStrings[i]);
+    }
   }
 
   // ___________________________________________________________________________

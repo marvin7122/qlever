@@ -270,19 +270,23 @@ idToStringAndTypeForEncodedValue(Id id) {
     case Bool:
       if (getRuntimeParameter<
               &RuntimeParameters::useBranchlessTypeDispatcher_>()) {
-        char buf[8];
-        char* end = ql::engine::BranchlessTypeDispatcher::dispatchTermFormat(
-            id, {}, buf, ql::engine::BranchlessTypeDispatcher::rawVocabLut());
-        return std::pair{std::string(buf, end), XSD_BOOLEAN_TYPE};
+        std::array<char, 8> buf;
+        const size_t size =
+            ql::engine::BranchlessTypeDispatcher::dispatchTermFormat(
+                id, {}, buf,
+                ql::engine::BranchlessTypeDispatcher::rawVocabLut());
+        return std::pair{std::string(buf.data(), size), XSD_BOOLEAN_TYPE};
       }
       return std::pair{std::string{id.getBoolLiteral()}, XSD_BOOLEAN_TYPE};
     case Int:
       if (getRuntimeParameter<
               &RuntimeParameters::useBranchlessTypeDispatcher_>()) {
-        char buf[24];
-        char* end = ql::engine::BranchlessTypeDispatcher::dispatchTermFormat(
-            id, {}, buf, ql::engine::BranchlessTypeDispatcher::rawVocabLut());
-        return std::pair{std::string(buf, end), XSD_INT_TYPE};
+        std::array<char, 24> buf;
+        const size_t size =
+            ql::engine::BranchlessTypeDispatcher::dispatchTermFormat(
+                id, {}, buf,
+                ql::engine::BranchlessTypeDispatcher::rawVocabLut());
+        return std::pair{std::string(buf.data(), size), XSD_INT_TYPE};
       }
       if (getRuntimeParameter<
               &RuntimeParameters::fastIntToStringForExport_>()) {
