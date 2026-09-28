@@ -67,6 +67,11 @@ jobs:
         with:
           ref: ${{ inputs.ref || '' }}
           submodules: recursive
+          # Full history and tags: CompilationInfo.cmake embeds `git describe`
+          # (e.g. v0.6.0-560-g<sha>, as Wolga builds report in --version);
+          # a shallow clone yields 0.0.0-unknown.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Resolve sha and targets
         env:
