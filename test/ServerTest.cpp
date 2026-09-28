@@ -720,6 +720,7 @@ TEST(ServerTest, exportEngineV1V2Parity) {
   const auto runToString = [&server](const auto& request) {
     auto response = server.process(request);
     EXPECT_THAT(response, StatusIs(http::status::ok));
+    EXPECT_THAT(response, ContentTypeIs("text/csv"));
     return responseBodyToString(std::move(response.body()));
   };
   const auto plainSelect = [&](std::string_view target) {
