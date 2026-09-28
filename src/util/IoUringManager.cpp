@@ -22,7 +22,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 #include "util/Exception.h"
 #include "util/Log.h"
@@ -92,6 +95,73 @@ uint64_t getIoUringCounter(IoUringCounter counter) {
 
 #ifdef QLEVER_HAS_IO_URING
 namespace {
+// MEASUREMENT ONLY (bench branch, not for merge): environment overrides of the
+// SQPoll setup for the research loop of marvin7122/qlever#164.
+//   QLEVER_SQPOLL_IDLE_MS=<ms>        sq_thread_idle
+//   QLEVER_SQPOLL_CPU=<cpu>|none      pin exactly to <cpu> (no remap), or no
+//                                     IORING_SETUP_SQ_AFF at all
+//   QLEVER_SQPOLL_SHARED=1            all SQPoll rings attach to one
+//                                     process-wide poll thread (ATTACH_WQ)
+//   QLEVER_SQPOLL_REAP=block|spin|timeout  how a reap waits when no CQE is
+//                                     ready: io_uring_wait_cqe (default),
+//                                     busy peek, or wait_cqe_timeout(50 us)
+struct SqPollExperiment {
+  std::optional<unsigned> idleMs;
+  bool cpuOverride = false;
+  std::optional<unsigned> cpu;  // nullopt with cpuOverride: no SQ_AFF
+  bool shared = false;
+  enum class Reap { Block, Spin, Timeout } reap = Reap::Block;
+};
+
+const SqPollExperiment& sqPollExperiment() {
+  static const SqPollExperiment experiment = [] {
+    SqPollExperiment e;
+    if (const char* v = std::getenv("QLEVER_SQPOLL_IDLE_MS")) {
+      e.idleMs = static_cast<unsigned>(std::strtoul(v, nullptr, 10));
+    }
+    if (const char* v = std::getenv("QLEVER_SQPOLL_CPU")) {
+      e.cpuOverride = true;
+      if (std::string_view{v} != "none") {
+        e.cpu = static_cast<unsigned>(std::strtoul(v, nullptr, 10));
+      }
+    }
+    if (const char* v = std::getenv("QLEVER_SQPOLL_SHARED")) {
+      e.shared = std::string_view{v} == "1";
+    }
+    if (const char* v = std::getenv("QLEVER_SQPOLL_REAP")) {
+      if (std::string_view{v} == "spin") {
+        e.reap = SqPollExperiment::Reap::Spin;
+      } else if (std::string_view{v} == "timeout") {
+        e.reap = SqPollExperiment::Reap::Timeout;
+      }
+    }
+    AD_LOG_INFO << "SQPoll experiment: idleMs="
+                << (e.idleMs ? std::to_string(*e.idleMs) : "default") << " cpu="
+                << (!e.cpuOverride ? "default"
+                                   : (e.cpu ? std::to_string(*e.cpu) : "none"))
+                << " shared=" << e.shared
+                << " reap=" << static_cast<int>(e.reap) << std::endl;
+    return e;
+  }();
+  return experiment;
+}
+
+// MEASUREMENT ONLY: the fd of one process-wide SQPoll ring that every other
+// SQPoll ring attaches to with `IORING_SETUP_ATTACH_WQ`, so they share its
+// poll thread. Created on first use with `templateParams`; -1 on failure.
+int sharedSqPollRingFd(const io_uring_params& templateParams) {
+  static io_uring anchor{};
+  static const int fd = [&templateParams] {
+    io_uring_params params = templateParams;
+    params.flags &= ~IORING_SETUP_ATTACH_WQ;
+    const int ret = io_uring_queue_init_params(8, &anchor, &params);
+    AD_LOG_INFO << "SQPoll experiment: shared poll ring setup returned " << ret
+                << std::endl;
+    return ret == 0 ? anchor.ring_fd : -1;
+  }();
+  return fd;
+}
+
 // Return `preferredCpu` when it is in this process's affinity mask, otherwise
 // the first CPU in the mask. Falls back to `preferredCpu` when the mask
 // cannot be read; the kernel setup then reports the error as before.
@@ -190,6 +260,26 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
                   << params.sq_thread_cpu << " instead" << std::endl;
     }
     params.sq_thread_idle = setupOptions.sqThreadIdleMs;
+    // MEASUREMENT ONLY: environment overrides, see `SqPollExperiment`.
+    const auto& experiment = sqPollExperiment();
+    if (experiment.idleMs.has_value()) {
+      params.sq_thread_idle = experiment.idleMs.value();
+    }
+    if (experiment.cpuOverride) {
+      if (experiment.cpu.has_value()) {
+        params.sq_thread_cpu = experiment.cpu.value();
+      } else {
+        params.flags &= ~IORING_SETUP_SQ_AFF;
+        params.sq_thread_cpu = 0;
+      }
+    }
+    if (experiment.shared) {
+      const int sharedFd = sharedSqPollRingFd(params);
+      if (sharedFd >= 0) {
+        params.flags |= IORING_SETUP_ATTACH_WQ;
+        params.wq_fd = static_cast<__u32>(sharedFd);
+      }
+    }
   }
   if (setupOptions.deferTaskrun) {
 #ifdef IORING_SETUP_DEFER_TASKRUN
@@ -413,7 +503,32 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
     const auto start = ioUringCountersEnabled
                            ? std::chrono::steady_clock::now()
                            : std::chrono::steady_clock::time_point{};
-    ret = io_uring_wait_cqe(&ring_, &cqe);
+    // MEASUREMENT ONLY: the reap mode of `SqPollExperiment`.
+    const auto reap = sqPollEnabled_ ? sqPollExperiment().reap
+                                     : SqPollExperiment::Reap::Block;
+    if (reap == SqPollExperiment::Reap::Spin) {
+      // Busy-check the completion queue without entering the kernel; fall
+      // back to a blocking wait after a bounded number of checks.
+      for (size_t i = 0;; ++i) {
+        ret = io_uring_peek_cqe(&ring_, &cqe);
+        if (ret != -EAGAIN) {
+          break;
+        }
+        if (i >= 10'000'000) {
+          ret = io_uring_wait_cqe(&ring_, &cqe);
+          break;
+        }
+        __builtin_ia32_pause();
+      }
+    } else if (reap == SqPollExperiment::Reap::Timeout) {
+      __kernel_timespec timeout{};
+      timeout.tv_nsec = 50'000;
+      do {
+        ret = io_uring_wait_cqe_timeout(&ring_, &cqe, &timeout);
+      } while (ret == -ETIME);
+    } else {
+      ret = io_uring_wait_cqe(&ring_, &cqe);
+    }
     if constexpr (ioUringCountersEnabled) {
       countIoUring(IoUringCounter::BlockingWaits);
       countIoUring(IoUringCounter::BlockingWaitNs, nanosecondsSince(start));
