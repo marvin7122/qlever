@@ -60,36 +60,25 @@ TEST(StringBatcher, StreamMacros) {
 }
 
 // _____________________________________________________________________________
-// Verify that toggling the `use-non-temporal-export-buffer` runtime
-// parameter (which switches `stream_generator_promise::copyIntoBuffer`
-// between `std::memcpy` and `StreamingBufferWriter::streamCopyNoFence`)
-// yields byte-identical output. This covers both the small-value path and
-// the buffer-boundary-spanning (overflow) path.
+// Values shorter than `minNonTemporalCopySize` are copied with `std::memcpy`
+// also when `use-non-temporal-export-buffer` is set, and the output does not
+// depend on the parameter.
 TEST(StreamGenerator, NonTemporalBufferParameterYieldsIdenticalOutput) {
   auto runWithParam = [](bool useNonTemporal) {
-    setRuntimeParameter<&RuntimeParameters::useNonTemporalExportBuffer_>(
-        useNonTemporal);
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::useNonTemporalExportBuffer_>(useNonTemporal);
     std::string result;
-    // 20 chars of payload against a 8-byte buffer forces several
-    // suspend/resume + overflow cycles through `yield_value`.
     for (const auto& batch : yieldSomething(4)) {
       result.append(batch);
     }
     return result;
   };
 
-  bool originalValue =
-      getRuntimeParameter<&RuntimeParameters::useNonTemporalExportBuffer_>();
-
   std::string withMemcpy = runWithParam(false);
   std::string withNonTemporal = runWithParam(true);
 
   EXPECT_EQ(withMemcpy, "hellohellohellohello");
   EXPECT_EQ(withMemcpy, withNonTemporal);
-
-  // Restore the default so this test doesn't affect others.
-  setRuntimeParameter<&RuntimeParameters::useNonTemporalExportBuffer_>(
-      originalValue);
 }
 
 namespace {

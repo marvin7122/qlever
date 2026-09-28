@@ -325,7 +325,9 @@ TEST(ExportIds, fastIntToStringForExportProducesIdenticalResults) {
   std::vector<int64_t> values{0,         1,          -1,        42,       -42,
                               999999999, -999999999, INT64_MAX, INT64_MIN};
 
-  setRuntimeParameter<&RuntimeParameters::fastIntToStringForExport_>(false);
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::fastIntToStringForExport_>(
+          false);
   std::vector<std::optional<std::pair<std::string, const char*>>>
       baselineResults;
   for (int64_t v : values) {
@@ -340,8 +342,6 @@ TEST(ExportIds, fastIntToStringForExportProducesIdenticalResults) {
     EXPECT_EQ(fastResult, baselineResults[i])
         << "Mismatch for value " << values[i];
   }
-  // Reset to the default so other tests are unaffected.
-  setRuntimeParameter<&RuntimeParameters::fastIntToStringForExport_>(false);
 }
 
 using ResolveResult =
@@ -720,14 +720,12 @@ TEST(ExportIds, resolveNonVocabIndexIds) {
 // not the formatted output.
 TEST(ExportIds, idToStringAndTypeForEncodedValueBranchlessDispatcherFlag) {
   auto testForBothFlagValues = [](Id id) {
-    setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(
-        false);
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::useBranchlessTypeDispatcher_>(false);
     auto withoutDispatcher =
         ql::exportIds::idToStringAndTypeForEncodedValue(id);
     setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(true);
     auto withDispatcher = ql::exportIds::idToStringAndTypeForEncodedValue(id);
-    setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(
-        false);
 
     ASSERT_TRUE(withoutDispatcher.has_value());
     ASSERT_TRUE(withDispatcher.has_value());
