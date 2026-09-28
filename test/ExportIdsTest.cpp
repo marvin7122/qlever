@@ -23,6 +23,7 @@
 #include "util/IdTestHelpers.h"
 #include "util/IndexTestHelpers.h"
 #include "util/ParseableDuration.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
@@ -571,8 +572,8 @@ TYPED_TEST(ExportIdsLiteralOrIriToStringAndTypeTest, blankNodeIris) {
 TYPED_TEST(ExportIdsLiteralOrIriToStringAndTypeTest,
            vectorizedPrefixExportIsByteIdentical) {
   for (bool useFastPath : {false, true}) {
-    setRuntimeParameter<&RuntimeParameters::useVectorizedPrefixExport_>(
-        useFastPath);
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::useVectorizedPrefixExport_>(useFastPath);
     SCOPED_TRACE(absl::StrCat("useVectorizedPrefixExport=", useFastPath));
 
     // `http://schema.org/` (19 bytes, not a multiple of 16) plus a suffix.
@@ -608,8 +609,6 @@ TYPED_TEST(ExportIdsLiteralOrIriToStringAndTypeTest,
          .returnOnlyLiterals_ = std::nullopt,
          .both_ = std::nullopt});
   }
-  // Restore the default so other tests are unaffected.
-  setRuntimeParameter<&RuntimeParameters::useVectorizedPrefixExport_>(false);
 }
 
 // _____________________________________________________________________________
