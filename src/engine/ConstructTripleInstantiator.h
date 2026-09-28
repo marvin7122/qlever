@@ -11,6 +11,7 @@
 #define QLEVER_SRC_ENGINE_CONSTRUCTTRIPLEINSTANTIATOR_H
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -67,30 +68,28 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType);
 std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
                          const ad_utility::MediaType& format);
 
-// Per-stream cache used by `formatTripleRle` to implement RLE prefix
-// constant folding (see `formatTripleRle` below) over the CONSTRUCT triple
-// export loop: `ConstructBatchEvaluator`'s `IdCache` already returns the
-// same `EvaluatedTerm` (shared_ptr) instance for equal `Id`s within a
-// batch, so a run of consecutive rows with an identical subject or
-// predicate carries pointer-identical `EvaluatedTermData`. This cache
-// remembers the last formatted subject/predicate string per pointer and
-// lets `formatTripleRle` skip re-formatting them. The handles are owning:
-// the cache outlives individual batches (it folds runs across batch
-// boundaries), while a batch's triples only own their `EvaluatedTerm`s
-// until the batch is consumed, so raw pointers would dangle. Consume this
-// cache single-threaded in a single pass; do not share it across threads.
+// Per-stream cache of `formatTripleRle`. The `ConstructBatchEvaluator`'s
+// `IdCache` hands out the same `EvaluatedTerm` (`shared_ptr`) for equal `Id`s,
+// so consecutive rows with the same subject or predicate (a run in a result
+// sorted by subject) carry the same pointer. The cache keeps the subject and
+// predicate of the previous row, formatted and escaped for `format_`, together
+// with owning handles: the cache lives across batches, while a batch only owns
+// its terms until it is consumed, so raw pointers could dangle (and a freed
+// address could be reused by a different term). Use one cache per output
+// stream, single-threaded.
 struct RleConstructTripleCache {
+  std::optional<ad_utility::MediaType> format_;
   EvaluatedTerm lastSubject_ = nullptr;
   EvaluatedTerm lastPredicate_ = nullptr;
   std::string cachedSubject_;
   std::string cachedPredicate_;
 };
 
-// Behaviorally identical to `formatTriple` (same byte output for the same
-// input), but reuses `cache`'s memoized subject/predicate formatting when
-// `evaluatedTriple`'s subject/predicate are the same `EvaluatedTerm`
-// instance as the previous call. Guarded behind the
-// `use-rle-prefix-construct-export` runtime parameter by the caller.
+// Same bytes as `formatTriple` (without `use-fast-export-stream-formatter`).
+// A subject or predicate that is the same `EvaluatedTerm` as in the previous
+// call is taken from `cache` instead of being formatted, escaped and copied
+// again. Used by the CONSTRUCT export when `use-rle-prefix-construct-export`
+// is set.
 std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
                             const ad_utility::MediaType& format,
                             RleConstructTripleCache& cache);

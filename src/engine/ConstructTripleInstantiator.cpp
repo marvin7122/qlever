@@ -209,6 +209,30 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
   }
 }
 
+namespace {
+// Return the subject or predicate `term` formatted for `format`, as
+// `formatTriple` would write it. The formatted string is kept in `cached`
+// together with the owning handle `last`; if `term` is the same
+// `EvaluatedTerm` instance as in the previous call, the kept string is
+// returned without formatting, escaping or copying it again.
+const std::string& formatTermCached(const EvaluatedTerm& term,
+                                    const ad_utility::MediaType& format,
+                                    EvaluatedTerm& last, std::string& cached) {
+  using enum ad_utility::MediaType;
+  if (last != term) {
+    std::string formatted = formatTerm(*term, format == ntriples);
+    if (format == csv) {
+      formatted = RdfEscaping::escapeForCsv(std::move(formatted));
+    } else if (format == tsv) {
+      formatted = RdfEscaping::escapeForTsv(std::move(formatted));
+    }
+    cached = std::move(formatted);
+    last = term;
+  }
+  return cached;
+}
+}  // namespace
+
 // _____________________________________________________________________________
 std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
                             const ad_utility::MediaType& format,
@@ -217,32 +241,18 @@ std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
   static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
   AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
 
-  const auto& [subject, predicate, object] = evaluatedTriple;
-  const bool includeDataType = (format == ntriples);
+  // The cached strings are already escaped for one format.
+  if (cache.format_ != format) {
+    cache = RleConstructTripleCache{};
+    cache.format_ = format;
+  }
 
-  // RLE prefix constant folding: reuse the previous row's formatted
-  // subject/predicate string when the `EvaluatedTerm` is pointer-identical
-  // to the last row's (guaranteed for repeated `Id`s within a batch by
-  // `ConstructBatchEvaluator`'s `IdCache`), instead of reformatting it.
-  // `shared_ptr` comparison is pointer comparison, and the owning handles
-  // in the cache keep the previous row's terms alive across batches.
-  std::string s;
-  if (cache.lastSubject_ == subject) {
-    s = cache.cachedSubject_;
-  } else {
-    s = formatTerm(*subject, includeDataType);
-    cache.lastSubject_ = subject;
-    cache.cachedSubject_ = s;
-  }
-  std::string p;
-  if (cache.lastPredicate_ == predicate) {
-    p = cache.cachedPredicate_;
-  } else {
-    p = formatTerm(*predicate, includeDataType);
-    cache.lastPredicate_ = predicate;
-    cache.cachedPredicate_ = p;
-  }
-  std::string o = formatTerm(*object, includeDataType);
+  const auto& [subject, predicate, object] = evaluatedTriple;
+  const std::string& s = formatTermCached(subject, format, cache.lastSubject_,
+                                          cache.cachedSubject_);
+  const std::string& p = formatTermCached(
+      predicate, format, cache.lastPredicate_, cache.cachedPredicate_);
+  std::string o = formatTerm(*object, format == ntriples);
 
   if (format == turtle || format == ntriples) {
     if (ql::starts_with(o, '"')) {
@@ -252,12 +262,10 @@ std::string formatTripleRle(const EvaluatedTriple& evaluatedTriple,
     }
     return absl::StrCat(s, " ", p, " ", o, " .\n");
   } else if (format == csv) {
-    return absl::StrCat(RdfEscaping::escapeForCsv(std::move(s)), ",",
-                        RdfEscaping::escapeForCsv(std::move(p)), ",",
-                        RdfEscaping::escapeForCsv(std::move(o)), "\n");
+    return absl::StrCat(s, ",", p, ",", RdfEscaping::escapeForCsv(std::move(o)),
+                        "\n");
   } else if (format == tsv) {
-    return absl::StrCat(RdfEscaping::escapeForTsv(std::move(s)), "\t",
-                        RdfEscaping::escapeForTsv(std::move(p)), "\t",
+    return absl::StrCat(s, "\t", p, "\t",
                         RdfEscaping::escapeForTsv(std::move(o)), "\n");
   } else {
     AD_FAIL();  // unreachable

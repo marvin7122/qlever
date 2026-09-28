@@ -87,11 +87,6 @@ if (NOT _NO_BENCHMARK)
     add_executable(SimdValidityBenchmark SimdValidityBenchmark.cpp)
     linkBenchmark(SimdValidityBenchmark engine sparqlParser qlever_util)
 
-    add_executable(RlePrefixBenchmark RlePrefixBenchmark.cpp)
-    # Standalone benchmark with its own main(): link the benchmark
-    # infrastructure without its default main to avoid duplicate main symbols.
-    qlever_target_link_libraries(RlePrefixBenchmark benchmark engine sparqlParser qlever_util)
-
     add_executable(SwarDelimiterBenchmark SwarDelimiterBenchmark.cpp)
     linkBenchmark(SwarDelimiterBenchmark engine sparqlParser qlever_util)
 
