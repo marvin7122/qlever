@@ -371,16 +371,15 @@ inline void preparePassthroughRead(io_uring_sqe* sqe, int deviceFd,
   AD_CORRECTNESS_CHECK(targetBuffer != nullptr);
   static_assert(sizeof(struct nvme_uring_cmd) <= kUringCmdDataSize,
                 "nvme_uring_cmd must fit the SQE command area");
-  // Same discipline as `io_uring_prep_read`: set every field the submission
-  // owns. The NVMe read command travels in the SQE's command area, where the
-  // kernel's NVMe driver picks it up. The target buffer's address is carried
-  // in the NVMe command (`addr`) with the same lifetime requirement as a plain
-  // read's buffer: it must stay valid until the completion is reaped.
-  sqe->opcode = IORING_OP_URING_CMD;
-  sqe->fd = deviceFd;
-  sqe->off = 0;
-  sqe->addr = 0;
-  sqe->len = 0;
+  // Like `io_uring_prep_read`, start from `io_uring_prep_rw`, which sets every
+  // field of the 64-byte SQE that the submission owns (flags, priority, buffer
+  // index, ...), so no value of an earlier use of the slot survives. The NVMe
+  // read command travels in the SQE's command area, where the kernel's NVMe
+  // driver picks it up. The target buffer's address is carried in the NVMe
+  // command (`addr`) with the same lifetime requirement as a plain read's
+  // buffer: it must stay valid until the completion is reaped.
+  io_uring_prep_rw(IORING_OP_URING_CMD, sqe, deviceFd, nullptr, 0, 0);
+  // `cmd_op` shares its bytes with `off`, so it is set after `off` was zeroed.
   sqe->cmd_op = NVME_URING_CMD_IO;
   struct nvme_uring_cmd cmd {};
   cmd.opcode = kNvmReadOpcode;

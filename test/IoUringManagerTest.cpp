@@ -1014,6 +1014,11 @@ TEST(NvmePassthroughSqe, preparesNvmeReadCommand) {
 
   EXPECT_EQ(sqe->opcode, IORING_OP_URING_CMD);
   EXPECT_EQ(sqe->fd, 7);
+  // The fields of the 64-byte SQE that were set before are reset.
+  EXPECT_EQ(sqe->flags, 0u);
+  EXPECT_EQ(sqe->addr, 0u);
+  EXPECT_EQ(sqe->len, 0u);
+  EXPECT_EQ(sqe->buf_index, 0u);
   EXPECT_EQ(sqe->cmd_op, static_cast<uint32_t>(NVME_URING_CMD_IO));
   nvme_uring_cmd cmd{};
   const auto* tail = sqeStorage + offsetof(io_uring_sqe, cmd);
