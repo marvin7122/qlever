@@ -144,3 +144,41 @@ TEST(StreamingBufferWriterTest, MoveSemantics) {
   EXPECT_EQ(writer1.capacity(), 0);
   EXPECT_EQ(writer1.bytesWritten(), 0);
 }
+
+// _____________________________________________________________________________
+// Accessors on a moved-from or zero-capacity writer must not form
+// `nullptr + 0` (undefined behavior): they expose a null pointer and empty
+// spans, and a zero-capacity writer is empty but not full.
+TEST(StreamingBufferWriterTest, MovedFromAndZeroCapacityAccessorsAreSafe) {
+  StreamingBufferWriter writer(256);
+  writer.write("Hello Move");
+  StreamingBufferWriter moved(std::move(writer));
+  EXPECT_EQ(moved.bytesWritten(), 10);
+  EXPECT_EQ(std::string_view(moved.data(), 10), "Hello Move");
+
+  EXPECT_TRUE(writer.currentWritePointer() == nullptr);
+  EXPECT_TRUE(writer.writtenSpan().empty());
+  EXPECT_TRUE(writer.remainingSpan().empty());
+  EXPECT_TRUE(writer.empty());
+  EXPECT_FALSE(writer.full());
+
+  StreamingBufferWriter zero(size_t{0});
+  EXPECT_EQ(zero.capacity(), 0u);
+  EXPECT_TRUE(zero.currentWritePointer() == nullptr);
+  EXPECT_TRUE(zero.writtenSpan().empty());
+  EXPECT_TRUE(zero.remainingSpan().empty());
+  EXPECT_TRUE(zero.empty());
+  EXPECT_FALSE(zero.full());
+}
+
+// _____________________________________________________________________________
+// `streamCopy` is undefined for overlapping ranges: the contract fires, while
+// a self-copy stays well-defined.
+TEST(StreamingBufferWriterTest, StreamCopyRejectsOverlappingRanges) {
+  std::vector<char> buffer(128, 0);
+  EXPECT_THROW(
+      StreamingBufferWriter::streamCopy(buffer.data() + 1, buffer.data(), 64),
+      ad_utility::Exception);
+  EXPECT_NO_THROW(
+      StreamingBufferWriter::streamCopy(buffer.data(), buffer.data(), 64));
+}

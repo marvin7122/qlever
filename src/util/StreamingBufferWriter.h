@@ -65,7 +65,9 @@ class StreamingBufferWriter {
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
     _mm_sfence();
 #else
-    std::atomic_thread_fence(std::memory_order_release);
+    // Full store fence to emulate `SFENCE` semantics: a release fence does
+    // not order the non-temporal stores `streamCopyNoFence` issues.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
 #endif
   }
 
@@ -80,6 +82,15 @@ class StreamingBufferWriter {
     if (count == 0) {
       return;
     }
+
+    // Requires: `[dest, dest + count)` and `[src, src + count)` do not
+    // overlap. Both `memcpy` and the non-temporal stores below are
+    // undefined for overlapping ranges (use `memmove` instead when the
+    // ranges may overlap). A self-copy (`dest == src`) is well-defined.
+    const auto destAddr = reinterpret_cast<uintptr_t>(dest);
+    const auto srcAddr = reinterpret_cast<uintptr_t>(src);
+    AD_CONTRACT_CHECK(dest == src || destAddr + count <= srcAddr ||
+                      srcAddr + count <= destAddr);
 
     auto* destPtr = static_cast<char*>(dest);
     const auto* srcPtr = static_cast<const char*>(src);
@@ -262,7 +273,10 @@ class StreamingBufferWriter {
   // ___________________________________________________________________________
   // Accessors. `write` uses non-temporal stores, so the bytes exposed by
   // `data`, `writtenSpan` and `currentWritePointer` are only guaranteed to be
-  // visible to another thread after `flush`.
+  // visible to another thread after `flush`. A zero-capacity writer (after a
+  // move, `reset` to an empty span, or a zero-size construction) exposes a
+  // null pointer and empty spans instead of forming `nullptr + 0`, which is
+  // undefined behavior; `data` may therefore return `nullptr`.
   [[nodiscard]] size_t bytesWritten() const noexcept { return bytesWritten_; }
   [[nodiscard]] size_t capacity() const noexcept { return capacity_; }
   [[nodiscard]] size_t remainingCapacity() const noexcept {
@@ -270,25 +284,37 @@ class StreamingBufferWriter {
   }
   [[nodiscard]] bool empty() const noexcept { return bytesWritten_ == 0; }
   [[nodiscard]] bool full() const noexcept {
-    return bytesWritten_ == capacity_;
+    return capacity_ > 0 && bytesWritten_ == capacity_;
   }
   [[nodiscard]] bool isOwner() const noexcept {
     return ownedBuffer_.has_value();
   }
 
   [[nodiscard]] char* currentWritePointer() noexcept {
+    if (capacity_ == 0) {
+      return nullptr;
+    }
     return buffer_ + bytesWritten_;
   }
   [[nodiscard]] const char* currentWritePointer() const noexcept {
+    if (capacity_ == 0) {
+      return nullptr;
+    }
     return buffer_ + bytesWritten_;
   }
   [[nodiscard]] char* data() noexcept { return buffer_; }
   [[nodiscard]] const char* data() const noexcept { return buffer_; }
 
   [[nodiscard]] std::span<const char> writtenSpan() const noexcept {
+    if (capacity_ == 0) {
+      return {};
+    }
     return {buffer_, bytesWritten_};
   }
   [[nodiscard]] std::span<char> remainingSpan() noexcept {
+    if (capacity_ == 0) {
+      return {};
+    }
     return {buffer_ + bytesWritten_, capacity_ - bytesWritten_};
   }
 };
