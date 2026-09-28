@@ -135,6 +135,18 @@ TEST(PmrVocabBatchLookupData, PmrAsResultEmpty) {
   EXPECT_TRUE(result->empty());
 }
 
+// `StringVectorVocabBatchLookupData::fromWords` takes ownership of the words
+// and hands out views into the strings it now owns, for short (SSO) strings,
+// whose bytes live inside the `std::string` object, as well as for long ones.
+TEST(StringVectorVocabBatchLookupData, FromWords) {
+  std::vector<std::string> words{"", "a", std::string(100, 'x'), "short"};
+  const auto expected = words;
+  auto result = StringVectorVocabBatchLookupData::fromWords(std::move(words));
+  // Reusing the moved-from vector does not affect the result.
+  words.assign(4, std::string(100, 'y'));
+  EXPECT_THAT(*result, ::testing::ElementsAreArray(expected));
+}
+
 namespace {
 // A minimal vocabulary with "holes": its `operator[]` returns `std::nullopt`
 // for odd indices. It does not opt in to the placeholder mechanism (see

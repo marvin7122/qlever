@@ -133,7 +133,21 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 // owning `std::string`s. The words are moved into the
 // `std::vector<std::string>` buffer and the `views()` point at those strings.
 struct StringVectorVocabBatchLookupData
-    : VocabLookupDataCommonBase<std::vector<std::string>> {};
+    : VocabLookupDataCommonBase<std::vector<std::string>> {
+  // Return the batch-lookup result for the owning `words` (one word per
+  // looked-up index, in order). The views are created from the stored strings
+  // only after the move, so they always point at the final location of the
+  // bytes (for short strings, the bytes live inside the `std::string` object
+  // itself).
+  static VocabBatchLookupResult fromWords(std::vector<std::string> words) {
+    auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+    data->buffer() = std::move(words);
+    data->views() = ::ranges::to_vector(
+        data->buffer() |
+        ql::views::transform(ad_utility::staticCast<std::string_view>));
+    return asResult(std::move(data));
+  }
+};
 
 // Generic sequential fallback implementations of the batch-lookup interface,
 // used by all vocabularies that do not provide a specialized (e.g. io_uring)
@@ -230,24 +244,13 @@ template <typename Vocab>
 VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
                                              ql::span<const size_t> indices) {
   AD_CONTRACT_CHECK(!indices.empty());
-  // Materialize the words as owning `std::string`s and move them into the
-  // result's `std::vector<std::string>` buffer. The views then point at those
-  // strings; no byte copying into a contiguous buffer is needed. Building the
-  // views after the move is safe: moving the vector does not relocate the
-  // contained strings.
-
-  std::vector<std::string> words = ::ranges::to<std::vector<std::string>>(
-      indices | ql::views::transform([&vocab](size_t idx) {
-        return wordAsStringOrPlaceholder(vocab, idx);
-      }));
-
-  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-  data->buffer() = std::move(words);
-  data->views() = ::ranges::to_vector(
-      data->buffer() |
-      ql::views::transform(ad_utility::staticCast<std::string_view>));
-
-  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+  // Materialize the words as owning `std::string`s; the result then owns them
+  // and hands out views into them.
+  return StringVectorVocabBatchLookupData::fromWords(
+      ::ranges::to<std::vector<std::string>>(
+          indices | ql::views::transform([&vocab](size_t idx) {
+            return wordAsStringOrPlaceholder(vocab, idx);
+          })));
 }
 
 // Streamed version of `lookupBatch`: lazily apply `vocab.lookupBatch` for the
