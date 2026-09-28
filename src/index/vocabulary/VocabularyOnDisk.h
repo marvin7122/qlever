@@ -279,7 +279,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
                                     ql::span<char*> targets,
                                     bool pageCacheFastPath) const;
 
-  // Log the counters of `nvme_` (every 1024 batches).
+  // Log the counters of `nvme_` (every 64 batches).
   void logNvmePassthroughCounters() const;
 
   // Read `numBytes[i]` bytes at `offsets[i]` of `fd` into `buffers[i]` for
