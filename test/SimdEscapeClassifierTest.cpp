@@ -12,8 +12,9 @@
 #include <string_view>
 #include <vector>
 
-#include "../util/GTestHelpers.h"
+#include "./util/GTestHelpers.h"
 #include "engine/SimdEscapeClassifier.h"
+#include "rdfTypes/RdfEscaping.h"
 
 using namespace ad_utility::simd;
 
@@ -160,8 +161,35 @@ TEST(SimdEscapeClassifierTest, escapeForTsv) {
   EXPECT_EQ(SimdEscapeClassifier::escapeForTsv(
                 "clean_tab_separated_value_test_32_bytes_long"),
             "clean_tab_separated_value_test_32_bytes_long");
+  // `\r` and `\` are not special in TSV (as in `RdfEscaping::escapeForTsv`).
   EXPECT_EQ(SimdEscapeClassifier::escapeForTsv("tab\there\nand\rhere\\too"),
-            "tab here\\nand\\rhere\\\\too");
+            "tab here\\nand\rhere\\too");
+}
+
+// ___________________________________________________________________________
+// The SIMD escape functions are drop-in replacements for the `RdfEscaping`
+// ones: same output for every byte value, at every position relative to the
+// 16- and 32-byte blocks, and for runs of special characters.
+TEST(SimdEscapeClassifierTest, matchesRdfEscapingForAllBytesAndPositions) {
+  std::vector<std::string> inputs;
+  for (int byte = 0; byte < 256; ++byte) {
+    for (size_t position : {0, 1, 15, 16, 17, 31, 32, 33, 63, 64}) {
+      std::string input(70, 'x');
+      input[position] = static_cast<char>(byte);
+      inputs.push_back(input.substr(0, position + 1));
+      inputs.push_back(std::move(input));
+    }
+  }
+  inputs.emplace_back("\t\n\r\\\",,\"\t\t\n\n\r\r\\\\");
+  inputs.emplace_back(std::string(100, '\t'));
+  inputs.emplace_back(std::string(100, '"'));
+  inputs.emplace_back("");
+  for (const auto& input : inputs) {
+    EXPECT_EQ(SimdEscapeClassifier::escapeForTsv(input),
+              RdfEscaping::escapeForTsv(input));
+    EXPECT_EQ(SimdEscapeClassifier::escapeForCsv(input),
+              RdfEscaping::escapeForCsv(input));
+  }
 }
 
 // ___________________________________________________________________________

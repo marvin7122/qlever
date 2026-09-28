@@ -13,7 +13,6 @@
 #include <random>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "util/FastIntToString.h"
 
@@ -88,6 +87,19 @@ TEST(FastIntToStringTest, NumDigitsUInt32) {
   EXPECT_EQ(numDigits(999999999U), 9U);
   EXPECT_EQ(numDigits(1000000000U), 10U);
   EXPECT_EQ(numDigits(std::numeric_limits<uint32_t>::max()), 10U);
+}
+
+// _____________________________________________________________________________
+TEST(FastIntToStringTest, CountlZero64) {
+  // Powers of two pin down every bit position.
+  for (int k = 0; k < 64; ++k) {
+    EXPECT_EQ(detail::countlZero64(1ULL << k), static_cast<uint32_t>(63 - k))
+        << "Failed for 1ULL << " << k;
+  }
+  EXPECT_EQ(detail::countlZero64(std::numeric_limits<uint64_t>::max()), 0U);
+  EXPECT_EQ(detail::countlZero64(0xFFFFFFFF00000000ULL), 0U);
+  EXPECT_EQ(detail::countlZero64(0x00000000FFFFFFFFULL), 32U);
+  EXPECT_EQ(detail::countlZero64(0x00FF000000000000ULL), 8U);
 }
 
 // _____________________________________________________________________________

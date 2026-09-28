@@ -57,11 +57,28 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
   // stored inside the object, and a string with one additional character is
   // not.
   size_t capacity = pmrStringSsoCapacity();
+  // A zero capacity means this platform offers no inline string storage at
+  // all, so every SSO-dependent assertion below would be meaningless there.
+  // All supported STLs provide SSO; this states the premise explicitly
+  // instead of tripping the `maxSize > 0` contract inside
+  // `requirePmrStringInlineStorage` with a confusing message.
+  ASSERT_GT(capacity, 0u) << "This platform offers no inline string storage, "
+                             "so the SSO assertions below are meaningless";
   requirePmrStringInlineStorage(capacity);
   PmrSsoProbeString atCapacity(capacity, 'x');
   EXPECT_TRUE(pointsIntoObject(atCapacity.data(), atCapacity));
   PmrSsoProbeString aboveCapacity(capacity + 1, 'y');
   EXPECT_FALSE(pointsIntoObject(aboveCapacity.data(), aboveCapacity));
+}
+
+// _____________________________________________________________________________
+TEST(GTestHelpersTest, RequirePmrStringInlineStorageRejectsInvalidSizes) {
+  // `maxSize == 0` violates the precondition, and a size above the probed
+  // capacity violates the platform premise; both must throw.
+  EXPECT_ANY_THROW(requirePmrStringInlineStorage(0));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      requirePmrStringInlineStorage(pmrStringSsoCapacity() + 1),
+      ::testing::HasSubstr("Platform premise violated"));
 }
 
 // _____________________________________________________________________________

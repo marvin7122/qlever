@@ -7,8 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
-#define QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
+#ifndef QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H
+#define QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H
 
 #include <atomic>
 #include <chrono>
@@ -33,16 +33,18 @@
 
 namespace qlever::export_pipeline {
 
-// _____________________________________________________________________________
-// Exception thrown or propagated when a pipeline consumer cancels early
-// (e.g. HTTP client disconnected, query timed out, or client socket broke).
-class PipelineCancelledException : public std::runtime_error {
- public:
-  PipelineCancelledException()
-      : std::runtime_error("AsyncChunkPipeline operation cancelled.") {}
-  explicit PipelineCancelledException(const std::string& message)
-      : std::runtime_error(message) {}
-};
+namespace detail {
+// C++17-compatible detection of a `.size()` member function. A raw
+// `requires`-expression is C++20-only, but this header is also compiled with
+// `CMAKE_CXX_STANDARD_MANUALLY_OVERRIDDEN=17`.
+template <typename T, typename = void>
+struct HasSize : std::false_type {};
+template <typename T>
+struct HasSize<T, std::void_t<decltype(std::declval<const T&>().size())>>
+    : std::true_type {};
+template <typename T>
+inline constexpr bool HasSize_v = HasSize<T>::value;
+}  // namespace detail
 
 // _____________________________________________________________________________
 // Diagnostic accounting and performance metrics for the double-buffering
@@ -126,7 +128,7 @@ class AsyncChunkPipeline {
       }
     }
 
-    if constexpr (requires(const ChunkType& c) { c.size(); }) {
+    if constexpr (detail::HasSize_v<ChunkType>) {
       stats_.totalBytesProduced += chunk.size();
     }
     stats_.totalChunksProduced++;
@@ -187,7 +189,7 @@ class AsyncChunkPipeline {
     ChunkType chunk = std::move(buffer_.front());
     buffer_.pop();
 
-    if constexpr (requires(const ChunkType& c) { c.size(); }) {
+    if constexpr (detail::HasSize_v<ChunkType>) {
       stats_.totalBytesConsumed += chunk.size();
     }
     stats_.totalChunksConsumed++;
@@ -198,7 +200,12 @@ class AsyncChunkPipeline {
 
   // ___________________________________________________________________________
   // Cancellation API: Signal early consumer cancellation (e.g. broken pipe).
+  // Holds the mutex so the flag update and the wakeups are atomic with
+  // respect to the predicate checks in `push`/`pop`: notifying without the
+  // lock risks a missed wakeup when a waiter checks the predicate after the
+  // flag is set but before it starts waiting.
   void cancel() {
+    std::lock_guard<std::mutex> lock(mutex_);
     isCancelled_ = true;
     cvNotFull_.notify_all();
     cvNotEmpty_.notify_all();
@@ -238,52 +245,7 @@ class AsyncChunkPipeline {
   // of the consumer, overlapping compute and network I/O.
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
   static cppcoro::generator<ChunkType> makeDoubleBuffered(
-      cppcoro::generator<ChunkType> sourceGenerator, size_t capacity = 2) {
-    AD_CONTRACT_CHECK(capacity >= 1);
-    auto pipeline = std::make_shared<AsyncChunkPipeline<ChunkType>>(capacity);
-
-    // Launch background worker thread to pull chunks eagerly.
-    std::thread worker(
-        [pipeline, source = std::move(sourceGenerator)]() mutable {
-          try {
-            for (auto&& chunk : source) {
-              if (pipeline->isCancelled()) {
-                break;
-              }
-              if (!pipeline->push(std::move(chunk))) {
-                break;
-              }
-            }
-            pipeline->finish();
-          } catch (...) {
-            pipeline->setException(std::current_exception());
-          }
-        });
-
-    // RAII guard ensuring worker is cancelled and joined upon generator exit.
-    struct WorkerGuard {
-      std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
-      std::thread thread;
-      ~WorkerGuard() {
-        if (pipe) {
-          pipe->cancel();
-        }
-        if (thread.joinable()) {
-          thread.join();
-        }
-      }
-    };
-    auto guard =
-        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
-
-    while (true) {
-      auto chunkOpt = pipeline->pop();
-      if (!chunkOpt.has_value()) {
-        break;
-      }
-      co_yield std::move(chunkOpt.value());
-    }
-  }
+      cppcoro::generator<ChunkType> sourceGenerator, size_t capacity = 2);
 
   // ___________________________________________________________________________
   // High-Level Adapter: Stream chunks from a producer callable into a
@@ -296,30 +258,21 @@ class AsyncChunkPipeline {
     AD_CONTRACT_CHECK(capacity >= 1);
     auto pipeline = std::make_shared<AsyncChunkPipeline<ChunkType>>(capacity);
 
-    std::thread worker([pipeline, func = std::move(producerFunc)]() mutable {
-      try {
-        ChunkSink<ChunkType> sink(pipeline);
-        func(sink);
-        pipeline->finish();
-      } catch (...) {
-        pipeline->setException(std::current_exception());
-      }
-    });
-
-    struct WorkerGuard {
-      std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
-      std::thread thread;
-      ~WorkerGuard() {
-        if (pipe) {
-          pipe->cancel();
-        }
-        if (thread.joinable()) {
-          thread.join();
-        }
-      }
-    };
-    auto guard =
-        std::make_shared<WorkerGuard>(WorkerGuard{pipeline, std::move(worker)});
+    // Cancels and joins the worker when this generator is finished or
+    // destroyed while suspended. It is created before the worker is started,
+    // so no allocation can fail while a joinable `std::thread` is unowned.
+    WorkerGuard guard;
+    guard.pipe = pipeline;
+    guard.thread =
+        std::thread([pipeline, func = std::move(producerFunc)]() mutable {
+          try {
+            ChunkSink<ChunkType> sink(pipeline);
+            func(sink);
+            pipeline->finish();
+          } catch (...) {
+            pipeline->setException(std::current_exception());
+          }
+        });
 
     while (true) {
       auto chunkOpt = pipeline->pop();
@@ -332,6 +285,23 @@ class AsyncChunkPipeline {
 #endif
 
  private:
+  // RAII guard ensuring the worker of `pipelineStream` is cancelled and joined
+  // when the adapter generator exits, also when the generator is destroyed
+  // while suspended at a `co_yield`. It is populated in place (the
+  // user-declared destructor suppresses the implicit move constructor).
+  struct WorkerGuard {
+    std::shared_ptr<AsyncChunkPipeline<ChunkType>> pipe;
+    std::thread thread;
+    ~WorkerGuard() {
+      if (pipe) {
+        pipe->cancel();
+      }
+      if (thread.joinable()) {
+        thread.join();
+      }
+    }
+  };
+
   const size_t capacity_;
   mutable std::mutex mutex_;
   std::condition_variable cvNotEmpty_;
@@ -366,6 +336,84 @@ class ChunkSink {
   }
 };
 
+// _____________________________________________________________________________
+// Runs a chunk producer on a dedicated thread and hands its chunks to the
+// consumer by value through an `AsyncChunkPipeline`, so that the producer works
+// at most `capacity` chunks ahead of the consumer.
+//
+// `makeRange` is invoked on the producer thread, and the range it returns
+// (typically a `cppcoro::generator`) is iterated and destroyed there. A
+// coroutine frame of the producer therefore never crosses threads, and the
+// consumer may itself be a coroutine: it only calls `pop`.
+//
+// The destructor cancels the pipeline and joins the producer, so destroying an
+// unfinished producer (for example because the consumer abandons the export)
+// is safe: the producer stops at its next `push`. An exception of the producer
+// (also one thrown by `makeRange` itself) is rethrown by `pop` after the chunks
+// produced before it.
+template <typename ChunkType = std::string>
+class AsyncChunkProducer {
+ public:
+  template <typename MakeRange>
+  explicit AsyncChunkProducer(MakeRange makeRange, size_t capacity = 2)
+      : pipeline_{capacity} {
+    // Started last, after `pipeline_` is fully constructed.
+    producer_ = std::thread{[this, makeRange = std::move(makeRange)]() mutable {
+      try {
+        for (auto&& chunk : makeRange()) {
+          if (!pipeline_.push(std::move(chunk))) {
+            return;
+          }
+        }
+        pipeline_.finish();
+      } catch (...) {
+        pipeline_.setException(std::current_exception());
+      }
+    }};
+  }
+
+  AsyncChunkProducer(const AsyncChunkProducer&) = delete;
+  AsyncChunkProducer& operator=(const AsyncChunkProducer&) = delete;
+  AsyncChunkProducer(AsyncChunkProducer&&) = delete;
+  AsyncChunkProducer& operator=(AsyncChunkProducer&&) = delete;
+
+  ~AsyncChunkProducer() {
+    pipeline_.cancel();
+    producer_.join();
+  }
+
+  // The next chunk in production order, blocking until it is available, or
+  // `std::nullopt` once the producer is done. Rethrows a producer exception.
+  [[nodiscard]] std::optional<ChunkType> pop() { return pipeline_.pop(); }
+
+  [[nodiscard]] PipelineStats stats() const { return pipeline_.stats(); }
+
+ private:
+  AsyncChunkPipeline<ChunkType> pipeline_;
+  // Joined in the destructor while `pipeline_` is still alive.
+  std::thread producer_;
+};
+
+#ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
+// _____________________________________________________________________________
+template <typename ChunkType>
+cppcoro::generator<ChunkType> AsyncChunkPipeline<ChunkType>::makeDoubleBuffered(
+    cppcoro::generator<ChunkType> sourceGenerator, size_t capacity) {
+  AD_CONTRACT_CHECK(capacity >= 1);
+  // The source generator is moved to the producer thread, which resumes and
+  // destroys it; destroying this generator (also while it is suspended at the
+  // `co_yield`) cancels and joins the producer.
+  AsyncChunkProducer<ChunkType> producer{
+      [source = std::move(sourceGenerator)]() mutable {
+        return std::move(source);
+      },
+      capacity};
+  while (auto chunk = producer.pop()) {
+    co_yield std::move(chunk.value());
+  }
+}
+#endif
+
 }  // namespace qlever::export_pipeline
 
-#endif  // QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_ASYNCCHUNKPIPELINE_H
+#endif  // QLEVER_SRC_ENGINE_ASYNCCHUNKPIPELINE_H

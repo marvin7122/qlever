@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -23,6 +24,7 @@
 #include <unistd.h>
 #endif
 
+#include "backports/span.h"
 #include "engine/BranchlessTypeDispatcher.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
@@ -30,6 +32,21 @@
 using namespace ql::engine;
 
 namespace {
+
+// Volatile sink for formatted output bytes. The benchmark otherwise only
+// counts bytes, so without a downstream read the optimizer could discard
+// the formatting work being measured.
+volatile size_t gFormattedBytesSink = 0;
+
+// _____________________________________________________________________________
+// Copy a string literal into `out` without a magic length: `sizeof` counts
+// the terminator, so `N - 1` is exactly the payload size.
+template <size_t N>
+char* copyLiteral(char* out, const char (&literal)[N]) {
+  static_assert(N >= 1);
+  std::memcpy(out, literal, N - 1);
+  return out + (N - 1);
+}
 
 // _____________________________________________________________________________
 // Linux perf_event hardware branch counter tracker.
@@ -80,10 +97,14 @@ class HardwarePerfCounter {
   void start() noexcept {
 #if defined(__linux__)
     if (isSupported_) {
-      ioctl(branchFd_, PERF_EVENT_IOC_RESET, 0);
-      ioctl(missFd_, PERF_EVENT_IOC_RESET, 0);
-      ioctl(branchFd_, PERF_EVENT_IOC_ENABLE, 0);
-      ioctl(missFd_, PERF_EVENT_IOC_ENABLE, 0);
+      if (ioctl(branchFd_, PERF_EVENT_IOC_RESET, 0) != 0 ||
+          ioctl(missFd_, PERF_EVENT_IOC_RESET, 0) != 0 ||
+          ioctl(branchFd_, PERF_EVENT_IOC_ENABLE, 0) != 0 ||
+          ioctl(missFd_, PERF_EVENT_IOC_ENABLE, 0) != 0) {
+        // A counter that fails to arm would report stale data, so fall
+        // back to zeros instead of reading invalid descriptors.
+        isSupported_ = false;
+      }
     }
 #endif
   }
@@ -95,8 +116,12 @@ class HardwarePerfCounter {
       ioctl(missFd_, PERF_EVENT_IOC_DISABLE, 0);
       ssize_t r1 = read(branchFd_, &branchCount, sizeof(uint64_t));
       ssize_t r2 = read(missFd_, &missCount, sizeof(uint64_t));
-      (void)r1;
-      (void)r2;
+      if (r1 != static_cast<ssize_t>(sizeof(uint64_t))) {
+        branchCount = 0;
+      }
+      if (r2 != static_cast<ssize_t>(sizeof(uint64_t))) {
+        missCount = 0;
+      }
     } else {
       branchCount = 0;
       missCount = 0;
@@ -117,85 +142,76 @@ struct BranchingSwitchDispatcher {
       case Datatype::Undefined:
         return out;
       case Datatype::Bool: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         const bool b = id.getBool();
         if (b) {
-          std::memcpy(out, "true", 4);
-          out += 4;
+          out = copyLiteral(out, "true");
         } else {
-          std::memcpy(out, "false", 5);
-          out += 5;
+          out = copyLiteral(out, "false");
         }
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", 45);
-        out += 45;
+        out =
+            copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>");
         return out;
       }
       case Datatype::Int: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         auto [p, ec] = std::to_chars(out, out + 24, id.getInt());
+        (void)ec;
         out = p;
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>", 45);
-        out += 45;
+        out =
+            copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>");
         return out;
       }
       case Datatype::Double: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
-        auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-        out = p;
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
-        out += 44;
+        out = copyLiteral(out, "\"");
+        out = ql::engine::detail::formatDoubleValue(out, out + 32,
+                                                    id.getDouble());
+        out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>");
         return out;
       }
       case Datatype::VocabIndex:
       case Datatype::LocalVocabIndex:
+      case Datatype::SecondaryVocabIndex:
       case Datatype::EncodedVal: {
-        std::memcpy(out, "<", 1);
-        out += 1;
+        out = copyLiteral(out, "<");
         std::memcpy(out, rawTerm.data(), rawTerm.size());
         out += rawTerm.size();
-        std::memcpy(out, ">", 1);
-        out += 1;
+        out = copyLiteral(out, ">");
         return out;
       }
       case Datatype::TextRecordIndex:
       case Datatype::WordVocabIndex: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         std::memcpy(out, rawTerm.data(), rawTerm.size());
         out += rawTerm.size();
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         return out;
       }
       case Datatype::Date: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         auto [str, type] = id.getDate().toStringAndType();
+        (void)type;
         std::memcpy(out, str.data(), str.size());
         out += str.size();
-        std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>", 46);
-        out += 46;
+        out =
+            copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>");
         return out;
       }
       case Datatype::GeoPoint: {
-        std::memcpy(out, "\"", 1);
-        out += 1;
+        out = copyLiteral(out, "\"");
         auto [str, type] = id.getGeoPoint().toStringAndType();
+        (void)type;
         std::memcpy(out, str.data(), str.size());
         out += str.size();
-        std::memcpy(
-            out, "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>", 52);
-        out += 52;
+        out = copyLiteral(
+            out, "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>");
         return out;
       }
       case Datatype::BlankNodeIndex: {
-        std::memcpy(out, "_:bn", 4);
-        out += 4;
+        out = copyLiteral(out, "_:bn");
         auto [p, ec] =
             std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
+        (void)ec;
         out = p;
         return out;
       }
@@ -223,57 +239,63 @@ struct BranchingIfElseDispatcher {
                                   char* out) noexcept {
     const Datatype dt = id.getDatatype();
     if (dt == Datatype::VocabIndex || dt == Datatype::LocalVocabIndex ||
-        dt == Datatype::EncodedVal) {
-      std::memcpy(out, "<", 1);
-      out += 1;
+        dt == Datatype::SecondaryVocabIndex || dt == Datatype::EncodedVal) {
+      out = copyLiteral(out, "<");
       std::memcpy(out, rawTerm.data(), rawTerm.size());
       out += rawTerm.size();
-      std::memcpy(out, ">", 1);
-      out += 1;
+      out = copyLiteral(out, ">");
       return out;
     } else if (dt == Datatype::TextRecordIndex ||
                dt == Datatype::WordVocabIndex) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       std::memcpy(out, rawTerm.data(), rawTerm.size());
       out += rawTerm.size();
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       return out;
     } else if (dt == Datatype::Int) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       auto [p, ec] = std::to_chars(out, out + 24, id.getInt());
+      (void)ec;
       out = p;
-      std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>", 45);
-      out += 45;
+      out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#integer>");
       return out;
     } else if (dt == Datatype::BlankNodeIndex) {
-      std::memcpy(out, "_:bn", 4);
-      out += 4;
+      out = copyLiteral(out, "_:bn");
       auto [p, ec] = std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
+      (void)ec;
       out = p;
       return out;
     } else if (dt == Datatype::Double) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
-      auto [p, ec] = std::to_chars(out, out + 32, id.getDouble());
-      out = p;
-      std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>", 44);
-      out += 44;
+      out = copyLiteral(out, "\"");
+      out =
+          ql::engine::detail::formatDoubleValue(out, out + 32, id.getDouble());
+      out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#double>");
       return out;
     } else if (dt == Datatype::Bool) {
-      std::memcpy(out, "\"", 1);
-      out += 1;
+      out = copyLiteral(out, "\"");
       if (id.getBool()) {
-        std::memcpy(out, "true", 4);
-        out += 4;
+        out = copyLiteral(out, "true");
       } else {
-        std::memcpy(out, "false", 5);
-        out += 5;
+        out = copyLiteral(out, "false");
       }
-      std::memcpy(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>", 45);
-      out += 45;
+      out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#boolean>");
+      return out;
+    } else if (dt == Datatype::Date) {
+      out = copyLiteral(out, "\"");
+      auto [str, type] = id.getDate().toStringAndType();
+      (void)type;
+      std::memcpy(out, str.data(), str.size());
+      out += str.size();
+      out = copyLiteral(out, "\"^^<http://www.w3.org/2001/XMLSchema#dateTime>");
+      return out;
+    } else if (dt == Datatype::GeoPoint) {
+      out = copyLiteral(out, "\"");
+      auto [str, type] = id.getGeoPoint().toStringAndType();
+      (void)type;
+      std::memcpy(out, str.data(), str.size());
+      out += str.size();
+      out = copyLiteral(
+          out, "\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>");
       return out;
     }
     return out;
@@ -356,6 +378,9 @@ BenchmarkResult runBenchmark(const std::string& name,
                              const BenchmarkDataset& ds,
                              std::vector<char>& outputBuffer,
                              HardwarePerfCounter& perf, size_t iterations = 5) {
+  if (ds.ids_.empty()) {
+    return BenchmarkResult{name, 0.0, 0.0, 0.0, 0, 0, 0.0, 0.0, 0};
+  }
   // Warmup
   Dispatcher::dispatchBatchTermFormat(ds.ids_, ds.rawTerms_,
                                       outputBuffer.data());
@@ -380,6 +405,16 @@ BenchmarkResult runBenchmark(const std::string& name,
     totalMs += std::chrono::duration<double, std::milli>(t1 - t0).count();
     totalBranches += branches;
     totalMisses += misses;
+  }
+
+  // Fold every written byte into the sink so the timed formatting loops
+  // stay observable to the optimizer. Plain assignment (not `+=`): compound
+  // assignment on a volatile operand is deprecated in C++20 and fails
+  // `-Werror=volatile` builds.
+  for (size_t i = 0; i < bytesWritten; ++i) {
+    gFormattedBytesSink =
+        gFormattedBytesSink +
+        static_cast<size_t>(static_cast<unsigned char>(outputBuffer[i]));
   }
 
   double avgMs = totalMs / static_cast<double>(iterations);
@@ -413,9 +448,10 @@ void printResults(const std::vector<BenchmarkResult>& results) {
             << std::setw(12) << "Time (ms)" << std::setw(18)
             << "Throughput (M/s)" << std::setw(15) << "ns / term"
             << std::setw(16) << "Branch Misses" << std::setw(14) << "Miss Rate"
-            << std::setw(15) << "Misses/Term"
+            << std::setw(15) << "Misses/Term" << std::setw(14) << "Branches"
+            << std::setw(12) << "Bytes"
             << "\n";
-  std::cout << std::string(118, '-') << "\n";
+  std::cout << std::string(144, '-') << "\n";
 
   for (const auto& r : results) {
     std::cout << std::left << std::setw(28) << r.name_ << std::right
@@ -424,15 +460,25 @@ void printResults(const std::vector<BenchmarkResult>& results) {
               << std::setw(15) << r.nsPerTerm_ << std::setw(16)
               << r.branchMisses_ << std::setw(13) << r.branchMissRate_ << "%"
               << std::setw(15) << std::setprecision(4) << r.branchMissesPerTerm_
-              << "\n";
+              << std::setw(14) << r.totalBranches_ << std::setw(12)
+              << r.bytesWritten_ << "\n";
   }
 
-  std::cout << std::string(118, '-') << "\n\n";
+  std::cout << std::string(144, '-') << "\n\n";
 
-  if (results.size() >= 3) {
-    double baseThroughput = results[0].throughputMTermsPerSec_;
-    double lutThroughput = results[2].throughputMTermsPerSec_;
-    double speedup = lutThroughput / baseThroughput;
+  const BenchmarkResult* base = nullptr;
+  const BenchmarkResult* lut = nullptr;
+  for (const auto& r : results) {
+    if (r.name_ == "Branching Switch") {
+      base = &r;
+    } else if (r.name_ == "Branchless LUT Dispatcher") {
+      lut = &r;
+    }
+  }
+  if (base != nullptr && lut != nullptr &&
+      base->throughputMTermsPerSec_ > 0.0) {
+    double speedup =
+        lut->throughputMTermsPerSec_ / base->throughputMTermsPerSec_;
     std::cout << ">> Branchless LUT Speedup over Switch Dispatcher: "
               << std::fixed << std::setprecision(2) << speedup << "x (+"
               << ((speedup - 1.0) * 100.0) << "% throughput)\n";
@@ -448,12 +494,16 @@ int main(int argc, char** argv) {
   if (argc > 1) {
     numTerms = std::stoull(argv[1]);
   }
+  if (numTerms == 0) {
+    std::cerr << "Number of terms must be greater than 0.\n";
+    return 1;
+  }
 
   std::cout << "Generating synthetic mixed RDF dataset with " << numTerms
             << " terms...\n";
   auto dataset = BenchmarkDataset::generate(numTerms);
 
-  // Allocate 512 MB buffer for formatted outputs
+  // Output buffer: 128 bytes per formatted term.
   std::vector<char> outputBuffer(numTerms * 128);
 
   HardwarePerfCounter perf;
@@ -479,5 +529,7 @@ int main(int argc, char** argv) {
       "Branchless LUT Dispatcher", dataset, outputBuffer, perf));
 
   printResults(results);
+  std::cout << "Formatted output checksum sink: " << gFormattedBytesSink
+            << "\n";
   return 0;
 }

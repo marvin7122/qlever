@@ -22,10 +22,15 @@
 #include "backports/span.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/PrefixCompressor.h"
+#include "index/vocabulary/StringSortComparator.h"
+#include "index/vocabulary/UnicodeVocabulary.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
+#include "index/vocabulary/VocabularyTypes.h"
+#include "util/AllocatorWithLimit.h"
 #include "util/Exception.h"
+#include "util/MemorySize/MemorySize.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 
 namespace {
@@ -175,6 +180,48 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchMatchesAccessOperator) {
   assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
+}
+
+// _____________________________________________________________________________
+// The builder overload charges the decoded words against the memory limit of
+// the builder's allocator: a limit that is too small throws, a sufficient one
+// yields the same words as the convenience overload.
+TYPED_TEST(CompressedVocabularyF, LookupBatchRespectsMemoryLimit) {
+  using namespace ad_utility::memory_literals;
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto vocab = this->createCompressedVocabulary()(words);
+  const std::array<size_t, 5> indices{4, 1, 0, 3, 2};
+
+  ArenaVocabBatchBuilder tooSmall(indices.size(),
+                                  ad_utility::makeAllocatorWithLimit<Id>(8_B));
+  EXPECT_THROW(vocab.lookupBatch(indices, tooSmall),
+               ad_utility::detail::AllocationExceedsLimitException);
+
+  ArenaVocabBatchBuilder sufficient(
+      indices.size(), ad_utility::makeAllocatorWithLimit<Id>(1_MB));
+  vocab.lookupBatch(indices, sufficient);
+  const auto result = std::move(sufficient).finalize();
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+}
+
+// _____________________________________________________________________________
+// Regression test: nested delegating overloads append to the same builder.
+// Only the outer result boundary finalizes it.
+TYPED_TEST(CompressedVocabularyF, LookupBatchWithBuilderThroughDelegation) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
+                                       "epsilon"};
+  auto compressed = this->createCompressedVocabulary()(words);
+  const std::array<size_t, 5> indices{4, 1, 0, 3, 1};
+  SimpleStringComparator comparator{"en", "us", false};
+  UnicodeVocabulary<decltype(compressed), decltype(comparator)> innerVocab{
+      comparator, std::move(compressed)};
+  UnicodeVocabulary<decltype(innerVocab), decltype(comparator)> vocab{
+      comparator, std::move(innerVocab)};
+  ArenaVocabBatchBuilder builder(indices.size());
+  vocab.lookupBatch(indices, builder);
+  const auto result = std::move(builder).finalize();
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
 
 // _____________________________________________________________________________
@@ -342,7 +389,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
 
   // Clobber the stack region a dangling SSO view would point into. Two deep
   // frames of sentinel bytes leave no plausible intact copy behind.
-  auto churn = []() { clobberStack<4096>(); };
+  auto churn = []() { clobberStack(); };
   churn();
   churn();
 
@@ -466,6 +513,21 @@ TEST(CompressedVocabularyWithHoles, accessOperator) {
     EXPECT_EQ(vocab[index],
               ad_utility::vocabulary::placeholderForMissingVocabIndex(index));
   }
+}
+
+// _____________________________________________________________________________
+// `lookupBatch` on a vocabulary with holes must agree with `operator[]`: same
+// words in the requested order, with the placeholder for hole indices. The
+// batch must not feed the plain-text placeholder to the decoder.
+TEST(CompressedVocabularyWithHoles, lookupBatchMatchesAccessOperator) {
+  std::string filename = gtestCurrentTestName();
+  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto vocab =
+      createVocabularyWithHoles(filename, wordsWithHoles(), indicesWithHoles());
+  // Mix contained indices, holes, duplicates, and an index past the end.
+  const std::vector<size_t> indices{0, 1, 2, 4, 5, 7, 1, 31, 32, 35};
+  const auto result = vocab.lookupBatch(ql::span<const size_t>{indices});
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
 }
 
 // _____________________________________________________________________________

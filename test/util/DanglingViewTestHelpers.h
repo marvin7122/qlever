@@ -25,9 +25,12 @@ template <size_t NumBytes = 4096>
 [[gnu::noinline]] char clobberStack(char sentinel = '#') {
   // `volatile` prevents the compiler from optimizing the stack writes away.
   static_assert(NumBytes > 0, "clobberStack requires a non-empty buffer");
+  static_assert(NumBytes <= 65536,
+                "clobberStack buffer is limited to 64KB to prevent stack "
+                "overflow from excessively large template arguments");
   volatile char buffer[NumBytes];
-  for (size_t i = 0; i < NumBytes; ++i) {
-    buffer[i] = sentinel;
+  for (volatile char& byte : buffer) {
+    byte = sentinel;
   }
   // Compiler barrier: prevents the optimizer from eliding the stack writes or
   // reordering them past the return. A signal fence compiles to no

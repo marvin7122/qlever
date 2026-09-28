@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -43,7 +42,7 @@ namespace ad_utility::simd {
 enum class EscapeFormat {
   CsvQuote,    // Escape quotes (")
   CsvSpecial,  // RFC 4180 special characters (", ,, \r, \n)
-  Tsv,         // IANA-TSV special characters (\t, \n, \r, \\)
+  Tsv,         // IANA-TSV special characters (\t, \n)
   Turtle,      // Turtle / N-Triples literal content escapes (", \\, \n, \r)
   Xml          // XML special characters (&, <, >, ", ')
 };
@@ -104,7 +103,7 @@ template <EscapeFormat Format>
   if constexpr (Format == EscapeFormat::Turtle) {
     return c == '"' || c == '\\' || c == '\n' || c == '\r';
   } else if constexpr (Format == EscapeFormat::Tsv) {
-    return c == '\t' || c == '\n' || c == '\r' || c == '\\';
+    return c == '\t' || c == '\n';
   } else if constexpr (Format == EscapeFormat::CsvQuote) {
     return c == '"';
   } else if constexpr (Format == EscapeFormat::CsvSpecial) {
@@ -146,14 +145,6 @@ inline char* emitEscape(char c, char* dest) noexcept {
       dest[0] = '\\';
       dest[1] = 'n';
       return dest + 2;
-    } else if (c == '\r') {
-      dest[0] = '\\';
-      dest[1] = 'r';
-      return dest + 2;
-    } else if (c == '\\') {
-      dest[0] = '\\';
-      dest[1] = '\\';
-      return dest + 2;
     }
     *dest = c;
     return dest + 1;
@@ -192,7 +183,7 @@ inline char* emitEscape(char c, char* dest) noexcept {
 
 // AVX2 32-byte vector classification.
 template <EscapeFormat Format>
-QLEVER_AVX2_TARGET [[nodiscard]] inline uint32_t scanChunk32Avx2(
+[[nodiscard]] QLEVER_AVX2_TARGET inline uint32_t scanChunk32Avx2(
     const char* data) noexcept {
   __m256i chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data));
   if constexpr (Format == EscapeFormat::Turtle) {
@@ -206,10 +197,7 @@ QLEVER_AVX2_TARGET [[nodiscard]] inline uint32_t scanChunk32Avx2(
   } else if constexpr (Format == EscapeFormat::Tsv) {
     __m256i m1 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\t'));
     __m256i m2 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\n'));
-    __m256i m3 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\r'));
-    __m256i m4 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\\'));
-    __m256i match =
-        _mm256_or_si256(_mm256_or_si256(m1, m2), _mm256_or_si256(m3, m4));
+    __m256i match = _mm256_or_si256(m1, m2);
     return static_cast<uint32_t>(_mm256_movemask_epi8(match));
   } else if constexpr (Format == EscapeFormat::CsvQuote) {
     __m256i match = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('"'));
@@ -236,7 +224,7 @@ QLEVER_AVX2_TARGET [[nodiscard]] inline uint32_t scanChunk32Avx2(
 
 // SSE2 16-byte vector classification.
 template <EscapeFormat Format>
-QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
+[[nodiscard]] QLEVER_SSE2_TARGET inline uint16_t scanChunk16Sse2(
     const char* data) noexcept {
   __m128i chunk = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data));
   if constexpr (Format == EscapeFormat::Turtle) {
@@ -249,9 +237,7 @@ QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
   } else if constexpr (Format == EscapeFormat::Tsv) {
     __m128i m1 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\t'));
     __m128i m2 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\n'));
-    __m128i m3 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\r'));
-    __m128i m4 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\\'));
-    __m128i match = _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
+    __m128i match = _mm_or_si128(m1, m2);
     return static_cast<uint16_t>(_mm_movemask_epi8(match));
   } else if constexpr (Format == EscapeFormat::CsvQuote) {
     __m128i match = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('"'));
@@ -273,6 +259,23 @@ QLEVER_SSE2_TARGET [[nodiscard]] inline uint16_t scanChunk16Sse2(
         _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4)), m5);
     return static_cast<uint16_t>(_mm_movemask_epi8(match));
   }
+}
+
+// Runtime detection of AVX2 support. AVX2 is not part of the x86-64 baseline,
+// so calling AVX2 code unconditionally faults (SIGILL) on older x86-64 CPUs;
+// the `target("avx2")` attribute only affects code generation, not dispatch.
+// `__builtin_cpu_supports` performs the CPUID initialization implicitly and
+// the result is cached, so the per-call cost is a single predictable branch
+// (and the branch folds away entirely when compiled with `-mavx2`).
+[[nodiscard]] inline bool cpuSupportsAvx2() noexcept {
+#if defined(__AVX2__)
+  // AVX2 enabled globally: the compilation baseline guarantees support.
+  return true;
+#elif defined(__GNUC__) || defined(__clang__)
+  return __builtin_cpu_supports("avx2");
+#else
+  return false;
+#endif
 }
 
 #endif  // QLEVER_SIMD_X86
@@ -314,7 +317,12 @@ class SimdEscapeClassifier {
   [[nodiscard]] static inline ChunkEscapeMask32 scanChunk32(
       const char* data) noexcept {
 #if defined(QLEVER_SIMD_X86)
-    return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    // AVX2 is not baseline x86-64: dispatch at runtime, scalar fallback on
+    // CPUs without AVX2.
+    if (detail::cpuSupportsAvx2()) {
+      return ChunkEscapeMask32{detail::scanChunk32Avx2<Format>(data)};
+    }
+    return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
 #else
     return ChunkEscapeMask32{detail::scanChunk32Scalar<Format>(data)};
 #endif
@@ -509,8 +517,10 @@ class SimdEscapeClassifier {
   }
 
   // ___________________________________________________________________________
-  // Escape a field for IANA-TSV. If no tabs or newlines are present, returns
-  // input directly. Otherwise replaces tabs with spaces and newlines with \n.
+  // Escape a field for IANA-TSV exactly like `RdfEscaping::escapeForTsv`: tabs
+  // become spaces and newlines become `\n`; all other bytes (including `\r`
+  // and `\`) are copied unchanged. Without tabs and newlines, returns the
+  // input directly.
   [[nodiscard]] static inline std::string escapeForTsv(std::string_view input) {
     if (!hasEscapes<EscapeFormat::Tsv>(input)) [[likely]] {
       return std::string{input};
@@ -533,14 +543,16 @@ class SimdEscapeClassifier {
     size_t posLastQuote = normLiteral.rfind('"');
 
     // If there are only two quotes and no internal special characters, pass
-    // through
+    // through. Only the content between the delimiters is scanned: the
+    // delimiters themselves are Turtle escape characters, so scanning the
+    // whole literal would never take this fast path.
+    std::string_view normalizedContent =
+        normLiteral.substr(1, posLastQuote - 1);
     if (posSecondQuote == posLastQuote &&
-        !hasEscapes<EscapeFormat::Turtle>(normLiteral)) [[likely]] {
+        !hasEscapes<EscapeFormat::Turtle>(normalizedContent)) [[likely]] {
       return std::string{normLiteral};
     }
 
-    std::string_view normalizedContent =
-        normLiteral.substr(1, posLastQuote - 1);
     std::string result;
     result.resize(normLiteral.size() * 2 + 2);
     char* out = result.data();

@@ -42,26 +42,43 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ChunkStreamingBenchmark engine testUtil)
 
-    addAndLinkBenchmark(ScatterGatherBenchmark engine testUtil)
+    addAndLinkBenchmark(SimdEscapeBenchmark qlever_util)
 
     addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
 
     addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
 
-    addAndLinkBenchmark(MonomorphicSerializerBenchmark engine sparqlParser
+    addAndLinkBenchmark(FastNumberFormatterBenchmark qlever_util)
+
+    addAndLinkBenchmark(PrefetchingBenchmark engine)
+
+    # Standalone main(), so not via addAndLinkBenchmark (which links
+    # benchmarkWithMain).
+    add_executable(BranchlessDispatcherBenchmark
+        BranchlessDispatcherBenchmark.cpp)
+    qlever_target_link_libraries(BranchlessDispatcherBenchmark engine
         qlever_util)
 
-    # The allocation-counting `operator new`/`delete` overloads in
-    # `SerializerMicroBenchmark.cpp` and `MonomorphicSerializerBenchmark.cpp`
-    # deliberately pair a malloc-based `operator new` with a `std::free`-based
-    # `operator delete`. GCC's `-Wmismatched-new-delete` also fires at inline
-    # call sites of these overloads, where a local `#pragma` cannot suppress
-    # it, so disable the warning for these targets when building with GCC.
-    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        target_compile_options(SerializerMicroBenchmark PRIVATE
-            -Wno-mismatched-new-delete)
-        target_compile_options(MonomorphicSerializerBenchmark PRIVATE
-            -Wno-mismatched-new-delete)
-    endif()
+    addAndLinkBenchmark(PrefixCompressorBenchmark)
+
+    addAndLinkBenchmark(VocabBatchLookupBenchmark vocabulary)
+
+    addAndLinkBenchmark(VocabularyBatchLookupMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(VocabularyBatchLookupEndToEndBenchmark vocabulary)
+
+    addAndLinkBenchmark(CompressedVocabLookupBatchMicroBenchmark vocabulary
+        fsst)
+
+    addAndLinkBenchmark(CompressedVocabLookupBatchEndToEndBenchmark vocabulary
+        fsst)
+
+    addAndLinkBenchmark(SplitVocabLookupBatchMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(SplitVocabLookupBatchEndToEndBenchmark vocabulary)
+
+    addAndLinkBenchmark(PolymorphicVocabLookupBatchMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(PolymorphicVocabLookupBatchEndToEndBenchmark vocabulary)
 
 endif()

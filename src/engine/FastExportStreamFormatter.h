@@ -6,8 +6,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_FASTEXPORTSTREAMFORMATTER_H
-#define QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_FASTEXPORTSTREAMFORMATTER_H
+#ifndef QLEVER_SRC_ENGINE_FASTEXPORTSTREAMFORMATTER_H
+#define QLEVER_SRC_ENGINE_FASTEXPORTSTREAMFORMATTER_H
 
 #include <algorithm>
 #include <array>
@@ -16,12 +16,13 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <memory>
-#include <optional>
 #include <string_view>
+#include <system_error>
+#include <type_traits>
 #include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
+#include "backports/concepts.h"
 #include "backports/span.h"
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
@@ -34,6 +35,9 @@ namespace ql::export_formatting {
 enum class ExportFormat { Turtle, NTriples, Csv, Tsv };
 
 // Summary metrics returned upon finalizing an export stream.
+// `totalBytesWritten_` counts flushed bytes only; bytes still buffered are
+// visible via `totalBytesWritten()`. `chunksEmitted_` counts sink
+// invocations (streaming mode only, zero in fixed-span mode).
 struct ExportStreamSummary {
   uint64_t totalTriples_ = 0;
   uint64_t totalBytesWritten_ = 0;
@@ -56,7 +60,6 @@ constexpr std::array<bool, 256> makeTsvSpecialTable() {
   std::array<bool, 256> table{};
   table[static_cast<uint8_t>('\t')] = true;
   table[static_cast<uint8_t>('\n')] = true;
-  table[static_cast<uint8_t>('\r')] = true;
   return table;
 }
 
@@ -186,15 +189,17 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Directly append a raw character.
-  void writeChar(char c) noexcept {
+  // Directly append a raw character. Can throw: `ensureAvailable` throws
+  // `ad_utility::Exception` in fixed-span mode on overflow, and growing the
+  // managed buffer in streaming mode can throw `std::bad_alloc`.
+  void writeChar(char c) {
     ensureAvailable(1);
     bufferPtr_[writePos_++] = c;
   }
 
   // ___________________________________________________________________________
   // Directly append a raw string slice without escaping.
-  void writeRaw(std::string_view sv) noexcept {
+  void writeRaw(std::string_view sv) {
     if (sv.empty()) {
       return;
     }
@@ -205,9 +210,9 @@ class FastExportStreamFormatter {
 
   // ___________________________________________________________________________
   // Write an integer directly without heap allocation.
-  template <typename IntegerType>
-  requires std::is_integral_v<IntegerType>
-  void writeInteger(IntegerType value) noexcept {
+  CPP_template(typename IntegerType)(
+      requires std::is_integral_v<IntegerType>) void writeInteger(IntegerType
+                                                                      value) {
     ensureAvailable(32);
     auto [ptr, ec] = std::to_chars(bufferPtr_ + writePos_,
                                    bufferPtr_ + bufferCapacity_, value);
@@ -240,7 +245,9 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Write a literal with optional datatype or language tag.
+  // Write a literal with optional datatype or language tag. The content is
+  // written verbatim: the caller owns escaping (use
+  // `writeEscapedTurtleLiteral` for normalized literals).
   void writeLiteral(std::string_view content, std::string_view datatype = "",
                     std::string_view langTag = "") {
     writeChar('"');
@@ -283,7 +290,9 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Fast IANA-TSV field serializer.
+  // Fast IANA-TSV field serializer. Escapes exactly like
+  // `RdfEscaping::escapeForTsv`: tabs become spaces, newlines become `\n`,
+  // and all other bytes (including `\r`) pass through unchanged.
   void writeEscapedTsv(std::string_view field) {
     if (!detail::hasSpecialCharacters<detail::tsvSpecialTable>(field)) {
       writeRaw(field);
@@ -295,8 +304,6 @@ class FastExportStreamFormatter {
         writeChar(' ');
       } else if (c == '\n') {
         writeRaw("\\n");
-      } else if (c == '\r') {
-        writeRaw("\\r");
       } else {
         writeChar(c);
       }
@@ -312,10 +319,13 @@ class FastExportStreamFormatter {
     AD_CONTRACT_CHECK(posSecondQuote != std::string_view::npos);
     size_t posLastQuote = normLiteral.rfind('"');
 
-    // If no internal special chars, write directly
+    // If no internal special chars, write directly. Scan only the content
+    // between the quotes: the surrounding quotes themselves are in
+    // `turtleSpecialTable`, so scanning the whole literal would always hit
+    // and defeat this fast path.
     if (posSecondQuote == posLastQuote &&
         !detail::hasSpecialCharacters<detail::turtleSpecialTable>(
-            normLiteral)) {
+            normLiteral.substr(1, posLastQuote - 1))) {
       writeRaw(normLiteral);
       return;
     }
@@ -380,6 +390,25 @@ class FastExportStreamFormatter {
       } else {
         writeRaw(term.rdfTermString_);
       }
+    } else if (format == ExportFormat::Csv) {
+      // Fully-qualified form: "value"^^<datatype>. Escape exactly like
+      // `RdfEscaping::escapeForCsv` applied to the whole term in
+      // `formatTriple`: quote the field and double embedded quotes.
+      const auto writeCsvDoubled = [this](std::string_view sv) {
+        for (char c : sv) {
+          if (c == '"') {
+            writeRaw("\"\"");
+          } else {
+            writeChar(c);
+          }
+        }
+      };
+      writeChar('"');
+      writeRaw("\"\"");
+      writeCsvDoubled(term.rdfTermString_);
+      writeRaw("\"\"^^<");
+      writeCsvDoubled(term.rdfTermDataType_);
+      writeRaw(">\"");
     } else {
       // Fully-qualified form: "value"^^<datatype>
       writeChar('"');
@@ -435,6 +464,8 @@ class FastExportStreamFormatter {
   // ___________________________________________________________________________
   // Write a tabular row for SELECT query export.
   void writeRow(ExportFormat format, ql::span<const std::string_view> cells) {
+    AD_CONTRACT_CHECK(format == ExportFormat::Csv ||
+                      format == ExportFormat::Tsv);
     const char delimiter = (format == ExportFormat::Csv) ? ',' : '\t';
     for (size_t i = 0; i < cells.size(); ++i) {
       if (i > 0) {
@@ -478,12 +509,18 @@ class FastExportStreamFormatter {
   }
 
   // ___________________________________________________________________________
-  // Inspect current buffer slice.
+  // Inspect the currently buffered (not yet flushed) slice. The view is
+  // invalidated by the next write, flush, or finalize.
+  // After `finalize()` the buffer pointer is null and the view is empty.
   [[nodiscard]] std::string_view currentChunk() const noexcept {
+    if (bufferPtr_ == nullptr) {
+      return {};
+    }
     return std::string_view(bufferPtr_, writePos_);
   }
 
   [[nodiscard]] size_t bytesBuffered() const noexcept { return writePos_; }
+  // Total bytes including buffered-but-unflushed data.
   [[nodiscard]] uint64_t totalBytesWritten() const noexcept {
     return totalBytesWritten_ + writePos_;
   }
@@ -511,4 +548,4 @@ class FastExportStreamFormatter {
 
 }  // namespace ql::export_formatting
 
-#endif  // QLEVER_SRC_ENGINE_EXPORT_PROTOTYPES_FASTEXPORTSTREAMFORMATTER_H
+#endif  // QLEVER_SRC_ENGINE_FASTEXPORTSTREAMFORMATTER_H

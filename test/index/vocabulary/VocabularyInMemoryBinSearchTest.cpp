@@ -147,16 +147,15 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
               ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
-// A vocabulary with holes deliberately reports a placeholder (not a throw)
-// for a missing index: `VocabularyInMemoryBinSearch` opts in via
-// `replaceOptionalByPlaceholderOnExport` (see `VocabularyTypes.h`), the same
-// behavior as `operator[]`. An empty index list remains a contract violation.
 TEST(VocabularyInMemoryBinSearch,
      LookupBatchReportsPlaceholderForMissingIndex) {
-  auto vocab = createVocabulary("LookupBatchReportsPlaceholderForMissingIndex")(
+  auto vocab = createVocabulary("LookupBatchPlaceholderForMissingIndex")(
       std::vector<std::string>{"alpha", "beta"});
   const std::array<size_t, 1> missingIndex{2};
 
+  // A missing index yields a placeholder rather than an exception, like the
+  // "holes" of a vocabulary with non-contiguous ids (see
+  // `replaceOptionalByPlaceholderOnExport` in `VocabularyTypes.h`).
   EXPECT_THAT(vocab.lookupBatch(missingIndex),
               ::testing::ElementsAre(
                   ad_utility::vocabulary::placeholderForMissingVocabIndex(2)));

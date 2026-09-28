@@ -7,6 +7,9 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
+
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -19,10 +22,8 @@
 #include "../benchmark/infrastructure/BenchmarkMeasurementContainer.h"
 #include "../benchmark/infrastructure/BenchmarkMetadata.h"
 #include "engine/AsyncChunkPipeline.h"
-#include "util/Exception.h"
-#include "util/Log.h"
-#include "util/Random.h"
 #include "util/Timer.h"
+#include "util/jthread.h"
 
 namespace ad_benchmark {
 
@@ -70,7 +71,9 @@ static void simulateNetworkTransmission(size_t chunkBytes,
 }
 
 // _____________________________________________________________________________
-// Benchmark Result Record
+// Benchmark Result Record.
+// NOTE: initialized positionally below (no designated initializers), so this
+// file also compiles with `CMAKE_CXX_STANDARD_MANUALLY_OVERRIDDEN=17`.
 struct BenchmarkRunResult {
   std::string mode;
   size_t chunkSizeTriples;
@@ -124,16 +127,14 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     const double mb = static_cast<double>(totalBytes) / (1024.0 * 1024.0);
 
     return BenchmarkRunResult{
-        .mode = "Sync Lockstep",
-        .chunkSizeTriples = chunkSize,
-        .latencyMs = latencyMs,
-        .totalTriples = totalTriples_,
-        .totalBytes = totalBytes,
-        .durationSeconds = duration,
-        .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
-        .throughputTriplesPerSec =
-            duration > 0 ? (static_cast<double>(totalTriples_) / duration)
-                         : 0.0,
+        "Sync Lockstep",
+        chunkSize,
+        latencyMs,
+        totalTriples_,
+        totalBytes,
+        duration,
+        duration > 0 ? (mb / duration) : 0.0,
+        duration > 0 ? (static_cast<double>(totalTriples_) / duration) : 0.0,
     };
   }
 
@@ -150,7 +151,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     ad_utility::timer::Timer timer(ad_utility::timer::Timer::Started);
 
     // Spawn background worker to generate chunks concurrently into Slot 2.
-    std::thread producerThread(
+    ad_utility::JThread producerThread(
         [pipeline, numChunks, chunkSize, totalTriples = totalTriples_]() {
           try {
             for (size_t c = 0; c < numChunks; ++c) {
@@ -170,6 +171,15 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
           }
         });
 
+    // If the consumer loop throws (e.g. `pop()` rethrows a producer
+    // exception), cancel the pipeline so the producer stops blocking in
+    // `push()`; the `JThread` destructor then joins it during unwinding.
+    absl::Cleanup cancelOnError{[&pipeline, &producerThread] {
+      if (producerThread.joinable()) {
+        pipeline->cancel();
+      }
+    }};
+
     // Consumer loop: transmits chunks over simulated network socket.
     size_t totalBytes = 0;
     while (auto chunkOpt = pipeline->pop()) {
@@ -178,10 +188,7 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
       // Socket transmits chunk while worker concurrently prepares next chunk
       simulateNetworkTransmission(chunk.size(), latency);
     }
-
-    if (producerThread.joinable()) {
-      producerThread.join();
-    }
+    producerThread.join();
 
     timer.stop();
     const double duration = ad_utility::timer::Timer::toSeconds(timer.value());
@@ -189,18 +196,16 @@ class ChunkStreamingBenchmark : public BenchmarkInterface {
     const PipelineStats stats = pipeline->stats();
 
     return BenchmarkRunResult{
-        .mode = "Async Double-Buffered",
-        .chunkSizeTriples = chunkSize,
-        .latencyMs = latencyMs,
-        .totalTriples = totalTriples_,
-        .totalBytes = totalBytes,
-        .durationSeconds = duration,
-        .throughputMBPerSec = duration > 0 ? (mb / duration) : 0.0,
-        .throughputTriplesPerSec =
-            duration > 0 ? (static_cast<double>(totalTriples_) / duration)
-                         : 0.0,
-        .backpressureStalls = stats.backpressureStalls,
-        .consumerWaitStalls = stats.consumerWaitStalls,
+        "Async Double-Buffered",
+        chunkSize,
+        latencyMs,
+        totalTriples_,
+        totalBytes,
+        duration,
+        duration > 0 ? (mb / duration) : 0.0,
+        duration > 0 ? (static_cast<double>(totalTriples_) / duration) : 0.0,
+        stats.backpressureStalls,
+        stats.consumerWaitStalls,
     };
   }
 

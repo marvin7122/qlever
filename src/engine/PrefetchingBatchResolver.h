@@ -18,11 +18,6 @@
 #include <utility>
 #include <vector>
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
-    defined(_M_IX86)
-#include <xmmintrin.h>
-#endif
-
 #include "backports/concepts.h"
 #include "backports/span.h"
 #include "global/Constants.h"
@@ -35,6 +30,8 @@
 #include "util/Algorithm.h"
 #include "util/CompactStringVector.h"
 #include "util/Exception.h"
+#include "util/Forward.h"
+#include "util/SoftwarePrefetch.h"
 
 namespace ql::engine::prefetch {
 
@@ -44,15 +41,7 @@ namespace ql::engine::prefetch {
 // into the L1 data cache (_MM_HINT_T0 / temporal locality 3).
 inline void prefetchVocabEntry(const void* address,
                                [[maybe_unused]] int distance = 8) noexcept {
-  if (address == nullptr) {
-    return;
-  }
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
-    defined(_M_IX86)
-  _mm_prefetch(static_cast<const char*>(address), _MM_HINT_T0);
-#elif defined(__GNUC__) || defined(__clang__)
-  __builtin_prefetch(address, 0, 3);
-#endif
+  ad_utility::prefetchForRead(address);
 }
 
 // _____________________________________________________________________________
@@ -142,7 +131,9 @@ class PrefetchingBatchResolver {
     // through `index` here, so prefetching `&index.getImpl()` would only touch
     // the `IndexImpl` object and provide no caching benefit.
     for (size_t i = 0; i < n; ++i) {
-      if (i + distance < n) {
+      // Subtraction-based guard: `i + distance` would wrap for a huge
+      // caller-supplied distance (`i < n`, so `n - i` cannot underflow).
+      if (distance < n - i) {
         const size_t pfPos = positions[i + distance];
         prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
       }
@@ -163,55 +154,14 @@ class PrefetchingBatchResolver {
 
   // ___________________________________________________________________________
   // Pipelined batch lookup directly over CompactVectorOfStrings storage,
-  // issuing prefetch intrinsics for string payload cache lines K iterations
-  // ahead.
+  // issuing multi-stage prefetch intrinsics for offset table lines and
+  // string payload cache lines K iterations ahead.
   template <typename CharType, typename MappingFunc>
   void resolveCompactVectorPipelined(
       const CompactVectorOfStrings<CharType>& words,
       ql::span<const size_t> indices, MappingFunc&& mappingFunc) const {
-    if (indices.empty() || !words.ready()) {
-      return;
-    }
-
-    const size_t n = indices.size();
-    const size_t distance = config_.prefetchDistance;
-    const size_t numWords = words.size();
-
-    // Prefetch the payload cache line of entry `idx`. `operator[]` is
-    // unchecked, so the bounds guard is load-bearing: prefetching must never
-    // fault on an out-of-range index.
-    auto prefetchEntry = [&words, numWords, distance](size_t idx) {
-      if (idx < numWords) {
-        prefetchVocabEntry(words[idx].data(), static_cast<int>(distance));
-      }
-    };
-
-    // Stage 1 warmup: prefetch payload lines for the first `distance` items
-    for (size_t k = 0; k < std::min(distance, n); ++k) {
-      prefetchEntry(indices[k]);
-    }
-
-    // Main pipelined loop
-    for (size_t i = 0; i < n; ++i) {
-      // 1. Prefetch payload line for (i + distance)
-      if (i + distance < n) {
-        prefetchEntry(indices[i + distance]);
-      }
-
-      // 2. Prefetch payload line for (i + distance / 2)
-      if (i + (distance / 2) < n) {
-        prefetchEntry(indices[i + (distance / 2)]);
-      }
-
-      // 3. Resolve current item i. The `+ 1` covers the `offsets[curIdx + 1]`
-      // access below: `curIdx` must not be the final (sentinel) offset.
-      const size_t curIdx = indices[i];
-      AD_CORRECTNESS_CHECK(curIdx < numWords);
-      const auto entry = words[curIdx];
-      std::basic_string_view<CharType> view(entry.data(), entry.size());
-
-      mappingFunc(i, curIdx, view);
-    }
+    ad_utility::forEachWordPrefetched(words, indices, config_.prefetchDistance,
+                                      AD_FWD(mappingFunc));
   }
 
   // ___________________________________________________________________________

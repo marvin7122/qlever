@@ -7,11 +7,11 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,46 +21,66 @@
 #include "engine/ConstructTypes.h"
 #include "engine/FastExportStreamFormatter.h"
 #include "global/Constants.h"
-#include "util/CompilerWarnings.h"
-#include "util/Exception.h"
 #include "util/http/MediaTypes.h"
 
 // _____________________________________________________________________________
-// Memory allocation tracker for measuring exact heap allocation counts.
+// Memory allocation tracker for measuring heap allocation counts via the
+// scalar and array `operator new` overloads.
 struct AllocationTracker {
   static inline std::atomic<bool> enabled_{false};
   static inline std::atomic<size_t> count_{0};
-  static inline std::atomic<size_t> bytes_{0};
 
-  static void start() {
-    count_.store(0, std::memory_order_seq_cst);
-    bytes_.store(0, std::memory_order_seq_cst);
-    enabled_.store(true, std::memory_order_seq_cst);
-  }
+  // Counts allocations for its lifetime; the destructor stops counting on
+  // every exit path, including exceptions from the measured code.
+  class Scope {
+   public:
+    Scope() {
+      count_.store(0, std::memory_order_seq_cst);
+      enabled_.store(true, std::memory_order_seq_cst);
+    }
+    ~Scope() { enabled_.store(false, std::memory_order_seq_cst); }
+    Scope(const Scope&) = delete;
+    Scope& operator=(const Scope&) = delete;
 
-  static void stop() { enabled_.store(false, std::memory_order_seq_cst); }
-
-  static size_t getCount() { return count_.load(std::memory_order_seq_cst); }
-
-  static size_t getBytes() { return bytes_.load(std::memory_order_seq_cst); }
+    [[nodiscard]] size_t count() const {
+      return count_.load(std::memory_order_seq_cst);
+    }
+  };
 };
 
 // Global new/delete instrumentation for allocation counting during benchmark
-// runs. Disabled when `QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE` is defined,
-// which the top-level CMakeLists.txt does for sanitizer builds: the sanitizer
-// runtimes (in particular AddressSanitizer and ThreadSanitizer) provide their
-// own global operator new/delete replacements that would otherwise fail the
-// link with multiple-definition errors. The sized deallocation function
-// forwards to the unsized one. GCC's `-Wmismatched-new-delete` cannot see
-// that these replacements form matching malloc/free pairs and flags the
-// `std::free` calls once they get inlined into callers (observed with GCC 11
-// in Release with `-Werror`), so the warning is disabled locally for these
-// definitions only (see `DISABLE_MISMATCHED_NEW_DELETE_WARNINGS`).
-#ifndef QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
+// runs. The malloc/free pairing below is intentional and matched, but GCC
+// cannot see across the replaceable global operators and reports a false
+// positive -Wmismatched-new-delete. GCC raises it while compiling the
+// allocation call sites (via inlining), so a pragma around the `operator
+// delete` definitions alone does not cover it (observed on GCC 11 with
+// -Werror); the warning is therefore suppressed file-wide (GCC only). The
+// sized-deallocation overloads must stay: GCC's -Wsized-deallocation (part of
+// -Wextra) rejects an unsized `operator delete` without its sized partner.
+//
+// Skipped under AddressSanitizer or ThreadSanitizer: their runtimes
+// already provide these replaceable allocation functions, so defining them
+// here causes multiple-definition link errors. Under sanitizers the
+// `heap-allocations` metadata below reads 0. Clang signals sanitizers via
+// `__has_feature`, GCC via the `__SANITIZE_*` macros; `__has_feature` must
+// only be invoked where it is defined, so the checks are nested.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER 1
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
+
+#ifndef SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 void* operator new(std::size_t size) {
   if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
     AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
-    AllocationTracker::bytes_.fetch_add(size, std::memory_order_relaxed);
   }
   void* ptr = std::malloc(size);
   if (!ptr) {
@@ -69,14 +89,25 @@ void* operator new(std::size_t size) {
   return ptr;
 }
 
-DISABLE_MISMATCHED_NEW_DELETE_WARNINGS
 void operator delete(void* ptr) noexcept { std::free(ptr); }
-GCC_REENABLE_WARNINGS
 
-void operator delete(void* ptr, std::size_t) noexcept {
-  ::operator delete(ptr);
+void operator delete(void* ptr, std::size_t) noexcept { std::free(ptr); }
+
+void* operator new[](std::size_t size) {
+  if (AllocationTracker::enabled_.load(std::memory_order_relaxed)) {
+    AllocationTracker::count_.fetch_add(1, std::memory_order_relaxed);
+  }
+  void* ptr = std::malloc(size);
+  if (!ptr) {
+    throw std::bad_alloc();
+  }
+  return ptr;
 }
-#endif  // QLEVER_BENCHMARK_NO_COUNTING_NEW_DELETE
+
+void operator delete[](void* ptr) noexcept { std::free(ptr); }
+
+void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
+#endif  // SERIALIZER_MICRO_BENCHMARK_UNDER_SANITIZER
 
 namespace ad_benchmark {
 namespace {
@@ -84,6 +115,7 @@ namespace {
 using namespace qlever::constructExport;
 using namespace ql::export_formatting;
 
+// _____________________________________________________________________________
 // Generates 1,000,000 synthetic triples representing realistic SPARQL exports.
 std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
   std::vector<EvaluatedTriple> triples;
@@ -129,9 +161,13 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
             "\"Simple Label " + std::to_string(i) + "\"@en", nullptr);
         break;
       case 2:
-        // Literal requiring escaping (quotes, newlines, tabs)
+        // Literal requiring escaping (quotes, newlines, tabs). In a
+        // normalized literal an embedded quote is a real `"` character
+        // (only escaped at the C++ source level); a backslash-quote
+        // sequence would denote a literal backslash and would measure
+        // double-escaping instead of the real export path.
         obj = std::make_shared<EvaluatedTermData>(
-            "\"Title with \\\"quotes\\\" and \nnewline and \ttab " +
+            "\"Title with \"quotes\" and \nnewline and \ttab " +
                 std::to_string(i) + "\"",
             nullptr);
         break;
@@ -155,6 +191,7 @@ std::vector<EvaluatedTriple> generateSyntheticTriples(size_t numTriples) {
   return triples;
 }
 
+// _____________________________________________________________________________
 class SerializerMicroBenchmark : public BenchmarkInterface {
  private:
   static constexpr size_t NUM_TRIPLES = 1'000'000;
@@ -192,14 +229,13 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
 
         auto& m = group.addMeasurement(
             "Baseline string-constructing (" + formatName + ")", [&]() {
-              AllocationTracker::start();
+              AllocationTracker::Scope allocationScope;
               size_t bytes = 0;
               for (const auto& triple : triples_) {
                 std::string formatted = formatTriple(triple, mediaType);
                 bytes += formatted.size();
               }
-              AllocationTracker::stop();
-              baselineAllocations = AllocationTracker::getCount();
+              baselineAllocations = allocationScope.count();
               totalBytesWritten = bytes;
               return bytes;
             });
@@ -220,7 +256,7 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
         auto& m = group.addMeasurement(
             "FastExportStreamFormatter zero-allocation (" + formatName + ")",
             [&]() {
-              AllocationTracker::start();
+              AllocationTracker::Scope allocationScope;
               size_t bytes = 0;
               size_t chunkCount = 0;
 
@@ -237,8 +273,7 @@ class SerializerMicroBenchmark : public BenchmarkInterface {
               }
               auto summary = std::move(formatter).finalize();
 
-              AllocationTracker::stop();
-              fastAllocations = AllocationTracker::getCount();
+              fastAllocations = allocationScope.count();
               totalBytesWritten = summary.totalBytesWritten_;
               chunksEmitted = summary.chunksEmitted_;
               return totalBytesWritten;
@@ -261,3 +296,7 @@ AD_REGISTER_BENCHMARK(SerializerMicroBenchmark);
 
 }  // namespace
 }  // namespace ad_benchmark
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
