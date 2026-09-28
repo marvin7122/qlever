@@ -89,7 +89,15 @@ struct PackedDelimiter {
   [[nodiscard]] constexpr size_t size() const noexcept { return len_; }
   [[nodiscard]] constexpr bool empty() const noexcept { return len_ == 0; }
 
-  constexpr bool operator==(const PackedDelimiter&) const noexcept = default;
+  // Manual equality, kept C++17-compatible: a defaulted `operator==` and
+  // the rewritten `operator!=` it synthesizes require C++20, but QLever
+  // still builds in C++17 mode, see `cpp-17-libqlever.yml`).
+  constexpr bool operator==(const PackedDelimiter& other) const noexcept {
+    return pattern_ == other.pattern_ && len_ == other.len_;
+  }
+  constexpr bool operator!=(const PackedDelimiter& other) const noexcept {
+    return !(*this == other);
+  }
 
   // Unpack delimiter sequence into an std::string
   [[nodiscard]] std::string toString() const {
@@ -124,7 +132,7 @@ class SwarDelimiterPacker {
   // overload (or an explicit 8-byte `memcpy`) instead.
   [[nodiscard]] static inline char* writeDelim64(char* out,
                                                  uint64_t delimPattern,
-                                                 size_t len) noexcept {
+                                                 size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 8);
     std::memcpy(out, &delimPattern, len);
@@ -137,8 +145,8 @@ class SwarDelimiterPacker {
   // when `Len < 8` (the trailing bytes are scratch overwritten by the wide
   // store); use the dynamic overload for exact-fit buffers.
   template <size_t Len>
-  [[nodiscard]] static inline char* writeDelim64(
-      char* out, uint64_t delimPattern) noexcept {
+  [[nodiscard]] static inline char* writeDelim64(char* out,
+                                                 uint64_t delimPattern) {
     static_assert(Len <= 8, "SWAR delimiter length must be <= 8 bytes");
     AD_CONTRACT_CHECK(out != nullptr);
     std::memcpy(out, &delimPattern, sizeof(uint64_t));
@@ -147,8 +155,8 @@ class SwarDelimiterPacker {
 
   // Write a strongly typed PackedDelimiter. Copies exactly `delim.len()`
   // bytes; safe for exact-fit buffers.
-  [[nodiscard]] static inline char* writeDelim(
-      char* out, const PackedDelimiter& delim) noexcept {
+  [[nodiscard]] static inline char* writeDelim(char* out,
+                                               const PackedDelimiter& delim) {
     return writeDelim64(out, delim.pattern(), delim.len());
   }
 
@@ -156,7 +164,7 @@ class SwarDelimiterPacker {
   // `len`). Safe for exact-fit buffers.
   [[nodiscard]] static inline char* writeDelim32(char* out,
                                                  uint32_t delimPattern,
-                                                 size_t len) noexcept {
+                                                 size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 4);
     std::memcpy(out, &delimPattern, len);
@@ -167,7 +175,7 @@ class SwarDelimiterPacker {
   // `len`). Safe for exact-fit buffers.
   [[nodiscard]] static inline char* writeDelim16(char* out,
                                                  uint16_t delimPattern,
-                                                 size_t len) noexcept {
+                                                 size_t len) {
     AD_CONTRACT_CHECK(out != nullptr);
     AD_CONTRACT_CHECK(len <= 2);
     std::memcpy(out, &delimPattern, len);
