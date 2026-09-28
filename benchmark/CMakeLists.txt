@@ -30,6 +30,11 @@ if (NOT _NO_BENCHMARK)
     # Add benchmarks after here.
     addAndLinkBenchmark(BenchmarkExamples)
 
+    # Stand-alone measurement tool with its own main (counts allocations by
+    # replacing the global operator new), for ad-freiburg/qlever#3523.
+    add_executable(PrefixCompressorLengthBenchmark PrefixCompressorLengthBenchmark.cpp)
+    qlever_target_link_libraries(PrefixCompressorLengthBenchmark qlever_util compilationInfo gtest)
+
     addAndLinkBenchmark(JoinAlgorithmBenchmark testUtil memorySize)
 
     addAndLinkBenchmark(ParallelMergeBenchmark testUtil)
