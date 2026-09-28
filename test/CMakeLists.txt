@@ -553,6 +553,8 @@ addLinkAndDiscoverTest(GeometryInfoTest qlever_util)
 
 addLinkAndDiscoverTest(QueryRewriteUtilTest engine)
 
+addLinkAndDiscoverTest(PrefetchingBatchResolverTest engine)
+
 addLinkAndDiscoverTest(HttpErrorTest engine)
 
 addLinkAndDiscoverTest(TimeTracerTest)
