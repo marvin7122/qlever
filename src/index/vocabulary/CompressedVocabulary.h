@@ -176,7 +176,7 @@ CPP_template(typename UnderlyingVocabulary,
         words.push_back(
             compressionWrapper_.decompress(word, getDecoderIdx(index)));
       }
-      return makeStringVectorVocabBatchLookupResult(std::move(words));
+      return StringVectorVocabBatchLookupData::fromWords(std::move(words));
     }
   }
 
