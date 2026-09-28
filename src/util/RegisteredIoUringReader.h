@@ -479,12 +479,12 @@ class BasicRegisteredIoUringReader {
         registeredFds_{std::move(other.registeredFds_)},
         registeredIovecs_{std::move(other.registeredIovecs_)},
         numInFlightRequests_{std::exchange(other.numInFlightRequests_, 0)},
-        nextBatchId_{other.nextBatchId_},
+        nextBatchId_{std::exchange(other.nextBatchId_, 1)},
         inFlightByReqId_{std::move(other.inFlightByReqId_)},
         inFlightByBatchId_{std::move(other.inFlightByBatchId_)},
         results_{std::move(other.results_)},
         errors_{std::move(other.errors_)},
-        nextReqId_{other.nextReqId_} {}
+        nextReqId_{std::exchange(other.nextReqId_, 0)} {}
 
   BasicRegisteredIoUringReader& operator=(
       BasicRegisteredIoUringReader&& other) noexcept {
@@ -498,12 +498,12 @@ class BasicRegisteredIoUringReader {
       registeredFds_ = std::move(other.registeredFds_);
       registeredIovecs_ = std::move(other.registeredIovecs_);
       numInFlightRequests_ = std::exchange(other.numInFlightRequests_, 0);
-      nextBatchId_ = other.nextBatchId_;
+      nextBatchId_ = std::exchange(other.nextBatchId_, 1);
       inFlightByReqId_ = std::move(other.inFlightByReqId_);
       inFlightByBatchId_ = std::move(other.inFlightByBatchId_);
       results_ = std::move(other.results_);
       errors_ = std::move(other.errors_);
-      nextReqId_ = other.nextReqId_;
+      nextReqId_ = std::exchange(other.nextReqId_, 0);
     }
     return *this;
   }
