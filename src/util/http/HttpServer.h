@@ -103,8 +103,9 @@ CPP_template(BodyReadMode bodyReadMode, typename HttpHandler,
   WebSocketHandler webSocketHandler_;
   ad_utility::MemorySize lazyBodyChunkSize_;
   // If true, chunked `streamable_body` responses (the HTTP export path) are
-  // transmitted via `ZeroCopySocketSender` (Linux `IORING_OP_SEND_ZC`) instead
-  // of the default Boost.Beast write path. Default false (Beast behavior).
+  // sent from the generator's memory via `ZeroCopyHttpSender` (Linux
+  // `IORING_OP_SENDMSG_ZC`) instead of the default Boost.Beast write path.
+  // Default false (Beast behavior).
   bool useSendZC_ = false;
   // All code that uses the `acceptor_` must run within this strand.
   // Note that the `acceptor_` might be concurrently accessed by the `listener`
@@ -538,7 +539,7 @@ CPP_template(BodyReadMode bodyReadMode, typename HttpHandler,
 
     // Lazily created on the first zero-copy response of this session, then
     // reused for subsequent responses on the same connection.
-    std::optional<ad_utility::ZeroCopySocketSender> zeroCopySender;
+    std::optional<ad_utility::httpUtils::ZeroCopyHttpSender> zeroCopySender;
 
     // This lambda sends an http message to the `stream` and sets
     // `streamNeedsClosing` if the closing of the session is requested by the
@@ -546,26 +547,23 @@ CPP_template(BodyReadMode bodyReadMode, typename HttpHandler,
     auto sendMessage = [&stream, &streamNeedsClosing, this, &zeroCopySender](
                            auto message) -> boost::asio::awaitable<void> {
       // Zero-copy fast path for the HTTP export path: chunked
-      // `streamable_body` responses are transmitted via `ZeroCopySocketSender`
-      // (Linux `IORING_OP_SEND_ZC`) when enabled. Everything else, including
+      // `streamable_body` responses are sent via `ZeroCopyHttpSender` (Linux
+      // `IORING_OP_SENDMSG_ZC`) when enabled. Everything else, including
       // non-chunked responses, keeps the default Beast write path.
       if constexpr (ad_utility::httpUtils::IsStreamableBodyResponse<
                         std::decay_t<decltype(message)>>::value) {
         if (useSendZC_ && message.chunked()) {
           if (!zeroCopySender.has_value()) {
-            zeroCopySender.emplace(
-                ad_utility::httpUtils::ZeroCopyHttpSenderConfig{}
-                    .toSenderConfig());
+            zeroCopySender.emplace(ad_utility::httpUtils::SocketSendBackend{},
+                                   stream.socket().native_handle());
           }
           try {
             co_await ad_utility::httpUtils::asyncWriteStreamableBodyZeroCopy(
                 stream, message, zeroCopySender.value());
           } catch (...) {
-            // The failed response may have left buffers pinned or requests
-            // in flight, so the sender must not be reused by the next
-            // keep-alive request on this session. Discard it (its destructor
-            // drains on a best-effort basis) and let the exception close the
-            // session via the handlers below.
+            // Do not reuse the sender of a failed response for the next
+            // keep-alive request; the exception closes the session via the
+            // handlers below.
             zeroCopySender.reset();
             throw;
           }
