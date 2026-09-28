@@ -862,10 +862,11 @@ TEST(ElasticExportSchedulerTest, OwnedMorselNullStateThrows) {
 // -----------------------------------------------------------------------------
 // Mirror the wiring in `Server::Server` (a poster onto `queryThreadPool_`, a
 // cap of the pool size on outstanding morsels, and the attachment to the query
-// registry) against a real `static_thread_pool`. Check three invariants: the
-// number of morsels in flight never exceeds the pool size, a second registered
-// query stops helper admission, and once that query ends the pending morsels
-// are posted again, still within the pool size.
+// registry) against a real `boost::asio::static_thread_pool`. Check three
+// invariants: The number of morsels in flight never exceeds the pool size,
+// a second registered query stops helper admission, and once that query ends
+// pending morsels become eligible again but are re-posted only when slots
+// free, still within the pool size.
 
 namespace {
 // Return true as soon as `condition` holds and false once `timeout` has
