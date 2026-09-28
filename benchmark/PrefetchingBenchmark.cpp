@@ -12,7 +12,6 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
-#include <memory>
 #include <random>
 #include <sstream>
 #include <string>
@@ -154,6 +153,14 @@ class HardwarePerformanceMonitor {
     supported_ = false;
 #endif
   }
+
+  // Owns raw perf-event file descriptors: copying or moving would close them
+  // twice.
+  HardwarePerformanceMonitor(const HardwarePerformanceMonitor&) = delete;
+  HardwarePerformanceMonitor& operator=(const HardwarePerformanceMonitor&) =
+      delete;
+  HardwarePerformanceMonitor(HardwarePerformanceMonitor&&) = delete;
+  HardwarePerformanceMonitor& operator=(HardwarePerformanceMonitor&&) = delete;
 
   ~HardwarePerformanceMonitor() {
 #if defined(__linux__)

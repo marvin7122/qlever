@@ -44,15 +44,13 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(SimdEscapeBenchmark qlever_util)
 
-    # io_uring, O_DIRECT, and `fdatasync` are Linux-only: the benchmark does
-    # not compile on macOS.
-    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
-    endif()
+    addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
 
     addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
 
     addAndLinkBenchmark(FastNumberFormatterBenchmark qlever_util)
+
+    addAndLinkBenchmark(PrefetchingBenchmark engine)
 
     # Standalone main(), so not via addAndLinkBenchmark (which links
     # benchmarkWithMain).

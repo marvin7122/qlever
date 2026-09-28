@@ -18,11 +18,6 @@
 #include <utility>
 #include <vector>
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
-    defined(_M_IX86)
-#include <xmmintrin.h>
-#endif
-
 #include "backports/concepts.h"
 #include "backports/span.h"
 #include "global/Constants.h"
@@ -35,6 +30,8 @@
 #include "util/Algorithm.h"
 #include "util/CompactStringVector.h"
 #include "util/Exception.h"
+#include "util/Forward.h"
+#include "util/SoftwarePrefetch.h"
 
 namespace ql::engine::prefetch {
 
@@ -44,15 +41,7 @@ namespace ql::engine::prefetch {
 // into the L1 data cache (_MM_HINT_T0 / temporal locality 3).
 inline void prefetchVocabEntry(const void* address,
                                [[maybe_unused]] int distance = 8) noexcept {
-  if (address == nullptr) {
-    return;
-  }
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
-    defined(_M_IX86)
-  _mm_prefetch(static_cast<const char*>(address), _MM_HINT_T0);
-#elif defined(__GNUC__) || defined(__clang__)
-  __builtin_prefetch(address, 0, 3);
-#endif
+  ad_utility::prefetchForRead(address);
 }
 
 // _____________________________________________________________________________
@@ -171,66 +160,8 @@ class PrefetchingBatchResolver {
   void resolveCompactVectorPipelined(
       const CompactVectorOfStrings<CharType>& words,
       ql::span<const size_t> indices, MappingFunc&& mappingFunc) const {
-    if (indices.empty() || !words.ready()) {
-      return;
-    }
-
-    const size_t n = indices.size();
-    const size_t distance = config_.prefetchDistance;
-    const auto offsets = words.offsetsSpan();
-    const auto data = words.dataSpan();
-
-    // Stage 1 warmup: prefetch offset table lines for the first `distance`
-    // items
-    for (size_t k = 0; k < std::min(distance, n); ++k) {
-      const size_t idx = indices[k];
-      if (idx < offsets.size()) {
-        prefetchVocabEntry(&offsets[idx], static_cast<int>(distance));
-      }
-    }
-
-    // Main pipelined loop
-    for (size_t i = 0; i < n; ++i) {
-      // 1. Prefetch offset table line for (i + distance). Subtraction-based
-      // guard: `i + distance` would wrap for a huge caller-supplied distance
-      // (`i < n`, so `n - i` cannot underflow).
-      if (distance < n - i) {
-        const size_t pfIdx = indices[i + distance];
-        if (pfIdx < offsets.size()) {
-          prefetchVocabEntry(&offsets[pfIdx], static_cast<int>(distance));
-        }
-      }
-
-      // 2. Prefetch string character data line for (i + distance / 2).
-      // Subtraction-based guard, same overflow rationale as above.
-      if ((distance / 2) < n - i) {
-        const size_t midIdx = indices[i + (distance / 2)];
-        // Check `midIdx` itself first: for `midIdx == SIZE_MAX` the successor
-        // expression below would wrap to zero and wrongly pass.
-        if (midIdx < offsets.size() && midIdx + 1 < offsets.size()) {
-          const auto strOffset = offsets[midIdx];
-          if (strOffset < data.size()) {
-            prefetchVocabEntry(data.data() + strOffset,
-                               static_cast<int>(distance / 2));
-          }
-        }
-      }
-
-      // 3. Resolve current item i. The `+ 1` covers the `offsets[curIdx + 1]`
-      // access below: `curIdx` must not be the final (sentinel) offset.
-      const size_t curIdx = indices[i];
-      // Check `curIdx` before forming the successor: for `curIdx == SIZE_MAX`
-      // the addition below would wrap to zero and wrongly pass.
-      AD_CORRECTNESS_CHECK(curIdx < offsets.size());
-      AD_CORRECTNESS_CHECK(curIdx + 1 < offsets.size());
-      const auto curOffset = offsets[curIdx];
-      const auto nextOffset = offsets[curIdx + 1];
-      const size_t strLen = nextOffset - curOffset;
-      const CharType* strPtr = data.data() + curOffset;
-      std::basic_string_view<CharType> view(strPtr, strLen);
-
-      mappingFunc(i, curIdx, view);
-    }
+    ad_utility::forEachWordPrefetched(words, indices, config_.prefetchDistance,
+                                      AD_FWD(mappingFunc));
   }
 
   // ___________________________________________________________________________

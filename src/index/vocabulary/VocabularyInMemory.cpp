@@ -4,7 +4,8 @@
 
 #include "index/vocabulary/VocabularyInMemory.h"
 
-namespace ad_utility::vocabulary {
+#include "global/RuntimeParameters.h"
+#include "util/SoftwarePrefetch.h"
 
 using std::string;
 
@@ -26,4 +27,21 @@ void VocabularyInMemory::writeToFile(const string& fileName) const {
   file << _words;
   AD_LOG_INFO << "Done, number of words: " << _words.size() << std::endl;
 }
-}  // namespace ad_utility::vocabulary
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyInMemory::lookupBatch(
+    ql::span<const size_t> indices) const {
+  const size_t prefetchDistance =
+      getRuntimeParameter<&RuntimeParameters::vocabLookupPrefetchDistance_>();
+  if (prefetchDistance == 0) {
+    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+  }
+  AD_CONTRACT_CHECK(!indices.empty());
+  std::vector<std::string> words(indices.size());
+  ad_utility::forEachWordPrefetched(
+      _words, indices, prefetchDistance,
+      [&words](size_t i, size_t, std::string_view word) {
+        words[i] = std::string{word};
+      });
+  return StringVectorVocabBatchLookupData::fromWords(std::move(words));
+}

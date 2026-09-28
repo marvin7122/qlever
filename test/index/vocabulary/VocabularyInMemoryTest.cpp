@@ -5,11 +5,13 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include "../../util/GTestHelpers.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "util/Serializer/ByteBufferSerializer.h"
-using Vocab = ad_utility::vocabulary::VocabularyInMemory;
+using Vocab = VocabularyInMemory;
 
 namespace {
 
@@ -124,7 +126,7 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
   v.open(filename);
   { auto writerPtr = v.makeDiskWriterPtr(filename); };
   {
-    ad_utility::vocabulary::VocabularyInMemory vocab;
+    VocabularyInMemory vocab;
     {
       auto wwPtr = vocab.makeDiskWriterPtr(filename);
       auto& ww = *wwPtr;
@@ -135,7 +137,7 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
   }
   ad_utility::deleteFile(filename);
   {
-    ad_utility::vocabulary::VocabularyInMemory vocab;
+    VocabularyInMemory vocab;
     auto wwPtr = vocab.makeDiskWriterPtr(filename);
     auto& ww = *wwPtr;
     ww("beta", false);
@@ -145,6 +147,26 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
     EXPECT_EQ(vocab[0], "beta");
   }
   ad_utility::deleteFile(filename);
+}
+
+// _____________________________________________________________________________
+// With `vocab-lookup-prefetch-distance` set, `lookupBatch` takes the software
+// prefetching path and must still return exactly the words of `operator[]`, in
+// the requested order and including duplicates, for distances that are
+// smaller than, equal to, and larger than the batch.
+TEST(VocabularyInMemory, LookupBatchWithPrefetchDistance) {
+  const std::vector<std::string> words{"alpha", "delta", "beta", "42",
+                                       "31",    "0",     "al"};
+  const auto vocab = createVocabulary(words);
+  const std::vector<size_t> indices{6, 0, 3, 3, 1, 5, 2, 4, 0};
+  for (size_t distance : {0, 1, 2, 8, 9, 1000}) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabLookupPrefetchDistance_>(distance);
+    const auto result = vocab.lookupBatch(indices);
+    assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+    AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
+                                 ::testing::HasSubstr("!indices.empty()"));
+  }
 }
 
 }  // namespace

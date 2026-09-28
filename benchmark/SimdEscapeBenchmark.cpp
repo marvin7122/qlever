@@ -139,7 +139,7 @@ LiteralDataset generateRealisticLiteralDataset(size_t targetBytes = 100 * 1024 *
 [[nodiscard]] size_t scalarFindFirstEscapeTsv(std::string_view text) noexcept {
   for (size_t i = 0; i < text.size(); ++i) {
     char c = text[i];
-    if (c == '\t' || c == '\n' || c == '\r' || c == '\\') {
+    if (c == '\t' || c == '\n') {
       return i;
     }
   }

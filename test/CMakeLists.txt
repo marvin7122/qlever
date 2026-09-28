@@ -268,7 +268,7 @@ addLinkAndDiscoverTestNoLibs(StringSortComparatorTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(FastIntToStringTest qlever_util)
 
-addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest qlever_util)
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest qlever_util rdfEscaping)
 
 addLinkAndDiscoverTestNoLibs(LocaleManagerTest stringUtils)
 
@@ -416,7 +416,6 @@ addLinkAndDiscoverTest(PrefilterExpressionIndexTest engine)
 addLinkAndDiscoverTest(GetPrefilterExpressionFromSparqlExpressionTest sparqlExpressions index)
 
 addLinkAndDiscoverTest(ExceptionTest)
-
 
 addLinkAndDiscoverTest(RandomExpressionTest index)
 
@@ -582,6 +581,8 @@ addLinkAndDiscoverTestNoLibs(ConstexprMapTest)
 addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
+
+addLinkAndDiscoverTest(RegisteredIoUringReaderTest)
 
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 

@@ -42,7 +42,7 @@ namespace ad_utility::simd {
 enum class EscapeFormat {
   CsvQuote,    // Escape quotes (")
   CsvSpecial,  // RFC 4180 special characters (", ,, \r, \n)
-  Tsv,         // IANA-TSV special characters (\t, \n, \r, \\)
+  Tsv,         // IANA-TSV special characters (\t, \n)
   Turtle,      // Turtle / N-Triples literal content escapes (", \\, \n, \r)
   Xml          // XML special characters (&, <, >, ", ')
 };
@@ -103,7 +103,7 @@ template <EscapeFormat Format>
   if constexpr (Format == EscapeFormat::Turtle) {
     return c == '"' || c == '\\' || c == '\n' || c == '\r';
   } else if constexpr (Format == EscapeFormat::Tsv) {
-    return c == '\t' || c == '\n' || c == '\r' || c == '\\';
+    return c == '\t' || c == '\n';
   } else if constexpr (Format == EscapeFormat::CsvQuote) {
     return c == '"';
   } else if constexpr (Format == EscapeFormat::CsvSpecial) {
@@ -144,14 +144,6 @@ inline char* emitEscape(char c, char* dest) noexcept {
     } else if (c == '\n') {
       dest[0] = '\\';
       dest[1] = 'n';
-      return dest + 2;
-    } else if (c == '\r') {
-      dest[0] = '\\';
-      dest[1] = 'r';
-      return dest + 2;
-    } else if (c == '\\') {
-      dest[0] = '\\';
-      dest[1] = '\\';
       return dest + 2;
     }
     *dest = c;
@@ -205,10 +197,7 @@ template <EscapeFormat Format>
   } else if constexpr (Format == EscapeFormat::Tsv) {
     __m256i m1 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\t'));
     __m256i m2 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\n'));
-    __m256i m3 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\r'));
-    __m256i m4 = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('\\'));
-    __m256i match =
-        _mm256_or_si256(_mm256_or_si256(m1, m2), _mm256_or_si256(m3, m4));
+    __m256i match = _mm256_or_si256(m1, m2);
     return static_cast<uint32_t>(_mm256_movemask_epi8(match));
   } else if constexpr (Format == EscapeFormat::CsvQuote) {
     __m256i match = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('"'));
@@ -248,9 +237,7 @@ template <EscapeFormat Format>
   } else if constexpr (Format == EscapeFormat::Tsv) {
     __m128i m1 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\t'));
     __m128i m2 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\n'));
-    __m128i m3 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\r'));
-    __m128i m4 = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('\\'));
-    __m128i match = _mm_or_si128(_mm_or_si128(m1, m2), _mm_or_si128(m3, m4));
+    __m128i match = _mm_or_si128(m1, m2);
     return static_cast<uint16_t>(_mm_movemask_epi8(match));
   } else if constexpr (Format == EscapeFormat::CsvQuote) {
     __m128i match = _mm_cmpeq_epi8(chunk, _mm_set1_epi8('"'));
@@ -530,8 +517,10 @@ class SimdEscapeClassifier {
   }
 
   // ___________________________________________________________________________
-  // Escape a field for IANA-TSV. If no tabs or newlines are present, returns
-  // input directly. Otherwise replaces tabs with spaces and newlines with \n.
+  // Escape a field for IANA-TSV exactly like `RdfEscaping::escapeForTsv`: tabs
+  // become spaces and newlines become `\n`; all other bytes (including `\r`
+  // and `\`) are copied unchanged. Without tabs and newlines, returns the
+  // input directly.
   [[nodiscard]] static inline std::string escapeForTsv(std::string_view input) {
     if (!hasEscapes<EscapeFormat::Tsv>(input)) [[likely]] {
       return std::string{input};
