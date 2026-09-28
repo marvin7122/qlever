@@ -287,7 +287,7 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
 // Test 6b: Throwing Morsel Surfaces Instead Of Hanging The Consumer
 // -----------------------------------------------------------------------------
 // A task exception must reach `consumeNextResult` as that same exception
-// (via the terminal `Cancelled` slot state), whether the morsel ran on a
+// (via the terminal `Failed` slot state), whether the morsel ran on a
 // helper worker or was stolen by the primary fallback path. The profile must
 // also reach a terminal status instead of dangling in `Running`.
 TEST(ElasticExportSchedulerTest, ThrowingMorselPropagatesToConsumer) {
@@ -311,7 +311,7 @@ TEST(ElasticExportSchedulerTest, ThrowingMorselPropagatesToConsumer) {
 
   auto profiles = session.inspectMorselProfiles();
   ASSERT_EQ(profiles.size(), 1u);
-  EXPECT_EQ(profiles[0].finalStatus_, MorselStatus::Cancelled);
+  EXPECT_EQ(profiles[0].finalStatus_, MorselStatus::Failed);
 }
 
 // -----------------------------------------------------------------------------

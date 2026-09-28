@@ -324,7 +324,7 @@ void ElasticExportScheduler::workerLoop() {
         } catch (...) {
           // An exception must never escape the worker thread: that would call
           // `std::terminate`. `executeHelperTask` converts a task failure
-          // into a terminal `Cancelled` slot state (storing the exception and
+          // into a terminal `Failed` slot state (storing the exception and
           // notifying waiters) before rethrowing, so the release below still
           // runs and `consumeNextResult` rethrows the original failure.
         }
