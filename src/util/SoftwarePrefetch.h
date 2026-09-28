@@ -92,8 +92,7 @@ void forEachWordPrefetched(const CompactVectorOfStrings<CharType>& words,
 
     // 3. Resolve item `i`. `curIdx` must not be the final (sentinel) offset.
     const size_t curIdx = indices[i];
-    AD_CORRECTNESS_CHECK(curIdx < offsets.size() &&
-                         curIdx + 1 < offsets.size());
+    AD_CONTRACT_CHECK(curIdx < offsets.size() && curIdx + 1 < offsets.size());
     const auto curOffset = offsets[curIdx];
     const size_t strLen = offsets[curIdx + 1] - curOffset;
     f(i, curIdx,

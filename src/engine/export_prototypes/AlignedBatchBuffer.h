@@ -13,6 +13,7 @@
 #include <memory>
 #include <new>
 #include <type_traits>
+#include <utility>
 
 #include "backports/span.h"
 #include "util/Exception.h"
@@ -62,6 +63,23 @@ class AlignedBatchBuffer {
   AlignedBatchBuffer() noexcept = default;
 
   explicit AlignedBatchBuffer(size_t capacity) { reserve(capacity); }
+
+  // A moved-from buffer is empty and has no storage, so that `reserve` and
+  // `push_back` stay valid on it.
+  AlignedBatchBuffer(AlignedBatchBuffer&& other) noexcept
+      : data_{std::move(other.data_)},
+        capacity_{std::exchange(other.capacity_, 0)},
+        size_{std::exchange(other.size_, 0)} {}
+
+  AlignedBatchBuffer& operator=(AlignedBatchBuffer&& other) noexcept {
+    data_ = std::move(other.data_);
+    capacity_ = std::exchange(other.capacity_, 0);
+    size_ = std::exchange(other.size_, 0);
+    return *this;
+  }
+
+  AlignedBatchBuffer(const AlignedBatchBuffer&) = delete;
+  AlignedBatchBuffer& operator=(const AlignedBatchBuffer&) = delete;
 
   void reserve(size_t newCapacity) {
     if (newCapacity <= capacity_) {
