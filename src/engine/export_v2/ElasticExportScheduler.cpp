@@ -14,6 +14,7 @@
 #include <algorithm>
 
 #include "util/ExceptionHandling.h"
+#include "util/Log.h"
 
 namespace ad_utility::export_v2 {
 
@@ -36,8 +37,17 @@ ElasticExportScheduler::ElasticExportScheduler(size_t threadCount,
   }
 
   workers_.reserve(threadCount);
-  for (size_t i = 0; i < threadCount; ++i) {
-    workers_.emplace_back(&ElasticExportScheduler::workerLoop, this);
+  try {
+    for (size_t i = 0; i < threadCount; ++i) {
+      workers_.emplace_back(&ElasticExportScheduler::workerLoop, this);
+    }
+  } catch (...) {
+    // A failed construction never runs the destructor, but `workers_` (a
+    // fully constructed subobject) is destroyed, and destroying a joinable
+    // `std::thread` calls `std::terminate`. Shut down first: it wakes the
+    // already-started workers and joins them.
+    shutdown();
+    throw;
   }
 }
 
@@ -45,18 +55,21 @@ ElasticExportScheduler::ElasticExportScheduler(size_t threadCount,
 ElasticExportScheduler::~ElasticExportScheduler() { shutdown(); }
 
 // _____________________________________________________________________________
-void ElasticExportScheduler::shutdown() {
+void ElasticExportScheduler::shutdown() noexcept {
   // Seq-cst exchange; all readers use acquire loads, which synchronize with
   // this store once observed. Only the first call joins the workers.
   if (!stopping_.exchange(true)) {
-    {
-      std::lock_guard<std::mutex> lock(queueMutex_);
-      workAvailableCv_.notify_all();
-      queueNotFullCv_.notify_all();
-    }
+    ad_utility::terminateIfThrows(
+        [this] {
+          std::lock_guard<std::mutex> lock(queueMutex_);
+          workAvailableCv_.notify_all();
+          queueNotFullCv_.notify_all();
+        },
+        "Waking the export helper workers during shutdown");
     for (auto& worker : workers_) {
       if (worker.joinable()) {
-        worker.join();
+        ad_utility::terminateIfThrows([&worker] { worker.join(); },
+                                      "Joining an export helper worker");
       }
     }
   }
@@ -111,16 +124,17 @@ void ElasticExportScheduler::propagateDemandChange(
   std::vector<std::shared_ptr<ExportJobStateBase>> aliveSessions;
   {
     std::lock_guard<std::mutex> lock(sessionsMutex_);
-    sessions_.erase(
-        std::remove_if(sessions_.begin(), sessions_.end(),
-                       [&aliveSessions](const auto& weak) {
-                         if (auto shared = weak.lock()) {
-                           aliveSessions.push_back(std::move(shared));
-                           return false;
-                         }
-                         return true;
-                       }),
-        sessions_.end());
+    // Explicit loop (not `std::remove_if` with a side-effecting predicate):
+    // keep the live sessions and drop the expired ones.
+    std::vector<std::weak_ptr<ExportJobStateBase>> kept;
+    kept.reserve(sessions_.size());
+    for (auto& weak : sessions_) {
+      if (auto shared = weak.lock()) {
+        aliveSessions.push_back(shared);
+        kept.push_back(std::move(weak));
+      }
+    }
+    sessions_ = std::move(kept);
   }
 
   for (auto& session : aliveSessions) {
@@ -281,7 +295,19 @@ void ElasticExportScheduler::workerLoop() {
             },
             "Releasing an export job helper lease");
       };
-      targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
+      // Only an internal `AD_CORRECTNESS_CHECK` failure can throw here
+      // (user task exceptions are captured into the slot in `runSlot`).
+      // Log the diagnostic before unwinding: both lease cleanups above
+      // still release their slots during unwinding, and the exception then
+      // terminates the worker, as in `TaskQueue::function_for_thread`.
+      try {
+        targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
+      } catch (...) {
+        AD_LOG_ERROR << "ElasticExportScheduler worker caught an exception "
+                        "from executeHelperTask; terminating the worker"
+                     << std::endl;
+        throw;
+      }
     }
   }
 }

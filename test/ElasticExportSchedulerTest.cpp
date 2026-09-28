@@ -427,28 +427,40 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
 
   constexpr size_t numWorkerThreads = 4;
   constexpr size_t morselsPerSession = 15;
-  std::vector<ad_utility::JThread> sessionRunners;
-  sessionRunners.reserve(numWorkerThreads);
+  // One slot per worker; each worker only writes its own slot, and the main
+  // thread only reads after the joins below, so no synchronization is needed.
+  // GTest assertions stay on the main thread: `EXPECT_*` failure reporting
+  // is not safe for concurrent use from worker threads.
+  std::vector<std::vector<std::string>> actuals(numWorkerThreads);
+  {
+    std::vector<ad_utility::JThread> sessionRunners;
+    sessionRunners.reserve(numWorkerThreads);
 
-  for (size_t t = 0; t < numWorkerThreads; ++t) {
-    sessionRunners.emplace_back([&scheduler, t]() {
-      auto session = scheduler->createSession<std::string>();
-      for (size_t i = 0; i < morselsPerSession; ++i) {
-        session.submitMorsel([t, i]() {
-          return "t" + std::to_string(t) + "_m" + std::to_string(i);
-        });
-      }
-      for (size_t i = 0; i < morselsPerSession; ++i) {
-        std::string expected =
-            "t" + std::to_string(t) + "_m" + std::to_string(i);
-        std::string actual = session.consumeNextResult();
-        EXPECT_EQ(actual, expected);
-      }
-    });
+    for (size_t t = 0; t < numWorkerThreads; ++t) {
+      sessionRunners.emplace_back([&scheduler, t, &actuals]() {
+        auto session = scheduler->createSession<std::string>();
+        for (size_t i = 0; i < morselsPerSession; ++i) {
+          session.submitMorsel([t, i]() {
+            return "t" + std::to_string(t) + "_m" + std::to_string(i);
+          });
+        }
+        for (size_t i = 0; i < morselsPerSession; ++i) {
+          actuals[t].push_back(session.consumeNextResult());
+        }
+      });
+    }
+    // Destroying the `JThread`s joins the session runners first; then
+    // `stopOnExit` stops the demand changer before it is joined.
   }
 
-  // Destroying the `JThread`s joins the session runners first; then
-  // `stopOnExit` stops the demand changer before it is joined.
+  ASSERT_EQ(actuals.size(), numWorkerThreads);
+  for (size_t t = 0; t < numWorkerThreads; ++t) {
+    ASSERT_EQ(actuals[t].size(), morselsPerSession);
+    for (size_t i = 0; i < morselsPerSession; ++i) {
+      EXPECT_EQ(actuals[t][i],
+                "t" + std::to_string(t) + "_m" + std::to_string(i));
+    }
+  }
 }
 
 // _____________________________________________________________________________

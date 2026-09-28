@@ -236,8 +236,11 @@ class ElasticExportScheduler
         std::memory_order_relaxed);
   }
 
-  /// Shut down the thread pool and join all worker threads.
-  void shutdown();
+  // Shut down the thread pool and join all worker threads. Never throws:
+  // it runs in the destructor (and in the constructor failure path), so
+  // lock/join failures terminate with a diagnostic, as in
+  // `TaskQueue::~TaskQueue`.
+  void shutdown() noexcept;
 
   /// Enqueue an owned morsel to the helper pool (called internally by
   /// sessions). Returns false without blocking when helpers are not
@@ -772,9 +775,18 @@ class ExportWorkSession {
 template <typename ResultType>
 ExportWorkSession<ResultType> ElasticExportScheduler::createSession() {
   uint64_t jobId = nextJobId();
-  uint64_t epoch = demandEpoch();
+  // Seq-cst snapshot so the reads cannot be reordered. A threshold crossing
+  // between them can still skew the snapshot, which is benign by design:
+  // `submitMorsel`/`enqueueMorsel` re-check eligibility under `queueMutex_`,
+  // and the worker only runs a morsel whose submission epoch matches the
+  // current demand epoch, so a skewed snapshot at worst leaves the morsel
+  // Pending for the primary.
+  uint64_t epoch = demandEpoch_.load(std::memory_order_seq_cst);
+  size_t foregroundQueries =
+      activeForegroundQueries_.load(std::memory_order_seq_cst);
   SessionState initialState =
-      (activeForegroundQueries() <= maxForegroundQueriesForHelperAdmission())
+      (foregroundQueries <=
+       maxForegroundQueriesForHelperAdmission_.load(std::memory_order_seq_cst))
           ? SessionState::HelpersEligible
           : SessionState::PrimaryOnly;
 
