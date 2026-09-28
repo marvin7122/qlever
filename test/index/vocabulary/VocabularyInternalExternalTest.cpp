@@ -147,6 +147,7 @@ TEST(VocabularyInternalExternal, BeginFinishLookupMatchesLookupBatch) {
     const auto& [expected, actual] = expectedAndActual;
     EXPECT_EQ(expected, actual) << " at requested slot " << i;
   }
+  EXPECT_ANY_THROW(vocab.finishLookup(nullptr));
 }
 
 TEST(VocabularyInternalExternal, EmptyVocabulary) {
