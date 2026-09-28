@@ -100,7 +100,7 @@ jobs:
           cd "${RUNNER_TEMP}/liburing"
           CC=gcc-13 CXX=g++-13 ./configure --prefix="${URING}" >/dev/null
           make -j4 -C src >/dev/null
-          make -C src install >/dev/null
+          make install >/dev/null  # top level: also installs liburing.pc
           grep '^Version' "${URING}/lib/pkgconfig/liburing.pc"
           ls -la "${URING}/lib"
           {
