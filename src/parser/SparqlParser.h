@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "index/vocabulary/EncodedIriManager.h"
 #include "parser/ParsedQuery.h"
 #include "util/BlankNodeManager.h"
 
@@ -21,12 +22,12 @@ class SparqlParser {
   // Passing no datasets means that the datasets are set normally from the
   // query or update.
   static ParsedQuery parseQuery(
-      const EncodedIriManager* encodedIriManager, std::string query,
-      const std::vector<DatasetClause>& datasets = {});
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      std::string query, const std::vector<DatasetClause>& datasets = {});
   static std::vector<ParsedQuery> parseUpdate(
       ad_utility::BlankNodeManager* bnodeManager,
-      const EncodedIriManager* encodedIriManager, std::string update,
-      const std::vector<DatasetClause>& datasets = {});
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      std::string update, const std::vector<DatasetClause>& datasets = {});
 };
 
 #endif  // QLEVER_SRC_PARSER_SPARQLPARSER_H

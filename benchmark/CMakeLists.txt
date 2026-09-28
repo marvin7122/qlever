@@ -34,6 +34,16 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ParallelMergeBenchmark testUtil)
 
-    addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
+        addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
+
+    add_executable(ExportPipelineRouterBenchmark ExportPipelineRouterBenchmark.cpp)
+    qlever_target_link_libraries(ExportPipelineRouterBenchmark engine sparqlParser qlever_util)
+
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
+
+    # Standalone (own main): do not use addAndLinkBenchmark, which would add a
+    # second main via benchmarkWithMain.
+    add_executable(SimdEscapeClassifierBenchmark SimdEscapeClassifierBenchmark.cpp)
+    qlever_target_link_libraries(SimdEscapeClassifierBenchmark engine sparqlParser qlever_util)
 
 endif()

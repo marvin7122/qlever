@@ -14,6 +14,8 @@
 #include "backports/algorithm.h"
 #include "util/Exception.h"
 
+namespace ad_utility::vocabulary {
+
 // _____________________________________________________________________________
 SecondaryVocabulary::SecondaryVocabulary(std::vector<std::string> words)
     : words_{std::move(words)} {
@@ -39,3 +41,4 @@ std::optional<SecondaryVocabIndex> SecondaryVocabulary::getId(
   }
   return SecondaryVocabIndex::make(static_cast<uint64_t>(it - words_.begin()));
 }
+}  // namespace ad_utility::vocabulary
