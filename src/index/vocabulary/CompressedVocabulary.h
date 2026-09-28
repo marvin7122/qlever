@@ -155,6 +155,12 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   //____________________________________________________________________________
+  // Return the words at `indices` in input order, exactly like one call to
+  // `operator[]` per index. Without holes, the compressed words are fetched
+  // with one `lookupBatch` call on the underlying vocabulary and then
+  // decompressed with the decoder of their block. With holes, the per-index
+  // path is used, which reports a placeholder for a hole. `indices` must not
+  // be empty.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     if constexpr (underlyingHasHoles) {
@@ -163,12 +169,14 @@ CPP_template(typename UnderlyingVocabulary,
       return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
     } else {
       // Fetch the compressed words in one batch through the underlying
-      // vocabulary (an on-disk underlying vocabulary serves this from its
-      // `io_uring` ring pool), then decompress each word with the decoder for
-      // its block. The underlying lookup preserves order, so each word pairs
-      // with the index at the same position, exactly like the sequential path.
+      // vocabulary (an on-disk underlying vocabulary reads them through its
+      // `BatchManager`: the `io_uring` ring when QLever is built with liburing
+      // and the ring could be set up, synchronous `pread` otherwise), then
+      // decompress each word with the decoder for its block. The underlying
+      // lookup preserves order, so each word pairs with the index at the same
+      // position, exactly like the sequential path.
       auto compressed = underlyingVocabulary_.lookupBatch(indices);
-      AD_CONTRACT_CHECK(compressed.size() == indices.size());
+      AD_CORRECTNESS_CHECK(compressed.size() == indices.size());
       std::vector<std::string> words;
       words.reserve(indices.size());
       for (const auto& [word, index] :
