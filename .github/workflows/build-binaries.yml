@@ -201,8 +201,12 @@ jobs:
             if ldd "${DST}/$t" | grep -q 'not found'; then
               ldd "${DST}/$t"; echo "::error::$t has unresolved libraries"; exit 1
             fi
-            ldd "${DST}/$t" | grep -q "liburing.so.2 => ${URING}/" \
-              || { ldd "${DST}/$t"; echo "::error::$t does not link the built liburing ${LIBURING_VERSION}"; exit 1; }
+            # Targets without io_uring code drop liburing (--as-needed); a
+            # target that needs it must resolve it to the 2.15 built above.
+            if ldd "${DST}/$t" | grep -q 'liburing\.so' \
+               && ! ldd "${DST}/$t" | grep -q "liburing.so.2 => ${URING}/"; then
+              ldd "${DST}/$t"; echo "::error::$t does not link the built liburing ${LIBURING_VERSION}"; exit 1
+            fi
             {
               echo "branch=${REF}"
               echo "sha=${SHA}"
