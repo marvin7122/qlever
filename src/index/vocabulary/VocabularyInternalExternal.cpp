@@ -25,31 +25,28 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  // Collect the indices that miss the internal vocabulary, so that the
-  // external vocabulary serves all of them in one batch (from its `io_uring`
-  // ring pool).
-  std::vector<std::string> words(indices.size());
+  // No word is copied: words cached in the internal vocabulary are placed as
+  // views into its RAM, and all misses are served in one external batch (from
+  // its `io_uring` ring pool), whose views are re-arranged into place while
+  // the assembled result keeps that batch alive.
+  MultiSourceVocabBatchAssembler assembler{indices.size()};
   std::vector<size_t> missPositions;
   std::vector<size_t> missIndices;
   missPositions.reserve(indices.size());
   missIndices.reserve(indices.size());
-  for (size_t i = 0; i < indices.size(); ++i) {
-    if (auto hit = internalVocab_[indices[i]]; hit.has_value()) {
-      words[i] = std::string{hit.value()};
+  for (auto [position, index] : ::ranges::views::enumerate(indices)) {
+    if (auto hit = internalVocab_[index]; hit.has_value()) {
+      assembler.assignUnownedViewAtPosition(position, hit.value());
     } else {
-      missPositions.push_back(i);
-      missIndices.push_back(indices[i]);
+      missPositions.push_back(position);
+      missIndices.push_back(index);
     }
   }
   if (!missIndices.empty()) {
-    auto external = externalVocab_.lookupBatch(missIndices);
-    AD_CONTRACT_CHECK(external.size() == missIndices.size());
-    for (const auto& [position, word] :
-         ::ranges::views::zip(missPositions, external)) {
-      words[position] = std::string{word};
-    }
+    assembler.scatterSubBatchResultAtPositions(
+        externalVocab_.lookupBatch(missIndices), missPositions);
   }
-  return StringVectorVocabBatchLookupData::fromWords(std::move(words));
+  return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 
 // _____________________________________________________________________________
