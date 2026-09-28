@@ -275,12 +275,12 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   // `lookupBatch` rejects empty input, so `sizes` is non-empty here, as the
   // builder requires.
   ContiguousVocabBatchBuilder builder(sizes);
-  // Bind the returned array: `addBatch` takes a span, and the pointers must
-  // stay alive until `wait` returns.
+  // Bind the returned array: the reads take spans, and the pointers must stay
+  // alive until all reads have completed.
   auto targets = builder.targets();
   if (pageCacheFastPath) {
-    auto missed = ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets,
-                                                ql::span<char*>{targets});
+    auto missed =
+        ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets, targets);
     readThroughManager(manager, file_.fd(), sizes, fileOffsets,
                        ql::span<char*>{targets}, missed);
   } else {

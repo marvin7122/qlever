@@ -264,7 +264,7 @@ TEST(VocabularyTest, LookupBatchCompressedBatched) {
   auto v = createExampleVocabulary();
   std::vector<size_t> indices{3, 1, 3, 0, 2, 1, 0, 3, 2, 2, 1, 0};
   auto result = v->lookupBatch(indices);
-  EXPECT_THAT((*result),
+  EXPECT_THAT(result,
               ::testing::ElementsAre("car", "ab", "car", "a", "ba", "ab", "a",
                                      "car", "ba", "ba", "ab", "a"));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*v, result,
