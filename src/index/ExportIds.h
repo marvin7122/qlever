@@ -163,8 +163,10 @@ inline std::optional<std::string> tryFastCopyKnownPrefixIri(
     if (offset == 1) {
       result[0] = '<';
     }
-    table.writePrefixFast(static_cast<WellKnownPrefixId>(i),
-                          ql::span<char>{result.data() + offset, storeSize});
+    const size_t written = table.writePrefixFast(
+        static_cast<WellKnownPrefixId>(i),
+        ql::span<char>{result.data() + offset, storeSize});
+    AD_CORRECTNESS_CHECK(written == prefix.size());
     std::memcpy(result.data() + offset + prefix.size(),
                 content.data() + prefix.size(), content.size() - prefix.size());
     result.resize(full.size());
