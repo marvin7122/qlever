@@ -168,15 +168,15 @@ CPP_template(typename UnderlyingVocabulary,
       // its block. The underlying lookup preserves order, so each word pairs
       // with the index at the same position, exactly like the sequential path.
       auto compressed = underlyingVocabulary_.lookupBatch(indices);
-      AD_CONTRACT_CHECK(compressed->size() == indices.size());
+      AD_CONTRACT_CHECK(compressed.size() == indices.size());
       std::vector<std::string> words;
       words.reserve(indices.size());
       for (const auto& [word, index] :
-           ::ranges::views::zip(*compressed, indices)) {
+           ::ranges::views::zip(compressed, indices)) {
         words.push_back(
             compressionWrapper_.decompress(word, getDecoderIdx(index)));
       }
-      return StringVectorVocabBatchLookupData::fromWords(std::move(words));
+      return makeStringVectorVocabBatchLookupResult(std::move(words));
     }
   }
 

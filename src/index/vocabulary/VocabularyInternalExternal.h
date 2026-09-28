@@ -63,10 +63,7 @@ class VocabularyInternalExternal {
   // Return the words at `indices` in input order, exactly like sequential
   // calls to `operator[]`. Words cached in the internal vocabulary are served
   // from RAM; all other indices are resolved in a single `lookupBatch` on the
-  // external vocabulary. `indices` must not be empty. No word is copied: the
-  // views of words from the internal vocabulary point into this vocabulary, so
-  // the result must not be used after this vocabulary is closed or destroyed;
-  // the result keeps the storage of the external batch alive itself.
+  // external vocabulary. `indices` must not be empty.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
