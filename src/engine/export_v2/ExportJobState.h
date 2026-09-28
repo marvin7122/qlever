@@ -1,6 +1,11 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #pragma once
 
@@ -35,26 +40,40 @@ class ExportJobStateBase {
 };
 
 struct OwnedMorsel {
-  std::shared_ptr<ExportJobStateBase> jobState_;
-  uint64_t submissionEpoch_{0};
-  size_t morselIndex_{0};
+  OwnedMorsel(std::shared_ptr<ExportJobStateBase> jobState,
+              uint64_t submissionEpoch, size_t morselIndex)
+      : submissionEpoch_{submissionEpoch},
+        morselIndex_{morselIndex},
+        jobState_{std::move(jobState)},
+        jobId_{checkedJobId(jobState_)} {}
 
   // The job id is derived from the state, never passed alongside it: the
   // state owns its identity, so a mismatched id is unrepresentable. The
-  // cached id is private so no later mutation can break that guarantee.
-  OwnedMorsel(std::shared_ptr<ExportJobStateBase> jobState,
-              uint64_t submissionEpoch, size_t morselIndex)
-      : jobState_{std::move(jobState)},
-        submissionEpoch_{submissionEpoch},
-        morselIndex_{morselIndex} {
-    AD_CONTRACT_CHECK(jobState_ != nullptr);
-    jobId_ = jobState_->jobId();
+  // state handle is private so no later reassignment can desynchronize the
+  // cached id; move it out with `extractJobState`.
+  [[nodiscard]] const std::shared_ptr<ExportJobStateBase>& jobState()
+      const noexcept {
+    return jobState_;
   }
-
+  [[nodiscard]] std::shared_ptr<ExportJobStateBase> extractJobState() && {
+    return std::move(jobState_);
+  }
   [[nodiscard]] uint64_t jobId() const noexcept { return jobId_; }
 
+  uint64_t submissionEpoch_{0};
+  size_t morselIndex_{0};
+
  private:
-  uint64_t jobId_{0};
+  // Assert the state handle before deriving the cached id, so the identity
+  // invariant holds from construction on without two-phase initialization.
+  static uint64_t checkedJobId(
+      const std::shared_ptr<ExportJobStateBase>& jobState) {
+    AD_CONTRACT_CHECK(jobState != nullptr);
+    return jobState->jobId();
+  }
+
+  std::shared_ptr<ExportJobStateBase> jobState_;
+  uint64_t jobId_;
 };
 
 }  // namespace ad_utility::export_v2

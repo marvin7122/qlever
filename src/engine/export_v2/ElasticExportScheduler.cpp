@@ -226,7 +226,8 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
       const size_t live = liveSessionCount_.load(std::memory_order_relaxed);
       const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
       const size_t share = fairShareUnsafe(live);
-      const size_t committed = committedOutstandingUnsafe(morsel.jobId());
+      const uint64_t jobId = morsel.jobId();
+      const size_t committed = committedOutstandingUnsafe(jobId);
       // Even split with a progress floor of one: below-share sessions post
       // immediately while total capacity allows, the rest wait first-in
       // first-out in pendingAdmission_.
@@ -234,7 +235,7 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
         // Reserve the share atomically with the decision: a concurrent
         // enqueuer must see the reservation, and `postReady` below must
         // not count the morsel a second time.
-        accountOutstandingUnsafe(morsel.jobId());
+        accountOutstandingUnsafe(jobId);
         toPost.emplace(std::move(morsel));
       } else {
         pendingAdmission_.push_back(std::move(morsel));
@@ -382,7 +383,7 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
   pendingAdmission_.erase(
       std::remove_if(
           pendingAdmission_.begin(), pendingAdmission_.end(),
-          [](const OwnedMorsel& m) { return m.jobState_->isCancelled(); }),
+          [](const OwnedMorsel& m) { return m.jobState()->isCancelled(); }),
       pendingAdmission_.end());
   // Admit one pending morsel and account it as outstanding.
   auto admitIt = [this, &readyToPost](auto it) {
@@ -431,7 +432,7 @@ void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
       !isHelperAdmissionEligibleUnsafe()) {
     return;
   }
-  auto targetJobState = std::move(morsel.jobState_);
+  auto targetJobState = std::move(morsel).extractJobState();
   const size_t targetMorselIndex = morsel.morselIndex_;
   const uint64_t submissionEpoch = morsel.submissionEpoch_;
   const uint64_t jobId = morsel.jobId();
@@ -504,7 +505,7 @@ void ElasticExportScheduler::workerLoop() {
       queue_.pop_front();
       queueNotFullCv_.notify_one();
 
-      targetJobState = std::move(morsel.jobState_);
+      targetJobState = std::move(morsel).extractJobState();
       targetMorselIndex = morsel.morselIndex_;
       submissionEpoch = morsel.submissionEpoch_;
       jobId = morsel.jobId();
