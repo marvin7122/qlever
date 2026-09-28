@@ -13,6 +13,7 @@
 #include <gmock/gmock.h>
 
 #include "engine/IndexScan.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "index/LocalVocabEntry.h"
 #include "parser/LiteralOrIri.h"
@@ -22,6 +23,7 @@
 #include "util/IdTestHelpers.h"
 #include "util/IndexTestHelpers.h"
 #include "util/ParseableDuration.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
@@ -301,6 +303,48 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
   }
 }
 
+// Same as `idsToStringAndTypeBatchMatchesIndividualLookups`, but with
+// `use-aligned-vocab-batch-lookup-buffer` switched on, so the
+// `VocabIndex` batch in `resolveVocabIndexIds` is staged through
+// `AlignedBatchBuffer` instead of a plain `std::vector<size_t>`. The result
+// must be byte-identical to the default (flag off) path.
+TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookupsAlignedBuffer) {
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::useAlignedVocabBatchLookupBuffer_>(true);
+
+  std::string kg =
+      "<s> <p> <o> . "
+      "<s> <q> \"hello\" . "
+      "<s> <p> 42 . "
+      "<s> <p> 3.14 .";
+  auto qec = ad_utility::testing::getQec(kg);
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  auto getId = ad_utility::testing::makeGetId(index);
+
+  std::vector<Id> ids{
+      getId("<s>"),
+      getId("<p>"),
+      getId("<o>"),
+      getId("<q>"),
+      getId("\"hello\""),
+      Id::makeFromInt(42),
+      Id::makeFromDouble(3.14),
+      Id::makeUndefined(),
+  };
+  ql::ranges::sort(ids);
+
+  auto batchResults = ql::exportIds::idsToStringAndType(
+      index, ql::span<const Id>{ids}, localVocab);
+
+  ASSERT_EQ(batchResults.size(), ids.size());
+  for (size_t i = 0; i < ids.size(); ++i) {
+    EXPECT_EQ(batchResults[i],
+              ql::exportIds::idToStringAndType(index, ids[i], localVocab))
+        << "Mismatch at index " << i;
+  }
+}
+
 // _____________________________________________________________________________
 // Empty span returns an empty vector.
 TEST(ExportIds, idsToStringAndTypeEmptyInput) {
@@ -309,6 +353,37 @@ TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto result = ql::exportIds::idsToStringAndType(
       qec->getIndex(), ql::span<const Id>{}, localVocab);
   EXPECT_TRUE(result.empty());
+}
+
+// _____________________________________________________________________________
+// The `fast-int-to-string-for-export` runtime parameter must not change the
+// serialized result of `xsd:int` literals; it only selects the formatting
+// implementation.
+TEST(ExportIds, fastIntToStringForExportProducesIdenticalResults) {
+  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+
+  std::vector<int64_t> values{0,         1,          -1,        42,       -42,
+                              999999999, -999999999, INT64_MAX, INT64_MIN};
+
+  setRuntimeParameter<&RuntimeParameters::fastIntToStringForExport_>(false);
+  std::vector<std::optional<std::pair<std::string, const char*>>>
+      baselineResults;
+  for (int64_t v : values) {
+    baselineResults.push_back(ql::exportIds::idToStringAndType(
+        index, Id::makeFromInt(v), localVocab));
+  }
+
+  setRuntimeParameter<&RuntimeParameters::fastIntToStringForExport_>(true);
+  for (size_t i = 0; i < values.size(); ++i) {
+    auto fastResult = ql::exportIds::idToStringAndType(
+        index, Id::makeFromInt(values[i]), localVocab);
+    EXPECT_EQ(fastResult, baselineResults[i])
+        << "Mismatch for value " << values[i];
+  }
+  // Reset to the default so other tests are unaffected.
+  setRuntimeParameter<&RuntimeParameters::fastIntToStringForExport_>(false);
 }
 
 using ResolveResult =
@@ -532,6 +607,55 @@ TYPED_TEST(ExportIdsLiteralOrIriToStringAndTypeTest, blankNodeIris) {
 }
 
 // _____________________________________________________________________________
+// The vectorized-prefix fast path (gated by the `use-vectorized-prefix-export`
+// runtime parameter) must produce byte-identical output to the plain path,
+// whether it is on or off, for well-known prefixes, prefixes with a length
+// that is not a multiple of 16, and IRIs that are not well-known.
+TYPED_TEST(ExportIdsLiteralOrIriToStringAndTypeTest,
+           vectorizedPrefixExportIsByteIdentical) {
+  for (bool useFastPath : {false, true}) {
+    setRuntimeParameter<&RuntimeParameters::useVectorizedPrefixExport_>(
+        useFastPath);
+    SCOPED_TRACE(absl::StrCat("useVectorizedPrefixExport=", useFastPath));
+
+    // `http://schema.org/` (19 bytes, not a multiple of 16) plus a suffix.
+    TestFixture::checkAllFlagCombinations(
+        "<http://schema.org/name>",
+        {.plain_ = "X:<http://schema.org/name>",
+         .removeQuotesAndAngleBrackets_ = "X:http://schema.org/name",
+         .returnOnlyLiterals_ = std::nullopt,
+         .both_ = std::nullopt});
+
+    // `http://www.wikidata.org/entity/` (32 bytes, exact multiple of 16).
+    TestFixture::checkAllFlagCombinations(
+        "<http://www.wikidata.org/entity/Q42>",
+        {.plain_ = "X:<http://www.wikidata.org/entity/Q42>",
+         .removeQuotesAndAngleBrackets_ =
+             "X:http://www.wikidata.org/entity/Q42",
+         .returnOnlyLiterals_ = std::nullopt,
+         .both_ = std::nullopt});
+
+    // A prefix on its own, with no suffix at all.
+    TestFixture::checkAllFlagCombinations(
+        "<http://schema.org/>",
+        {.plain_ = "X:<http://schema.org/>",
+         .removeQuotesAndAngleBrackets_ = "X:http://schema.org/",
+         .returnOnlyLiterals_ = std::nullopt,
+         .both_ = std::nullopt});
+
+    // An IRI that is not one of the well-known prefixes must not be touched.
+    TestFixture::checkAllFlagCombinations(
+        "<http://example.org/x>",
+        {.plain_ = "X:<http://example.org/x>",
+         .removeQuotesAndAngleBrackets_ = "X:http://example.org/x",
+         .returnOnlyLiterals_ = std::nullopt,
+         .both_ = std::nullopt});
+  }
+  // Restore the default so other tests are unaffected.
+  setRuntimeParameter<&RuntimeParameters::useVectorizedPrefixExport_>(false);
+}
+
+// _____________________________________________________________________________
 TEST(ExportIds, partitionIdPositions) {
   using namespace ad_utility::testing;
 
@@ -630,6 +754,38 @@ TEST(ExportIds, resolveNonVocabIndexIds) {
   check({0, 1, 2, 3});
   // A subset (`Undefined` + local literal); untouched slots stay `nullopt`.
   check({2, 3});
+}
+
+// _____________________________________________________________________________
+// `idToStringAndTypeForEncodedValue` must return byte-identical results for
+// `Bool` and `Int` regardless of `use-branchless-type-dispatcher`, since that
+// runtime parameter only changes the formatting mechanism (a LUT-based
+// `BranchlessTypeDispatcher` dispatch instead of the hand-written `switch`),
+// not the formatted output.
+TEST(ExportIds, idToStringAndTypeForEncodedValueBranchlessDispatcherFlag) {
+  auto testForBothFlagValues = [](Id id) {
+    setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(
+        false);
+    auto withoutDispatcher =
+        ql::exportIds::idToStringAndTypeForEncodedValue(id);
+    setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(true);
+    auto withDispatcher = ql::exportIds::idToStringAndTypeForEncodedValue(id);
+    setRuntimeParameter<&RuntimeParameters::useBranchlessTypeDispatcher_>(
+        false);
+
+    ASSERT_TRUE(withoutDispatcher.has_value());
+    ASSERT_TRUE(withDispatcher.has_value());
+    EXPECT_EQ(withoutDispatcher->first, withDispatcher->first);
+    EXPECT_STREQ(withoutDispatcher->second, withDispatcher->second);
+  };
+
+  testForBothFlagValues(Id::makeFromBool(true));
+  testForBothFlagValues(Id::makeFromBool(false));
+  testForBothFlagValues(Id::makeFromInt(0));
+  testForBothFlagValues(Id::makeFromInt(42));
+  testForBothFlagValues(Id::makeFromInt(-1337));
+  testForBothFlagValues(Id::makeFromInt(std::numeric_limits<int64_t>::max()));
+  testForBothFlagValues(Id::makeFromInt(std::numeric_limits<int64_t>::min()));
 }
 
 }  // namespace

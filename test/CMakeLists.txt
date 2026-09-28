@@ -138,6 +138,8 @@ add_compile_definitions(QLEVER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
+
+addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
@@ -264,6 +266,10 @@ addLinkAndDiscoverTest(ParsedUriTest)
 
 addLinkAndDiscoverTestNoLibs(StringSortComparatorTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(FastIntToStringTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest qlever_util rdfEscaping)
+
 addLinkAndDiscoverTestNoLibs(LocaleManagerTest stringUtils)
 
 addLinkAndDiscoverTestNoLibs(GenericCharTraitsTest)
@@ -279,6 +285,8 @@ addLinkAndDiscoverTestNoLibs(AllocatorPmrTest)
 addLinkAndDiscoverTestNoLibs(AllocatorBackendTest)
 
 addLinkAndDiscoverTestNoLibs(AlignedAllocatorTest)
+
+addLinkAndDiscoverTestNoLibs(StreamingBufferWriterTest)
 
 addLinkAndDiscoverTest(MinusTest engine)
 
@@ -545,6 +553,8 @@ addLinkAndDiscoverTest(GeometryInfoTest qlever_util)
 
 addLinkAndDiscoverTest(QueryRewriteUtilTest engine)
 
+addLinkAndDiscoverTest(PrefetchingBatchResolverTest engine)
+
 addLinkAndDiscoverTest(HttpErrorTest engine)
 
 addLinkAndDiscoverTest(TimeTracerTest)
@@ -572,6 +582,8 @@ addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
+addLinkAndDiscoverTest(RegisteredIoUringReaderTest)
+
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
 addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
@@ -579,7 +591,11 @@ addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
 addLinkAndDiscoverTest(ExternalValuesQueryTest engine)
 addLinkAndDiscoverTest(ExternalValuesTest engine)
 
+addLinkAndDiscoverTest(AsyncChunkPipelineTest engine)
+
 addLinkAndDiscoverTest(ConstructBatchEvaluatorTest engine)
+
+addLinkAndDiscoverTest(FastExportStreamFormatterTest engine rdfEscaping)
 
 addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
