@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -34,6 +33,7 @@
 #define QLEVER_SSE2_TARGET
 #endif
 
+#include "absl/numeric/bits.h"
 #include "backports/span.h"
 #include "global/Id.h"
 #include "global/ValueId.h"
@@ -112,23 +112,23 @@ class ValidityBitmask64 {
   }
 
   [[nodiscard]] constexpr size_t countValid() const noexcept {
-    return static_cast<size_t>(std::popcount(mask_));
+    return static_cast<size_t>(absl::popcount(mask_));
   }
 
   [[nodiscard]] constexpr size_t countUnbound() const noexcept {
-    return 64 - static_cast<size_t>(std::popcount(mask_));
+    return 64 - static_cast<size_t>(absl::popcount(mask_));
   }
 
   [[nodiscard]] constexpr uint64_t rawMask() const noexcept { return mask_; }
 
   // Returns the index of the first unbound row (0..63), or 64 if all are valid.
   [[nodiscard]] constexpr size_t firstUnboundIndex() const noexcept {
-    return static_cast<size_t>(std::countr_one(mask_));
+    return static_cast<size_t>(absl::countr_one(mask_));
   }
 
   // Returns the index of the first valid row (0..63), or 64 if all are unbound.
   [[nodiscard]] constexpr size_t firstValidIndex() const noexcept {
-    return mask_ == 0ULL ? 64 : static_cast<size_t>(std::countr_zero(mask_));
+    return mask_ == 0ULL ? 64 : static_cast<size_t>(absl::countr_zero(mask_));
   }
 
   // Iteration helpers over set/unset bits
@@ -136,7 +136,7 @@ class ValidityBitmask64 {
   void forEachValid(Func&& func) const {
     uint64_t remaining = mask_;
     while (remaining != 0) {
-      size_t idx = static_cast<size_t>(std::countr_zero(remaining));
+      size_t idx = static_cast<size_t>(absl::countr_zero(remaining));
       func(idx);
       remaining &= (remaining - 1);  // Clear lowest set bit
     }
@@ -146,7 +146,7 @@ class ValidityBitmask64 {
   void forEachUnbound(Func&& func) const {
     uint64_t remaining = ~mask_;
     while (remaining != 0) {
-      size_t idx = static_cast<size_t>(std::countr_zero(remaining));
+      size_t idx = static_cast<size_t>(absl::countr_zero(remaining));
       func(idx);
       remaining &= (remaining - 1);  // Clear lowest set bit
     }
