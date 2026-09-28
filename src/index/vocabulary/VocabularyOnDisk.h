@@ -216,9 +216,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
                                       ql::span<const size_t> indices,
                                       bool pageCacheFastPath) const;
 
-  // Block until the reads in `pending` complete and return their `OffsetPair`s.
+  // Block until the reads in `pending` complete and move their `OffsetPair`s
+  // out of `pending`.
   static std::vector<OffsetPair> waitOffsetPairs(
-      ad_utility::BatchManagerBase& manager, PendingOffsetRead pending);
+      ad_utility::BatchManagerBase& manager, PendingOffsetRead& pending);
 
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched

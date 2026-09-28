@@ -277,7 +277,7 @@ VocabularyOnDisk::PendingOffsetRead VocabularyOnDisk::submitOffsetPairs(
 
 // _____________________________________________________________________________
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::waitOffsetPairs(
-    ad_utility::BatchManagerBase& manager, PendingOffsetRead pending) {
+    ad_utility::BatchManagerBase& manager, PendingOffsetRead& pending) {
   if (pending.handle_.has_value()) {
     manager.wait(pending.handle_.value());
   }
@@ -288,8 +288,8 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::waitOffsetPairs(
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
     bool pageCacheFastPath) const {
-  return waitOffsetPairs(
-      manager, submitOffsetPairs(manager, indices, pageCacheFastPath));
+  auto pending = submitOffsetPairs(manager, indices, pageCacheFastPath);
+  return waitOffsetPairs(manager, pending);
 }
 
 // _____________________________________________________________________________
@@ -449,10 +449,11 @@ VocabLookupOutput VocabularyOnDisk::lookupBatchesStreamed(
               "`VocabularyOnDisk::lookupBatchesStreamed`");
           return std::nullopt;
         }
-        PendingOffsetRead oldest = std::move(state->pending_.front());
-        state->pending_.pop_front();
+        // Pop the oldest batch only after its reads completed, so that the
+        // destructor still drains them if the wait throws.
         std::vector<OffsetPair> offsetPairs =
-            waitOffsetPairs(*state->manager_, std::move(oldest));
+            waitOffsetPairs(*state->manager_, state->pending_.front());
+        state->pending_.pop_front();
         return state->vocabulary_->readStrings(*state->manager_, offsetPairs,
                                                state->pageCacheFastPath_);
       }}};
