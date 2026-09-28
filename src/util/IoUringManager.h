@@ -161,6 +161,44 @@ struct SyncIoPolicy {
                                uint64_t fileOffset);
 };
 
+// Process-wide counts of the `io_uring` submissions of the batch lookup, so
+// that a benchmark can check which submission path actually ran. They are only
+// maintained in builds configured with `-DQLEVER_IOURING_STATS=ON`
+// (`IO_URING_STATS_ENABLED`); otherwise no call site records anything and every
+// count stays 0.
+struct IoUringStats {
+  // Reads submitted with `IOSQE_FIXED_FILE` (a registered file slot).
+  uint64_t fixedFileSqes = 0;
+  // Reads submitted with a plain file descriptor.
+  uint64_t plainFdSqes = 0;
+  // Updates of a ring's fixed-file table (`IORING_REGISTER_FILES_UPDATE`).
+  uint64_t filesUpdateCalls = 0;
+
+  // The counts accumulated since `before` was taken.
+  IoUringStats operator-(const IoUringStats& before) const {
+    return {fixedFileSqes - before.fixedFileSqes,
+            plainFdSqes - before.plainFdSqes,
+            filesUpdateCalls - before.filesUpdateCalls};
+  }
+};
+
+#ifdef QLEVER_IOURING_STATS
+inline constexpr bool IO_URING_STATS_ENABLED = true;
+#else
+inline constexpr bool IO_URING_STATS_ENABLED = false;
+#endif
+
+// The current counts (all 0 unless `IO_URING_STATS_ENABLED`).
+IoUringStats ioUringStatsSnapshot();
+
+namespace detail {
+// Record one submitted read, with or without `IOSQE_FIXED_FILE`, and one
+// fixed-file table update. Call sites guard these with
+// `if constexpr (IO_URING_STATS_ENABLED)`.
+void recordIoUringSqe(bool fixedFile);
+void recordIoUringFilesUpdate();
+}  // namespace detail
+
 // The fixed-file slot table of one `io_uring` ring, without the ring itself:
 // which caller descriptor occupies which slot, and the `dup`ed descriptor that
 // the ring holds for it. The `dup` keeps the ring's table entry alive
@@ -281,6 +319,12 @@ class IoUringPolicy {
   // over an already registered one fails with `EBUSY`, and updating one slot
   // leaves the other slots (and reads in flight on them) untouched.
   FixedFileSlots fixedFileSlots_{[this](unsigned slot, int registeredFd) {
+    if constexpr (IO_URING_STATS_ENABLED) {
+      detail::recordIoUringFilesUpdate();
+    }
+    if constexpr (IO_URING_STATS_ENABLED) {
+      detail::recordIoUringFilesUpdate();
+    }
     return io_uring_register_files_update(&ring_, slot, &registeredFd, 1);
   }};
 

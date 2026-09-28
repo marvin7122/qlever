@@ -805,4 +805,60 @@ TEST(FixedFileSlots, defaultSyscallsDupAndCloseARealDescriptor) {
   EXPECT_EQ(errno, EBADF);
   EXPECT_NE(fcntl(fd, F_GETFD), -1);
 }
+// `IoUringStats::operator-` subtracts field by field.
+TEST(IoUringStats, differenceIsPerField) {
+  const ad_utility::IoUringStats after{10, 20, 3};
+  const ad_utility::IoUringStats before{4, 5, 1};
+  const ad_utility::IoUringStats delta = after - before;
+  EXPECT_EQ(delta.fixedFileSqes, 6u);
+  EXPECT_EQ(delta.plainFdSqes, 15u);
+  EXPECT_EQ(delta.filesUpdateCalls, 2u);
+}
+
+#ifdef QLEVER_HAS_IO_URING
+// With `-DQLEVER_IOURING_STATS=ON`, every read of the fixed-file policy counts
+// as one `IOSQE_FIXED_FILE` submission and every newly registered file as one
+// table update. Without the option, nothing is counted.
+TEST(IoUringStats, countsFixedFileReadsAndTableUpdates) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  const auto firstFile = makeTempFile("AAAABBBB");
+  const auto secondFile = makeTempFile("CCCC");
+  const ad_utility::IoUringStats before = ad_utility::ioUringStatsSnapshot();
+  {
+    ad_utility::IoUringPolicy policy{64};
+    std::string a(4, '\0');
+    std::string b(4, '\0');
+    std::string c(4, '\0');
+    const std::array<size_t, 2> twoSizes{4, 4};
+    const std::array<uint64_t, 2> twoOffsets{0, 4};
+    std::array<char*, 2> twoBuffers{a.data(), b.data()};
+    const std::array<size_t, 1> oneSize{4};
+    const std::array<uint64_t, 1> oneOffset{0};
+    std::array<char*, 1> oneBuffer{c.data()};
+    policy.addBatch(firstFile.second, twoSizes, twoOffsets, twoBuffers, 0);
+    policy.wait(0);
+    policy.addBatch(secondFile.second, oneSize, oneOffset, oneBuffer, 1);
+    policy.wait(1);
+    policy.addBatch(firstFile.second, oneSize, oneOffset, oneBuffer, 2);
+    policy.wait(2);
+    EXPECT_EQ(a, "AAAA");
+    EXPECT_EQ(b, "BBBB");
+    EXPECT_EQ(c, "AAAA");
+  }
+  const ad_utility::IoUringStats delta =
+      ad_utility::ioUringStatsSnapshot() - before;
+  if constexpr (ad_utility::IO_URING_STATS_ENABLED) {
+    EXPECT_EQ(delta.fixedFileSqes, 4u);
+    EXPECT_EQ(delta.plainFdSqes, 0u);
+    EXPECT_EQ(delta.filesUpdateCalls, 2u);
+  } else {
+    EXPECT_EQ(delta.fixedFileSqes, 0u);
+    EXPECT_EQ(delta.plainFdSqes, 0u);
+    EXPECT_EQ(delta.filesUpdateCalls, 0u);
+  }
+}
+#endif
 }  // namespace

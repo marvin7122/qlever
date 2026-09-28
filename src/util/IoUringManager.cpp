@@ -24,12 +24,28 @@
 namespace ad_utility {
 
 namespace {
-std::atomic<uint64_t> fixedFileReadsSubmitted{0};
+// The counters behind `ioUringStatsSnapshot`; see `IoUringStats`.
+std::atomic<uint64_t> numFixedFileSqes{0};
+std::atomic<uint64_t> numPlainFdSqes{0};
+std::atomic<uint64_t> numFilesUpdateCalls{0};
 }  // namespace
 
 //______________________________________________________________________________
-uint64_t numFixedFileReadsSubmitted() {
-  return fixedFileReadsSubmitted.load(std::memory_order_relaxed);
+IoUringStats ioUringStatsSnapshot() {
+  return {numFixedFileSqes.load(std::memory_order_relaxed),
+          numPlainFdSqes.load(std::memory_order_relaxed),
+          numFilesUpdateCalls.load(std::memory_order_relaxed)};
+}
+
+//______________________________________________________________________________
+void detail::recordIoUringSqe(bool fixedFile) {
+  (fixedFile ? numFixedFileSqes : numPlainFdSqes)
+      .fetch_add(1, std::memory_order_relaxed);
+}
+
+//______________________________________________________________________________
+void detail::recordIoUringFilesUpdate() {
+  numFilesUpdateCalls.fetch_add(1, std::memory_order_relaxed);
 }
 
 //______________________________________________________________________________
@@ -245,7 +261,9 @@ void IoUringPolicy::addBatch(int fd,
                        static_cast<unsigned>(numBytesToRead),
                        static_cast<__u64>(fileOffset));
     sqe->flags |= IOSQE_FIXED_FILE;
-    fixedFileReadsSubmitted.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (IO_URING_STATS_ENABLED) {
+      detail::recordIoUringSqe(true);
+    }
 
     // Tag the SQE with a unique request id and record its metadata (the batch
     // it belongs to and how many bytes it should read). io_uring copies the
