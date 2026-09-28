@@ -15,11 +15,13 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
+#include "util/NvmePassthrough.h"
 
 #ifdef QLEVER_HAS_IO_URING
 #include <liburing.h>
@@ -85,6 +87,12 @@ class BatchManager final : public BatchManagerBase {
   using BatchHandle = typename BatchManagerBase::BatchHandle;
 
   explicit BatchManager(unsigned ringSize = 256) : policy_(ringSize) {}
+
+  // Same, but forward NVMe passthrough options to the policy. Only usable with
+  // policies that accept them (`IoUringPolicy`); instantiating it for any other
+  // policy fails to compile, which is intended.
+  BatchManager(unsigned ringSize, const nvmePassthrough::Options& nvmeOptions)
+      : policy_(ringSize, nvmeOptions) {}
 
   BatchManager(const BatchManager&) = delete;
   BatchManager& operator=(const BatchManager&) = delete;
@@ -186,12 +194,14 @@ class IoUringPolicy {
   ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
-  // belongs to, and how many bytes it was supposed to read (so that reading
-  // fewer bytes than expected can be detected). See
-  // `inFlightReadsByRequestId_`.
+  // belongs to, how many bytes it was supposed to read (so that reading fewer
+  // bytes than expected can be detected), and whether it was submitted as an
+  // NVMe passthrough command (whose completion carries a command status
+  // instead of a byte count). See `inFlightReadsByRequestId_`.
   struct InFlightRead {
     BatchHandle batchHandle;
     size_t expectedNumBytes;
+    bool isNvmePassthrough = false;
   };
 
   // Monotonically increasing counter that mints a unique request id for each
@@ -207,13 +217,67 @@ class IoUringPolicy {
   // Wait for one CQE and update the in-flight bookkeeping.
   void drainOneCqe();
 
+  // NVMe passthrough (`IORING_OP_URING_CMD`) state, see `NvmePassthrough.h`.
+  // Only set by the constructor that takes `nvmePassthrough::Options`, and only
+  // if the ring could be created with the 128-byte SQEs and 32-byte CQEs that
+  // the NVMe driver requires. When set, `addBatch` submits a read of an fd that
+  // passes `isNvmeCapable` as a native NVMe read if its range is whole
+  // logical blocks, and as a plain read otherwise, so the bytes read are the
+  // same either way. There is no fallback after submission: a device that
+  // rejects the command completes it with an error, which `wait` reports.
+  bool nvmePassthroughEnabled_ = false;
+  uint32_t nvmeNamespaceId_ = 0;
+  uint32_t nvmeLogicalBlockSize_ = 0;
+
+  // Per-fd result of the capability probe (`isNvmeCapable`), keyed by the fd
+  // number. It is therefore only valid while each probed fd stays open: every
+  // fd passed to `addBatch` must outlive this policy (as in
+  // `VocabularyOnDisk`, which owns both its files and its pool of managers).
+  mutable ad_utility::HashMap<int, bool> nvmeCapableFds_;
+
+  // If passthrough applies to this read, prepare `sqe` as a native NVMe read of
+  // `numBytes` bytes at `fileOffset` of `fd` into `targetBuffer` and return
+  // true. Otherwise leave `sqe` untouched and return false, so the caller
+  // prepares a plain read.
+  bool tryPrepareNvmePassthrough(io_uring_sqe* sqe, int fd, uint64_t fileOffset,
+                                 size_t numBytes, char* targetBuffer);
+
+  // Create the ring with default (64-byte) SQEs. Throws if the kernel rejects
+  // the setup.
+  void initPlainRing();
+
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
+
+  // Same, but with NVMe passthrough options. If `nvmeOptions.enabled`, the
+  // namespace id and block size must be nonzero (checked), and the ring is
+  // created with the 128-byte SQEs and 32-byte CQEs that NVMe `uring_cmd`
+  // requires. If this build has no NVMe `uring_cmd` support, a plain ring with
+  // passthrough disabled is created instead (with a warning). If the kernel
+  // rejects the extended ring, construction throws like the primary
+  // constructor.
+  IoUringPolicy(unsigned ringSize, const nvmePassthrough::Options& nvmeOptions);
   ~IoUringPolicy();
+
+  // True iff reads of capable fds are submitted as NVMe passthrough commands.
+  bool isNvmePassthroughEnabled() const { return nvmePassthroughEnabled_; }
+
+  // True iff `fd` passed the passthrough capability probe
+  // (`nvmePassthrough::isPassthroughCandidate` for the configured namespace).
+  // The first call per fd probes, later calls reuse the cached result. Never
+  // throws for a failed probe.
+  bool isNvmeCapable(int fd) const;
+
+  // Override the capability probe result for `fd`. Only for tests, which have
+  // no NVMe device: marking a regular file capable makes `addBatch` submit
+  // native NVMe commands to it, which the kernel rejects.
+  void setNvmeCapableForTesting(int fd, bool capable) {
+    nvmeCapableFds_[fd] = capable;
+  }
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain
@@ -237,18 +301,46 @@ using BatchIoManager = BatchManager<IoUringPolicy>;
 using BatchIoManager = BatchManager<SyncIoPolicy>;
 #endif
 
+// Serve the reads of a batch that are fully in the page cache with
+// non-blocking `preadv2(RWF_NOWAIT)` calls, and return the positions (indices
+// into the three spans, ascending) of the reads that were not served. The
+// caller must issue those through its regular path, which also reports real
+// errors. Reads whose file ranges are exactly adjacent (`offsets[i] +
+// numBytes[i] == offsets[i + 1]`) are coalesced into one `preadv2` call with
+// one `iovec` per read. A read is served only if all of its bytes were read:
+// `EAGAIN` (not cached), a short read (end of file, or only a prefix cached)
+// or any other error leaves the read (and, for a failed call, the rest of its
+// run) to the caller. If the kernel or file system rejects `RWF_NOWAIT`
+// (`EOPNOTSUPP`), the fast path is disabled for the rest of the process (see
+// `pageCacheFastPathIsSupported`), which is logged once. Without
+// `RWF_NOWAIT` support at compile time, every read is returned.
+// Precondition: the three spans have the same length.
+std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
+                                      ql::span<const uint64_t> offsets,
+                                      ql::span<char*> buffers);
+
+// False once `readPageCacheHits` found that `RWF_NOWAIT` is not supported, or
+// if it is not available at compile time.
+bool pageCacheFastPathIsSupported();
+
 // Build a batch manager. When io_uring is compiled in and the runtime flag
 // `preferIoUring` is set, try to build an `IoUringManager`. If its setup
 // syscall fails at runtime clear `preferIoUring` and fall back to a
 // `SyncIoManager`. Passing the flag by reference makes this probe-once: after
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall.
+//
+// If `nvmeOptions.enabled`, the io_uring manager is created with NVMe
+// passthrough (see `IoUringPolicy`). The synchronous fallback never uses
+// passthrough.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
+    bool& preferIoUring, unsigned ringSize = 256,
+    const nvmePassthrough::Options& nvmeOptions = {}) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize);
+      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize,
+                                                           nvmeOptions);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
@@ -260,6 +352,7 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
   }
 #else
   preferIoUring = false;
+  (void)nvmeOptions;
 #endif
   return std::make_unique<BatchManager<SyncIoPolicy>>(ringSize);
 }

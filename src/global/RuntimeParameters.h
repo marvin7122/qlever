@@ -1,6 +1,12 @@
-//   Copyright 2024, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
@@ -220,6 +226,46 @@ struct RuntimeParameters {
   // debug caching issues, and to get rid of the overhead of caching (in
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
+
+  // If set to true, `VocabularyOnDisk::lookupBatch` first reads the vocabulary
+  // words (and their offsets) that are in the page cache with non-blocking
+  // `preadv2(RWF_NOWAIT)` calls (adjacent ranges coalesced into one call) and
+  // submits only the remaining reads to its `io_uring` ring. A read that hits
+  // the page cache then costs a share of one syscall instead of an `io_uring`
+  // submission and completion; a read that misses costs one extra failed
+  // syscall per run of adjacent ranges.
+  Bool vocabularyIouringPageCacheFastPath_{
+      false, "vocabulary-iouring-page-cache-fast-path"};
+
+  // NVMe passthrough for the words file of an on-disk vocabulary (see
+  // `VocabularyOnDisk` and `util/NvmePassthrough.h`). If set when an index is
+  // loaded, and the words file is an NVMe generic character device
+  // (`/dev/ngXnY` holding the words file image from LBA 0 on), batch lookups
+  // whose words are far apart are read with native NVMe commands through
+  // `io_uring` (`IORING_OP_URING_CMD`), bypassing the page cache and the block
+  // layer. All other reads of the words file go through the block device of
+  // the same namespace (`/dev/nvmeXnY`). On a regular words file, the same
+  // routing and coalescing is applied, but every read is a plain read. Only
+  // read when the index is loaded; off by default.
+  Bool vocabularyNvmePassthrough_{false, "vocabulary-nvme-passthrough"};
+
+  // The NVMe namespace id of the device that holds the words file, see
+  // `vocabulary-nvme-passthrough`. Must match the id that the device reports.
+  SizeT vocabularyNvmeNamespaceId_{1, "vocabulary-nvme-namespace-id"};
+
+  // For `vocabulary-nvme-passthrough`: the largest gap (in 512-byte blocks)
+  // between two words of a batch that is read as part of one NVMe command
+  // instead of starting a new command. A command covers at most 256 blocks
+  // (128 KiB).
+  SizeT vocabularyNvmeMaxGapBlocks_{32, "vocabulary-nvme-max-gap-blocks"};
+
+  // For `vocabulary-nvme-passthrough`: a batch of word reads whose median gap
+  // between consecutive words (in file order) is at most this size is read
+  // through the buffered block device, where readahead serves several words
+  // per device read; a batch with larger gaps is read with NVMe passthrough.
+  MemorySizeParameter vocabularyNvmeMaxBufferedMedianGap_{
+      ad_utility::MemorySize::bytes(128 * 1024),
+      "vocabulary-nvme-max-buffered-median-gap"};
 
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be

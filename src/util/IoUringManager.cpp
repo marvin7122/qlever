@@ -10,8 +10,14 @@
 
 #include "util/IoUringManager.h"
 
+#include <absl/strings/str_cat.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <cerrno>
+#include <climits>
+#include <cstring>
 #include <stdexcept>
 
 #include "util/Exception.h"
@@ -40,6 +46,87 @@ void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
   }
 }
 
+namespace {
+#ifdef RWF_NOWAIT
+// Cleared once a `preadv2(RWF_NOWAIT)` fails with `EOPNOTSUPP`.
+std::atomic<bool> pageCacheFastPathSupported{true};
+#endif
+}  // namespace
+
+//______________________________________________________________________________
+bool pageCacheFastPathIsSupported() {
+#ifdef RWF_NOWAIT
+  return pageCacheFastPathSupported.load(std::memory_order_relaxed);
+#else
+  return false;
+#endif
+}
+
+//______________________________________________________________________________
+std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
+                                      ql::span<const uint64_t> offsets,
+                                      ql::span<char*> buffers) {
+  AD_CONTRACT_CHECK(offsets.size() == numBytes.size() &&
+                    buffers.size() == numBytes.size());
+  std::vector<size_t> notServed;
+#ifdef RWF_NOWAIT
+  const size_t numReads = numBytes.size();
+  std::vector<iovec> iovecs;
+  size_t runBegin = 0;
+  while (runBegin < numReads) {
+    // The run `[runBegin, runEnd)` holds exactly adjacent file ranges, at most
+    // `IOV_MAX` of them (the limit of one `preadv2` call).
+    size_t runEnd = runBegin + 1;
+    while (runEnd < numReads &&
+           runEnd - runBegin < static_cast<size_t>(IOV_MAX) &&
+           offsets[runEnd - 1] + numBytes[runEnd - 1] == offsets[runEnd]) {
+      ++runEnd;
+    }
+    if (!pageCacheFastPathSupported.load(std::memory_order_relaxed)) {
+      for (size_t i = runBegin; i < numReads; ++i) {
+        notServed.push_back(i);
+      }
+      return notServed;
+    }
+    iovecs.clear();
+    for (size_t i = runBegin; i < runEnd; ++i) {
+      iovecs.push_back(iovec{buffers[i], numBytes[i]});
+    }
+    // See https://man7.org/linux/man-pages/man2/preadv2.2.html: with
+    // `RWF_NOWAIT`, the call fails with `EAGAIN` (or returns fewer bytes)
+    // instead of waiting for the storage device when data is not cached.
+    const ssize_t numBytesRead =
+        preadv2(fd, iovecs.data(), static_cast<int>(iovecs.size()),
+                static_cast<off_t>(offsets[runBegin]), RWF_NOWAIT);
+    if (numBytesRead < 0 && errno == EOPNOTSUPP) {
+      if (pageCacheFastPathSupported.exchange(false)) {
+        AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported for the "
+                       "vocabulary files; reading them without the "
+                       "page-cache fast path"
+                    << std::endl;
+      }
+    }
+    // Reads that were read completely are served, the others (from the first
+    // incomplete one on) are left to the caller.
+    size_t remaining = numBytesRead < 0 ? 0 : static_cast<size_t>(numBytesRead);
+    size_t i = runBegin;
+    for (; i < runEnd && remaining >= numBytes[i]; ++i) {
+      remaining -= numBytes[i];
+    }
+    for (; i < runEnd; ++i) {
+      notServed.push_back(i);
+    }
+    runBegin = runEnd;
+  }
+#else
+  (void)fd;
+  for (size_t i = 0; i < numBytes.size(); ++i) {
+    notServed.push_back(i);
+  }
+#endif
+  return notServed;
+}
+
 //______________________________________________________________________________
 void SyncIoPolicy::addBatch(int fd,
                             ql::span<const size_t> numBytesToReadPerRequest,
@@ -56,7 +143,7 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+void IoUringPolicy::initPlainRing() {
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
   // submission queue. liburing rounds the requested size up to a power of two,
@@ -68,6 +155,82 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   if (ret < 0) {
     AD_THROW("io_uring_queue_init failed in IoUringManager");
   }
+}
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+  initPlainRing();
+}
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize,
+                             const nvmePassthrough::Options& nvmeOptions)
+    : ringSize_(ringSize) {
+  if (!nvmeOptions.enabled) {
+    initPlainRing();
+    return;
+  }
+  AD_CONTRACT_CHECK(
+      nvmeOptions.namespaceId != 0 && nvmeOptions.logicalBlockSize != 0,
+      "NVMe passthrough requires a nonzero namespace id and block size");
+  if constexpr (!nvmePassthrough::kUringCmdSupported) {
+    AD_LOG_WARN << "NVMe passthrough was requested, but this build has no NVMe "
+                   "`uring_cmd` support; reading with plain io_uring reads"
+                << std::endl;
+    initPlainRing();
+    return;
+  }
+#ifdef QLEVER_HAS_NVME_URING_CMD
+  // The 128-byte SQEs carry the 80-byte NVMe command, and the NVMe driver only
+  // accepts `uring_cmd` on rings that also have 32-byte CQEs. Plain reads work
+  // unchanged on such a ring, so reads that do not qualify for passthrough are
+  // submitted as before.
+  io_uring_params params{};
+  params.flags = IORING_SETUP_SQE128 | IORING_SETUP_CQE32;
+  const int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
+  if (ret < 0) {
+    AD_THROW(
+        absl::StrCat("io_uring_queue_init_params with IORING_SETUP_SQE128 and "
+                     "IORING_SETUP_CQE32 failed in IoUringPolicy: ",
+                     std::strerror(-ret)));
+  }
+  nvmePassthroughEnabled_ = true;
+  nvmeNamespaceId_ = nvmeOptions.namespaceId;
+  nvmeLogicalBlockSize_ = nvmeOptions.logicalBlockSize;
+#endif
+}
+
+//______________________________________________________________________________
+bool IoUringPolicy::isNvmeCapable(int fd) const {
+  auto it = nvmeCapableFds_.find(fd);
+  if (it != nvmeCapableFds_.end()) {
+    return it->second;
+  }
+  const bool capable =
+      nvmePassthrough::isPassthroughCandidate(fd, nvmeNamespaceId_);
+  nvmeCapableFds_[fd] = capable;
+  return capable;
+}
+
+//______________________________________________________________________________
+bool IoUringPolicy::tryPrepareNvmePassthrough(
+    [[maybe_unused]] io_uring_sqe* sqe, int fd, uint64_t fileOffset,
+    size_t numBytes, [[maybe_unused]] char* targetBuffer) {
+  if (!nvmePassthroughEnabled_ || !isNvmeCapable(fd)) {
+    return false;
+  }
+  const auto params = nvmePassthrough::translateToReadParams(
+      fileOffset, numBytes, nvmeNamespaceId_, nvmeLogicalBlockSize_);
+  if (!params.has_value()) {
+    return false;
+  }
+#ifdef QLEVER_HAS_NVME_URING_CMD
+  nvmePassthrough::preparePassthroughRead(sqe, fd, params.value(),
+                                          targetBuffer);
+  return true;
+#else
+  return false;
+#endif
 }
 
 //______________________________________________________________________________
@@ -128,16 +291,24 @@ void IoUringPolicy::addBatch(int fd,
 
     // Record the read's parameters in the SQE (this only sets the SQE's fields;
     // the request is not handed to the kernel until a later `io_uring_submit`).
-    io_uring_prep_read(sqe, fd, targetBuf,
-                       static_cast<unsigned>(numBytesToRead),
-                       static_cast<__u64>(fileOffset));
+    // A read of a capable NVMe device is submitted as a native NVMe read (see
+    // `tryPrepareNvmePassthrough`), all others as a plain read.
+    const bool isNvmePassthrough = tryPrepareNvmePassthrough(
+        sqe, fd, fileOffset, numBytesToRead, targetBuf);
+    if (!isNvmePassthrough) {
+      io_uring_prep_read(sqe, fd, targetBuf,
+                         static_cast<unsigned>(numBytesToRead),
+                         static_cast<__u64>(fileOffset));
+    }
 
     // Tag the SQE with a unique request id and record its metadata (the batch
-    // it belongs to and how many bytes it should read). io_uring copies the
-    // request id (the SQE's `user_data`) verbatim into the matching completion,
-    // so `drainOneCqe` can recover it.
+    // it belongs to, how many bytes it should read, and how its completion
+    // is to be interpreted). io_uring copies the request id (the SQE's
+    // `user_data`) verbatim into the matching completion, so `drainOneCqe` can
+    // recover it.
     const uint64_t requestId = nextRequestIdToAssign_++;
-    inFlightReadsByRequestId_[requestId] = InFlightRead{handle, numBytesToRead};
+    inFlightReadsByRequestId_[requestId] =
+        InFlightRead{handle, numBytesToRead, isNvmePassthrough};
     // Store the id in the pointer-sized `user_data` field, which every
     // liburing version provides. The 64-bit `io_uring_sqe_set_data64` helper
     // requires a very recent liburing that older images (e.g. the gcc11 CI
@@ -191,9 +362,18 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
   if (numBytesRead < 0) {
     AD_THROW("I/O error in IoUringPolicy read operation");
   }
-  // A result smaller than requested (a partial read, or 0 at end of file) means
-  // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != inFlightRead.expectedNumBytes) {
+  if (inFlightRead.isNvmePassthrough) {
+    // The completion of an NVMe passthrough command carries the NVMe status (0
+    // on success), not a byte count: the command either transfers all of its
+    // blocks or fails.
+    if (numBytesRead != 0) {
+      AD_THROW(absl::StrCat("NVMe passthrough read failed in IoUringPolicy ",
+                            "with NVMe status ", numBytesRead));
+    }
+  } else if (static_cast<size_t>(numBytesRead) !=
+             inFlightRead.expectedNumBytes) {
+    // A result smaller than requested (a partial read, or 0 at end of file)
+    // means we read fewer bytes than expected, which we treat as an error.
     AD_THROW("read fewer bytes than requested in IoUringPolicy");
   }
 

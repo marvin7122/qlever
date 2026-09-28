@@ -1,12 +1,22 @@
-// Copyright 2016, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2016 - 2026, The QLever Authors, in particular:
+//
+// 2016 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <array>
+#include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
@@ -16,6 +26,7 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/NvmePassthrough.h"
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 
@@ -43,6 +54,41 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
+
+  // State for reading the words file with NVMe passthrough (see the runtime
+  // parameter `vocabulary-nvme-passthrough`). Only allocated by `open` if that
+  // parameter is set; `nullptr` otherwise, in which case every read of the
+  // words file is exactly as without this feature.
+  struct NvmePassthroughState {
+    // The same bytes as `file_`, read through the page cache and the block
+    // layer: for a words file that is an NVMe generic character device
+    // (`/dev/ngXnY`), the block device of the same namespace (`/dev/nvmeXnY`);
+    // for a regular file, the same file opened a second time. Serves
+    // `operator[]`, `scanAll`, and the batches that are not read with
+    // passthrough.
+    ad_utility::File bufferedWordsFile_;
+    // The end of the readable bytes (the file or device size), so a coalesced
+    // read never extends past it.
+    uint64_t readLimit_ = 0;
+    // See the runtime parameters `vocabulary-nvme-max-gap-blocks` and
+    // `vocabulary-nvme-max-buffered-median-gap`.
+    uint64_t maxGapBlocks_ = 0;
+    uint64_t maxBufferedMedianGapBytes_ = 0;
+
+    // Counters of the routing decisions, logged periodically by
+    // `logNvmePassthroughCounters`.
+    std::atomic<uint64_t> numPassthroughBatches_ = 0;
+    std::atomic<uint64_t> numPassthroughWords_ = 0;
+    std::atomic<uint64_t> numPassthroughCommands_ = 0;
+    std::atomic<uint64_t> numPassthroughCommandBytes_ = 0;
+    std::atomic<uint64_t> numBufferedBatches_ = 0;
+    std::atomic<uint64_t> numBufferedWords_ = 0;
+    // Histogram of the median gap of the batches (see
+    // `nvmePassthrough::medianGapBytes`): bucket `i < 7` counts gaps below
+    // `4^i` KiB, bucket 7 all larger gaps and batches without a gap.
+    std::array<std::atomic<uint64_t>, 8> medianGapHistogram_{};
+  };
+  std::unique_ptr<NvmePassthroughState> nvme_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -102,6 +148,19 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
+
+  // Replace the pool of batch managers that `lookupBatch` reads through. Only
+  // for tests, which use it to observe (and serve) the reads that would be
+  // submitted to the device.
+  void setIoManagersForTesting(
+      std::vector<std::unique_ptr<ad_utility::BatchManagerBase>> managers);
+
+  // The file descriptor of the words file that NVMe passthrough reads go to,
+  // and the one that buffered reads go to (both the same if NVMe passthrough
+  // is not enabled). Only for tests.
+  std::pair<int, int> wordsFileDescriptorsForTesting() const {
+    return {file_.fd(), bufferedWordsFile().fd()};
+  }
 
   // Default constructor for an empty vocabulary.
   VocabularyOnDisk() = default;
@@ -177,15 +236,59 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
   // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
+  // With `pageCacheFastPath`, each run of consecutive indices is first read as
+  // one range of the `.offsets` file with `readPageCacheHits`, and only the
+  // pairs of the runs that were not in the page cache go through `manager`.
   std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          ql::span<const size_t> indices) const;
+                                          ql::span<const size_t> indices,
+                                          bool pageCacheFastPath) const;
 
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched
-  // read via `manager`, and return it as a `VocabBatchLookupResult`.
-  VocabBatchLookupResult readStrings(
-      ad_utility::BatchManagerBase& manager,
-      ql::span<const OffsetPair> offsetPairs) const;
+  // read via `manager`, and return it as a `VocabBatchLookupResult`. With
+  // `pageCacheFastPath`, the words that are in the page cache are read with
+  // `readPageCacheHits` (adjacent words in one call), and only the others go
+  // through `manager`.
+  VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
+                                     ql::span<const OffsetPair> offsetPairs,
+                                     bool pageCacheFastPath) const;
+
+  // The words file for reads through the page cache (see
+  // `NvmePassthroughState::bufferedWordsFile_`).
+  const ad_utility::File& bufferedWordsFile() const {
+    return nvme_ ? nvme_->bufferedWordsFile_ : file_;
+  }
+
+  // Set up `nvme_` for the words file `filename` (already opened as `file_`)
+  // from the runtime parameters, and return the options for the batch
+  // managers. Throw if the words file is neither a regular file nor an NVMe
+  // generic character device, or if the device does not match the parameters.
+  ad_utility::nvmePassthrough::Options setUpNvmePassthrough(
+      const std::string& filename);
+
+  // Phase 2 of `lookupBatch` with NVMe passthrough enabled: read word `i`
+  // (`sizes[i]` bytes at `fileOffsets[i]`) into `targets[i]`. With
+  // `pageCacheFastPath`, the words in the page cache are read first. The
+  // remaining words are read with passthrough, as whole-block runs (see
+  // `nvmePassthrough::planBlockReads`), if the batch is scattered (its
+  // `nvmePassthrough::medianGapBytes` exceeds `maxBufferedMedianGapBytes_`),
+  // and through the buffered words file otherwise.
+  void readWordsWithNvmePassthrough(ad_utility::BatchManagerBase& manager,
+                                    ql::span<const size_t> sizes,
+                                    ql::span<const uint64_t> fileOffsets,
+                                    ql::span<char*> targets,
+                                    bool pageCacheFastPath) const;
+
+  // Log the counters of `nvme_` (every 1024 batches).
+  void logNvmePassthroughCounters() const;
+
+  // Read `numBytes[i]` bytes at `offsets[i]` of `fd` into `buffers[i]` for
+  // every `i` in `positions` through `manager` and wait for them.
+  static void readThroughManager(ad_utility::BatchManagerBase& manager, int fd,
+                                 ql::span<const size_t> numBytes,
+                                 ql::span<const uint64_t> offsets,
+                                 ql::span<char*> buffers,
+                                 ql::span<const size_t> positions);
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H

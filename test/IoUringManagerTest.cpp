@@ -12,10 +12,14 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <memory>
+#include <numeric>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -29,6 +33,7 @@
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
 #include "util/Log.h"
+#include "util/NvmePassthrough.h"
 
 namespace {
 
@@ -116,6 +121,17 @@ class ReadBatchForTesting {
           return buffer.data();
         }));
     return manager.addBatch(fd, numBytes_, offsets_, pointers);
+  }
+
+  // Submit all accumulated reads directly to `policy` under `handle`.
+  template <typename Policy>
+  void submitToPolicy(Policy& policy, int fd,
+                      typename Policy::BatchHandle handle) {
+    std::vector<char*> pointers = ::ranges::to_vector(
+        targetBuffers_ | ql::views::transform([](std::string& buffer) {
+          return buffer.data();
+        }));
+    policy.addBatch(fd, numBytes_, offsets_, pointers, handle);
   }
 
   // The bytes read by each read, in request order (valid once the batch has
@@ -609,4 +625,410 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
 #endif
   expectManagerWorks(*manager);
 }
+
+// Run `readPageCacheHits` on `reads` (pairs of file offset and size) of `fd`
+// and return the positions of the reads that were not served together with
+// the buffers (filled with '-' before the call).
+std::pair<std::vector<size_t>, std::vector<std::string>> readHits(
+    int fd, const std::vector<std::pair<uint64_t, size_t>>& reads) {
+  std::vector<size_t> numBytes;
+  std::vector<uint64_t> offsets;
+  std::vector<std::string> buffers;
+  for (const auto& [offset, size] : reads) {
+    offsets.push_back(offset);
+    numBytes.push_back(size);
+    buffers.emplace_back(size, '-');
+  }
+  std::vector<char*> targets;
+  for (auto& buffer : buffers) {
+    targets.push_back(buffer.data());
+  }
+  auto notServed =
+      ad_utility::readPageCacheHits(fd, numBytes, offsets, targets);
+  return {std::move(notServed), std::move(buffers)};
+}
+
+// All positions `0 .. n - 1`.
+std::vector<size_t> allPositions(size_t n) {
+  std::vector<size_t> positions(n);
+  std::iota(positions.begin(), positions.end(), size_t{0});
+  return positions;
+}
+
+// A batch whose file was just written is in the page cache and is served
+// completely; adjacent ranges (the first two reads) are read in one call.
+TEST(ReadPageCacheHits, hitOnlyBatch) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  auto [notServed, buffers] = readHits(fd, {{0, 4}, {4, 4}, {12, 4}, {4, 0}});
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    EXPECT_EQ(notServed, allPositions(4));
+    return;
+  }
+  EXPECT_TRUE(notServed.empty());
+  EXPECT_EQ(buffers[0], "AAAA");
+  EXPECT_EQ(buffers[1], "BBBB");
+  EXPECT_EQ(buffers[2], "DDDD");
+  EXPECT_EQ(buffers[3], "");
+}
+
+// Reads that cannot be served completely (here: beyond the end of the file)
+// are all returned, whether or not `RWF_NOWAIT` is supported.
+TEST(ReadPageCacheHits, missOnlyBatch) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  auto [notServed, buffers] = readHits(fd, {{16, 4}, {40, 4}, {20, 4}});
+  EXPECT_EQ(notServed, allPositions(3));
+}
+
+// A mixed batch: a short read in the middle of a run of adjacent ranges
+// returns the incomplete read and the rest of its run, the complete reads of
+// the run and of other runs are served.
+TEST(ReadPageCacheHits, mixedBatchWithShortRead) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  auto [notServed, buffers] =
+      readHits(fd, {{0, 4}, {8, 4}, {12, 2}, {14, 4}, {18, 4}, {4, 4}});
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    EXPECT_EQ(notServed, allPositions(6));
+    return;
+  }
+  EXPECT_EQ(notServed, (std::vector<size_t>{3, 4}));
+  EXPECT_EQ(buffers[0], "AAAA");
+  EXPECT_EQ(buffers[1], "CCCC");
+  EXPECT_EQ(buffers[2], "DD");
+  EXPECT_EQ(buffers[5], "BBBB");
+}
+
+// An empty batch is trivially served, and spans of different lengths are
+// rejected.
+TEST(ReadPageCacheHits, emptyBatchAndContract) {
+  auto [tmp, fd] = makeTempFile("AAAA");
+  EXPECT_TRUE(ad_utility::readPageCacheHits(fd, {}, {}, {}).empty());
+  std::vector<size_t> numBytes{4, 4};
+  std::vector<uint64_t> offsets{0};
+  std::string buffer(8, '-');
+  std::vector<char*> targets{buffer.data(), buffer.data() + 4};
+  EXPECT_ANY_THROW(
+      ad_utility::readPageCacheHits(fd, numBytes, offsets, targets));
+}
+
+namespace nvme = ad_utility::nvmePassthrough;
+
+// File-offset to LBA translation is pure arithmetic: an aligned range maps to
+// (namespace, starting LBA, 0-based block count).
+TEST(NvmePassthroughTranslation, alignedRangeTranslates) {
+  const auto params = nvme::translateToReadParams(
+      /*fileOffset=*/4096, /*numBytes=*/8192, /*namespaceId=*/3,
+      /*logicalBlockSize=*/4096);
+  ASSERT_TRUE(params.has_value());
+  EXPECT_EQ(params->namespaceId, 3u);
+  EXPECT_EQ(params->startLba, 1u);
+  EXPECT_EQ(params->numBlocksZeroBased, 1u);
+  EXPECT_EQ(params->transferBytes, 8192u);
+}
+
+// A read that is not whole blocks, an invalid request, or one beyond the
+// command limits translates to `std::nullopt`, so the caller keeps the plain
+// read path.
+TEST(NvmePassthroughTranslation, untranslatableRangesFallBack) {
+  using nvme::translateToReadParams;
+  EXPECT_FALSE(translateToReadParams(100, 4096, 1, 512).has_value());
+  EXPECT_FALSE(translateToReadParams(0, 100, 1, 512).has_value());
+  EXPECT_FALSE(translateToReadParams(0, 0, 1, 512).has_value());
+  EXPECT_FALSE(translateToReadParams(0, 512, 0, 512).has_value());
+  EXPECT_FALSE(translateToReadParams(0, 512, 1, 0).has_value());
+  EXPECT_FALSE(translateToReadParams(0, 0x10001ULL * 512, 1, 512).has_value());
+  // A starting LBA that would wrap around is rejected ...
+  EXPECT_FALSE(translateToReadParams(512, 512, 1, 512,
+                                     std::numeric_limits<uint64_t>::max())
+                   .has_value());
+  // ... while the same base with offset zero still translates exactly.
+  const auto atMax = translateToReadParams(
+      0, 512, 1, 512, std::numeric_limits<uint64_t>::max());
+  ASSERT_TRUE(atMax.has_value());
+  EXPECT_EQ(atMax->startLba, std::numeric_limits<uint64_t>::max());
+}
+
+// Call `planBlockReads` with owning vectors.
+nvme::BlockReadPlan plan(std::vector<uint64_t> offsets,
+                         std::vector<size_t> sizes, uint64_t maxGapBlocks = 0,
+                         std::optional<uint64_t> readLimit = std::nullopt) {
+  return nvme::planBlockReads(offsets, sizes, maxGapBlocks, readLimit);
+}
+
+// Check that every word `i` of `plan` lies inside the run that covers it, at
+// the right staging offset.
+void expectSlicesInsideRuns(const nvme::BlockReadPlan& plan,
+                            const std::vector<uint64_t>& offsets,
+                            const std::vector<size_t>& sizes) {
+  ASSERT_EQ(plan.slices.size(), offsets.size());
+  for (size_t i = 0; i < offsets.size(); ++i) {
+    if (sizes[i] == 0) {
+      continue;
+    }
+    const auto& slice = plan.slices[i];
+    EXPECT_EQ(slice.numBytes, sizes[i]);
+    size_t numCovering = 0;
+    for (const auto& run : plan.runs) {
+      if (offsets[i] >= run.fileOffset &&
+          offsets[i] + sizes[i] <= run.fileOffset + run.numBytes) {
+        EXPECT_EQ(slice.stagingOffset - run.stagingOffset,
+                  offsets[i] - run.fileOffset);
+        ++numCovering;
+      }
+    }
+    EXPECT_EQ(numCovering, 1u) << "word " << i;
+  }
+}
+
+// Whole-block coverage: adjacent words merge into one run while the slices
+// keep the input order; disjoint words give separate runs with accumulating
+// staging offsets.
+TEST(NvmeBlockCoalescing, coversWordsWithMergedRuns) {
+  std::vector<uint64_t> offsets{0, 100, 1000, 5000};
+  std::vector<size_t> sizes{512, 100, 600, 10};
+  const auto p = plan(offsets, sizes);
+  ASSERT_EQ(p.runs.size(), 2u);
+  EXPECT_EQ(p.runs[0].fileOffset, 0u);
+  EXPECT_EQ(p.runs[0].numBytes, 2048u);
+  EXPECT_EQ(p.runs[1].fileOffset, 4608u);
+  EXPECT_EQ(p.runs[1].numBytes, 512u);
+  EXPECT_EQ(p.stagingBytes, 2560u);
+  EXPECT_EQ(p.slices[2].stagingOffset, 1000u);
+  EXPECT_EQ(p.slices[3].stagingOffset, 2048u + 392);
+  expectSlicesInsideRuns(p, offsets, sizes);
+}
+
+// Duplicate words share their blocks but keep one slice each, zero-length
+// words cover nothing, and an empty input plans nothing.
+TEST(NvmeBlockCoalescing, duplicatesAndEmptyWords) {
+  const auto p = plan({600, 600, 2000}, {100, 100, 0});
+  ASSERT_EQ(p.runs.size(), 1u);
+  EXPECT_EQ(p.runs[0].fileOffset, 512u);
+  EXPECT_EQ(p.runs[0].numBytes, 512u);
+  ASSERT_EQ(p.slices.size(), 3u);
+  EXPECT_EQ(p.slices[0].stagingOffset, 88u);
+  EXPECT_EQ(p.slices[1].stagingOffset, 88u);
+  EXPECT_EQ(p.slices[2].numBytes, 0u);
+  const auto empty = plan({}, {});
+  EXPECT_TRUE(empty.runs.empty());
+  EXPECT_TRUE(empty.slices.empty());
+  EXPECT_EQ(empty.stagingBytes, 0u);
+}
+
+// Gaps up to the allowance are swallowed into one run; larger gaps and a zero
+// allowance keep separate runs.
+TEST(NvmeBlockCoalescing, gapAllowance) {
+  const auto merged = plan({0, 5 * 512}, {10, 10}, 32);
+  ASSERT_EQ(merged.runs.size(), 1u);
+  EXPECT_EQ(merged.runs[0].numBytes, 6 * 512u);
+  expectSlicesInsideRuns(merged, {0, 5 * 512}, {10, 10});
+  EXPECT_EQ(plan({0, 100 * 512}, {10, 10}, 32).runs.size(), 2u);
+  EXPECT_EQ(plan({0, 5 * 512}, {10, 10}, 0).runs.size(), 2u);
+}
+
+// Runs stop before exceeding 256 blocks (128 KiB), even if every gap would be
+// swallowed: with the largest useful allowance (256 blocks), words 100 blocks
+// apart merge into commands of at most 128 KiB.
+TEST(NvmeBlockCoalescing, runsAreAtMost128KiB) {
+  std::vector<uint64_t> offsets;
+  std::vector<size_t> sizes;
+  for (uint64_t w = 0; w < 10; ++w) {
+    offsets.push_back(w * 100 * 512);
+    sizes.push_back(10);
+  }
+  const auto p = plan(offsets, sizes, 256);
+  // Blocks 0..200 (201 blocks), 300..500, 600..800, 900 (block 300 would make
+  // the first run 301 blocks long).
+  ASSERT_EQ(p.runs.size(), 4u);
+  EXPECT_EQ(p.runs[0].numBytes, 201 * 512u);
+  EXPECT_EQ(p.runs[3].numBytes, 512u);
+  for (const auto& run : p.runs) {
+    EXPECT_LE(run.numBytes, nvme::kCoalesceMaxRunBlocks * 512);
+  }
+  expectSlicesInsideRuns(p, offsets, sizes);
+  // With the default allowance (32 blocks), every word is its own command.
+  EXPECT_EQ(plan(offsets, sizes, 32).runs.size(), 10u);
+}
+
+// With a read limit, the last run ends there instead of covering the rest of
+// its final block; everything else is unchanged.
+TEST(NvmeBlockCoalescing, clampsLastRunToReadLimit) {
+  const auto p = plan({0, 5000}, {10, 100}, 0, 5100);
+  ASSERT_EQ(p.runs.size(), 2u);
+  EXPECT_EQ(p.runs[0].numBytes, 512u);
+  EXPECT_EQ(p.runs[1].fileOffset, 4608u);
+  EXPECT_EQ(p.runs[1].numBytes, 5100u - 4608u);
+  EXPECT_EQ(p.stagingBytes, 1024u);
+  EXPECT_EQ(p.slices[1].stagingOffset, 512u + (5000 - 4608));
+  EXPECT_EQ(plan({0}, {512}, 0, 512).runs[0].numBytes, 512u);
+  EXPECT_EQ(plan({5000}, {100}).runs[0].numBytes, 512u);
+  // A word past the read limit is a contract violation.
+  EXPECT_ANY_THROW(plan({5000}, {200}, 0, 5100));
+}
+
+// The median gap between consecutive words in file order, independent of the
+// input order; overlapping and duplicate words have gap zero, and empty words
+// are ignored.
+TEST(NvmeMedianGap, medianGapBytes) {
+  auto gap = [](std::vector<uint64_t> offsets, std::vector<size_t> sizes) {
+    return nvme::medianGapBytes(offsets, sizes);
+  };
+  // Gaps 0, 800, 8900.
+  EXPECT_EQ(gap({10000, 0, 1000, 100}, {100, 100, 100, 100}), 800u);
+  EXPECT_EQ(gap({0, 0, 50}, {100, 100, 10}), 0u);
+  // Gaps 900 and 5000: the upper median.
+  EXPECT_EQ(gap({0, 1000, 6100}, {100, 100, 10}), 5000u);
+  EXPECT_EQ(gap({0}, {10}), std::nullopt);
+  EXPECT_EQ(gap({0, 5000}, {0, 10}), std::nullopt);
+  EXPECT_EQ(gap({}, {}), std::nullopt);
+}
+
+// The block device of an NVMe namespace is found from the name of its
+// generic character device.
+TEST(NvmeDeviceNames, blockDeviceNameForGenericCharDevice) {
+  using nvme::blockDeviceNameForGenericCharDevice;
+  EXPECT_EQ(blockDeviceNameForGenericCharDevice("ng1n1"), "nvme1n1");
+  EXPECT_EQ(blockDeviceNameForGenericCharDevice("ng10n23"), "nvme10n23");
+  for (std::string_view name :
+       {"nvme1n1", "ng1", "ngn1", "ng1n", "ng1x1", "ng1n1p1", "null", ""}) {
+    EXPECT_EQ(blockDeviceNameForGenericCharDevice(name), std::nullopt) << name;
+  }
+}
+
+// The capability probe fails closed without throwing: an invalid fd, a
+// regular file, and a character device that is not an NVMe namespace (such as
+// `/dev/null`) are all "not capable".
+TEST(NvmePassthroughProbe, failsClosedForNonDevices) {
+  EXPECT_FALSE(nvme::isPassthroughCandidate(-1, 1));
+  auto [tmp, fd] = makeTempFile("X");
+  EXPECT_FALSE(nvme::isPassthroughCandidate(fd, 1));
+  ad_utility::File nullFile{"/dev/null", "r"};
+  EXPECT_FALSE(nvme::isPassthroughCandidate(nullFile.fd(), 1));
+  EXPECT_EQ(nvme::nvmeNamespaceIdOf(nullFile.fd()), std::nullopt);
+}
+
+#ifdef QLEVER_HAS_IO_URING
+// Build an `IoUringPolicy` with `options`, or return `nullptr` if the kernel
+// does not allow the ring (no io_uring at all, or no 128-byte SQEs).
+std::unique_ptr<ad_utility::IoUringPolicy> makePolicy(
+    const nvme::Options& options) {
+  try {
+    return std::make_unique<ad_utility::IoUringPolicy>(64, options);
+  } catch (const ad_utility::Exception&) {
+    return nullptr;
+  }
+}
+
+// Passthrough is off by default, and a policy with disabled options is a plain
+// policy.
+TEST(NvmePassthroughPolicy, disabledByDefault) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is not available at runtime";
+  }
+  ad_utility::IoUringPolicy plain(64);
+  EXPECT_FALSE(plain.isNvmePassthroughEnabled());
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  ad_utility::IoUringPolicy disabled(64, nvme::Options{});
+  EXPECT_FALSE(disabled.isNvmePassthroughEnabled());
+  ReadBatchForTesting batch;
+  batch.add({{4, 4}, {0, 4}});
+  batch.submitToPolicy(disabled, fd, 0);
+  disabled.wait(0);
+  EXPECT_THAT(batch.result(), ElementsAre("BBBB", "AAAA"));
+}
+
+// Enabled options with a zero namespace id or block size are a contract
+// violation.
+TEST(NvmePassthroughPolicy, invalidOptionsThrow) {
+  EXPECT_THROW(ad_utility::IoUringPolicy(64, nvme::Options{true, 0, 512}),
+               ad_utility::Exception);
+  EXPECT_THROW(ad_utility::IoUringPolicy(64, nvme::Options{true, 1, 0}),
+               ad_utility::Exception);
+}
+
+// With passthrough enabled, a regular file fails the capability probe and is
+// read with plain reads, byte-identical to a plain policy.
+TEST(NvmePassthroughPolicy, regularFilesKeepPlainReads) {
+  auto policy = makePolicy(nvme::Options{true, 1, 512});
+  if (!policy) {
+    GTEST_SKIP() << "io_uring with 128-byte SQEs is not available at runtime";
+  }
+  EXPECT_EQ(policy->isNvmePassthroughEnabled(), nvme::kUringCmdSupported);
+  std::string content(2048, 'x');
+  content.replace(512, 4, "ABCD");
+  auto [tmp, fd] = makeTempFile(content);
+  EXPECT_FALSE(policy->isNvmeCapable(fd));
+  ReadBatchForTesting batch;
+  batch.add({{512, 512}, {512, 4}, {0, 512}});
+  batch.submitToPolicy(*policy, fd, 7);
+  policy->wait(7);
+  EXPECT_EQ(batch.result()[0].substr(0, 4), "ABCD");
+  EXPECT_EQ(batch.result()[1], "ABCD");
+  EXPECT_EQ(batch.result()[2], std::string(512, 'x'));
+}
+
+// The command path, observed without an NVMe device: once the probe result
+// for a regular file is overridden to "capable", every whole-block read of it
+// is submitted as a native NVMe command, which the kernel rejects for a
+// regular file, so `wait` throws (a plain read of the same range succeeds, see
+// above). A read that is not whole blocks still takes the plain path and
+// succeeds on the same fd.
+TEST(NvmePassthroughPolicy, capableFdGetsNativeCommands) {
+  auto policy = makePolicy(nvme::Options{true, 1, 512});
+  if (!policy || !policy->isNvmePassthroughEnabled()) {
+    GTEST_SKIP() << "NVMe passthrough is not available in this build or at "
+                    "runtime";
+  }
+  auto [tmp, fd] = makeTempFile(std::string(2048, 'x'));
+  policy->setNvmeCapableForTesting(fd, true);
+  EXPECT_TRUE(policy->isNvmeCapable(fd));
+
+  ReadBatchForTesting unaligned;
+  unaligned.add({{100, 4}});
+  unaligned.submitToPolicy(*policy, fd, 0);
+  policy->wait(0);
+  EXPECT_THAT(unaligned.result(), ElementsAre("xxxx"));
+
+  ReadBatchForTesting aligned;
+  aligned.add({{512, 1024}});
+  aligned.submitToPolicy(*policy, fd, 1);
+  EXPECT_ANY_THROW(policy->wait(1));
+}
+#endif
+
+#if defined(QLEVER_HAS_IO_URING) && defined(QLEVER_HAS_NVME_URING_CMD)
+// Preparing a passthrough SQE sets the `uring_cmd` opcode, the NVMe command
+// operation and the native read command (namespace, buffer, length, starting
+// LBA split across CDW10/11, 0-based block count in CDW12), and zeroes the
+// rest of the command area. No device is involved.
+TEST(NvmePassthroughSqe, preparesNvmeReadCommand) {
+  const auto params =
+      nvme::translateToReadParams(/*fileOffset=*/8192, /*numBytes=*/4096,
+                                  /*namespaceId=*/2, /*logicalBlockSize=*/4096);
+  ASSERT_TRUE(params.has_value());
+  std::string buffer(4096, '\0');
+  // The C type is 64 bytes; the command area needs the 128-byte SQE128 slot.
+  alignas(io_uring_sqe) unsigned char sqeStorage[128];
+  std::memset(sqeStorage, 0xFF, sizeof(sqeStorage));
+  auto* sqe = reinterpret_cast<io_uring_sqe*>(sqeStorage);
+  nvme::preparePassthroughRead(sqe, /*deviceFd=*/7, *params, buffer.data());
+
+  EXPECT_EQ(sqe->opcode, IORING_OP_URING_CMD);
+  EXPECT_EQ(sqe->fd, 7);
+  EXPECT_EQ(sqe->cmd_op, static_cast<uint32_t>(NVME_URING_CMD_IO));
+  nvme_uring_cmd cmd{};
+  const auto* tail = sqeStorage + offsetof(io_uring_sqe, cmd);
+  std::memcpy(&cmd, tail, sizeof(cmd));
+  // 02h is the NVM Read opcode (01h would be Write).
+  EXPECT_EQ(cmd.opcode, 0x02);
+  EXPECT_EQ(cmd.nsid, 2u);
+  EXPECT_EQ(cmd.addr, reinterpret_cast<__u64>(buffer.data()));
+  EXPECT_EQ(cmd.data_len, 4096u);
+  EXPECT_EQ(cmd.cdw10, 2u);
+  EXPECT_EQ(cmd.cdw11, 0u);
+  EXPECT_EQ(cmd.cdw12, 0u);
+  for (size_t i = sizeof(cmd); i < nvme::kUringCmdDataSize; ++i) {
+    EXPECT_EQ(tail[i], 0u) << "nonzero byte at command offset " << i;
+  }
+}
+#endif
 }  // namespace

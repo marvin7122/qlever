@@ -1,14 +1,18 @@
-// Copyright 2025 The QLever Authors, in particular:
+// Copyright 2025 - 2026, The QLever Authors, in particular:
 //
 // 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2025 NN, BMW
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 // BMW =  Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "global/RuntimeParameters.h"
 
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+
+#include <limits>
 
 #include "backports/algorithm.h"
 #include "util/Algorithm.h"
@@ -68,6 +72,11 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(vocabularyIouringPageCacheFastPath_);
+  add(vocabularyNvmePassthrough_);
+  add(vocabularyNvmeNamespaceId_);
+  add(vocabularyNvmeMaxGapBlocks_);
+  add(vocabularyNvmeMaxBufferedMedianGap_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
@@ -94,6 +103,14 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  vocabularyNvmeNamespaceId_.setParameterConstraint(
+      [](size_t value, std::string_view parameterName) {
+        if (value == 0 || value > std::numeric_limits<uint32_t>::max()) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName,
+              " must be a nonzero 32-bit NVMe namespace id, was ", value)};
+        }
+      });
 }
 
 // _____________________________________________________________________________
