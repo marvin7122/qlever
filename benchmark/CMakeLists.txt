@@ -36,6 +36,57 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
+
+    addAndLinkBenchmark(SerializerMicroBenchmark engine sparqlParser qlever_util)
+
+    addAndLinkBenchmark(ChunkStreamingBenchmark engine testUtil)
+
+    addAndLinkBenchmark(SimdEscapeBenchmark qlever_util)
+
+    addAndLinkBenchmark(IoUringDirectBenchmark qlever_util)
+
+    addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
+
+    addAndLinkBenchmark(FastNumberFormatterBenchmark qlever_util)
+
+    addAndLinkBenchmark(PrefetchingBenchmark engine)
+
+    # Standalone main(), so not via addAndLinkBenchmark (which links
+    # benchmarkWithMain).
+    add_executable(BranchlessDispatcherBenchmark
+        BranchlessDispatcherBenchmark.cpp)
+    qlever_target_link_libraries(BranchlessDispatcherBenchmark engine
+        qlever_util)
+
+    addAndLinkBenchmark(PrefixCompressorBenchmark)
+
+    addAndLinkBenchmark(VocabBatchLookupBenchmark vocabulary)
+
+    addAndLinkBenchmark(VocabularyBatchLookupMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(VocabularyBatchLookupEndToEndBenchmark vocabulary)
+
+    addAndLinkBenchmark(CompressedVocabLookupBatchMicroBenchmark vocabulary
+        fsst)
+
+    addAndLinkBenchmark(CompressedVocabLookupBatchEndToEndBenchmark vocabulary
+        fsst)
+
+    addAndLinkBenchmark(SplitVocabLookupBatchMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(SplitVocabLookupBatchEndToEndBenchmark vocabulary)
+
+    addAndLinkBenchmark(PolymorphicVocabLookupBatchMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(PolymorphicVocabLookupBatchEndToEndBenchmark vocabulary)
+
+    add_executable(AdaptiveChunkBenchmark AdaptiveChunkBenchmark.cpp)
+    linkBenchmark(AdaptiveChunkBenchmark engine sparqlParser qlever_util)
+
+    add_executable(SimdValidityBenchmark SimdValidityBenchmark.cpp)
+    linkBenchmark(SimdValidityBenchmark engine sparqlParser qlever_util)
+
     add_executable(RlePrefixBenchmark RlePrefixBenchmark.cpp)
     # Standalone benchmark with its own main(): link the benchmark
     # infrastructure without its default main to avoid duplicate main symbols.

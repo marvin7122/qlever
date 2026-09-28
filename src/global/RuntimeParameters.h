@@ -45,6 +45,42 @@ struct RuntimeParameters {
   // between otherwise equal queries.
   Bool stripColumns_{false, "strip-columns"};
 
+  // If set, the CSV and TSV export of SELECT results escapes the cells with
+  // the vectorized `ad_utility::simd::SimdEscapeClassifier` instead of
+  // `RdfEscaping::escapeForCsv`/`escapeForTsv`. The output is the same.
+  Bool useSimdEscapeClassifierCsvTsv_{false,
+                                      "use-simd-escape-classifier-csv-tsv"};
+
+  // If set, `stream_generator` (the buffer behind the Turtle, CSV and TSV
+  // export) copies the yielded strings into its buffer with non-temporal
+  // (cache-bypassing) stores instead of `std::memcpy`.
+  Bool useNonTemporalExportBuffer_{false, "use-non-temporal-export-buffer"};
+
+  // If set, the export formats `Bool` and `Int` values through the 16-entry
+  // lookup table of `ql::engine::BranchlessTypeDispatcher` instead of the
+  // `switch` in `ExportIds::idToStringAndTypeForEncodedValue`. Only these two
+  // datatypes are routed through the table, because only their table
+  // formatters produce the same bytes as the `switch` (the table's `Double`
+  // formatter does not special-case NaN and infinities).
+  Bool useBranchlessTypeDispatcher_{false, "use-branchless-type-dispatcher"};
+
+  // Number of words ahead that a batched lookup in an in-memory vocabulary
+  // (`VocabularyInMemory::lookupBatch`) prefetches into the CPU cache. Zero
+  // (default) disables software prefetching.
+  SizeT vocabLookupPrefetchDistance_{0, "vocab-lookup-prefetch-distance"};
+
+  // If set, the export writes IRIs that begin with one of a fixed set of
+  // well-known prefixes (Wikidata entity and direct property, RDF, RDFS, OWL,
+  // schema.org, XSD) with the aligned vector stores of `VectorizedPrefixTable`
+  // for the prefix and a plain copy for the rest. The output is the same.
+  Bool useVectorizedPrefixExport_{false, "use-vectorized-prefix-export"};
+
+  // If set, the batched vocabulary lookup of the export
+  // (`resolveVocabIndexIds` in `ExportIds.h`) stages its indices in a
+  // cache-line aligned `AlignedBatchBuffer` instead of a `std::vector`.
+  Bool useAlignedVocabBatchLookupBuffer_{
+      false, "use-aligned-vocab-batch-lookup-buffer"};
+
   // If the time estimate for a sort operation is larger by more than this
   // factor than the remaining time, then the sort is canceled with a
   // timeout exception.
@@ -108,6 +144,11 @@ struct RuntimeParameters {
   // since it has not yet been validated on the V2 export pipeline.
   Bool useRlePrefixConstructExport_{false, "use-rle-prefix-construct-export"};
   Bool groupByHashMapEnabled_{false, "group-by-hash-map-enabled"};
+  // Use the branchless integer-to-ASCII formatter from `util/FastIntToString.h`
+  // instead of `std::to_string` when serializing `xsd:int` literal values
+  // during export. Defaults to `false` (existing behavior), so it has to be
+  // enabled explicitly.
+  Bool fastIntToStringForExport_{false, "fast-int-to-string-for-export"};
   Bool groupByDisableIndexScanOptimizations_{
       false, "group-by-disable-index-scan-optimizations"};
   SizeT serviceMaxValueRows_{10'000, "service-max-value-rows"};
@@ -250,6 +291,24 @@ struct RuntimeParameters {
   // triples (per template triple); bounded memory, partial deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
+
+  // If set to `true`, CONSTRUCT query export of Turtle formats the
+  // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
+  // formatting) instead of the legacy per-term `std::string` construction
+  // in `formatTerm`/`formatTriple`. Output is required to be byte-identical
+  // to the legacy path; default `false` keeps master's behaviour unchanged.
+  Bool useFastExportStreamFormatter_{false, "use-fast-export-stream-formatter"};
+
+  // If true, the chunks of a streamed query result start at 64 KiB and double
+  // after every chunk up to the fixed 1 MiB, so that the first bytes reach the
+  // client earlier. If false, every chunk has the fixed size of 1 MiB.
+  Bool adaptiveExportChunkSize_{false, "adaptive-export-chunk-size"};
+
+  // If true, the CONSTRUCT export classifies the `Id`s of each variable column
+  // 64 at a time with a SIMD validity bitmask and resolves only the defined
+  // ones; undefined values skip the sort and the `Id` cache. The output is the
+  // same either way.
+  Bool constructSkipUnboundSimd_{false, "construct-skip-unbound-simd"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
