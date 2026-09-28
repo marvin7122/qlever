@@ -22,7 +22,7 @@ name: Build binaries
 # The tar keeps the executable bits (artifact zips drop them). Install it on
 # Ural with fetch-hosted-bin.sh <run-id> (.github/scripts/).
 
-run-name: "build-binaries ${{ inputs.ref || github.ref_name }} [${{ inputs.targets || 'qlever-server' }}]"
+run-name: "build-binaries ${{ inputs.ref || github.head_ref || github.ref_name }} [${{ inputs.targets || 'qlever-server' }}]"
 
 on:
   workflow_dispatch:
