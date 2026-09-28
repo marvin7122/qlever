@@ -9,6 +9,7 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORTPIPELINEROUTER_H
 #define QLEVER_SRC_ENGINE_EXPORTPIPELINEROUTER_H
 
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <optional>
@@ -267,24 +268,33 @@ class ExportPipelineRouter {
     return targetMode;
   }
 
+  // Case-insensitive keyword matching without allocating a lowercased copy
+  // per check (these run on every export request): `getLowercase` is ASCII,
+  // so `absl::EqualsIgnoreCase` matches exactly, and the comparison itself
+  // cannot throw, which keeps the `noexcept` on the callers honest.
   [[nodiscard]] static bool isTruthy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
+    return val == "1" || absl::EqualsIgnoreCase(val, "true") ||
+           absl::EqualsIgnoreCase(val, "yes") ||
+           absl::EqualsIgnoreCase(val, "on");
   }
 
   [[nodiscard]] static bool isFalsy(std::string_view val) noexcept {
-    auto lower = ad_utility::getLowercase(std::string(val));
-    return lower == "0" || lower == "false" || lower == "no" || lower == "off";
+    return val == "0" || absl::EqualsIgnoreCase(val, "false") ||
+           absl::EqualsIgnoreCase(val, "no") ||
+           absl::EqualsIgnoreCase(val, "off");
   }
 
   [[nodiscard]] static std::optional<ExportSendMode> parseSendMode(
       std::string_view val) noexcept {
-    const auto lower = ad_utility::getLowercase(std::string(val));
-    if (lower == "string" || lower == "concat" || lower == "concatenated") {
+    if (absl::EqualsIgnoreCase(val, "string") ||
+        absl::EqualsIgnoreCase(val, "concat") ||
+        absl::EqualsIgnoreCase(val, "concatenated")) {
       return ExportSendMode::ConcatenatedString;
     }
-    if (lower == "iovec" || lower == "sg" || lower == "scatter-gather" ||
-        lower == "writev") {
+    if (absl::EqualsIgnoreCase(val, "iovec") ||
+        absl::EqualsIgnoreCase(val, "sg") ||
+        absl::EqualsIgnoreCase(val, "scatter-gather") ||
+        absl::EqualsIgnoreCase(val, "writev")) {
       return ExportSendMode::ScatterGather;
     }
     return std::nullopt;

@@ -9,7 +9,8 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORT_V2_SIMDESCAPECLASSIFIER_H
 #define QLEVER_SRC_ENGINE_EXPORT_V2_SIMDESCAPECLASSIFIER_H
 
-#include <bit>
+#include <absl/numeric/bits.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -40,10 +41,10 @@ class EscapeMask32 {
   [[nodiscard]] constexpr bool hasEscape() const { return mask_ != 0; }
   [[nodiscard]] constexpr uint32_t raw() const { return mask_; }
   [[nodiscard]] constexpr uint32_t firstEscape() const {
-    return hasEscape() ? static_cast<uint32_t>(std::countr_zero(mask_)) : 32;
+    return hasEscape() ? static_cast<uint32_t>(absl::countr_zero(mask_)) : 32;
   }
   [[nodiscard]] constexpr uint32_t count() const {
-    return static_cast<uint32_t>(std::popcount(mask_));
+    return static_cast<uint32_t>(absl::popcount(mask_));
   }
 
  private:
@@ -52,6 +53,13 @@ class EscapeMask32 {
 
 namespace detail {
 
+// Fast-reject predicate: which characters need attention from the escaper.
+// For `Csv` this is a deliberate superset (`,`, `\r`, `\n` in addition to
+// `"`): callers use it to skip the quoting path entirely when nothing
+// matches, and fall back to full RFC4180 quoting (`RdfEscaping::escapeForCsv`,
+// see `escapeCell` in `ExportEngineV2.cpp`) otherwise. In particular,
+// `copyAndEscape<Csv>` below only doubles `"` and is NOT a complete CSV
+// escaper on its own.
 template <EscapeFormat Format>
 [[nodiscard]] constexpr bool isEscapeCharacter(char character) {
   if constexpr (Format == EscapeFormat::Csv) {
@@ -114,7 +122,13 @@ scanChunkAvx2(const char* data) {
 
 [[nodiscard]] inline bool supportsAvx2() {
 #if defined(__GNUC__) || defined(__clang__)
-  static const bool result = __builtin_cpu_supports("avx2");
+  // `__builtin_cpu_init` must run before the first `__builtin_cpu_supports`
+  // query; without it the check can return false (or stale data) and the
+  // AVX2 path would silently never run.
+  static const bool result = [] {
+    __builtin_cpu_init();
+    return __builtin_cpu_supports("avx2");
+  }();
   return result;
 #else
   return false;
@@ -225,7 +239,7 @@ class SimdEscapeClassifier {
 
       uint32_t copied = 0;
       while (mask != 0) {
-        const uint32_t escape = std::countr_zero(mask);
+        const uint32_t escape = absl::countr_zero(mask);
         std::memcpy(output, input.data() + offset + copied, escape - copied);
         output += escape - copied;
         output = detail::emitEscaped<Format>(input[offset + escape], output);

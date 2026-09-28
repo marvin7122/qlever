@@ -139,13 +139,19 @@ class ScatterGatherChunk {
 
       const auto attempt = writer({iovecs.data(), iovecs.size()});
       if (attempt.bytesWritten_ < 0) {
-        if (attempt.errorNumber_ == EINTR) {
+        // The fds written here are blocking, so `EAGAIN`/`EWOULDBLOCK`
+        // cannot occur persistently; retry them like `EINTR`.
+        if (attempt.errorNumber_ == EINTR || attempt.errorNumber_ == EAGAIN ||
+            attempt.errorNumber_ == EWOULDBLOCK) {
           continue;
         }
         AD_THROW(absl::StrCat("scatter-gather write failed: ",
                               std::strerror(attempt.errorNumber_)));
       }
       AD_CONTRACT_CHECK(attempt.errorNumber_ == 0);
+      // A zero return with a non-empty write is a loud contract failure
+      // (pinned by `RejectsWriterWithoutProgress`); like all contract
+      // violations it throws rather than aborting the process.
       AD_CONTRACT_CHECK(attempt.bytesWritten_ > 0);
 
       size_t remaining = static_cast<size_t>(attempt.bytesWritten_);

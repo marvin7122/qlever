@@ -177,7 +177,10 @@ class Server {
       boost::beast::http::response<ql::engine::export_v2::scatter_gather_body>;
   class MockSend {
    public:
-    Awaitable<void> operator()(auto response) {
+    // No abbreviated function template (`auto` parameter): the C++17 CI job
+    // compiles this header.
+    template <typename Response>
+    Awaitable<void> operator()(Response response) {
       using Sent = std::decay_t<decltype(response)>;
       static_assert(std::is_same_v<Sent, ResponseT> ||
                         std::is_same_v<Sent, SgResponseForTesting>,

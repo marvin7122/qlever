@@ -126,7 +126,7 @@ struct CellWriter {
             std::enable_if_t<std::is_integral_v<Value>, int> = 0>
   static void write(Writer& writer, Value value) {
     static_assert(Type == ColumnType::Integer,
-                  "This column type requires a string or floating argument");
+                  "This column type requires an integral argument");
     writer.writeInteger(value);
   }
 

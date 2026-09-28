@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <utility>
 
@@ -38,6 +39,9 @@ class ReadOnlyMmap {
   // Requested view into the mapping: `data()` plus `numBytes_`.
   const void* data_ = nullptr;
   size_t numBytes_ = 0;
+  // Requested file offset, to detect re-mapping attempts for a different
+  // region (only meaningful when mapped).
+  off_t fileOffset_ = 0;
 
  public:
   ReadOnlyMmap() = default;
@@ -49,7 +53,8 @@ class ReadOnlyMmap {
       : alignedBase_{std::exchange(other.alignedBase_, nullptr)},
         mappedBytes_{std::exchange(other.mappedBytes_, 0)},
         data_{std::exchange(other.data_, nullptr)},
-        numBytes_{std::exchange(other.numBytes_, 0)} {}
+        numBytes_{std::exchange(other.numBytes_, 0)},
+        fileOffset_{std::exchange(other.fileOffset_, 0)} {}
   ReadOnlyMmap& operator=(ReadOnlyMmap&& other) noexcept {
     if (this != &other) {
       unmap();
@@ -57,6 +62,7 @@ class ReadOnlyMmap {
       mappedBytes_ = std::exchange(other.mappedBytes_, 0);
       data_ = std::exchange(other.data_, nullptr);
       numBytes_ = std::exchange(other.numBytes_, 0);
+      fileOffset_ = std::exchange(other.fileOffset_, 0);
     }
     return *this;
   }
@@ -64,11 +70,18 @@ class ReadOnlyMmap {
   ~ReadOnlyMmap() { unmap(); }
 
   // Map `numBytes` starting at `fileOffset` of `fd` read-only. A no-op
-  // returning `true` when this instance is already mapped. Returns `false`
-  // (leaving this instance unmapped) when the mapping cannot be established.
+  // returning `true` when this instance is already mapped *for the same
+  // region*; requesting a different region on an already-mapped instance is
+  // rejected with `false` (unmap or construct a new instance instead), so a
+  // retry with a different region can never silently keep a stale view.
+  // Returns `false` (leaving this instance unmapped) when the mapping cannot
+  // be established. Callers must only map files that are immutable after
+  // their creation: the size check below and the mapping itself are
+  // best-effort, and truncating the file afterwards can still fault (`SIGBUS`)
+  // when the bytes past the new end are touched.
   [[nodiscard]] bool map(int fd, size_t numBytes, off_t fileOffset = 0) {
     if (isMapped()) {
-      return true;
+      return numBytes == numBytes_ && fileOffset == fileOffset_;
     }
     if (numBytes == 0 || fileOffset < 0) {
       return false;
@@ -109,6 +122,7 @@ class ReadOnlyMmap {
     mappedBytes_ = numBytes + delta;
     data_ = static_cast<const char*>(base) + delta;
     numBytes_ = numBytes;
+    fileOffset_ = fileOffset;
     return true;
   }
 
@@ -125,6 +139,7 @@ class ReadOnlyMmap {
       mappedBytes_ = 0;
       data_ = nullptr;
       numBytes_ = 0;
+      fileOffset_ = 0;
     }
   }
 

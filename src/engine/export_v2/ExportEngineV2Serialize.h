@@ -45,7 +45,9 @@ inline ScatterGatherChunk serializeTableChunk(
       if (id.getDatatype() == Datatype::Int) {
         builder.appendCopy(std::to_string(id.getInt()));
       } else if (id.getDatatype() == Datatype::Double) {
-        builder.appendCopy(std::to_string(id.getDouble()));
+        // Match the legacy `%.1f`/`%.13g` contract (`formatLegacyDouble`):
+        // `std::to_string` would emit fixed 6-decimal and lowercase nan/inf.
+        builder.appendCopy(detail::formatLegacyDouble(id.getDouble()));
       } else if (id.getDatatype() == Datatype::Undefined) {
         // empty string for undef
       } else {

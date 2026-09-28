@@ -14,6 +14,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -209,7 +210,11 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
       : alloc_{std::move(alloc)} {}
 
  protected:
-  void* do_allocate(std::size_t bytes, std::size_t) override {
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+    // The arena only serves byte-sized types today, but the `pmr` contract
+    // requires honoring `alignment`: fail loudly instead of handing out
+    // under-aligned storage for a future over-aligned user.
+    AD_CONTRACT_CHECK(alignment <= alignof(std::max_align_t));
     return alloc_.allocate(bytes);
   }
   void do_deallocate(void* p, std::size_t bytes, std::size_t) override {

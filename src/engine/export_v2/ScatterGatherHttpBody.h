@@ -68,6 +68,13 @@ class scatter_gather_body::writer {
       AD_LOG_ERROR << "Failed to generate scatter-gather response:\n"
                    << e.what() << std::endl;
       return false;
+    } catch (...) {
+      // The generator can propagate non-`std::exception` types (e.g. boost
+      // exceptions); Beast expects an `error_code`, not a C++ exception.
+      ec = {EPIPE, boost::system::generic_category()};
+      AD_LOG_ERROR << "Failed to generate scatter-gather response:\n"
+                   << "unknown exception" << std::endl;
+      return false;
     }
   }
 
