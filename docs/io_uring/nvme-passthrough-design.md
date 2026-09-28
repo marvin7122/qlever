@@ -1,80 +1,81 @@
-# NVMe passthrough reads via `IORING_OP_URING_CMD`
+# NVMe passthrough reads for `VocabularyOnDisk`
 
-## Goal
+## What it does
 
-Replace the generic block-layer read path in `IoUringPolicy` with native NVMe
-commands submitted through io_uring (`IORING_OP_URING_CMD`) on devices that
-support it. The passthrough path must bypass the generic storage stack for
-each read while keeping the existing plain-read path as the fallback for
-devices and kernels that do not support passthrough.
+With the runtime parameter `vocabulary-nvme-passthrough=true`, the words file
+of a `VocabularyOnDisk` can be an NVMe generic character device
+(`/dev/ngXnY`). Batch lookups whose words are far apart are then read with
+native NVMe Read commands submitted through `io_uring`
+(`IORING_OP_URING_CMD`), which bypass the page cache, the file system and the
+block layer. All other reads of the words file go through the block device of
+the same namespace (`/dev/nvmeXnY`), i.e. through the page cache.
 
-## Paper reference
+The feature is off by default. Without the parameter, no code path changes.
 
-Jasny et al. describe this step in the subsubsection "Tuning io_uring for
-the Storage Engine" (thesis: `document/chapters/05B-iouring-batch-lookup.tex`,
-paragraph "NVMe passthrough.", lines 926-929). The io_uring
-`OP_URING_CMD` opcode issues native NVMe commands through the kernel to
-device queues and bypasses the generic storage stack. In the paper's
-buffer-managed storage engine, passthrough adds 20% throughput (to
-300 k tx/s, the +Passthru leg), and the subsequent IOPoll leg adds 21%
-(to 376 k tx/s, the +IOPoll leg). This design covers the passthrough leg
-only; IOPoll stays out of scope.
+## Components
 
-## Current state
+- `src/util/NvmePassthrough.h`: file offset to LBA translation, whole-block
+  read planning (`planBlockReads`, runs of at most 128 KiB that merge gaps up
+  to a configurable number of 512-byte blocks), the median gap of a batch
+  (`medianGapBytes`), the block device name for a generic character device,
+  the fail-closed capability probe (`NVME_IOCTL_ID` must report the configured
+  namespace), and the preparation of the 128-byte SQE.
+- `IoUringPolicy` (`src/util/IoUringManager.{h,cpp}`): with
+  `nvmePassthrough::Options`, the ring is created with `IORING_SETUP_SQE128 |
+  IORING_SETUP_CQE32` (the NVMe driver rejects `uring_cmd` on other rings). A
+  read of a capable fd whose range is whole logical blocks becomes a native
+  NVMe Read; every other read stays a plain read on the same ring. The
+  completion of a passthrough command carries the NVMe status (0 on success)
+  instead of a byte count.
+- `VocabularyOnDisk`: opens the block device next to the character device
+  (checks the namespace id on both and requires 512-byte logical blocks), and
+  routes each batch of word reads by its locality (see below). `operator[]`
+  and `scanAll` always read through the block device.
 
-`IoUringPolicy::addBatch` in `src/util/IoUringManager.cpp` prepares one
-block-layer read SQE per request with `io_uring_prep_read` at
-`src/util/IoUringManager.cpp:131`. The SQE is tagged with a request id at
-`src/util/IoUringManager.cpp:139-141`, and the batch is flushed with
-`io_uring_submit` at `src/util/IoUringManager.cpp:147`. Completions are
-drained per batch in `IoUringPolicy::wait` at
-`src/util/IoUringManager.cpp:151-159`. Every read therefore traverses the
-generic filesystem and block stack before reaching the device.
+## Locality-adaptive routing
 
-## Design
+For each batch, the words that still have to be read (all words, or those
+not served from the page cache with `vocabulary-iouring-page-cache-fast-path`)
+are sorted by file offset, and the median gap between consecutive words is
+computed.
 
-1. Add a `submitPassthroughRead` helper next to the `io_uring_prep_read`
-   call site (`src/util/IoUringManager.cpp:131`) that prepares an
-   `IORING_OP_URING_CMD` SQE carrying a native NVMe read command (namespace,
-   starting LBA, block count) for the requested file offset and length.
-2. Detect passthrough capability once per device at ring setup (NVMe
-   character device present and kernel supports `IORING_OP_URING_CMD` for
-   it). Store the result as a per-fd flag on the policy object.
-3. Route each request in `addBatch` through the passthrough helper when the
-   flag is set, and through the existing `io_uring_prep_read` path
-   otherwise. The fallback is per device, not per request, so mixed fleets
-   keep working without configuration.
-4. Keep completion handling unchanged: the passthrough SQE carries the same
-   `user_data` request id scheme (`src/util/IoUringManager.cpp:139-141`),
-   so `drainOneCqe` and `wait` need no changes.
-5. Interact with fixed (registered) buffers by requiring the registered
-   buffer set for the passthrough path: the NVMe command targets the
-   already-pinned target buffer, which preserves the zero-copy data path
-   and keeps buffer registration as the single pinning point.
-6. Gate the feature behind a runtime parameter (default off) so operators
-   enable passthrough explicitly per deployment after validating their
-   device and kernel combination.
+- Median gap at most `vocabulary-nvme-max-buffered-median-gap` (default
+  128 KiB, the default readahead window): the batch is read through the
+  block device, one plain read per word, exactly as without passthrough. The
+  kernel's readahead serves several words per device read, which passthrough
+  cannot do.
+- Larger median gap, or fewer than two words: the batch is read with
+  passthrough as whole-block runs that merge gaps of at most
+  `vocabulary-nvme-max-gap-blocks` blocks (default 32 = 16 KiB; a command
+  covers at most 256 blocks = 128 KiB), then each word is copied from the
+  staging buffer to its place in the result.
 
-## Acceptance
+A regular words file gets the same routing and coalescing with plain reads
+(its capability probe fails), which keeps the path testable without NVMe
+hardware.
 
-- Unit tests cover capability detection and the fallback: a device without
-  passthrough support takes the plain-read path, and a failed capability
-  probe disables passthrough without failing the batch.
-- A benchmark on Ural against the Wikidata truthy index on NVMe storage
-  compares passthrough reads against the plain-read path on the same
-  hardware and reports throughput and per-I/O CPU cost.
+## Deployment
 
-## Dependency note
+1. The namespace must use 512-byte logical blocks.
+2. Write the words file of the on-disk vocabulary (the file that
+   `VocabularyOnDisk::open` receives; its offsets are in the file with the
+   suffix `.offsets`) to the raw namespace starting at LBA 0, e.g.
+   `dd if=<words file> of=/dev/nvmeXnY bs=1M oflag=direct`, and replace the
+   words file by a symbolic link to `/dev/ngXnY`. The `.offsets` file stays a
+   regular file.
+3. The server needs read access to both `/dev/ngXnY` and `/dev/nvmeXnY`
+   (`root` only by default) and a kernel with NVMe `uring_cmd` support (5.19
+   or later).
+4. Start the server with `--set-runtime-parameter
+   vocabulary-nvme-passthrough=true` and, if the namespace id is not 1,
+   `--set-runtime-parameter vocabulary-nvme-namespace-id=<id>`.
 
-This design requires PR #83 (fixed buffers / `O_DIRECT`) first, because
-the passthrough path targets pinned buffers and direct device access.
-PR #93 (`SEND_ZC`) is socket zero-copy for the network path and is
-unrelated to this storage change; it must not be confused with the
-registered-buffer interaction described above.
+A misconfiguration (a character device that is not an NVMe generic character
+device, a namespace id mismatch, a block size other than 512, no `io_uring`)
+fails when the index is loaded.
 
 ## Out of scope
 
-- IOPoll completion polling (the paper's +IOPoll leg).
-- SQPoll submission polling and multishot operations.
-- Changes to the filesystem layout or to non-NVMe devices.
-- Write-path passthrough; reads only.
+- IOPoll completion polling and SQPoll.
+- Registered (fixed) buffers for the passthrough commands.
+- Passthrough for other files than the vocabulary words file; writes.
