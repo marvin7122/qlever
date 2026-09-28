@@ -432,10 +432,12 @@ void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
       !isHelperAdmissionEligibleUnsafe()) {
     return;
   }
-  auto targetJobState = std::move(morsel).extractJobState();
+  // Read the scalar fields before moving the state out: reading a
+  // moved-from `morsel` afterwards would rely on move internals.
   const size_t targetMorselIndex = morsel.morselIndex_;
   const uint64_t submissionEpoch = morsel.submissionEpoch_;
   const uint64_t jobId = morsel.jobId();
+  auto targetJobState = std::move(morsel).extractJobState();
   const uint64_t leaseEpoch = demandEpoch_.load(std::memory_order_relaxed);
   const uint64_t leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
   totalActiveHelpers_.fetch_add(1, std::memory_order_relaxed);
@@ -505,10 +507,12 @@ void ElasticExportScheduler::workerLoop() {
       queue_.pop_front();
       queueNotFullCv_.notify_one();
 
-      targetJobState = std::move(morsel).extractJobState();
+      // Read the scalar fields before moving the state out: reading a
+      // moved-from `morsel` afterwards would rely on move internals.
       targetMorselIndex = morsel.morselIndex_;
       submissionEpoch = morsel.submissionEpoch_;
       jobId = morsel.jobId();
+      targetJobState = std::move(morsel).extractJobState();
 
       leaseEpoch = demandEpoch_.load(std::memory_order_relaxed);
       leaseId = nextLeaseId_.fetch_add(1, std::memory_order_relaxed);
