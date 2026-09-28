@@ -165,6 +165,40 @@ int sharedSqPollRingFd(const io_uring_params& templateParams) {
 // Return `preferredCpu` when it is in this process's affinity mask, otherwise
 // the first CPU in the mask. Falls back to `preferredCpu` when the mask
 // cannot be read; the kernel setup then reports the error as before.
+// The descriptor of the process-wide ring whose SQPoll thread every SQPoll
+// ring with `shareSqPollThread` attaches to, or a negative value if that ring
+// cannot be set up. It is created on first use with the SQPoll parameters of
+// the first such ring (CPU and idle time) and lives until the process ends,
+// so no attached ring can outlive its poller. A tiny ring: only its poll
+// thread is used, no reads are submitted to it.
+int sharedSqPollRingFd(const io_uring_params& sqPollParams) {
+  static const int fd = [&sqPollParams]() {
+    static io_uring pollerRing{};
+    io_uring_params params{};
+    params.flags =
+        sqPollParams.flags & (IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF);
+    params.sq_thread_cpu = sqPollParams.sq_thread_cpu;
+    params.sq_thread_idle = sqPollParams.sq_thread_idle;
+    const int ret = io_uring_queue_init_params(8, &pollerRing, &params);
+    if (ret < 0) {
+      AD_LOG_WARN << "The shared SQPoll ring could not be set up ("
+                  << std::strerror(-ret)
+                  << "); every SQPoll ring gets its own poll thread"
+                  << std::endl;
+      return ret;
+    }
+    AD_LOG_INFO << "io_uring SQPoll: all SQPoll rings share one kernel poll "
+                   "thread (idle "
+                << params.sq_thread_idle << " ms, "
+                << ((params.flags & IORING_SETUP_SQ_AFF)
+                        ? absl::StrCat("pinned to CPU ", params.sq_thread_cpu)
+                        : std::string{"not pinned"})
+                << ")" << std::endl;
+    return pollerRing.ring_fd;
+  }();
+  return fd;
+}
+
 unsigned firstCpuInAffinityOr(unsigned preferredCpu) {
   cpu_set_t affinity;
   CPU_ZERO(&affinity);
@@ -248,16 +282,20 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
   }
   struct io_uring_params params {};
   if (setupOptions.useSqPoll) {
-    params.flags |= IORING_SETUP_SQPOLL | IORING_SETUP_SQ_AFF;
-    // Pin the poll thread to a CPU in this process's affinity mask, like
-    // `sqPollAvailable()` probes: the configured CPU may be offline or
-    // isolated, in which case the kernel would deny the setup with `-EINVAL`.
-    params.sq_thread_cpu = firstCpuInAffinityOr(setupOptions.sqThreadCpu);
-    if (params.sq_thread_cpu != setupOptions.sqThreadCpu) {
-      AD_LOG_WARN << "SQPoll CPU " << setupOptions.sqThreadCpu
-                  << " is not in this process's affinity mask; pinning the "
-                     "poll thread to CPU "
-                  << params.sq_thread_cpu << " instead" << std::endl;
+    params.flags |= IORING_SETUP_SQPOLL;
+    if (setupOptions.sqThreadCpu.has_value()) {
+      const unsigned configuredCpu = setupOptions.sqThreadCpu.value();
+      params.flags |= IORING_SETUP_SQ_AFF;
+      // Pin the poll thread to a CPU in this process's affinity mask: the
+      // configured CPU may be offline or isolated, in which case the kernel
+      // would deny the setup with `-EINVAL`.
+      params.sq_thread_cpu = firstCpuInAffinityOr(configuredCpu);
+      if (params.sq_thread_cpu != configuredCpu) {
+        AD_LOG_WARN << "SQPoll CPU " << configuredCpu
+                    << " is not in this process's affinity mask; pinning the "
+                       "poll thread to CPU "
+                    << params.sq_thread_cpu << " instead" << std::endl;
+      }
     }
     params.sq_thread_idle = setupOptions.sqThreadIdleMs;
     // MEASUREMENT ONLY: environment overrides, see `SqPollExperiment`.
@@ -300,7 +338,24 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
   // fill up before the cap does. (Draining and retrying instead was tried and
   // hung under cancellation.) The extra entries cost a few kilobytes.
   const unsigned entries = setupOptions.useSqPoll ? 2 * ringSize_ : ringSize_;
-  int ret = io_uring_queue_init_params(entries, &ring_, &params);
+  int ret = -EINVAL;
+  if (setupOptions.useSqPoll && setupOptions.shareSqPollThread) {
+    if (const int pollerFd = sharedSqPollRingFd(params); pollerFd >= 0) {
+      io_uring_params attached = params;
+      attached.flags |= IORING_SETUP_ATTACH_WQ;
+      attached.wq_fd = static_cast<__u32>(pollerFd);
+      ret = io_uring_queue_init_params(entries, &ring_, &attached);
+      if (ret < 0) {
+        AD_LOG_WARN << "Attaching an io_uring to the shared SQPoll thread "
+                       "failed ("
+                    << std::strerror(-ret)
+                    << "); this ring gets its own poll thread" << std::endl;
+      }
+    }
+  }
+  if (ret < 0) {
+    ret = io_uring_queue_init_params(entries, &ring_, &params);
+  }
   bool usedFallbackRing = false;
   if (ret == -EPERM || ret == -EINVAL) {
     // The kernel denied the requested setup (missing `CAP_SYS_NICE` for the

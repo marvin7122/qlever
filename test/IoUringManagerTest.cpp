@@ -14,6 +14,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <memory>
 #include <sstream>
@@ -629,7 +631,10 @@ TEST(IoUringSetupOptions, defaultsPreservePlainRing) {
   EXPECT_FALSE(options.useSqPoll);
   EXPECT_FALSE(options.deferTaskrun);
   EXPECT_FALSE(options.singleIssuer);
-  EXPECT_EQ(options.sqThreadIdleMs, 2000u);
+  // With SQPoll requested: one shared, unpinned poller with a short idle time.
+  EXPECT_TRUE(options.shareSqPollThread);
+  EXPECT_FALSE(options.sqThreadCpu.has_value());
+  EXPECT_EQ(options.sqThreadIdleMs, 1u);
 }
 
 // A default-constructed policy keeps the plain setup path and reports SQPoll
@@ -682,6 +687,66 @@ TEST(SqPollSetup, sqPollRequestStillServesReads) {
   policy.wait(0);
   EXPECT_THAT((std::vector<std::string>{first, second}),
               ::testing::ElementsAre("AAAA", "BBBB"));
+}
+
+// The number of SQPoll kernel threads (`iou-sqp-<pid>`) of this process.
+size_t numSqPollThreads() {
+  size_t count = 0;
+  for (const auto& task :
+       std::filesystem::directory_iterator("/proc/self/task")) {
+    std::ifstream comm{task.path() / "comm"};
+    std::string name;
+    std::getline(comm, name);
+    count += name.rfind("iou-sqp", 0) == 0 ? 1 : 0;
+  }
+  return count;
+}
+
+// With `shareSqPollThread` (the default), all SQPoll rings of the process
+// attach to one poll thread, so a second and third ring add no poller.
+// Without it, every ring gets its own. Both variants serve reads.
+TEST(SqPollSetup, sqPollRingsShareOnePollThread) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  if (!ad_utility::IoUringPolicy::sqPollAvailable()) {
+    GTEST_SKIP() << "SQPoll setup denied, fallback covered by plain tests";
+  }
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  auto expectServesReads = [fd](ad_utility::IoUringPolicy& policy) {
+    std::string first(4, '\0');
+    std::string second(4, '\0');
+    std::vector<size_t> numBytes{4, 4};
+    std::vector<uint64_t> fileOffsets{0, 4};
+    std::vector<char*> buffers{first.data(), second.data()};
+    policy.addBatch(fd, numBytes, fileOffsets, buffers, 0);
+    policy.wait(0);
+    EXPECT_THAT((std::vector<std::string>{first, second}),
+                ::testing::ElementsAre("AAAA", "BBBB"));
+  };
+  ad_utility::IoUringSetupOptions options;
+  options.useSqPoll = true;
+  {
+    // The first shared ring may create the process-wide poller itself.
+    ad_utility::IoUringPolicy first(16, options);
+    ASSERT_TRUE(first.sqPollEnabled());
+    const size_t pollersWithOneRing = numSqPollThreads();
+    ad_utility::IoUringPolicy second(16, options);
+    ad_utility::IoUringPolicy third(16, options);
+    EXPECT_TRUE(second.sqPollEnabled());
+    EXPECT_TRUE(third.sqPollEnabled());
+    EXPECT_EQ(numSqPollThreads(), pollersWithOneRing);
+    expectServesReads(second);
+    expectServesReads(third);
+  }
+  options.shareSqPollThread = false;
+  const size_t pollersBefore = numSqPollThreads();
+  ad_utility::IoUringPolicy own1(16, options);
+  ad_utility::IoUringPolicy own2(16, options);
+  EXPECT_EQ(numSqPollThreads(), pollersBefore + 2);
+  expectServesReads(own1);
+  expectServesReads(own2);
 }
 
 // Request `deferTaskrun` and `singleIssuer` without SQPoll, alone and

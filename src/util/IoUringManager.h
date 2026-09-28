@@ -14,6 +14,7 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 
 #include "backports/algorithm.h"
@@ -72,17 +73,27 @@ class BatchManagerBase {
 // kernel-side polling. Set `useSqPoll` to let a kernel poll thread take over
 // submission, so the application thread pays no `io_uring_enter` syscall per
 // submitted batch while the poller stays awake. `sqThreadIdleMs` bounds how
-// long the poller stays awake across submission gaps within one query (it
-// sleeps between queries). The two opt-in flags below default to `false`.
+// long the poller stays awake after the last submission. The two opt-in flags
+// below default to `false`.
 // `singleIssuer` is only sound while exactly one thread ever submits to a
 // ring, which holds because `IoUringPolicy` is single-threaded use only.
 struct IoUringSetupOptions {
   bool useSqPoll = false;
-  // Preferred CPU for the SQPoll thread. The constructor remaps it to the
-  // first CPU in this process's affinity mask when it is not in the mask
-  // (e.g. offline or isolated), instead of letting the kernel deny the setup.
-  unsigned sqThreadCpu = 0;
-  unsigned sqThreadIdleMs = 2000;
+  // All SQPoll rings of the process share one kernel poll thread
+  // (`IORING_SETUP_ATTACH_WQ`). With one poller per ring, the pollers of the
+  // ring pool competed for CPU time and a submission waited until its ring's
+  // poller was scheduled again.
+  bool shareSqPollThread = true;
+  // CPU to pin the SQPoll thread to (`IORING_SETUP_SQ_AFF`); unpinned by
+  // default, so the scheduler can keep the poller off the submitting thread's
+  // CPU. A configured CPU that is not in this process's affinity mask (e.g.
+  // offline or isolated) is remapped to the first CPU in the mask instead of
+  // letting the kernel deny the setup.
+  std::optional<unsigned> sqThreadCpu;
+  // The poller sleeps after this many milliseconds without a submission and is
+  // woken by the next one. A short timeout keeps an idle poller from burning a
+  // CPU between the batches of a query.
+  unsigned sqThreadIdleMs = 1;
   bool deferTaskrun = false;
   bool singleIssuer = false;
 };
