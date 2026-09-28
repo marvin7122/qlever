@@ -288,14 +288,11 @@ void resolveVocabIndexIds(
       positions | ql::views::transform([&ids](size_t i) {
         return static_cast<size_t>(ids[i].getVocabIndex().get());
       }));
-  ArenaVocabBatchBuilder builder(rawIndices.size(),
-                                 index.getImpl().allocator());
-  auto vocabStrings =
-      index.getImpl().getVocab().lookupBatch(rawIndices, builder);
+  auto vocabStrings = index.getImpl().getVocab().lookupBatch(rawIndices);
 
   // `vocabStrings` is in the same order as `positions`, so zip scatters each
   // looked-up string back to the position it came from.
-  for (auto&& [sv, i] : ::ranges::views::zip(vocabStrings, positions)) {
+  for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, positions)) {
     results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
                                              returnOnlyLiterals>(
         LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
