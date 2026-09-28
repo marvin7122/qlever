@@ -12,7 +12,6 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
-#include <sys/mman.h>
 
 #include <algorithm>
 #include <array>
@@ -321,15 +320,14 @@ void VocabularyOnDisk::open(const std::string& filename) {
   size_ = numOffsets - 1;
 
   // Memory-map the offsets region: the `numOffsets` leading 8-byte entries.
-  // The `MmapVectorMetaData` trailer stays unmapped. Access to the offsets is
-  // random, so advise the kernel against readahead (advice only, failure is
-  // harmless). A failed mapping is not an error: the lookup paths below
-  // transparently fall back to positioned and ring I/O.
+  // The `MmapVectorMetaData` trailer stays unmapped. The mapping keeps the
+  // kernel's default readahead: with `MADV_RANDOM`, every page fault on a cold
+  // cache became a synchronous single-page read, which made cold exports
+  // slower than the `pread` path it replaces. A failed mapping is not an
+  // error: the lookup paths below transparently fall back to positioned and
+  // ring I/O.
   static_assert(sizeof(Offset) == 8);
-  if (offsetsMapping_.map(offsetsFile_.fd(), numOffsets * sizeof(Offset))) {
-    ::madvise(const_cast<void*>(offsetsMapping_.data()), offsetsMapping_.size(),
-              MADV_RANDOM);
-  } else {
+  if (!offsetsMapping_.map(offsetsFile_.fd(), numOffsets * sizeof(Offset))) {
     AD_LOG_WARN << "Could not memory-map the vocabulary offsets file, "
                    "falling back to explicit I/O for offset lookups.\n";
   }
