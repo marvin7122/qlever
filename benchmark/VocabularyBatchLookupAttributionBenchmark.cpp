@@ -10,8 +10,10 @@
 // RESEARCH ONLY (not part of the PR): attribute the cost of
 // `VocabularyOnDisk::lookupBatch` and `VocabularyInternalExternal::lookupBatch`
 // on files that sit in the page cache. Every case is repeated until it has
-// resolved at least `kMinWordsPerCase` words and reports ns per word, so the
-// numbers are not single ~100 us samples.
+// timed in long trials (see `runGroup`) and reports ns per word, so the
+// numbers are not single ~100 us samples. Each timed trial runs >= 1 s,
+// with >= 10 interleaved trials after an untimed warm-up (median, min..max).
+// Run pinned to one core (`taskset -c <n>`).
 //
 // Cases per (vocabulary size, batch size):
 //   single        : `operator[]` per word (two `pread`s + one `std::string`).
@@ -24,8 +26,11 @@
 //                   `VocabularyInternalExternal::lookupBatch` (no I/O).
 //   ie-single / ie-batch : `VocabularyInternalExternal` per word / batched.
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <numeric>
 #include <random>
@@ -41,8 +46,6 @@
 
 namespace ad_benchmark {
 namespace {
-
-constexpr size_t kMinWordsPerCase = 2'000'000;
 
 std::vector<std::string> makeWords(size_t numWords) {
   std::vector<std::string> words;
@@ -98,28 +101,84 @@ size_t manualTwoPhase(ad_utility::BatchManagerBase& manager, int offsetsFd,
   return total;
 }
 
+// A registered case of the current group; all cases of a group are run as
+// interleaved trials by `runGroup`.
+struct Case {
+  std::string group;
+  std::string name;
+  size_t wordsPerCall;
+  std::function<size_t()> f;
+  size_t calls = 1;
+  std::vector<double> nsPerWord;
+};
+std::vector<Case> pendingCases;
+
+// Environment knobs: `ATTR_TRIALS` (default 11) and `ATTR_MIN_SECONDS`
+// (default 1.0, the minimum duration of one timed trial).
+size_t envSize(const char* name, size_t dflt) {
+  const char* v = std::getenv(name);
+  return v ? std::stoul(v) : dflt;
+}
+double envDouble(const char* name, double dflt) {
+  const char* v = std::getenv(name);
+  return v ? std::stod(v) : dflt;
+}
+
 template <typename F>
-void timeCase(BenchmarkResults& results, const std::string& group,
-              const std::string& name, size_t wordsPerCall, F f,
-              size_t& checksum) {
-  const size_t calls = std::max<size_t>(1, kMinWordsPerCase / wordsPerCall);
-  // One untimed warm-up call.
-  checksum += f();
-  auto start = std::chrono::steady_clock::now();
-  for (size_t i = 0; i < calls; ++i) {
-    checksum += f();
+void timeCase(BenchmarkResults&, const std::string& group,
+              const std::string& name, size_t wordsPerCall, F f, size_t&) {
+  pendingCases.push_back(Case{group, name, wordsPerCall, std::move(f)});
+}
+
+// Run all pending cases: one untimed warm-up and calibration per case (so
+// that one timed trial takes at least `ATTR_MIN_SECONDS`), then `ATTR_TRIALS`
+// interleaved trials (case 1, case 2, ..., case 1, case 2, ...). Report the
+// median and min..max of ns per word.
+void runGroup(BenchmarkResults& results, size_t& checksum) {
+  using Clock = std::chrono::steady_clock;
+  const size_t trials = envSize("ATTR_TRIALS", 11);
+  const double minSeconds = envDouble("ATTR_MIN_SECONDS", 1.0);
+  for (auto& c : pendingCases) {
+    // Warm-up and calibration: double the number of calls until one round
+    // takes at least 1/8 of the target, then scale.
+    size_t calls = 1;
+    while (true) {
+      auto start = Clock::now();
+      for (size_t i = 0; i < calls; ++i) checksum += c.f();
+      double sec = std::chrono::duration<double>(Clock::now() - start).count();
+      if (sec >= minSeconds / 8) {
+        c.calls = std::max<size_t>(
+            1, static_cast<size_t>(calls * (minSeconds * 1.05) / sec) + 1);
+        break;
+      }
+      calls *= 2;
+    }
   }
-  auto ns = std::chrono::duration<double, std::nano>(
-                std::chrono::steady_clock::now() - start)
-                .count();
-  double perWord = ns / static_cast<double>(calls * wordsPerCall);
-  std::cout << "ATTR\t" << group << "\t" << name << "\t" << perWord
-            << "\tns/word\t(" << calls << " calls)" << std::endl;
-  results.addGroup(group + " / " + name)
-      .addMeasurement("ns per word x1000", [perWord]() {
-        volatile double sink = perWord;
-        (void)sink;
-      });
+  for (size_t t = 0; t < trials; ++t) {
+    for (auto& c : pendingCases) {
+      auto start = Clock::now();
+      for (size_t i = 0; i < c.calls; ++i) checksum += c.f();
+      double ns = std::chrono::duration<double, std::nano>(Clock::now() - start)
+                      .count();
+      c.nsPerWord.push_back(ns / static_cast<double>(c.calls * c.wordsPerCall));
+    }
+  }
+  for (auto& c : pendingCases) {
+    auto v = c.nsPerWord;
+    std::sort(v.begin(), v.end());
+    double median = v[v.size() / 2];
+    std::cout << "ATTR\t" << c.group << "\t" << c.name << "\tmedian\t" << median
+              << "\tmin\t" << v.front() << "\tmax\t" << v.back()
+              << "\tns/word\ttrials\t" << v.size() << "\tcalls/trial\t"
+              << c.calls << "\twords/trial\t" << c.calls * c.wordsPerCall
+              << std::endl;
+    results.addGroup(c.group + " / " + c.name)
+        .addMeasurement("median ns per word (value in stdout)", [median]() {
+          volatile double sink = median;
+          (void)sink;
+        });
+  }
+  pendingCases.clear();
 }
 }  // namespace
 
@@ -170,7 +229,7 @@ class BMVocabBatchLookupAttribution : public BenchmarkInterface {
       ad_utility::BatchManager<ad_utility::IoUringPolicy> uringManager{256};
 #endif
 
-      for (size_t batch : {1u, 4u, 16u, 128u, 2'048u, 50'000u}) {
+      for (size_t batch : {1u, 16u, 128u, 2'048u, 50'000u}) {
         if (batch > numWords) {
           continue;
         }
@@ -238,6 +297,7 @@ class BMVocabBatchLookupAttribution : public BenchmarkInterface {
               return t;
             },
             checksum);
+        runGroup(results, checksum);
       }
     }
     std::cout << "attribution checksum: " << checksum << '\n';
