@@ -222,9 +222,9 @@ TEST(AsyncChunkPipelineTest, PropagatesFailureAfterQueuedChunks) {
   ASSERT_EQ(pipeline.push("before-error"), PushResult::Accepted);
   pipeline.fail(std::make_exception_ptr(std::runtime_error{"producer failed"}));
   EXPECT_EQ(pipeline.pop(), std::optional<std::string>{"before-error"});
-  // "before-error" is 12 bytes produced but not yet consumed.
+  // "before-error" is 12 bytes produced and, by the `pop` above, consumed.
   EXPECT_EQ(pipeline.stats().bytesProduced_, 12);
-  EXPECT_EQ(pipeline.stats().bytesConsumed_, 0);
+  EXPECT_EQ(pipeline.stats().bytesConsumed_, 12);
   // `static_cast<void>` discards the `[[nodiscard]]` return value while the
   // helper checks the exception message.
   AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(static_cast<void>(pipeline.pop()),
