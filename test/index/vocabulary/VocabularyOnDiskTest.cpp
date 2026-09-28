@@ -16,6 +16,7 @@
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "global/RuntimeParameters.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
 #include "util/Forward.h"
@@ -307,6 +308,47 @@ TEST(VocabularyOnDisk, LookupBatchWithRegisteredBuffersAndDirectIo) {
           vocab, result, indices);
     }
   }
+}
+
+// With `vocabulary-iouring-page-cache-fast-path`, the words and offsets that
+// are in the page cache are read before the batch manager sees the rest. The
+// result must be byte-identical to the result without the fast path, for runs
+// of consecutive indices as well as for reordered and duplicated indices.
+TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
+  auto withoutFastPath = vocab->lookupBatch(indices);
+  setRuntimeParameter<&RuntimeParameters::vocabularyIouringPageCacheFastPath_>(
+      true);
+  absl::Cleanup resetParameter{[]() {
+    setRuntimeParameter<
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(false);
+  }};
+  auto withFastPath = vocab->lookupBatch(indices);
+  EXPECT_THAT(withFastPath, ::testing::ElementsAreArray(withoutFastPath));
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, withFastPath, indices);
+}
+
+// The page-cache fast path and the `O_DIRECT` reads combine: the words that
+// the fast path does not serve go through the registered arena with
+// `O_DIRECT`, and the result is the same as without either.
+TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathWithDirectIo) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 9> indices{4, 0, 1, 2, 3, 3, 0, 4, 2};
+  auto plain = vocab->lookupBatch(indices);
+  absl::Cleanup reset{[]() {
+    setRuntimeParameter<
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(false);
+    ad_utility::useRegisteredBuffersForVocabularyReads = false;
+    ad_utility::useDirectIoForVocabularyReads = false;
+  }};
+  setRuntimeParameter<&RuntimeParameters::vocabularyIouringPageCacheFastPath_>(
+      true);
+  ad_utility::useRegisteredBuffersForVocabularyReads = true;
+  ad_utility::useDirectIoForVocabularyReads = true;
+  auto combined = vocab->lookupBatch(indices);
+  EXPECT_THAT(combined, ::testing::ElementsAreArray(plain));
 }
 
 // An empty batch is an invalid request and must throw.
