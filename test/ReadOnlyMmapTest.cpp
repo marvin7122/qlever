@@ -19,15 +19,31 @@
 
 namespace ad_utility {
 
-// Write `content` to a fresh file and return its name; the caller removes it.
-std::string writeTempFile(std::string_view content) {
+// Write `content` to a fresh file and return its name; the returned
+// `TempFileGuard` removes it on scope exit, including on an early return
+// from `ASSERT_*` or an exception unwinding the test.
+class TempFileGuard {
+ public:
+  explicit TempFileGuard(std::string filename)
+      : filename_{std::move(filename)} {}
+  ~TempFileGuard() { std::filesystem::remove(filename_); }
+  TempFileGuard(const TempFileGuard&) = delete;
+  TempFileGuard& operator=(const TempFileGuard&) = delete;
+
+  const std::string& name() const { return filename_; }
+
+ private:
+  std::string filename_;
+};
+
+TempFileGuard writeTempFile(std::string_view content) {
   std::string filename =
       ::testing::UnitTest::GetInstance()->current_test_info()->name();
   filename += ".tmp";
   File file{filename, "w"};
   file.write(content.data(), content.size());
   file.close();
-  return filename;
+  return TempFileGuard{std::move(filename)};
 }
 
 TEST(ReadOnlyMmap, DefaultIsUnmapped) {
@@ -38,8 +54,8 @@ TEST(ReadOnlyMmap, DefaultIsUnmapped) {
 
 TEST(ReadOnlyMmap, MapsFileContents) {
   const std::string payload = "0123456789abcdef";
-  const std::string filename = writeTempFile(payload);
-  File file{filename, "r"};
+  const TempFileGuard tempFile = writeTempFile(payload);
+  File file{tempFile.name(), "r"};
 
   ReadOnlyMmap mapping;
   ASSERT_TRUE(mapping.map(file.fd(), payload.size()));
@@ -52,22 +68,18 @@ TEST(ReadOnlyMmap, MapsFileContents) {
 
   // A second `map` on an already mapped instance is a no-op success.
   EXPECT_TRUE(mapping.map(file.fd(), payload.size()));
-
-  std::filesystem::remove(filename);
 }
 
 TEST(ReadOnlyMmap, MapsSuffixAtOffset) {
   const std::string payload = "0123456789abcdef";
-  const std::string filename = writeTempFile(payload);
-  File file{filename, "r"};
+  const TempFileGuard tempFile = writeTempFile(payload);
+  File file{tempFile.name(), "r"};
 
   ReadOnlyMmap mapping;
   ASSERT_TRUE(mapping.map(file.fd(), 6, 4));
   std::string_view mapped{static_cast<const char*>(mapping.data()),
                           mapping.size()};
   EXPECT_EQ(mapped, "456789");
-
-  std::filesystem::remove(filename);
 }
 
 TEST(ReadOnlyMmap, FailedMapStaysUnmapped) {
@@ -81,8 +93,8 @@ TEST(ReadOnlyMmap, FailedMapStaysUnmapped) {
 
 TEST(ReadOnlyMmap, MoveTransfersMapping) {
   const std::string payload = "0123456789abcdef";
-  const std::string filename = writeTempFile(payload);
-  File file{filename, "r"};
+  const TempFileGuard tempFile = writeTempFile(payload);
+  File file{tempFile.name(), "r"};
 
   ReadOnlyMmap source;
   ASSERT_TRUE(source.map(file.fd(), payload.size()));
@@ -101,8 +113,6 @@ TEST(ReadOnlyMmap, MoveTransfersMapping) {
   std::string_view mapped{static_cast<const char*>(assigned.data()),
                           assigned.size()};
   EXPECT_EQ(mapped, payload);
-
-  std::filesystem::remove(filename);
 }
 
 }  // namespace ad_utility
