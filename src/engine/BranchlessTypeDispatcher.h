@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string_view>
+#include <system_error>
 
 #include "backports/span.h"
 #include "global/Constants.h"
@@ -29,10 +30,14 @@ namespace ql::engine {
 // Forward declarations
 struct TypeFormatDescriptor;
 
-// Function pointer signature for single-pass term formatting.
+// Function pointer signature for single-pass term formatting. A formatter
+// writes `prefix`, the value of `id` (or `rawTerm`) and `suffix` to
+// `[out, last)` and returns the one-past-the-end pointer of what it wrote, or
+// `nullptr` if the output does not fit into `[out, last)`.
 using TermFormatterFn = char* (*)(ValueId id, std::string_view rawTerm,
-                                  char* out, std::string_view prefix,
-                                  std::string_view suffix) noexcept;
+                                  char* out, char* last,
+                                  std::string_view prefix,
+                                  std::string_view suffix);
 
 // _____________________________________________________________________________
 // 16-entry lookup table descriptor mapping a 4-bit Datatype tag to delimiters
@@ -52,134 +57,125 @@ struct TypeFormatDescriptor {
 
 namespace detail {
 
-// Format a double into `[out, last)`, returning the one-past-the-end pointer.
-// Floating-point `std::to_chars` is only available on macOS 13.3 and later,
-// but QLever still targets macOS 11.0, so fall back to `snprintf` on Apple
-// platforms.
+// Copy `bytes` to `out` if they fit into `[out, last)`. Return the
+// one-past-the-end pointer of the copy, or `nullptr` if they do not fit.
+inline char* append(char* out, char* last, std::string_view bytes) noexcept {
+  if (out == nullptr || static_cast<size_t>(last - out) < bytes.size()) {
+    return nullptr;
+  }
+  std::memcpy(out, bytes.data(), bytes.size());
+  return out + bytes.size();
+}
+
+// Format a double into `[out, last)`, returning the one-past-the-end pointer,
+// or `nullptr` if it does not fit. Floating-point `std::to_chars` is only
+// available on macOS 13.3 and later, but QLever still targets macOS 11.0, so
+// fall back to `snprintf` on Apple platforms.
 inline char* formatDoubleValue(char* out, char* last, double value) noexcept {
+  if (out == nullptr) {
+    return nullptr;
+  }
 #if defined(__APPLE__)
-  const int numChars =
-      std::snprintf(out, static_cast<size_t>(last - out), "%.17g", value);
-  return numChars > 0 ? out + numChars : out;
+  const auto capacity = static_cast<size_t>(last - out);
+  const int numChars = std::snprintf(out, capacity, "%.17g", value);
+  // `snprintf` returns the length the output would have had; it was
+  // truncated if that length does not leave room for the terminating null.
+  if (numChars < 0 || static_cast<size_t>(numChars) >= capacity) {
+    return nullptr;
+  }
+  return out + numChars;
 #else
   auto [ptr, ec] = std::to_chars(out, last, value);
-  (void)ec;
-  return ptr;
+  return ec == std::errc{} ? ptr : nullptr;
 #endif
+}
+
+// Format an integer into `[out, last)`, returning the one-past-the-end
+// pointer, or `nullptr` if it does not fit.
+template <typename Int>
+char* formatIntegerValue(char* out, char* last, Int value) noexcept {
+  if (out == nullptr) {
+    return nullptr;
+  }
+  auto [ptr, ec] = std::to_chars(out, last, value);
+  return ec == std::errc{} ? ptr : nullptr;
 }
 
 // Fast branchless copy for terms with opening and closing delimiters.
 inline char* formatTermWithDelimiters(ValueId, std::string_view rawTerm,
-                                      char* out, std::string_view prefix,
-                                      std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  std::memcpy(out, rawTerm.data(), rawTerm.size());
-  out += rawTerm.size();
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
+                                      char* out, char* last,
+                                      std::string_view prefix,
+                                      std::string_view suffix) {
+  out = append(out, last, prefix);
+  out = append(out, last, rawTerm);
+  return append(out, last, suffix);
 }
 
 // Fast branchless formatter for integer values.
-inline char* formatInteger(ValueId id, std::string_view, char* out,
-                           std::string_view prefix,
-                           std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 24, id.getInt());
-  (void)ec;
-  out = ptr;
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
+inline char* formatInteger(ValueId id, std::string_view, char* out, char* last,
+                           std::string_view prefix, std::string_view suffix) {
+  out = append(out, last, prefix);
+  out = formatIntegerValue(out, last, id.getInt());
+  return append(out, last, suffix);
 }
 
 // Fast branchless formatter for double values.
-inline char* formatDouble(ValueId id, std::string_view, char* out,
-                          std::string_view prefix,
-                          std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  out = formatDoubleValue(out, out + 32, id.getDouble());
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
+inline char* formatDouble(ValueId id, std::string_view, char* out, char* last,
+                          std::string_view prefix, std::string_view suffix) {
+  out = append(out, last, prefix);
+  out = formatDoubleValue(out, last, id.getDouble());
+  return append(out, last, suffix);
 }
 
 // Branchless boolean lookup table.
 inline constexpr std::array<std::string_view, 2> kBoolStrings{"false", "true"};
 
 // Fast branchless formatter for boolean values.
-inline char* formatBoolean(ValueId id, std::string_view, char* out,
-                           std::string_view prefix,
-                           std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  const std::string_view val = kBoolStrings[static_cast<size_t>(id.getBool())];
-  std::memcpy(out, val.data(), val.size());
-  out += val.size();
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
+inline char* formatBoolean(ValueId id, std::string_view, char* out, char* last,
+                           std::string_view prefix, std::string_view suffix) {
+  out = append(out, last, prefix);
+  out = append(out, last, kBoolStrings[static_cast<size_t>(id.getBool())]);
+  return append(out, last, suffix);
 }
 
 // Fast branchless formatter for blank node indices.
 inline char* formatBlankNode(ValueId id, std::string_view, char* out,
-                             std::string_view prefix,
-                             std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  auto [ptr, ec] = std::to_chars(out, out + 24, id.getBlankNodeIndex().get());
-  (void)ec;
-  out = ptr;
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
+                             char* last, std::string_view prefix,
+                             std::string_view suffix) {
+  out = append(out, last, prefix);
+  out = formatIntegerValue(out, last, id.getBlankNodeIndex().get());
+  return append(out, last, suffix);
 }
 
-// Fast branchless formatter for date values.
-inline char* formatDate(ValueId id, std::string_view, char* out,
-                        std::string_view prefix,
-                        std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  auto [str, type] = id.getDate().toStringAndType();
-  (void)type;
-  std::memcpy(out, str.data(), str.size());
-  out += str.size();
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
+// Formatter for date values. The date is formatted into a temporary string
+// first (`Date::toStringAndType`), so this may allocate.
+inline char* formatDate(ValueId id, std::string_view, char* out, char* last,
+                        std::string_view prefix, std::string_view suffix) {
+  out = append(out, last, prefix);
+  out = append(out, last, id.getDate().toStringAndType().first);
+  return append(out, last, suffix);
 }
 
-// Fast branchless formatter for GeoPoint values.
-inline char* formatGeoPoint(ValueId id, std::string_view, char* out,
-                            std::string_view prefix,
-                            std::string_view suffix) noexcept {
-  std::memcpy(out, prefix.data(), prefix.size());
-  out += prefix.size();
-  auto [str, type] = id.getGeoPoint().toStringAndType();
-  (void)type;
-  std::memcpy(out, str.data(), str.size());
-  out += str.size();
-  std::memcpy(out, suffix.data(), suffix.size());
-  out += suffix.size();
-  return out;
+// Formatter for GeoPoint values. The point is formatted into a temporary
+// string first (`GeoPoint::toStringAndType`), so this may allocate.
+inline char* formatGeoPoint(ValueId id, std::string_view, char* out, char* last,
+                            std::string_view prefix, std::string_view suffix) {
+  out = append(out, last, prefix);
+  out = append(out, last, id.getGeoPoint().toStringAndType().first);
+  return append(out, last, suffix);
 }
 
-// No-op formatter for undefined or unmapped datatype slots.
-inline char* formatUndefined(ValueId, std::string_view, char* out,
-                             std::string_view, std::string_view) noexcept {
+// Formatter for `Datatype::Undefined`, which is exported as the empty string.
+inline char* formatUndefined(ValueId, std::string_view, char* out, char*,
+                             std::string_view, std::string_view) {
   return out;
 }
 
 // Builds the default 16-entry lookup table for standard RDF N-Triples export.
 constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
+  // The slots without a `Datatype` keep `formatFn_ == nullptr`, which
+  // `dispatchTermFormat` rejects.
   std::array<TypeFormatDescriptor, 16> lut{};
-  for (size_t i = 0; i < 16; ++i) {
-    lut[i] = TypeFormatDescriptor{"", "", &formatUndefined};
-  }
 
   // 0: Undefined
   lut[static_cast<size_t>(Datatype::Undefined)] =
@@ -206,7 +202,7 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
   // SecondaryVocabIndex: same vocabulary-term treatment as the main
-  // vocabularies (an unmapped slot would silently emit nothing).
+  // vocabularies (an unmapped slot would be rejected by the dispatcher).
   lut[static_cast<size_t>(Datatype::SecondaryVocabIndex)] =
       TypeFormatDescriptor{"<", ">", &formatTermWithDelimiters};
 
@@ -241,10 +237,9 @@ constexpr std::array<TypeFormatDescriptor, 16> makeDefaultLut() {
 // Builds the 16-entry lookup table for Turtle export (compact
 // literals/numbers).
 constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
+  // The slots without a `Datatype` keep `formatFn_ == nullptr`, which
+  // `dispatchTermFormat` rejects.
   std::array<TypeFormatDescriptor, 16> lut{};
-  for (size_t i = 0; i < 16; ++i) {
-    lut[i] = TypeFormatDescriptor{"", "", &formatUndefined};
-  }
 
   lut[static_cast<size_t>(Datatype::Undefined)] =
       TypeFormatDescriptor{"", "", &formatUndefined};
@@ -280,10 +275,9 @@ constexpr std::array<TypeFormatDescriptor, 16> makeTurtleLut() {
 // Builds the 16-entry lookup table for raw vocabulary entries (where terms
 // already contain quotes/delimiters).
 constexpr std::array<TypeFormatDescriptor, 16> makeRawVocabLut() {
+  // The slots without a `Datatype` keep `formatFn_ == nullptr`, which
+  // `dispatchTermFormat` rejects.
   std::array<TypeFormatDescriptor, 16> lut{};
-  for (size_t i = 0; i < 16; ++i) {
-    lut[i] = TypeFormatDescriptor{"", "", &formatUndefined};
-  }
 
   lut[static_cast<size_t>(Datatype::Undefined)] =
       TypeFormatDescriptor{"", "", &formatUndefined};
@@ -332,40 +326,39 @@ class BranchlessTypeDispatcher {
   using LookupTable = std::array<TypeFormatDescriptor, 16>;
 
   // ___________________________________________________________________________
-  // Format a single RDF term branchlessly into `out`.
-  // Precondition: `out` must point to sufficient pre-allocated memory.
-  // Returns: Pointer past the last byte written.
-  static inline char* dispatchTermFormat(
-      ValueId id, std::string_view rawTerm, char* out,
+  // Format a single RDF term branchlessly into `out` and return the number of
+  // bytes written. Throw if `out` is too small or if the datatype of `id` has
+  // no entry in `lut`.
+  static inline size_t dispatchTermFormat(
+      ValueId id, std::string_view rawTerm, ql::span<char> out,
       const LookupTable& lut = kDefaultTypeFormatLut) {
-    AD_CONTRACT_CHECK(out != nullptr);
     const uint8_t typeTag =
         static_cast<uint8_t>(id.getBits() >> ValueId::numDataBits) & 0x0F;
     const auto& desc = lut[typeTag];
-    AD_CONTRACT_CHECK(desc.formatFn_ != nullptr);
-    return desc.formatFn_(id, rawTerm, out, desc.prefix_, desc.suffix_);
+    AD_CONTRACT_CHECK(desc.formatFn_ != nullptr,
+                      "The lookup table has no formatter for this datatype");
+    char* const end =
+        desc.formatFn_(id, rawTerm, out.data(), out.data() + out.size(),
+                       desc.prefix_, desc.suffix_);
+    AD_CONTRACT_CHECK(end != nullptr,
+                      "The output buffer is too small for the formatted term");
+    return static_cast<size_t>(end - out.data());
   }
 
   // ___________________________________________________________________________
-  // Batch format a contiguous slice of terms branchlessly.
-  // Preconditions: `ids` and `rawTerms` must have identical lengths, and `out`
-  // must be non-null.
-  // Returns: Total number of bytes written.
+  // Format the terms of `ids` (with the corresponding `rawTerms`) one after the
+  // other into `out` and return the total number of bytes written. Throw if
+  // the sizes of `ids` and `rawTerms` differ or if `out` is too small.
   static inline size_t dispatchBatchTermFormat(
       ql::span<const ValueId> ids, ql::span<const std::string_view> rawTerms,
-      char* out, const LookupTable& lut = kDefaultTypeFormatLut) {
+      ql::span<char> out, const LookupTable& lut = kDefaultTypeFormatLut) {
     AD_CONTRACT_CHECK(ids.size() == rawTerms.size());
-    AD_CONTRACT_CHECK(out != nullptr || ids.empty());
-    if (ids.empty()) {
-      return 0;
+    size_t numBytes = 0;
+    for (size_t i = 0; i < ids.size(); ++i) {
+      numBytes +=
+          dispatchTermFormat(ids[i], rawTerms[i], out.subspan(numBytes), lut);
     }
-
-    char* curr = out;
-    const size_t numTerms = ids.size();
-    for (size_t i = 0; i < numTerms; ++i) {
-      curr = dispatchTermFormat(ids[i], rawTerms[i], curr, lut);
-    }
-    return static_cast<size_t>(curr - out);
+    return numBytes;
   }
 
   // Access to built-in lookup tables.

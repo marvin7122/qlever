@@ -115,3 +115,28 @@ TEST(AlignedBatchBuffer, ReserveRejectsSizesThatWouldOverflow) {
       buffer.reserve(std::numeric_limits<size_t>::max() / sizeof(uint64_t)));
   EXPECT_EQ(buffer.capacity(), 0);
 }
+
+// _____________________________________________________________________________
+TEST(AlignedBatchBuffer, MovedFromBufferIsEmptyAndReusable) {
+  AlignedBatchBuffer<uint64_t> source{4};
+  source.push_back(1);
+  source.push_back(2);
+
+  AlignedBatchBuffer<uint64_t> target{std::move(source)};
+  EXPECT_EQ(toVector(target), (std::vector<uint64_t>{1, 2}));
+  EXPECT_EQ(source.size(), 0);
+  EXPECT_EQ(source.capacity(), 0);
+  EXPECT_EQ(source.data(), nullptr);
+
+  // The moved-from buffer can be used again after `reserve`.
+  source.reserve(1);
+  source.push_back(3);
+  EXPECT_EQ(toVector(source), (std::vector<uint64_t>{3}));
+
+  AlignedBatchBuffer<uint64_t> assigned;
+  assigned = std::move(target);
+  EXPECT_EQ(toVector(assigned), (std::vector<uint64_t>{1, 2}));
+  EXPECT_EQ(target.size(), 0);
+  EXPECT_EQ(target.capacity(), 0);
+  EXPECT_EQ(target.data(), nullptr);
+}
