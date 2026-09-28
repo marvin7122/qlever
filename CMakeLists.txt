@@ -376,7 +376,7 @@ else ()
 endif ()
 
 ### io_uring (optional, for asynchronous batch vocabulary I/O)
-option(QLEVER_IOURING_STATS "Count io_uring submissions of the batch vocabulary lookup and log them per query (benchmark instrumentation)" OFF)
+option(QLEVER_IOURING_STATS "Count io_uring submissions of the batch vocabulary lookup and log them per query (benchmark instrumentation)" ON)
 if (QLEVER_IOURING_STATS)
     add_compile_definitions(QLEVER_IOURING_STATS)
 endif ()
