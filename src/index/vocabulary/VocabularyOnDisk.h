@@ -1,11 +1,18 @@
-// Copyright 2016, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2016 - 2026, The QLever Authors, in particular:
+//
+// 2016 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -186,32 +193,66 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
   // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
+  // With `pageCacheFastPath`, each run of consecutive indices is first read as
+  // one range of the `.offsets` file with `readPageCacheHits`, and only the
+  // pairs of the runs that were not in the page cache go through `manager`.
   std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          ql::span<const size_t> indices) const;
+                                          ql::span<const size_t> indices,
+                                          bool pageCacheFastPath) const;
 
   // Submitted-but-not-yet-completed phase-1 reads for one batch: owns the
-  // requested indices and the target buffers of the submitted batch, so the
-  // caller's span may go out of scope while the reads are in flight.
+  // target buffers of the submitted reads, so the caller's span of indices may
+  // go out of scope while the reads are in flight. `handle_` is empty if no
+  // read had to go through the manager (all pairs came from the page cache).
   struct PendingOffsetRead {
-    std::vector<size_t> indices_;
     std::vector<OffsetPair> offsetPairs_;
-    ad_utility::BatchManagerBase::BatchHandle handle_;
+    std::optional<ad_utility::BatchManagerBase::BatchHandle> handle_;
   };
 
-  // Submit the phase-1 reads for `indices` without waiting for them.
+  // Submit the phase-1 reads for `indices` without waiting for them. With
+  // `pageCacheFastPath`, the pairs that are in the page cache are read
+  // synchronously as in `readOffsetPairs`, and only the others are submitted.
   PendingOffsetRead submitOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                      ql::span<const size_t> indices) const;
+                                      ql::span<const size_t> indices,
+                                      bool pageCacheFastPath) const;
 
   // Block until the reads in `pending` complete and return their `OffsetPair`s.
-  std::vector<OffsetPair> waitOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          PendingOffsetRead pending) const;
+  static std::vector<OffsetPair> waitOffsetPairs(
+      ad_utility::BatchManagerBase& manager, PendingOffsetRead pending);
 
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched
-  // read via `manager`, and return it as a `VocabBatchLookupResult`.
-  VocabBatchLookupResult readStrings(
-      ad_utility::BatchManagerBase& manager,
-      ql::span<const OffsetPair> offsetPairs) const;
+  // read via `manager`, and return it as a `VocabBatchLookupResult`. With
+  // `pageCacheFastPath`, the words that are in the page cache are read with
+  // `readPageCacheHits` (adjacent words in one call), and only the others go
+  // through `manager`.
+  VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
+                                     ql::span<const OffsetPair> offsetPairs,
+                                     bool pageCacheFastPath) const;
+
+  // Submit reads of `numBytes[i]` bytes at `offsets[i]` of `fd` into
+  // `buffers[i]` for every `i` in `positions` through `manager`, without
+  // waiting for them. Return the handle of the submitted batch, or
+  // `std::nullopt` if `positions` is empty.
+  static std::optional<ad_utility::BatchManagerBase::BatchHandle>
+  submitThroughManager(ad_utility::BatchManagerBase& manager, int fd,
+                       ql::span<const size_t> numBytes,
+                       ql::span<const uint64_t> offsets,
+                       ql::span<char*> buffers,
+                       ql::span<const size_t> positions);
+
+  // Whether the lookups use the page-cache fast path: the runtime parameter
+  // `vocabulary-iouring-page-cache-fast-path` is set and the kernel supports
+  // `preadv2` with `RWF_NOWAIT`.
+  static bool pageCacheFastPathIsEnabled();
+
+  // Read `numBytes[i]` bytes at `offsets[i]` of `fd` into `buffers[i]` for
+  // every `i` in `positions` through `manager` and wait for them.
+  static void readThroughManager(ad_utility::BatchManagerBase& manager, int fd,
+                                 ql::span<const size_t> numBytes,
+                                 ql::span<const uint64_t> offsets,
+                                 ql::span<char*> buffers,
+                                 ql::span<const size_t> positions);
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H
