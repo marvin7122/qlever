@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <deque>
+#include <numeric>
 
 #include "backports/algorithm.h"
 #include "global/Constants.h"
@@ -281,15 +282,13 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
 }
 
 // _____________________________________________________________________________
-std::optional<ad_utility::BatchManagerBase::BatchHandle>
-VocabularyOnDisk::submitStrings(ad_utility::BatchManagerBase& manager,
-                                ql::span<const OffsetPair> offsetPairs,
-                                std::vector<char>& buffer,
-                                ql::span<std::string_view> views,
-                                bool pageCacheFastPath) const {
-  AD_CORRECTNESS_CHECK(offsetPairs.size() == views.size());
+VocabularyOnDisk::PendingStringRead VocabularyOnDisk::submitStrings(
+    ad_utility::BatchManagerBase& manager,
+    ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath) const {
   // String `i` starts at `offset_` with length `nextOffset_ - offset_`; the
-  // strings are packed contiguously into `buffer`.  const size_t numIndices = offsetPairs.size();
+  // strings are packed contiguously into the builder's buffer, with one
+  // precomputed view per word at its fixed offset.
+  const size_t numIndices = offsetPairs.size();
   std::vector<size_t> sizes(numIndices);
   std::vector<uint64_t> fileOffsets(numIndices);
   for (auto&& [size, fileOffset, offsetPair] :
@@ -298,35 +297,33 @@ VocabularyOnDisk::submitStrings(ad_utility::BatchManagerBase& manager,
     fileOffset = offsetPair.offset_;
   }
 
-  buffer.resize(::ranges::accumulate(sizes, size_t{0}));
-  std::vector<char*> targets(numIndices);
-  size_t bufferOffset = 0;
-  for (auto&& [target, view, size] :
-       ::ranges::views::zip(targets, views, sizes)) {
-    target = buffer.data() + bufferOffset;
-    view = std::string_view(target, size);
-    bufferOffset += size;
-  }
-
+  // Every caller passes a non-empty batch, so `sizes` is non-empty here, as
+  // the builder requires. The builder's buffer is heap-allocated, so the read
+  // targets stay valid when the returned `PendingStringRead` is moved.
+  PendingStringRead pending{ContiguousVocabBatchBuilder{sizes}, std::nullopt};
+  auto targets = pending.builder_.targets();
   if (!pageCacheFastPath) {
-    return manager.addBatch(file_.fd(), sizes, fileOffsets, targets);
+    pending.handle_ = manager.addBatch(file_.fd(), sizes, fileOffsets,
+                                       ql::span<char*>{targets});
+    return pending;
   }
   auto missed =
       ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets, targets);
-  return submitThroughManager(manager, file_.fd(), sizes, fileOffsets, targets,
-                              missed);
+  pending.handle_ =
+      submitThroughManager(manager, file_.fd(), sizes, fileOffsets,
+                           ql::span<char*>{targets}, missed);
+  return pending;
 }
 
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::readStrings(
     ad_utility::BatchManagerBase& manager,
     ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath) const {
-  auto data = std::make_shared<VocabBatchLookupData>();
-  data->views().resize(offsetPairs.size());
-  if (auto handle = submitStrings(manager, offsetPairs, data->buffer(),
-                                  data->views(), pageCacheFastPath)) {
-    manager.wait(handle.value());  }
-  return std::move(builder).finalize();
+  auto pending = submitStrings(manager, offsetPairs, pageCacheFastPath);
+  if (pending.handle_.has_value()) {
+    manager.wait(pending.handle_.value());
+  }
+  return std::move(pending.builder_).finalize();
 }
 
 // _____________________________________________________________________________
@@ -363,15 +360,6 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   return readStrings(*manager, offsetPairs, pageCacheFastPath);
 }
 
-namespace {
-// The result of a lookup that was read in sub-batches: the words of each
-// sub-batch are packed into their own buffer, because the word reads of a
-// sub-batch are submitted as soon as its offsets are known, before the total
-// size of all words is known.
-struct SubBatchedLookupData
-    : VocabLookupDataCommonBase<std::vector<std::vector<char>>> {};
-}  // namespace
-
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::lookupBatchPipelined(
     ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
@@ -391,18 +379,16 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatchPipelined(
                            std::min(subBatchSize, indices.size() - begin));
   };
 
-  auto data = std::make_shared<SubBatchedLookupData>();
-  // Both vectors are sized once here and never resized below: the word reads
-  // target the inner buffers, and `views` point into them.
-  data->buffer().resize(numSubBatches);
-  data->views().resize(indices.size());
-  const auto views = ql::span{data->views()};
-
   std::deque<PendingOffsetRead> pendingOffsetReads;
-  std::vector<ad_utility::BatchManagerBase::BatchHandle> pendingWordReads;
+  // The word reads of each sub-batch go into that sub-batch's own builder,
+  // because they are submitted as soon as its offsets are known, before the
+  // total size of all words is known.
+  std::vector<PendingStringRead> pendingWordReads;
+  pendingWordReads.reserve(numSubBatches);
   // If anything below throws, wait for all reads that are still in flight
-  // before their target buffers (in `pendingOffsetReads` and `data`) die.
-  // Waiting for a batch that already completed returns immediately.
+  // before their target buffers (in `pendingOffsetReads` and
+  // `pendingWordReads`) die. Waiting for a batch that already completed
+  // returns immediately.
   absl::Cleanup drainReads{[&manager, &pendingOffsetReads,
                             &pendingWordReads]() {
     ad_utility::terminateIfThrows(
@@ -412,8 +398,10 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatchPipelined(
               manager.wait(pending.handle_.value());
             }
           }
-          for (auto handle : pendingWordReads) {
-            manager.wait(handle);
+          for (const auto& pending : pendingWordReads) {
+            if (pending.handle_.has_value()) {
+              manager.wait(pending.handle_.value());
+            }
           }
         },
         "draining in-flight reads in `VocabularyOnDisk::lookupBatchPipelined`");
@@ -431,18 +419,28 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatchPipelined(
     pendingOffsetReads.pop_front();
     // Submit the word reads of sub-batch `i` without waiting for them, so they
     // overlap with the offset reads of the following sub-batches.
-    if (auto handle =
-            submitStrings(manager, offsetPairs, data->buffer()[i],
-                          views.subspan(i * subBatchSize, offsetPairs.size()),
-                          pageCacheFastPath)) {
-      pendingWordReads.push_back(handle.value());
+    pendingWordReads.push_back(
+        submitStrings(manager, offsetPairs, pageCacheFastPath));
+  }
+  for (const auto& pending : pendingWordReads) {
+    if (pending.handle_.has_value()) {
+      manager.wait(pending.handle_.value());
     }
   }
-  for (auto handle : pendingWordReads) {
-    manager.wait(handle);
+
+  // All reads have completed. Concatenate the sub-batch results without
+  // copying the words: the assembled result co-owns every sub-batch buffer.
+  MultiSourceVocabBatchAssembler assembler{indices.size()};
+  std::vector<size_t> resultPositions;
+  for (size_t i = 0; i < numSubBatches; ++i) {
+    auto subBatchResult = std::move(pendingWordReads[i].builder_).finalize();
+    resultPositions.resize(subBatchResult.size());
+    std::iota(resultPositions.begin(), resultPositions.end(), i * subBatchSize);
+    assembler.scatterSubBatchResultAtPositions(std::move(subBatchResult),
+                                               resultPositions);
   }
   pendingWordReads.clear();
-  return SubBatchedLookupData::asResult(std::move(data));
+  return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 
 // _____________________________________________________________________________

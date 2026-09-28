@@ -254,15 +254,24 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // `preadv2` with `RWF_NOWAIT`.
   static bool pageCacheFastPathIsEnabled();
 
-  // Submit the phase-2 reads for `offsetPairs` without waiting for them: pack
-  // the words contiguously into `buffer` (which is resized here) and point
-  // `views[i]` at word `i`. With `pageCacheFastPath`, the words that are in the
-  // page cache are read synchronously as in `readStrings`. Return the handle of
-  // the submitted batch, or `std::nullopt` if no read had to be submitted.
-  std::optional<ad_utility::BatchManagerBase::BatchHandle> submitStrings(
-      ad_utility::BatchManagerBase& manager,
-      ql::span<const OffsetPair> offsetPairs, std::vector<char>& buffer,
-      ql::span<std::string_view> views, bool pageCacheFastPath) const;
+  // Submitted-but-not-yet-completed phase-2 reads for one batch: `builder_`
+  // owns the buffer that the reads target and the view of every word.
+  // `handle_` is empty if no read had to go through the manager (all words
+  // came from the page cache). Call `finalize` on `builder_` only after the
+  // reads of `handle_` have completed.
+  struct PendingStringRead {
+    ContiguousVocabBatchBuilder builder_;
+    std::optional<ad_utility::BatchManagerBase::BatchHandle> handle_;
+  };
+
+  // Submit the phase-2 reads for the non-empty `offsetPairs` without waiting
+  // for them: the words are packed contiguously into the buffer of the
+  // returned builder. With `pageCacheFastPath`, the words that are in the page
+  // cache are read synchronously as in `readStrings`, and only the others are
+  // submitted.
+  PendingStringRead submitStrings(ad_utility::BatchManagerBase& manager,
+                                  ql::span<const OffsetPair> offsetPairs,
+                                  bool pageCacheFastPath) const;
 
   // The number of indices per sub-batch in `lookupBatchPipelined`. Half of the
   // default ring size of `ad_utility::BatchManager` (256), so that at the
