@@ -392,6 +392,14 @@ else ()
     MESSAGE(STATUS "USE_IO_URING is OFF, building without io_uring support")
 endif ()
 
+# Diagnostic counters for the io_uring batch reads (submissions, poller
+# wake-ups, blocking completion waits). Off by default; see
+# `src/util/IoUringManager.h`.
+option(QLEVER_IOURING_COUNTERS "Count io_uring submissions and completion waits for diagnostics" OFF)
+if (QLEVER_IOURING_COUNTERS)
+    add_compile_definitions(QLEVER_IOURING_COUNTERS)
+endif ()
+
 ### ZSTD
 find_package(ZSTD QUIET)
 if (TARGET zstd::libzstd_static)

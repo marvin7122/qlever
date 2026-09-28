@@ -12,10 +12,15 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <fcntl.h>
 #include <sched.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
+#include <array>
 #include <cerrno>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -23,6 +28,67 @@
 #include "util/Log.h"
 
 namespace ad_utility {
+
+namespace {
+constexpr size_t numIoUringCounterSlots =
+    static_cast<size_t>(IoUringCounter::NumCounters);
+
+// The slots of the diagnostic counters (see `IoUringCounter`): a shared
+// mapping of the file named by `QLEVER_IOURING_COUNTERS_FILE`, or process
+// memory when the variable is unset or the file cannot be mapped.
+uint64_t* ioUringCounterSlots() {
+  static uint64_t* const slots = []() -> uint64_t* {
+    const char* path = std::getenv("QLEVER_IOURING_COUNTERS_FILE");
+    if (path != nullptr && path[0] != '\0') {
+      const size_t numBytes = numIoUringCounterSlots * sizeof(uint64_t);
+      const int fd = open(path, O_RDWR | O_CREAT, 0644);
+      if (fd >= 0) {
+        void* mapped = MAP_FAILED;
+        if (ftruncate(fd, static_cast<off_t>(numBytes)) == 0) {
+          mapped = mmap(nullptr, numBytes, PROT_READ | PROT_WRITE, MAP_SHARED,
+                        fd, 0);
+        }
+        close(fd);
+        if (mapped != MAP_FAILED) {
+          auto* fileSlots = static_cast<uint64_t*>(mapped);
+          __atomic_store_n(&fileSlots[0], IO_URING_COUNTERS_MAGIC,
+                           __ATOMIC_RELAXED);
+          return fileSlots;
+        }
+      }
+      AD_LOG_WARN << "Cannot map the io_uring counters file " << path
+                  << "; counting in process memory" << std::endl;
+    }
+    static std::array<uint64_t, numIoUringCounterSlots> processSlots{
+        IO_URING_COUNTERS_MAGIC};
+    return processSlots.data();
+  }();
+  return slots;
+}
+
+// The time since `start` in nanoseconds.
+uint64_t nanosecondsSince(std::chrono::steady_clock::time_point start) {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now() - start)
+          .count());
+}
+}  // namespace
+
+//______________________________________________________________________________
+void detail::addToIoUringCounter(IoUringCounter counter, uint64_t value) {
+  __atomic_fetch_add(&ioUringCounterSlots()[static_cast<size_t>(counter)],
+                     value, __ATOMIC_RELAXED);
+}
+
+//______________________________________________________________________________
+uint64_t getIoUringCounter(IoUringCounter counter) {
+  if constexpr (!ioUringCountersEnabled) {
+    return 0;
+  }
+  return __atomic_load_n(&ioUringCounterSlots()[static_cast<size_t>(counter)],
+                         __ATOMIC_RELAXED);
+}
 
 #ifdef QLEVER_HAS_IO_URING
 namespace {
@@ -171,6 +237,9 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
   // Report SQPoll only when the kernel granted the requested setup. After the
   // fallback above no poll thread exists, even though SQPoll was requested.
   sqPollEnabled_ = setupOptions.useSqPoll && !usedFallbackRing;
+  if (sqPollEnabled_) {
+    countIoUring(IoUringCounter::SqPollRings);
+  }
 }
 
 //______________________________________________________________________________
@@ -250,6 +319,8 @@ void IoUringPolicy::addBatch(int fd,
     return;
   }
   numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
+  countIoUring(IoUringCounter::Batches);
+  countIoUring(IoUringCounter::Reads, numReadRequestsToPerform);
 
   for (const auto& [numBytesToRead, fileOffset, targetBuf] :
        ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
@@ -259,7 +330,7 @@ void IoUringPolicy::addBatch(int fd,
     if (numInFlightReadRequests_ >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
-      io_uring_submit(&ring_);
+      submit();
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
       }
@@ -293,11 +364,32 @@ void IoUringPolicy::addBatch(int fd,
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
+  submit();
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::submit() {
+  if constexpr (ioUringCountersEnabled) {
+    countIoUring(IoUringCounter::SubmitCalls);
+    // Mirror liburing's decision whether `io_uring_submit` enters the
+    // kernel: without SQPoll whenever entries are prepared, with SQPoll only
+    // to wake a poll thread that went to sleep.
+    const bool entersKernel = sqPollEnabled_
+                                  ? (IO_URING_READ_ONCE(*ring_.sq.kflags) &
+                                     IORING_SQ_NEED_WAKEUP) != 0
+                                  : io_uring_sq_ready(&ring_) > 0;
+    if (entersKernel) {
+      countIoUring(IoUringCounter::SubmitSyscalls);
+    }
+  }
   io_uring_submit(&ring_);
 }
 
 //______________________________________________________________________________
 void IoUringPolicy::wait(BatchHandle handle) {
+  const auto start = ioUringCountersEnabled
+                         ? std::chrono::steady_clock::now()
+                         : std::chrono::steady_clock::time_point{};
   // Drain completions until this batch is gone. `drainOneCqe` erases a batch as
   // soon as its last read completes, so a present entry always still has
   // outstanding reads.
@@ -305,16 +397,32 @@ void IoUringPolicy::wait(BatchHandle handle) {
          numInFlightReadRequestsPerBatch_.end()) {
     drainOneCqe();
   }
+  if constexpr (ioUringCountersEnabled) {
+    countIoUring(IoUringCounter::BatchWaits);
+    countIoUring(IoUringCounter::BatchWaitNs, nanosecondsSince(start));
+  }
 }
 
 //______________________________________________________________________________
 void ad_utility::IoUringPolicy::drainOneCqe() {
-  // Block until at least one completion queue entry (CQE) is available.
+  // Take a completion queue entry (CQE) if one is ready, else block until one
+  // is available.
   io_uring_cqe* cqe = nullptr;
-  int ret = io_uring_wait_cqe(&ring_, &cqe);
+  int ret = io_uring_peek_cqe(&ring_, &cqe);
+  if (ret == -EAGAIN) {
+    const auto start = ioUringCountersEnabled
+                           ? std::chrono::steady_clock::now()
+                           : std::chrono::steady_clock::time_point{};
+    ret = io_uring_wait_cqe(&ring_, &cqe);
+    if constexpr (ioUringCountersEnabled) {
+      countIoUring(IoUringCounter::BlockingWaits);
+      countIoUring(IoUringCounter::BlockingWaitNs, nanosecondsSince(start));
+    }
+  }
   if (ret < 0) {
     AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
   }
+  countIoUring(IoUringCounter::CompletionsReaped);
 
   // Recover the read's result (`cqe->res`) and the request id we stored in the
   // SQE, then consume the CQE so its slot is freed. Do this before any throw.

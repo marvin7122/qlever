@@ -752,4 +752,41 @@ TEST(SqPollSetup, sqPollBatchLargerThanRing) {
   }
 }
 #endif
+
+#ifdef QLEVER_HAS_IO_URING
+// The diagnostic counters count one batch with its reads, at least one
+// submission and one reaped completion per read when they are compiled in
+// (CMake option `QLEVER_IOURING_COUNTERS`), and stay 0 otherwise.
+TEST(IoUringCounters, countBatchReadsOnlyWhenCompiledIn) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using ad_utility::getIoUringCounter;
+  using C = ad_utility::IoUringCounter;
+  const auto countersNow = [] {
+    return std::vector<uint64_t>{
+        getIoUringCounter(C::Batches), getIoUringCounter(C::Reads),
+        getIoUringCounter(C::SubmitCalls), getIoUringCounter(C::BatchWaits),
+        getIoUringCounter(C::CompletionsReaped)};
+  };
+  const auto before = countersNow();
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
+  ReadBatchForTesting batch;
+  batch.add({{4, 4}, {0, 4}, {8, 4}});
+  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(64);
+  manager.wait(batch.submitTo(manager, fd));
+  EXPECT_THAT(batch.result(), ::testing::ElementsAre("BBBB", "AAAA", "CCCC"));
+  const auto after = countersNow();
+  if constexpr (ad_utility::ioUringCountersEnabled) {
+    EXPECT_EQ(after[0] - before[0], 1u);
+    EXPECT_EQ(after[1] - before[1], 3u);
+    EXPECT_GE(after[2] - before[2], 1u);
+    EXPECT_EQ(after[3] - before[3], 1u);
+    EXPECT_EQ(after[4] - before[4], 3u);
+  } else {
+    EXPECT_THAT(after, ::testing::Each(0u));
+  }
+}
+#endif
 }  // namespace

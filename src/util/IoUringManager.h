@@ -87,6 +87,66 @@ struct IoUringSetupOptions {
   bool singleIssuer = false;
 };
 
+// Diagnostic counters of `IoUringPolicy`, compiled in only with the CMake
+// option `QLEVER_IOURING_COUNTERS` (default off; without it every counting
+// call below compiles to nothing). They show how a batch read interacts with
+// the kernel: how many submissions really entered the kernel (with SQPoll only
+// the ones that had to wake the sleeping poll thread), how many completion
+// waits had to block in the kernel, and how long the waits took.
+//
+// The counters are process-wide sums. When the environment variable
+// `QLEVER_IOURING_COUNTERS_FILE` names a file, they live in a shared mapping
+// of that file, so a benchmark driver can read them while the server runs or
+// after it has exited: slot 0 holds `IO_URING_COUNTERS_MAGIC`, and slot `i`
+// (a native-endian `uint64_t` at byte offset `8 * i`) holds the counter with
+// value `i` below. Otherwise they live in process memory.
+#ifdef QLEVER_IOURING_COUNTERS
+inline constexpr bool ioUringCountersEnabled = true;
+#else
+inline constexpr bool ioUringCountersEnabled = false;
+#endif
+
+inline constexpr uint64_t IO_URING_COUNTERS_MAGIC = 0x31544e4355474e55;
+
+enum class IoUringCounter : size_t {
+  // `addBatch` calls with at least one read, and the reads they carried.
+  Batches = 1,
+  Reads = 2,
+  // `io_uring_submit` calls, and the ones that entered the kernel: without
+  // SQPoll every call with prepared entries, with SQPoll only the calls that
+  // found the poll thread asleep (`IORING_SQ_NEED_WAKEUP`) and woke it.
+  SubmitCalls = 3,
+  SubmitSyscalls = 4,
+  // Completions reaped, and the reaps that found no completion ready and
+  // blocked in the kernel, with the total time they blocked.
+  CompletionsReaped = 5,
+  BlockingWaits = 6,
+  BlockingWaitNs = 7,
+  // `wait(handle)` calls and the total time they took.
+  BatchWaits = 8,
+  BatchWaitNs = 9,
+  // Rings that were set up with an SQPoll thread.
+  SqPollRings = 10,
+  NumCounters = 11
+};
+
+namespace detail {
+void addToIoUringCounter(IoUringCounter counter, uint64_t value);
+}  // namespace detail
+
+// Add `value` to `counter`; a no-op unless the counters are compiled in.
+inline void countIoUring(IoUringCounter counter, uint64_t value = 1) {
+  if constexpr (ioUringCountersEnabled) {
+    detail::addToIoUringCounter(counter, value);
+  } else {
+    (void)counter;
+    (void)value;
+  }
+}
+
+// The current value of `counter` (0 unless the counters are compiled in).
+uint64_t getIoUringCounter(IoUringCounter counter);
+
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
 // Vocabulary to the `Policy`, which must satisfy the `ReadPolicy` concept
@@ -239,6 +299,10 @@ class IoUringPolicy {
 
   // Wait for one CQE and update the in-flight bookkeeping.
   void drainOneCqe();
+
+  // Submit the prepared SQEs via `io_uring_submit` (and count the submission
+  // when the diagnostic counters are compiled in).
+  void submit();
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
