@@ -87,10 +87,10 @@ class StreamingBufferWriter {
     // overlap. Both `memcpy` and the non-temporal stores below are
     // undefined for overlapping ranges (use `memmove` instead when the
     // ranges may overlap). A self-copy (`dest == src`) is well-defined.
-    const auto destAddr = reinterpret_cast<uintptr_t>(dest);
-    const auto srcAddr = reinterpret_cast<uintptr_t>(src);
-    AD_CONTRACT_CHECK(dest == src || destAddr + count <= srcAddr ||
-                      srcAddr + count <= destAddr);
+    const auto destBegin = reinterpret_cast<uintptr_t>(dest);
+    const auto srcBegin = reinterpret_cast<uintptr_t>(src);
+    AD_CONTRACT_CHECK(dest == src || destBegin + count <= srcBegin ||
+                      srcBegin + count <= destBegin);
 
     auto* destPtr = static_cast<char*>(dest);
     const auto* srcPtr = static_cast<const char*>(src);
