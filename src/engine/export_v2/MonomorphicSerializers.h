@@ -191,9 +191,11 @@ class MonomorphicRowSerializer {
   static_assert(sizeof...(ColumnTypes) > 0,
                 "A row serializer needs at least one column");
 
-  // Stateless utility with only static members: never instantiate.
+  // Stateless utility with only static members: never instantiate or copy.
+  // (The user-declared copy constructor also suppresses implicit moves.)
   MonomorphicRowSerializer() = delete;
   MonomorphicRowSerializer(const MonomorphicRowSerializer&) = delete;
+  MonomorphicRowSerializer& operator=(const MonomorphicRowSerializer&) = delete;
 
   // The schema as values, e.g. for a caller that checks at runtime that a
   // result table matches the instantiation it is about to use.
