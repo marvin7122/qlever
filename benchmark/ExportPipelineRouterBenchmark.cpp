@@ -9,8 +9,10 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -22,21 +24,26 @@ using ParamValueMap = ExportPipelineRouter::ParamValueMap;
 
 namespace {
 
-// Parse a strictly positive iteration count; print usage and return false on
-// any invalid input (no exceptions escape into the benchmark driver).
-bool parseCount(std::string_view val, size_t& out) {
+// Parse a strictly positive iteration count; return `std::nullopt` on any
+// invalid input (no exceptions escape into the benchmark driver).
+std::optional<size_t> parseCount(std::string_view val) {
   size_t parsed = 0;
   const auto [ptr, ec] =
       std::from_chars(val.data(), val.data() + val.size(), parsed);
   if (ec != std::errc{} || ptr != val.data() + val.size() || parsed == 0) {
-    return false;
+    return std::nullopt;
   }
-  out = parsed;
-  return true;
+  return parsed;
 }
 
-void printUsage(const char* prog) {
+void printUsage(std::string_view prog) {
   std::cerr << "Usage: " << prog << " [-p <iterations>]\n";
+}
+
+// `argv[0]` may be null when `argc == 0`; fall back to a fixed name.
+std::string_view programName(char* prog) {
+  return prog != nullptr ? std::string_view{prog}
+                         : std::string_view{"benchmark"};
 }
 
 }  // namespace
@@ -49,16 +56,18 @@ int main(int argc, char** argv) {
     std::string_view val;
     if (arg == "-p") {
       if (i + 1 >= argc) {
-        printUsage(argv[0]);
+        printUsage(programName(argv[0]));
         return 1;
       }
       val = argv[++i];
     } else {
       val = arg;
     }
-    if (!parseCount(val, numQueries)) {
+    if (auto parsed = parseCount(val); parsed.has_value()) {
+      numQueries = *parsed;
+    } else {
       std::cerr << "Invalid iteration count: " << val << "\n";
-      printUsage(argv[0]);
+      printUsage(programName(argv[0]));
       return 1;
     }
   }
@@ -78,8 +87,8 @@ int main(int argc, char** argv) {
   // Ineligible for V2, so every V2 request for it exercises the fallback.
   auto orderByQuery = SparqlParser::parseQuery(
       nullptr, "SELECT ?s WHERE { ?s ?p ?o } ORDER BY ?s");
-  const std::array<const ParsedQuery*, 3> queries{&selectQuery, &constructQuery,
-                                                  &orderByQuery};
+  const std::array<std::reference_wrapper<const ParsedQuery>, 3> queries{
+      selectQuery, constructQuery, orderByQuery};
 
   ParamValueMap fastParams;
   fastParams["fast-export"] = {"1"};
@@ -88,7 +97,8 @@ int main(int argc, char** argv) {
 
   auto runOnce = [&](size_t i) {
     return ExportPipelineRouter::selectEngine(
-        *queries[i % queries.size()], (i % 2 == 0) ? fastParams : defaultParams,
+        queries[i % queries.size()].get(),
+        (i % 2 == 0) ? fastParams : defaultParams,
         (i % 5 == 0) ? std::optional<std::string_view>("v2") : std::nullopt);
   };
 
@@ -115,8 +125,11 @@ int main(int argc, char** argv) {
 
   double nsPerDecision =
       (elapsed.count() * 1e9) / static_cast<double>(numQueries);
-  double mDecisionsPerSec =
-      static_cast<double>(numQueries) / (elapsed.count() * 1e6);
+  double mDecisionsPerSec = 0.0;
+  if (elapsed.count() > 0) {
+    mDecisionsPerSec =
+        static_cast<double>(numQueries) / (elapsed.count() * 1e6);
+  }
 
   std::cout << "Results:\n";
   std::cout << "  Total Elapsed: " << std::fixed << std::setprecision(4)

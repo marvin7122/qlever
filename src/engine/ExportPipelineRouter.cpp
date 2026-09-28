@@ -12,10 +12,12 @@
 #include <absl/strings/str_cat.h>
 
 #include <initializer_list>
+#include <type_traits>
 #include <variant>
 
 #include "backports/algorithm.h"
 #include "parser/GraphPatternOperation.h"
+#include "parser/SparqlTriple.h"
 
 namespace ql::engine {
 
@@ -55,6 +57,53 @@ std::optional<std::string_view> getFirstParameterValue(
     return std::nullopt;
   }
   return it->second.front();
+}
+
+// _____________________________________________________________________________
+// Return true if `triple` uses a genuine property path (a predicate that is
+// neither a variable nor a plain IRI) instead of a single predicate.
+bool tripleHasPropertyPath(const SparqlTriple& triple) {
+  return std::holds_alternative<PropertyPath>(triple.p_) &&
+         !triple.getSimplePredicate().has_value();
+}
+
+// _____________________________________________________________________________
+// Return true if `pattern` or any nested group contains a SERVICE clause, a
+// subquery, a property path, or a MINUS clause, all of which need the
+// materialized execution of Legacy V1. Note that `TransPath` never occurs in
+// a parsed query: it is created later by the `QueryPlanner`, while a parsed
+// query carries property paths inside the triples of its
+// `BasicGraphPattern`s, which is what is checked here.
+bool graphPatternHasUnsupportedOperation(
+    const parsedQuery::GraphPattern& pattern) {
+  return ql::ranges::any_of(
+      pattern._graphPatterns,
+      [](const parsedQuery::GraphPatternOperation& operation) {
+        // `GraphPatternOperation::visit` casts to the underlying
+        // `std::variant`; `std::visit` on the derived type does not compile
+        // with GCC 8 (C++17 build).
+        return operation.visit([](const auto& op) -> bool {
+          using T = std::decay_t<decltype(op)>;
+          if constexpr (std::is_same_v<T, parsedQuery::Service> ||
+                        std::is_same_v<T, parsedQuery::Subquery> ||
+                        std::is_same_v<T, parsedQuery::TransPath> ||
+                        std::is_same_v<T, parsedQuery::Minus>) {
+            return true;
+          } else if constexpr (std::is_same_v<T,
+                                              parsedQuery::GroupGraphPattern> ||
+                               std::is_same_v<T, parsedQuery::Optional>) {
+            return graphPatternHasUnsupportedOperation(op._child);
+          } else if constexpr (std::is_same_v<T, parsedQuery::Union>) {
+            return graphPatternHasUnsupportedOperation(op._child1) ||
+                   graphPatternHasUnsupportedOperation(op._child2);
+          } else if constexpr (std::is_same_v<T,
+                                              parsedQuery::BasicGraphPattern>) {
+            return ql::ranges::any_of(op._triples, tripleHasPropertyPath);
+          } else {
+            return false;
+          }
+        });
+      });
 }
 
 }  // namespace
@@ -173,7 +222,8 @@ bool ExportPipelineRouter::hasUnsupportedConstructs(const ParsedQuery& query) {
         return std::holds_alternative<parsedQuery::Describe>(operation);
       });
   return isDescribe || query.isAggregatingQuery() ||
-         !query._havingClauses.empty() || !query._orderBy.empty();
+         !query._havingClauses.empty() || !query._orderBy.empty() ||
+         graphPatternHasUnsupportedOperation(query._rootGraphPattern);
 }
 
 }  // namespace ql::engine
