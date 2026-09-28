@@ -155,16 +155,10 @@ ConstructTripleGenerator::generateFormattedTriples(
       evaluateTables(templateTriples, variableColumns, std::move(rowIndices),
                      rowOffset, config);
 
-  // Fold RLE prefix runs via `formatTripleRle` (see
-  // `engine/ConstructTripleInstantiator.h`).
-  // Read the default-off `RuntimeParameters::useRlePrefixConstructExport_`
-  // flag; keep it default-off until end-to-end validation on the V2
-  // pipeline completes.
-  // Share a single `RleConstructTripleCache` across the whole single-pass
-  // streamed output range. Fold a run only for consecutive rows whose
-  // `EvaluatedTerm` instances are pointer-identical (repeated `Id`s served
-  // from `ConstructBatchEvaluator`'s `IdCache`); expect no folding for
-  // unsorted inputs or after `IdCache` evictions.
+  // With `use-rle-prefix-construct-export`, a subject or predicate that
+  // repeats from one triple to the next is formatted only once (see
+  // `formatTripleRle`). One cache is shared by the whole output stream, so runs
+  // continue across batch boundaries.
   const bool useRle =
       getRuntimeParameter<&RuntimeParameters::useRlePrefixConstructExport_>();
   if (useRle) {
