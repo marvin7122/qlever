@@ -29,8 +29,10 @@ namespace ad_utility {
 // and reports failure as `false` (never by throwing) so callers that own a
 // fallback path can degrade gracefully. The requested file offset needs no
 // page alignment: it is rounded down internally and `data()` still points at
-// exactly the requested first byte. Move-only: a moved-from instance is
-// unmapped.
+// exactly the requested first byte. `data()` is therefore aligned like
+// `fileOffset` modulo the page size; a caller that reads typed values through
+// `data()` must pass an offset that is a multiple of their alignment.
+// Move-only: a moved-from instance is unmapped.
 class ReadOnlyMmap {
  private:
   // Page-aligned base handed to `mmap`/`munmap`, or `nullptr` when unmapped.

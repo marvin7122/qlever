@@ -34,7 +34,8 @@ VocabularyOnDisk::OffsetPair VocabularyOnDisk::offsetPairAt(
   AD_CONTRACT_CHECK(index < size());
   if (offsetsAreMemoryMapped()) {
     // The offsets region holds `size() + 1` entries, so `index + 1` is a
-    // valid entry for every word index.
+    // valid entry for every word index. The region is mapped from file offset
+    // 0, so `data()` is page-aligned and so is every `Offset` read here.
     const auto* base = static_cast<const Offset*>(offsetsMapping_.data());
     return {base[index], base[index + 1]};
   }
