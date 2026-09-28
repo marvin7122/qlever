@@ -198,7 +198,7 @@ VocabularyOnDisk::PendingOffsetRead VocabularyOnDisk::submitOffsetPairs(
   const size_t numIndices = indices.size();
   PendingOffsetRead pending;
   pending.offsetPairs_.resize(numIndices);
-  std::vector<size_t> sizes(numIndices, sizeof(OffsetPair));
+  std::vector sizes(numIndices, sizeof(OffsetPair));
   std::vector<uint64_t> fileOffsets(numIndices);
   std::vector<char*> targets(numIndices);
   for (auto&& [fileOffset, index, target, offsetPair] : ::ranges::views::zip(
@@ -398,7 +398,7 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatchPipelined(
   // target the inner buffers, and `views` point into them.
   data->buffer().resize(numSubBatches);
   data->views().resize(indices.size());
-  const auto views = ql::span<std::string_view>{data->views()};
+  const auto views = ql::span{data->views()};
 
   std::deque<PendingOffsetRead> pendingOffsetReads;
   std::vector<ad_utility::BatchManagerBase::BatchHandle> pendingWordReads;
@@ -503,48 +503,47 @@ VocabLookupOutput VocabularyOnDisk::lookupBatchesStreamed(
             "`VocabularyOnDisk::lookupBatchesStreamed`");
       }
     }
+
+    // Return the next batch of the stream, or `std::nullopt` at its end.
+    std::optional<VocabBatchLookupResult> next() {
+      // Pop the manager lazily on the first pull, so merely creating the
+      // stream (like the sequential path) acquires no pool slot.
+      if (!manager_) {
+        manager_ = vocabulary_->ioManagers_->pop().value();
+      }
+      // Submit ahead until the pipeline is full or the input is exhausted.
+      while (!inputExhausted_ && pending_.size() < pipelineDepth_) {
+        std::optional<std::vector<size_t>> indices = input_.get();
+        if (!indices.has_value()) {
+          inputExhausted_ = true;
+          break;
+        }
+        pending_.push_back(vocabulary_->submitOffsetPairs(
+            *manager_, indices.value(), pageCacheFastPath_));
+      }
+      if (pending_.empty()) {
+        // Input exhausted and nothing left in flight: return the manager and
+        // end the stream.
+        ad_utility::terminateIfThrows(
+            [this]() { vocabulary_->ioManagers_->push(std::move(manager_)); },
+            "returning the `IoManager` to the pool in "
+            "`VocabularyOnDisk::lookupBatchesStreamed`");
+        return std::nullopt;
+      }
+      // Pop the oldest batch only after its reads completed, so that the
+      // destructor still drains them if the wait throws.
+      std::vector<OffsetPair> offsetPairs =
+          waitOffsetPairs(*manager_, pending_.front());
+      pending_.pop_front();
+      return vocabulary_->readStrings(*manager_, offsetPairs,
+                                      pageCacheFastPath_);
+    }
   };
   auto state = std::make_shared<PipelineState>(
       this, std::move(rangeOfIndexBatches), pipelineDepth,
       pageCacheFastPathIsEnabled());
   return VocabLookupOutput{ad_utility::InputRangeFromGetCallable{
-      [state]() -> std::optional<VocabBatchLookupResult> {
-        // Pop the manager lazily on the first pull, so merely creating the
-        // stream (like the sequential path) acquires no pool slot.
-        if (!state->manager_) {
-          state->manager_ = state->vocabulary_->ioManagers_->pop().value();
-        }
-        // Submit ahead until the pipeline is full or the input is exhausted.
-        while (!state->inputExhausted_ &&
-               state->pending_.size() < state->pipelineDepth_) {
-          std::optional<std::vector<size_t>> next = state->input_.get();
-          if (!next.has_value()) {
-            state->inputExhausted_ = true;
-            break;
-          }
-          state->pending_.push_back(state->vocabulary_->submitOffsetPairs(
-              *state->manager_, *next, state->pageCacheFastPath_));
-        }
-        if (state->pending_.empty()) {
-          // Input exhausted and nothing left in flight: return the manager and
-          // end the stream.
-          ad_utility::terminateIfThrows(
-              [&]() {
-                state->vocabulary_->ioManagers_->push(
-                    std::move(state->manager_));
-              },
-              "returning the `IoManager` to the pool in "
-              "`VocabularyOnDisk::lookupBatchesStreamed`");
-          return std::nullopt;
-        }
-        // Pop the oldest batch only after its reads completed, so that the
-        // destructor still drains them if the wait throws.
-        std::vector<OffsetPair> offsetPairs =
-            waitOffsetPairs(*state->manager_, state->pending_.front());
-        state->pending_.pop_front();
-        return state->vocabulary_->readStrings(*state->manager_, offsetPairs,
-                                               state->pageCacheFastPath_);
-      }}};
+      [state]() { return state->next(); }}};
 }
 
 // _____________________________________________________________________________
