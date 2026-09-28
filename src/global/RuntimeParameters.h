@@ -244,6 +244,12 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If set, the Export V2 SELECT CSV/TSV serializer writes rows with
+  // `MonomorphicRowSerializer` (one compile-time schema per window) instead of
+  // the generic per-cell assembly loop. Output bytes are identical; only
+  // SELECTs with at most three columns take this path.
+  Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

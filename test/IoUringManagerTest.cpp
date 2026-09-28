@@ -118,6 +118,16 @@ class ReadBatchForTesting {
     return manager.addBatch(fd, numBytes_, offsets_, pointers);
   }
 
+  // Run `ad_utility::readLeadingPageCacheHits` on all accumulated reads.
+  size_t readLeadingPageCacheHits(int fd) {
+    std::vector<char*> pointers = ::ranges::to_vector(
+        targetBuffers_ | ql::views::transform([](std::string& buffer) {
+          return buffer.data();
+        }));
+    return ad_utility::readLeadingPageCacheHits(fd, numBytes_, offsets_,
+                                                pointers);
+  }
+
   // The bytes read by each read, in request order (valid once the batch has
   // completed).
   const std::vector<std::string>& result() const { return targetBuffers_; }
@@ -189,7 +199,10 @@ class IoUringManagerTest : public ::testing::Test {
   void SetUp() override {
 #ifdef QLEVER_HAS_IO_URING
     if constexpr (std::is_same_v<
-                      T, ad_utility::BatchManager<ad_utility::IoUringPolicy>>) {
+                      T, ad_utility::BatchManager<ad_utility::IoUringPolicy>> ||
+                  std::is_same_v<T, ad_utility::BatchManager<
+                                        ad_utility::PageCacheFirstPolicy<
+                                            ad_utility::IoUringPolicy>>>) {
       if (!ioUringAvailableAtRuntime()) {
         GTEST_SKIP() << "io_uring is compiled in, but not available at "
                         "runtime (e.g. blocked by seccomp inside Docker)";
@@ -200,12 +213,18 @@ class IoUringManagerTest : public ::testing::Test {
 };
 
 #ifdef QLEVER_HAS_IO_URING
-using ManagerTypes =
-    ::testing::Types<ad_utility::BatchManager<ad_utility::IoUringPolicy>,
-                     ad_utility::BatchManager<ad_utility::SyncIoPolicy>>;
+using ManagerTypes = ::testing::Types<
+    ad_utility::BatchManager<ad_utility::IoUringPolicy>,
+    ad_utility::BatchManager<ad_utility::SyncIoPolicy>,
+    ad_utility::BatchManager<
+        ad_utility::PageCacheFirstPolicy<ad_utility::IoUringPolicy>>,
+    ad_utility::BatchManager<
+        ad_utility::PageCacheFirstPolicy<ad_utility::SyncIoPolicy>>>;
 #else
 using ManagerTypes =
-    ::testing::Types<ad_utility::BatchManager<ad_utility::SyncIoPolicy>>;
+    ::testing::Types<ad_utility::BatchManager<ad_utility::SyncIoPolicy>,
+                     ad_utility::BatchManager<ad_utility::PageCacheFirstPolicy<
+                         ad_utility::SyncIoPolicy>>>;
 #endif
 
 TYPED_TEST_SUITE(IoUringManagerTest, ManagerTypes);
@@ -554,6 +573,52 @@ TYPED_TEST(IoUringManagerTest, fakeHandle) {
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
 }
 
+// A freshly written file is in the page cache, so every read of a batch is
+// served synchronously, unless the platform or file system lacks `RWF_NOWAIT`
+// (then none is). The served reads carry the correct bytes.
+TEST(ReadLeadingPageCacheHits, servesCachedReads) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  ReadBatchForTesting batch;
+  batch.add({{8, 4}, {0, 4}, {12, 4}});
+  const size_t numServed = batch.readLeadingPageCacheHits(fd);
+  EXPECT_THAT(numServed, ::testing::AnyOf(0u, 3u));
+  if (numServed == 3) {
+    EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
+  }
+}
+
+// A read that cannot be fully served (here: past the end of the file) ends the
+// served prefix, even if later reads could be served, so the regular read path
+// reports its error.
+TEST(ReadLeadingPageCacheHits, stopsAtFirstShortRead) {
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {4, 8}, {4, 4}});
+  EXPECT_LE(batch.readLeadingPageCacheHits(fd), 1u);
+}
+
+// An empty batch serves nothing.
+TEST(ReadLeadingPageCacheHits, emptyBatch) {
+  auto [tmp, fd] = makeTempFile("AAAA");
+  EXPECT_EQ(ad_utility::readLeadingPageCacheHits(fd, {}, {}, {}), 0u);
+}
+
+// Spans of different lengths violate the precondition and are rejected before
+// any read.
+TEST(ReadLeadingPageCacheHits, mismatchedSpanLengthsThrow) {
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  std::vector<size_t> numBytes{4, 4};
+  std::vector<uint64_t> offsets{0};
+  std::vector<char> storage(8);
+  std::vector<char*> buffers{storage.data(), storage.data() + 4};
+  EXPECT_ANY_THROW(
+      ad_utility::readLeadingPageCacheHits(fd, numBytes, offsets, buffers));
+  std::vector<uint64_t> twoOffsets{0, 4};
+  std::vector<char*> oneBuffer{storage.data()};
+  EXPECT_ANY_THROW(ad_utility::readLeadingPageCacheHits(fd, numBytes,
+                                                        twoOffsets, oneBuffer));
+}
+
 // Check that the `manager` (as returned by `makeBatchManager`, see the tests
 // below) performs correct reads via the type-erased `BatchManagerBase`
 // interface.
@@ -593,7 +658,8 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     EXPECT_NE(
-        dynamic_cast<ad_utility::BatchManager<ad_utility::IoUringPolicy>*>(
+        dynamic_cast<ad_utility::BatchManager<
+            ad_utility::PageCacheFirstPolicy<ad_utility::IoUringPolicy>>*>(
             manager.get()),
         nullptr);
   } else {

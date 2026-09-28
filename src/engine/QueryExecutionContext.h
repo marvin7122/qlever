@@ -1,7 +1,13 @@
-// Copyright 2011 - 2024, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Björn Buchhold <buchhold@cs.uni-freiburg.de> [2011 - 2017]
-//          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de> [2017 - 2024]
+// Copyright 2011 - 2026 The QLever Authors, in particular:
+//
+// 2011 - 2017 Björn Buchhold <buchhold@cs.uni-freiburg.de>, UFR
+// 2017 - 2024 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_ENGINE_QUERYEXECUTIONCONTEXT_H
 #define QLEVER_SRC_ENGINE_QUERYEXECUTIONCONTEXT_H
@@ -120,6 +126,12 @@ class QueryExecutionContext
   QueryResultCache& getQueryTreeCache() { return *_subtreeCache; }
 
   [[nodiscard]] const Index& getIndex() const { return *_index; }
+
+  // Shared ownership of the index, for work that may outlive this context
+  // (e.g. export helper tasks that still run after the request finished).
+  [[nodiscard]] std::shared_ptr<const Index> getIndexSharedPtr() const {
+    return _index;
+  }
 
   const LocatedTriplesState& locatedTriplesState() const {
     AD_CORRECTNESS_CHECK(locatedTriplesSharedState_ != nullptr);
