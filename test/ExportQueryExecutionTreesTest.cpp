@@ -2268,12 +2268,41 @@ INSTANTIATE_TEST_SUITE_P(
         LruWindowParam{10, "abcde"}));
 
 // _____________________________________________________________________________
+// `use-simd-escape-classifier-csv-tsv` switches the CSV and TSV cell escaping
+// from `RdfEscaping` to `SimdEscapeClassifier`; the exported bytes must not
+// change. The literal contains the special characters of both formats plus
+// `\r` and `\`, which are special in CSV but not in TSV.
+TEST(ExportQueryExecutionTrees, SimdEscapeClassifierCsvTsvProducesSameBytes) {
+  const std::string kg =
+      R"(<a> <b> "needs\tescaping, \\backslash, \rcarriage return, and \"quotes\"" .)";
+  const std::string query = "SELECT * WHERE { ?s ?p ?o }";
+  using ad_utility::MediaType;
+
+  for (MediaType format : {MediaType::csv, MediaType::tsv}) {
+    auto legacy = [&] {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::useSimdEscapeClassifierCsvTsv_>(false);
+      return runQueryStreamableResult(kg, query, format);
+    }();
+    auto simd = [&] {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::useSimdEscapeClassifierCsvTsv_>(true);
+      return runQueryStreamableResult(kg, query, format);
+    }();
+    EXPECT_EQ(legacy, simd);
+    EXPECT_NE(legacy.find("needs"), std::string::npos);
+  }
+}
+
+// _____________________________________________________________________________
 // With `use-fast-export-stream-formatter`, the Turtle export of a CONSTRUCT
-// query is formatted by `FastExportStreamFormatter`; the bytes must not change.
+// query is formatted by `FastExportStreamFormatter`; the bytes must not
+// change.
 TEST(ExportQueryExecutionTrees, ConstructTurtleFastFormatterProducesSameBytes) {
   const std::string kg =
       "<s> <p> \"plain\" . <s> <p> \"with \\\"quotes\\\" and \\\\ and \\n\" ."
-      " <s> <q> 42 . <s> <q> \"3.5\"^^<http://www.w3.org/2001/XMLSchema#double>"
+      " <s> <q> 42 . <s> <q> "
+      "\"3.5\"^^<http://www.w3.org/2001/XMLSchema#double>"
       " . <s> <r> \"text\"@en . <s> <r> _:b .";
   const std::string query = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
   auto run = [&](bool useFastFormatter) {
