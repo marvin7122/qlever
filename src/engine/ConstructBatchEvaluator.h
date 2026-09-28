@@ -89,6 +89,20 @@ class ConstructBatchEvaluator {
       ql::span<const ColumnIndex> variableColumnIndices,
       const BatchEvaluationContext& evaluationContext,
       const LocalVocab& localVocab, const Index& index, IdCache& idCache);
+
+  // Evaluate two consecutive row batches with shared fiber overlap: both
+  // batches' cache checks run first, then all columns' miss resolutions
+  // share one wave schedule, then each batch's cache insertions run in
+  // batch order. The returned results are identical to two sequential
+  // `evaluateBatch` calls (same cache insertion order per batch, same
+  // duplicate-column contract); only the I/O waits overlap. Both contexts
+  // must be non-empty and view rows of tables that outlive the call.
+  static std::pair<BatchEvaluationResult, BatchEvaluationResult>
+  evaluateBatchPair(ql::span<const ColumnIndex> variableColumnIndices,
+                    const BatchEvaluationContext& firstContext,
+                    const BatchEvaluationContext& secondContext,
+                    const LocalVocab& localVocab, const Index& index,
+                    IdCache& idCache);
 };
 
 }  // namespace qlever::constructExport

@@ -9,10 +9,13 @@
 
 #include "engine/ConstructTripleGenerator.h"
 
+#include <iterator>
+
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "global/RuntimeParameters.h"
 #include "util/FiberIoStats.h"
 
 namespace qlever::constructExport {
@@ -49,36 +52,81 @@ struct BatchEvalContext {
   std::shared_ptr<ConstructDeduplicator> deduplicator_;
 };
 
-// Evaluate the rows covered by `batch.view_`. Cancellation is checked once at
-// the start. When `context.deduplicator_` is set, duplicate triples are
-// dropped as they are instantiated (see `instantiateBatch`'s
-// `DeduplicationParams`).
+// The rows of one chunk form a contiguous index range, so the batch is
+// [first index, first index + chunk size). Chunks from `views::chunk` are
+// never empty.
 CPP_template(typename ChunkView)(requires ranges::range<ChunkView>)
-    std::vector<EvaluatedTriple> computeBatch(
-        const TableConstRefWithVocab& tableWithVocab, ChunkView batch,
-        const BatchEvalContext& context, size_t tableRowOffset) {
-  context.cancellationHandle_.get()->throwIfCancelled();
+    BatchEvaluationContext
+    batchContextFor(const TableConstRefWithVocab& tableWithVocab,
+                    const ChunkView& batch) {
   AD_CORRECTNESS_CHECK(!ql::ranges::empty(batch));
-
   const size_t batchBegin = *ql::ranges::begin(batch);
   const size_t batchEnd =
       batchBegin + static_cast<size_t>(ql::ranges::size(batch));
+  return BatchEvaluationContext{tableWithVocab.idTable(), batchBegin, batchEnd};
+}
 
-  const BatchEvaluationContext ctx{tableWithVocab.idTable(), batchBegin,
-                                   batchEnd};
-
-  auto batchResult = ConstructBatchEvaluator::evaluateBatch(
-      context.preprocessedTemplate_.get().uniqueVariableColumns_, ctx,
-      tableWithVocab.localVocab(), context.index_, context.cache_);
-
-  const size_t blankNodeBaseId = tableRowOffset + batchBegin;
-
+// Instantiate one evaluated batch. When `context.deduplicator_` is set,
+// duplicate triples are dropped as they are instantiated (see
+// `instantiateBatch`'s `DeduplicationParams`). Runs serially in row order;
+// callers pair only the evaluation above and keep one call per batch in
+// batch order, so deduplication decisions match the serial schedule.
+std::vector<EvaluatedTriple> instantiateOne(
+    const BatchEvalContext& context, const BatchEvaluationResult& batchResult,
+    const BatchEvaluationContext& ctx, size_t tableRowOffset) {
+  const size_t blankNodeBaseId = tableRowOffset + ctx.firstRow_;
   std::optional<DeduplicationParams> deduplication{std::nullopt};
   if (context.deduplicator_) {
     deduplication.emplace(DeduplicationParams{*context.deduplicator_, ctx});
   }
   return instantiateBatch(context.preprocessedTemplate_.get(), batchResult,
                           blankNodeBaseId, deduplication);
+}
+
+// Evaluate the rows covered by `batch.view_`. Cancellation is checked once at
+// the start.
+CPP_template(typename ChunkView)(requires ranges::range<ChunkView>)
+    std::vector<EvaluatedTriple> computeBatch(
+        const TableConstRefWithVocab& tableWithVocab, ChunkView batch,
+        const BatchEvalContext& context, size_t tableRowOffset) {
+  context.cancellationHandle_.get()->throwIfCancelled();
+  const BatchEvaluationContext ctx = batchContextFor(tableWithVocab, batch);
+
+  auto batchResult = ConstructBatchEvaluator::evaluateBatch(
+      context.preprocessedTemplate_.get().uniqueVariableColumns_, ctx,
+      tableWithVocab.localVocab(), context.index_, context.cache_);
+  return instantiateOne(context, batchResult, ctx, tableRowOffset);
+}
+
+// Evaluate two consecutive chunks with shared fiber overlap (see
+// `ConstructBatchEvaluator::evaluateBatchPair`) and instantiate both
+// serially in batch order. Cancellation is checked once at the start, so a
+// cancelled export still throws between batches, never mid-batch. The
+// emitted triples are identical to two sequential `computeBatch` calls:
+// evaluation results match by construction and instantiation keeps the
+// serial order, including deduplication decisions.
+CPP_template(typename FirstView, typename SecondView)(
+    requires ranges::range<FirstView>&& ranges::range<SecondView>)
+    std::vector<EvaluatedTriple> computeBatchPair(
+        const TableConstRefWithVocab& tableWithVocab, FirstView first,
+        SecondView second, const BatchEvalContext& context,
+        size_t tableRowOffset) {
+  context.cancellationHandle_.get()->throwIfCancelled();
+  const BatchEvaluationContext firstCtx =
+      batchContextFor(tableWithVocab, first);
+  const BatchEvaluationContext secondCtx =
+      batchContextFor(tableWithVocab, second);
+
+  auto [firstResult, secondResult] = ConstructBatchEvaluator::evaluateBatchPair(
+      context.preprocessedTemplate_.get().uniqueVariableColumns_, firstCtx,
+      secondCtx, tableWithVocab.localVocab(), context.index_, context.cache_);
+  std::vector<EvaluatedTriple> triples =
+      instantiateOne(context, firstResult, firstCtx, tableRowOffset);
+  auto secondTriples =
+      instantiateOne(context, secondResult, secondCtx, tableRowOffset);
+  triples.insert(triples.end(), std::make_move_iterator(secondTriples.begin()),
+                 std::make_move_iterator(secondTriples.end()));
+  return triples;
 }
 
 // Chunks `table` into batches and evaluates each one. Takes `TableWithRange` by
@@ -94,14 +142,42 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
-  return ranges::views::chunk(std::move(rowView),
-                              ConstructTripleGenerator::BATCH_SIZE) |
-         ql::views::transform([tableWithVocab, context = std::move(context),
-                               tableRowOffset](auto chunkView) {
-           return computeBatch(tableWithVocab, chunkView, context,
-                               tableRowOffset);
-         }) |
-         ql::views::join;
+  auto chunks = ranges::views::chunk(std::move(rowView),
+                                     ConstructTripleGenerator::BATCH_SIZE);
+  // Shared (not moved twice): both lambdas below read the same context,
+  // including the deduplicator. Moving `context` into each lambda would
+  // leave the second with a disengaged `shared_ptr` deduplicator.
+  auto sharedContext = std::make_shared<BatchEvalContext>(std::move(context));
+  auto computeOne = [tableWithVocab, sharedContext,
+                     tableRowOffset](auto chunkView) {
+    return computeBatch(tableWithVocab, chunkView, *sharedContext,
+                        tableRowOffset);
+  };
+  if (!getRuntimeParameter<&RuntimeParameters::exportFiberOverlap_>()) {
+    return InputRangeTypeErased<EvaluatedTriple>(
+        std::move(chunks) | ql::views::transform(std::move(computeOne)) |
+        ql::views::join);
+  }
+  // Overlap consecutive chunks in pairs (depth 2, the depth the NVMe
+  // optimization arc saturates at): both chunks' miss resolutions share one
+  // fiber wave while instantiation stays serial and ordered. A lone
+  // trailing chunk evaluates alone. `view_` is an `iota_view`, so holding
+  // both chunk views while the pair evaluates is safe.
+  auto computePair = [tableWithVocab, sharedContext,
+                      tableRowOffset](auto chunkPair) {
+    auto pairIt = ql::ranges::begin(chunkPair);
+    auto first = *pairIt;
+    ++pairIt;
+    if (pairIt == ql::ranges::end(chunkPair)) {
+      return computeBatch(tableWithVocab, first, *sharedContext,
+                          tableRowOffset);
+    }
+    return computeBatchPair(tableWithVocab, first, *pairIt, *sharedContext,
+                            tableRowOffset);
+  };
+  return InputRangeTypeErased<EvaluatedTriple>(
+      std::move(chunks) | ranges::views::chunk(2) |
+      ql::views::transform(std::move(computePair)) | ql::views::join);
 }
 }  // namespace
 
