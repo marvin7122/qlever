@@ -43,10 +43,10 @@ on:
       - .github/scripts/fetch-hosted-bin.sh
 
 concurrency:
-  # Parallel dispatches for different refs/targets run side by side; an
-  # identical dispatch queues behind the running one instead of killing it.
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || inputs.ref || github.ref }}-${{ inputs.targets }}
-  cancel-in-progress: false
+  # Every dispatch runs on its own (in a shared group GitHub cancels all but
+  # the newest queued run); a new push to a PR cancels its older self-test.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
