@@ -98,7 +98,7 @@ void resolveColumnMisses(const Index& index, const LocalVocab& localVocab,
   ad_utility::fiberIoStats::add(ad_utility::fiberIoStats::Counter::ResolvedIds,
                                 work.missIds_.size());
   work.missResolved_ =
-      ql::exportIds::idsToStringAndType(index, work.missIds_, localVocab);
+      ql::exportIds::idsToStringAndTypeDepth2(index, work.missIds_, localVocab);
 }
 
 // Convert the result of `ExportIds::idToStringAndType` to an `EvaluatedTerm`.
@@ -165,7 +165,8 @@ void collectBatchMisses(ql::span<const ColumnIndex> variableColumnIndices,
 // so concurrent bodies share no mutable state.
 void resolveColumnsInWaves(const Index& index, const LocalVocab& localVocab,
                            const std::vector<ColumnWork*>& columns) {
-  constexpr size_t kMaxConcurrentColumns = NUM_VOCAB_BATCH_IO_MANAGERS;
+  // The depth-2 lookup holds two pooled I/O managers per column.
+  constexpr size_t kMaxConcurrentColumns = NUM_VOCAB_BATCH_IO_MANAGERS / 2;
   for (size_t begin = 0; begin < columns.size();
        begin += kMaxConcurrentColumns) {
     const size_t end = std::min(begin + kMaxConcurrentColumns, columns.size());
