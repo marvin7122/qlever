@@ -601,4 +601,4 @@ addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 
-addLinkAndDiscoverTest(RlePrefixCompressorTest qlever_util)
+addLinkAndDiscoverTest(RlePrefixCompressorTest engine)
