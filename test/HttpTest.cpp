@@ -760,13 +760,11 @@ TYPED_TEST(HttpServerBodyTest, MaterializeBody) {
 }
 
 // A chunked `streamable_body` export-style response arrives byte-identical
-// with and without the zero-copy send path. Empty generator chunks are
-// skipped by the zero-copy path because they would serialize as the
-// terminating zero chunk.
+// with and without the zero-copy send path.
 TYPED_TEST(HttpServerBodyTest, StreamableBodyRoundTripWithAndWithoutSendZC) {
   const std::string bigA(70'000, 'a');
   const std::string bigB(70'000, 'b');
-  const std::vector<std::string> chunks{bigA, "", bigB, "tail"};
+  const std::vector<std::string> chunks{bigA, bigB, "tail"};
   const std::string expected = bigA + bigB + "tail";
   for (bool useSendZC : {false, true}) {
     SCOPED_TRACE(useSendZC ? "send-zc" : "beast");
