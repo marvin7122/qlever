@@ -28,15 +28,14 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // Collect the indices that miss the internal vocabulary, so that the
   // external vocabulary serves all of them in one batch (from its `io_uring`
   // ring pool).
-  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-  data->buffer().resize(indices.size());
+  std::vector<std::string> words(indices.size());
   std::vector<size_t> missPositions;
   std::vector<size_t> missIndices;
   missPositions.reserve(indices.size());
   missIndices.reserve(indices.size());
   for (size_t i = 0; i < indices.size(); ++i) {
     if (auto hit = internalVocab_[indices[i]]; hit.has_value()) {
-      data->buffer()[i] = std::string{hit.value()};
+      words[i] = std::string{hit.value()};
     } else {
       missPositions.push_back(i);
       missIndices.push_back(indices[i]);
@@ -44,19 +43,13 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   }
   if (!missIndices.empty()) {
     auto external = externalVocab_.lookupBatch(missIndices);
-    AD_CONTRACT_CHECK(external->size() == missIndices.size());
+    AD_CONTRACT_CHECK(external.size() == missIndices.size());
     for (const auto& [position, word] :
-         ::ranges::views::zip(missPositions, *external)) {
-      data->buffer()[position] = std::string{word};
+         ::ranges::views::zip(missPositions, external)) {
+      words[position] = std::string{word};
     }
   }
-  // Build the views only after the buffer is complete, so that no reallocation
-  // can move the bytes the views point into.
-  data->views().reserve(data->buffer().size());
-  for (const auto& word : data->buffer()) {
-    data->views().emplace_back(word);
-  }
-  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+  return makeStringVectorVocabBatchLookupResult(std::move(words));
 }
 
 // _____________________________________________________________________________
