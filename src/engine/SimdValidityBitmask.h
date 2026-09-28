@@ -65,27 +65,27 @@ class ValidityBitmask64 {
   }
 
   // Row-level query and manipulation
-  [[nodiscard]] bool isRowValid(size_t index) const noexcept {
+  [[nodiscard]] bool isRowValid(size_t index) const {
     AD_EXPENSIVE_CHECK(index < 64);
     return (mask_ & (1ULL << index)) != 0;
   }
 
-  [[nodiscard]] bool isRowUnbound(size_t index) const noexcept {
+  [[nodiscard]] bool isRowUnbound(size_t index) const {
     AD_EXPENSIVE_CHECK(index < 64);
     return (mask_ & (1ULL << index)) == 0;
   }
 
-  void setRowValid(size_t index) noexcept {
+  void setRowValid(size_t index) {
     AD_CONTRACT_CHECK(index < 64);
     mask_ |= (1ULL << index);
   }
 
-  void setRowUnbound(size_t index) noexcept {
+  void setRowUnbound(size_t index) {
     AD_CONTRACT_CHECK(index < 64);
     mask_ &= ~(1ULL << index);
   }
 
-  void setRow(size_t index, bool isValid) noexcept {
+  void setRow(size_t index, bool isValid) {
     AD_CONTRACT_CHECK(index < 64);
     if (isValid) {
       mask_ |= (1ULL << index);
@@ -354,7 +354,7 @@ class SimdValidityScanner {
   // ___________________________________________________________________________
   // Scan a batch of exactly 64 uint64_t raw values.
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
-      const uint64_t* data) noexcept {
+      const uint64_t* data) {
     AD_CONTRACT_CHECK(data != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -378,7 +378,7 @@ class SimdValidityScanner {
 
   // ___________________________________________________________________________
   // Fast check whether all 64 ValueIds in the batch are valid (none are zero).
-  [[nodiscard]] static inline bool isAllValid64(const ValueId* data) noexcept {
+  [[nodiscard]] static inline bool isAllValid64(const ValueId* data) {
     return scanBatch64(data).allValid();
   }
 
@@ -386,7 +386,7 @@ class SimdValidityScanner {
   // Scan an arbitrary span of ValueIds (up to 64 elements).
   // Bits at index >= data.size() are set to 0 (unbound).
   [[nodiscard]] static inline ValidityBitmask64 scanBatch(
-      ql::span<const ValueId> data) noexcept {
+      ql::span<const ValueId> data) {
     AD_CONTRACT_CHECK(data.size() <= 64);
     if (data.size() == 64) {
       return scanBatch64(data.data());
@@ -403,9 +403,8 @@ class SimdValidityScanner {
   // ___________________________________________________________________________
   // Scan an entire column of ValueIds into a destination span of
   // ValidityBitmask64. Returns the number of 64-row bitmask blocks written.
-  static inline size_t scanColumn(
-      ql::span<const ValueId> column,
-      ql::span<ValidityBitmask64> outBitmasks) noexcept {
+  static inline size_t scanColumn(ql::span<const ValueId> column,
+                                  ql::span<ValidityBitmask64> outBitmasks) {
     const size_t numRows = column.size();
     const size_t numFullBatches = numRows / 64;
     const size_t totalBatches = (numRows + 63) / 64;
@@ -438,8 +437,7 @@ class SimdValidityScanner {
   // ___________________________________________________________________________
   // Vectorized store writing 64 CSV delimiter tokens (e.g. ',') with zero cell
   // checks. Returns the pointer past the last written byte (dest + 64).
-  static inline char* writeUnboundBatchCsv(char* dest,
-                                           char delimiter = ',') noexcept {
+  static inline char* writeUnboundBatchCsv(char* dest, char delimiter = ',') {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -452,8 +450,7 @@ class SimdValidityScanner {
   // ___________________________________________________________________________
   // Vectorized store writing 64 TSV delimiter tokens (e.g. '\t') with zero cell
   // checks. Returns the pointer past the last written byte (dest + 64).
-  static inline char* writeUnboundBatchTsv(char* dest,
-                                           char delimiter = '\t') noexcept {
+  static inline char* writeUnboundBatchTsv(char* dest, char delimiter = '\t') {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -467,7 +464,7 @@ class SimdValidityScanner {
   // Vectorized store writing 64 pairs of (delimiter, rowSeparator) = 128 bytes
   // for CSV export with newline terminators (e.g. ',\n').
   static inline char* writeUnboundRowsCsv(char* dest, char delimiter = ',',
-                                          char rowSeparator = '\n') noexcept {
+                                          char rowSeparator = '\n') {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -481,7 +478,7 @@ class SimdValidityScanner {
   // Vectorized store writing 64 pairs of (delimiter, rowSeparator) = 128 bytes
   // for TSV export with newline terminators (e.g. '\t\n').
   static inline char* writeUnboundRowsTsv(char* dest, char delimiter = '\t',
-                                          char rowSeparator = '\n') noexcept {
+                                          char rowSeparator = '\n') {
     AD_CONTRACT_CHECK(dest != nullptr);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
@@ -494,22 +491,22 @@ class SimdValidityScanner {
 
 // _____________________________________________________________________________
 // Free convenience wrapper functions
-inline char* writeUnboundBatchCsv(char* dest, char delimiter = ',') noexcept {
+inline char* writeUnboundBatchCsv(char* dest, char delimiter = ',') {
   return SimdValidityScanner::writeUnboundBatchCsv(dest, delimiter);
 }
 
-inline char* writeUnboundBatchTsv(char* dest, char delimiter = '\t') noexcept {
+inline char* writeUnboundBatchTsv(char* dest, char delimiter = '\t') {
   return SimdValidityScanner::writeUnboundBatchTsv(dest, delimiter);
 }
 
 inline char* writeUnboundRowsCsv(char* dest, char delimiter = ',',
-                                 char rowSeparator = '\n') noexcept {
+                                 char rowSeparator = '\n') {
   return SimdValidityScanner::writeUnboundRowsCsv(dest, delimiter,
                                                   rowSeparator);
 }
 
 inline char* writeUnboundRowsTsv(char* dest, char delimiter = '\t',
-                                 char rowSeparator = '\n') noexcept {
+                                 char rowSeparator = '\n') {
   return SimdValidityScanner::writeUnboundRowsTsv(dest, delimiter,
                                                   rowSeparator);
 }
