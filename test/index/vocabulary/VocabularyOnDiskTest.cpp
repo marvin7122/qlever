@@ -16,6 +16,7 @@
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "global/Constants.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
 #include "util/Forward.h"
@@ -288,6 +289,23 @@ TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
   auto result = vocab->lookupBatch(validIndices);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
                                                                 validIndices);
+}
+
+// A handle whose offset reads are in flight may be destroyed without calling
+// `finishLookup`: its destructor drains the reads and returns the pooled I/O
+// manager, so later lookups still work. `finishLookup` rejects a null handle.
+TEST(VocabularyOnDisk, DroppedInFlightHandleReturnsManager) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 3> indices{4, 0, 2};
+  // Drop more handles than the pool has managers. If a dropped handle kept its
+  // manager, `beginLookup` would block on the empty pool.
+  for (size_t round = 0; round < 2 * NUM_VOCAB_BATCH_IO_MANAGERS; ++round) {
+    auto handle = vocab->beginLookup(indices);
+  }
+  auto result = vocab->finishLookup(vocab->beginLookup(indices));
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
+                                                                indices);
+  EXPECT_ANY_THROW(vocab->finishLookup(nullptr));
 }
 
 // Each batch yielded by `lookupBatchesStreamed` must equal the individual
