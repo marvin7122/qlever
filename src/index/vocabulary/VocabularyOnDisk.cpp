@@ -362,9 +362,10 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
 // _____________________________________________________________________________
 VocabLookupOutput VocabularyOnDisk::lookupBatchesStreamed(
     VocabLookupInput rangeOfIndexBatches) const {
-  size_t pipelineDepth = ad_utility::vocabularyIoUringPipelineDepth.load(
-      std::memory_order_relaxed);
-  return lookupBatchesStreamed(std::move(rangeOfIndexBatches), pipelineDepth);
+  return lookupBatchesStreamed(
+      std::move(rangeOfIndexBatches),
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyIouringPipelineDepth_>());
 }
 
 // _____________________________________________________________________________

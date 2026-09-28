@@ -12,7 +12,6 @@
 
 #include "global/RuntimeParameters.h"
 #include "util/GTestHelpers.h"
-#include "util/IoUringManager.h"
 
 using ::testing::AllOf;
 using ::testing::HasSubstr;
@@ -72,13 +71,8 @@ TEST(RuntimeParameters, lazyIndexScanNumThreadsIsStrictlyPositive) {
 TEST(RuntimeParameters, vocabularyIouringPipelineDepth) {
   RuntimeParameters params;
   EXPECT_EQ(params.vocabularyIouringPipelineDepth_.get(), 1u);
-  EXPECT_EQ(ad_utility::vocabularyIoUringPipelineDepth.load(), 1u);
   params.setFromAssignment("vocabulary-iouring-pipeline-depth=4");
   EXPECT_EQ(params.vocabularyIouringPipelineDepth_.get(), 4u);
-  // The update action propagates the value to the vocabulary library.
-  EXPECT_EQ(ad_utility::vocabularyIoUringPipelineDepth.load(), 4u);
-  params.setFromAssignment("vocabulary-iouring-pipeline-depth=1");
-  EXPECT_EQ(ad_utility::vocabularyIoUringPipelineDepth.load(), 1u);
 }
 
 // Test that `getKeys` and `toMap` (the building blocks of
