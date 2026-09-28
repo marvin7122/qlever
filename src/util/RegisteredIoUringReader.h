@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,11 @@
 #endif
 
 namespace ad_utility::export_prototypes {
+
+// The message of the current `errno`. Unlike `strerror`, this is thread-safe.
+inline std::string errnoMessage() {
+  return std::system_category().message(errno);
+}
 
 // Direct I/O block alignment constants for NVMe and modern Linux kernels.
 inline constexpr size_t kDirectIoBlockSize = 4096;
@@ -127,8 +133,8 @@ class DirectIoFile {
     }
 #endif
     if (fd_ < 0) {
-      AD_THROW(absl::StrCat("Failed to open file: ", path_,
-                            " (errno: ", strerror(errno), ")"));
+      AD_THROW(absl::StrCat("Failed to open file: ", path_, " (",
+                            errnoMessage(), ")"));
     }
 
     struct stat st {};
@@ -621,7 +627,7 @@ class RegisteredIoUringReader {
     ssize_t bytesRead =
         ::pread(fd, dest.data(), dest.size(), static_cast<off_t>(offset));
     if (bytesRead < 0) {
-      AD_THROW(absl::StrCat("pread failed (errno: ", strerror(errno), ")"));
+      AD_THROW(absl::StrCat("pread failed (", errnoMessage(), ")"));
     }
     if (static_cast<size_t>(bytesRead) != dest.size()) {
       AD_THROW("pread read fewer bytes than requested");
