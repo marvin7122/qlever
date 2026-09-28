@@ -1,6 +1,12 @@
-//   Copyright 2024, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
@@ -220,6 +226,15 @@ struct RuntimeParameters {
   // debug caching issues, and to get rid of the overhead of caching (in
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
+
+  // If set to true, the batched reads of `VocabularyOnDisk::lookupBatch` first
+  // try to serve each read from the page cache with a non-blocking
+  // `preadv2(RWF_NOWAIT)` and submit the remaining reads of the batch (from the
+  // first one that is not fully cached on) through the regular batch manager.
+  // A read that hits the page cache then costs one syscall instead of the
+  // `io_uring` submission and completion. A batch that misses the page cache
+  // pays one extra failed syscall.
+  Bool vocabularyReadPageCacheFirst_{false, "vocabulary-read-page-cache-first"};
 
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be

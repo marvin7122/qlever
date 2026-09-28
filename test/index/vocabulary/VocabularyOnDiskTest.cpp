@@ -16,6 +16,7 @@
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "global/RuntimeParameters.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
 #include "util/Forward.h"
@@ -266,6 +267,21 @@ TEST(VocabularyOnDisk, ScanAllSingleWordExceedsLimit) {
 // same indices, including for reordered and duplicated indices.
 TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
   auto vocab = createExampleVocabulary();
+  std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
+  auto result = vocab->lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
+                                                                indices);
+}
+
+// With `vocabulary-read-page-cache-first`, reads that are in the page cache are
+// served before the batch manager sees them. The result must be the same.
+TEST(VocabularyOnDisk, LookupBatchPageCacheFirst) {
+  auto vocab = createExampleVocabulary();
+  setRuntimeParameter<&RuntimeParameters::vocabularyReadPageCacheFirst_>(true);
+  absl::Cleanup resetParameter{[]() {
+    setRuntimeParameter<&RuntimeParameters::vocabularyReadPageCacheFirst_>(
+        false);
+  }};
   std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
   auto result = vocab->lookupBatch(indices);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,

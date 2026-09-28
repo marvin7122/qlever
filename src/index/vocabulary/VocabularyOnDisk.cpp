@@ -1,6 +1,12 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -11,6 +17,7 @@
 #include <array>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -156,9 +163,26 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 }
 
 // _____________________________________________________________________________
+void VocabularyOnDisk::readBatch(ad_utility::BatchManagerBase& manager, int fd,
+                                 ql::span<const size_t> numBytes,
+                                 ql::span<const uint64_t> offsets,
+                                 ql::span<char*> buffers, bool pageCacheFirst) {
+  const size_t numServed =
+      pageCacheFirst
+          ? ad_utility::readLeadingPageCacheHits(fd, numBytes, offsets, buffers)
+          : 0;
+  if (numServed == numBytes.size()) {
+    return;
+  }
+  manager.wait(manager.addBatch(fd, numBytes.subspan(numServed),
+                                offsets.subspan(numServed),
+                                buffers.subspan(numServed)));
+}
+
+// _____________________________________________________________________________
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
-    ad_utility::BatchManagerBase& manager,
-    ql::span<const size_t> indices) const {
+    ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
+    bool pageCacheFirst) const {
   // For each requested index `i`, read its offset together with the next offset
   // (which bounds the string) as one 16-byte pair from `.offsets`.
   const size_t numIndices = indices.size();
@@ -172,15 +196,15 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
-  manager.wait(
-      manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
+  readBatch(manager, offsetsFile_.fd(), sizes, fileOffsets, targets,
+            pageCacheFirst);
   return offsetPairs;
 }
 
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::readStrings(
     ad_utility::BatchManagerBase& manager,
-    ql::span<const OffsetPair> offsetPairs) const {
+    ql::span<const OffsetPair> offsetPairs, bool pageCacheFirst) const {
   // Read the string data. String `i` starts at `offset_` with length
   // `nextOffset_ - offset_`; the strings are packed contiguously into `buffer`.
   const size_t numIndices = offsetPairs.size();
@@ -205,7 +229,7 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     bufferOffset += size;
   }
 
-  manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
+  readBatch(manager, file_.fd(), sizes, fileOffsets, targets, pageCacheFirst);
   return VocabBatchLookupData::asResult(std::move(data));
 }
 
@@ -225,8 +249,10 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "`VocabularyOnDisk::lookupBatch`");
   }};
 
-  auto offsetPairs = readOffsetPairs(*manager, indices);
-  return readStrings(*manager, offsetPairs);
+  const bool pageCacheFirst =
+      getRuntimeParameter<&RuntimeParameters::vocabularyReadPageCacheFirst_>();
+  auto offsetPairs = readOffsetPairs(*manager, indices, pageCacheFirst);
+  return readStrings(*manager, offsetPairs, pageCacheFirst);
 }
 
 // _____________________________________________________________________________
