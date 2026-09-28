@@ -14,12 +14,14 @@
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "global/RuntimeParameters.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
 #include "util/Forward.h"
+#include "util/HashMap.h"
 #include "util/MmapVector.h"
 
 namespace {
@@ -356,4 +358,245 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
     for ([[maybe_unused]] auto& r : streamed) {
     }
   });
+}
+
+// Every pipeline depth (including `0`, treated as `1`, and `1`, the
+// drain-per-batch default) must yield exactly the same batches as the
+// sequential path: same contents in the same order, matching the individual
+// `vocab[]` lookups.
+TEST(VocabularyOnDisk, LookupBatchesStreamedPipelineDepthMatchesSequential) {
+  auto vocab = createExampleVocabulary();
+  const std::vector<std::vector<size_t>> batches{
+      {2, 0, 3}, {1}, {4, 0, 1}, {3, 3, 2, 0}, {4}};
+  for (size_t depth : {0u, 1u, 2u, 4u}) {
+    auto inputBatches = batches;
+    auto streamed = vocab->lookupBatchesStreamed(
+        VocabLookupInput{std::move(inputBatches)}, depth);
+    vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
+        *vocab, streamed, batches);
+  }
+}
+
+// The pipelined depths must agree word-for-word with the parameterless
+// (sequential, depth-1 default) overload on the same input.
+TEST(VocabularyOnDisk, LookupBatchesStreamedDepthOneEqualsOldPath) {
+  auto vocab = createExampleVocabulary();
+  const std::vector<std::vector<size_t>> batches{{2, 0, 3}, {1}, {4, 0, 1}};
+  auto collectWords = [](VocabLookupOutput streamed) {
+    std::vector<std::vector<std::string>> words;
+    for (const auto& result : streamed) {
+      words.emplace_back(result.begin(), result.end());
+    }
+    return words;
+  };
+  auto expectedBatches = batches;
+  auto expected = collectWords(vocab->lookupBatchesStreamed(
+      VocabLookupInput{std::move(expectedBatches)}));
+  for (size_t depth : {1u, 2u, 4u}) {
+    auto inputBatches = batches;
+    auto actual = collectWords(vocab->lookupBatchesStreamed(
+        VocabLookupInput{std::move(inputBatches)}, depth));
+    EXPECT_EQ(actual, expected) << "at pipeline depth " << depth;
+  }
+}
+
+// Error behavior must match the sequential path for pipelined depths: an
+// out-of-range index and an empty batch must throw when the batch is pulled.
+TEST(VocabularyOnDisk, LookupBatchesStreamedPipelineDepthErrorParity) {
+  for (size_t depth : {2u, 4u}) {
+    auto vocab = createExampleVocabulary();
+    std::vector<std::vector<size_t>> badIndex{{0, 99}};
+    auto streamedBadIndex = vocab->lookupBatchesStreamed(
+        VocabLookupInput{std::move(badIndex)}, depth);
+    EXPECT_ANY_THROW({
+      for ([[maybe_unused]] auto& r : streamedBadIndex) {
+      }
+    }) << "at pipeline depth "
+       << depth;
+
+    std::vector<std::vector<size_t>> emptyBatch{{2, 0}, {}, {1}};
+    auto streamedEmpty = vocab->lookupBatchesStreamed(
+        VocabLookupInput{std::move(emptyBatch)}, depth);
+    EXPECT_ANY_THROW({
+      for ([[maybe_unused]] auto& r : streamedEmpty) {
+      }
+    }) << "at pipeline depth "
+       << depth;
+  }
+}
+
+// Abandoning a pipelined stream early (with reads still in flight) must be
+// safe: the stream drains the in-flight reads and returns its I/O manager to
+// the pool, so subsequent lookups keep working.
+TEST(VocabularyOnDisk, LookupBatchesStreamedPipelineDepthEarlyAbandon) {
+  auto vocab = createExampleVocabulary();
+  std::vector<std::vector<size_t>> batches{{2, 0, 3}, {1}, {4, 0, 1}};
+  {
+    // Pull exactly one batch (leaving later batches' reads in flight), then
+    // abandon the stream.
+    auto streamed =
+        vocab->lookupBatchesStreamed(VocabLookupInput{std::move(batches)}, 2u);
+    for ([[maybe_unused]] const auto& r : streamed) {
+      break;
+    }
+  }
+  std::array<size_t, 3> indices{4, 1, 0};
+  auto result = vocab->lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
+                                                                indices);
+}
+
+namespace {
+// A vocabulary of `numWords` words of different lengths, large enough that a
+// `lookupBatch` is split into several sub-batches by the pipelined path.
+VocabularyOnDiskHandle createLargeVocabulary(size_t numWords = 300) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < numWords; ++i) {
+    words.push_back(absl::StrCat("word", i, std::string(i % 17, 'x')));
+  }
+  return createVocabularyFromWords(words);
+}
+
+// `numIndices` indices into a vocabulary of `vocabSize` words, in a scrambled
+// order and with duplicates.
+std::vector<size_t> scrambledIndices(size_t numIndices, size_t vocabSize) {
+  std::vector<size_t> indices;
+  for (size_t i = 0; i < numIndices; ++i) {
+    indices.push_back((i * 7919 + 13) % vocabSize);
+  }
+  return indices;
+}
+
+// A `BatchManagerBase` that reads synchronously and records which batches are
+// submitted but not yet waited for. A batch counts as an offset batch if it
+// reads from `offsetsFd`. If `failingWait` is set, the wait with that (0-based)
+// number throws once, before it waits, like an I/O error would.
+class RecordingBatchManager : public ad_utility::BatchManagerBase {
+ public:
+  ad_utility::BatchManager<ad_utility::SyncIoPolicy> manager_;
+  int offsetsFd_;
+  std::optional<size_t> failingWait_;
+  size_t numWaits_ = 0;
+  size_t numBatches_ = 0;
+  // The submitted batches that were not yet waited for, with their file.
+  ad_utility::HashMap<BatchHandle, int> inFlight_;
+  size_t maxOffsetBatchesInFlight_ = 0;
+  // Whether a word batch was ever submitted while an offset batch was in
+  // flight.
+  bool wordReadsOverlappedOffsetReads_ = false;
+
+  explicit RecordingBatchManager(int offsetsFd,
+                                 std::optional<size_t> failingWait = {})
+      : offsetsFd_{offsetsFd}, failingWait_{failingWait} {}
+
+  BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
+                       ql::span<const uint64_t> offsets,
+                       ql::span<char*> buffers) override {
+    auto handle = manager_.addBatch(fd, numBytes, offsets, buffers);
+    ++numBatches_;
+    const auto numOffsetBatchesInFlight = static_cast<size_t>(
+        ql::ranges::count_if(inFlight_, [this](const auto& batch) {
+          return batch.second == offsetsFd_;
+        }));
+    if (fd == offsetsFd_) {
+      maxOffsetBatchesInFlight_ =
+          std::max(maxOffsetBatchesInFlight_, numOffsetBatchesInFlight + 1);
+    } else if (numOffsetBatchesInFlight > 0) {
+      wordReadsOverlappedOffsetReads_ = true;
+    }
+    inFlight_.emplace(handle, fd);
+    return handle;
+  }
+
+  void wait(BatchHandle handle) override {
+    if (numWaits_++ == failingWait_) {
+      throw std::runtime_error("simulated I/O error");
+    }
+    manager_.wait(handle);
+    inFlight_.erase(handle);
+  }
+};
+}  // namespace
+
+// For every pipeline depth, `lookupBatch` must return exactly the words of the
+// sequential path (depth `1`), in the order of the indices, with and without
+// the page-cache fast path, also for batches that are not a multiple of the
+// sub-batch size.
+TEST(VocabularyOnDisk, LookupBatchPipelineDepthMatchesSequential) {
+  auto vocab = createLargeVocabulary();
+  for (bool pageCacheFastPath : {false, true}) {
+    auto fastPath = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(
+        pageCacheFastPath);
+    for (size_t numIndices : {1u, 127u, 128u, 129u, 300u, 1000u}) {
+      auto indices = scrambledIndices(numIndices, vocab->size());
+      auto sequential = vocab->lookupBatch(indices);
+      vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+          *vocab, sequential, indices);
+      for (size_t depth : {0u, 2u, 4u, 16u}) {
+        auto pipelineDepth = setRuntimeParameterForTest<
+            &RuntimeParameters::vocabularyIouringPipelineDepth_>(depth);
+        auto pipelined = vocab->lookupBatch(indices);
+        EXPECT_THAT(
+            std::vector<std::string_view>(pipelined.begin(), pipelined.end()),
+            ::testing::ElementsAreArray(sequential.begin(), sequential.end()))
+            << "depth " << depth << ", " << numIndices << " indices";
+      }
+    }
+  }
+}
+
+// `lookupBatchPipelined` keeps the offset reads of at most `pipelineDepth`
+// sub-batches in flight, submits the word reads of a sub-batch while the
+// offset reads of later sub-batches are in flight (for a depth of at least
+// `2`), and has waited for every batch when it returns.
+TEST(VocabularyOnDisk, LookupBatchPipelinedBoundsOffsetReadsInFlight) {
+  auto vocab = createLargeVocabulary();
+  auto indices = scrambledIndices(1000, vocab->size());
+  for (size_t subBatchSize : {1u, 10u, 128u, 1000u}) {
+    const size_t numSubBatches =
+        (indices.size() + subBatchSize - 1) / subBatchSize;
+    for (size_t depth : {1u, 2u, 4u}) {
+      RecordingBatchManager manager{vocab->offsetsFile_.fd()};
+      auto result = vocab->lookupBatchPipelined(manager, indices, depth,
+                                                subBatchSize, false);
+      vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+          *vocab, result, indices);
+      EXPECT_EQ(manager.maxOffsetBatchesInFlight_,
+                std::min(depth, numSubBatches));
+      EXPECT_EQ(manager.wordReadsOverlappedOffsetReads_,
+                depth >= 2 && numSubBatches >= 2);
+      EXPECT_EQ(manager.numBatches_, 2 * numSubBatches);
+      EXPECT_TRUE(manager.inFlight_.empty());
+    }
+  }
+}
+
+// If a wait throws (an I/O error) at any point of `lookupBatchPipelined`, the
+// exception propagates, but only after every batch that is still in flight
+// was waited for, because the reads target buffers that die with the call. An
+// out-of-range index throws before any read is submitted.
+TEST(VocabularyOnDisk, LookupBatchPipelinedDrainsReadsOnException) {
+  auto vocab = createLargeVocabulary();
+  auto indices = scrambledIndices(50, vocab->size());
+  const size_t subBatchSize = 10;
+  // 5 offset batches and 5 word batches, one wait each.
+  const size_t numWaits = 10;
+  for (size_t depth : {1u, 2u, 4u}) {
+    for (size_t failingWait = 0; failingWait < numWaits; ++failingWait) {
+      RecordingBatchManager manager{vocab->offsetsFile_.fd(), failingWait};
+      AD_EXPECT_THROW_WITH_MESSAGE(
+          vocab->lookupBatchPipelined(manager, indices, depth, subBatchSize,
+                                      false),
+          ::testing::HasSubstr("simulated I/O error"));
+      EXPECT_TRUE(manager.inFlight_.empty())
+          << "depth " << depth << ", failing wait " << failingWait;
+    }
+    RecordingBatchManager manager{vocab->offsetsFile_.fd()};
+    auto outOfRange = indices;
+    outOfRange.push_back(vocab->size());
+    EXPECT_ANY_THROW(vocab->lookupBatchPipelined(manager, outOfRange, depth,
+                                                 subBatchSize, false));
+    EXPECT_EQ(manager.numBatches_, 0u);
+  }
 }
