@@ -521,11 +521,15 @@ TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
 // Blocked enqueuer wakes when the admission threshold flips.
 
 TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
+  // Two helpers and a single queue slot: both helpers block on morsels while
+  // one queued morsel fills the queue, so the next enqueue must block.
   auto scheduler = ElasticExportScheduler::create(2, 1);
+  ASSERT_EQ(scheduler->queueCapacity(), 1u);
   scheduler->setMaxForegroundQueriesForHelperAdmission(1);
 
   auto session = scheduler->createSession<int>();
   std::promise<void> unblockPromise;
+  // Share the future: both blocking morsels below wait on the same promise.
   auto unblockFuture = unblockPromise.get_future().share();
   auto blockingTask = [unblockFuture]() -> int {
     unblockFuture.wait();
@@ -535,6 +539,9 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
   // scheduler destructor would wait for them forever.
   bool helpersReleased = false;
   auto releaseHelpers = [&] {
+    // Flag-first: `set_value` throws when the promise is already satisfied,
+    // so setting the flag first keeps this idempotent and safe to call from
+    // the cleanup guard below while unwinding.
     if (!helpersReleased) {
       helpersReleased = true;
       unblockPromise.set_value();
@@ -557,16 +564,21 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
   session.submitMorsel([]() -> int { return 2; });
 
   auto state = session.stateHandle();
+  // Orphan slot index on purpose: no morsel was submitted for it, so the
+  // enqueue below must be rejected once helpers become ineligible.
+  constexpr size_t kOrphanMorselIndex = 99;
   std::atomic<bool> enqueueReturned{false};
   std::atomic<bool> enqueueResult{true};
   ad_utility::JThread blockedEnqueuer([&]() {
-    bool admitted = scheduler->enqueueMorsel(
-        OwnedMorsel(state, state->jobId(), scheduler->demandEpoch(), 99));
+    bool admitted = scheduler->enqueueMorsel(OwnedMorsel(
+        state, state->jobId(), scheduler->demandEpoch(), kOrphanMorselIndex));
     enqueueResult.store(admitted);
     enqueueReturned.store(true);
   });
-  // Runs before `blockedEnqueuer` is joined: if the wakeup regressed, shut
-  // the scheduler down so the enqueuer returns and the join cannot hang.
+  // If the wakeup regressed and the enqueuer is still blocked, shut the
+  // scheduler down so the enqueuer returns and the join below cannot hang.
+  // This guard destroys before the `JThread`, so it also covers early
+  // `ASSERT` exits; on success it runs after the explicit join as a no-op.
   absl::Cleanup unblockEnqueuerOnExit = [&] {
     if (!enqueueReturned.load()) {
       releaseHelpers();
@@ -574,10 +586,21 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
     }
   };
 
+  // Let the enqueuer thread reach the wait on the full queue before flipping
+  // eligibility: otherwise a lost notification would go unnoticed, because
+  // `enqueueMorsel` re-checks eligibility after acquiring the mutex anyway.
+  std::this_thread::sleep_for(50ms);
+  ASSERT_FALSE(enqueueReturned.load());
   // Flip to ineligible while the enqueuer is blocked: the threshold setter
   // must wake it so it re-checks eligibility instead of waiting on a stale
   // full queue.
   scheduler->onForegroundQueryStarted();
+  // One active foreground query against a zero threshold: helpers are
+  // ineligible from here on.
+  ASSERT_EQ(scheduler->activeForegroundQueries(), 1u);
+  absl::Cleanup rollbackForegroundQuery = [&] {
+    scheduler->onForegroundQueryEnded();
+  };
   scheduler->setMaxForegroundQueriesForHelperAdmission(0);
   // Fail fast on a wakeup regression instead of hanging in join() until the
   // global ctest timeout.
@@ -598,23 +621,35 @@ TEST(ElasticExportSchedulerTest, BlockedEnqueuerWakesWhenEligibilityFlips) {
   EXPECT_EQ(results[0], 1);
   EXPECT_EQ(results[1], 1);
   EXPECT_EQ(results[2], 2);
-
-  scheduler->onForegroundQueryEnded();
+  // The `rollbackForegroundQuery` guard above balances the started query.
 }
 
 // _____________________________________________________________________________
 // Idle workers wake when a threshold change makes helpers eligible again.
 TEST(ElasticExportSchedulerTest, IdleWorkerWakesWhenThresholdRises) {
+  // One helper isolates the busy-to-idle transition; eight slots hold the
+  // second morsel without blocking, unlike the capacity-1 test above.
   auto scheduler = ElasticExportScheduler::create(1, 8);
   scheduler->setMaxForegroundQueriesForHelperAdmission(1);
   scheduler->onForegroundQueryStarted();
+  // Balance the started query on every exit path: an early `ASSERT` return
+  // must not leak foreground-query state.
+  absl::Cleanup rollbackForegroundQuery = [&] {
+    scheduler->onForegroundQueryEnded();
+  };
   auto session = scheduler->createSession<int>();
+  ASSERT_EQ(session.state(), SessionState::HelpersEligible);
 
   std::promise<void> unblockPromise;
   auto unblockFuture = unblockPromise.get_future();
+  // Never leave the helper blocked on an early exit: the scheduler
+  // destructor would wait for it forever.
   bool unblocked = false;
   absl::Cleanup unblockOnExit = [&] {
+    // Flag-first, as in the test above: `set_value` on a satisfied promise
+    // throws, so the flag must be set before satisfying it.
     if (!unblocked) {
+      unblocked = true;
       unblockPromise.set_value();
     }
   };
@@ -622,6 +657,9 @@ TEST(ElasticExportSchedulerTest, IdleWorkerWakesWhenThresholdRises) {
     unblockFuture.wait();
     return 1;
   });
+  // Poll until the condition holds or the timeout expires: there is no
+  // notification primitive to wait on, 1ms avoids busy-spinning, and 5s is a
+  // generous fail-fast bound instead of the global ctest timeout.
   auto waitFor = [](const auto& condition) {
     auto deadline = std::chrono::steady_clock::now() + 5s;
     while (!condition() && std::chrono::steady_clock::now() < deadline) {
@@ -636,14 +674,25 @@ TEST(ElasticExportSchedulerTest, IdleWorkerWakesWhenThresholdRises) {
 
   // Make helpers ineligible, then let the worker finish its morsel: it goes
   // idle although the queue still holds the second morsel.
+  uint64_t epochBeforeFlips = scheduler->demandEpoch();
   scheduler->setMaxForegroundQueriesForHelperAdmission(0);
-  unblockPromise.set_value();
   unblocked = true;
+  unblockPromise.set_value();
   ASSERT_TRUE(waitFor([&] { return scheduler->activeHelperCount() == 0u; }));
+
+  // The second morsel is still queued and untouched while the worker is
+  // idle: this is the state the threshold raise below must wake. Index 1 is
+  // the second submitted morsel (index 0 is the blocking one returning 1).
+  ASSERT_GE(session.inspectMorselProfiles().size(), 2u);
+  EXPECT_EQ(session.inspectMorselProfiles()[1].finalStatus_,
+            MorselStatus::Pending);
 
   // Raising the threshold must wake the idle worker, which then runs the
   // queued morsel before the coordinator asks for it.
   scheduler->setMaxForegroundQueriesForHelperAdmission(1);
+  // The setter only notifies: it must not advance the demand epoch, or the
+  // queued morsel would go stale and never complete.
+  ASSERT_EQ(scheduler->demandEpoch(), epochBeforeFlips);
   ASSERT_TRUE(waitFor([&] {
     return session.inspectMorselProfiles()[1].finalStatus_ ==
            MorselStatus::Completed;
@@ -651,6 +700,5 @@ TEST(ElasticExportSchedulerTest, IdleWorkerWakesWhenThresholdRises) {
   EXPECT_TRUE(session.inspectMorselProfiles()[1].executedByHelper_);
   EXPECT_EQ(session.consumeNextResult(), 1);
   EXPECT_EQ(session.consumeNextResult(), 2);
-
-  scheduler->onForegroundQueryEnded();
+  // The `rollbackForegroundQuery` guard above balances the started query.
 }

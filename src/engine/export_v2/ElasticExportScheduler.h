@@ -216,9 +216,13 @@ class ElasticExportScheduler
 
   /// Set the maximum number of active queries allowed for helper admission.
   /// Defaults to 1 (i.e. only the export query itself is running).
-  void setMaxForegroundQueriesForHelperAdmission(size_t count) {
+  void setMaxForegroundQueriesForHelperAdmission(size_t count) noexcept {
+    // Release store so the new threshold is visible to every thread that
+    // observes the notify below. The notify runs under `queueMutex_`, and
+    // waiters re-check eligibility while holding that mutex, so the
+    // mutex handoff alone already rules out a lost wakeup.
     maxForegroundQueriesForHelperAdmission_.store(count,
-                                                  std::memory_order_relaxed);
+                                                  std::memory_order_release);
     // Eligibility may have flipped in either direction; wake blocked
     // enqueuers and idle workers so they re-check it instead of waiting on
     // a stale state.
@@ -379,8 +383,8 @@ class ExportJobState final
       for (const size_t index : pendingIndicesToEnqueue) {
         // Discard is safe: a rejected morsel stays Pending and the
         // coordinator runs it lazily on the primary path.
-        static_cast<void>(scheduler->enqueueMorsel(
-            OwnedMorsel(self, jobId_, newEpoch, index)));
+        (void)scheduler->enqueueMorsel(
+            OwnedMorsel(self, jobId_, newEpoch, index));
       }
     }
   }
@@ -469,8 +473,8 @@ class ExportJobState final
       // A false return means helpers became ineligible (or shutdown
       // started) after the check above; the slot stays Pending and the
       // primary consumes it, so ignoring the result is the fallback.
-      static_cast<void>(scheduler->enqueueMorsel(
-          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index)));
+      (void)scheduler->enqueueMorsel(
+          OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, index));
     }
     return index;
   }
