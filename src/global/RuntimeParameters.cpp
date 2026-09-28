@@ -89,6 +89,10 @@ RuntimeParameters::RuntimeParameters() {
     ad_utility::useDirectIoForVocabularyReads.store(value,
                                                     std::memory_order_relaxed);
   });
+  vocabBlockCacheSize_.setOnUpdateAction([](size_t numBlocks) {
+    ad_utility::vocabularyBlockCacheNumBlocks.store(numBlocks,
+                                                    std::memory_order_relaxed);
+  });
 
   // A constraint that rejects values that are not strictly positive, with a
   // readable error message. Works for integral types and for

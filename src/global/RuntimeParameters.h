@@ -244,13 +244,13 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
-  // The number of 4 KiB blocks per thread-local shard of the userspace block
-  // cache for vocabulary disk reads (`VocabBlockCache`, consulted on the
-  // `VocabularyOnDisk` batch path). Repeated reads of the same block are then
-  // served from memory instead of disk, compensating for the loss of kernel
-  // page-cache reuse under `O_DIRECT`. The vocabulary index files are immutable
-  // after the build, so cached blocks never go stale. The default of `0`
-  // disables the cache, leaving the read behavior unchanged.
+  // The number of 4 KiB blocks of the per-thread block cache in front of the
+  // `O_DIRECT` vocabulary reads (`vocabulary-iouring-direct-io`): every block
+  // read via `O_DIRECT` is kept, and later requests for bytes in a cached
+  // block are copied from there instead of being read again. The vocabulary
+  // files are immutable after the build, so cached blocks never go stale.
+  // The default of `0` disables the cache. Has no effect without
+  // `vocabulary-iouring-direct-io`.
   SizeT vocabBlockCacheSize_{0, "vocab-block-cache-size"};
 
   // If set, the batched vocabulary reads (`VocabularyOnDisk::lookupBatch`)

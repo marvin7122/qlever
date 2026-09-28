@@ -7,16 +7,20 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABBLOCKCACHE_H
-#define QLEVER_SRC_INDEX_VOCABULARY_VOCABBLOCKCACHE_H
+#ifndef QLEVER_SRC_UTIL_VOCABBLOCKCACHE_H
+#define QLEVER_SRC_UTIL_VOCABBLOCKCACHE_H
 
 #include <sys/types.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <utility>
 #include <vector>
+
+#include "util/HashMap.h"
 
 namespace ad_utility::vocab {
 
@@ -96,10 +100,23 @@ class VocabBlockCache {
     char* data_ = nullptr;
   };
 
-  // Find the slot holding `key`, or `nullptr` if absent. Linear scan: the
-  // capacity is small in practice (tens of blocks, see the
-  // `vocab-block-cache-size` runtime parameter), so a hash index would only
-  // add overhead. Revisit if profiling ever shows this lookup as hot.
+  // The key of a cached block.
+  struct Key {
+    dev_t dev_;
+    ino_t ino_;
+    uint64_t blockNo_;
+    bool operator==(const Key& other) const {
+      return dev_ == other.dev_ && ino_ == other.ino_ &&
+             blockNo_ == other.blockNo_;
+    }
+    template <typename H>
+    friend H AbslHashValue(H h, const Key& key) {
+      return H::combine(std::move(h), key.dev_, key.ino_, key.blockNo_);
+    }
+  };
+
+  // Find the slot holding `key`, or `nullptr` if absent (hash lookup in
+  // `slotOfKey_`; the cache can hold millions of blocks).
   Slot* findSlot(dev_t dev, ino_t ino, uint64_t blockNo);
   // Free `storage_` and reset all members.
   void clear();
@@ -112,6 +129,8 @@ class VocabBlockCache {
   };
 
   std::vector<Slot> slots_;
+  // The slot index of every occupied slot, by key.
+  ad_utility::HashMap<Key, size_t> slotOfKey_;
   // Single aligned chunk of `capacity() * kBlockSize` bytes (or `nullptr`
   // when `capacity() == 0`). Exclusive ownership: acquisition happens only
   // in `resize`, release only in `clear` (called by the destructor and the
@@ -129,6 +148,18 @@ class VocabBlockCache {
 // own shard, so concurrent lookups from different threads take no locks.
 VocabBlockCache& threadLocalVocabBlockCache(size_t numBlocks);
 
+// Process-wide counters of the block cache in front of the `O_DIRECT`
+// vocabulary reads (see `BatchReadOptions::blockCacheNumBlocks`): requests
+// served from a cached block, block reads issued because the block was not
+// cached, and blocks inserted after such a read. Monotonic; callers log
+// differences (e.g. per export).
+struct VocabBlockCacheCounters {
+  std::atomic<uint64_t> hits_{0};
+  std::atomic<uint64_t> misses_{0};
+  std::atomic<uint64_t> inserts_{0};
+};
+inline VocabBlockCacheCounters vocabBlockCacheCounters;
+
 }  // namespace ad_utility::vocab
 
-#endif  // QLEVER_SRC_INDEX_VOCABULARY_VOCABBLOCKCACHE_H
+#endif  // QLEVER_SRC_UTIL_VOCABBLOCKCACHE_H

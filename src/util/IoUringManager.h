@@ -12,6 +12,7 @@
 #define QLEVER_SRC_UTIL_IOURINGMANAGER_H
 
 #include <gtest/gtest_prod.h>
+#include <sys/types.h>
 
 #include <atomic>
 #include <cstdint>
@@ -48,6 +49,11 @@ struct BatchReadOptions {
   // page cache) and copies the requested bytes out of the slot. Consecutive
   // requests whose blocks lie in the same slot share one read.
   int directIoFd = -1;
+  // If `directIoFd` is used and this is positive: keep the blocks read via
+  // `O_DIRECT` in the calling thread's `VocabBlockCache` of this many 4 KiB
+  // blocks, and serve every later request whose enclosing block is cached
+  // from there instead of reading it again. Only honored by `IoUringPolicy`.
+  size_t blockCacheNumBlocks = 0;
 };
 
 // Process-wide switches for the `BatchReadOptions` of vocabulary batch reads.
@@ -56,6 +62,8 @@ struct BatchReadOptions {
 // (see `RuntimeParameters`), like `setRuntimeLogLevel` in `Log.h`.
 inline std::atomic<bool> useRegisteredBuffersForVocabularyReads{false};
 inline std::atomic<bool> useDirectIoForVocabularyReads{false};
+// Set by the runtime parameter `vocab-block-cache-size`.
+inline std::atomic<size_t> vocabularyBlockCacheNumBlocks{0};
 
 template <typename T>
 CPP_requires(
@@ -275,6 +283,17 @@ class IoUringPolicy {
   std::vector<uint32_t> freeSlots_;
   // The copies to do when the read into a slot completes, indexed by slot.
   std::vector<std::vector<CopyFromSlot>> copiesPerSlot_;
+
+  // For an `O_DIRECT` read whose block is to be inserted into the block cache
+  // on completion (see `BatchReadOptions::blockCacheNumBlocks`): the key of
+  // the block and the cache size, indexed by slot.
+  struct CacheInsert {
+    dev_t dev;
+    ino_t ino;
+    uint64_t blockNo;
+    size_t cacheNumBlocks;
+  };
+  std::vector<std::optional<CacheInsert>> cacheInsertPerSlot_;
 
   // Return true if the registered arena is available, registering it first
   // if this has not been tried yet. Registration is only attempted while no
