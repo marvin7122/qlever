@@ -13,6 +13,7 @@
 
 #include "absl/cleanup/cleanup.h"
 #include "util/Exception.h"
+#include "util/FiberIoStats.h"
 
 #if defined(QLEVER_HAS_IO_URING) && defined(QLEVER_HAS_FIBER_IO)
 #include <boost/fiber/algo/round_robin.hpp>
@@ -65,6 +66,8 @@ void FiberIoScheduler::runAsFibers(std::vector<std::function<void()>> bodies) {
     return;
   }
   ensureFiberAlgorithm();
+  fiberIoStats::add(fiberIoStats::Counter::FiberRuns);
+  fiberIoStats::add(fiberIoStats::Counter::FiberBodies, bodies.size());
   FiberIoScheduler& scheduler = FiberIoScheduler::local();
   // One error slot per body. Exceptions are captured inside the wrapper:
   // letting them escape the fiber function risks `std::terminate`
@@ -157,6 +160,9 @@ void FiberIoScheduler::waitUntil(IoUringPolicy& policy,
                                  const std::function<bool()>& isDone) {
   enterWait();
   absl::Cleanup leaveWait{[this]() { exitWait(); }};
+  fiberIoStats::add(fiberIoStats::Counter::FiberWaits);
+  fiberIoStats::add(fiberIoStats::Counter::WaitingFibersAtWaitSum,
+                    numWaitingFibers_);
   bool yieldedSinceProgress = false;
   while (!isDone()) {
     if (policy.reapAvailableCompletions() > 0) {
@@ -165,8 +171,12 @@ void FiberIoScheduler::waitUntil(IoUringPolicy& policy,
     }
     if (siblingsMayHaveWork() || !yieldedSinceProgress) {
       yieldedSinceProgress = true;
+      fiberIoStats::add(fiberIoStats::Counter::Yields);
       boost::this_fiber::yield();
     } else {
+      fiberIoStats::add(fiberIoStats::Counter::Parks);
+      fiberIoStats::add(fiberIoStats::Counter::WaitingFibersAtParkSum,
+                        numWaitingFibers_);
       policy.drainOneCqe();
       yieldedSinceProgress = false;
     }

@@ -12,10 +12,12 @@
 
 #include <unistd.h>
 
+#include <chrono>
 #include <stdexcept>
 
 #include "util/Exception.h"
 #include "util/FiberIoScheduler.h"
+#include "util/FiberIoStats.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -183,6 +185,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
   }
 #endif
   // Drain completions until this batch is gone.
+  fiberIoStats::add(fiberIoStats::Counter::BlockingWaits);
   while (!isBatchComplete(handle)) {
     drainOneCqe();
   }
@@ -201,6 +204,7 @@ bool IoUringPolicy::tryReapOneCqe() {
     AD_THROW("io_uring_peek_cqe failed in IoUringPolicy");
   }
   AD_CORRECTNESS_CHECK(cqe != nullptr);
+  fiberIoStats::add(fiberIoStats::Counter::PeekReaps);
   attributeCompletion(cqe);
   return true;
 }
@@ -218,7 +222,25 @@ size_t IoUringPolicy::reapAvailableCompletions() {
 void ad_utility::IoUringPolicy::drainOneCqe() {
   // Block until at least one completion queue entry (CQE) is available.
   io_uring_cqe* cqe = nullptr;
+#ifdef QLEVER_FIBER_IO_STATS
+  // Tell completions that were already posted apart from waits in the
+  // kernel, and time the latter.
+  int ret = io_uring_peek_cqe(&ring_, &cqe);
+  if (ret == 0) {
+    fiberIoStats::add(fiberIoStats::Counter::DrainsWithoutKernelWait);
+  } else {
+    const auto waitStart = std::chrono::steady_clock::now();
+    ret = io_uring_wait_cqe(&ring_, &cqe);
+    fiberIoStats::add(fiberIoStats::Counter::KernelWaits);
+    fiberIoStats::add(fiberIoStats::Counter::KernelWaitNs,
+                      static_cast<uint64_t>(
+                          std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now() - waitStart)
+                              .count()));
+  }
+#else
   int ret = io_uring_wait_cqe(&ring_, &cqe);
+#endif
   if (ret < 0) {
     AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
   }

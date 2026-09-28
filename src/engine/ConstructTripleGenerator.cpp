@@ -13,6 +13,7 @@
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "util/FiberIoStats.h"
 
 namespace qlever::constructExport {
 
@@ -123,10 +124,17 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
       std::make_shared<const PreprocessedConstructTemplate>(
           std::move(preprocessedTemplate));
 
+  // Lives as long as the pipeline below, i.e. until the export is done, and
+  // then logs the fiber and `io_uring` wait counters of this export (only if
+  // they are compiled in, see `FiberIoStats.h`).
+  auto fiberIoStatsScope =
+      ad_utility::fiberIoStats::makeExportScope("CONSTRUCT export");
+
   auto processTable =
       [preprocessedTemplate = std::move(preprocessedTemplatePtr),
        index = config.index_, cancellationHandle = config.cancellationHandle_,
        cache = std::move(cache), deduplicator = std::move(deduplicator),
+       fiberIoStatsScope = std::move(fiberIoStatsScope),
        accumulatedRowOffset = rowOffset](const TableWithRange& table) mutable {
         const size_t numRowsOfTable = ql::ranges::size(table.view_);
 

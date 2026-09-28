@@ -27,6 +27,7 @@
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
 #include "util/FiberIoScheduler.h"
+#include "util/FiberIoStats.h"
 #include "util/File.h"
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
@@ -856,6 +857,83 @@ TEST(FiberScheduler, exceptionInBodyPropagatesAfterJoin) {
            []() -> void { throw std::runtime_error("fiber body failure"); }}),
       std::runtime_error);
   EXPECT_TRUE(siblingRan);
+}
+#endif
+
+// The formatted line names every counter once, and `difference` subtracts
+// element-wise. Independent of the build option.
+TEST(FiberIoStats, formatAndDifference) {
+  namespace stats = ad_utility::fiberIoStats;
+  stats::Snapshot before{};
+  stats::Snapshot after{};
+  after[static_cast<size_t>(stats::Counter::Yields)] = 5;
+  after[static_cast<size_t>(stats::Counter::KernelWaitNs)] = 7;
+  before[static_cast<size_t>(stats::Counter::KernelWaitNs)] = 2;
+  const auto delta = stats::difference(after, before);
+  EXPECT_EQ(delta[static_cast<size_t>(stats::Counter::Yields)], 5u);
+  EXPECT_EQ(delta[static_cast<size_t>(stats::Counter::KernelWaitNs)], 5u);
+  const std::string line = stats::format(delta);
+  EXPECT_THAT(line, ::testing::StartsWith("fiberRuns=0 fiberBodies=0"));
+  EXPECT_THAT(line, ::testing::HasSubstr(" yields=5 "));
+  EXPECT_THAT(line, ::testing::HasSubstr(" kernelWaitNs=5 "));
+  EXPECT_THAT(line, ::testing::EndsWith(" resolvedIds=0"));
+}
+
+// With the counters compiled out nothing is counted and no scope is created;
+// with them compiled in, `runAsFibers` counts its call and its bodies.
+TEST(FiberIoStats, countersFollowTheBuildOption) {
+  namespace stats = ad_utility::fiberIoStats;
+  const auto before = stats::snapshot();
+  ad_utility::FiberIoScheduler::runAsFibers({[]() {}, []() {}});
+  stats::add(stats::Counter::ResolvedIds, 3);
+  const auto delta = stats::difference(stats::snapshot(), before);
+  const auto at = [&delta](stats::Counter counter) {
+    return delta[static_cast<size_t>(counter)];
+  };
+  if constexpr (!stats::kEnabled) {
+    EXPECT_EQ(stats::makeExportScope("test"), nullptr);
+    EXPECT_EQ(stats::snapshot(), stats::Snapshot{});
+    return;
+  }
+  EXPECT_NE(stats::makeExportScope("test"), nullptr);
+  EXPECT_EQ(at(stats::Counter::ResolvedIds), 3u);
+#if defined(QLEVER_HAS_IO_URING) && defined(QLEVER_HAS_FIBER_IO)
+  EXPECT_EQ(at(stats::Counter::FiberRuns), 1u);
+  EXPECT_EQ(at(stats::Counter::FiberBodies), 2u);
+#else
+  EXPECT_EQ(at(stats::Counter::FiberRuns), 0u);
+#endif
+}
+
+#ifdef QLEVER_HAS_IO_URING
+// A blocking wait on a plain thread is counted as such, and every completion
+// it drains is counted either as already posted or as a kernel wait.
+TEST(FiberIoStats, blockingWaitIsCounted) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime";
+  }
+  namespace stats = ad_utility::fiberIoStats;
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  ad_utility::IoUringPolicy policy(64);
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {4, 4}});
+  const auto before = stats::snapshot();
+  constexpr auto handle = 0;
+  batch.submitToWithHandle(policy, fd, handle);
+  policy.wait(handle);
+  const auto delta = stats::difference(stats::snapshot(), before);
+  const auto at = [&delta](stats::Counter counter) {
+    return delta[static_cast<size_t>(counter)];
+  };
+  EXPECT_THAT(batch.result(), ::testing::ElementsAre("AAAA", "BBBB"));
+  if constexpr (stats::kEnabled) {
+    EXPECT_EQ(at(stats::Counter::BlockingWaits), 1u);
+    EXPECT_EQ(at(stats::Counter::DrainsWithoutKernelWait) +
+                  at(stats::Counter::KernelWaits),
+              2u);
+  } else {
+    EXPECT_EQ(at(stats::Counter::BlockingWaits), 0u);
+  }
 }
 #endif
 }  // namespace

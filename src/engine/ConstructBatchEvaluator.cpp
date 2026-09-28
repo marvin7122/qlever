@@ -15,6 +15,7 @@
 #include "global/Constants.h"
 #include "index/ExportIds.h"
 #include "util/FiberIoScheduler.h"
+#include "util/FiberIoStats.h"
 
 namespace qlever::constructExport {
 
@@ -93,6 +94,8 @@ void resolveColumnMisses(const Index& index, const LocalVocab& localVocab,
   if (work.missIds_.empty()) {
     return;
   }
+  ad_utility::fiberIoStats::add(ad_utility::fiberIoStats::Counter::ResolvedIds,
+                                work.missIds_.size());
   work.missResolved_ =
       ql::exportIds::idsToStringAndType(index, work.missIds_, localVocab);
 }
