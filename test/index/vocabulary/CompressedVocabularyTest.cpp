@@ -830,3 +830,19 @@ TEST(DecoderMultiplexer, DirectDecompressIntoAndMaxDecompressedSize) {
   EXPECT_THROW(static_cast<void>(mux.decompress(compressed, invalidIndex)),
                std::out_of_range);
 }
+
+// _____________________________________________________________________________
+TEST(DecoderMultiplexer, EmptyWordWithNonEmptyCompressedFormAndEmptyOutput) {
+  // `PrefixCompressor` encodes the empty word as one byte, so its bound is 0
+  // while the compressed form is non-empty. An empty output span is the exact
+  // size for that word and must be accepted.
+  PrefixCompressor compressor;
+  compressor.buildCodebook(std::vector<std::string>{"alpha"});
+  const std::string compressed = compressor.compress("");
+  ASSERT_EQ(compressed.size(), 1u);
+  ad_utility::vocabulary::detail::DecoderMultiplexer<PrefixCompressor> mux{
+      std::vector<PrefixCompressor>{compressor}};
+  ASSERT_EQ(mux.maxDecompressedSize(compressed, 0), 0u);
+  std::string scratch;
+  EXPECT_EQ(mux.decompressInto(compressed, 0, ql::span<char>{}, scratch), 0u);
+}

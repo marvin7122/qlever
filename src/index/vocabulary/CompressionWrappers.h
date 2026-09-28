@@ -132,7 +132,11 @@ struct DecoderMultiplexer {
                                       size_t decoderIndex, ql::span<char> out,
                                       std::string& scratch) const {
     const auto& decoder = decoders_.at(decoderIndex);
-    AD_CORRECTNESS_CHECK(!out.empty() || compressed.empty());
+    // An empty `out` is valid exactly when the decoded word is empty. The
+    // compressed form of the empty word may be non-empty (one byte for
+    // `PrefixCompressor`), so ask the decoder instead of `compressed`.
+    AD_CORRECTNESS_CHECK(!out.empty() || compressed.empty() ||
+                         decoder.maxDecompressedSize(compressed) == 0);
     DISABLE_CLANG_UNUSED_RESULT_WARNING
     size_t decompressedSize;
     if constexpr (RequiresScratchDecompressInto<Decoder>) {
