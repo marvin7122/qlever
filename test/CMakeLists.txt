@@ -575,6 +575,8 @@ addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
+addLinkAndDiscoverTest(RegisteredIoUringReaderTest)
+
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
 addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
