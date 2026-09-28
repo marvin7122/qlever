@@ -1,25 +1,27 @@
 name: Build and test
 
-# Minimal fork CI (2026-09-28): one hosted build + unit tests, one compiler,
-# no sanitizers. Full correctness coverage comes from the upstream
-# (ad-freiburg/qlever) CI once the upstream PRs are opened.
-#
-# Triggers:
-# - pull_request: the only build that runs on fork PRs (with the `ci` label,
-#   like every other fork PR workflow).
-# - push to master: keeps a warm ccache on the default branch. GitHub only
-#   shares caches from the default branch across PRs, so without this every
-#   PR would start cold.
-# - workflow_dispatch: on-demand build + gtest verification for agents, e.g.
+# On-demand hosted build + gtest verification (2026-09-28): one gcc13
+# Release build plus ctest on a GitHub-hosted ubuntu-24.04 runner, with
+# ccache via actions/cache. Agents use it instead of queueing on the
+# self-hosted Wolga/Ural runners:
 #     ghq workflow run build-and-test.yml -R marvin7122/qlever \
 #       -f ref=<branch-or-sha> -f targets="<t1> <t2>"
-#   `targets` is a space-separated list of CMake targets. Test binaries are
-#   registered as ctest tests of the same name (QLEVER_ONE_TEST_CASE_PER_FILE),
-#   so exactly those tests run. Empty `targets` builds and tests everything.
+# `targets` is a space-separated list of CMake targets. Test binaries are
+# registered as ctest tests of the same name (QLEVER_ONE_TEST_CASE_PER_FILE),
+# so exactly those tests run. Empty `targets` builds and tests everything.
+#
+# Triggers:
+# - workflow_dispatch: the use case above.
+# - push to master: keeps a warm ccache on the default branch. GitHub only
+#   shares caches from the default branch, so dispatches on other refs
+#   would otherwise start cold.
+# - pull_request: only when this file changes (self-test of the workflow).
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
+    paths:
+      - '.github/workflows/build-and-test.yml'
   push:
     branches: [ master ]
   workflow_dispatch:
