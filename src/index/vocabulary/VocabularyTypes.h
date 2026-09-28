@@ -149,6 +149,40 @@ struct StringVectorVocabBatchLookupData
   }
 };
 
+// A vocabulary batch-lookup result that owns no string bytes. Each view points
+// either
+//   (a) into the storage of the vocabulary that performed the lookup (e.g. its
+//       in-memory words); such a view is valid as long as that vocabulary is
+//       alive and not closed, or
+//   (b) into another batch-lookup result that was passed to `borrowFrom`. That
+//       result is stored in `buffer()`, so the result returned by `asResult`
+//       (an aliasing `shared_ptr` to this object) keeps its storage alive.
+// The producer first `resize`s `views()` to the number of looked-up indices,
+// assigns the views of kind (a) directly, and places the words of kind (b) via
+// `borrowFrom`, which re-arranges the views of the other result without
+// copying any bytes.
+struct BorrowedVocabBatchLookupData
+    : VocabLookupDataCommonBase<VocabBatchLookupResult> {
+  // Set `views()[positions[i]]` to the `i`-th word of `batch` and keep
+  // `batch` (and thus the bytes the views point into) alive as long as this
+  // object. `views()` must already have been resized to cover all `positions`.
+  // Can be called only once per object.
+  void borrowFrom(VocabBatchLookupResult batch,
+                  ql::span<const size_t> positions) {
+    AD_CONTRACT_CHECK(batch != nullptr);
+    AD_CONTRACT_CHECK(buffer() == nullptr);
+    AD_CONTRACT_CHECK(batch->size() == positions.size());
+    auto& views = this->views();
+    AD_CONTRACT_CHECK(ql::ranges::all_of(positions, [&views](size_t position) {
+      return position < views.size();
+    }));
+    for (auto [position, word] : ::ranges::views::zip(positions, *batch)) {
+      views[position] = word;
+    }
+    buffer() = std::move(batch);
+  }
+};
+
 // Generic sequential fallback implementations of the batch-lookup interface,
 // used by all vocabularies that do not provide a specialized (e.g. io_uring)
 // implementation. They simply loop over the indices and issue the ordinary

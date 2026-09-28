@@ -147,6 +147,61 @@ TEST(StringVectorVocabBatchLookupData, FromWords) {
   EXPECT_THAT(*result, ::testing::ElementsAreArray(expected));
 }
 
+// `BorrowedVocabBatchLookupData` re-arranges the views of a borrowed batch and
+// mixes them with views into storage it doesn't own, without copying bytes.
+TEST(BorrowedVocabBatchLookupData, BorrowFromKeepsBatchAliveWithoutCopying) {
+  // Storage that outlives the result (standing in for a vocabulary's words).
+  const std::string ramWord = "a word that lives in RAM, longer than SSO";
+  auto batch = StringVectorVocabBatchLookupData::fromWords(
+      {"first borrowed word, not short", "b"});
+  const std::vector<std::string_view> batchViews{batch->begin(), batch->end()};
+
+  auto data = std::make_shared<BorrowedVocabBatchLookupData>();
+  data->views().resize(3);
+  data->views()[1] = ramWord;
+  // The words of `batch` go to positions 2 and 0 (in this order).
+  std::vector<size_t> positions{2, 0};
+  data->borrowFrom(std::move(batch), positions);
+  auto result = BorrowedVocabBatchLookupData::asResult(std::move(data));
+
+  // Only `result` keeps the borrowed batch alive now.
+  EXPECT_THAT(*result, ::testing::ElementsAre(
+                           "b", ramWord, "first borrowed word, not short"));
+  // No bytes were copied: every view points at the original storage.
+  EXPECT_EQ((*result)[0].data(), batchViews[1].data());
+  EXPECT_EQ((*result)[1].data(), ramWord.data());
+  EXPECT_EQ((*result)[2].data(), batchViews[0].data());
+}
+
+// _____________________________________________________________________________
+TEST(BorrowedVocabBatchLookupData, BorrowFromContract) {
+  using ::testing::HasSubstr;
+  auto makeBatch = []() {
+    return StringVectorVocabBatchLookupData::fromWords({"x", "y"});
+  };
+  auto data = std::make_shared<BorrowedVocabBatchLookupData>();
+  data->views().resize(2);
+  // One position per word of the batch.
+  std::vector<size_t> tooFewPositions{0};
+  AD_EXPECT_THROW_WITH_MESSAGE(data->borrowFrom(makeBatch(), tooFewPositions),
+                               HasSubstr("batch->size() == positions.size()"));
+  // Every position must be covered by the (already resized) views.
+  std::vector<size_t> outOfRange{0, 2};
+  AD_EXPECT_THROW_WITH_MESSAGE(data->borrowFrom(makeBatch(), outOfRange),
+                               HasSubstr("position < views.size()"));
+  AD_EXPECT_THROW_WITH_MESSAGE(data->borrowFrom(nullptr, {}),
+                               HasSubstr("batch != nullptr"));
+  // A failed call leaves the views untouched.
+  EXPECT_THAT(data->views(), ::testing::Each(::testing::IsEmpty()));
+  // A second `borrowFrom` would silently drop the first batch's storage.
+  std::vector<size_t> positions{1, 0};
+  data->borrowFrom(makeBatch(), positions);
+  AD_EXPECT_THROW_WITH_MESSAGE(data->borrowFrom(makeBatch(), positions),
+                               HasSubstr("buffer() == nullptr"));
+  auto result = BorrowedVocabBatchLookupData::asResult(std::move(data));
+  EXPECT_THAT(*result, ::testing::ElementsAre("y", "x"));
+}
+
 namespace {
 // A minimal vocabulary with "holes": its `operator[]` returns `std::nullopt`
 // for odd indices. It does not opt in to the placeholder mechanism (see
