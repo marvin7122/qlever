@@ -15,9 +15,11 @@
 #include <unistd.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <utility>
 
+#include "util/Exception.h"
 #include "util/Log.h"
 
 namespace ad_utility {
