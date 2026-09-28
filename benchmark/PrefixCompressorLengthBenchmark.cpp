@@ -210,13 +210,20 @@ int main(int argc, char** argv) {
   auto arena = std::make_unique<char[]>(d.totalDecompressedSize);
 
   // Untimed verification pass (checksum) and warm-up of about 0.5 s.
+  // With `PCL_PASSES=<n>` in the environment the warm-up is skipped and the
+  // timed loop runs exactly `n` passes, so that instruction and allocation
+  // counters (valgrind) see a fixed amount of work.
+  const char* fixedPassesEnv = std::getenv("PCL_PASSES");
+  const size_t fixedPasses =
+      fixedPassesEnv ? std::strtoull(fixedPassesEnv, nullptr, 10) : 0;
   uint64_t checksum = 14695981039346656037ULL;
   size_t verifyBytes = runPass<true>(d, mode, buffer, arena.get(), checksum);
   using Clock = std::chrono::steady_clock;
   uint64_t dummy = 0;
   auto warmStart = Clock::now();
-  while (std::chrono::duration<double>(Clock::now() - warmStart).count() <
-         0.5) {
+  while (fixedPasses == 0 &&
+         std::chrono::duration<double>(Clock::now() - warmStart).count() <
+             0.5) {
     verifyBytes += runPass<false>(d, mode, buffer, arena.get(), dummy);
   }
 
@@ -231,7 +238,7 @@ int main(int argc, char** argv) {
     bytes += runPass<false>(d, mode, buffer, arena.get(), dummy);
     ++passes;
     elapsed = std::chrono::duration<double>(Clock::now() - start).count();
-  } while (elapsed < minSeconds);
+  } while (fixedPasses > 0 ? passes < fixedPasses : elapsed < minSeconds);
   const uint64_t allocs = numAllocations - allocsBefore;
   const uint64_t allocBytes = numAllocatedBytes - allocBytesBefore;
   const double decodes = static_cast<double>(passes) * numWords;
