@@ -95,7 +95,9 @@ struct HasSize<T, std::void_t<decltype(std::declval<const T&>().size())>>
 //
 // `ChunkType` must own its data (a chunk outlives the call to `push`) and be
 // nothrow move constructible, which keeps the ring consistent when a chunk is
-// moved in or out.
+// moved in or out. A `size()` member, if present, must be `noexcept`:
+// `chunkSize()` calls it from `noexcept` contexts (`cancel` and therefore the
+// destructor), where a throw would terminate.
 template <typename ChunkType = std::string>
 class AsyncChunkPipeline {
   static_assert(std::is_nothrow_move_constructible_v<ChunkType>,
@@ -104,6 +106,10 @@ class AsyncChunkPipeline {
                 "Chunks are destroyed in the `noexcept` `cancel` and in the "
                 "destructor, so their destruction must not throw");
   static_assert(!std::is_pointer_v<ChunkType>, "`ChunkType` must own its data");
+  static_assert(!detail::HasSize<ChunkType>::value ||
+                    noexcept(std::declval<const ChunkType&>().size()),
+                "`ChunkType::size()` runs in `noexcept` contexts and must "
+                "not throw");
 
  private:
   // The lifecycle. `Disabled` is set at construction and final. `Running`
@@ -199,8 +205,8 @@ class AsyncChunkPipeline {
     if (numFilledSlots_ > 0) {
       auto& slot = slots_[consumeIndex_];
       AD_CORRECTNESS_CHECK(slot.has_value());
-      // Measure before mutating the ring: a throwing `size()` then leaves
-      // the queued chunk untouched.
+      // Measure before mutating the ring, so the counters only reflect
+      // chunks that are actually stored.
       const size_t bytes = chunkSize(*slot);
       std::optional<ChunkType> oldestChunk{std::move(slot)};
       slot.reset();
@@ -226,14 +232,14 @@ class AsyncChunkPipeline {
   }
 
   // Report a producer failure: `pop` rethrows `failure` once the queued chunks
-  // are drained. `failure` must not be null. Do nothing if the pipeline is not
-  // `Running`: it is disabled, or the export already ended in another way and
-  // its outcome must not change afterwards (the first failure wins).
+  // are drained. Do nothing if the pipeline is not `Running`: it is disabled,
+  // or the export already ended in another way and its outcome must not change
+  // afterwards (the first failure wins). Otherwise `failure` must not be null.
   void fail(std::exception_ptr failure) {
-    AD_CONTRACT_CHECK(failure != nullptr);
     if (state_ != State::Running) {
       return;
     }
+    AD_CONTRACT_CHECK(failure != nullptr);
     producerFailure_ = std::move(failure);
     state_ = State::Failed;
   }
