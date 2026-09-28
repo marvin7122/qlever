@@ -36,6 +36,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
-    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst ${CMAKE_DL_LIBS})
 
 endif()
