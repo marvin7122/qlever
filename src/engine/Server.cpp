@@ -4,6 +4,7 @@
 // 2020 - 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2022 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
 // 2024 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -20,6 +21,7 @@
 #include <vector>
 
 #include "backports/filesystem.h"
+#include "engine/ExportPipelineRouter.h"
 #include "engine/ExportQueryExecutionTrees.h"
 #include "engine/GraphStoreProtocol.h"
 #include "engine/HttpApiHelpers.h"
@@ -957,7 +959,15 @@ CPP_template_def(typename RequestT, typename SendT)(
     Awaitable<void> Server::sendStreamableResponse(
         const RequestT& request, SendT& send, MediaType mediaType,
         const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
-        SharedCancellationHandle cancellationHandle) const {
+        SharedCancellationHandle cancellationHandle,
+        ql::engine::ExportEngineMode engineMode) const {
+  // TODO<Marvin Stoetzel> Execute the V2 streaming engine in the V2 arm. Until
+  // then, both arms execute the V1 pipeline.
+  if (engineMode == ql::engine::ExportEngineMode::FastStreamingV2) {
+    AD_LOG_INFO << "V2 export engine requested; executing via the V1 "
+                   "implementation until the streaming engine lands."
+                << std::endl;
+  }
   auto responseGenerator = ExportQueryExecutionTrees::computeResult(
       plannedQuery.parsedQuery(), plannedQuery.queryExecutionTree(), mediaType,
       requestTimer, std::move(cancellationHandle));
@@ -1109,11 +1119,27 @@ CPP_template_def(typename RequestT, typename SendT)(
   plannedQuery->parsedQuery().updateExportLimit(
       qlever::http_api_helpers::determineSendLimit(params, mediaType));
 
+  // Decide between the legacy export pipeline and the streaming export engine
+  // (see `ExportPipelineRouter`).
+  std::optional<std::string_view> exportEngineHeader;
+  std::string_view exportEngineHeaderValue =
+      request.base()["X-QLever-Export-Engine"];
+  if (!exportEngineHeaderValue.empty()) {
+    exportEngineHeader = exportEngineHeaderValue;
+  }
+  ql::engine::ExportEngineMode engineMode =
+      ql::engine::ExportPipelineRouter::selectEngine(
+          plannedQuery.value().parsedQuery(), params, exportEngineHeader);
+  AD_LOG_INFO << ql::engine::ExportPipelineRouter::describeDecision(
+                     plannedQuery.value().parsedQuery(), params,
+                     exportEngineHeader)
+              << std::endl;
+
   // This actually processes the query and sends the result in the
   // requested format.
   co_await sendStreamableResponse(request, AD_FWD(send), mediaType,
                                   plannedQuery.value(), requestTimer,
-                                  cancellationHandle);
+                                  cancellationHandle, engineMode);
   // Print the runtime info. This needs to be done after the query
   // was computed.
   AD_LOG_INFO << "Done processing query and sending result"

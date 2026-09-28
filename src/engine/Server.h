@@ -4,6 +4,7 @@
 // 2020 - 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2022 - 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
 // 2024 - 2026 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -50,7 +51,15 @@ CPP_concept QueryOrUpdate =
 // Forward declaration for testing.
 namespace serverTestHelpers {
 class ServerForTesting;
-}
+}  // namespace serverTestHelpers
+
+namespace ql::engine {
+// Forward-declare the enum because `sendStreamableResponse` below only names
+// the type. Keep the definition from `engine/ExportPipelineRouter.h` out of
+// this widely included header, since it pulls in the SPARQL parser and URL
+// parsing headers.
+enum class ExportEngineMode;
+}  // namespace ql::engine
 
 //! The HTTP Server used.
 class Server {
@@ -452,13 +461,17 @@ class Server {
       std::optional<std::string_view> userTimeout, bool accessTokenOk) const;
 
   /// Send response for the streamable media types (tsv, csv, octet-stream,
-  /// turtle, sparqlJson, qleverJson).
+  /// turtle, sparqlJson, qleverJson). `engineMode` is the export engine that
+  /// `ExportPipelineRouter::selectEngine` chose for this request; the caller
+  /// selects it because the selection depends on the request's parameters
+  /// and headers.
   CPP_template(typename RequestT, typename SendT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<void> sendStreamableResponse(
           const RequestT& request, SendT& send, ad_utility::MediaType mediaType,
           const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
-          SharedCancellationHandle cancellationHandle) const;
+          SharedCancellationHandle cancellationHandle,
+          ql::engine::ExportEngineMode engineMode) const;
 
   FRIEND_TEST(MaterializedViewsTest, serverIntegration);
 

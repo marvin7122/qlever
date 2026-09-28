@@ -1,10 +1,14 @@
-// Copyright 2024, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Julian Mundhahs (mundhahj@tf.uni-freiburg.de)
+// Copyright 2024 - 2026 The QLever Authors, in particular:
+//
+// 2024 Julian Mundhahs <mundhahj@tf.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <boost/beast/http.hpp>
 #include <optional>
 
@@ -697,6 +701,41 @@ TEST(ServerTest, handleHttpRequest) {
       responseBodyToString(std::move(response.body())),
       testing::HasSubstr("User submitted timeout was higher than what is "
                          "currently allowed by this instance (30s)"));
+}
+
+// _____________________________________________________________________________
+// Check that every way of selecting the export engine (the `export-engine` and
+// `fast-export` parameters and the `X-QLever-Export-Engine` header) returns the
+// same CSV bytes as a request without a selection.
+TEST(ServerTest, exportEngineV1V2Parity) {
+  const auto qec = getQec(TestIndexConfig{"<a> <b> <c> . <d> <e> <f> ."});
+  auto server = makeServerForTesting(qec->getIndex().getOnDiskBase());
+  const auto makeCsvRequest = [](std::string_view target) {
+    return makeRequest(http::verb::post, target,
+                       {{http::field::content_type, "application/sparql-query"},
+                        {http::field::accept, "text/csv"}},
+                       "SELECT * WHERE { ?s ?p ?o }");
+  };
+  const auto runToString = [&server](const auto& request) {
+    auto response = server.process(request);
+    EXPECT_THAT(response, StatusIs(http::status::ok));
+    EXPECT_THAT(response, ContentTypeIs("text/csv"));
+    return responseBodyToString(std::move(response.body()));
+  };
+  // The baseline must be the CSV result (a header line and one line per
+  // triple), so that the comparisons below cannot pass on an empty or error
+  // response.
+  const std::string baseline = runToString(makeCsvRequest("/"));
+  ASSERT_THAT(baseline, testing::StartsWith("s,p,o\n"));
+  ASSERT_EQ(std::count(baseline.begin(), baseline.end(), '\n'), 3);
+  for (std::string_view target :
+       {"/?export-engine=v1", "/?export-engine=v2", "/?fast-export=true"}) {
+    SCOPED_TRACE(target);
+    EXPECT_THAT(runToString(makeCsvRequest(target)), testing::StrEq(baseline));
+  }
+  auto headerRequest = makeCsvRequest("/");
+  headerRequest.set("X-QLever-Export-Engine", "v2");
+  EXPECT_THAT(runToString(headerRequest), testing::StrEq(baseline));
 }
 
 // _____________________________________________________________________________
