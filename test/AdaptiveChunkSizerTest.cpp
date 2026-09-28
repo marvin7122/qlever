@@ -222,4 +222,18 @@ TEST(AdaptiveChunkBufferTest, WriteAndFlushRampUp) {
   EXPECT_EQ(buffer.sizer().currentChunkBytes(), 128 * 1024);
 }
 
+// Writes beyond the current capacity keep every byte, also when the growth is
+// capped at `maxChunkBytes_` and a single write exceeds that cap.
+TEST(AdaptiveChunkBufferTest, GrowthBeyondMaxChunkBytesKeepsAllBytes) {
+  AdaptiveChunkBuffer buffer{AdaptiveChunkConfig{8, 16}};
+  const std::string first(12, 'a');
+  const std::string second(20, 'b');
+  buffer.write(first);
+  buffer.write(second);
+  EXPECT_EQ(buffer.bytesBuffered(), 32);
+  EXPECT_EQ(buffer.currentView(), first + second);
+  EXPECT_EQ(buffer.flush(), first + second);
+  EXPECT_EQ(buffer.sizer().currentChunkBytes(), 16);
+}
+
 }  // namespace

@@ -270,12 +270,17 @@ class AdaptiveChunkBuffer {
 
   // ___________________________________________________________________________
   // Write a string_view slice into the buffer, expanding dynamically if needed.
+  // Doubling is capped at `maxChunkBytes_`, so the buffer only grows beyond
+  // that cap by exactly the bytes that a single oversized write needs.
   void write(std::string_view sv) {
     if (sv.empty()) {
       return;
     }
-    if (writePos_ + sv.size() > buffer_.size()) {
-      buffer_.resize(std::max(buffer_.size() * 2, writePos_ + sv.size()));
+    const size_t required = writePos_ + sv.size();
+    if (required > buffer_.size()) {
+      const size_t doubled =
+          std::min(buffer_.size() * 2, sizer_.config().maxChunkBytes_);
+      buffer_.resize(std::max(doubled, required));
     }
     std::memcpy(buffer_.data() + writePos_, sv.data(), sv.size());
     writePos_ += sv.size();
