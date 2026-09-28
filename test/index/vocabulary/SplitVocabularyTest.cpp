@@ -223,10 +223,12 @@ TEST(Vocabulary, SplitVocabularyCustomWithTwoVocabs) {
   ASSERT_FALSE(sv.getGeoInfo(1ULL << 59).has_value());
   ASSERT_FALSE(sv.getGeoInfo((1ULL << 59) | 1).has_value());
 
+  // Close before deleting: the files are still mapped while the vocabulary
+  // is open, and deleting open/mapped files fails on some platforms.
+  sv.close();
   const auto filename = gtestCurrentTestName();
   ad_utility::deleteFile(filename);
   ad_utility::deleteFile(absl::StrCat(filename, ".a"));
-  sv.close();
 }
 
 // _____________________________________________________________________________

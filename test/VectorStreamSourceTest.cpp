@@ -34,7 +34,7 @@ Pair makeEmptyBlock(size_t numColumns) {
 }
 
 std::vector<Pair> collect(const VectorStreamSource& source,
-                          std::vector<Pair>& blocks,
+                          const std::vector<Pair>& blocks,
                           ql::span<const EqualityFilter> filters = {}) {
   std::vector<Pair> result;
   source.run(

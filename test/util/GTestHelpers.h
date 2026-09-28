@@ -19,7 +19,6 @@
 #include <re2/re2.h>
 
 #include <memory>
-#include <memory_resource>
 #include <optional>
 #include <sstream>
 #include <vector>
@@ -407,7 +406,7 @@ inline void requirePmrStringInlineStorage(size_t maxSize) {
   const size_t capacity = pmrStringSsoCapacity();
   AD_CORRECTNESS_CHECK(
       capacity >= maxSize,
-      absl::StrCat("Platform premise violated: std::pmr::string does not "
+      absl::StrCat("Platform premise violated: ql::pmr::string does not "
                    "store ",
                    maxSize,
                    " characters on this platform (capacity: ", capacity, ")"));

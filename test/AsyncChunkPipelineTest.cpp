@@ -25,7 +25,7 @@ using namespace qlever::export_v2;
 
 static_assert(kExportV2CompiledIn);
 
-void waitUntilProducerBlocks(AsyncChunkPipeline<std::string>& pipeline) {
+void waitUntilProducerBlocks(const AsyncChunkPipeline<std::string>& pipeline) {
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds{1};
   while (pipeline.stats().producerWaits_ == 0 &&

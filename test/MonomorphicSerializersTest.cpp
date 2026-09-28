@@ -10,10 +10,13 @@
 
 #include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 #include "engine/export_v2/MonomorphicSerializers.h"
 #include "global/Id.h"
@@ -49,7 +52,10 @@ class RecordingWriter {
     output_.append(value);
   }
 
-  template <std::integral Value>
+  // `std::integral` is C++20; the C++17 CI job compiles this file, so use
+  // `enable_if` like the implementation header does.
+  template <typename Value,
+            std::enable_if_t<std::is_integral_v<Value>, int> = 0>
   void writeInteger(Value value) {
     appendNumber(value);
   }

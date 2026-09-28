@@ -11,9 +11,9 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
-#include <memory_resource>
 #include <string>
 
+#include "backports/memory_resource.h"
 #include "util/GTestHelpers.h"
 
 TEST(GTestHelpersTest, CurrentTestSuiteAndTestName) {
@@ -69,20 +69,21 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
 
 // _____________________________________________________________________________
 TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
-  // Verify that empty and small strings use inline storage: the data must lie
-  // inside the string object itself, not in allocator-provided memory.
-  for (size_t size : {size_t{0}, size_t{7}, size_t{15}}) {
-    // `maxSize == 0` is a rejected precondition, so probe from 1 on.
-    if (size > 0) {
-      requirePmrStringInlineStorage(size);
-    }
-    std::pmr::string shortString(size, 'x');
+  // Verify that small strings use inline storage: the data must lie inside
+  // the string object itself, not in allocator-provided memory. The capacity
+  // is probed for `ql::pmr::string` (see `PmrStringSsoCapacity` above), so
+  // this check must use the same type: a `std::pmr::string` of that size may
+  // already be heap-allocated, and vice versa. Size 0 is excluded: for an
+  // empty string `data()` is not guaranteed to point inside the object.
+  for (size_t size : {size_t{7}, size_t{15}}) {
+    requirePmrStringInlineStorage(size);
+    ql::pmr::string shortString(size, 'x');
     EXPECT_TRUE(pointsIntoObject(shortString.data(), shortString));
     EXPECT_EQ(shortString.size(), size);
   }
   // Verify that a string above the SSO threshold is not stored inside the
   // object.
-  std::pmr::string longString(64, 'y');
+  ql::pmr::string longString(64, 'y');
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
 }
 
