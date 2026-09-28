@@ -16,6 +16,7 @@
 // (passes over all words, default 1). One untimed warm-up pass runs first.
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <random>
 #include <string>
@@ -29,6 +30,59 @@
 namespace ad_benchmark {
 namespace {
 
+// _____________________________________________________________________________
+// Allocation statistics of the calling thread, read from jemalloc (which
+// QLever links when it is installed) via `mallctl`. The symbol is declared
+// weak, so without jemalloc `available()` is false and no statistics are
+// recorded. All reads happen outside the timed region.
+extern "C" int mallctl(const char* name, void* oldp, size_t* oldlenp,
+                       void* newp, size_t newlen) __attribute__((weak));
+
+class JemallocThreadStats {
+ public:
+  struct Snapshot {
+    uint64_t requests = 0;  // Number of allocation requests (all threads).
+    uint64_t allocatedBytes = 0;  // Bytes allocated by this thread.
+  };
+
+  static bool available() { return mallctl != nullptr; }
+
+  // Flush this thread's cache so that the arena counters include all its
+  // requests, then read the counters.
+  static Snapshot read() {
+    Snapshot snapshot;
+    if (!available()) {
+      return snapshot;
+    }
+    mallctl("thread.tcache.flush", nullptr, nullptr, nullptr, 0);
+    uint64_t epoch = 1;
+    size_t length = sizeof(epoch);
+    mallctl("epoch", &epoch, &length, &epoch, length);
+    snapshot.requests = readUint64("stats.arenas.4096.small.nrequests") +
+                        readUint64("stats.arenas.4096.large.nrequests");
+    snapshot.allocatedBytes = readUint64("thread.allocated");
+    return snapshot;
+  }
+
+  // Reset and read the high-water mark of this thread's live heap bytes.
+  static void resetPeak() {
+    if (available()) {
+      mallctl("thread.peak.reset", nullptr, nullptr, nullptr, 0);
+    }
+  }
+  static uint64_t peakBytes() {
+    return available() ? readUint64("thread.peak.read") : 0;
+  }
+
+ private:
+  static uint64_t readUint64(const char* name) {
+    uint64_t value = 0;
+    size_t length = sizeof(value);
+    return mallctl(name, &value, &length, nullptr, 0) == 0 ? value : 0;
+  }
+};
+
+// _____________________________________________________________________________
 size_t parseEnvironmentSize(const char* varName, size_t defaultValue) {
   const char* value = std::getenv(varName);
   if (value == nullptr) {
@@ -120,9 +174,20 @@ class CompressedVocabularyLookupBenchmark : public BenchmarkInterface {
       return bytes;
     };
     AD_CORRECTNESS_CHECK(run(1) == totalBytes_);
+    const auto before = JemallocThreadStats::read();
+    JemallocThreadStats::resetPeak();
     auto& entry = results.addMeasurement(
         "operator[] over all words x VOCAB_BENCH_REPETITIONS",
         [&]() { return run(repetitions); });
+    const uint64_t peak = JemallocThreadStats::peakBytes();
+    const auto after = JemallocThreadStats::read();
+    if (JemallocThreadStats::available()) {
+      entry.metadata().addKeyValuePair("allocationRequests",
+                                       after.requests - before.requests);
+      entry.metadata().addKeyValuePair(
+          "allocatedBytes", after.allocatedBytes - before.allocatedBytes);
+      entry.metadata().addKeyValuePair("peakLiveHeapBytesAboveStart", peak);
+    }
     entry.metadata().addKeyValuePair("lookups", numWords_ * repetitions);
     entry.metadata().addKeyValuePair("decodedBytesPerPass", totalBytes_);
     return results;
