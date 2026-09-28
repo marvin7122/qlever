@@ -42,5 +42,6 @@ if (NOT _NO_BENCHMARK)
     addAndLinkBenchmark(PrefixCompressorBenchmark)
 
     addAndLinkBenchmark(VocabBatchLookupBenchmark vocabulary)
+    addAndLinkBenchmark(VocabBatchResolveAbBenchmark vocabulary)
 
 endif()
