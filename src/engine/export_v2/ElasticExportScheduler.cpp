@@ -96,6 +96,24 @@ void ElasticExportScheduler::shutdown() {
         worker.join();
       }
     }
+    // Drain tasks posted onto the external pool: a posted `runPostedMorsel`
+    // dereferences this scheduler, so it must not still be queued or running
+    // when the scheduler is destroyed. The poster pool itself must still be
+    // alive here (`Server::~Server` guarantees this); with the internal
+    // worker mode the counter is always zero and this returns immediately.
+    std::unique_lock<std::mutex> lock(postedMutex_);
+    postedDoneCv_.wait(lock, [this] {
+      return postedInflight_.load(std::memory_order_relaxed) == 0;
+    });
+  }
+}
+
+void ElasticExportScheduler::onPostedTaskDone() noexcept {
+  size_t prev = postedInflight_.fetch_sub(1, std::memory_order_relaxed);
+  AD_CORRECTNESS_CHECK(prev > 0, "Underflow in postedInflight_");
+  if (prev == 1) {
+    std::lock_guard<std::mutex> lock(postedMutex_);
+    postedDoneCv_.notify_all();
   }
 }
 
@@ -189,9 +207,24 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
     if (stopping_.load(std::memory_order_relaxed)) {
       return false;
     }
-    poster_([this, morsel = std::move(morsel)]() mutable {
-      runPostedMorsel(std::move(morsel));
-    });
+    // Count the posted task before handing it to the external pool, so
+    // `shutdown` can wait for it even if the pool starts it late. Balanced
+    // in `onPostedTaskDone`, which also runs when `poster_` itself throws.
+    postedInflight_.fetch_add(1, std::memory_order_relaxed);
+    try {
+      poster_([this, morsel = std::move(morsel)]() mutable {
+        try {
+          runPostedMorsel(std::move(morsel));
+        } catch (...) {
+          onPostedTaskDone();
+          throw;
+        }
+        onPostedTaskDone();
+      });
+    } catch (...) {
+      onPostedTaskDone();
+      throw;
+    }
     return true;
   }
   std::unique_lock<std::mutex> lock(queueMutex_);

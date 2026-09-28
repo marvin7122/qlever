@@ -5,6 +5,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <set>
@@ -473,4 +474,32 @@ TEST(ElasticExportSchedulerTest, AbandonedRemainderRunsExactlyOnce) {
 
   scheduler.onForegroundQueryEnded();
   scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// `shutdown` waits for tasks posted onto the external pool.
+// -----------------------------------------------------------------------------
+TEST(ElasticExportSchedulerTest, ShutdownDrainsPostedHelperTasks) {
+  std::atomic<bool> helperRan{false};
+  ElasticExportScheduler scheduler(
+      [&helperRan](absl::AnyInvocable<void()> work) {
+        // Simulate an external pool that starts the work with a delay.
+        std::thread([work = std::move(work), &helperRan]() mutable {
+          std::this_thread::sleep_for(50ms);
+          work();
+          helperRan.store(true, std::memory_order_relaxed);
+        }).detach();
+      },
+      64);
+  scheduler.setMaxForegroundQueriesForHelperAdmission(1);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  EXPECT_EQ(session.state(), SessionState::HelpersEligible);
+  session.submitMorsel([]() { return "drained"; });
+
+  scheduler.shutdown();
+  // `shutdown` must have waited for the posted task: without the drain it
+  // would return while the helper is still sleeping and this would fail.
+  EXPECT_TRUE(helperRan.load(std::memory_order_relaxed));
 }

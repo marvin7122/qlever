@@ -85,7 +85,10 @@ class Server {
                   std::shared_ptr<ad_utility::metrics::MetricsReader>
                       metricsReader = nullptr);
 
-  virtual ~Server() = default;
+  // Shuts the export-V2 scheduler down while the thread pools are still
+  // alive (see the definition in `Server.cpp`); the defaulted member-wise
+  // destruction order alone would tear the pools down first.
+  virtual ~Server();
 
   // First initialize the server. Then loop, wait for requests and trigger
   // processing. This method never returns except when throwing an exception.

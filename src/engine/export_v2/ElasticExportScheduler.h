@@ -241,7 +241,10 @@ class ElasticExportScheduler {
         std::memory_order_relaxed);
   }
 
-  /// Shut down the thread pool and join all worker threads.
+  /// Shut down the thread pool, join all worker threads, and wait for tasks
+  /// posted onto the external pool (`poster_` mode) to finish. Must run
+  /// before the poster pool is torn down: `Server::~Server` calls it while
+  /// the pools are still alive.
   void shutdown();
 
   /// Enqueue an owned morsel to the helper pool (called internally by
@@ -266,7 +269,15 @@ class ElasticExportScheduler {
  private:
   void workerLoop();
   void runPostedMorsel(OwnedMorsel morsel);
+  void onPostedTaskDone() noexcept;
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
+
+  // Posted tasks in flight on the external pool (`poster_` mode). `shutdown`
+  // waits for these to reach zero, so a posted `runPostedMorsel` can neither
+  // run on nor outlive a destroyed scheduler (use-after-free).
+  std::atomic<size_t> postedInflight_{0};
+  std::mutex postedMutex_;
+  std::condition_variable postedDoneCv_;
 
   WorkPoster poster_;
   const size_t maxQueueCapacity_;

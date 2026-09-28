@@ -106,6 +106,22 @@ Server::Server(
 }
 
 // _____________________________________________________________________________
+Server::~Server() {
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+  // The destructor body runs before any member is destroyed, so
+  // `queryThreadPool_` is still alive here. Shutting the scheduler down now
+  // drains helper tasks posted onto that pool; they reference the scheduler,
+  // and member-wise destruction (reverse declaration order) would otherwise
+  // destroy the pool first and leave them dangling. The registry callbacks
+  // that reference the scheduler are removed with `queryRegistry_`, which is
+  // still destroyed before `exportScheduler_` as before.
+  if (exportScheduler_) {
+    exportScheduler_->shutdown();
+  }
+#endif
+}
+
+// _____________________________________________________________________________
 void Server::initializeServerMetrics(
     std::optional<ad_utility::MemorySize> memoryLimit) {
   metrics_ = std::make_unique<ServerMetrics>(
