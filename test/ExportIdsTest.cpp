@@ -13,6 +13,7 @@
 #include <gmock/gmock.h>
 
 #include "engine/IndexScan.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "index/LocalVocabEntry.h"
 #include "parser/LiteralOrIri.h"
@@ -22,6 +23,7 @@
 #include "util/IdTestHelpers.h"
 #include "util/IndexTestHelpers.h"
 #include "util/ParseableDuration.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
@@ -309,6 +311,37 @@ TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto result = ql::exportIds::idsToStringAndType(
       qec->getIndex(), ql::span<const Id>{}, localVocab);
   EXPECT_TRUE(result.empty());
+}
+
+// _____________________________________________________________________________
+// The `fast-int-to-string-for-export` runtime parameter must not change the
+// serialized result of `xsd:int` literals; it only selects the formatting
+// implementation.
+TEST(ExportIds, fastIntToStringForExportProducesIdenticalResults) {
+  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+
+  std::vector<int64_t> values{0,         1,          -1,        42,       -42,
+                              999999999, -999999999, INT64_MAX, INT64_MIN};
+
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::fastIntToStringForExport_>(
+          false);
+  std::vector<std::optional<std::pair<std::string, const char*>>>
+      baselineResults;
+  for (int64_t v : values) {
+    baselineResults.push_back(ql::exportIds::idToStringAndType(
+        index, Id::makeFromInt(v), localVocab));
+  }
+
+  setRuntimeParameter<&RuntimeParameters::fastIntToStringForExport_>(true);
+  for (size_t i = 0; i < values.size(); ++i) {
+    auto fastResult = ql::exportIds::idToStringAndType(
+        index, Id::makeFromInt(values[i]), localVocab);
+    EXPECT_EQ(fastResult, baselineResults[i])
+        << "Mismatch for value " << values[i];
+  }
 }
 
 using ResolveResult =

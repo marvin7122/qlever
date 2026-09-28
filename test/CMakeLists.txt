@@ -267,6 +267,8 @@ addLinkAndDiscoverTest(ParsedUriTest)
 
 addLinkAndDiscoverTestNoLibs(StringSortComparatorTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(FastIntToStringTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(LocaleManagerTest stringUtils)
 
 addLinkAndDiscoverTestNoLibs(GenericCharTraitsTest)
