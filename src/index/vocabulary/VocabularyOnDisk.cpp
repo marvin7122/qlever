@@ -313,12 +313,15 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
     std::weak_ptr<ThreadRingBudget> budget_;
 
     ThreadOwnedRing(std::unique_ptr<ad_utility::BatchManagerBase> manager,
-                    std::weak_ptr<ThreadRingBudget> budget)
+                    std::weak_ptr<ThreadRingBudget> budget) noexcept
         : manager_{std::move(manager)}, budget_{std::move(budget)} {}
+    // Construct the entry in place in the map below and never move it, so a
+    // moved-from state (which would have to skip the slot release) cannot
+    // exist.
     ThreadOwnedRing(const ThreadOwnedRing&) = delete;
     ThreadOwnedRing& operator=(const ThreadOwnedRing&) = delete;
-    ThreadOwnedRing(ThreadOwnedRing&&) noexcept = default;
-    ThreadOwnedRing& operator=(ThreadOwnedRing&&) noexcept = default;
+    ThreadOwnedRing(ThreadOwnedRing&&) = delete;
+    ThreadOwnedRing& operator=(ThreadOwnedRing&&) = delete;
 
     ~ThreadOwnedRing() {
       // Destroy (and thereby drain) the ring first, and only then hand the
@@ -354,9 +357,10 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
   while (numOwnedRings < NUM_VOCAB_BATCH_IO_MANAGERS) {
     if (threadRingBudget_->numOwnedRings_.compare_exchange_weak(
             numOwnedRings, numOwnedRings + size_t{1})) {
-      // Release the claimed slot if anything below throws before `owned`
-      // takes it over (e.g. allocation failure inside `makeBatchManager`), so
-      // a failed claim never leaves a phantom slot behind.
+      // Release the claimed slot if anything below throws before the map
+      // entry takes it over (e.g. allocation failure inside `makeBatchManager`
+      // or `try_emplace`), so a failed claim never leaves a phantom slot
+      // behind.
       absl::Cleanup releaseSlot{[budget = threadRingBudget_]() {
         budget->numOwnedRings_.fetch_sub(1);
       }};
@@ -373,14 +377,14 @@ ad_utility::BatchManagerBase* VocabularyOnDisk::threadLocalManager() const {
       // Probe once per thread, so that a failed `io_uring_queue_init` degrades
       // only this thread's ring to the synchronous fallback.
       bool preferIoUring = threadRingBudget_->preferIoUring_.load();
-      ThreadOwnedRing owned{ad_utility::makeBatchManager(preferIoUring),
-                            threadRingBudget_};
-      // Make `owned` (or the map node it is moved into) the single owner of
-      // the slot. Its destructor releases the slot if `emplace` throws, so the
+      auto manager = ad_utility::makeBatchManager(preferIoUring);
+      // Construct the entry in place. Its constructor only moves pointers and
+      // cannot throw, so either `try_emplace` throws before the entry exists
+      // (and the guard releases the slot), or the entry owns the slot and the
       // guard must not release it a second time.
+      auto [newIt, inserted] = ownedRings.try_emplace(
+          threadRingBudget_, std::move(manager), threadRingBudget_);
       std::move(releaseSlot).Cancel();
-      auto [newIt, inserted] =
-          ownedRings.emplace(threadRingBudget_, std::move(owned));
       // Rely on the fast path above having found no entry for this budget.
       AD_CORRECTNESS_CHECK(inserted);
       return newIt->second.manager_.get();
