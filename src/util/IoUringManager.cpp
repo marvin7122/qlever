@@ -51,6 +51,13 @@ int sharedSqPollRingFd(const io_uring_params& sqPollParams) {
                   << std::endl;
       return ret;
     }
+    AD_LOG_INFO << "io_uring SQPoll: all SQPoll rings share one kernel poll "
+                   "thread (idle "
+                << params.sq_thread_idle << " ms, "
+                << ((params.flags & IORING_SETUP_SQ_AFF)
+                        ? absl::StrCat("pinned to CPU ", params.sq_thread_cpu)
+                        : std::string{"not pinned"})
+                << ")" << std::endl;
     return pollerRing.ring_fd;
   }();
   return fd;
