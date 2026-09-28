@@ -237,6 +237,19 @@ using BatchIoManager = BatchManager<IoUringPolicy>;
 using BatchIoManager = BatchManager<SyncIoPolicy>;
 #endif
 
+// Serve the leading reads of a batch from the page cache and return how many
+// were served. Read `i` is attempted with a non-blocking
+// `preadv2(RWF_NOWAIT)`, which copies the bytes if they are all in the page
+// cache and fails with `EAGAIN` (or returns fewer bytes) otherwise. The
+// function stops at the first read that is not fully served (not cached, short,
+// any error, or `RWF_NOWAIT` unsupported by the kernel or file system): the
+// caller issues that read and all later ones through its regular path, which
+// also reports real errors. Always returns 0 on platforms without
+// `RWF_NOWAIT`. Precondition: the three spans have the same length.
+size_t readLeadingPageCacheHits(int fd, ql::span<const size_t> numBytesToRead,
+                                ql::span<const uint64_t> offsets,
+                                ql::span<char*> buffers);
+
 // Build a batch manager. When io_uring is compiled in and the runtime flag
 // `preferIoUring` is set, try to build an `IoUringManager`. If its setup
 // syscall fails at runtime clear `preferIoUring` and fall back to a

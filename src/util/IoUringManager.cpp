@@ -10,6 +10,7 @@
 
 #include "util/IoUringManager.h"
 
+#include <sys/uio.h>
 #include <unistd.h>
 
 #include <stdexcept>
@@ -38,6 +39,34 @@ void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
   if (static_cast<size_t>(numBytesRead) != numBytes) {
     AD_THROW("read fewer bytes than requested in readFullyOrThrow");
   }
+}
+
+//______________________________________________________________________________
+size_t readLeadingPageCacheHits(int fd, ql::span<const size_t> numBytesToRead,
+                                ql::span<const uint64_t> offsets,
+                                ql::span<char*> buffers) {
+  AD_CONTRACT_CHECK(offsets.size() == numBytesToRead.size() &&
+                    buffers.size() == numBytesToRead.size());
+#ifdef RWF_NOWAIT
+  size_t numServed = 0;
+  for (const auto& [numBytes, offset, buffer] :
+       ::ranges::views::zip(numBytesToRead, offsets, buffers)) {
+    // See https://man7.org/linux/man-pages/man2/preadv2.2.html: with
+    // `RWF_NOWAIT`, the read fails with `EAGAIN` instead of waiting for the
+    // storage device when the data is not in the page cache.
+    iovec target{buffer, numBytes};
+    const ssize_t numBytesRead =
+        preadv2(fd, &target, 1, static_cast<off_t>(offset), RWF_NOWAIT);
+    if (numBytesRead < 0 || static_cast<size_t>(numBytesRead) != numBytes) {
+      break;
+    }
+    ++numServed;
+  }
+  return numServed;
+#else
+  (void)fd;
+  return 0;
+#endif
 }
 
 //______________________________________________________________________________

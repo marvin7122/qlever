@@ -609,4 +609,53 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
 #endif
   expectManagerWorks(*manager);
 }
+
+// `readLeadingPageCacheHits` serves the leading reads that are fully in the
+// page cache and stops at the first read that is not fully served (here: a
+// read that extends beyond the end of the file and is therefore short).
+TEST(ReadLeadingPageCacheHits, servesLeadingReadsAndStopsAtShortRead) {
+  // The file was just written, so its pages are in the page cache.
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  std::vector<size_t> numBytes{4, 4, 4, 4};
+  std::vector<uint64_t> offsets{8, 0, 14, 4};
+  std::vector<std::string> buffers(4, std::string(4, '-'));
+  std::vector<char*> targets;
+  for (auto& buffer : buffers) {
+    targets.push_back(buffer.data());
+  }
+  const size_t numServed =
+      ad_utility::readLeadingPageCacheHits(fd, numBytes, offsets, targets);
+  if (numServed == 0) {
+    // `RWF_NOWAIT` is not available for this platform or file system. Then
+    // nothing may have been read, and the caller reads everything itself.
+    EXPECT_EQ(buffers[0], "----");
+    return;
+  }
+  EXPECT_EQ(numServed, 2u);
+  EXPECT_EQ(buffers[0], "CCCC");
+  EXPECT_EQ(buffers[1], "AAAA");
+  // Reads from the first unserved one on are left to the caller.
+  EXPECT_EQ(buffers[3], "----");
+}
+
+// All reads of a batch that is fully in the page cache are served, an empty
+// batch is trivially served, and spans of different lengths are rejected.
+TEST(ReadLeadingPageCacheHits, fullyCachedAndEmptyBatchesAndContract) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  std::vector<size_t> numBytes{4, 4};
+  std::vector<uint64_t> offsets{12, 4};
+  std::vector<std::string> buffers(2, std::string(4, '-'));
+  std::vector<char*> targets{buffers[0].data(), buffers[1].data()};
+  const size_t numServed =
+      ad_utility::readLeadingPageCacheHits(fd, numBytes, offsets, targets);
+  if (numServed != 0) {
+    EXPECT_EQ(numServed, 2u);
+    EXPECT_EQ(buffers[0], "DDDD");
+    EXPECT_EQ(buffers[1], "BBBB");
+  }
+  EXPECT_EQ(ad_utility::readLeadingPageCacheHits(fd, {}, {}, {}), 0u);
+  std::vector<size_t> tooFew{4};
+  EXPECT_ANY_THROW(
+      ad_utility::readLeadingPageCacheHits(fd, tooFew, offsets, targets));
+}
 }  // namespace
