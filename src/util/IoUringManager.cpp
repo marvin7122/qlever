@@ -100,13 +100,23 @@ IoUringPolicy::~IoUringPolicy() {
 }
 
 //______________________________________________________________________________
-bool IoUringPolicy::registeredBuffersAvailable() {
+bool IoUringPolicy::registeredBuffersAvailable(size_t slotSize) {
   // Registering buffers while reads are in flight would make the kernel
-  // quiesce the ring; defer to a batch that starts on an idle ring.
-  if (registration_ == Registration::NotTried &&
-      numInFlightReadRequests_ == 0) {
+  // quiesce the ring; defer to a batch that starts on an idle ring. The same
+  // holds for replacing the arena by one with another slot size.
+  if (numInFlightReadRequests_ != 0) {
+    return registration_ == Registration::Registered &&
+           arena_->slotSize() == slotSize;
+  }
+  if (registration_ == Registration::Registered &&
+      arena_->slotSize() != slotSize) {
+    io_uring_unregister_buffers(&ring_);
+    arena_.reset();
+    registration_ = Registration::NotTried;
+  }
+  if (registration_ == Registration::NotTried) {
     try {
-      arena_.emplace(ringSize_, kRegisteredSlotSize);
+      arena_.emplace(ringSize_, slotSize);
       auto iovecs = arena_->iovecs();
       int ret = io_uring_register_buffers(&ring_, iovecs.data(),
                                           static_cast<unsigned>(iovecs.size()));
@@ -122,13 +132,15 @@ bool IoUringPolicy::registeredBuffersAvailable() {
         freeSlots_[i] = ringSize_ - 1 - i;
       }
       registration_ = Registration::Registered;
-      static std::once_flag logOnce;
-      std::call_once(logOnce, [this]() {
+      // Log once per slot size (the slot size follows the `O_DIRECT` block
+      // size, see `BatchReadOptions::directIoBlockSize`).
+      static std::atomic<size_t> loggedSlotSize{0};
+      if (loggedSlotSize.exchange(slotSize) != slotSize) {
         AD_LOG_INFO << "io_uring registered buffers are used for vocabulary "
                        "batch reads ("
-                    << ringSize_ << " slots of " << kRegisteredSlotSize
+                    << ringSize_ << " slots of " << slotSize
                     << " bytes per ring)" << std::endl;
-      });
+      }
     } catch (const std::exception& e) {
       arena_.reset();
       registration_ = Registration::Failed;
@@ -228,10 +240,14 @@ void IoUringPolicy::addBatch(int fd,
   if (numBytesToReadPerRequest.empty()) {
     return;
   }
+  // With `O_DIRECT`, a slot holds one block of `directIoBlockSize` bytes.
+  const size_t block = options.directIoBlockSize;
+  AD_CONTRACT_CHECK(block > 0 &&
+                    block % export_prototypes::kDirectIoBlockSize == 0);
   const bool useRegisteredBuffers =
-      options.useRegisteredBuffers && registeredBuffersAvailable();
+      options.useRegisteredBuffers && registeredBuffersAvailable(block);
   const bool useDirectIo = useRegisteredBuffers && options.directIoFd >= 0;
-  constexpr size_t block = export_prototypes::kDirectIoBlockSize;
+  const size_t slotSize = block;
 
   // The `O_DIRECT` read that the current request may still join.
   std::optional<OpenDirectRead> openDirectRead;
@@ -250,7 +266,7 @@ void IoUringPolicy::addBatch(int fd,
   if (useDirectIo && options.blockCacheNumBlocks > 0 &&
       ::fstat(options.directIoFd, &directFileId) == 0) {
     cache = &ad_utility::vocab::threadLocalVocabBlockCache(
-        options.blockCacheNumBlocks);
+        options.blockCacheNumBlocks, block);
   }
   auto& counters = ad_utility::vocab::vocabBlockCacheCounters;
 
@@ -265,10 +281,10 @@ void IoUringPolicy::addBatch(int fd,
         (fileOffset + numBytesToRead + block - 1) / block * block;
     auto& open = openDirectRead;
     if (open.has_value() && blockBegin >= open->blockBegin &&
-        blockEnd - open->blockBegin <= kRegisteredSlotSize) {
+        blockEnd - open->blockBegin <= slotSize) {
       open->blockEnd = std::max(open->blockEnd, blockEnd);
     } else {
-      if (blockEnd - blockBegin > kRegisteredSlotSize) {
+      if (blockEnd - blockBegin > slotSize) {
         submitOpenDirectRead();
         return false;
       }
@@ -300,8 +316,12 @@ void IoUringPolicy::addBatch(int fd,
       if (cache != nullptr) {
         const uint64_t blockNo = blockBegin / block;
         cacheInsertPerSlot_[open->slot] =
-            CacheInsert{directFileId.st_dev, directFileId.st_ino, blockNo,
-                        options.blockCacheNumBlocks, handle};
+            CacheInsert{directFileId.st_dev,
+                        directFileId.st_ino,
+                        blockNo,
+                        options.blockCacheNumBlocks,
+                        block,
+                        handle};
         pendingBlockSlot_[BlockKey{directFileId.st_dev, directFileId.st_ino,
                                    blockNo}] = open->slot;
       }
@@ -335,8 +355,7 @@ void IoUringPolicy::addBatch(int fd,
     // SQE: `acquireSlot` may submit the prepared SQEs.
     InFlightRead read{handle, numBytesToRead};
     const bool readIntoSlot = useRegisteredBuffers && !useDirectIo &&
-                              numBytesToRead > 0 &&
-                              numBytesToRead <= kRegisteredSlotSize;
+                              numBytesToRead > 0 && numBytesToRead <= slotSize;
     if (readIntoSlot) {
       read.slot = acquireSlot();
     }
@@ -428,9 +447,9 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
       }
       // Only a complete block is cached (the last block of a file is short).
       if (cacheInsert.has_value() &&
-          static_cast<size_t>(numBytesRead) == kRegisteredSlotSize) {
+          static_cast<size_t>(numBytesRead) == cacheInsert->blockSize) {
         ad_utility::vocab::threadLocalVocabBlockCache(
-            cacheInsert->cacheNumBlocks)
+            cacheInsert->cacheNumBlocks, cacheInsert->blockSize)
             .insert(cacheInsert->dev, cacheInsert->ino, cacheInsert->blockNo,
                     slotData);
         ad_utility::vocab::vocabBlockCacheCounters.inserts_.fetch_add(

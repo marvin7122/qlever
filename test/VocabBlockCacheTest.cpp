@@ -18,7 +18,7 @@
 
 namespace {
 using ad_utility::vocab::VocabBlockCache;
-constexpr size_t blockSize = VocabBlockCache::kBlockSize;
+constexpr size_t blockSize = VocabBlockCache::kDefaultBlockSize;
 
 // Fill a block with deterministic content derived from `seed`.
 std::array<char, blockSize> makeBlockData(uint64_t seed) {
@@ -186,6 +186,34 @@ TEST(VocabBlockCache, HashIndexStaysConsistentUnderEviction) {
   // The most recently inserted block is always cached.
   auto last = makeBlockData(10 * capacity - 1);
   expectCachedBlock(cache, testDev, testIno, 10 * capacity - 1, last);
+}
+
+// Blocks larger than 4 KiB: the whole block is stored and returned, and a
+// block size that is not a positive multiple of 4 KiB is rejected.
+TEST(VocabBlockCache, LargerBlockSize) {
+  constexpr size_t largeBlockSize = 4 * blockSize;
+  VocabBlockCache cache{3, largeBlockSize};
+  EXPECT_EQ(cache.blockSize(), largeBlockSize);
+  std::string data(largeBlockSize, '\0');
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<char>((i * 7) % 251);
+  }
+  cache.insert(testDev, testIno, 5, data.data());
+  const char* cached = cache.lookup(testDev, testIno, 5);
+  ASSERT_NE(cached, nullptr);
+  EXPECT_EQ((std::string_view{cached, largeBlockSize}), data);
+
+  // Changing the block size drops the content.
+  cache.resize(3, blockSize);
+  EXPECT_EQ(cache.blockSize(), blockSize);
+  EXPECT_EQ(cache.lookup(testDev, testIno, 5), nullptr);
+  VocabBlockCache& shard =
+      ad_utility::vocab::threadLocalVocabBlockCache(13, largeBlockSize);
+  EXPECT_EQ(shard.blockSize(), largeBlockSize);
+  EXPECT_EQ(shard.capacity(), 13u);
+
+  EXPECT_ANY_THROW(cache.resize(3, 0));
+  EXPECT_ANY_THROW(cache.resize(3, blockSize + 512));
 }
 
 }  // namespace

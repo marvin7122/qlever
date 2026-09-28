@@ -983,7 +983,11 @@ CPP_template_def(typename RequestT, typename SendT)(
   absl::Cleanup logBlockCache{[&]() {
     if (ad_utility::useDirectIoForVocabularyReads.load() &&
         ad_utility::vocabularyBlockCacheNumBlocks.load() > 0) {
-      AD_LOG_INFO << "Vocabulary block cache for this export: "
+      AD_LOG_INFO << "Vocabulary block cache for this export ("
+                  << ad_utility::vocabularyBlockCacheNumBlocks.load()
+                  << " blocks of "
+                  << ad_utility::vocabularyDirectIoBlockSize.load()
+                  << " bytes per thread): "
                   << cacheCounters.hits_.load() - cacheHitsBefore << " hits, "
                   << cacheCounters.inFlightHits_.load() -
                          cacheInFlightHitsBefore

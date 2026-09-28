@@ -661,6 +661,67 @@ TYPED_TEST(IoUringManagerTest, DirectIoBlockCacheJoinsInFlightReads) {
   }
 }
 
+// With `directIoBlockSize` = 16 KiB, every `O_DIRECT` read fetches (and the
+// cache keeps) the enclosing 16 KiB block, so a later request for another
+// 4 KiB block of it hits. Switching back to 4 KiB blocks on the same manager
+// registers the arena again with 4 KiB slots.
+TYPED_TEST(IoUringManagerTest, DirectIoLargerBlockSize) {
+  constexpr size_t smallBlock =
+      ad_utility::export_prototypes::kDirectIoBlockSize;
+  constexpr size_t largeBlock = 4 * smallBlock;
+  std::string content;
+  for (size_t i = 0; i < 3 * largeBlock + 100; ++i) {
+    content.push_back(static_cast<char>('a' + (i * 17) % 26));
+  }
+  auto [tmp, fd] = makeTempFile(content);
+  ad_utility::export_prototypes::DirectIoFile directFile;
+  try {
+    directFile.open(absl::StrCat(gtestCurrentTestName(), ".tmp"), true);
+  } catch (const std::exception& e) {
+    GTEST_SKIP() << "O_DIRECT is not supported here: " << e.what();
+  }
+  TypeParam manager(16);
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers = true;
+  options.directIoFd = directFile.fd();
+  // A capacity that no other test uses, so that this thread's cache starts
+  // empty.
+  options.blockCacheNumBlocks = 29;
+  options.directIoBlockSize = largeBlock;
+  constexpr bool usesCache =
+      !std::is_same_v<TypeParam,
+                      ad_utility::BatchManager<ad_utility::SyncIoPolicy>>;
+
+  auto before = BlockCacheCounts::now();
+  readAndCheck(manager, fd, content, {{10, 5}, {largeBlock + 7, 20}}, options);
+  auto first = BlockCacheCounts::now() - before;
+  before = BlockCacheCounts::now();
+  // Other 4 KiB blocks of the two cached 16 KiB blocks, and the short last
+  // block of the file (read, but not cached).
+  readAndCheck(manager, fd, content,
+               {{smallBlock + 3, 10},
+                {largeBlock + 3 * smallBlock, 40},
+                {3 * largeBlock + 50, 50}},
+               options);
+  auto second = BlockCacheCounts::now() - before;
+  if (usesCache) {
+    EXPECT_EQ(first.misses_, 2u);
+    EXPECT_EQ(first.inserts_, 2u);
+    EXPECT_EQ(second.hits_, 2u);
+    EXPECT_EQ(second.misses_, 1u);
+    EXPECT_EQ(second.inserts_, 0u);
+  } else {
+    EXPECT_EQ(first.hits_ + first.misses_ + second.hits_ + second.misses_, 0u);
+  }
+
+  // Back to 4 KiB blocks; the request that spans two 4 KiB blocks does not fit
+  // into a slot and uses a plain read.
+  options.directIoBlockSize = smallBlock;
+  readAndCheck(manager, fd, content,
+               {{10, 5}, {largeBlock + 7, 20}, {2 * smallBlock - 3, 10}},
+               options);
+}
+
 // A read that is fully satisfied returns the requested bytes from the requested
 // offset.
 TEST(ReadFullyOrThrow, FullReadSucceeds) {

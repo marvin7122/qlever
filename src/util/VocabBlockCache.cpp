@@ -20,7 +20,9 @@
 namespace ad_utility::vocab {
 
 // _____________________________________________________________________________
-VocabBlockCache::VocabBlockCache(size_t numBlocks) { resize(numBlocks); }
+VocabBlockCache::VocabBlockCache(size_t numBlocks, size_t blockSize) {
+  resize(numBlocks, blockSize);
+}
 
 // _____________________________________________________________________________
 VocabBlockCache::~VocabBlockCache() { clear(); }
@@ -30,6 +32,7 @@ VocabBlockCache::VocabBlockCache(VocabBlockCache&& other) noexcept
     : slots_{std::move(other.slots_)},
       slotOfKey_{std::move(other.slotOfKey_)},
       storage_{std::exchange(other.storage_, nullptr)},
+      blockSize_{other.blockSize_},
       hand_{std::exchange(other.hand_, 0)},
       numHits_{std::exchange(other.numHits_, 0)},
       numMisses_{std::exchange(other.numMisses_, 0)},
@@ -45,6 +48,7 @@ VocabBlockCache& VocabBlockCache::operator=(VocabBlockCache&& other) noexcept {
     slots_ = std::move(other.slots_);
     slotOfKey_ = std::move(other.slotOfKey_);
     storage_ = std::exchange(other.storage_, nullptr);
+    blockSize_ = other.blockSize_;
     hand_ = std::exchange(other.hand_, 0);
     numHits_ = std::exchange(other.numHits_, 0);
     numMisses_ = std::exchange(other.numMisses_, 0);
@@ -57,10 +61,15 @@ VocabBlockCache& VocabBlockCache::operator=(VocabBlockCache&& other) noexcept {
 size_t VocabBlockCache::size() const { return slotOfKey_.size(); }
 
 // _____________________________________________________________________________
-void VocabBlockCache::resize(size_t numBlocks) {
+void VocabBlockCache::resize(size_t numBlocks, size_t blockSize) {
+  if (blockSize == 0 || blockSize % kDefaultBlockSize != 0) {
+    AD_THROW("vocabulary block cache block size " + std::to_string(blockSize) +
+             " is not a positive multiple of " +
+             std::to_string(kDefaultBlockSize));
+  }
   // Guard the allocation-size multiplication: an unchecked wrap would
   // allocate an undersized chunk and corrupt the heap on the first `insert`.
-  if (numBlocks > SIZE_MAX / kBlockSize) {
+  if (numBlocks > SIZE_MAX / blockSize) {
     AD_THROW("vocabulary block cache size " + std::to_string(numBlocks) +
              " blocks would overflow the allocation size");
   }
@@ -69,20 +78,21 @@ void VocabBlockCache::resize(size_t numBlocks) {
   // previous content untouched (strong guarantee).
   void* raw = nullptr;
   if (numBlocks > 0 &&
-      ::posix_memalign(&raw, kBlockSize, numBlocks * kBlockSize) != 0) {
+      ::posix_memalign(&raw, kDefaultBlockSize, numBlocks * blockSize) != 0) {
     AD_THROW("Failed to allocate " + std::to_string(numBlocks) + " blocks of " +
-             std::to_string(kBlockSize) +
+             std::to_string(blockSize) +
              " bytes for the vocabulary block cache");
   }
   std::unique_ptr<char[], FreeDeleter> newStorage{static_cast<char*>(raw)};
   std::vector<Slot> newSlots;
   newSlots.resize(numBlocks);
   for (size_t i = 0; i < numBlocks; ++i) {
-    newSlots[i].data_ = newStorage.get() + i * kBlockSize;
+    newSlots[i].data_ = newStorage.get() + i * blockSize;
   }
   clear();
   storage_ = std::move(newStorage);
   slots_ = std::move(newSlots);
+  blockSize_ = blockSize;
   slotOfKey_.reserve(numBlocks);
   hand_ = 0;
 }
@@ -114,7 +124,7 @@ void VocabBlockCache::insert(dev_t dev, ino_t ino, uint64_t blockNo,
   }
   // Overwrite the existing entry for an immutable file re-read.
   if (Slot* slot = findSlot(dev, ino, blockNo)) {
-    std::memcpy(slot->data_, data, kBlockSize);
+    std::memcpy(slot->data_, data, blockSize_);
     slot->referenced_ = true;
     return;
   }
@@ -145,7 +155,7 @@ void VocabBlockCache::insert(dev_t dev, ino_t ino, uint64_t blockNo,
   // an existing key) sets the bit, so an explicitly re-referenced block wins
   // the next eviction sweep over a merely inserted one.
   slot.referenced_ = false;
-  std::memcpy(slot.data_, data, kBlockSize);
+  std::memcpy(slot.data_, data, blockSize_);
   hand_ = (hand_ + 1) % slots_.size();
 }
 
@@ -159,10 +169,11 @@ void VocabBlockCache::clear() {
 }
 
 // _____________________________________________________________________________
-VocabBlockCache& threadLocalVocabBlockCache(size_t numBlocks) {
+VocabBlockCache& threadLocalVocabBlockCache(size_t numBlocks,
+                                            size_t blockSize) {
   thread_local VocabBlockCache cache;
-  if (cache.capacity() != numBlocks) {
-    cache.resize(numBlocks);
+  if (cache.capacity() != numBlocks || cache.blockSize() != blockSize) {
+    cache.resize(numBlocks, blockSize);
   }
   return cache;
 }

@@ -70,6 +70,7 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(vocabBlockCacheSize_);
+  add(vocabBlockCacheBlockSize_);
   add(vocabularyIoUringRegisteredBuffers_);
   add(vocabularyIoUringDirectIo_);
 
@@ -92,6 +93,20 @@ RuntimeParameters::RuntimeParameters() {
   vocabBlockCacheSize_.setOnUpdateAction([](size_t numBlocks) {
     ad_utility::vocabularyBlockCacheNumBlocks.store(numBlocks,
                                                     std::memory_order_relaxed);
+  });
+  vocabBlockCacheBlockSize_.setParameterConstraint(
+      [](size_t blockSize, std::string_view parameterName) {
+        constexpr size_t unit =
+            ad_utility::export_prototypes::kDirectIoBlockSize;
+        if (blockSize == 0 || blockSize % unit != 0) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName, " must be a positive multiple of ",
+              unit, ", was ", blockSize)};
+        }
+      });
+  vocabBlockCacheBlockSize_.setOnUpdateAction([](size_t blockSize) {
+    ad_utility::vocabularyDirectIoBlockSize.store(blockSize,
+                                                  std::memory_order_relaxed);
   });
 
   // A constraint that rejects values that are not strictly positive, with a
