@@ -36,4 +36,7 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    add_executable(SimdValidityBenchmark SimdValidityBenchmark.cpp)
+    linkBenchmark(SimdValidityBenchmark engine sparqlParser qlever_util)
+
 endif()
