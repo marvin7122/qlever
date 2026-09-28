@@ -141,17 +141,6 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {};
 
-// Construct a result from owning strings and expose views into their storage.
-inline VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
-    std::vector<std::string> words) {
-  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
-  data->buffer() = std::move(words);
-  data->views() = ::ranges::to_vector(
-      data->buffer() |
-      ql::views::transform(ad_utility::staticCast<std::string_view>));
-  return StringVectorVocabBatchLookupData::asResult(std::move(data));
-}
-
 // Construct a PMR-backed result and expose views into its monotonic allocator.
 // `views` must all point into `buffer`, else we get UB.
 inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
@@ -163,10 +152,9 @@ inline VocabBatchLookupResult makePmrVocabBatchLookupResult(
   return PmrVocabBatchLookupData::asResult(std::move(data));
 }
 
-// Type-erased smart pointer holding whatever keeps word storage alive. Used
-// to store child `VocabBatchLookupResult`s or references to vocabulary state
-// (e.g., shared ownership of a vocabulary's in-memory word storage).
-// See the usage below.
+// Type-erased smart pointer holding whatever keeps word storage alive, e.g. a
+// child `VocabBatchLookupResult` whose views were merged into a combined result
+// (see `SplitVocabulary::lookupBatch` and the helpers below).
 using VocabBatchOwner = std::shared_ptr<const void>;
 
 // `VocabBatchLookupResult` that owns multiple independent storage sources.
@@ -326,7 +314,13 @@ VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
         return wordAsStringOrPlaceholder(vocab, idx);
       }));
 
-  return makeStringVectorVocabBatchLookupResult(std::move(words));
+  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+  data->buffer() = std::move(words);
+  data->views() = ::ranges::to_vector(
+      data->buffer() |
+      ql::views::transform(ad_utility::staticCast<std::string_view>));
+
+  return StringVectorVocabBatchLookupData::asResult(std::move(data));
 }
 
 // Streamed version of `lookupBatch`: lazily apply `vocab.lookupBatch` for the

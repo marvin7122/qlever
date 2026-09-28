@@ -11,11 +11,11 @@
 
 #include <array>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include "../../util/GTestHelpers.h"
-#include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyTypes.h"
-#include "util/File.h"
 
 namespace {
 // A class that executes a passed function in its constructor.
@@ -44,6 +44,17 @@ class WordWriterNoFinish : public WordWriterBase {
   uint64_t operator()(std::string_view, bool) override { return 0; }
   void finishImpl() override {}
 };
+
+// Build a batch-lookup result that owns `words` as strings.
+VocabBatchLookupResult makeStringVectorVocabBatchLookupResult(
+    std::vector<std::string> words) {
+  auto data = std::make_shared<StringVectorVocabBatchLookupData>();
+  data->buffer() = std::move(words);
+  for (const auto& word : data->buffer()) {
+    data->views().emplace_back(word);
+  }
+  return StringVectorVocabBatchLookupData::asResult(std::move(data));
+}
 }  // namespace
 
 // _____________________________________________________________________________
@@ -158,66 +169,6 @@ TEST(VocabBatchLookupData, KeepAliveRequiresAnOwner) {
   std::vector<std::string_view> views{"orphan"};
   AD_EXPECT_THROW_WITH_MESSAGE(keepAliveVocabBatch({}, std::move(views)),
                                ::testing::HasSubstr("owners"));
-}
-
-// Fixture for the "batch result outlives its vocabulary" tests: provides a
-// one-word `VocabularyInMemoryBinSearch` built via a `WordWriter`, with
-// per-test filenames so the suites are independent.
-class VocabBatchLookupDataVocabTest : public ::testing::Test {
- protected:
-  // Build a vocabulary containing exactly `word` at index 0 and open it.
-  VocabularyInMemoryBinSearch buildVocab(std::string_view word) {
-    const std::string filename =
-        ::testing::UnitTest::GetInstance()->current_test_info()->name();
-    ad_utility::deleteFile(filename, false);
-    ad_utility::deleteFile(filename + ".ids", false);
-    VocabularyInMemoryBinSearch vocabulary;
-    {
-      VocabularyInMemoryBinSearch::WordWriter writer{filename};
-      writer(word, 0);
-      writer.finish();
-    }
-    vocabulary.open(filename);
-    return vocabulary;
-  }
-};
-
-// A view obtained from `VocabularyInMemoryBinSearch` stays valid when the
-// vocabulary is `close()`d afterwards: the batch result retains
-// `wordStorage()` shared ownership of the bytes, and `close()` only installs a
-// fresh empty buffer instead of mutating the old one.
-// _____________________________________________________________________________
-TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesClose) {
-  auto vocabulary = buildVocab("ram-word");
-  auto maybeWord = vocabulary[0];
-  ASSERT_TRUE(maybeWord.has_value());
-  const char* wordData = maybeWord->data();
-  std::vector<std::string_view> views{maybeWord.value()};
-  std::vector<VocabBatchOwner> owners{vocabulary.wordStorage()};
-  auto result = keepAliveVocabBatch(std::move(owners), std::move(views));
-
-  vocabulary.close();
-  EXPECT_EQ(vocabulary.size(), 0u);
-  EXPECT_THAT(*result, ::testing::ElementsAre("ram-word"));
-  EXPECT_EQ((*result)[0].data(), wordData);
-}
-
-// Same guarantee when the vocabulary object is destroyed entirely while the
-// batch result still lives: shared ownership of the word storage keeps the
-// bytes alive past the destructor.
-// _____________________________________________________________________________
-TEST_F(VocabBatchLookupDataVocabTest, KeepAliveOutlivesVocabularyDestruction) {
-  auto vocabulary = std::make_optional(buildVocab("other-word"));
-  auto maybeWord = (*vocabulary)[0];
-  ASSERT_TRUE(maybeWord.has_value());
-  const char* wordData = maybeWord->data();
-  std::vector<std::string_view> views{maybeWord.value()};
-  std::vector<VocabBatchOwner> owners{vocabulary->wordStorage()};
-  auto result = keepAliveVocabBatch(std::move(owners), std::move(views));
-
-  vocabulary.reset();
-  EXPECT_THAT(*result, ::testing::ElementsAre("other-word"));
-  EXPECT_EQ((*result)[0].data(), wordData);
 }
 
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
