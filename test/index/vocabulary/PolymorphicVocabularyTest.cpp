@@ -235,11 +235,9 @@ TEST(PolymorphicVocabulary, lookupBatchMatchesIndividualLookups) {
 // `finishLookup` rejects a null handle. Checked for every `VocabularyType`.
 TEST(PolymorphicVocabulary, beginFinishLookupMatchesIndividualLookups) {
   for (auto vocabType : VocabularyType::all()) {
-    auto [temporaryFile, cleanup] = ad_utility::testing::filenameForTesting();
-    std::string filename = temporaryFile.string();
-    auto deleteFiles = getFileCleanup(VocabularyType{vocabType}, filename);
+    auto [filename, cleanup] = ad_utility::testing::filenameForTesting();
     PolymorphicVocabulary vocab;
-    setupVocab(vocab, vocabType, filename);
+    setupVocab(vocab, vocabType, filename.string());
 
     std::array<size_t, 6> indices{2, 0, 3, 1, 1, 0};
     auto result = vocab.finishLookup(vocab.beginLookup(indices));
