@@ -47,4 +47,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(VocabularyBatchLookupEndToEndBenchmark vocabulary)
 
+    addAndLinkBenchmark(VocabularyBatchLookupAttributionBenchmark vocabulary)
+
 endif()
