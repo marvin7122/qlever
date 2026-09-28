@@ -244,6 +244,12 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If true, the CONSTRUCT export classifies the `Id`s of each variable column
+  // 64 at a time with a SIMD validity bitmask and resolves only the defined
+  // ones; undefined values skip the sort and the `Id` cache. The output is the
+  // same either way.
+  Bool constructSkipUnboundSimd_{false, "construct-skip-unbound-simd"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
