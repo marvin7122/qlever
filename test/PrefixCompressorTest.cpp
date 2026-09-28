@@ -19,12 +19,12 @@
 #include "util/Views.h"
 
 TEST(PrefixCompressor, CompressionPreservesWords) {
-  ad_utility::vocabulary::PrefixCompressor p;
-  p.buildCodebook(std::vector<std::string>{"alp", "alpha", "al"});
+  PrefixCompressor p;
+  p.buildCodebook(std::vector<std::string>{"alph", "alpha", "al"});
 
   std::vector<std::string> words{
-      "a",      "al",       "alp",     "alpha",
-      "alpine", "alphabet", "betabet", std::string{0, 0, 'a', 1}};
+      "a",     "al",       "alp",     "alph",
+      "alpha", "alphabet", "betabet", std::string{0, 0, 'a', 1}};
 
   for (const auto& word : words) {
     ASSERT_NE(p.compress(word), word);
@@ -33,8 +33,8 @@ TEST(PrefixCompressor, CompressionPreservesWords) {
 }
 
 TEST(PrefixCompressor, OverlappingPrefixes) {
-  ad_utility::vocabulary::PrefixCompressor p;
-  p.buildCodebook(std::vector<std::string>{"alp", "alpha", "al"});
+  PrefixCompressor p;
+  p.buildCodebook(std::vector<std::string>{"alph", "alpha", "al"});
 
   // 1 byte for prefix "alpha" + 3 bytes for "bet".
   ASSERT_EQ(p.compress("alphabet").size(), 4u);
@@ -51,7 +51,7 @@ TEST(PrefixCompressor, OverlappingPrefixes) {
 }
 
 TEST(PrefixCompressor, TooManyPrefixesThrow) {
-  ad_utility::vocabulary::PrefixCompressor p;
+  PrefixCompressor p;
   std::vector<std::string> tooManyPrefixes;
   for (size_t i = 0; i < NUM_COMPRESSION_PREFIXES + 1; ++i) {
     tooManyPrefixes.push_back(std::to_string(i));
@@ -61,41 +61,41 @@ TEST(PrefixCompressor, TooManyPrefixesThrow) {
 
 // _____________________________________________________________________________
 TEST(PrefixCompressor, DecompressIntoMatchesDecompress) {
-  ad_utility::vocabulary::PrefixCompressor p;
+  PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alp", "alpha", "al"});
   auto checkWord = [&](std::string_view word) {
     const std::string compressed = p.compress(word);
-    const std::string viaString = p.decompress(compressed);
-    std::string intoBuf(p.maxDecompressedSize(compressed), '\0');
-    const size_t n = p.decompressInto(
-        compressed, ql::span<char>{intoBuf.data(), intoBuf.size()});
-    EXPECT_EQ(n, viaString.size());
-    EXPECT_EQ(std::string_view(intoBuf.data(), n), viaString);
-    EXPECT_EQ(viaString, word);
+    const std::string decompressedWord = p.decompress(compressed);
+    std::string decompressedIntoBuffer(p.maxDecompressedSize(compressed), '\0');
+    const size_t numWritten = p.decompressInto(
+        compressed, ql::span<char>{decompressedIntoBuffer.data(),
+                                   decompressedIntoBuffer.size()});
+    EXPECT_EQ(numWritten, decompressedWord.size());
+    EXPECT_EQ(std::string_view(decompressedIntoBuffer.data(), numWritten),
+              decompressedWord);
+    EXPECT_EQ(decompressedWord, word);
   };
   for (std::string_view word :
-       {"a", "al", "alp", "alpine", "alpha", "alphabet", "nothing"}) {
+       {"", "a", "al", "alp", "alpine", "alpha", "alphabet", "nothing"}) {
     checkWord(word);
   }
-  const std::string onlyPrefix = p.compress("alpha");
-  ASSERT_EQ(onlyPrefix.size(), 1u);
-  checkWord("alpha");
+  // A word that is exactly a prefix compresses to the code byte alone.
+  ASSERT_EQ(p.compress("alpha").size(), 1u);
   AD_EXPECT_THROW_WITH_MESSAGE(static_cast<void>(p.maxDecompressedSize("")),
                                ::testing::HasSubstr("!compressedWord.empty()"));
 
-  // Ensure that decompressing into an undersized output buffer fails the
-  // contract check.
   const std::string compressed = p.compress("alphabet");
-  std::string smallBuf(1, '\0');
+  std::string undersizedBuffer(1, '\0');
   AD_EXPECT_THROW_WITH_MESSAGE(
       static_cast<void>(p.decompressInto(
-          compressed, ql::span<char>{smallBuf.data(), smallBuf.size()})),
+          compressed,
+          ql::span<char>{undersizedBuffer.data(), undersizedBuffer.size()})),
       ::testing::HasSubstr("out.size() >= decompressedSizeWithIndex"));
 }
 
 // _____________________________________________________________________________
 TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
-  ad_utility::vocabulary::PrefixCompressor p;
+  PrefixCompressor p;
   p.buildCodebook(std::vector<std::string>{"alpha"});
 
   const std::string compressedAlpha = p.compress("alpha");
@@ -109,19 +109,21 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
   EXPECT_EQ(p.maxDecompressedSize(compressedAlpha), 5u);
   EXPECT_EQ(p.maxDecompressedSize(compressedBeta), 4u);
 
-  std::string output(p.maxDecompressedSize(compressedAlpha), '\0');
+  std::string decompressedOutput(p.maxDecompressedSize(compressedAlpha), '\0');
   EXPECT_EQ(p.decompressInto(compressedAlpha,
-                             ql::span<char>{output.data(), output.size()}),
+                             ql::span<char>{decompressedOutput.data(),
+                                            decompressedOutput.size()}),
             5u);
-  EXPECT_EQ(output, "alpha");
+  EXPECT_EQ(decompressedOutput, "alpha");
 
-  // Oversized buffers are accepted; only the exact decompressed size is
-  // written and reported.
-  std::string oversized(p.maxDecompressedSize(compressedAlpha) + 7, 'x');
-  EXPECT_EQ(p.decompressInto(compressedAlpha, ql::span<char>{oversized.data(),
-                                                             oversized.size()}),
-            5u);
-  EXPECT_EQ(std::string_view(oversized.data(), 5), "alpha");
+  // Accept an oversized buffer, but write and report only the decompressed
+  // size.
+  std::string oversizedBuffer(p.maxDecompressedSize(compressedAlpha) + 7, 'x');
+  EXPECT_EQ(
+      p.decompressInto(compressedAlpha, ql::span<char>{oversizedBuffer.data(),
+                                                       oversizedBuffer.size()}),
+      5u);
+  EXPECT_EQ(std::string_view(oversizedBuffer.data(), 5), "alpha");
 }
 
 // _____________________________________________________________________________
@@ -130,31 +132,26 @@ TEST(PrefixCompressor, PrefixIndexBoundaryMarkers) {
 // NUM_COMPRESSION_PREFIXES) maps to indices [0, NUM_COMPRESSION_PREFIXES),
 // everything else yields `std::nullopt`.
 TEST(PrefixCompressor, PrefixIndexBoundaries) {
-  using Marker = std::string;
   const auto byteWord = [](unsigned int byte) {
-    return Marker(1, static_cast<char>(byte));
+    return std::string(1, static_cast<char>(byte));
   };
+  EXPECT_FALSE(PrefixCompressor::prefixIndex("").has_value());
   EXPECT_FALSE(
-      ad_utility::vocabulary::PrefixCompressor::prefixIndex("").has_value());
-  EXPECT_FALSE(ad_utility::vocabulary::PrefixCompressor::prefixIndex(
-                   byteWord(MIN_COMPRESSION_PREFIX - 1))
-                   .has_value());
-  EXPECT_EQ(ad_utility::vocabulary::PrefixCompressor::prefixIndex(
-                byteWord(MIN_COMPRESSION_PREFIX)),
+      PrefixCompressor::prefixIndex(byteWord(MIN_COMPRESSION_PREFIX - 1))
+          .has_value());
+  EXPECT_EQ(PrefixCompressor::prefixIndex(byteWord(MIN_COMPRESSION_PREFIX)),
             0u);
-  EXPECT_EQ(ad_utility::vocabulary::PrefixCompressor::prefixIndex(byteWord(
+  EXPECT_EQ(PrefixCompressor::prefixIndex(byteWord(
                 MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES - 1)),
-            NUM_COMPRESSION_PREFIXES - 1u);
-  EXPECT_FALSE(ad_utility::vocabulary::PrefixCompressor::prefixIndex(
+            size_t{NUM_COMPRESSION_PREFIXES} - 1);
+  EXPECT_FALSE(PrefixCompressor::prefixIndex(
                    byteWord(MIN_COMPRESSION_PREFIX + NUM_COMPRESSION_PREFIXES))
                    .has_value());
-  EXPECT_FALSE(
-      ad_utility::vocabulary::PrefixCompressor::prefixIndex(byteWord(0))
-          .has_value());
+  EXPECT_FALSE(PrefixCompressor::prefixIndex(byteWord(0)).has_value());
 }
 
 TEST(PrefixCompressor, MaximumNumberOfPrefixes) {
-  ad_utility::vocabulary::PrefixCompressor p;
+  PrefixCompressor p;
   std::vector<std::string> maximalNumberOfPrefixes;
   for (size_t i = 0; i < NUM_COMPRESSION_PREFIXES; ++i) {
     maximalNumberOfPrefixes.push_back("aaaaa" + std::to_string(i));

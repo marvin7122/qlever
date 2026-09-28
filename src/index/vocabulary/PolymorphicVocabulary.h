@@ -28,8 +28,6 @@
 #include "util/TypeTraits.h"
 #include "util/json.h"
 
-namespace ad_utility::vocabulary {
-
 // A vocabulary that can at runtime choose between different vocabulary
 // implementations. The only restriction is, that a vocabulary can only be read
 // from disk with the same implementation that it was written to.
@@ -100,12 +98,10 @@ class PolymorphicVocabulary {
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
-  // Same as `lookupBatch(indices)`, but decode into `builder` when the
-  // underlying vocabulary supports it (compressed). Otherwise `builder` is
-  // unused and the underlying result is returned. Note: `builder` is consumed
-  // (moved-from) by this call and must not be reused.
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
-                                     ArenaVocabBatchBuilder& builder) const;
+  // Append the words for `indices` to `builder`. Compressed alternatives
+  // decode directly into the arena. Other alternatives copy their results.
+  void lookupBatch(ql::span<const size_t> indices,
+                   ArenaVocabBatchBuilder& builder) const;
 
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const;
@@ -259,7 +255,5 @@ class PolymorphicVocabulary {
         self.vocab_);
   }
 };
-
-}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_POLYMORPHICVOCABULARY_H

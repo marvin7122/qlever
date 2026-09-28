@@ -72,6 +72,17 @@ TEST(GTestHelpersTest, PmrStringSsoCapacity) {
 }
 
 // _____________________________________________________________________________
+TEST(GTestHelpersTest, RequirePmrStringInlineStorageRejectsInvalidSizes) {
+  // `maxSize == 0` violates the precondition, and a size above the probed
+  // capacity violates the platform premise; both must throw.
+  AD_EXPECT_THROW_WITH_MESSAGE(requirePmrStringInlineStorage(0),
+                               ::testing::HasSubstr("maxSize > 0"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      requirePmrStringInlineStorage(pmrStringSsoCapacity() + 1),
+      ::testing::HasSubstr("Platform premise violated"));
+}
+
+// _____________________________________________________________________________
 TEST(GTestHelpersTest, AssertPmrStringUsesSso) {
   // Verify that empty and small strings use inline storage: the data must lie
   // inside the string object itself, not in allocator-provided memory.

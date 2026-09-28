@@ -14,8 +14,6 @@
 #include "engine/CallFixedSize.h"
 #include "util/Exception.h"
 
-namespace ad_utility::vocabulary {
-
 // _____________________________________________________________________________
 void PolymorphicVocabulary::open(const std::string& filename) {
   std::visit([&filename](auto& vocab) { vocab.open(filename); }, vocab_);
@@ -67,17 +65,16 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
 }
 
 // _____________________________________________________________________________
-VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
-    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+void PolymorphicVocabulary::lookupBatch(ql::span<const size_t> indices,
+                                        ArenaVocabBatchBuilder& builder) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  return std::visit(
-      [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
+  std::visit(
+      [&indices, &builder](const auto& vocab) {
         if constexpr (SupportsBuilderLookupBatch<
                           std::decay_t<decltype(vocab)>>) {
           vocab.lookupBatch(indices, builder);
-          return std::move(builder).finalize();
         } else {
-          return vocab.lookupBatch(indices);
+          appendVocabBatchLookupResult(vocab.lookupBatch(indices), builder);
         }
       },
       vocab_);
@@ -134,4 +131,3 @@ void PolymorphicVocabulary::resetToType(VocabularyType type) {
       AD_FAIL();
   }
 }
-}  // namespace ad_utility::vocabulary
