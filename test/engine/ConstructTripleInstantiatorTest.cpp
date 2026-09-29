@@ -602,8 +602,7 @@ TEST(FormatTripleRle, RunOfRepeatedSubjectPredicateMatchesFormatTriple) {
   auto subject = makeTerm("<http://s>");
   auto predicate = makeTerm("<http://p>");
   RleConstructTripleCache cache;
-  for (const std::string& objStr :
-       {"<http://o1>", "<http://o2>", "<http://o3>"}) {
+  for (std::string objStr : {"<http://o1>", "<http://o2>", "<http://o3>"}) {
     auto triple = EvaluatedTriple{subject, predicate, makeTerm(objStr)};
     EXPECT_EQ(formatTriple(triple, ad_utility::MediaType::turtle),
               formatTripleRle(triple, ad_utility::MediaType::turtle, cache));
