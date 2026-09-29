@@ -1,0 +1,33 @@
+name: pr81 gcc11 Werror check
+# Temporary verification for upstream #3529: build the targets of this part with
+# the upstream "Native build" gcc 11 -Werror settings.
+on:
+  push:
+    branches: [ ci/pr81-gcc11-check ]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: 'recursive'
+      - name: Install dependencies
+        uses: ./.github/workflows/install-dependencies-ubuntu
+      - name: Install compiler
+        uses: ./.github/workflows/install-compiler-ubuntu
+        with:
+          compiler: gcc
+          compiler-version: 11
+      - name: Configure
+        run: >-
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="$(pwd)/toolchains/gcc11.cmake"
+          -DADDITIONAL_COMPILER_FLAGS="-Wall -Wextra -Werror -Woverloaded-virtual"
+          -DADDITIONAL_LINKER_FLAGS="-fuse-ld=mold"
+          -DUSE_PARALLEL=true -DRUN_EXPENSIVE_TESTS=true -DENABLE_EXPENSIVE_CHECKS=true
+          -DBUILD_SHARED_LIBS=ON -DQLEVER_ONE_TEST_CASE_PER_FILE=ON
+          -DUSE_PRECOMPILED_HEADERS=OFF -DCHEAPER_COMPILATION=ON
+      - name: Build
+        run: cmake --build build --target SerializerMicroBenchmark FastExportStreamFormatterTest ConstructTripleInstantiatorTest ExportQueryExecutionTreesTest -- -j $(nproc)
+      - name: Test
+        run: cd build && ctest -R "FastExportStreamFormatterTest|ConstructTripleInstantiatorTest|ExportQueryExecutionTreesTest" --output-on-failure
