@@ -602,6 +602,35 @@ TEST(Vocabulary, SplitVocabularyLookupBatchAllCasesMatchItemAt) {
       absl::StrCat(gtestCurrentTestName(), ".compressed"));
 }
 
+// _____________________________________________________________________________
+TEST(Vocabulary, SplitVocabularyLookupBatchMixedMarkersSkipsUnusedVocab) {
+  // A mixed-marker batch that does not use every underlying vocabulary: the
+  // unused one (marker 1) gets no `lookupBatch` call, and the result still
+  // matches `operator[]`.
+  const std::string filename = gtestCurrentTestName();
+  auto cleanup =
+      vocabulary_test::makeVocabFileCleanup<ThreeSplitCompressedVocabulary>(
+          filename);
+  ThreeSplitCompressedVocabulary sv;
+  auto ww = sv.makeDiskWriterPtr(filename);
+  (*ww)("\"abc\"", true);
+  (*ww)("\"xyz\"^^<blabliblu>", true);
+  (*ww)("\"xyz\"^^<http://example.com>", true);
+  (*ww)("\"zzz\"^^<blabliblu>", true);
+  ww->finish();
+  sv.readFromFile(filename);
+
+  const std::array<size_t, 4> indices{static_cast<size_t>(sv.addMarker(1, 2)),
+                                      static_cast<size_t>(sv.addMarker(0, 0)),
+                                      static_cast<size_t>(sv.addMarker(0, 2)),
+                                      static_cast<size_t>(sv.addMarker(1, 2))};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      sv, sv.lookupBatch(indices), indices);
+  EXPECT_EQ(sv[indices[0]], "\"zzz\"^^<blabliblu>");
+  EXPECT_EQ(sv[indices[1]], "\"abc\"");
+  sv.close();
+}
+
 using namespace splitVocabTestHelpers;
 
 // Share common SplitVocabulary setup across multiple tests. Every test gets a
