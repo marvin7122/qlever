@@ -1074,5 +1074,8 @@ TEST(ServerMockSend, CapturesScatterGatherResponseSeparately) {
   ASSERT_TRUE(mockSend.scatterGatherResponse().has_value());
   EXPECT_EQ(mockSend.scatterGatherResponse()->result(),
             boost::beast::http::status::ok);
+  // The regular slot stays untouched: a default `ResponseT` carries
+  // `status::unknown`, so any misrouted capture would show up here.
+  EXPECT_EQ(mockSend.response_.result(), boost::beast::http::status::unknown);
 }
 #endif
