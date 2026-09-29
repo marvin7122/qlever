@@ -148,6 +148,17 @@ void runSelectQueryTestCase(
   EXPECT_EQ(
       runQueryStreamableResult(testCase.kg, testCase.query, csv, useTextIndex),
       testCase.resultCsv);
+  // The per-cell path (batched lookup switched off) gives the same bytes.
+  {
+    auto noBatch = setRuntimeParameterForTest<
+        &RuntimeParameters::selectExportBatchLookup_>(false);
+    EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, tsv,
+                                       useTextIndex),
+              testCase.resultTsv);
+    EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, csv,
+                                       useTextIndex),
+              testCase.resultCsv);
+  }
 
   auto resultJSON = nlohmann::json::parse(runQueryStreamableResult(
       testCase.kg, testCase.query, qleverJson, useTextIndex));
@@ -2329,4 +2340,29 @@ TEST(ExportQueryExecutionTrees, ConstructTurtleFastFormatterProducesSameBytes) {
   const std::string legacy = run(false);
   EXPECT_THAT(legacy, ::testing::HasSubstr("\\\"quotes\\\""));
   EXPECT_EQ(run(true), legacy);
+}
+
+// _____________________________________________________________________________
+// The batched CSV/TSV export of SELECT queries (`select-export-batch-lookup`)
+// is byte-identical to the per-cell export, also when the rows span several
+// batches, repeat `Id`s, and start at an OFFSET inside a batch.
+TEST(ExportQueryExecutionTrees, SelectBatchLookupMatchesPerCellExport) {
+  std::string kg;
+  for (size_t i = 0; i < 9000; ++i) {
+    absl::StrAppend(&kg, "<s", i % 97, "> <p", i % 3, "> \"lit\t", i % 1013,
+                    "\\n,\\\"x\" . <s", i % 97, "> <n> ", i, " .\n");
+  }
+  for (std::string query :
+       {"SELECT ?s ?p ?o WHERE { ?s ?p ?o }",
+        "SELECT ?o ?s WHERE { ?s ?p ?o } ORDER BY ?o LIMIT 5000 OFFSET 1234",
+        "SELECT ?x ?s WHERE { ?s <n> ?o }"}) {
+    for (auto format :
+         {ad_utility::MediaType::tsv, ad_utility::MediaType::csv}) {
+      std::string batched = runQueryStreamableResult(kg, query, format);
+      auto noBatch = setRuntimeParameterForTest<
+          &RuntimeParameters::selectExportBatchLookup_>(false);
+      EXPECT_EQ(batched, runQueryStreamableResult(kg, query, format)) << query;
+      EXPECT_GT(batched.size(), 1000u);
+    }
+  }
 }

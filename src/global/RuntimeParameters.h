@@ -284,6 +284,12 @@ struct RuntimeParameters {
   // client earlier. If false, every chunk has the fixed size of 1 MiB.
   Bool adaptiveExportChunkSize_{true, "adaptive-export-chunk-size"};
 
+  // If true (the default), the CSV and TSV export of SELECT queries resolves
+  // the `Id`s of 4096 rows at a time: each distinct `Id` of a column once, and
+  // all vocabulary words through one batched lookup. If false, every cell is
+  // resolved on its own. The output is byte-identical.
+  Bool selectExportBatchLookup_{true, "select-export-batch-lookup"};
+
   // Opt-in adaptive io_uring batch sizing for vocabulary lookups
   // (`AdaptiveBatchController`): adapt the effective submission batch size
   // to the ratio of outstanding I/Os to still-pending reads instead of

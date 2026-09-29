@@ -35,6 +35,10 @@ using ad_utility::InputRangeTypeErased;
 namespace {
 
 using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
+
+// Number of rows whose `Id`s the CSV/TSV export of SELECT queries resolves in
+// one batch (see `selectExportBatchLookup_`).
+constexpr uint64_t selectExportBatchRows = 4096;
 using Literal = ad_utility::triple_component::Literal;
 
 // _____________________________________________________________________________
@@ -517,6 +521,55 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   constexpr auto& escapeFunction =
       format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
   uint64_t resultSize = 0;
+  // The runtime parameter is read once per export, not once per row.
+  if (getRuntimeParameter<&RuntimeParameters::selectExportBatchLookup_>()) {
+    // Resolve the `Id`s in batches of rows: per selected column, each distinct
+    // `Id` of the batch is looked up once, and all vocabulary lookups of the
+    // batch go through one batched `lookupBatch` pipeline instead of one
+    // single-word lookup per cell. The rows are then written in their original
+    // order, so the output is byte-identical to the per-cell path below.
+    std::vector<ql::exportIds::DeduplicatedStringsAndTypes> resolvedColumns(
+        selectedColumnIndices.size());
+    for (const auto& [pair, range] :
+         getRowIndices(limitAndOffset, *result, resultSize)) {
+      const auto& idTable = pair.idTable();
+      // `range` is a contiguous range of row indices.
+      const uint64_t rowsBegin = *ql::ranges::begin(range);
+      const uint64_t rowsEnd = rowsBegin + ql::ranges::size(range);
+      for (uint64_t batchBegin = rowsBegin; batchBegin < rowsEnd;
+           batchBegin += selectExportBatchRows) {
+        const uint64_t numRows =
+            std::min(selectExportBatchRows, rowsEnd - batchBegin);
+        for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
+          if (selectedColumnIndices[j].has_value()) {
+            resolvedColumns[j] =
+                ql::exportIds::idsToStringAndTypeDeduplicated<format == csv>(
+                    qet.getQec()->getIndex(),
+                    idTable.getColumn(selectedColumnIndices[j]->columnIndex_)
+                        .subspan(batchBegin, numRows),
+                    pair.localVocab(), escapeFunction);
+          }
+        }
+        for (uint64_t k = 0; k < numRows; ++k) {
+          for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
+            if (selectedColumnIndices[j].has_value()) {
+              const auto& optionalStringAndType = resolvedColumns[j][k];
+              if (optionalStringAndType.has_value()) [[likely]] {
+                STREAMABLE_YIELD(optionalStringAndType.value().first);
+              }
+            }
+            if (j + 1 < selectedColumnIndices.size()) {
+              STREAMABLE_YIELD(separator);
+            }
+          }
+          STREAMABLE_YIELD('\n');
+          cancellationHandle->throwIfCancelled();
+        }
+      }
+    }
+    AD_LOG_DEBUG << "Done creating readable result.\n";
+    STREAMABLE_RETURN;
+  }
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
     for (uint64_t i : range) {
