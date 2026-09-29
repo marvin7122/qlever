@@ -216,8 +216,8 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // `finish` completes the lookup and returns the manager to the pool.
   class LookupHandle : public VocabLookupHandleBase {
    public:
-    // Requires `vocab_`, `manager_`, `indices_`, `offsetBatch_` and
-    // `offsetPairs_` to be set by `VocabularyOnDisk::beginLookup`.
+    // Requires `vocab_`, `manager_`, `offsetBatch_` and `offsetPairs_` to be
+    // set by `VocabularyOnDisk::beginLookup`.
     VocabBatchLookupResult finish() override;
 
     // Drain in-flight offset reads, then return the `manager_` if `finish`
@@ -233,9 +233,6 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // The vocabulary that created this handle. It must outlive the handle.
     const VocabularyOnDisk* vocab_ = nullptr;
     std::unique_ptr<ad_utility::BatchManagerBase> manager_;
-    // The requested indices, owned so the offset reads can be completed after
-    // the caller's span has gone out of scope.
-    std::vector<size_t> indices_;
     // The batched offset read submitted by `beginLookup`. Empty until the
     // batch was actually submitted, so a handle whose `beginLookup` threw
     // before the submission never waits on a batch it does not own.

@@ -246,18 +246,17 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   // exit path (including exceptions such as an out-of-range index) without a
   // separate cleanup that could double-return it.
   handle->manager_ = ioManagers_->pop().value();
-  handle->indices_.assign(indices.begin(), indices.end());
 
   // Submit the offset reads (Phase 1) without waiting for them: the caller
   // decides when to block (in `finishLookup`), which is what allows the reads
   // of the next batch to be in flight while the current batch is consumed.
-  const size_t numIndices = handle->indices_.size();
+  const size_t numIndices = indices.size();
   handle->offsetPairs_.resize(numIndices);
   std::vector sizes(numIndices, sizeof(OffsetPair));
   std::vector<uint64_t> fileOffsets(numIndices);
   std::vector<char*> targets(numIndices);
   for (auto&& [fileOffset, index, target, offsetPair] : ::ranges::views::zip(
-           fileOffsets, handle->indices_, targets, handle->offsetPairs_)) {
+           fileOffsets, indices, targets, handle->offsetPairs_)) {
     AD_CONTRACT_CHECK(index < size());
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
@@ -276,10 +275,9 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   // right here. The pairs of consecutive indices overlap in the file, so read
   // each run of consecutive indices `[runBegins[r], runBegins[r + 1])` as one
   // range of `runLength + 1` offsets into `runOffsets`.
-  const auto& indicesRef = handle->indices_;
   std::vector<size_t> runBegins{0};
   for (size_t i = 1; i < numIndices; ++i) {
-    if (indicesRef[i] != indicesRef[i - 1] + 1) {
+    if (indices[i] != indices[i - 1] + 1) {
       runBegins.push_back(i);
     }
   }
