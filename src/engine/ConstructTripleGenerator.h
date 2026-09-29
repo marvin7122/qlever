@@ -89,12 +89,29 @@ class ConstructTripleGenerator {
       ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
       size_t rowOffset, const EvaluationConfig& config);
 
+  // The Turtle export with `FastExportStreamFormatter` on `numThreads` (at
+  // least two) worker threads: the batches of `BATCH_SIZE` rows of each table
+  // are evaluated and formatted concurrently, each worker with its own
+  // `IdCache`, and the strings (one per batch) are returned in batch order, so
+  // the output is byte-identical to the sequential export. Only for
+  // `DeduplicationMode::None` (deduplication depends on the order in which
+  // triples are seen).
+  static InputRangeTypeErased<std::string> formatTablesAsTurtleInParallel(
+      const Triples& templateTriples,
+      const VariableToColumnMap& variableColumns,
+      ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
+      size_t rowOffset, const EvaluationConfig& config, size_t numThreads);
+
   FRIEND_TEST(MakeIdCache, emptyTemplate);
   FRIEND_TEST(MakeIdCache, singleVariable);
   FRIEND_TEST(MakeIdCache, multipleVariables);
   FRIEND_TEST(ConstructTripleGeneratorTest, rowOffsetAccumulatesAcrossTables);
   FRIEND_TEST(ConstructTripleGeneratorTest, cannotCancelDuringBatch);
   FRIEND_TEST(ConstructTripleGeneratorTest, cancellationThrowsBetweenBatches);
+  FRIEND_TEST(ConstructTripleGeneratorTest, parallelTurtleMatchesSequential);
+  FRIEND_TEST(ConstructTripleGeneratorTest,
+              parallelTurtlePropagatesCancellation);
+  FRIEND_TEST(ConstructTripleGeneratorTest, parallelTurtleCanBeAbandoned);
 };
 
 }  // namespace qlever::constructExport

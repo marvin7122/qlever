@@ -2330,3 +2330,38 @@ TEST(ExportQueryExecutionTrees, ConstructTurtleFastFormatterProducesSameBytes) {
   EXPECT_THAT(legacy, ::testing::HasSubstr("\\\"quotes\\\""));
   EXPECT_EQ(run(true), legacy);
 }
+
+// _____________________________________________________________________________
+// The Turtle export of CONSTRUCT queries on several threads
+// (`construct-export-threads`) is byte-identical to the export on one thread,
+// also with several batches per table, blank nodes (whose labels depend on the
+// row number), UNDEF values (rows without triples), repeated terms, and a
+// LIMIT/OFFSET.
+TEST(ExportQueryExecutionTrees, ConstructTurtleParallelMatchesSequential) {
+  std::string kg;
+  for (size_t i = 0; i < 5000; ++i) {
+    absl::StrAppend(&kg, "<s", i % 311, "> <p", i % 5, "> \"v\\n", i % 977,
+                    "\"@en . ");
+    if (i % 3 == 0) {
+      absl::StrAppend(&kg, "<s", i % 311, "> <q> ", i, " . ");
+    }
+  }
+  using enum ad_utility::MediaType;
+  for (std::string query :
+       {"CONSTRUCT { ?s ?p ?o . _:b <r> ?o } WHERE { ?s ?p ?o }",
+        "CONSTRUCT { ?s <x> ?n . ?s <y> ?o } WHERE { ?s ?p ?o OPTIONAL { ?s "
+        "<q> ?n } } LIMIT 3000 OFFSET 777"}) {
+    auto sequential = [&]() {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::constructExportThreads_>(1);
+      return runQueryStreamableResult(kg, query, turtle);
+    }();
+    EXPECT_GT(sequential.size(), 10000u);
+    for (size_t numThreads : {2, 3, 8}) {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::constructExportThreads_>(numThreads);
+      EXPECT_EQ(runQueryStreamableResult(kg, query, turtle), sequential)
+          << query << " with " << numThreads << " threads";
+    }
+  }
+}

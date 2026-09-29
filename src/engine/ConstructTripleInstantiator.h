@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "backports/span.h"
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructTypes.h"
 #include "engine/QueryExecutionTree.h"
@@ -88,6 +89,11 @@ inline constexpr size_t FAST_TURTLE_BATCH_BYTES = 64 * 1024;
 ad_utility::InputRangeTypeErased<std::string> formatTriplesAsTurtleInBatches(
     ad_utility::InputRangeTypeErased<EvaluatedTriple> triples,
     size_t targetBatchBytes = FAST_TURTLE_BATCH_BYTES);
+
+// Formats all `triples` as Turtle with `FastExportStreamFormatter` into one
+// string. The result is byte-identical to the concatenation of
+// `formatTriple(triple, turtle)` for all triples.
+std::string formatTriplesAsTurtle(ql::span<const EvaluatedTriple> triples);
 
 // Creates a `StringTriple` object. Needed for backwards compatibility with
 // `ExportQueryExecutionTrees::constructQueryResultBindingsToQLeverJSON`

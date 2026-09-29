@@ -6,10 +6,12 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
 
 #include "./util/IdTableHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
+#include "backports/StartsWithAndEndsWith.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
@@ -509,6 +511,73 @@ TEST_F(ConstructTripleGeneratorTest,
       EXPECT_ANY_THROW(range.get());
     }
   }
+}
+
+// =============================================================================
+// Tests for `ConstructTripleGenerator::formatTablesAsTurtleInParallel`
+// =============================================================================
+
+// Several tables with several batches each: the strings come in batch order,
+// the blank-node labels use the accumulated row offset, and the result equals
+// the sequential export.
+TEST_F(ConstructTripleGeneratorTest, parallelTurtleMatchesSequential) {
+  constexpr size_t N = 2 * ConstructTripleGenerator::BATCH_SIZE + 5;
+  std::vector<std::vector<IntOrId>> rows;
+  for (size_t i = 0; i < N; ++i) {
+    rows.push_back({i % 2 == 0 ? idS_ : idO_});
+  }
+  auto result1 = makeResult(makeIdTableFromVector(rows));
+  auto result2 = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples =
+      oneTriple(BlankNode{false, "x"}, iriV("<p>"), Variable{"?a"});
+  VariableToColumnMap varMap{{Variable{"?a"}, makeAlwaysDefinedColumn(0)}};
+  auto tables = [&]() {
+    std::vector<TableWithRange> v{makeTableWithRange(*result1, 3, N),
+                                  makeTableWithRange(*result2, 0, N - 1)};
+    return ad_utility::InputRangeTypeErased<TableWithRange>{std::move(v)};
+  };
+  std::string sequential;
+  for (const auto& triple : ConstructTripleGenerator::evaluateTables(
+           templateTriples, varMap, tables(), 7, makeConfig())) {
+    sequential += formatTriple(triple, ad_utility::MediaType::turtle);
+  }
+  ASSERT_FALSE(sequential.empty());
+  for (size_t numThreads : {2, 3, 5}) {
+    auto range = ConstructTripleGenerator::formatTablesAsTurtleInParallel(
+        templateTriples, varMap, tables(), 7, makeConfig(), numThreads);
+    auto strings = collectFormatted(std::move(range));
+    // One string per batch: 3 batches for each table.
+    EXPECT_EQ(strings.size(), 6u);
+    EXPECT_EQ(absl::StrJoin(strings, ""), sequential) << numThreads;
+  }
+}
+
+// A cancelled export throws from the worker into the consumer.
+TEST_F(ConstructTripleGeneratorTest, parallelTurtlePropagatesCancellation) {
+  constexpr size_t N = 3 * ConstructTripleGenerator::BATCH_SIZE;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples = oneTriple(iriV("<s>"), iriV("<p>"), iriV("<o>"));
+  auto handle = makeHandle();
+  handle->cancel(ad_utility::CancellationState::MANUAL);
+  auto range = ConstructTripleGenerator::formatTablesAsTurtleInParallel(
+      templateTriples, {}, singleTableRange(makeTableWithRange(*result, 0, N)),
+      0, makeConfig(handle), 2);
+  EXPECT_ANY_THROW(range.get());
+}
+
+// Destroying the range with batches still in flight joins the workers.
+TEST_F(ConstructTripleGeneratorTest, parallelTurtleCanBeAbandoned) {
+  constexpr size_t N = 20 * ConstructTripleGenerator::BATCH_SIZE;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples = oneTriple(iriV("<s>"), iriV("<p>"), iriV("<o>"));
+  auto range = ConstructTripleGenerator::formatTablesAsTurtleInParallel(
+      templateTriples, {}, singleTableRange(makeTableWithRange(*result, 0, N)),
+      0, makeConfig(), 4);
+  auto first = range.get();
+  ASSERT_TRUE(first.has_value());
+  EXPECT_TRUE(ql::starts_with(first.value(), "<s> <p> <o> .\n"));
 }
 
 }  // namespace qlever::constructExport

@@ -166,6 +166,26 @@ std::string formatTripleAsTurtleWithFastFormatter(
 }
 
 // _____________________________________________________________________________
+std::string formatTriplesAsTurtle(ql::span<const EvaluatedTriple> triples) {
+  using ql::export_formatting::ExportFormat;
+  using ql::export_formatting::FastExportStreamFormatter;
+  size_t bound = 0;
+  for (const auto& triple : triples) {
+    bound += turtleTripleSizeUpperBound(triple);
+  }
+  // Sized to the upper bound, so the fixed-span formatter never runs out of
+  // space, and shrunk to the written size afterwards.
+  std::string result(bound, '\0');
+  FastExportStreamFormatter formatter(
+      ql::span<char>(result.data(), result.size()));
+  for (const auto& triple : triples) {
+    formatter.writeTriple(ExportFormat::Turtle, triple);
+  }
+  result.resize(formatter.currentChunk().size());
+  return result;
+}
+
+// _____________________________________________________________________________
 ad_utility::InputRangeTypeErased<std::string> formatTriplesAsTurtleInBatches(
     ad_utility::InputRangeTypeErased<EvaluatedTriple> triples,
     size_t targetBatchBytes) {
