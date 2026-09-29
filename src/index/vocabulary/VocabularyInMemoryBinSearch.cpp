@@ -6,6 +6,8 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
+
 using std::string;
 
 // _____________________________________________________________________________
@@ -32,14 +34,42 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
         absl::StrCat(fileName, idsSuffix));
     idFile >> ownedIndices();
   }
+  buildIndexSamples();
+}
+
+// _____________________________________________________________________________
+void VocabularyInMemoryBinSearch::buildIndexSamples() {
+  indexSamples_.clear();
+  auto indices = this->indices();
+  if (indices.size() <= indexSampleDistance) {
+    return;
+  }
+  indexSamples_.reserve((indices.size() - 1) / indexSampleDistance + 1);
+  for (size_t i = 0; i < indices.size(); i += indexSampleDistance) {
+    indexSamples_.push_back(indices[i]);
+  }
 }
 
 // _____________________________________________________________________________
 std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
     uint64_t index) const {
   auto indices = this->indices();
-  auto it = ql::ranges::lower_bound(indices, index);
-  if (it != indices.end() && *it == index) {
+  auto first = indices.begin();
+  auto last = indices.end();
+  if (!indexSamples_.empty()) {
+    // The first sample that is greater than `index` is the start of the block
+    // after the one that can contain `index`.
+    const auto block = static_cast<size_t>(
+        ql::ranges::upper_bound(indexSamples_, index) - indexSamples_.begin());
+    if (block == 0) {
+      return std::nullopt;
+    }
+    first = indices.begin() + (block - 1) * indexSampleDistance;
+    last =
+        indices.begin() + std::min(block * indexSampleDistance, indices.size());
+  }
+  auto it = std::lower_bound(first, last, index);
+  if (it != last && *it == index) {
     return static_cast<size_t>(it - indices.begin());
   }
   return std::nullopt;
@@ -104,6 +134,7 @@ VocabularyInMemoryBinSearch::makeDiskWriterPtr(
 void VocabularyInMemoryBinSearch::close() {
   words_.clear();
   indices_.emplace<Indices>();
+  indexSamples_.clear();
 }
 
 // _____________________________________________________________________________
