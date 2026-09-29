@@ -76,6 +76,9 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyIouringPageCacheFastPath_);
   add(ioUringAdaptiveBatchEnabled_);
   add(ioUringAdaptiveBatchMinSize_);
+  add(constructExportBatchRows_);
+  add(constructExportFibersPerColumn_);
+  add(constructExportMaxFibers_);
   add(ioUringAdaptiveBatchMaxSize_);
 
   // Propagate runtime log level changes immediately to the global atomic in
@@ -104,6 +107,10 @@ RuntimeParameters::RuntimeParameters() {
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
   ioUringAdaptiveBatchMinSize_.setParameterConstraint(mustBeStrictlyPositive);
+  constructExportBatchRows_.setParameterConstraint(mustBeStrictlyPositive);
+  constructExportFibersPerColumn_.setParameterConstraint(
+      mustBeStrictlyPositive);
+  constructExportMaxFibers_.setParameterConstraint(mustBeStrictlyPositive);
   ioUringAdaptiveBatchMaxSize_.setParameterConstraint(mustBeStrictlyPositive);
 }
 

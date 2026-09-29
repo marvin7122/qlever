@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "util/FiberIoScheduler.h"
 
@@ -99,6 +100,18 @@ void resolveColumnMisses(const Index& index, const LocalVocab& localVocab,
       ql::exportIds::idsToStringAndTypeDepth2(index, work.missIds_, localVocab);
 }
 
+// Resolve the slice `[begin, end)` of `work.missIds_` into the same slice of
+// the pre-sized `work.missResolved_`. Disjoint slices of one column share no
+// mutable state, so they may run as concurrent fibers.
+void resolveColumnMissSlice(const Index& index, const LocalVocab& localVocab,
+                            ColumnWork& work, size_t begin, size_t end) {
+  auto ids = ql::span<const Id>{work.missIds_}.subspan(begin, end - begin);
+  auto resolved =
+      ql::exportIds::idsToStringAndTypeDepth2(index, ids, localVocab);
+  std::move(resolved.begin(), resolved.end(),
+            work.missResolved_.begin() + begin);
+}
+
 // Convert the result of `ExportIds::idToStringAndType` to an `EvaluatedTerm`.
 std::optional<EvaluatedTerm> stringAndTypeToEvaluatedTerm(
     std::optional<std::pair<std::string, const char*>>&& optStringAndType) {
@@ -158,40 +171,61 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
   }
 
   // Phase B in waves of concurrent fibers, so one thread keeps several
-  // lookup batches in flight (design step 1). Only columns with misses take
-  // part. Each in-flight column holds up to `kIoManagersPerColumn` pooled I/O
-  // managers (the depth-2 lookup keeps the next sub-batch in flight), so a
-  // wave of `NUM_VOCAB_BATCH_IO_MANAGERS / kIoManagersPerColumn` columns
-  // uses exactly the managers the vocabulary creates up front, and a single
-  // export never makes the pool grow. The pool does not block when it is
-  // empty (it creates a manager), so the bound limits the number of rings and
-  // fiber stacks, not correctness. A lone resolvable column skips fibers (no
-  // overlap possible, avoid the setup).
-  std::vector<size_t> resolvable;
+  // lookup batches in flight. Only columns with misses take part. Research
+  // knobs: each column's misses are split into up to
+  // `construct-export-fibers-per-column` contiguous slices of at least
+  // `maxVocabIndicesPerSubBatch` ids, and at most
+  // `construct-export-max-fibers` slices run concurrently. The defaults (1
+  // slice per column, 4 fibers) are the column waves of 4: each column holds
+  // up to two pooled I/O managers (depth-2 lookup), so a wave uses the 8
+  // managers the vocabulary creates up front. The pool does not block when
+  // it is empty (it creates a manager). A lone slice skips fibers.
+  const size_t slicesPerColumn = getRuntimeParameter<
+      &RuntimeParameters::constructExportFibersPerColumn_>();
+  const size_t maxFibers =
+      getRuntimeParameter<&RuntimeParameters::constructExportMaxFibers_>();
+  struct Slice {
+    size_t column_;
+    size_t begin_;
+    size_t end_;
+    bool whole_;
+  };
+  std::vector<Slice> slices;
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (!columns[i].missIds_.empty()) {
-      resolvable.push_back(i);
+    const size_t n = columns[i].missIds_.size();
+    if (n == 0) {
+      continue;
+    }
+    const size_t k = std::max<size_t>(
+        1, std::min(slicesPerColumn,
+                    n / ql::exportIds::maxVocabIndicesPerSubBatch));
+    if (k == 1) {
+      slices.push_back({i, 0, n, true});
+      continue;
+    }
+    columns[i].missResolved_.resize(n);
+    for (size_t j = 0; j < k; ++j) {
+      slices.push_back({i, n * j / k, n * (j + 1) / k, false});
     }
   }
-  constexpr size_t kIoManagersPerColumn = 2;
-  constexpr size_t kMaxConcurrentColumns =
-      NUM_VOCAB_BATCH_IO_MANAGERS / kIoManagersPerColumn;
-  static_assert(kMaxConcurrentColumns >= 1);
-  for (size_t begin = 0; begin < resolvable.size();
-       begin += kMaxConcurrentColumns) {
-    const size_t end =
-        std::min(begin + kMaxConcurrentColumns, resolvable.size());
+  auto runSlice = [&index, &localVocab, &columns](const Slice& slice) {
+    if (slice.whole_) {
+      resolveColumnMisses(index, localVocab, columns[slice.column_]);
+    } else {
+      resolveColumnMissSlice(index, localVocab, columns[slice.column_],
+                             slice.begin_, slice.end_);
+    }
+  };
+  for (size_t begin = 0; begin < slices.size(); begin += maxFibers) {
+    const size_t end = std::min(begin + maxFibers, slices.size());
     if (end - begin == 1) {
-      resolveColumnMisses(index, localVocab, columns[resolvable[begin]]);
+      runSlice(slices[begin]);
       continue;
     }
     std::vector<std::function<void()>> bodies;
     bodies.reserve(end - begin);
-    for (size_t i :
-         ql::span<const size_t>{resolvable}.subspan(begin, end - begin)) {
-      bodies.emplace_back([&index, &localVocab, &columns, i]() {
-        resolveColumnMisses(index, localVocab, columns[i]);
-      });
+    for (size_t s = begin; s < end; ++s) {
+      bodies.emplace_back([&runSlice, &slices, s]() { runSlice(slices[s]); });
     }
     ad_utility::FiberIoScheduler::runAsFibers(std::move(bodies));
   }

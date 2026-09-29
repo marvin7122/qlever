@@ -301,6 +301,13 @@ struct RuntimeParameters {
   // are clamped to the ring size, and a maximum below the minimum is raised
   // to the minimum.
   SizeT ioUringAdaptiveBatchMaxSize_{256, "iouring-adaptive-batch-max-size"};
+  // Research knobs (bench only): rows per CONSTRUCT evaluation batch, the
+  // number of fiber slices each column's misses are split into, and the
+  // maximum number of fibers resolved concurrently in phase B.
+  SizeT constructExportBatchRows_{1024, "construct-export-batch-rows"};
+  SizeT constructExportFibersPerColumn_{1,
+                                        "construct-export-fibers-per-column"};
+  SizeT constructExportMaxFibers_{4, "construct-export-max-fibers"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
