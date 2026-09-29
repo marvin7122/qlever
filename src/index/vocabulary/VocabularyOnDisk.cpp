@@ -438,6 +438,10 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 void VocabularyOnDisk::open(const std::string& filename) {
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+  // The vocabulary is read with many small reads, for which the access time
+  // check is a measurable part of the kernel time.
+  file_.disableAccessTimeUpdatesIfPermitted();
+  offsetsFile_.disableAccessTimeUpdatesIfPermitted();
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.

@@ -6,6 +6,7 @@
 #define QLEVER_SRC_UTIL_FILE_H
 
 #include <absl/strings/str_cat.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -102,6 +103,30 @@ class File {
   [[nodiscard]] int fd() const {
     assert(file_);
     return fileno(file_);
+  }
+
+  // Stop the kernel from updating the access time of the file on reads, if
+  // permitted. Every read of a file (also a page-cache hit) otherwise checks
+  // whether the access time has to be updated (`touch_atime`), which is a
+  // measurable part of the kernel time of small reads. `O_NOATIME` is only
+  // permitted to the owner of the file (or with `CAP_FOWNER`); in all other
+  // cases, and where `O_NOATIME` does not exist, nothing changes. The flag
+  // belongs to the open file description, so it also holds for the
+  // duplicates from `duplicateForReading`. Return true iff the flag is set.
+  // See open(2) and fcntl(2):
+  // https://web.archive.org/web/20260923074325/https://www.man7.org/linux/man-pages/man2/open.2.html
+  bool disableAccessTimeUpdatesIfPermitted() {
+    AD_CONTRACT_CHECK(isOpen());
+#ifdef O_NOATIME
+    const int flags = ::fcntl(fd(), F_GETFL);
+    if (flags == -1) {
+      return false;
+    }
+    return (flags & O_NOATIME) != 0 ||
+           ::fcntl(fd(), F_SETFL, flags | O_NOATIME) == 0;
+#else
+    return false;
+#endif
   }
 
   // Return a new `File` for the same underlying file by duplicating the file

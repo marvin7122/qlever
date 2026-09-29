@@ -147,3 +147,33 @@ TEST(File, makeFilestream) {
   ASSERT_THROW(ad_utility::makeIfstream("nonExisting1620349.datxyz"),
                std::runtime_error);
 }
+
+// _____________________________________________________________________________
+TEST(File, disableAccessTimeUpdatesIfPermitted) {
+  using ad_utility::File;
+  std::string filename = "testFileNoAtime.tmp";
+  {
+    File file(filename, "w");
+    file.write("abc", 3);
+  }
+  File file(filename, "r");
+#ifdef O_NOATIME
+  // The test owns the file, so the flag can be set, also twice, and it is
+  // shared with a duplicate.
+  EXPECT_TRUE(file.disableAccessTimeUpdatesIfPermitted());
+  EXPECT_TRUE(file.disableAccessTimeUpdatesIfPermitted());
+  EXPECT_NE(::fcntl(file.fd(), F_GETFL) & O_NOATIME, 0);
+  File duplicate = file.duplicateForReading();
+  EXPECT_NE(::fcntl(duplicate.fd(), F_GETFL) & O_NOATIME, 0);
+#else
+  EXPECT_FALSE(file.disableAccessTimeUpdatesIfPermitted());
+#endif
+  // Reads are unaffected.
+  std::string s(3, '\0');
+  EXPECT_EQ(file.read(s.data(), 3, 0), 3);
+  EXPECT_EQ(s, "abc");
+  file.close();
+  // A closed file is a contract violation.
+  EXPECT_ANY_THROW(file.disableAccessTimeUpdatesIfPermitted());
+  ad_utility::deleteFile(filename);
+}
