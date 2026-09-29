@@ -25,6 +25,7 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/ResidentFileMapping.h"
 #include "util/Serializer/Serializer.h"
 
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
@@ -46,6 +47,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
+
+  // Read-only mappings of `file_` and `offsetsFile_` with the pages that this
+  // process has read before (see `vocabulary-mmap-resident-reads`).
+  ad_utility::ResidentFileMapping wordsMapping_;
+  ad_utility::ResidentFileMapping offsetsMapping_;
 
   // Pool of persistent `BatchIoManager`s for `beginLookup`. `acquire` never
   // blocks: when every pooled manager is taken, it creates a new one, which
@@ -284,6 +290,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // `vocabulary-iouring-page-cache-fast-path`). Fixed by `beginLookup`, so
     // both phases of one lookup take the same path.
     bool pageCacheFastPath_ = false;
+    // Whether this lookup also reads from the mappings of known resident pages
+    // (see `vocabulary-mmap-resident-reads`); only with `pageCacheFastPath_`.
+    bool residentReads_ = false;
+    // The positions (in `indices_`) whose offsets were submitted to the
+    // `manager_`; their pages are marked resident once the reads completed.
+    std::vector<size_t> offsetPositionsReadThroughManager_;
 
     // Hand the `manager_` back to the pool. Used by `finish` and the
     // destructor; the handle owns the manager until one of them runs.
@@ -300,7 +312,18 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // through `manager`.
   VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
                                      ql::span<const OffsetPair> offsetPairs,
-                                     bool pageCacheFastPath) const;
+                                     bool pageCacheFastPath,
+                                     bool residentReads) const;
+
+  // Serve the reads `i` (`numBytes[i]` bytes at `offsets[i]` of `fd` into
+  // `buffers[i]`) whose pages `mapping` knows as resident from the mapping
+  // (only if `mapping` is not null), then the page-cache hits among the
+  // others with `readPageCacheHits`, and mark the pages of the latter as
+  // resident. Return the indices (ascending) of the reads not served.
+  static std::vector<size_t> readResidentOrPageCacheHits(
+      const ad_utility::ResidentFileMapping* mapping, int fd,
+      ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+      ql::span<char*> buffers);
 
   // Submit the reads of `numBytes[i]` bytes at `offsets[i]` of `fd` into
   // `buffers[i]` for every `i` in `positions` to `manager` as one batch,

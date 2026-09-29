@@ -599,6 +599,7 @@ addLinkAndDiscoverTestNoLibs(ConstexprMapTest)
 addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
+addLinkAndDiscoverTestNoLibs(ResidentFileMappingTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(FiberIoSchedulerTest qlever_util)
 

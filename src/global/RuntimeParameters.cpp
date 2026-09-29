@@ -74,6 +74,7 @@ RuntimeParameters::RuntimeParameters() {
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
   add(vocabularyIouringPageCacheFastPath_);
+  add(vocabularyMmapResidentReads_);
   add(ioUringAdaptiveBatchEnabled_);
   add(ioUringAdaptiveBatchMinSize_);
   add(ioUringAdaptiveBatchMaxSize_);

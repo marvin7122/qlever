@@ -370,6 +370,37 @@ TEST(VocabularyOnDisk, PageCacheFastPathMissesGoThroughTheManager) {
       *vocab, secondResult, ql::span<const size_t>{indices}.subspan(3));
 }
 
+// _____________________________________________________________________________
+// With `vocabulary-mmap-resident-reads`, the second lookup of the same words is
+// served from the mappings (their pages were marked resident by the first
+// one). The results are the same as without the mappings, also after the files
+// were evicted from the page cache (the mapping then faults the pages back
+// in), and for words that were read through the batch manager.
+TEST(VocabularyOnDisk, ResidentReadsAreByteIdentical) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
+  auto withoutMapping = [&]() {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyMmapResidentReads_>(false);
+    return vocab->lookupBatch(indices);
+  }();
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyMmapResidentReads_>(true);
+  // Cold: through the manager, then marked resident.
+  evictExampleVocabularyFromPageCache();
+  auto first = vocab->lookupBatch(indices);
+  // Served from the mappings.
+  auto second = vocab->lookupBatch(indices);
+  // Marked resident, but evicted since.
+  evictExampleVocabularyFromPageCache();
+  auto third = vocab->lookupBatch(indices);
+  for (const auto* result : {&first, &second, &third}) {
+    EXPECT_THAT(*result, ::testing::ElementsAreArray(withoutMapping));
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, *result, indices);
+  }
+}
+
 // An empty batch is an invalid request and must throw.
 TEST(VocabularyOnDisk, LookupBatchEmptyThrows) {
   auto vocab = createExampleVocabulary();
