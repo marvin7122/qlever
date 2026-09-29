@@ -298,9 +298,53 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
         << "Mismatch at index " << i;
   }
 
-  auto depth2 = ql::exportIds::idsToStringAndTypeDepth2(
+  auto pipelined = ql::exportIds::idsToStringAndTypePipelined(
       index, ql::span<const Id>{ids}, localVocab);
-  EXPECT_EQ(depth2, batchResults);
+  EXPECT_EQ(pipelined, batchResults);
+}
+
+// _____________________________________________________________________________
+// `idsToStringAndTypePipelined` with more than two full sub-batches plus a
+// partial one, so that every stage of the pipeline (a finished sub-batch, the
+// word reads of the next one, the offset reads of the one after) is in use,
+// and with non-vocabulary IDs interleaved. The result must equal
+// `idsToStringAndType`, for an in-memory and an on-disk vocabulary.
+TEST(ExportIds, idsToStringAndTypePipelinedSpansSeveralSubBatches) {
+  constexpr size_t numSubjects =
+      2 * ql::exportIds::maxVocabIndicesPerSubBatch + 100;
+  std::string kg;
+  for (size_t i = 0; i < numSubjects; ++i) {
+    absl::StrAppend(&kg, "<s", i, "> <p> \"label ", i, "\" . ");
+  }
+  using ad_utility::VocabularyType;
+  for (auto type : {VocabularyType::Enum::InMemoryUncompressed,
+                    VocabularyType::Enum::OnDiskCompressed}) {
+    SCOPED_TRACE(VocabularyType{type}.toString());
+    ad_utility::testing::TestIndexConfig config{kg};
+    config.vocabularyType = VocabularyType{type};
+    auto qec = ad_utility::testing::getQec(std::move(config));
+    const Index& index = qec->getIndex();
+    LocalVocab localVocab{};
+    auto getId = ad_utility::testing::makeGetId(index);
+
+    // Two vocabulary IDs per subject (in reverse order, so that the lookups
+    // are not sorted), and a non-vocabulary ID after every 7th subject.
+    std::vector<Id> ids;
+    for (size_t i = numSubjects; i-- > 0;) {
+      ids.push_back(getId(absl::StrCat("<s", i, ">")));
+      ids.push_back(getId(absl::StrCat("\"label ", i, "\"")));
+      if (i % 7 == 0) {
+        ids.push_back(Id::makeFromInt(static_cast<int64_t>(i)));
+      }
+    }
+    ASSERT_GT(ids.size(), 4 * ql::exportIds::maxVocabIndicesPerSubBatch);
+
+    auto expected = ql::exportIds::idsToStringAndType(
+        index, ql::span<const Id>{ids}, localVocab);
+    auto pipelined = ql::exportIds::idsToStringAndTypePipelined(
+        index, ql::span<const Id>{ids}, localVocab);
+    EXPECT_EQ(pipelined, expected);
+  }
 }
 
 // _____________________________________________________________________________

@@ -800,6 +800,14 @@ class VocabLookupHandleBase {
  public:
   virtual ~VocabLookupHandleBase() = default;
 
+  // Make progress without blocking on the reads that `beginLookup` submitted
+  // last: a lookup that reads in several dependent rounds (e.g. first the
+  // offsets of the words, then the words) waits for the first round and
+  // submits the next one, without waiting for it. Calling it is optional and
+  // idempotent; `finish` does the remaining work. The default does nothing,
+  // for lookups with a single round of reads or none.
+  virtual void advance() {}
+
   // Block until every read of the lookup has completed and return the resolved
   // string representations, in the same order as the indices passed to the
   // corresponding `beginLookup`.

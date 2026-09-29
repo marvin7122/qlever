@@ -318,9 +318,10 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
 
 // With the fast path, the offsets and words that miss the page cache are
 // submitted to the batch manager: `beginLookup` submits the offset pairs of the
-// missed runs without waiting, `finishLookup` waits for them and then reads the
-// missed words. The result must be the same as for cached files, for runs of
-// consecutive indices as well as for reordered and duplicated indices.
+// missed runs without waiting, `advance` waits for them and submits the missed
+// words, `finishLookup` waits for the words. The result must be the same as for
+// cached files, for runs of consecutive indices as well as for reordered and
+// duplicated indices.
 TEST(VocabularyOnDisk, PageCacheFastPathMissesGoThroughTheManager) {
   auto vocab = createExampleVocabulary();
   ASSERT_TRUE(getRuntimeParameter<
@@ -330,11 +331,15 @@ TEST(VocabularyOnDisk, PageCacheFastPathMissesGoThroughTheManager) {
   auto result = vocab->lookupBatch(indices);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
                                                                 indices);
-  // Two lookups in flight at the same time (as in the depth-2 pipeline of the
+  // Two lookups in flight at the same time (as in the pipeline of the
   // CONSTRUCT export), finished in submission order.
   evictExampleVocabularyFromPageCache();
   auto first = vocab->beginLookup(indices);
   auto second = vocab->beginLookup(ql::span<const size_t>{indices}.subspan(3));
+  // `advance` submits the word reads of `first`; calling it again does
+  // nothing.
+  first->advance();
+  first->advance();
   auto firstResult = vocab->finishLookup(std::move(first));
   auto secondResult = vocab->finishLookup(std::move(second));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
@@ -364,9 +369,10 @@ TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
                                                                 validIndices);
 }
 
-// A handle whose offset reads are in flight may be destroyed without calling
-// `finishLookup`: its destructor drains the reads and returns the pooled I/O
-// manager, so later lookups still work. `finishLookup` rejects a null handle.
+// A handle whose offset or word reads are in flight may be destroyed without
+// calling `finishLookup`: its destructor drains the reads and returns the
+// pooled I/O manager, so later lookups still work. `finishLookup` rejects a
+// null handle.
 TEST(VocabularyOnDisk, DroppedInFlightHandleReturnsManager) {
   auto vocab = createExampleVocabulary();
   std::array<size_t, 3> indices{4, 0, 2};
@@ -388,6 +394,11 @@ TEST(VocabularyOnDisk, DroppedInFlightHandleReturnsManager) {
         evictExampleVocabularyFromPageCache();
       }
       auto handle = vocab->beginLookup(indices);
+      // Every other handle is dropped after `advance`, with its word reads
+      // in flight instead of its offset reads.
+      if (round % 2 == 1) {
+        handle->advance();
+      }
     }
   }
   auto result = vocab->finishLookup(vocab->beginLookup(indices));

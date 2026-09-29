@@ -703,6 +703,11 @@ CPP_template(typename UnderlyingVocabulary,
     std::vector<size_t> indices_;
     std::unique_ptr<VocabLookupHandleBase> underlyingHandle_;
 
+    void advance() override {
+      AD_CORRECTNESS_CHECK(underlyingHandle_ != nullptr);
+      underlyingHandle_->advance();
+    }
+
     VocabBatchLookupResult finish() override {
       AD_CORRECTNESS_CHECK(underlyingHandle_ != nullptr);
       auto compressed = underlyingHandle_->finish();

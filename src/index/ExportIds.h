@@ -350,19 +350,22 @@ idsToStringAndType(const Index& index, ql::span<const Id> ids,
   return results;
 }
 
-// Depth-2 pipeline over many vocab sub-batches: submit the next sub-batch's
-// lookup before consuming the current one, so its reads are in flight while
-// the current batch is consumed. Each sub-batch is at most 256 indices so
-// `beginLookup` stays non-blocking: `addBatch` drains once in-flight reads
-// reach the default ring size (256). Depth-2 uses two pooled managers, not
-// one 512-slot ring.
+// Pipelined lookup of the `VocabIndex` IDs of `ids` in sub-batches, for exports
+// of many IDs. A vocabulary lookup of an on-disk word reads in two dependent
+// rounds (the offsets of the words, then the words), so the pipeline has three
+// stages: while sub-batch k is finished (its words are decoded and converted),
+// the word reads of sub-batch k + 1 and the offset reads of sub-batch k + 2 are
+// in flight. Each sub-batch has at most 256 indices, the ring size, so no
+// submission waits for a free ring slot; three lookups (and thus three pooled
+// I/O managers) are in flight at a time. All other IDs are resolved as in
+// `idsToStringAndType`, and so is the result.
 constexpr size_t maxVocabIndicesPerSubBatch = 256;
 
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
           typename EscapeFunction = ql::identity>
 std::vector<std::optional<std::pair<std::string, const char*>>>
-idsToStringAndTypeDepth2(
+idsToStringAndTypePipelined(
     const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
     const EscapeFunction& escapeFunction = EscapeFunction{}) {
   std::vector<std::optional<std::pair<std::string, const char*>>> results(
@@ -375,38 +378,42 @@ idsToStringAndTypeDepth2(
 
   const auto vocabPositions =
       ql::span<const size_t>{positions.vocabIndexIndices_};
-  const size_t numVocabIndices = vocabPositions.size();
-  if (numVocabIndices == 0) {
-    return results;
-  }
-  // Submit the first sub-batch's lookup, then walk the remaining sub-batches
-  // in a depth-2 pipeline: each iteration submits the next sub-batch's lookup
-  // before finishing the current one, so the next batch's reads are in flight
-  // while the current batch is consumed.
-  auto handle = beginResolveVocabIndexIds(
-      index, ids,
-      vocabPositions.subspan(
-          0, std::min(maxVocabIndicesPerSubBatch, numVocabIndices)));
-  size_t batchStart = 0;
-  size_t batchSize = std::min(maxVocabIndicesPerSubBatch, numVocabIndices);
-  while (handle) {
-    const size_t batchEnd = batchStart + batchSize;
-    std::unique_ptr<VocabLookupHandleBase> nextHandle;
-    if (batchEnd < numVocabIndices) {
-      nextHandle = beginResolveVocabIndexIds(
-          index, ids,
-          vocabPositions.subspan(batchEnd,
-                                 std::min(maxVocabIndicesPerSubBatch,
-                                          numVocabIndices - batchEnd)));
+  const size_t numSubBatches =
+      (vocabPositions.size() + maxVocabIndicesPerSubBatch - 1) /
+      maxVocabIndicesPerSubBatch;
+  // The positions of sub-batch `k`.
+  auto subBatch = [&vocabPositions](size_t k) {
+    const size_t begin = k * maxVocabIndicesPerSubBatch;
+    return vocabPositions.subspan(
+        begin,
+        std::min(maxVocabIndicesPerSubBatch, vocabPositions.size() - begin));
+  };
+  auto beginSubBatch = [&](size_t k) -> std::unique_ptr<VocabLookupHandleBase> {
+    if (k >= numSubBatches) {
+      return nullptr;
     }
+    return beginResolveVocabIndexIds(index, ids, subBatch(k));
+  };
+
+  // Fill the pipeline: sub-batch 0 with its word reads submitted, sub-batch 1
+  // with its offset reads submitted.
+  auto current = beginSubBatch(0);
+  if (current) {
+    current->advance();
+  }
+  auto next = beginSubBatch(1);
+  for (size_t k = 0; k < numSubBatches; ++k) {
+    // The offset reads of `next` were in flight while sub-batch k - 1 was
+    // finished; wait for them and submit its word reads.
+    if (next) {
+      next->advance();
+    }
+    auto afterNext = beginSubBatch(k + 2);
     finishResolveVocabIndexIds<removeQuotesAndAngleBrackets,
                                returnOnlyLiterals>(
-        index, vocabPositions.subspan(batchStart, batchSize), std::move(handle),
-        results, escapeFunction);
-    handle = std::move(nextHandle);
-    batchStart = batchEnd;
-    batchSize =
-        std::min(maxVocabIndicesPerSubBatch, numVocabIndices - batchStart);
+        index, subBatch(k), std::move(current), results, escapeFunction);
+    current = std::move(next);
+    next = std::move(afterNext);
   }
   return results;
 }

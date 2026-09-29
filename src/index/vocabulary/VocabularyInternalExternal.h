@@ -207,6 +207,8 @@ class VocabularyInternalExternal {
   // assembled result.
   class MixedLookupHandle : public VocabLookupHandleBase {
    public:
+    // Forward to the lookup of the external words, if there is one.
+    void advance() override;
     VocabBatchLookupResult finish() override;
 
    private:

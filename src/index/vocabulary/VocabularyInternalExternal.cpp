@@ -76,6 +76,13 @@ VocabBatchLookupResult VocabularyInternalExternal::finishLookup(
 }
 
 // _____________________________________________________________________________
+void VocabularyInternalExternal::MixedLookupHandle::advance() {
+  if (externalHandle_ != nullptr) {
+    externalHandle_->advance();
+  }
+}
+
+// _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::MixedLookupHandle::finish() {
   if (externalSlots_.empty()) {
     return std::move(assembler_).finalizeVocabBatchLookupResult();

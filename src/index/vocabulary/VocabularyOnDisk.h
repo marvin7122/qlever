@@ -212,36 +212,52 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   };
 
   // The state of a split-phase lookup: owns the pooled I/O manager (removed
-  // from the pool by `beginLookup`) and the submitted offset-read batch until
-  // `finish` completes the lookup and returns the manager to the pool.
+  // from the pool by `beginLookup`), the submitted reads and their target
+  // buffers until `finish` completes the lookup and returns the manager to the
+  // pool. A lookup reads in two dependent rounds: `beginLookup` submits the
+  // offset pairs, `advance` waits for them and submits the words, `finish`
+  // waits for the words.
   class LookupHandle : public VocabLookupHandleBase {
    public:
-    // Requires `vocab_`, `manager_`, `offsetBatch_` and `offsetPairs_` to be
-    // set by `VocabularyOnDisk::beginLookup`.
+    // Wait for the offset reads (if they are still in flight) and submit the
+    // word reads without waiting for them. Idempotent.
+    void advance() override;
+
+    // Call `advance` if that has not happened yet, wait for the word reads and
+    // return the words.
     VocabBatchLookupResult finish() override;
 
-    // Drain in-flight offset reads, then return the `manager_` if `finish`
-    // was never called. The reads target `offsetPairs_`, which dies here.
+    // If `finish` was never called, drain the in-flight reads (they target
+    // buffers owned by this handle), then return the `manager_`.
     ~LookupHandle() override;
 
    private:
-    // Only `VocabularyOnDisk::beginLookup` sets up the state below. The handle
-    // is only reachable through `VocabLookupHandleBase`, so no other code can
-    // mutate the targets of the in-flight reads.
+    // Only `VocabularyOnDisk` sets up the state below. The handle is only
+    // reachable through `VocabLookupHandleBase`, so no other code can mutate
+    // the targets of the in-flight reads.
     friend class VocabularyOnDisk;
 
     // The vocabulary that created this handle. It must outlive the handle.
     const VocabularyOnDisk* vocab_ = nullptr;
     std::unique_ptr<ad_utility::BatchManagerBase> manager_;
-    // The batched offset read submitted by `beginLookup`. Empty until the
-    // batch was actually submitted, so a handle whose `beginLookup` threw
-    // before the submission never waits on a batch it does not own.
+    // The batched offset read submitted by `beginLookup`. Empty if nothing was
+    // submitted (all pairs served from the page cache, or `beginLookup` threw
+    // before the submission) and after `advance` waited for it.
     std::optional<ad_utility::BatchManagerBase::BatchHandle> offsetBatch_;
-    // The target buffers of the submitted offset read.
+    // The target buffers of the offset reads.
     std::vector<OffsetPair> offsetPairs_;
+    // The batched word read submitted by `advance`; empty if nothing was
+    // submitted or after `finish` waited for it.
+    std::optional<ad_utility::BatchManagerBase::BatchHandle> wordBatch_;
+    // The target buffer of the word reads (set by `advance`), and the
+    // per-word read requests, which live as long as the reads.
+    std::optional<ContiguousVocabBatchBuilder> wordBuilder_;
+    std::vector<size_t> wordSizes_;
+    std::vector<uint64_t> wordFileOffsets_;
+    std::vector<char*> wordTargets_;
     // Whether this lookup uses the page-cache fast path (see
     // `vocabulary-iouring-page-cache-fast-path`). Fixed by `beginLookup`, so
-    // both phases of one lookup take the same path.
+    // both rounds of one lookup take the same path.
     bool pageCacheFastPath_ = false;
 
     // Hand the `manager_` back to the pool. Used by `finish` and the
@@ -249,17 +265,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     void returnManagerToPool();
   };
 
-  // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
-  // string data from `file_` into one contiguous buffer in a single batched
-  // read via `manager`, and return it as a `VocabBatchLookupResult`.
-  // `offsetPairs` must be non-empty (guaranteed by `lookupBatch`, which
-  // rejects empty input; the `ContiguousVocabBatchBuilder` requires it). With
-  // `pageCacheFastPath`, the words that are in the page cache are read with
-  // `readPageCacheHits` (adjacent words in one call), and only the others go
-  // through `manager`.
-  VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
-                                     ql::span<const OffsetPair> offsetPairs,
-                                     bool pageCacheFastPath) const;
+  // Second round of a lookup (`LookupHandle::advance`): given the offset
+  // pairs of `handle`, set up its word buffer and submit the word reads from
+  // `file_` without waiting. With the fast path, the words that are in the
+  // page cache are read right here with `preadv2(RWF_NOWAIT)`, and only the
+  // others are submitted.
+  void submitWordReads(LookupHandle& handle) const;
 
   // Submit the reads of `numBytes[i]` bytes at `offsets[i]` of `fd` into
   // `buffers[i]` for every `i` in `positions` to `manager` as one batch,
@@ -271,14 +282,6 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
                        ql::span<const uint64_t> offsets,
                        ql::span<char*> buffers,
                        ql::span<const size_t> positions);
-
-  // Read `numBytes[i]` bytes at `offsets[i]` of `fd` into `buffers[i]` for
-  // every `i` in `positions` through `manager` and wait for them.
-  static void readThroughManager(ad_utility::BatchManagerBase& manager, int fd,
-                                 ql::span<const size_t> numBytes,
-                                 ql::span<const uint64_t> offsets,
-                                 ql::span<char*> buffers,
-                                 ql::span<const size_t> positions);
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H

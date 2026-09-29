@@ -185,52 +185,35 @@ VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
 }
 
 // _____________________________________________________________________________
-void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
-                                          int fd,
-                                          ql::span<const size_t> numBytes,
-                                          ql::span<const uint64_t> offsets,
-                                          ql::span<char*> buffers,
-                                          ql::span<const size_t> positions) {
-  auto batch =
-      submitThroughManager(manager, fd, numBytes, offsets, buffers, positions);
-  if (batch.has_value()) {
-    manager.wait(batch.value());
-  }
-}
-
-// _____________________________________________________________________________
-VocabBatchLookupResult VocabularyOnDisk::readStrings(
-    ad_utility::BatchManagerBase& manager,
-    ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath) const {
-  // Read the string data. String `i` starts at `offset_` with length
-  // `nextOffset_ - offset_`; the strings are packed contiguously into the
-  // builder's buffer, with one precomputed view per word at its fixed offset.
-  const size_t numIndices = offsetPairs.size();
-  std::vector<size_t> sizes(numIndices);
-  std::vector<uint64_t> fileOffsets(numIndices);
-  for (auto&& [size, fileOffset, offsetPair] :
-       ::ranges::views::zip(sizes, fileOffsets, offsetPairs)) {
+void VocabularyOnDisk::submitWordReads(LookupHandle& handle) const {
+  // Word `i` starts at `offset_` with length `nextOffset_ - offset_`. The
+  // words are packed contiguously into the builder's buffer, with one
+  // precomputed view per word at its fixed offset.
+  const size_t numIndices = handle.offsetPairs_.size();
+  handle.wordSizes_.resize(numIndices);
+  handle.wordFileOffsets_.resize(numIndices);
+  for (auto&& [size, fileOffset, offsetPair] : ::ranges::views::zip(
+           handle.wordSizes_, handle.wordFileOffsets_, handle.offsetPairs_)) {
     size = offsetPair.wordSize();
     fileOffset = offsetPair.offset();
   }
 
-  // `lookupBatch` rejects empty input, so `sizes` is non-empty here, as the
-  // builder requires.
-  AD_CORRECTNESS_CHECK(!sizes.empty());
-  ContiguousVocabBatchBuilder builder(sizes);
-  // Bind the returned array: `addBatch` takes a span, and the pointers must
-  // stay alive until `wait` returns.
-  auto targets = builder.targets();
-  ql::span<char*> targetSpan{targets};
-  if (pageCacheFastPath) {
-    auto missed = ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets,
-                                                targetSpan);
-    readThroughManager(manager, file_.fd(), sizes, fileOffsets, targetSpan,
-                       missed);
+  // `beginLookup` rejects empty input, so `wordSizes_` is non-empty here, as
+  // the builder requires.
+  AD_CORRECTNESS_CHECK(!handle.wordSizes_.empty());
+  handle.wordBuilder_.emplace(handle.wordSizes_);
+  handle.wordTargets_ = handle.wordBuilder_->targets();
+  ql::span<char*> targets{handle.wordTargets_};
+  if (handle.pageCacheFastPath_) {
+    auto missed = ad_utility::readPageCacheHits(
+        file_.fd(), handle.wordSizes_, handle.wordFileOffsets_, targets);
+    handle.wordBatch_ =
+        submitThroughManager(*handle.manager_, file_.fd(), handle.wordSizes_,
+                             handle.wordFileOffsets_, targets, missed);
   } else {
-    manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targetSpan));
+    handle.wordBatch_ = handle.manager_->addBatch(
+        file_.fd(), handle.wordSizes_, handle.wordFileOffsets_, targets);
   }
-  return std::move(builder).finalize();
 }
 
 // _____________________________________________________________________________
@@ -331,6 +314,20 @@ VocabBatchLookupResult VocabularyOnDisk::finishLookup(
 }
 
 // _____________________________________________________________________________
+void VocabularyOnDisk::LookupHandle::advance() {
+  if (wordBuilder_.has_value()) {
+    return;
+  }
+  // With the page-cache fast path, all offset pairs may already have been
+  // read by `beginLookup`, in which case no batch was submitted.
+  if (offsetBatch_.has_value()) {
+    manager_->wait(offsetBatch_.value());
+    offsetBatch_.reset();
+  }
+  vocab_->submitWordReads(*this);
+}
+
+// _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
   // Complete the lookup and hand the `manager` back to the pool on every exit
   // path (including exceptions, e.g. an I/O error while waiting). The handle
@@ -343,32 +340,33 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
                                   "returning the `IoManager` to the pool in "
                                   "`VocabularyOnDisk::LookupHandle::finish`");
   }};
-  // Wait for the offset reads submitted by `beginLookup`, then read the string
-  // data (Phase 2) and return it.
-  // With the page-cache fast path, all offset pairs may already have been
-  // read by `beginLookup`, in which case no batch was submitted.
-  if (offsetBatch_.has_value()) {
-    manager_->wait(offsetBatch_.value());
+  advance();
+  if (wordBatch_.has_value()) {
+    manager_->wait(wordBatch_.value());
+    wordBatch_.reset();
   }
-  return vocab_->readStrings(*manager_, offsetPairs_, pageCacheFastPath_);
+  return std::move(wordBuilder_.value()).finalize();
 }
 
 // _____________________________________________________________________________
 VocabularyOnDisk::LookupHandle::~LookupHandle() {
   // If `finish` was never called (e.g. an exception between `beginLookup` and
-  // `finishLookup`), drain the offset reads first. Those reads target
-  // `offsetPairs_`, which dies with this handle. Returning a busy manager
-  // would let the next pool owner reuse the ring while the kernel still
-  // writes into freed memory.
+  // `finishLookup`), drain the reads that are still in flight first. They
+  // target `offsetPairs_` and `wordBuilder_`, which die with this handle.
+  // Returning a busy manager would let the next pool owner reuse the ring
+  // while the kernel still writes into freed memory.
   if (manager_) {
     ad_utility::terminateIfThrows(
         [this]() {
           if (offsetBatch_.has_value()) {
             manager_->wait(offsetBatch_.value());
           }
+          if (wordBatch_.has_value()) {
+            manager_->wait(wordBatch_.value());
+          }
           returnManagerToPool();
         },
-        "draining in-flight offset reads and returning the `IoManager` in "
+        "draining in-flight reads and returning the `IoManager` in "
         "the destructor of `VocabularyOnDisk::LookupHandle`");
   }
 }
