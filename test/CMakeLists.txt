@@ -179,6 +179,11 @@ addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
 addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
 addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
+# `scanBatch` compares `ValueId`s, and comparing `Id`s needs the
+# `LocalVocabEntry` symbols (see the note at `localVocab` in
+# `src/index/CMakeLists.txt`), so link `localVocab` explicitly to keep this
+# test free of `testUtil`.
+addLinkAndDiscoverTestNoLibs(SimdValidityBitmaskTest localVocab)
 
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
@@ -668,4 +673,11 @@ endif ()
 # `MonomorphicRowSerializer` against Legacy; needs a test index.
 if (QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTest(ExportEngineV2MonomorphicTest engine sparqlParser)
+endif ()
+
+# Byte identity of the V2 serializer with and without the SIMD
+# validity-bitmask fast path for `Union` columns against Legacy, for a
+# wide-`OPTIONAL` query with many undefined cells; needs a test index.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2SimdValidityTest engine sparqlParser)
 endif ()
