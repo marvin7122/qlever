@@ -1,6 +1,7 @@
 name: "Native build to WebAssembly using Conan and Emscripten"
 
 on:
+  workflow_dispatch:
   push:
     # Pushes to master publish a dev version of the `@ad-freiburg/qlever` npm
     # package under
