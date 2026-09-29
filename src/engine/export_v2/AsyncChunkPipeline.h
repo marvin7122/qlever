@@ -17,6 +17,7 @@
 #include <optional>
 #include <queue>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -47,10 +48,11 @@ struct AsyncChunkPipelineStats {
   size_t consumerWaits_ = 0;
 };
 
-// A bounded handoff queue adapted from PR #82. It retains that implementation's
-// backpressure and exception propagation, but does not create worker threads.
-// The future HTTP integration can drive it from the query executor and socket
-// completion handlers without violating the single-core scheduling contract.
+// A bounded, thread-safe handoff queue adapted from PR #82: `push` blocks while
+// `capacity_` chunks are queued, `pop` blocks until a chunk is queued or the
+// producer is done, and a producer failure is rethrown by `pop` after the
+// chunks queued before it. It creates no threads; `AsyncChunkProducer` below
+// pairs it with one producer thread.
 template <typename ChunkType = std::string>
 class AsyncChunkPipeline {
  private:
@@ -195,6 +197,66 @@ class AsyncChunkPipeline {
     std::lock_guard lock{mutex_};
     return stats_;
   }
+};
+
+// Runs a chunk producer on a dedicated thread and hands its chunks to the
+// consumer by value through a running `AsyncChunkPipeline`, so the producer
+// works at most `capacity_` chunks ahead of the consumer.
+//
+// `makeRange` is invoked on the producer thread, and the range it returns
+// (typically a `cppcoro::generator`) is iterated and destroyed there. A
+// coroutine frame therefore never crosses threads, and the consumer can be a
+// coroutine itself: it only calls `pop`.
+//
+// The destructor cancels the pipeline and joins the producer, so destroying
+// an unfinished producer (the consumer abandons the export) is safe: the
+// producer stops at its next `push`. Producer exceptions are rethrown by `pop`
+// after the chunks produced before them.
+template <typename ChunkType>
+class AsyncChunkProducer {
+ public:
+  template <typename MakeRange>
+  AsyncChunkProducer(MakeRange makeRange, size_t capacity)
+      : pipeline_{AsyncChunkPipelineConfig{capacity, true}} {
+    AD_CONTRACT_CHECK(pipeline_.isEnabled(),
+                      "AsyncChunkProducer requires QLEVER_ENABLE_EXPORT_V2");
+    producer_ = std::thread{[this, makeRange = std::move(makeRange)]() mutable {
+      try {
+        for (auto&& chunk : makeRange()) {
+          if (pipeline_.push(std::move(chunk)) == PushResult::Closed) {
+            return;
+          }
+        }
+        pipeline_.finish();
+      } catch (...) {
+        pipeline_.fail(std::current_exception());
+      }
+    }};
+  }
+
+  AsyncChunkProducer(const AsyncChunkProducer&) = delete;
+  AsyncChunkProducer& operator=(const AsyncChunkProducer&) = delete;
+  AsyncChunkProducer(AsyncChunkProducer&&) = delete;
+  AsyncChunkProducer& operator=(AsyncChunkProducer&&) = delete;
+
+  ~AsyncChunkProducer() {
+    pipeline_.cancel();
+    producer_.join();
+  }
+
+  // The next chunk in production order, blocking until it is available, or
+  // `std::nullopt` once the producer is done. Rethrows a producer exception.
+  [[nodiscard]] std::optional<ChunkType> pop() { return pipeline_.pop(); }
+
+  [[nodiscard]] AsyncChunkPipelineStats stats() const {
+    return pipeline_.stats();
+  }
+
+ private:
+  AsyncChunkPipeline<ChunkType> pipeline_;
+  // Started last in the constructor and joined in the destructor while
+  // `pipeline_` is still alive.
+  std::thread producer_;
 };
 
 }  // namespace qlever::export_v2

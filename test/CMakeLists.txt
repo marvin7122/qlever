@@ -669,3 +669,9 @@ endif ()
 if (QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTest(ExportEngineV2MonomorphicTest engine sparqlParser)
 endif ()
+
+# The V2 SELECT CSV/TSV export with `export-v2-async-pipeline` (producer
+# thread + `AsyncChunkProducer`): same bytes, exceptions, abandonment.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2AsyncPipelineTest engine sparqlParser)
+endif ()
