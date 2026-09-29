@@ -691,13 +691,23 @@ class ExportJobState final
         });
         if (!ordered_ && slots_[index].status_ != MorselStatus::Completed &&
             slots_[index].status_ != MorselStatus::Failed) {
+          // Re-select by earliest completion timestamp, mirroring the
+          // initial selection above: the lowest ready slot index is not
+          // necessarily the morsel that completed first.
+          size_t best = slots_.size();
           for (size_t i = 0; i < slots_.size(); ++i) {
             if (!slots_[i].consumed_ &&
                 (slots_[i].status_ == MorselStatus::Completed ||
                  slots_[i].status_ == MorselStatus::Failed)) {
-              index = i;
-              break;
+              if (best == slots_.size() ||
+                  slots_[i].profile_.completedAt_ <
+                      slots_[best].profile_.completedAt_) {
+                best = i;
+              }
             }
+          }
+          if (best != slots_.size()) {
+            index = best;
           }
         }
       }
