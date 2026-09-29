@@ -18,6 +18,7 @@
 #include "parser/LiteralOrIri.h"
 #include "parser/NormalizedString.h"
 #include "rdfTypes/Literal.h"
+#include "rdfTypes/RdfEscaping.h"
 #include "util/IdTableHelpers.h"
 #include "util/IdTestHelpers.h"
 #include "util/IndexTestHelpers.h"
@@ -301,6 +302,43 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
   auto depth2 = ql::exportIds::idsToStringAndTypeDepth2(
       index, ql::span<const Id>{ids}, localVocab);
   EXPECT_EQ(depth2, batchResults);
+}
+
+// _____________________________________________________________________________
+// `idsToStringAndTypeDeduplicated` resolves every distinct `Id` once and maps
+// each input position to the same value as the per-ID lookup.
+TEST(ExportIds, idsToStringAndTypeDeduplicatedMatchesIndividualLookups) {
+  auto qec = ad_utility::testing::getQec(
+      "<s> <p> <o> . <s> <q> \"hello\" . <s> <p> 42 .");
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  auto getId = ad_utility::testing::makeGetId(index);
+  // Repeated `Id`s, unsorted, mixed datatypes.
+  std::vector<Id> ids{getId("<o>"),        getId("<s>"), getId("<o>"),
+                      Id::makeFromInt(42), getId("<s>"), Id::makeUndefined(),
+                      getId("\"hello\""),  getId("<o>"), Id::makeFromInt(42),
+                      Id::makeUndefined()};
+  auto check = [&](auto removeQuotes, const auto& escape) {
+    constexpr bool r = decltype(removeQuotes)::value;
+    auto dedup = ql::exportIds::idsToStringAndTypeDeduplicated<r>(
+        index, ql::span<const Id>{ids}, localVocab, escape);
+    // Distinct `Id`s: <o>, <s>, 42, UNDEF, "hello".
+    EXPECT_EQ(dedup.uniqueResults_.size(), 5u);
+    ASSERT_EQ(dedup.positionOfUnique_.size(), ids.size());
+    for (size_t k = 0; k < ids.size(); ++k) {
+      EXPECT_EQ(dedup[k], ql::exportIds::idToStringAndType<r>(
+                              index, ids[k], localVocab, escape))
+          << "Mismatch at index " << k;
+    }
+  };
+  check(std::false_type{}, ql::identity{});
+  check(std::true_type{}, RdfEscaping::escapeForCsv);
+  check(std::false_type{}, RdfEscaping::escapeForTsv);
+
+  auto empty = ql::exportIds::idsToStringAndTypeDeduplicated(
+      index, ql::span<const Id>{}, localVocab);
+  EXPECT_TRUE(empty.uniqueResults_.empty());
+  EXPECT_TRUE(empty.positionOfUnique_.empty());
 }
 
 // _____________________________________________________________________________

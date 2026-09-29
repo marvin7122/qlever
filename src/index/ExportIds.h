@@ -14,7 +14,10 @@
 #define QLEVER_SRC_INDEX_EXPORTIDS_H
 
 #include <array>
+#include <cstdint>
+#include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -409,6 +412,51 @@ idsToStringAndTypeDepth2(
         std::min(maxVocabIndicesPerSubBatch, numVocabIndices - batchStart);
   }
   return results;
+}
+
+// The strings of a batch of `Id`s in which each distinct `Id` is resolved only
+// once: the value of `ids[k]` is `uniqueResults_[positionOfUnique_[k]]`.
+struct DeduplicatedStringsAndTypes {
+  std::vector<std::optional<std::pair<std::string, const char*>>>
+      uniqueResults_;
+  std::vector<uint32_t> positionOfUnique_;
+
+  // The resolved value of the `k`-th input `Id`.
+  const std::optional<std::pair<std::string, const char*>>& operator[](
+      size_t k) const {
+    return uniqueResults_[positionOfUnique_[k]];
+  }
+};
+
+// Like `idsToStringAndTypeDepth2`, but every distinct `Id` in `ids` is
+// resolved only once. Two `Id`s count as the same iff their bits are equal, so
+// a `LocalVocabIndex` and a `VocabIndex` `Id` of the same term are resolved
+// separately (to the same string). The distinct `Id`s are resolved in the
+// order of their bits, so the `VocabIndex` lookups of the batch are sorted.
+// `ids.size()` must fit into 32 bits.
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false,
+          typename EscapeFunction = ql::identity>
+DeduplicatedStringsAndTypes idsToStringAndTypeDeduplicated(
+    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
+    const EscapeFunction& escapeFunction = EscapeFunction{}) {
+  AD_CONTRACT_CHECK(ids.size() <= std::numeric_limits<uint32_t>::max());
+  DeduplicatedStringsAndTypes result;
+  std::vector<uint32_t> order(ids.size());
+  std::iota(order.begin(), order.end(), uint32_t{0});
+  ql::ranges::sort(order, {}, [&ids](uint32_t k) { return ids[k].getBits(); });
+  std::vector<Id> uniqueIds;
+  result.positionOfUnique_.resize(ids.size());
+  for (uint32_t k : order) {
+    if (uniqueIds.empty() || uniqueIds.back().getBits() != ids[k].getBits()) {
+      uniqueIds.push_back(ids[k]);
+    }
+    result.positionOfUnique_[k] = static_cast<uint32_t>(uniqueIds.size() - 1);
+  }
+  result.uniqueResults_ = idsToStringAndTypeDepth2<removeQuotesAndAngleBrackets,
+                                                   returnOnlyLiterals>(
+      index, uniqueIds, localVocab, escapeFunction);
+  return result;
 }
 
 }  // namespace ql::exportIds
