@@ -488,8 +488,8 @@ INSTANTIATE_TEST_SUITE_P(
 // exercised across batch boundaries via `ConstructBatchEvaluator`'s `IdCache`.
 TEST_F(ConstructTripleGeneratorTest, rleFlagOnMatchesFlagOff) {
   // One more row than a batch: every row resolves `?sub` to the same `<s>`.
-  std::vector<std::vector<Id>> rows(ConstructTripleGenerator::BATCH_SIZE + 1,
-                                    {idS_});
+  std::vector<std::vector<IntOrId>> rows(
+      ConstructTripleGenerator::BATCH_SIZE + 1, std::vector<IntOrId>{idS_});
   auto result = makeResult(makeIdTableFromVector(rows));
   auto templateTriples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
   VariableToColumnMap varMap;
