@@ -291,6 +291,11 @@ struct RuntimeParameters {
   // of the request. The output does not depend on the number of threads.
   SizeT constructExportNumThreads_{1, "construct-export-num-threads"};
 
+  // The number of threads that resolve and format the TSV and CSV export of
+  // SELECT queries in batches of rows. 0 means one thread per hardware
+  // thread; 1 runs the export on the thread of the request. The output does
+  // not depend on the number of threads.
+  SizeT selectExportNumThreads_{1, "select-export-num-threads"};
 
   // Opt-in adaptive io_uring batch sizing for vocabulary lookups
   // (`AdaptiveBatchController`): adapt the effective submission batch size

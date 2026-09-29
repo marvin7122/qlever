@@ -2403,3 +2403,107 @@ TEST(ExportQueryExecutionTrees, ConstructParallelKeepsDeduplication) {
   EXPECT_EQ(ql::ranges::count(sequential, '\n'), 311);
   EXPECT_EQ(run(4), sequential);
 }
+
+// _____________________________________________________________________________
+// The TSV and CSV export of SELECT queries on several threads
+// (`select-export-num-threads`) is byte-identical to the export on one
+// thread: several batches of `SELECT_EXPORT_BATCH_SIZE` rows, UNDEF values,
+// terms from the `LocalVocab` (BIND) that need escaping, numbers, and
+// LIMIT/OFFSET.
+TEST(ExportQueryExecutionTrees, SelectCsvTsvParallelMatchesSequential) {
+  const std::string kg = parallelExportTestKg();
+  using enum ad_utility::MediaType;
+  for (std::string query :
+       {"SELECT ?s ?p ?o WHERE { ?s ?p ?o }",
+        "SELECT ?o ?n ?c ?s WHERE { ?s ?p ?o OPTIONAL { ?s <q> ?n } "
+        "BIND(CONCAT(STR(?o), \"\\t;\\\"x\") AS ?c) } LIMIT 7000 OFFSET 777"}) {
+    for (auto mediaType : {tsv, csv}) {
+      auto sequential = [&]() {
+        auto cleanup = setRuntimeParameterForTest<
+            &RuntimeParameters::selectExportNumThreads_>(1);
+        return runQueryStreamableResult(kg, query, mediaType);
+      }();
+      EXPECT_GT(static_cast<uint64_t>(ql::ranges::count(sequential, '\n')),
+                ExportQueryExecutionTrees::SELECT_EXPORT_BATCH_SIZE);
+      for (size_t numThreads : {0, 2, 3, 8}) {
+        auto cleanup = setRuntimeParameterForTest<
+            &RuntimeParameters::selectExportNumThreads_>(numThreads);
+        EXPECT_EQ(runQueryStreamableResult(kg, query, mediaType), sequential)
+            << query << " as " << ad_utility::toString(mediaType) << " with "
+            << numThreads << " threads";
+      }
+    }
+  }
+}
+
+// _____________________________________________________________________________
+// The parallel SELECT export of a lazy result with several blocks (one of them
+// empty, one smaller than a batch, one with several batches) and a LIMIT and
+// OFFSET that cut into the first and the last block.
+TEST(ExportQueryExecutionTrees, SelectTsvParallelOnLazyBlocks) {
+  auto* qec = ad_utility::testing::getQec();
+  constexpr size_t batch = ExportQueryExecutionTrees::SELECT_EXPORT_BATCH_SIZE;
+  auto makeTable = [](size_t numRows, int64_t first) {
+    std::vector<std::vector<IntOrId>> rows;
+    for (size_t i = 0; i < numRows; ++i) {
+      rows.push_back(
+          {first + static_cast<int64_t>(i), static_cast<int64_t>(i % 7)});
+    }
+    return makeIdTableFromVector(rows, ad_utility::testing::IntId);
+  };
+  auto run = [&](size_t numThreads, LimitOffsetClause limitOffset) {
+    auto cleanup =
+        setRuntimeParameterForTest<&RuntimeParameters::selectExportNumThreads_>(
+            numThreads);
+    std::vector<IdTable> tables;
+    tables.push_back(makeTable(100, 0));
+    tables.push_back(makeTable(0, 0));
+    tables.push_back(makeTable(3 * batch + 17, 1000));
+    tables.push_back(makeTable(batch, 100000));
+    auto qet = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, std::move(tables),
+        std::vector<std::optional<Variable>>{Variable{"?a"}, Variable{"?b"}});
+    auto pq = parseQuery("SELECT ?b ?a WHERE { ?a ?b ?c }");
+    pq._limitOffset = limitOffset;
+    ad_utility::Timer timer{ad_utility::Timer::Started};
+    std::string result;
+    for (const auto& block : ExportQueryExecutionTrees::computeResult(
+             pq, *qet, ad_utility::MediaType::tsv, timer,
+             std::make_shared<ad_utility::CancellationHandle<>>())) {
+      result += block;
+    }
+    return result;
+  };
+  for (auto limitOffset :
+       {LimitOffsetClause{}, LimitOffsetClause{2 * batch + 5, 50}}) {
+    const std::string sequential = run(1, limitOffset);
+    EXPECT_THAT(sequential, ::testing::StartsWith("?b\t?a\n0\t0\n"));
+    for (size_t numThreads : {2, 5}) {
+      EXPECT_EQ(run(numThreads, limitOffset), sequential) << numThreads;
+    }
+  }
+}
+
+// _____________________________________________________________________________
+// A cancelled parallel SELECT export throws: the workers check the
+// cancellation handle of the export (the query itself is computed with a
+// separate handle), and the exception reaches the consumer.
+TEST(ExportQueryExecutionTrees, SelectTsvParallelPropagatesCancellation) {
+  const std::string kg = parallelExportTestKg();
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::selectExportNumThreads_>(
+          4);
+  auto* qec = ad_utility::testing::getQec(kg);
+  QueryPlanner qp{qec, std::make_shared<ad_utility::CancellationHandle<>>()};
+  auto pq = parseQuery("SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
+  auto qet = qp.createExecutionTree(pq);
+  auto exportHandle = std::make_shared<ad_utility::CancellationHandle<>>();
+  exportHandle->cancel(ad_utility::CancellationState::MANUAL);
+  ad_utility::Timer timer{ad_utility::Timer::Started};
+  EXPECT_ANY_THROW(([&]() {
+    auto generator = ExportQueryExecutionTrees::computeResult(
+        pq, *qet, ad_utility::MediaType::tsv, timer, exportHandle);
+    for ([[maybe_unused]] const auto& block : generator) {
+    }
+  }()));
+}

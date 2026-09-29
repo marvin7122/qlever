@@ -29,6 +29,11 @@
 // consumption of large JSON exports and to make this interface even simpler.
 class ExportQueryExecutionTrees {
  public:
+  // The number of rows that the CSV and TSV export of SELECT queries resolves
+  // and formats as one unit (on a worker thread with the runtime parameter
+  // `select-export-num-threads`).
+  static constexpr uint64_t SELECT_EXPORT_BATCH_SIZE = 4096;
+
   using enum ad_utility::MediaType;
   using CancellationHandle = ad_utility::SharedCancellationHandle;
   using LiteralOrIri = ad_utility::triple_component::LiteralOrIri;
@@ -169,6 +174,16 @@ class ExportQueryExecutionTrees {
       const parsedQuery::SelectClause& selectClause,
       LimitOffsetClause limitAndOffset, CancellationHandle cancellationHandle,
       const ad_utility::Timer& requestTimer, STREAMABLE_YIELDER_ARG_DECL);
+
+  // Append the CSV or TSV lines of the rows `[beginRow, endRow)` of `table`
+  // (only the `selectedColumnIndices`) to `output`. Reads only `index` and
+  // `table`, so several threads may call it concurrently.
+  template <ad_utility::MediaType format>
+  static void appendCsvOrTsvRows(
+      std::string& output, const Index& index,
+      const TableConstRefWithVocab& table,
+      const QueryExecutionTree::ColumnIndicesAndTypes& selectedColumnIndices,
+      uint64_t beginRow, uint64_t endRow);
 
   // Yield all `IdTables` provided by the given `result`.
   static ad_utility::InputRangeTypeErased<TableConstRefWithVocab> getIdTables(

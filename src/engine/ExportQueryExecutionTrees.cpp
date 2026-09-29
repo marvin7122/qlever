@@ -27,6 +27,7 @@
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/ConstexprUtils.h"
+#include "util/OrderedTaskWindow.h"
 #include "util/http/MediaTypes.h"
 #include "util/views/TakeUntilInclusiveView.h"
 
@@ -462,6 +463,39 @@ ExportQueryExecutionTrees::selectQueryResultBindingsToQLeverJSON(
 
 // _____________________________________________________________________________
 template <ad_utility::MediaType format>
+void ExportQueryExecutionTrees::appendCsvOrTsvRows(
+    std::string& output, const Index& index,
+    const TableConstRefWithVocab& table,
+    const QueryExecutionTree::ColumnIndicesAndTypes& selectedColumnIndices,
+    uint64_t beginRow, uint64_t endRow) {
+  using enum ad_utility::MediaType;
+  // Every format other than TSV is formatted as CSV (only CSV and TSV reach
+  // this function at runtime).
+  static constexpr char separator = format == tsv ? '\t' : ',';
+  constexpr auto& escapeFunction =
+      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  for (uint64_t i = beginRow; i < endRow; ++i) {
+    for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
+      if (selectedColumnIndices[j].has_value()) {
+        const auto& val = selectedColumnIndices[j].value();
+        Id id = table.idTable()(i, val.columnIndex_);
+        auto optionalStringAndType =
+            ql::exportIds::idToStringAndType<format == csv>(
+                index, id, table.localVocab(), escapeFunction);
+        if (optionalStringAndType.has_value()) [[likely]] {
+          output.append(optionalStringAndType.value().first);
+        }
+      }
+      if (j + 1 < selectedColumnIndices.size()) {
+        output.push_back(separator);
+      }
+    }
+    output.push_back('\n');
+  }
+}
+
+// _____________________________________________________________________________
+template <ad_utility::MediaType format>
 STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
     const QueryExecutionTree& qet,
     const parsedQuery::SelectClause& selectClause,
@@ -514,30 +548,62 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  const Index& index = qet.getQec()->getIndex();
   uint64_t resultSize = 0;
-  for (const auto& [pair, range] :
-       getRowIndices(limitAndOffset, *result, resultSize)) {
-    for (uint64_t i : range) {
-      for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
-        if (selectedColumnIndices[j].has_value()) {
-          const auto& val = selectedColumnIndices[j].value();
-          Id id = pair.idTable()(i, val.columnIndex_);
-          auto optionalStringAndType =
-              ql::exportIds::idToStringAndType<format == csv>(
-                  qet.getQec()->getIndex(), id, pair.localVocab(),
-                  escapeFunction);
-          if (optionalStringAndType.has_value()) [[likely]] {
-            STREAMABLE_YIELD(optionalStringAndType.value().first);
-          }
-        }
-        if (j + 1 < selectedColumnIndices.size()) {
-          STREAMABLE_YIELD(separator);
-        }
+  auto tables = getRowIndices(limitAndOffset, *result, resultSize);
+#ifdef __EMSCRIPTEN__
+  // No worker threads in the WebAssembly build.
+  const size_t numThreads = 1;
+#else
+  const size_t numThreads = ad_utility::resolveNumThreads(
+      getRuntimeParameter<&RuntimeParameters::selectExportNumThreads_>());
+#endif
+  if (numThreads <= 1) {
+    std::string batch;
+    for (const auto& [table, range] : tables) {
+      const uint64_t last = *range.begin() + ql::ranges::size(range);
+      for (uint64_t begin = *range.begin(); begin < last;
+           begin += SELECT_EXPORT_BATCH_SIZE) {
+        const uint64_t end = std::min(last, begin + SELECT_EXPORT_BATCH_SIZE);
+        batch.clear();
+        appendCsvOrTsvRows<format>(batch, index, table, selectedColumnIndices,
+                                   begin, end);
+        STREAMABLE_YIELD(batch);
+        cancellationHandle->throwIfCancelled();
       }
-      STREAMABLE_YIELD('\n');
-      cancellationHandle->throwIfCancelled();
+    }
+    STREAMABLE_RETURN;
+  }
+
+  // The batches of each table are resolved and formatted on `numThreads`
+  // workers and yielded in order. The tasks reference `index`,
+  // `selectedColumnIndices`, `cancellationHandle` and the current table:
+  // `window` is declared after the first three, so it joins its workers
+  // before they are destroyed, and all batches of a table are consumed before
+  // `tables` advances (which may free the table).
+  ad_utility::OrderedTaskWindow<std::string> window{numThreads, 2 * numThreads};
+  for (const auto& [table, range] : tables) {
+    const uint64_t last = *range.begin() + ql::ranges::size(range);
+    for (uint64_t begin = *range.begin(); begin < last;
+         begin += SELECT_EXPORT_BATCH_SIZE) {
+      const uint64_t end = std::min(last, begin + SELECT_EXPORT_BATCH_SIZE);
+      if (window.full()) {
+        std::string batch = window.popFront();
+        STREAMABLE_YIELD(batch);
+      }
+      window.submit(ad_utility::OrderedTaskWindow<std::string>::Task{
+          [&index, &selectedColumnIndices, &cancellationHandle, table = table,
+           begin, end](size_t) {
+            cancellationHandle->throwIfCancelled();
+            std::string batch;
+            appendCsvOrTsvRows<format>(batch, index, table,
+                                       selectedColumnIndices, begin, end);
+            return batch;
+          }});
+    }
+    while (!window.empty()) {
+      std::string batch = window.popFront();
+      STREAMABLE_YIELD(batch);
     }
   }
   AD_LOG_DEBUG << "Done creating readable result.\n";
