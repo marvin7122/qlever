@@ -1,10 +1,11 @@
-// Copyright 2026, University of Freiburg
-// Chair of Algorithms and Data Structures
+// Copyright 2026, University of Freiburg,
+// Chair of Algorithms and Data Structures.
 // Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <set>
@@ -172,10 +173,11 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
         return 100;
       });
 
-  // Submit morsel 1
-  session.submitMorsel([]() { return 200; });
-
-  // Wait until morsel 0 is running on a helper
+  // Wait until morsel 0 is running on a helper. Morsel 1 is submitted only
+  // after revocation below: submitting it earlier would let the second
+  // helper pick it up before the revocation arrives, which makes
+  // `executedByHelper_` for morsel 1 nondeterministic (cooperative
+  // revocation only stops not-yet-started helper work).
   morsel0Started.wait();
 
   // A new foreground query starts! (count = 2)
@@ -184,6 +186,10 @@ TEST(ElasticExportSchedulerTest, CooperativeRevocationUnderForegroundPressure) {
 
   // Session must transition to Revoking because helper 0 is actively leased
   EXPECT_EQ(session.state(), SessionState::Revoking);
+
+  // Submit morsel 1 while helpers are revoked, so it stays pending and runs
+  // on the coordinator thread.
+  session.submitMorsel([]() { return 200; });
 
   // Allow morsel 0 to complete cooperatively
   unblockMorsel0Promise.set_value();
@@ -281,7 +287,7 @@ TEST(ElasticExportSchedulerTest, CancellationStopsAdmissionAndCleansUp) {
 // Test 6b: Throwing Morsel Surfaces Instead Of Hanging The Consumer
 // -----------------------------------------------------------------------------
 // A task exception must reach `consumeNextResult` as that same exception
-// (via the terminal `Cancelled` slot state), whether the morsel ran on a
+// (via the terminal `Failed` slot state), whether the morsel ran on a
 // helper worker or was stolen by the primary fallback path. The profile must
 // also reach a terminal status instead of dangling in `Running`.
 TEST(ElasticExportSchedulerTest, ThrowingMorselPropagatesToConsumer) {
@@ -305,7 +311,7 @@ TEST(ElasticExportSchedulerTest, ThrowingMorselPropagatesToConsumer) {
 
   auto profiles = session.inspectMorselProfiles();
   ASSERT_EQ(profiles.size(), 1u);
-  EXPECT_EQ(profiles[0].finalStatus_, MorselStatus::Cancelled);
+  EXPECT_EQ(profiles[0].finalStatus_, MorselStatus::Failed);
 }
 
 // -----------------------------------------------------------------------------
@@ -451,6 +457,31 @@ TEST(ElasticExportSchedulerTest, UnorderedEmissionConsumesEveryMorselOnce) {
 }
 
 // -----------------------------------------------------------------------------
+// Test 15: Unordered Emission Honors Completion Order
+// -----------------------------------------------------------------------------
+TEST(ElasticExportSchedulerTest, UnorderedEmissionHonorsCompletionOrder) {
+  ElasticExportScheduler scheduler(2, 64);
+  auto session = scheduler.createSession<int>();
+  session.setOrdered(false);
+
+  // Slot 0 finishes last (200ms); slot 1 finishes (near-)immediately. Both
+  // run on the helpers, so after the wait below both are Completed and
+  // slot 1's `completedAt_` timestamp is strictly earlier.
+  session.submitMorsel([]() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    return 0;
+  });
+  session.submitMorsel([]() { return 1; });
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+
+  // The morsel that completed first must be emitted first. Slot-index
+  // order would emit slot 0 here.
+  EXPECT_EQ(session.consumeNextResult(), 1);
+  EXPECT_EQ(session.consumeNextResult(), 0);
+  EXPECT_FALSE(session.hasMoreResults());
+}
+
+// -----------------------------------------------------------------------------
 // Test 11: TrySubmitMorsel Reports Instead Of Firing
 // -----------------------------------------------------------------------------
 
@@ -507,4 +538,76 @@ TEST(ElasticExportSchedulerTest, AbandonedRemainderRunsExactlyOnce) {
 
   scheduler.onForegroundQueryEnded();
   scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Test 13: Worker Exception Propagates to Coordinator Without Leaks
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, WorkerExceptionPropagatesToCoordinator) {
+  ElasticExportScheduler scheduler(2, 64);
+  auto session = scheduler.createSession<int>();
+
+  // Slot 0 succeeds
+  session.submitMorsel([]() -> int { return 42; });
+  // Slot 1 throws an exception
+  session.submitMorsel([]() -> int {
+    throw std::runtime_error("Simulated morsel processing failure");
+  });
+  // Slot 2 succeeds
+  session.submitMorsel([]() -> int { return 100; });
+
+  // Slot 0 should return 42
+  EXPECT_EQ(session.consumeNextResult(), 42);
+
+  // Slot 1 should throw std::runtime_error
+  EXPECT_THROW(
+      {
+        try {
+          [[maybe_unused]] int r = session.consumeNextResult();
+        } catch (const std::runtime_error& e) {
+          EXPECT_STREQ(e.what(), "Simulated morsel processing failure");
+          throw;
+        }
+      },
+      std::runtime_error);
+
+  // Slot 2 should still return 100
+  EXPECT_EQ(session.consumeNextResult(), 100);
+
+  // Verify lease accounting did not leak. Workers destroy their leases as
+  // they finish loop iterations, which can lag behind the coordinator
+  // consuming the final result, so wait briefly for quiescence instead of
+  // asserting an instantaneous zero.
+  const auto quiescenceDeadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (scheduler.activeHelperCount() != 0u &&
+         std::chrono::steady_clock::now() < quiescenceDeadline) {
+    std::this_thread::yield();
+  }
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+}
+
+// -----------------------------------------------------------------------------
+// Test 14: Clean Shutdown Under High Foreground Load With Pending Morsels
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, CleanShutdownUnderHighForegroundLoad) {
+  ElasticExportScheduler scheduler(4, 64);
+
+  // Simulate high foreground load (helpers ineligible)
+  scheduler.onForegroundQueryStarted();
+  scheduler.onForegroundQueryStarted();
+  scheduler.onForegroundQueryStarted();
+
+  // Create session and enqueue morsels
+  auto session = scheduler.createSession<int>();
+  for (int i = 0; i < 20; ++i) {
+    session.submitMorsel([i]() -> int { return i * 2; });
+  }
+
+  // Shutdown scheduler while queue may contain pending items under high load
+  // Must return promptly without deadlock or infinite spin loop
+  scheduler.shutdown();
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
 }

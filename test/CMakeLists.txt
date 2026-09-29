@@ -177,8 +177,7 @@ addLinkAndDiscoverTest(StringUtilsTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
-addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
-addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
+addLinkAndDiscoverTestNoLibs(StreamingBufferWriterTest)
 
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
@@ -264,6 +263,20 @@ if (QLEVER_ENABLE_EXPORT_V2)
     endif ()
 endif ()
 
+addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
+
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
+
+addLinkAndDiscoverTest(VectorStreamSourceTest engine)
+
+# `ScatterGatherHttpBody.h` defines coroutine bodies over
+# `cppcoro::generator`, which does not exist in
+# `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`). The option
+# stays ON there, so the exclusion must name the reduced set explicitly.
+if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
+    addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+endif ()
+
 addLinkAndDiscoverTest(IdTableTest qlever_util)
 
 addLinkAndDiscoverTest(TransitivePathTest engine)
@@ -323,13 +336,6 @@ addLinkAndDiscoverTest(SparqlExpressionTest sparqlExpressions index engine)
 addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions index engine)
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
-
-# `ScatterGatherHttpBody.h` defines coroutine bodies over
-# `cppcoro::generator`, which does not exist in
-# `REDUCED_FEATURE_SET_FOR_CPP17` builds (see `util/Generator.h`).
-if (QLEVER_ENABLE_EXPORT_V2 AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
-    addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
-endif ()
 
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
@@ -550,8 +556,6 @@ addLinkAndDiscoverTest(GeneratorsTest)
 addLinkAndDiscoverTest(FilterTest engine)
 
 addLinkAndDiscoverTest(ResultTest engine)
-
-addLinkAndDiscoverTest(VectorStreamSourceTest engine)
 
 addLinkAndDiscoverTest(BlankNodeManagerTest)
 

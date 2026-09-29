@@ -34,7 +34,7 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(ParallelMergeBenchmark testUtil)
 
-        addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
+    addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
     add_executable(ExportPipelineRouterBenchmark ExportPipelineRouterBenchmark.cpp)
     qlever_target_link_libraries(ExportPipelineRouterBenchmark engine sparqlParser qlever_util)
@@ -45,10 +45,7 @@ if (NOT _NO_BENCHMARK)
     # second main via benchmarkWithMain.
     add_executable(SimdEscapeClassifierBenchmark SimdEscapeClassifierBenchmark.cpp)
     qlever_target_link_libraries(SimdEscapeClassifierBenchmark engine sparqlParser qlever_util)
-    # NOTE: no StreamingBufferBenchmark here: its sources
-    # (`StreamingBufferBenchmark.cpp`, `util/StreamingBufferWriter.h`) were
-    # never merged onto this branch (they live further up the stack), and
-    # nothing on this branch uses them.
+    addAndLinkBenchmark(StreamingBufferBenchmark qlever_util)
     # Standalone: do not use addAndLinkBenchmark (benchmark → sparqlParser →
     # IndexImpl). That graph fails on Wolga GCC 11 + range-v3; SEND_ZC only
     # needs qlever_util + liburing (global).
