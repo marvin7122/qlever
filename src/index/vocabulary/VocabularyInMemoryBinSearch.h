@@ -53,6 +53,23 @@ class VocabularyInMemoryBinSearch
   // `fromZeroCopyDeserializer`).
   Words words_;
   std::variant<Indices, IndicesView> indices_;
+  // Every `indexSampleDistance`-th entry of the indices:
+  // `indexSamples_[b] == indices()[b * indexSampleDistance]`. The indices of a
+  // large vocabulary span gigabytes (e.g. 6 GB for Wikidata), so a plain binary
+  // search over them costs one cache miss and one TLB miss per step. Searching
+  // the small `indexSamples_` first narrows the search to one block of
+  // `indexSampleDistance` entries (see `positionOfIndex`). Empty for
+  // vocabularies with at most `indexSampleDistance` words.
+  std::vector<uint64_t> indexSamples_;
+
+ public:
+  // The distance between two entries of `indexSamples_`: a block of 2048
+  // indices (16 KiB) is searched after the samples.
+  static constexpr size_t indexSampleDistance = 2048;
+
+ private:
+  // (Re)compute `indexSamples_` from the current indices.
+  void buildIndexSamples();
 
  public:
   // Construct an empty vocabulary
@@ -78,6 +95,7 @@ class VocabularyInMemoryBinSearch
     result.indices_ =
         ad_utility::serialization::zeroCopyDeserializeToSpan<uint64_t>(
             serializer);
+    result.buildIndexSamples();
     return result;
   }
 
@@ -202,6 +220,7 @@ class VocabularyInMemoryBinSearch
     } else {
       auto& indices = arg.indices_.template emplace<Indices>();
       serializer | indices;
+      arg.buildIndexSamples();
     }
   }
 

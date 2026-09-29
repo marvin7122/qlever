@@ -3,6 +3,7 @@
 // Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -396,6 +397,63 @@ TEST(VocabularyInMemoryBinSearch, zeroCopyDeserialization) {
   expectVocabulariesAreEqual(vocab, view);
   EXPECT_EQ(view[3], std::optional{std::string_view{"beta"}});
   EXPECT_EQ(view[5], std::nullopt);
+}
+
+// _____________________________________________________________________________
+// A vocabulary with more words than `indexSampleDistance` narrows the search
+// with the sampled indices; `positionOfIndex` must agree with a plain binary
+// search for every index (contained, holes, before the first and after the
+// last index, and at the block boundaries), after `open`, after the generic
+// deserialization, and for a zero-copy view.
+TEST(VocabularyInMemoryBinSearch, positionOfIndexWithIndexSamples) {
+  std::string filename = gtestCurrentTestName();
+  auto cleanup = getFileCleanup(filename);
+  constexpr size_t d = VocabularyInMemoryBinSearch::indexSampleDistance;
+  // `2 * d + 17` words: two full blocks and a partial one. The indices start
+  // at 5 and have holes of varying size.
+  std::vector<std::string> words;
+  std::vector<uint64_t> indices;
+  uint64_t index = 5;
+  for (size_t i = 0; i < 2 * d + 17; ++i) {
+    words.push_back(absl::StrCat("w", i));
+    indices.push_back(index);
+    index += 1 + i % 3;
+  }
+  auto vocab = createVocabularyWithIndices(filename, words, indices);
+  auto expectPositions = [&](const VocabularyInMemoryBinSearch& v) {
+    for (uint64_t i = 0; i <= indices.back() + 3; ++i) {
+      auto it = ql::ranges::lower_bound(indices, i);
+      std::optional<size_t> expected;
+      if (it != indices.end() && *it == i) {
+        expected = static_cast<size_t>(it - indices.begin());
+      }
+      ASSERT_EQ(v.positionOfIndex(i), expected) << i;
+    }
+    EXPECT_EQ(v.positionOfIndex(indices.at(d)), std::optional{d});
+    EXPECT_EQ(v.positionOfIndex(indices.at(2 * d)), std::optional{2 * d});
+    EXPECT_EQ(v[indices.at(d - 1)],
+              std::optional{std::string_view{words.at(d - 1)}});
+  };
+  expectPositions(vocab);
+
+  ad_utility::serialization::ByteBufferWriteSerializer writeSerializer;
+  writeSerializer << vocab;
+  VocabularyInMemoryBinSearch readVocab;
+  ad_utility::serialization::ByteBufferReadSerializer readSerializer{
+      std::move(writeSerializer).data()};
+  readSerializer >> readVocab;
+  expectPositions(readVocab);
+
+  ad_utility::serialization::AlignedByteBufferWriteSerializer alignedWriter;
+  alignedWriter << vocab;
+  ad_utility::serialization::AlignedByteBufferReadSerializer alignedReader{
+      std::move(alignedWriter).data()};
+  expectPositions(
+      VocabularyInMemoryBinSearch::fromZeroCopyDeserializer(alignedReader));
+
+  // After `close` nothing is found, also not via stale samples.
+  vocab.close();
+  EXPECT_EQ(vocab.positionOfIndex(indices.at(d)), std::nullopt);
 }
 
 // _____________________________________________________________________________
