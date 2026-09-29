@@ -1,6 +1,12 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022        Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -14,6 +20,7 @@
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
+#include "util/Log.h"
 #include "util/MmapVector.h"
 #include "util/StringUtils.h"
 #include "util/Views.h"
@@ -21,16 +28,31 @@
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 
 // ____________________________________________________________________________
-OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
-  AD_CORRECTNESS_CHECK(i < size());
-  // Read the offset of the word at index `i` and the offset of the next word
-  // (which marks the end of the word at index `i`) in a single `pread`.
+VocabularyOnDisk::OffsetPair VocabularyOnDisk::offsetPairAt(
+    size_t index) const {
+  AD_CONTRACT_CHECK(index < size());
+  if (offsetsAreMemoryMapped()) {
+    // The offsets region holds `size() + 1` entries, so `index + 1` is a
+    // valid entry for every word index. The region is mapped from file offset
+    // 0, so `data()` is page-aligned and so is every `Offset` read here.
+    const auto* base = static_cast<const Offset*>(offsetsMapping_.data());
+    return {base[index], base[index + 1]};
+  }
+  // Read the offset of the word at `index` and the offset of the next word
+  // (which marks the end of the word at `index`) in a single `pread`.
   std::array<Offset, 2> offsets{};
   // Assert no unexpected padding.
   static_assert(sizeof(offsets) == sizeof(Offset) * 2);
   offsetsFile_.read(offsets.data(), sizeof(offsets),
-                    static_cast<off_t>(i * sizeof(Offset)));
-  return {offsets[0], offsets[1] - offsets[0]};
+                    static_cast<off_t>(index * sizeof(Offset)));
+  return {offsets[0], offsets[1]};
+}
+
+// ____________________________________________________________________________
+OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
+  AD_CORRECTNESS_CHECK(i < size());
+  const auto pair = offsetPairAt(static_cast<size_t>(i));
+  return {pair.offset(), pair.nextOffset() - pair.offset()};
 }
 
 // _____________________________________________________________________________
@@ -159,6 +181,16 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     ad_utility::BatchManagerBase& manager,
     ql::span<const size_t> indices) const {
+  // Fast path: the mapping serves every pair as a pointer dereference, with
+  // no ring submission, no per-request bookkeeping, and no wait.
+  if (offsetsAreMemoryMapped()) {
+    std::vector<OffsetPair> pairs;
+    pairs.reserve(indices.size());
+    for (size_t index : indices) {
+      pairs.push_back(offsetPairAt(index));
+    }
+    return pairs;
+  }
   // For each requested index `i`, read its offset together with the next offset
   // (which bounds the string) as one 16-byte pair from `.offsets`.
   const size_t numIndices = indices.size();
@@ -286,6 +318,20 @@ void VocabularyOnDisk::open(const std::string& filename) {
       ad_utility::MmapVectorMetaData::readFromFile(offsetsFile_).size_;
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
+
+  // Memory-map the offsets region: the `numOffsets` leading 8-byte entries.
+  // The `MmapVectorMetaData` trailer stays unmapped. The mapping keeps the
+  // kernel's default readahead: with `MADV_RANDOM`, every page fault on a cold
+  // cache became a synchronous single-page read, which made cold exports
+  // slower than the `pread` path it replaces. A failed mapping is not an
+  // error: the lookup paths below transparently fall back to positioned and
+  // ring I/O.
+  static_assert(sizeof(Offset) == 8);
+  offsetsMapping_.unmap();
+  if (!offsetsMapping_.map(offsetsFile_.fd(), numOffsets * sizeof(Offset))) {
+    AD_LOG_WARN << "Could not memory-map the vocabulary offsets file, "
+                   "falling back to explicit I/O for offset lookups.\n";
+  }
 
   // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
