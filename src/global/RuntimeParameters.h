@@ -279,6 +279,14 @@ struct RuntimeParameters {
   // output is byte-identical; `false` selects the previous path.
   Bool useFastExportStreamFormatter_{true, "use-fast-export-stream-formatter"};
 
+  // If set to `true` (default `false`), the CONSTRUCT export path bypasses
+  // the per-export `IdCache` in `ConstructBatchEvaluator`: every `Id` counts
+  // as a cache miss and is resolved via the vocabulary, and resolved values
+  // are never inserted into the cache. The exported triples are
+  // byte-identical; `true` selects the no-cache path for A/B measurements of
+  // how much the cache saves.
+  Bool constructDisableIdCache_{false, "construct-disable-id-cache"};
+
   // If true, the chunks of a streamed query result start at 64 KiB and double
   // after every chunk up to the fixed 1 MiB, so that the first bytes reach the
   // client earlier. If false, every chunk has the fixed size of 1 MiB.

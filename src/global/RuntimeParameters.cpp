@@ -72,6 +72,7 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(useFastExportStreamFormatter_);
+  add(constructDisableIdCache_);
   add(adaptiveExportChunkSize_);
   add(vocabularyIouringPageCacheFastPath_);
   add(ioUringAdaptiveBatchEnabled_);

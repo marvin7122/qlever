@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "util/FiberIoScheduler.h"
 
@@ -38,10 +39,12 @@ struct ColumnWork {
 
 // Phase A: sort the column, check the cache, scatter hits to
 // `work.result_`, and collect misses into `work.missIds_`/`missRows_`. Pure
-// CPU work, always runs on the calling thread.
+// CPU work, always runs on the calling thread. When `bypassCache` is set (see
+// the `construct-disable-id-cache` runtime parameter), every `Id` counts as a
+// miss so that phase B resolves it via the vocabulary.
 void collectColumnMisses(size_t idTableColumnIdx,
                          const BatchEvaluationContext& ctx, IdCache& idCache,
-                         ColumnWork& work) {
+                         ColumnWork& work, bool bypassCache) {
   decltype(auto) col = ctx.idTable_.getColumn(idTableColumnIdx)
                            .subspan(ctx.firstRow_, ctx.numRows());
 
@@ -62,7 +65,10 @@ void collectColumnMisses(size_t idTableColumnIdx,
   // `sortedIndices`). Each entry corresponds to the entry at the same index
   // in `missRows`.
   for (const auto& [rowInBatch, id] : sortedIndices) {
-    auto cached = idCache.tryGet(id);
+    boost::optional<const std::optional<EvaluatedTerm>&> cached;
+    if (!bypassCache) {
+      cached = idCache.tryGet(id);
+    }
     if (cached) {
       // Note that a `LocalVocabIndex` Id may well produce a hit here, even
       // though such Ids are never inserted into `idCache` (see the comment in
@@ -110,8 +116,10 @@ std::optional<EvaluatedTerm> stringAndTypeToEvaluatedTerm(
 // Phase C: insert the resolved misses into `idCache` and scatter them to
 // `work.result_`. Runs on the calling thread in column order, exactly as the
 // sequential evaluation would, so cache insertion order (and hence LRU
-// eviction) is unaffected by phase B concurrency.
-void scatterColumnResolved(ColumnWork& work, IdCache& idCache) {
+// eviction) is unaffected by phase B concurrency. When `bypassCache` is set,
+// resolved values are used directly and never inserted into the cache.
+void scatterColumnResolved(ColumnWork& work, IdCache& idCache,
+                           bool bypassCache) {
   for (auto&& [id, resolved, rows] : ::ranges::views::zip(
            work.missIds_, work.missResolved_, work.missRows_)) {
     // Init-capture (not a reference capture): the factory moves from the
@@ -129,7 +137,7 @@ void scatterColumnResolved(ColumnWork& work, IdCache& idCache) {
     // Resolving them per block is fine performance-wise: `LocalVocabEntry`s
     // live in RAM, so there is no disk I/O to amortize across batches.
     const std::optional<EvaluatedTerm> evaluated =
-        id.getDatatype() == Datatype::LocalVocabIndex
+        (id.getDatatype() == Datatype::LocalVocabIndex || bypassCache)
             ? evaluate(id)
             : idCache.getOrCompute(id, evaluate);
     for (const size_t row : rows) {
@@ -148,13 +156,20 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
   BatchEvaluationResult batchResult;
   batchResult.numRows_ = evaluationContext.numRows();
 
+  // The bypass flag is read once per batch, not once per `Id`: taking the
+  // global parameter lock per probed `Id` would dominate the lookup it
+  // guards.
+  const bool bypassCache =
+      getRuntimeParameter<&RuntimeParameters::constructDisableIdCache_>();
+
   // Phase A for every column, sequentially.
   std::vector<ColumnWork> columns;
   columns.reserve(variableColumnIndices.size());
   for (size_t variableColumnIdx : variableColumnIndices) {
     ColumnWork& work = columns.emplace_back();
     work.columnIdx_ = variableColumnIdx;
-    collectColumnMisses(variableColumnIdx, evaluationContext, idCache, work);
+    collectColumnMisses(variableColumnIdx, evaluationContext, idCache, work,
+                        bypassCache);
   }
 
   // Phase B in waves of concurrent fibers, so one thread keeps several
@@ -199,7 +214,7 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
   // Phase C for every column in order, then publish. Identical to the
   // sequential evaluation, including the duplicate-column contract check.
   for (ColumnWork& work : columns) {
-    scatterColumnResolved(work, idCache);
+    scatterColumnResolved(work, idCache, bypassCache);
     auto [it, wasNew] = batchResult.variablesByColumn_.emplace(
         work.columnIdx_, std::move(work.result_));
     AD_CORRECTNESS_CHECK(wasNew);
