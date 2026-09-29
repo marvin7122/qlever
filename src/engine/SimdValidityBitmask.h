@@ -40,13 +40,15 @@
 
 namespace ad_utility::simd {
 
-// `scanBatch64`/`isAllUnbound64` reinterpret `ValueId*` as `uint64_t*`. This
-// only holds while `ValueId` stays a standard-layout 64-bit wrapper; fail
-// the build instead of silently invoking UB if it ever gains a base class,
-// padding, or extra members.
+// `ValueId` batches are never reinterpreted: callers copy the underlying bits
+// through the public `ValueId::getBits()` accessor into a `uint64_t` buffer
+// first, and the vectorized kernels below only ever load `uint64_t`/`char`
+// storage via `std::memcpy` (which compilers lower to single unaligned
+// vector loads/stores), so no strict-aliasing assumptions are made anywhere.
 static_assert(sizeof(ValueId) == sizeof(uint64_t));
 static_assert(alignof(ValueId) == alignof(uint64_t));
 static_assert(std::is_standard_layout_v<ValueId>);
+static_assert(std::is_trivially_copyable_v<ValueId>);
 
 // _____________________________________________________________________________
 // ValidityBitmask64: Invariant-bearing 64-bit column validity tracker.
@@ -213,6 +215,24 @@ namespace detail {
 
 #if defined(QLEVER_SIMD_X86)
 
+// Defined unaligned AVX2 load: `std::memcpy` into the vector object avoids
+// aliasing a `uint64_t`/`char` buffer as `__m256i` and compiles to a single
+// `vmovdqu`.
+[[nodiscard]] QLEVER_AVX2_TARGET inline __m256i loadUnalignedAvx2(
+    const uint64_t* words) noexcept {
+  __m256i vec;
+  std::memcpy(&vec, words, sizeof(vec));
+  return vec;
+}
+
+// Defined unaligned AVX2 store: `std::memcpy` from the vector object avoids
+// aliasing the `char` destination as `__m256i*` and compiles to a single
+// `vmovdqu` store.
+QLEVER_AVX2_TARGET inline void storeUnalignedAvx2(char* dest,
+                                                  __m256i vec) noexcept {
+  std::memcpy(dest, &vec, sizeof(vec));
+}
+
 // AVX2 implementation: Scans 64 64-bit values (512 bytes) using 16 __m256i
 // vectors. For each 4-element vector, _mm256_cmpeq_epi64 checks against 0
 // (undefined ValueId), and _mm256_movemask_pd extracts the 4-bit comparison
@@ -220,11 +240,10 @@ namespace detail {
 [[nodiscard]] QLEVER_AVX2_TARGET inline uint64_t scanBatch64Avx2(
     const uint64_t* data) noexcept {
   const __m256i zero = _mm256_setzero_si256();
-  const auto* ptr = reinterpret_cast<const __m256i*>(data);
   uint64_t resultMask = 0;
 
   for (size_t i = 0; i < 16; ++i) {
-    __m256i v = _mm256_loadu_si256(ptr + i);
+    __m256i v = loadUnalignedAvx2(data + i * 4);
     __m256i cmp = _mm256_cmpeq_epi64(v, zero);
     uint64_t undef4 =
         static_cast<uint32_t>(_mm256_movemask_pd(_mm256_castsi256_pd(cmp)));
@@ -237,23 +256,22 @@ namespace detail {
 // AVX2 fast test for all-unbound (all 64 values == 0) via bitwise OR reduction.
 [[nodiscard]] QLEVER_AVX2_TARGET inline bool isAllUnbound64Avx2(
     const uint64_t* data) noexcept {
-  const auto* ptr = reinterpret_cast<const __m256i*>(data);
   __m256i or0 =
-      _mm256_or_si256(_mm256_loadu_si256(ptr + 0), _mm256_loadu_si256(ptr + 1));
-  __m256i or1 =
-      _mm256_or_si256(_mm256_loadu_si256(ptr + 2), _mm256_loadu_si256(ptr + 3));
-  __m256i or2 =
-      _mm256_or_si256(_mm256_loadu_si256(ptr + 4), _mm256_loadu_si256(ptr + 5));
-  __m256i or3 =
-      _mm256_or_si256(_mm256_loadu_si256(ptr + 6), _mm256_loadu_si256(ptr + 7));
-  __m256i or4 =
-      _mm256_or_si256(_mm256_loadu_si256(ptr + 8), _mm256_loadu_si256(ptr + 9));
-  __m256i or5 = _mm256_or_si256(_mm256_loadu_si256(ptr + 10),
-                                _mm256_loadu_si256(ptr + 11));
-  __m256i or6 = _mm256_or_si256(_mm256_loadu_si256(ptr + 12),
-                                _mm256_loadu_si256(ptr + 13));
-  __m256i or7 = _mm256_or_si256(_mm256_loadu_si256(ptr + 14),
-                                _mm256_loadu_si256(ptr + 15));
+      _mm256_or_si256(loadUnalignedAvx2(data + 0), loadUnalignedAvx2(data + 4));
+  __m256i or1 = _mm256_or_si256(loadUnalignedAvx2(data + 8),
+                                loadUnalignedAvx2(data + 12));
+  __m256i or2 = _mm256_or_si256(loadUnalignedAvx2(data + 16),
+                                loadUnalignedAvx2(data + 20));
+  __m256i or3 = _mm256_or_si256(loadUnalignedAvx2(data + 24),
+                                loadUnalignedAvx2(data + 28));
+  __m256i or4 = _mm256_or_si256(loadUnalignedAvx2(data + 32),
+                                loadUnalignedAvx2(data + 36));
+  __m256i or5 = _mm256_or_si256(loadUnalignedAvx2(data + 40),
+                                loadUnalignedAvx2(data + 44));
+  __m256i or6 = _mm256_or_si256(loadUnalignedAvx2(data + 48),
+                                loadUnalignedAvx2(data + 52));
+  __m256i or7 = _mm256_or_si256(loadUnalignedAvx2(data + 56),
+                                loadUnalignedAvx2(data + 60));
 
   __m256i acc0 =
       _mm256_or_si256(_mm256_or_si256(or0, or1), _mm256_or_si256(or2, or3));
@@ -268,8 +286,8 @@ namespace detail {
 QLEVER_AVX2_TARGET inline char* write64DelimitersAvx2(char* dest,
                                                       char delimiter) noexcept {
   __m256i delims = _mm256_set1_epi8(delimiter);
-  _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest), delims);
-  _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + 32), delims);
+  storeUnalignedAvx2(dest, delims);
+  storeUnalignedAvx2(dest + 32, delims);
   return dest + 64;
 }
 
@@ -279,11 +297,17 @@ QLEVER_AVX2_TARGET inline char* write64DelimiterPairsAvx2(
     char* dest, char delimiter, char separator) noexcept {
   uint16_t pair = static_cast<uint8_t>(delimiter) |
                   (static_cast<uint16_t>(static_cast<uint8_t>(separator)) << 8);
-  __m256i vec = _mm256_set1_epi16(static_cast<short>(pair));
-  _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest), vec);
-  _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + 32), vec);
-  _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + 64), vec);
-  _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + 96), vec);
+  // Bit-preserving conversion: a value conversion to a signed 16-bit lane
+  // would be implementation-defined for `pair > 32767`, but only the bit
+  // pattern matters for `_mm256_set1_epi16`.
+  int16_t lanes;
+  static_assert(sizeof(lanes) == sizeof(pair));
+  std::memcpy(&lanes, &pair, sizeof(lanes));
+  __m256i vec = _mm256_set1_epi16(lanes);
+  storeUnalignedAvx2(dest, vec);
+  storeUnalignedAvx2(dest + 32, vec);
+  storeUnalignedAvx2(dest + 64, vec);
+  storeUnalignedAvx2(dest + 96, vec);
   return dest + 128;
 }
 
@@ -334,19 +358,27 @@ class SimdValidityScanner {
   // ___________________________________________________________________________
   // Scan a batch of exactly 64 ValueIds (512 bytes) and construct a
   // ValidityBitmask64.
+  // Copy a batch of exactly 64 `ValueId`s to their underlying bits through
+  // the public accessor. This keeps the vectorized kernels independent of the
+  // `ValueId` object representation instead of reinterpreting the array.
+  static inline void copyBatch64Bits(const ValueId* data,
+                                     uint64_t (&words)[64]) noexcept {
+    AD_CONTRACT_CHECK(data != nullptr);
+    for (size_t i = 0; i < 64; ++i) {
+      words[i] = data[i].getBits();
+    }
+  }
+
   [[nodiscard]] static inline ValidityBitmask64 scanBatch64(
       const ValueId* data) noexcept {
-    AD_CONTRACT_CHECK(data != nullptr);
-    // `ValueId` is a standard-layout class whose first (and only) member is
-    // the underlying `uint64_t`, so it is pointer-interconvertible with it
-    // and this access is well-defined.
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
+    uint64_t words[64];
+    copyBatch64Bits(data, words);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
-      return ValidityBitmask64{detail::scanBatch64Avx2(raw)};
+      return ValidityBitmask64{detail::scanBatch64Avx2(words)};
     }
 #endif
-    return ValidityBitmask64{detail::scanBatch64Scalar(raw)};
+    return ValidityBitmask64{detail::scanBatch64Scalar(words)};
   }
 
   // ___________________________________________________________________________
@@ -366,15 +398,15 @@ class SimdValidityScanner {
   // Fast check whether all 64 ValueIds in the batch are unbound (all zero).
   [[nodiscard]] static inline bool isAllUnbound64(
       const ValueId* data) noexcept {
-    AD_CONTRACT_CHECK(data != nullptr);
-    const auto* raw = reinterpret_cast<const uint64_t*>(data);
+    uint64_t words[64];
+    copyBatch64Bits(data, words);
 #if defined(QLEVER_SIMD_X86)
     if (cpuSupportsAvx2()) {
-      return detail::isAllUnbound64Avx2(raw);
+      return detail::isAllUnbound64Avx2(words);
     }
 #endif
     for (size_t i = 0; i < 64; ++i) {
-      if (raw[i] != 0) {
+      if (words[i] != 0) {
         return false;
       }
     }
