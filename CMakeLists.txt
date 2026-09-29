@@ -236,6 +236,10 @@ if ("${CMAKE_GENERATOR}" STREQUAL "Ninja")
     )
 endif ()
 
+# SCRATCH-ONLY profiling flag (bench/idcache-bypass-fp, never merge): keep
+# frame pointers so `perf --call-graph fp` yields user towers.
+add_compile_options(-fno-omit-frame-pointer)
+
 # Enable the manual usage of the C++ 17 backports (currently `range-v3` instead
 # of `std::ranges` and the `std::enable_if_t` based expansion of the concept
 # macros from `range-v3`.
