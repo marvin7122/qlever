@@ -179,7 +179,11 @@ addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
 addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
 addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
-addLinkAndDiscoverTestNoLibs(SimdValidityBitmaskTest)
+# `scanBatch` compares `ValueId`s, and comparing `Id`s needs the
+# `LocalVocabEntry` symbols (see the note at `localVocab` in
+# `src/index/CMakeLists.txt`), so link `localVocab` explicitly to keep this
+# test free of `testUtil`.
+addLinkAndDiscoverTestNoLibs(SimdValidityBitmaskTest localVocab)
 
 addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
