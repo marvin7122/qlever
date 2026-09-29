@@ -314,7 +314,7 @@ TEST(ExportIds, idsToStringAndTypePipelinedSpansSeveralSubBatches) {
       2 * ql::exportIds::maxVocabIndicesPerSubBatch + 100;
   std::string kg;
   for (size_t i = 0; i < numSubjects; ++i) {
-    absl::StrAppend(&kg, "<s", i, "> <p> \"label ", i, "\" . ");
+    absl::StrAppend(&kg, "<s", i, "> <p> \"label ", i, "\" .\n");
   }
   using ad_utility::VocabularyType;
   for (auto type : {VocabularyType::Enum::InMemoryUncompressed,
