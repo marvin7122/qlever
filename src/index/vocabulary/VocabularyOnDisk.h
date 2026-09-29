@@ -11,6 +11,8 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <gtest/gtest_prod.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -48,6 +50,9 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // unmapped and all reads fall back to positioned I/O. The mapping is owned
   // here so every lookup path below shares one lifetime with the files.
   ad_utility::ReadOnlyMmap offsetsMapping_;
+  // White-box test for the unmapped fallback (releases the mapping to
+  // simulate a failed `map`).
+  FRIEND_TEST(VocabularyOnDisk, LookupBatchWorksWhenOffsetsNotMemoryMapped);
 
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
