@@ -8,11 +8,13 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
-#include <cstring>
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 
 #include "util/File.h"
 #include "util/ReadOnlyMmap.h"
@@ -26,9 +28,24 @@ class TempFileGuard {
  public:
   explicit TempFileGuard(std::string filename)
       : filename_{std::move(filename)} {}
-  ~TempFileGuard() { std::filesystem::remove(filename_); }
+  // Never throwing: a `filesystem_error` during stack unwinding would
+  // otherwise call `std::terminate`.
+  ~TempFileGuard() noexcept {
+    std::error_code ec;
+    std::filesystem::remove(filename_, ec);
+  }
   TempFileGuard(const TempFileGuard&) = delete;
   TempFileGuard& operator=(const TempFileGuard&) = delete;
+  TempFileGuard(TempFileGuard&& other) noexcept
+      : filename_{std::exchange(other.filename_, {})} {}
+  TempFileGuard& operator=(TempFileGuard&& other) noexcept {
+    if (this != &other) {
+      std::error_code ec;
+      std::filesystem::remove(filename_, ec);
+      filename_ = std::exchange(other.filename_, {});
+    }
+    return *this;
+  }
 
   const std::string& name() const { return filename_; }
 
@@ -37,13 +54,18 @@ class TempFileGuard {
 };
 
 TempFileGuard writeTempFile(std::string_view content) {
-  std::string filename =
-      ::testing::UnitTest::GetInstance()->current_test_info()->name();
-  filename += ".tmp";
-  File file{filename, "w"};
+  // Unique per process and per call: parallel `ctest` shards share the
+  // working directory, and a crashed run may leave its file behind.
+  static unsigned counter = 0;
+  std::filesystem::path filename =
+      std::filesystem::temp_directory_path() /
+      (::testing::UnitTest::GetInstance()->current_test_info()->name() +
+       std::string{"-"} + std::to_string(::getpid()) + std::string{"-"} +
+       std::to_string(counter++) + std::string{".tmp"});
+  File file{filename.string(), "w"};
   file.write(content.data(), content.size());
   file.close();
-  return TempFileGuard{std::move(filename)};
+  return TempFileGuard{filename.string()};
 }
 
 TEST(ReadOnlyMmap, DefaultIsUnmapped) {
@@ -66,8 +88,31 @@ TEST(ReadOnlyMmap, MapsFileContents) {
                           mapping.size()};
   EXPECT_EQ(mapped, payload);
 
-  // A second `map` on an already mapped instance is a no-op success.
+  // A second `map` of the same region is a no-op success.
   EXPECT_TRUE(mapping.map(file.fd(), payload.size()));
+}
+
+TEST(ReadOnlyMmap, RemapDifferentRegionIsRejected) {
+  const std::string payload = "0123456789abcdef";
+  const TempFileGuard tempFile = writeTempFile(payload);
+  File file{tempFile.name(), "r"};
+
+  ReadOnlyMmap mapping;
+  ASSERT_TRUE(mapping.map(file.fd(), payload.size()));
+  // A different region on the mapped instance is rejected, and the
+  // original mapping is left untouched.
+  EXPECT_FALSE(mapping.map(file.fd(), 4, 4));
+  EXPECT_TRUE(mapping.isMapped());
+  EXPECT_EQ(mapping.size(), payload.size());
+  std::string_view mapped{static_cast<const char*>(mapping.data()),
+                          mapping.size()};
+  EXPECT_EQ(mapped, payload);
+  // After `unmap` the other region maps fine.
+  mapping.unmap();
+  ASSERT_TRUE(mapping.map(file.fd(), 6, 4));
+  std::string_view suffix{static_cast<const char*>(mapping.data()),
+                          mapping.size()};
+  EXPECT_EQ(suffix, "456789");
 }
 
 TEST(ReadOnlyMmap, MapsSuffixAtOffset) {

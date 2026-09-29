@@ -327,6 +327,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
   // error: the lookup paths below transparently fall back to positioned and
   // ring I/O.
   static_assert(sizeof(Offset) == 8);
+  offsetsMapping_.unmap();
   if (!offsetsMapping_.map(offsetsFile_.fd(), numOffsets * sizeof(Offset))) {
     AD_LOG_WARN << "Could not memory-map the vocabulary offsets file, "
                    "falling back to explicit I/O for offset lookups.\n";
