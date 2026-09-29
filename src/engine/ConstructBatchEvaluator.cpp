@@ -53,7 +53,16 @@ void collectColumnMisses(size_t idTableColumnIdx,
   // reads to sequential reads for I/O locality.
   auto sortedIndices = ::ranges::to_vector(::ranges::views::enumerate(col));
 
-  ql::ranges::sort(sortedIndices, {}, ad_utility::second);
+  // Sort by the bits of the `Id`s: for all datatypes except `LocalVocabIndex`
+  // (whose bits are a pointer), this is the order of `Id::compareThreeWay`,
+  // but it compiles to a plain integer comparison instead of an out-of-line
+  // call per comparison. `LocalVocabIndex` `Id`s end up in a block of their
+  // own, sorted by address. Two different `Id`s of the same term (a
+  // `LocalVocabIndex` and a `VocabIndex` one, see below) are then resolved
+  // separately, to the same string; the output does not change.
+  ql::ranges::sort(sortedIndices, {}, [](const auto& rowAndId) {
+    return rowAndId.second.getBits();
+  });
 
   // Check the cache for each sorted ID. Scatter hits directly to `result_`;
   // collect misses for batch resolution.
@@ -75,7 +84,8 @@ void collectColumnMisses(size_t idTableColumnIdx,
       // `LocalVocab`; and it is correct, because equal `Id`s denote the same
       // RDF term.
       work.result_[rowInBatch] = cached.value();
-    } else if (!work.missIds_.empty() && work.missIds_.back() == id) {
+    } else if (!work.missIds_.empty() &&
+               work.missIds_.back().getBits() == id.getBits()) {
       work.missRows_.back().push_back(static_cast<size_t>(rowInBatch));
     } else {
       work.missIds_.push_back(id);
