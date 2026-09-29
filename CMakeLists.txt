@@ -3,6 +3,9 @@ if (POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)
 endif ()
 project(QLever C CXX)
+# PROFILING ONLY (bench branch, never a stack part): frame pointers so that
+# perf record --call-graph fp gives complete user call chains.
+add_compile_options(-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer)
 
 if (APPLE)
     # Dynamically detect Homebrew prefix
