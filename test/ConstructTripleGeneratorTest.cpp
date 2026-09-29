@@ -514,13 +514,13 @@ TEST_F(ConstructTripleGeneratorTest,
 }
 
 // =============================================================================
-// Tests for `ConstructTripleGenerator::formatTablesAsTurtleInParallel`
+// Tests for `ConstructTripleGenerator::formatTablesInParallel`
 // =============================================================================
 
 // Several tables with several batches each: the strings come in batch order,
 // the blank-node labels use the accumulated row offset, and the result equals
 // the sequential export.
-TEST_F(ConstructTripleGeneratorTest, parallelTurtleMatchesSequential) {
+TEST_F(ConstructTripleGeneratorTest, parallelMatchesSequential) {
   constexpr size_t N = 2 * ConstructTripleGenerator::BATCH_SIZE + 5;
   std::vector<std::vector<IntOrId>> rows;
   for (size_t i = 0; i < N; ++i) {
@@ -536,45 +536,56 @@ TEST_F(ConstructTripleGeneratorTest, parallelTurtleMatchesSequential) {
                                   makeTableWithRange(*result2, 0, N - 1)};
     return ad_utility::InputRangeTypeErased<TableWithRange>{std::move(v)};
   };
-  std::string sequential;
-  for (const auto& triple : ConstructTripleGenerator::evaluateTables(
-           templateTriples, varMap, tables(), 7, makeConfig())) {
-    sequential += formatTriple(triple, ad_utility::MediaType::turtle);
-  }
-  ASSERT_FALSE(sequential.empty());
-  for (size_t numThreads : {2, 3, 5}) {
-    auto range = ConstructTripleGenerator::formatTablesAsTurtleInParallel(
-        templateTriples, varMap, tables(), 7, makeConfig(), numThreads);
-    auto strings = collectFormatted(std::move(range));
-    // One string per batch: 3 batches for each table.
-    EXPECT_EQ(strings.size(), 6u);
-    EXPECT_EQ(absl::StrJoin(strings, ""), sequential) << numThreads;
+  using enum ad_utility::MediaType;
+  const std::vector<std::pair<ad_utility::MediaType, bool>> formats{
+      {turtle, true},
+      {turtle, false},
+      {ntriples, false},
+      {csv, false},
+      {tsv, false}};
+  for (const auto& [mediaType, fastTurtle] : formats) {
+    std::string sequential;
+    for (const auto& triple : ConstructTripleGenerator::evaluateTables(
+             templateTriples, varMap, tables(), 7, makeConfig())) {
+      sequential += formatTriple(triple, mediaType);
+    }
+    ASSERT_FALSE(sequential.empty());
+    for (size_t numThreads : {2, 3, 5}) {
+      auto range = ConstructTripleGenerator::formatTablesInParallel(
+          templateTriples, varMap, tables(), 7, mediaType, fastTurtle,
+          makeConfig(), numThreads);
+      auto strings = collectFormatted(std::move(range));
+      // One string per batch: 3 batches for each table.
+      EXPECT_EQ(strings.size(), 6u);
+      EXPECT_EQ(absl::StrJoin(strings, ""), sequential)
+          << numThreads << ' ' << ad_utility::toString(mediaType);
+    }
   }
 }
 
 // A cancelled export throws from the worker into the consumer.
-TEST_F(ConstructTripleGeneratorTest, parallelTurtlePropagatesCancellation) {
+TEST_F(ConstructTripleGeneratorTest, parallelPropagatesCancellation) {
   constexpr size_t N = 3 * ConstructTripleGenerator::BATCH_SIZE;
   std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
   auto result = makeResult(makeIdTableFromVector(rows));
   auto templateTriples = oneTriple(iriV("<s>"), iriV("<p>"), iriV("<o>"));
   auto handle = makeHandle();
   handle->cancel(ad_utility::CancellationState::MANUAL);
-  auto range = ConstructTripleGenerator::formatTablesAsTurtleInParallel(
+  auto range = ConstructTripleGenerator::formatTablesInParallel(
       templateTriples, {}, singleTableRange(makeTableWithRange(*result, 0, N)),
-      0, makeConfig(handle), 2);
+      0, ad_utility::MediaType::turtle, true, makeConfig(handle), 2);
   EXPECT_ANY_THROW(range.get());
 }
 
 // Destroying the range with batches still in flight joins the workers.
-TEST_F(ConstructTripleGeneratorTest, parallelTurtleCanBeAbandoned) {
+TEST_F(ConstructTripleGeneratorTest, parallelCanBeAbandoned) {
   constexpr size_t N = 20 * ConstructTripleGenerator::BATCH_SIZE;
   std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
   auto result = makeResult(makeIdTableFromVector(rows));
   auto templateTriples = oneTriple(iriV("<s>"), iriV("<p>"), iriV("<o>"));
-  auto range = ConstructTripleGenerator::formatTablesAsTurtleInParallel(
+  auto range = ConstructTripleGenerator::formatTablesInParallel(
       templateTriples, {}, singleTableRange(makeTableWithRange(*result, 0, N)),
-      0, makeConfig(), 4);
+      0, ad_utility::MediaType::turtle, true, makeConfig(), 4);
   auto first = range.get();
   ASSERT_TRUE(first.has_value());
   EXPECT_TRUE(ql::starts_with(first.value(), "<s> <p> <o> .\n"));

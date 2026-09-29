@@ -284,11 +284,13 @@ struct RuntimeParameters {
   // client earlier. If false, every chunk has the fixed size of 1 MiB.
   Bool adaptiveExportChunkSize_{true, "adaptive-export-chunk-size"};
 
-  // The number of threads that evaluate and format the Turtle export of
-  // CONSTRUCT queries (with `use-fast-export-stream-formatter`, and without
-  // `construct-deduplication`). With 0 or 1, the export runs on the thread of
-  // the request. The output does not depend on the number of threads.
-  SizeT constructExportThreads_{4, "construct-export-threads"};
+  // The number of threads that evaluate (resolve the `Id`s to terms,
+  // including the vocabulary lookups) and format the export of CONSTRUCT
+  // queries in batches of 1024 rows, when `construct-deduplication` is off.
+  // 0 means one thread per hardware thread; 1 runs the export on the thread
+  // of the request. The output does not depend on the number of threads.
+  SizeT constructExportNumThreads_{1, "construct-export-num-threads"};
+
 
   // Opt-in adaptive io_uring batch sizing for vocabulary lookups
   // (`AdaptiveBatchController`): adapt the effective submission batch size

@@ -2332,36 +2332,74 @@ TEST(ExportQueryExecutionTrees, ConstructTurtleFastFormatterProducesSameBytes) {
 }
 
 // _____________________________________________________________________________
-// The Turtle export of CONSTRUCT queries on several threads
-// (`construct-export-threads`) is byte-identical to the export on one thread,
-// also with several batches per table, blank nodes (whose labels depend on the
-// row number), UNDEF values (rows without triples), repeated terms, and a
-// LIMIT/OFFSET.
-TEST(ExportQueryExecutionTrees, ConstructTurtleParallelMatchesSequential) {
+namespace {
+// A knowledge graph with repeated subjects, predicates and objects, literals
+// that need escaping, language tags, numbers, and one optional predicate `<q>`
+// that is only present for some subjects.
+std::string parallelExportTestKg() {
   std::string kg;
-  for (size_t i = 0; i < 5000; ++i) {
-    absl::StrAppend(&kg, "<s", i % 311, "> <p", i % 5, "> \"v\\n", i % 977,
-                    "\"@en . ");
+  for (size_t i = 0; i < 9000; ++i) {
+    absl::StrAppend(&kg, "<s", i % 311, "> <p", i % 5, "> \"v\\n,\\t\\\"",
+                    i % 977, "\"@en . ");
     if (i % 3 == 0) {
       absl::StrAppend(&kg, "<s", i % 311, "> <q> ", i, " . ");
     }
   }
+  return kg;
+}
+}  // namespace
+
+// The export of CONSTRUCT queries on several threads
+// (`construct-export-num-threads`) is byte-identical to the export on one
+// thread for every media type, also with several batches per table, blank
+// nodes (whose labels depend on the row number), UNDEF values (rows without
+// triples), repeated terms, and a LIMIT/OFFSET. 0 means one thread per
+// hardware thread.
+TEST(ExportQueryExecutionTrees, ConstructParallelMatchesSequential) {
+  const std::string kg = parallelExportTestKg();
   using enum ad_utility::MediaType;
   for (std::string query :
        {"CONSTRUCT { ?s ?p ?o . _:b <r> ?o } WHERE { ?s ?p ?o }",
         "CONSTRUCT { ?s <x> ?n . ?s <y> ?o } WHERE { ?s ?p ?o OPTIONAL { ?s "
         "<q> ?n } } LIMIT 3000 OFFSET 777"}) {
-    auto sequential = [&]() {
-      auto cleanup = setRuntimeParameterForTest<
-          &RuntimeParameters::constructExportThreads_>(1);
-      return runQueryStreamableResult(kg, query, turtle);
-    }();
-    EXPECT_GT(sequential.size(), 10000u);
-    for (size_t numThreads : {2, 3, 8}) {
-      auto cleanup = setRuntimeParameterForTest<
-          &RuntimeParameters::constructExportThreads_>(numThreads);
-      EXPECT_EQ(runQueryStreamableResult(kg, query, turtle), sequential)
-          << query << " with " << numThreads << " threads";
+    for (auto mediaType : {turtle, ntriples, csv, tsv}) {
+      for (bool fastFormatter : {true, false}) {
+        auto fastCleanup = setRuntimeParameterForTest<
+            &RuntimeParameters::useFastExportStreamFormatter_>(fastFormatter);
+        auto sequential = [&]() {
+          auto cleanup = setRuntimeParameterForTest<
+              &RuntimeParameters::constructExportNumThreads_>(1);
+          return runQueryStreamableResult(kg, query, mediaType);
+        }();
+        EXPECT_GT(sequential.size(), 10000u);
+        for (size_t numThreads : {0, 2, 3, 8}) {
+          auto cleanup = setRuntimeParameterForTest<
+              &RuntimeParameters::constructExportNumThreads_>(numThreads);
+          EXPECT_EQ(runQueryStreamableResult(kg, query, mediaType), sequential)
+              << query << " as " << ad_utility::toString(mediaType) << " with "
+              << numThreads << " threads";
+        }
+      }
     }
   }
+}
+
+// _____________________________________________________________________________
+// With deduplication, the CONSTRUCT export stays sequential: the output does
+// not depend on `construct-export-num-threads`.
+TEST(ExportQueryExecutionTrees, ConstructParallelKeepsDeduplication) {
+  const std::string kg = parallelExportTestKg();
+  const std::string query = "CONSTRUCT { ?s <x> <y> } WHERE { ?s ?p ?o }";
+  auto dedup =
+      setRuntimeParameterForTest<&RuntimeParameters::constructDeduplication_>(
+          ad_utility::DeduplicationMode::full());
+  auto run = [&](size_t numThreads) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::constructExportNumThreads_>(numThreads);
+    return runQueryStreamableResult(kg, query, ad_utility::MediaType::turtle);
+  };
+  const std::string sequential = run(1);
+  // One triple per distinct subject.
+  EXPECT_EQ(ql::ranges::count(sequential, '\n'), 311);
+  EXPECT_EQ(run(4), sequential);
 }

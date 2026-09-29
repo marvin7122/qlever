@@ -73,7 +73,7 @@ RuntimeParameters::RuntimeParameters() {
   add(constructDeduplication_);
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
-  add(constructExportThreads_);
+  add(constructExportNumThreads_);
   add(vocabularyIouringPageCacheFastPath_);
   add(ioUringAdaptiveBatchEnabled_);
   add(ioUringAdaptiveBatchMinSize_);

@@ -57,7 +57,11 @@ class ConstructTripleGenerator {
   // lazy range of triples serialized according to `mediaType`: one string per
   // triple, except for Turtle with the runtime parameter
   // `use-fast-export-stream-formatter` (default), where each string holds as
-  // many triples as fit into about 64 KiB. Duplicate triples are handled
+  // many triples as fit into about 64 KiB. With the runtime parameter
+  // `construct-export-num-threads` not equal to 1 and without deduplication,
+  // the batches are evaluated and formatted on worker threads (see
+  // `formatTablesInParallel`), and each string holds one batch. The bytes do
+  // not depend on the number of threads. Duplicate triples are handled
   // according to `config.mode_`.
   static InputRangeTypeErased<std::string> generateFormattedTriples(
       const Triples& templateTriples,
@@ -89,18 +93,21 @@ class ConstructTripleGenerator {
       ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
       size_t rowOffset, const EvaluationConfig& config);
 
-  // The Turtle export with `FastExportStreamFormatter` on `numThreads` (at
-  // least two) worker threads: the batches of `BATCH_SIZE` rows of each table
-  // are evaluated and formatted concurrently, each worker with its own
-  // `IdCache`, and the strings (one per batch) are returned in batch order, so
-  // the output is byte-identical to the sequential export. Only for
-  // `DeduplicationMode::None` (deduplication depends on the order in which
-  // triples are seen).
-  static InputRangeTypeErased<std::string> formatTablesAsTurtleInParallel(
+  // The export in `mediaType` on `numThreads` (at least two) worker threads:
+  // the batches of `BATCH_SIZE` rows of each table are evaluated (`Id` to term
+  // resolution, including the vocabulary lookups) and formatted concurrently,
+  // each worker with its own `IdCache`, and the strings (one per batch) are
+  // returned in batch order, so the output is byte-identical to the
+  // sequential export. At most `2 * numThreads` batches are in flight. With
+  // `fastTurtle` (only for Turtle), a batch is formatted with
+  // `FastExportStreamFormatter`. Only for `DeduplicationMode::None`
+  // (deduplication depends on the order in which triples are seen).
+  static InputRangeTypeErased<std::string> formatTablesInParallel(
       const Triples& templateTriples,
       const VariableToColumnMap& variableColumns,
       ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
-      size_t rowOffset, const EvaluationConfig& config, size_t numThreads);
+      size_t rowOffset, ad_utility::MediaType mediaType, bool fastTurtle,
+      const EvaluationConfig& config, size_t numThreads);
 
   FRIEND_TEST(MakeIdCache, emptyTemplate);
   FRIEND_TEST(MakeIdCache, singleVariable);
@@ -108,10 +115,9 @@ class ConstructTripleGenerator {
   FRIEND_TEST(ConstructTripleGeneratorTest, rowOffsetAccumulatesAcrossTables);
   FRIEND_TEST(ConstructTripleGeneratorTest, cannotCancelDuringBatch);
   FRIEND_TEST(ConstructTripleGeneratorTest, cancellationThrowsBetweenBatches);
-  FRIEND_TEST(ConstructTripleGeneratorTest, parallelTurtleMatchesSequential);
-  FRIEND_TEST(ConstructTripleGeneratorTest,
-              parallelTurtlePropagatesCancellation);
-  FRIEND_TEST(ConstructTripleGeneratorTest, parallelTurtleCanBeAbandoned);
+  FRIEND_TEST(ConstructTripleGeneratorTest, parallelMatchesSequential);
+  FRIEND_TEST(ConstructTripleGeneratorTest, parallelPropagatesCancellation);
+  FRIEND_TEST(ConstructTripleGeneratorTest, parallelCanBeAbandoned);
 };
 
 }  // namespace qlever::constructExport
