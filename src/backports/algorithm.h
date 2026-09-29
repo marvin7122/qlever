@@ -7,6 +7,7 @@
 #define QLEVER_SRC_BACKPORTS_ALGORITHM_H
 
 #include <algorithm>
+#include <map>
 #include <range/v3/all.hpp>
 #include <utility>
 #include <vector>
@@ -67,6 +68,20 @@ constexpr typename std::vector<T, Alloc>::size_type erase_if(
   auto r = c.end() - it;
   c.erase(it, c.end());
   return r;
+}
+
+template <class Key, class T, class Compare, class Alloc, class Pred>
+typename std::map<Key, T, Compare, Alloc>::size_type erase_if(
+    std::map<Key, T, Compare, Alloc>& c, Pred pred) {
+  const auto oldSize = c.size();
+  for (auto it = c.begin(); it != c.end();) {
+    if (pred(*it)) {
+      it = c.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  return oldSize - c.size();
 }
 }  // namespace backports
 
