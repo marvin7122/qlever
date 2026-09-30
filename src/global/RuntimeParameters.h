@@ -278,6 +278,18 @@ struct RuntimeParameters {
   // SELECTs with at most three columns take this path.
   Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
 
+  // Term-result cache of the SELECT export (see
+  // `ql::exportIds::IdToStringAndTypeCache`). A capacity of 0 disables it.
+  // After every window of that many cached lookups, the cache is switched off
+  // for the rest of the export if the window's hit rate is below the minimum
+  // (a window of 0 or a minimum of 0 keeps it on).
+  SizeT selectExportTermCacheCapacity_{1 << 16,
+                                       "select-export-term-cache-capacity"};
+  SizeT selectExportTermCacheWindow_{1 << 13,
+                                     "select-export-term-cache-window"};
+  Double selectExportTermCacheMinHitRate_{
+      0.25, "select-export-term-cache-min-hit-rate"};
+
   // If set to `true`, CONSTRUCT query export of Turtle formats the
   // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
   // formatting) instead of the legacy per-term `std::string` construction
