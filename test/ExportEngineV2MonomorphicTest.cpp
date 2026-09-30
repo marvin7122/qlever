@@ -252,7 +252,7 @@ TEST_F(ExportEngineV2Monomorphic, RuntimeParameterKeepsLegacyBytes) {
     if (!monomorphic.has_value()) {
       ad_utility::Timer timer{ad_utility::Timer::Started};
       for (const auto& block : ExportQueryExecutionTrees::computeResult(
-               pq, qet, mediaType, timer, std::move(handle))) {
+               pq, *qet, mediaType, timer, std::move(handle))) {
         result += block;
       }
       return result;
