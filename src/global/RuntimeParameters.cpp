@@ -8,6 +8,7 @@
 // BMW =  Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "global/RuntimeParameters.h"
+#include "util/IoUringManager.h"
 
 #include <absl/strings/str_join.h>
 
@@ -75,6 +76,18 @@ RuntimeParameters::RuntimeParameters() {
   add(selectExportTermCacheCapacity_);
   add(selectExportTermCacheWindow_);
   add(selectExportTermCacheMinHitRate_);
+  add(vocabularyIoUringRegisteredBuffers_);
+  add(vocabularyIoUringDirectIo_);
+  // The vocabulary library does not depend on the runtime parameters, so
+  // propagate these switches to the process-wide atomics it reads.
+  vocabularyIoUringRegisteredBuffers_.setOnUpdateAction([](bool value) {
+    ad_utility::useRegisteredBuffersForVocabularyReads.store(
+        value, std::memory_order_relaxed);
+  });
+  vocabularyIoUringDirectIo_.setOnUpdateAction([](bool value) {
+    ad_utility::useDirectIoForVocabularyReads.store(value,
+                                                    std::memory_order_relaxed);
+  });
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
   add(vocabularyIouringPageCacheFastPath_);

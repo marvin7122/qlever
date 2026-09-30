@@ -290,6 +290,18 @@ struct RuntimeParameters {
   Double selectExportTermCacheMinHitRate_{
       0.25, "select-export-term-cache-min-hit-rate"};
 
+  // If set, the batched vocabulary reads (`VocabularyOnDisk::lookupBatch`)
+  // read through a pinned arena of fixed buffers that is registered with each
+  // io_uring ring (`IORING_OP_READ_FIXED`) and copy each word from there.
+  // Without io_uring support this has no effect.
+  Bool vocabularyIoUringRegisteredBuffers_{
+      false, "vocabulary-iouring-registered-buffers"};
+
+  // If set together with `vocabulary-iouring-registered-buffers`, those reads
+  // bypass the page cache: they fetch the enclosing 4 KiB blocks via a second
+  // descriptor of the vocabulary files that is opened with `O_DIRECT`.
+  Bool vocabularyIoUringDirectIo_{false, "vocabulary-iouring-direct-io"};
+
   // If set to `true`, CONSTRUCT query export of Turtle formats the
   // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
   // formatting) instead of the legacy per-term `std::string` construction
