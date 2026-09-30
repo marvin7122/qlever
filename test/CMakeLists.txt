@@ -672,6 +672,8 @@ addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
 
 addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
 
+addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
+
 addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
 addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
 addLinkAndDiscoverTest(VectorStreamSourceTest engine)
