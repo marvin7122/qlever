@@ -332,6 +332,8 @@ addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions ind
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
 
+addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
+
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
 addLinkAndDiscoverTestNoLibs(StringBatcherTest)
@@ -625,6 +627,28 @@ addLinkAndDiscoverTest(FastExportStreamFormatterTest engine rdfEscaping)
 addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
 addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+
+# Header-only util under export_v2; do not pull testUtil/index (cluster GCC
+# range-v3 needs -fpermissive for those translation units).
+addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
+# Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
+# range-v3 fails in IndexImpl / CompressedExternalIdTable). The standalone
+# `localVocab` lib (no `index` dependency) provides `LocalVocab::getWord`
+# used by the serialize path.
+# Requires the enabled pipeline (`PipelineMorselIntegration` pushes with
+# `runtimeEnabled_ = true` and expects `Accepted`).
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global localVocab)
+    if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
+endif ()
+
+# Byte identity of the V2 serializer with and without
+# `MonomorphicRowSerializer` against Legacy; needs a test index.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2MonomorphicTest engine sparqlParser)
+endif ()
 
 addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
 
