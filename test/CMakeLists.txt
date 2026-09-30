@@ -615,6 +615,8 @@ addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
 addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
 
+addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
+
 addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
 
 addLinkAndDiscoverTest(ConstructTripleGeneratorTest engine)
