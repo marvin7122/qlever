@@ -110,6 +110,7 @@ RuntimeParameters::RuntimeParameters() {
   });
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
+  add(exportV2AdaptiveChunkSizing_);
   add(vocabularyIouringPageCacheFastPath_);
 
   // Propagate runtime log level changes immediately to the global atomic in

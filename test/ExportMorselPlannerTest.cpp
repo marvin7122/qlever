@@ -9,6 +9,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -182,6 +183,78 @@ TEST(ExportMorselPlanner, EmptyBlocksAreSkipped) {
   const uint64_t rows =
       plannedRows(std::move(input).generator(), LimitOffsetClause{}, 8192);
   EXPECT_EQ(rows, 2u);
+}
+
+// The `std::function<uint64_t()>` overload (used to drive adaptive chunk
+// sizing) is called once up front and again after every yielded morsel, so a
+// growing (or shrinking) sequence of sizes changes the morsel boundaries
+// exactly as requested, without the planner knowing anything about bytes.
+TEST(ExportMorselPlanner, DynamicRowsPerMorselGrows) {
+  auto input = makeInput({{{1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}}});
+  Result result{std::move(input).generator(), {}};
+  std::vector<uint64_t> sizes = {2, 3, 4};
+  size_t index = 0;
+  std::function<uint64_t()> rowsPerMorselFn = [&]() {
+    const uint64_t size = sizes[std::min(index, sizes.size() - 1)];
+    ++index;
+    return size;
+  };
+  std::vector<ExportMorsel> morsels;
+  for (auto&& morsel : planExportMorsels(result.idTables(), LimitOffsetClause{},
+                                         rowsPerMorselFn)) {
+    morsels.push_back(std::move(morsel));
+  }
+  // 2 + 3 + 4 = 9 rows total: growth (2 -> 3 -> 4) is reflected exactly in
+  // the morsel boundaries.
+  ASSERT_EQ(morsels.size(), 3u);
+  EXPECT_EQ(morsels[0].numRows_, 2u);
+  EXPECT_EQ(morsels[1].numRows_, 3u);
+  EXPECT_EQ(morsels[2].numRows_, 4u);
+}
+
+TEST(ExportMorselPlanner, DynamicRowsPerMorselShrinks) {
+  auto input = makeInput({{{1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}}});
+  Result result{std::move(input).generator(), {}};
+  std::vector<uint64_t> sizes = {5, 3, 1};
+  size_t index = 0;
+  std::function<uint64_t()> rowsPerMorselFn = [&]() {
+    const uint64_t size = sizes[std::min(index, sizes.size() - 1)];
+    ++index;
+    return size;
+  };
+  std::vector<ExportMorsel> morsels;
+  for (auto&& morsel : planExportMorsels(result.idTables(), LimitOffsetClause{},
+                                         rowsPerMorselFn)) {
+    morsels.push_back(std::move(morsel));
+  }
+  // 5 + 3 + 1 = 9 rows total: shrinking (5 -> 3 -> 1) is reflected exactly.
+  ASSERT_EQ(morsels.size(), 3u);
+  EXPECT_EQ(morsels[0].numRows_, 5u);
+  EXPECT_EQ(morsels[1].numRows_, 3u);
+  EXPECT_EQ(morsels[2].numRows_, 1u);
+}
+
+// The fixed-`rowsPerMorsel` overload (used when the adaptive-chunk-sizing
+// runtime parameter is off) must plan byte-for-byte the same morsels as
+// before this change: it is a thin wrapper delegating to the dynamic
+// overload with a constant function.
+TEST(ExportMorselPlanner, FixedOverloadUnchangedByDynamicOverload) {
+  auto inputFixed = makeInput({{{1}, {2}, {3}, {4}, {5}, {6}, {7}}});
+  auto inputDynamic = makeInput({{{1}, {2}, {3}, {4}, {5}, {6}, {7}}});
+  std::vector<ExportMorsel> fixedMorsels;
+  std::vector<ExportMorsel> dynamicMorsels;
+  plannedRows(std::move(inputFixed).generator(), LimitOffsetClause{}, 3,
+              &fixedMorsels);
+  Result result{std::move(inputDynamic).generator(), {}};
+  std::function<uint64_t()> constantThree = []() -> uint64_t { return 3; };
+  for (auto&& morsel : planExportMorsels(result.idTables(), LimitOffsetClause{},
+                                         constantThree)) {
+    dynamicMorsels.push_back(std::move(morsel));
+  }
+  ASSERT_EQ(fixedMorsels.size(), dynamicMorsels.size());
+  for (size_t i = 0; i < fixedMorsels.size(); ++i) {
+    EXPECT_EQ(fixedMorsels[i].numRows_, dynamicMorsels[i].numRows_);
+  }
 }
 
 }  // namespace
