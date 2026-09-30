@@ -613,6 +613,8 @@ addLinkAndDiscoverTest(FastExportStreamFormatterTest engine rdfEscaping)
 
 addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
+addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+
 addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
 
 addLinkAndDiscoverTest(ConstructTripleGeneratorTest engine)
