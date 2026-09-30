@@ -36,6 +36,9 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    add_executable(ExportPipelineRouterBenchmark ExportPipelineRouterBenchmark.cpp)
+    qlever_target_link_libraries(ExportPipelineRouterBenchmark engine sparqlParser qlever_util)
+
     addAndLinkBenchmark(SparqlExpressionBenchmark engine testUtil gtest gmock)
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
 
