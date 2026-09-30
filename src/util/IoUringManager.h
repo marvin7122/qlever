@@ -12,11 +12,13 @@
 #define QLEVER_SRC_UTIL_IOURINGMANAGER_H
 
 #include <gtest/gtest_prod.h>
+#include <sys/types.h>
 
 #include <atomic>
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -48,6 +50,17 @@ struct BatchReadOptions {
   // page cache) and copies the requested bytes out of the slot. Consecutive
   // requests whose blocks lie in the same slot share one read.
   int directIoFd = -1;
+  // If `directIoFd` is used and this is positive: keep the blocks read via
+  // `O_DIRECT` in the calling thread's `VocabBlockCache` of this many blocks
+  // (of `directIoBlockSize` bytes), and serve every later request whose
+  // enclosing block is cached from there instead of reading it again. Only
+  // honored by `IoUringPolicy`.
+  size_t blockCacheNumBlocks = 0;
+  // The size of the slots of the registered arena, and with `directIoFd` the
+  // size and alignment of every `O_DIRECT` read (and of the cached blocks). A
+  // positive multiple of 4 KiB. Larger blocks act like readahead for requests
+  // that are close in the file and waste bandwidth on scattered ones.
+  size_t directIoBlockSize = export_prototypes::kDirectIoBlockSize;
 };
 
 // Process-wide switches for the `BatchReadOptions` of vocabulary batch reads.
@@ -56,6 +69,11 @@ struct BatchReadOptions {
 // (see `RuntimeParameters`), like `setRuntimeLogLevel` in `Log.h`.
 inline std::atomic<bool> useRegisteredBuffersForVocabularyReads{false};
 inline std::atomic<bool> useDirectIoForVocabularyReads{false};
+// Set by the runtime parameters `vocab-block-cache-size` and
+// `vocab-block-cache-block-size`.
+inline std::atomic<size_t> vocabularyBlockCacheNumBlocks{0};
+inline std::atomic<size_t> vocabularyDirectIoBlockSize{
+    export_prototypes::kDirectIoBlockSize};
 
 template <typename T>
 CPP_requires(
@@ -259,12 +277,6 @@ class IoUringPolicy {
     size_t minNumBytes;
   };
 
-  // Size of one slot of the registered arena. With `O_DIRECT`, a read fetches
-  // the aligned blocks that enclose the requested bytes, so a read fits into
-  // a slot if these blocks do.
-  static constexpr size_t kRegisteredSlotSize =
-      export_prototypes::kDirectIoBlockSize;
-
   // The arena for `BatchReadOptions::useRegisteredBuffers`: one slot per ring
   // entry, so that every in-flight read can own a slot. Allocated and
   // registered with the ring on the first batch that asks for it; if that
@@ -276,10 +288,36 @@ class IoUringPolicy {
   // The copies to do when the read into a slot completes, indexed by slot.
   std::vector<std::vector<CopyFromSlot>> copiesPerSlot_;
 
-  // Return true if the registered arena is available, registering it first
-  // if this has not been tried yet. Registration is only attempted while no
-  // read is in flight.
-  bool registeredBuffersAvailable();
+  // For an `O_DIRECT` read whose block is to be inserted into the block cache
+  // on completion (see `BatchReadOptions::blockCacheNumBlocks`): the key of
+  // the block and the cache size, indexed by slot.
+  struct CacheInsert {
+    dev_t dev;
+    ino_t ino;
+    uint64_t blockNo;
+    size_t cacheNumBlocks;
+    size_t blockSize;
+    BatchHandle batchHandle;
+  };
+  std::vector<std::optional<CacheInsert>> cacheInsertPerSlot_;
+
+  // The slot of every such read that has not completed yet, by block
+  // (device, inode, block number). A later request of the same batch for a
+  // pending block is copied out of that slot when the read completes, so a
+  // block is read once per batch even if its requests are not consecutive.
+  using BlockKey = std::tuple<dev_t, ino_t, uint64_t>;
+  ad_utility::HashMap<BlockKey, uint32_t> pendingBlockSlot_;
+
+  // Forget the pending cache insert of `slot` (if any), see above.
+  void releaseCacheInsert(uint32_t slot);
+
+  // Return true if a registered arena with slots of `slotSize` bytes is
+  // available, registering it first if this has not been tried yet (or
+  // replacing an arena with another slot size). Registration is only attempted
+  // while no read is in flight. With `O_DIRECT`, a read fetches the aligned
+  // blocks that enclose the requested bytes, so a read fits into a slot if
+  // these blocks do.
+  bool registeredBuffersAvailable(size_t slotSize);
 
   // Return an SQE for the next read, first submitting the prepared SQEs and
   // draining completions if the ring is full.

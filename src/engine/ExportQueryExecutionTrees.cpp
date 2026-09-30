@@ -28,6 +28,7 @@
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/ConstexprUtils.h"
+#include "util/VocabBlockCache.h"
 #include "util/http/MediaTypes.h"
 #include "util/views/TakeUntilInclusiveView.h"
 
@@ -943,9 +944,15 @@ ExportQueryExecutionTrees::computeResult(
           compute, mediaType);
 
   return [](auto range) -> cppcoro::generator<std::string> {
+    // The vocabulary lookups of the export happen while `range` is consumed;
+    // log the block cache activity (see `vocab-block-cache-size`) at its end,
+    // before the last chunk is sent.
+    const auto cacheCountsBefore =
+        ad_utility::vocab::VocabBlockCacheCounts::now();
     for (auto&& item : range) {
       co_yield item;
     }
+    ad_utility::vocab::logVocabBlockCacheActivitySince(cacheCountsBefore);
   }(convertStreamGeneratorForChunkedTransfer(std::move(inner)));
 
 #else
