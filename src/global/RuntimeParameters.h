@@ -311,6 +311,22 @@ struct RuntimeParameters {
   // descriptor of the vocabulary files that is opened with `O_DIRECT`.
   Bool vocabularyIoUringDirectIo_{false, "vocabulary-iouring-direct-io"};
 
+  // The number of blocks of the per-thread block cache in front of the
+  // `O_DIRECT` vocabulary reads (`vocabulary-iouring-direct-io`): every block
+  // read via `O_DIRECT` is kept, and later requests for bytes in a cached
+  // block are copied from there instead of being read again. The vocabulary
+  // files are immutable after the build, so cached blocks never go stale.
+  // The default of `0` disables the cache. Has no effect without
+  // `vocabulary-iouring-direct-io`.
+  SizeT vocabBlockCacheSize_{0, "vocab-block-cache-size"};
+
+  // The size in bytes of every `O_DIRECT` vocabulary read (aligned to it) and
+  // of the blocks of the cache above (`vocab-block-cache-size` counts blocks
+  // of this size). A positive multiple of 4096. Larger blocks act like
+  // readahead for requests that are close in the file and waste bandwidth on
+  // scattered ones. Has no effect without `vocabulary-iouring-direct-io`.
+  SizeT vocabBlockCacheBlockSize_{4096, "vocab-block-cache-block-size"};
+
   // If set to `true`, CONSTRUCT query export of Turtle formats the
   // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
   // formatting) instead of the legacy per-term `std::string` construction
@@ -322,6 +338,14 @@ struct RuntimeParameters {
   // after every chunk up to the fixed 1 MiB, so that the first bytes reach the
   // client earlier. If false, every chunk has the fixed size of 1 MiB.
   Bool adaptiveExportChunkSize_{false, "adaptive-export-chunk-size"};
+
+  // If set, Export V2 sizes SELECT CSV/TSV morsels adaptively
+  // (`AdaptiveChunkSizer`): the first morsel targets a small 64 KB buffer for
+  // low time-to-first-byte, then the target doubles on every morsel up to a
+  // 4 MB plateau for sustained throughput. Default off: morsels keep the
+  // fixed 8192-row size, and output bytes are identical either way; only the
+  // chunk boundaries (and thus the number/timing of HTTP writes) change.
+  Bool exportV2AdaptiveChunkSizing_{false, "export-v2-adaptive-chunk-sizing"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE

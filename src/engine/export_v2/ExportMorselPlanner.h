@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -47,9 +48,16 @@ struct ExportMorsel {
 // either limit, rows past the export limit are still counted but never
 // serialized, and pulling stops as soon as both limits are exhausted (LIMIT 0
 // pulls no block at all).
+// Same as below, but `rowsPerMorsel` is queried once per morsel boundary
+// (initially, and again every time a morsel is yielded) instead of being
+// fixed for the whole stream. This lets a caller drive the morsel size from
+// an external policy (e.g. `AdaptiveChunkSizer::targetRowCount()`) without
+// this planner knowing anything about bytes or adaptive ramp-up.
 inline cppcoro::generator<ExportMorsel> planExportMorsels(
     Result::LazyResult idTables, const LimitOffsetClause& limitOffset,
-    uint64_t rowsPerMorsel) {
+    std::function<uint64_t()> rowsPerMorselFn) {
+  AD_CONTRACT_CHECK(rowsPerMorselFn != nullptr);
+  uint64_t rowsPerMorsel = rowsPerMorselFn();
   AD_CONTRACT_CHECK(rowsPerMorsel > 0);
   constexpr uint64_t unbounded = std::numeric_limits<uint64_t>::max();
   auto reduce = [](uint64_t& value, uint64_t subtrahend) {
@@ -87,6 +95,8 @@ inline cppcoro::generator<ExportMorsel> planExportMorsels(
         if (morsel.numRows_ == rowsPerMorsel) {
           co_yield std::move(morsel);
           morsel = ExportMorsel{};
+          rowsPerMorsel = rowsPerMorselFn();
+          AD_CONTRACT_CHECK(rowsPerMorsel > 0);
         }
       }
     }
@@ -99,6 +109,16 @@ inline cppcoro::generator<ExportMorsel> planExportMorsels(
   if (!morsel.empty()) {
     co_yield std::move(morsel);
   }
+}
+
+// Convenience overload for a fixed `rowsPerMorsel` (the pre-adaptive-sizing
+// behavior): every morsel has the same target row count.
+inline cppcoro::generator<ExportMorsel> planExportMorsels(
+    Result::LazyResult idTables, const LimitOffsetClause& limitOffset,
+    uint64_t rowsPerMorsel) {
+  AD_CONTRACT_CHECK(rowsPerMorsel > 0);
+  return planExportMorsels(std::move(idTables), limitOffset,
+                           [rowsPerMorsel]() { return rowsPerMorsel; });
 }
 
 }  // namespace ql::engine::export_v2
