@@ -1,0 +1,33 @@
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
+
+#include <gtest/gtest.h>
+
+#include <string>
+
+#include "engine/export_v2/AsyncChunkPipeline.h"
+
+namespace {
+
+TEST(AsyncChunkPipelineDisabledTest,
+     CompileTimeDisabledPipelineIgnoresRuntimeOptIn) {
+  static_assert(!qlever::export_v2::kExportV2CompiledIn);
+  // The compile-time switch is the kill switch: it takes precedence over the
+  // runtime opt-in, so the pipeline stays disabled even with
+  // `runtimeEnabled_ = true`.
+  qlever::export_v2::AsyncChunkPipeline<std::string> pipeline{
+      {.capacity_ = 2, .runtimeEnabled_ = true}};
+
+  EXPECT_FALSE(pipeline.isEnabled());
+  EXPECT_EQ(pipeline.push(std::string{}),
+            qlever::export_v2::PushResult::Closed);
+  EXPECT_FALSE(pipeline.pop().has_value());
+}
+
+}  // namespace
