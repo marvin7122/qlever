@@ -78,6 +78,8 @@ RuntimeParameters::RuntimeParameters() {
   add(selectExportTermCacheMinHitRate_);
   add(vocabularyIoUringRegisteredBuffers_);
   add(vocabularyIoUringDirectIo_);
+  add(vocabBlockCacheSize_);
+  add(vocabBlockCacheBlockSize_);
   // The vocabulary library does not depend on the runtime parameters, so
   // propagate these switches to the process-wide atomics it reads.
   vocabularyIoUringRegisteredBuffers_.setOnUpdateAction([](bool value) {
@@ -87,6 +89,24 @@ RuntimeParameters::RuntimeParameters() {
   vocabularyIoUringDirectIo_.setOnUpdateAction([](bool value) {
     ad_utility::useDirectIoForVocabularyReads.store(value,
                                                     std::memory_order_relaxed);
+  });
+  vocabBlockCacheSize_.setOnUpdateAction([](size_t numBlocks) {
+    ad_utility::vocabularyBlockCacheNumBlocks.store(numBlocks,
+                                                    std::memory_order_relaxed);
+  });
+  vocabBlockCacheBlockSize_.setParameterConstraint(
+      [](size_t blockSize, std::string_view parameterName) {
+        constexpr size_t unit =
+            ad_utility::export_prototypes::kDirectIoBlockSize;
+        if (blockSize == 0 || blockSize % unit != 0) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName, " must be a positive multiple of ",
+              unit, ", was ", blockSize)};
+        }
+      });
+  vocabBlockCacheBlockSize_.setOnUpdateAction([](size_t blockSize) {
+    ad_utility::vocabularyDirectIoBlockSize.store(blockSize,
+                                                  std::memory_order_relaxed);
   });
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
