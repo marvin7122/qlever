@@ -259,9 +259,9 @@ TEST_F(ExportEngineV2Monomorphic, RuntimeParameterKeepsLegacyBytes) {
     }
     auto cleanup = setRuntimeParameterForTest<
         &RuntimeParameters::exportV2MonomorphicRows_>(monomorphic.value());
-    EXPECT_TRUE(ExportEngineV2::canHandle(pq, qet, mediaType));
-    for (const auto& block :
-         ExportEngineV2::computeResult(pq, qet, mediaType, std::move(handle))) {
+    EXPECT_TRUE(ExportEngineV2::canHandle(pq, *qet, mediaType));
+    for (const auto& block : ExportEngineV2::computeResult(
+             pq, *qet, mediaType, std::move(handle))) {
       result += block;
     }
     return result;
