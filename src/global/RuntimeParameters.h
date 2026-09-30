@@ -278,6 +278,15 @@ struct RuntimeParameters {
   // SELECTs with at most three columns take this path.
   Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
 
+  // If set, the Export V2 SELECT CSV/TSV serializer uses
+  // `ad_utility::simd::SimdValidityScanner` to detect, in batches of 64 rows,
+  // output-column chunks that are entirely unbound (all cells `UNDEF`, the
+  // common case for wide `OPTIONAL`/`UNION` columns) and skips the general
+  // per-cell resolver (`idsToStringAndType`/`lookupBatch`) for those batches.
+  // Output bytes are identical: unresolved cells already default to "unbound"
+  // in the resolved-column vector. Off by default.
+  Bool exportV2SimdValidityBitmask_{false, "export-v2-simd-validity-bitmask"};
+
   // Term-result cache of the SELECT export (see
   // `ql::exportIds::IdToStringAndTypeCache`). A capacity of 0 disables it.
   // After every window of that many cached lookups, the cache is switched off

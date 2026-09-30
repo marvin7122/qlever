@@ -73,6 +73,7 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(exportV2MonomorphicRows_);
+  add(exportV2SimdValidityBitmask_);
   add(selectExportTermCacheCapacity_);
   add(selectExportTermCacheWindow_);
   add(selectExportTermCacheMinHitRate_);

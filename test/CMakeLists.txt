@@ -633,6 +633,11 @@ addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
 # Header-only util under export_v2; do not pull testUtil/index (cluster GCC
 # range-v3 needs -fpermissive for those translation units).
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
+# `scanBatch` compares `ValueId`s, and comparing `Id`s needs the
+# `LocalVocabEntry` symbols (see the note at `localVocab` in
+# `src/index/CMakeLists.txt`), so link `localVocab` explicitly to keep this
+# test free of `testUtil`.
+addLinkAndDiscoverTestNoLibs(SimdValidityBitmaskTest localVocab)
 # Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
 # range-v3 fails in IndexImpl / CompressedExternalIdTable). The standalone
 # `localVocab` lib (no `index` dependency) provides `LocalVocab::getWord`
@@ -650,6 +655,13 @@ endif ()
 # `MonomorphicRowSerializer` against Legacy; needs a test index.
 if (QLEVER_ENABLE_EXPORT_V2)
     addLinkAndDiscoverTest(ExportEngineV2MonomorphicTest engine sparqlParser)
+endif ()
+
+# Byte identity of the V2 serializer with and without the SIMD
+# validity-bitmask fast path for `Union` columns against Legacy, for
+# wide-`OPTIONAL`-shaped columns with many undefined cells; needs a test index.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2SimdValidityTest engine sparqlParser)
 endif ()
 
 addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
