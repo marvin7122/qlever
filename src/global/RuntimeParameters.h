@@ -272,6 +272,12 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If set, the Export V2 SELECT CSV/TSV serializer writes rows with
+  // `MonomorphicRowSerializer` (one compile-time schema per window) instead of
+  // the generic per-cell assembly loop. Output bytes are identical; only
+  // SELECTs with at most three columns take this path.
+  Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
+
   // If set to `true`, CONSTRUCT query export of Turtle formats the
   // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
   // formatting) instead of the legacy per-term `std::string` construction
