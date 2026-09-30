@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <mutex>
 
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
@@ -168,7 +169,9 @@ VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
                                        int fd, ql::span<const size_t> numBytes,
                                        ql::span<const uint64_t> offsets,
                                        ql::span<char*> buffers,
-                                       ql::span<const size_t> positions) {
+                                       ql::span<const size_t> positions,
+                                       const ad_utility::BatchReadOptions&
+                                           options) {
   if (positions.empty()) {
     return std::nullopt;
   }
@@ -181,7 +184,7 @@ VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
   auto selectedOffsets = select(offsets);
   auto selectedBuffers = select(buffers);
   return manager.addBatch(fd, selectedNumBytes, selectedOffsets,
-                          selectedBuffers);
+                          selectedBuffers, options);
 }
 
 // _____________________________________________________________________________
@@ -190,9 +193,11 @@ void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
                                           ql::span<const size_t> numBytes,
                                           ql::span<const uint64_t> offsets,
                                           ql::span<char*> buffers,
-                                          ql::span<const size_t> positions) {
-  auto batch =
-      submitThroughManager(manager, fd, numBytes, offsets, buffers, positions);
+                                          ql::span<const size_t> positions,
+                                          const ad_utility::BatchReadOptions&
+                                              options) {
+  auto batch = submitThroughManager(manager, fd, numBytes, offsets, buffers,
+                                    positions, options);
   if (batch.has_value()) {
     manager.wait(batch.value());
   }
@@ -226,9 +231,10 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     auto missed = ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets,
                                                 targetSpan);
     readThroughManager(manager, file_.fd(), sizes, fileOffsets, targetSpan,
-                       missed);
+                       missed, batchReadOptions(false));
   } else {
-    manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targetSpan));
+    manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targetSpan,
+                                  batchReadOptions(false)));
   }
   return std::move(builder).finalize();
 }
@@ -267,8 +273,9 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
           &RuntimeParameters::vocabularyIouringPageCacheFastPath_>() &&
       ad_utility::pageCacheFastPathIsSupported();
   if (!handle->pageCacheFastPath_) {
-    handle->offsetBatch_ = handle->manager_->addBatch(offsetsFile_.fd(), sizes,
-                                                      fileOffsets, targets);
+    handle->offsetBatch_ = handle->manager_->addBatch(
+        offsetsFile_.fd(), sizes, fileOffsets, targets,
+        batchReadOptions(true));
     return handle;
   }
 
@@ -319,9 +326,9 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
           OffsetPair{runStart[i - begin], runStart[i - begin + 1]};
     }
   }
-  handle->offsetBatch_ =
-      submitThroughManager(*handle->manager_, offsetsFile_.fd(), sizes,
-                           fileOffsets, targets, missedPositions);
+  handle->offsetBatch_ = submitThroughManager(
+      *handle->manager_, offsetsFile_.fd(), sizes, fileOffsets, targets,
+      missedPositions, batchReadOptions(true));
   return handle;
 }
 
@@ -436,6 +443,11 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 void VocabularyOnDisk::open(const std::string& filename) {
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+  // Open `O_DIRECT` duplicates for direct-I/O lookups (stays closed when
+  // direct I/O is unsupported, so scrubbing tools that walk the file system
+  // keep working).
+  directIoFiles_ = std::make_unique<DirectIoFiles>();
+  directIoFiles_->filename_ = filename;
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.
@@ -452,4 +464,28 @@ void VocabularyOnDisk::open(const std::string& filename) {
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
     ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
   }
+}
+
+// _____________________________________________________________________________
+ad_utility::BatchReadOptions VocabularyOnDisk::batchReadOptions(
+    bool forOffsetsFile) const {
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers =
+      ad_utility::useRegisteredBuffersForVocabularyReads.load();
+  if (ad_utility::useDirectIoForVocabularyReads.load() &&
+      directIoFiles_ != nullptr) {
+    auto& files = *directIoFiles_;
+    std::call_once(files.opened_, [&files] {
+      files.words_ = ad_utility::export_prototypes::DirectIoFile{
+          files.filename_, true};
+      files.offsets_ = ad_utility::export_prototypes::DirectIoFile{
+          files.filename_ + std::string{offsetSuffix_}, true};
+    });
+    const auto& file =
+        forOffsetsFile ? files.offsets_ : files.words_;
+    if (file.isDirect()) {
+      options.directIoFd = file.fd();
+    }
+  }
+  return options;
 }
