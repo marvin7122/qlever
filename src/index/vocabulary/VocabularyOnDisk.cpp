@@ -486,6 +486,11 @@ ad_utility::BatchReadOptions VocabularyOnDisk::batchReadOptions(
     if (file.isDirect()) {
       options.directIoFd = file.fd();
     }
+    options.blockCacheNumBlocks =
+        ad_utility::vocabularyBlockCacheNumBlocks.load(
+            std::memory_order_relaxed);
+    options.directIoBlockSize =
+        ad_utility::vocabularyDirectIoBlockSize.load(std::memory_order_relaxed);
   }
   return options;
 }
