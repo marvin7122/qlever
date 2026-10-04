@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
@@ -234,6 +240,30 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 }
 
 // _____________________________________________________________________________
+TYPED_TEST(CompressedVocabularyF, LookupBatchSpansDecoderBlocks) {
+  auto createVocab = TestFixture::createCompressedVocabulary();
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 111; ++i) {
+    words.push_back(absl::StrCat("someWord", i, std::string(i % 13, 'y')));
+  }
+  // NOTE: The fixture uses a decoder block size of 4, so these shuffled indices
+  // (with duplicates) span many decoder blocks. Each word has to be
+  // decompressed with the decoder of its own block, in input order.
+  auto vocab = createVocab(words);
+  std::vector<size_t> indices{110, 0, 57, 3, 4, 57, 109, 1, 42, 110, 5, 0};
+  auto result = vocab.lookupBatch(indices);
+  std::vector<std::string> expected;
+  for (size_t index : indices) {
+    expected.push_back(words.at(index));
+  }
+  EXPECT_THAT(result, ::testing::ElementsAreArray(expected));
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+
+  // An empty batch is an invalid request.
+  EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
+}
+
+// _____________________________________________________________________________
 TYPED_TEST(CompressedVocabularyF, ScanAllEmptyVocabulary) {
   auto createVocab = TestFixture::createCompressedVocabulary();
   auto vocab = createVocab({});
@@ -346,6 +376,31 @@ TEST(CompressedVocabularyWithHoles, accessOperator) {
     EXPECT_EQ(vocab[index],
               ad_utility::vocabulary::placeholderForMissingVocabIndex(index));
   }
+}
+
+// _____________________________________________________________________________
+TEST(CompressedVocabularyWithHoles, lookupBatch) {
+  std::string filename = gtestCurrentTestName();
+  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto words = wordsWithHoles();
+  auto indices = indicesWithHoles();
+  auto vocab = createVocabularyWithHoles(filename, words, indices);
+
+  // Contained words from several decoder blocks, holes, and duplicates, in
+  // shuffled order. A hole yields the same placeholder as `operator[]`.
+  std::vector<size_t> batch{indices.at(10), 0,  indices.at(0),  2,
+                            indices.at(5),  35, indices.at(10), indices.at(1)};
+  auto result = vocab.lookupBatch(batch);
+  using ad_utility::vocabulary::placeholderForMissingVocabIndex;
+  EXPECT_THAT(result, ::testing::ElementsAre(
+                          words.at(10), placeholderForMissingVocabIndex(0),
+                          words.at(0), placeholderForMissingVocabIndex(2),
+                          words.at(5), placeholderForMissingVocabIndex(35),
+                          words.at(10), words.at(1)));
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, batch);
+
+  // An empty batch is an invalid request.
+  EXPECT_ANY_THROW(vocab.lookupBatch(ql::span<const size_t>{}));
 }
 
 // _____________________________________________________________________________

@@ -1,6 +1,12 @@
-//  Copyright 2022, University of Freiburg,
-//  Chair of Algorithms and Data Structures.
-//  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2022 - 2026 The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
@@ -149,8 +155,37 @@ CPP_template(typename UnderlyingVocabulary,
   }
 
   //____________________________________________________________________________
+  // Return the words at `indices` in input order, exactly like one call to
+  // `operator[]` per index. Without holes, the compressed words are fetched
+  // with one `lookupBatch` call on the underlying vocabulary and then
+  // decompressed with the decoder of their block. With holes, the per-index
+  // path is used, which reports a placeholder for a hole. `indices` must not
+  // be empty.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    AD_CONTRACT_CHECK(!indices.empty());
+    if constexpr (underlyingHasHoles) {
+      // Indices that are holes report a placeholder; keep the per-index path
+      // that implements that mapping.
+      return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    } else {
+      // Fetch the compressed words in one batch through the underlying
+      // vocabulary (an on-disk underlying vocabulary reads them through its
+      // `BatchManager`: the `io_uring` ring when QLever is built with liburing
+      // and the ring could be set up, synchronous `pread` otherwise), then
+      // decompress each word with the decoder for its block. The underlying
+      // lookup preserves order, so each word pairs with the index at the same
+      // position, exactly like the sequential path.
+      auto compressed = underlyingVocabulary_.lookupBatch(indices);
+      AD_CORRECTNESS_CHECK(compressed.size() == indices.size());
+      std::vector<std::string> words;
+      words.reserve(indices.size());
+      for (const auto& [word, index] :
+           ::ranges::views::zip(compressed, indices)) {
+        words.push_back(
+            compressionWrapper_.decompress(word, getDecoderIdx(index)));
+      }
+      return StringVectorVocabBatchLookupData::fromWords(std::move(words));
+    }
   }
 
   //____________________________________________________________________________
