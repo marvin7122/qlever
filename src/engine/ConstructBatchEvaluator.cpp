@@ -112,7 +112,8 @@ BatchEvaluationResult ConstructBatchEvaluator::completeBatch(
     for (size_t i = 0; i < column.pendingIds_.size(); ++i) {
       evaluated.push_back(stringAndTypeToEvaluatedTerm(
           ql::exportIds::literalOrIriToStringAndType(
-              LiteralOrIriView::fromStringRepresentation(words[nextWord++]))));
+              ql::exportIds::LiteralOrIriView::fromStringRepresentation(
+                  words[nextWord++]))));
     }
     {
       auto lockedCache = idCache.wlock();
