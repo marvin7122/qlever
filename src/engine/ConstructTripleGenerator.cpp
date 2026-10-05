@@ -105,6 +105,76 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
          });
 }
 
+// Stage 1 of the three-stage pipeline (see `evaluateTables`): chunks `table`
+// into batches and prepares each one (`ConstructBatchEvaluator::prepareBatch`).
+// The same lifetime rules as for `processTableBatches` apply.
+auto prepareTableBatches(
+    TableWithRange table,
+    std::shared_ptr<const PreprocessedConstructTemplate> preprocessedTemplate,
+    std::reference_wrapper<const Index> index,
+    std::shared_ptr<SynchronizedIdCache> cache,
+    ad_utility::SharedCancellationHandle cancellationHandle,
+    size_t tableRowOffset) {
+  auto rowView = table.view_;
+  const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
+  return ranges::views::chunk(std::move(rowView),
+                              ConstructTripleGenerator::BATCH_SIZE) |
+         ql::views::transform(
+             [tableWithVocab,
+              preprocessedTemplate = std::move(preprocessedTemplate), index,
+              cache = std::move(cache),
+              cancellationHandle = std::move(cancellationHandle),
+              tableRowOffset](auto chunkView) {
+               cancellationHandle->throwIfCancelled();
+               AD_CORRECTNESS_CHECK(!ql::ranges::empty(chunkView));
+               const size_t batchBegin = *ql::ranges::begin(chunkView);
+               const size_t batchEnd =
+                   batchBegin +
+                   static_cast<size_t>(ql::ranges::size(chunkView));
+               const BatchEvaluationContext ctx{tableWithVocab.idTable(),
+                                                batchBegin, batchEnd};
+               PreparedBatch prepared = ConstructBatchEvaluator::prepareBatch(
+                   preprocessedTemplate->uniqueVariableColumns_, ctx,
+                   tableWithVocab.localVocab(), index.get(), *cache);
+               prepared.blankNodeBaseId_ = tableRowOffset + batchBegin;
+               return prepared;
+             });
+}
+
+// Stage 2 of the three-stage pipeline: completes the prepared batches
+// (`ConstructBatchEvaluator::completeBatch`) and instantiates their triples.
+class CompletedBatches
+    : public ad_utility::InputRangeFromGet<std::vector<EvaluatedTriple>> {
+ public:
+  CompletedBatches(
+      InputRangeTypeErased<PreparedBatch> preparedBatches,
+      std::shared_ptr<const PreprocessedConstructTemplate> preprocessedTemplate,
+      std::reference_wrapper<const Index> index,
+      std::shared_ptr<SynchronizedIdCache> cache)
+      : preparedBatches_{std::move(preparedBatches)},
+        preprocessedTemplate_{std::move(preprocessedTemplate)},
+        index_{index},
+        cache_{std::move(cache)} {}
+
+  std::optional<std::vector<EvaluatedTriple>> get() override {
+    auto prepared = preparedBatches_.get();
+    if (!prepared.has_value()) {
+      return std::nullopt;
+    }
+    const BatchEvaluationResult batchResult =
+        ConstructBatchEvaluator::completeBatch(prepared.value(), index_.get(),
+                                               *cache_);
+    return instantiateBatch(*preprocessedTemplate_, batchResult,
+                            prepared->blankNodeBaseId_);
+  }
+
+ private:
+  InputRangeTypeErased<PreparedBatch> preparedBatches_;
+  std::shared_ptr<const PreprocessedConstructTemplate> preprocessedTemplate_;
+  std::reference_wrapper<const Index> index_;
+  std::shared_ptr<SynchronizedIdCache> cache_;
+};
+
 // Yields the triples of `batches` one by one, in order.
 class FlattenedBatches : public ad_utility::InputRangeFromGet<EvaluatedTriple> {
  public:
@@ -151,6 +221,47 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
       qec.makeShared<const PreprocessedConstructTemplate>(
           std::move(preprocessedTemplate));
 
+  // With a pipeline depth N > 0, the batches are evaluated on other threads
+  // than the consuming one, which formats them, and each stage hands its
+  // batches to the next one through a queue of N batches. With
+  // `construct-export-pipeline-split-lookup` (only without deduplication),
+  // the export has three stages: thread 1 computes the result blocks, looks up
+  // the `Id`s in the cache and submits the vocabulary lookup of each batch
+  // (`prepareBatch`); thread 2 waits for the lookup, decodes the words and
+  // instantiates the triples (`completeBatch`); the consumer formats. The two
+  // evaluating threads share the `IdCache` through a mutex. Otherwise one
+  // thread evaluates the batches; the `IdCache` and the deduplicator are only
+  // used by that thread.
+  const size_t pipelineDepth =
+      getRuntimeParameter<&RuntimeParameters::constructExportPipelineDepth_>();
+  if (pipelineDepth > 0 && !deduplicator &&
+      getRuntimeParameter<
+          &RuntimeParameters::constructExportPipelineSplitLookup_>()) {
+    auto sharedCache = std::make_shared<SynchronizedIdCache>(std::move(cache));
+    auto prepareTable = [preprocessedTemplate = preprocessedTemplatePtr,
+                         index = config.index_,
+                         cancellationHandle = config.cancellationHandle_,
+                         cache = sharedCache, accumulatedRowOffset = rowOffset](
+                            const TableWithRange& table) mutable {
+      const size_t tableRowOffset = accumulatedRowOffset;
+      accumulatedRowOffset += ql::ranges::size(table.view_);
+      return prepareTableBatches(table, preprocessedTemplate, index, cache,
+                                 cancellationHandle, tableRowOffset);
+    };
+    InputRangeTypeErased<PreparedBatch> prepared{
+        std::move(rowIndices) | ql::views::transform(std::move(prepareTable)) |
+        ql::views::join};
+    prepared =
+        ad_utility::streams::runStreamAsync(std::move(prepared), pipelineDepth);
+    InputRangeTypeErased<std::vector<EvaluatedTriple>> completed{
+        CompletedBatches{std::move(prepared), preprocessedTemplatePtr,
+                         config.index_, std::move(sharedCache)}};
+    completed = ad_utility::streams::runStreamAsync(std::move(completed),
+                                                    pipelineDepth);
+    return InputRangeTypeErased<EvaluatedTriple>{
+        FlattenedBatches{std::move(completed)}};
+  }
+
   auto processTable =
       [preprocessedTemplate = std::move(preprocessedTemplatePtr),
        index = config.index_, cancellationHandle = config.cancellationHandle_,
@@ -170,13 +281,6 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
       std::move(rowIndices) | ql::views::transform(std::move(processTable)) |
       ql::views::join};
 
-  // With a pipeline depth N > 0, a separate thread evaluates the batches (the
-  // computation of the result blocks, the `Id` resolution with its vocabulary
-  // reads, and the instantiation of the template triples) up to N batches
-  // ahead of the consumer, which formats them. The `IdCache` and the
-  // deduplicator are only used by that thread.
-  const size_t pipelineDepth =
-      getRuntimeParameter<&RuntimeParameters::constructExportPipelineDepth_>();
   if (pipelineDepth > 0) {
     batches =
         ad_utility::streams::runStreamAsync(std::move(batches), pipelineDepth);

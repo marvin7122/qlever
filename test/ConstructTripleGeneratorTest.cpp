@@ -401,13 +401,24 @@ static std::string formatTwoTablesAsTurtle(
   for (size_t i = 0; i < N1; ++i) {
     rows1.push_back({ids[i % 3], i % 5 == 0 ? U : ids[(i + 1) % 3]});
   }
+  // The second table also holds a local vocabulary entry and an encoded
+  // value, which are resolved without a vocabulary read.
+  LocalVocab localVocab2;
+  const Id idLocal =
+      Id::makeFromLocalVocabIndex(localVocab2.getIndexAndAddIfNotContained(
+          LocalVocabEntry::literalWithoutQuotes("local-word",
+                                                qec.getLocalVocabContext())));
+  const Id idInt = Id::makeFromInt(42);
   for (size_t i = 0; i < N2; ++i) {
-    rows2.push_back({ids[(i + 2) % 3], ids[i % 3]});
+    rows2.push_back({ids[(i + 2) % 3], i % 7 == 0   ? idLocal
+                                       : i % 7 == 1 ? idInt
+                                                    : ids[i % 3]});
   }
   auto result1 = std::make_shared<const Result>(
       makeIdTableFromVector(rows1), std::vector<ColumnIndex>{}, LocalVocab{});
-  auto result2 = std::make_shared<const Result>(
-      makeIdTableFromVector(rows2), std::vector<ColumnIndex>{}, LocalVocab{});
+  auto result2 = std::make_shared<const Result>(makeIdTableFromVector(rows2),
+                                                std::vector<ColumnIndex>{},
+                                                std::move(localVocab2));
   std::vector<TableWithRange> tables{
       {TableConstRefWithVocab{result1->idTableView(), result1->localVocab()},
        ql::views::iota(uint64_t{0}, uint64_t{N1})},
@@ -432,8 +443,9 @@ static std::string formatTwoTablesAsTurtle(
   return out;
 }
 
-// Every pipeline depth yields the same output as the evaluation on the
-// consuming thread (depth 0), across several batches and two tables.
+// Every pipeline depth, with and without the split lookup (three stages),
+// yields the same output as the evaluation on the consuming thread (depth 0),
+// across several batches and two tables.
 TEST_F(ConstructTripleGeneratorTest, pipelineDepthDoesNotChangeOutput) {
   auto format = [this]() {
     return formatTwoTablesAsTurtle(index_, *qec_, makeHandle(),
@@ -446,11 +458,22 @@ TEST_F(ConstructTripleGeneratorTest, pipelineDepthDoesNotChangeOutput) {
     sequential = format();
   }
   ASSERT_FALSE(sequential.empty());
-  for (size_t depth : {1, 2, 3, 8}) {
-    auto cleanup = setRuntimeParameterForTest<
-        &RuntimeParameters::constructExportPipelineDepth_>(depth);
-    EXPECT_EQ(format(), sequential) << "depth " << depth;
+  EXPECT_THAT(sequential, ::testing::HasSubstr("local-word"));
+  EXPECT_THAT(sequential, ::testing::HasSubstr("42"));
+  for (bool splitLookup : {false, true}) {
+    auto cleanupSplit = setRuntimeParameterForTest<
+        &RuntimeParameters::constructExportPipelineSplitLookup_>(splitLookup);
+    for (size_t depth : {1, 2, 3, 8}) {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::constructExportPipelineDepth_>(depth);
+      EXPECT_EQ(format(), sequential)
+          << "depth " << depth << " split lookup " << splitLookup;
+    }
   }
+  // Without a pipeline depth, the split lookup has no effect.
+  auto cleanupSplit = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportPipelineSplitLookup_>(true);
+  EXPECT_EQ(format(), sequential);
 }
 
 // With a pipeline, an exception of the evaluating thread (here: the query was
@@ -458,14 +481,18 @@ TEST_F(ConstructTripleGeneratorTest, pipelineDepthDoesNotChangeOutput) {
 TEST_F(ConstructTripleGeneratorTest, pipelinePropagatesCancellation) {
   auto cleanup = setRuntimeParameterForTest<
       &RuntimeParameters::constructExportPipelineDepth_>(2);
-  auto handle = makeHandle();
-  handle->cancel(ad_utility::CancellationState::MANUAL);
-  EXPECT_ANY_THROW(
-      formatTwoTablesAsTurtle(index_, *qec_, handle, {idS_, idP_, idO_}));
+  for (bool splitLookup : {false, true}) {
+    auto cleanupSplit = setRuntimeParameterForTest<
+        &RuntimeParameters::constructExportPipelineSplitLookup_>(splitLookup);
+    auto handle = makeHandle();
+    handle->cancel(ad_utility::CancellationState::MANUAL);
+    EXPECT_ANY_THROW(
+        formatTwoTablesAsTurtle(index_, *qec_, handle, {idS_, idP_, idO_}));
+  }
 }
 
 // A pipelined range that is destroyed before it is exhausted stops its
-// evaluating thread (the destructor returns instead of blocking on the full
+// evaluating threads (the destructor returns instead of blocking on a full
 // queue).
 TEST_F(ConstructTripleGeneratorTest, pipelinedRangeCanBeAbandoned) {
   auto cleanup = setRuntimeParameterForTest<
@@ -476,7 +503,9 @@ TEST_F(ConstructTripleGeneratorTest, pipelinedRangeCanBeAbandoned) {
   auto templateTriples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
   VariableToColumnMap varMap;
   varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
-  {
+  for (bool splitLookup : {false, true}) {
+    auto cleanupSplit = setRuntimeParameterForTest<
+        &RuntimeParameters::constructExportPipelineSplitLookup_>(splitLookup);
     auto range = ConstructTripleGenerator::generateFormattedTriples(
         templateTriples, varMap,
         singleTableRange(makeTableWithRange(*result, 0, N)), 0,
@@ -485,7 +514,6 @@ TEST_F(ConstructTripleGeneratorTest, pipelinedRangeCanBeAbandoned) {
     ASSERT_TRUE(first.has_value());
     EXPECT_EQ(first.value(), "<s>,<p>,<o>\n");
   }
-  SUCCEED();
 }
 
 // =============================================================================

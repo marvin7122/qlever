@@ -32,6 +32,111 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
 }
 
 // _____________________________________________________________________________
+PreparedBatch ConstructBatchEvaluator::prepareBatch(
+    ql::span<const ColumnIndex> variableColumnIndices,
+    const BatchEvaluationContext& ctx, const LocalVocab& localVocab,
+    const Index& index, SynchronizedIdCache& idCache) {
+  PreparedBatch prepared;
+  prepared.numRows_ = ctx.numRows();
+  std::vector<size_t> pendingVocabIndices;
+  for (ColumnIndex columnIndex : variableColumnIndices) {
+    auto& column = prepared.columns_.emplace_back();
+    column.columnIndex_ = columnIndex;
+    column.values_.resize(ctx.numRows());
+    decltype(auto) col = ctx.idTable_.getColumn(columnIndex)
+                             .subspan(ctx.firstRow_, ctx.numRows());
+    // As in `evaluateVariableByColumn`: sort by `Id`, scatter the cache hits,
+    // and collect the unique misses with their rows.
+    auto sortedIndices = ::ranges::to_vector(::ranges::views::enumerate(col));
+    ql::ranges::sort(sortedIndices, {}, ad_utility::second);
+    std::vector<Id> missIds;
+    std::vector<absl::InlinedVector<size_t, 3>> missRows;
+    {
+      auto lockedCache = idCache.wlock();
+      for (const auto& [rowInBatch, id] : sortedIndices) {
+        auto cached = lockedCache->tryGet(id);
+        if (cached) {
+          column.values_[rowInBatch] = cached.value();
+        } else if (!missIds.empty() && missIds.back() == id) {
+          missRows.back().push_back(static_cast<size_t>(rowInBatch));
+        } else {
+          missIds.push_back(id);
+          missRows.push_back({static_cast<size_t>(rowInBatch)});
+        }
+      }
+    }
+    // Resolve the misses that need no vocabulary read now: a
+    // `LocalVocabIndex` `Id` points into `localVocab`, which is only alive
+    // while the current result block is. As in `evaluateVariableByColumn`,
+    // `LocalVocabIndex` `Id`s are never inserted into `idCache`.
+    for (auto&& [id, rows] : ::ranges::views::zip(missIds, missRows)) {
+      if (id.getDatatype() == Datatype::VocabIndex) {
+        pendingVocabIndices.push_back(id.getVocabIndex().get());
+        column.pendingIds_.push_back(id);
+        column.pendingRows_.push_back(std::move(rows));
+        continue;
+      }
+      std::optional<EvaluatedTerm> evaluated = stringAndTypeToEvaluatedTerm(
+          ql::exportIds::idToStringAndType(index, id, localVocab));
+      if (id.getDatatype() != Datatype::LocalVocabIndex) {
+        evaluated = idCache.wlock()->getOrCompute(
+            id, [&evaluated](const Id&) { return evaluated; });
+      }
+      for (const size_t row : rows) {
+        column.values_[row] = evaluated;
+      }
+    }
+  }
+  if (!pendingVocabIndices.empty()) {
+    prepared.lookup_ =
+        index.getImpl().getVocab().beginLookup(pendingVocabIndices);
+  }
+  return prepared;
+}
+
+// _____________________________________________________________________________
+BatchEvaluationResult ConstructBatchEvaluator::completeBatch(
+    PreparedBatch& prepared, const Index& index, SynchronizedIdCache& idCache) {
+  BatchEvaluationResult batchResult;
+  batchResult.numRows_ = prepared.numRows_;
+  VocabBatchLookupResult words;
+  if (prepared.lookup_) {
+    words =
+        index.getImpl().getVocab().finishLookup(std::move(prepared.lookup_));
+  }
+  size_t nextWord = 0;
+  for (auto& column : prepared.columns_) {
+    // Build the terms without holding the lock, then insert them all at once.
+    std::vector<std::optional<EvaluatedTerm>> evaluated;
+    evaluated.reserve(column.pendingIds_.size());
+    for (size_t i = 0; i < column.pendingIds_.size(); ++i) {
+      evaluated.push_back(stringAndTypeToEvaluatedTerm(
+          ql::exportIds::literalOrIriToStringAndType(
+              LiteralOrIriView::fromStringRepresentation(words[nextWord++]))));
+    }
+    {
+      auto lockedCache = idCache.wlock();
+      for (auto&& [id, value] :
+           ::ranges::views::zip(column.pendingIds_, evaluated)) {
+        value = lockedCache->getOrCompute(
+            id, [&value](const Id&) { return value; });
+      }
+    }
+    for (auto&& [value, rows] :
+         ::ranges::views::zip(evaluated, column.pendingRows_)) {
+      for (const size_t row : rows) {
+        column.values_[row] = value;
+      }
+    }
+    auto [it, wasNew] = batchResult.variablesByColumn_.emplace(
+        column.columnIndex_, std::move(column.values_));
+    AD_CORRECTNESS_CHECK(wasNew);
+  }
+  AD_CORRECTNESS_CHECK(nextWord == words.size());
+  return batchResult;
+}
+
+// _____________________________________________________________________________
 std::optional<EvaluatedTerm>
 ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
     std::optional<std::pair<std::string, const char*>>&& optStringAndType) {
