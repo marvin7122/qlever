@@ -321,23 +321,36 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 // the earlier batch afterwards returns at once, also in reverse order.
 TYPED_TEST(IoUringManagerTest, RingOverflowReapsCompletionsOfEarlierBatch) {
   constexpr size_t RING_SIZE = 16;
-  SequentialReadScenarioForTesting first;
-  SequentialReadScenarioForTesting second;
+  // One file, two batches over disjoint regions of it. Chunk `i` holds a
+  // distinct pattern, so a read landing in the wrong buffer is detected.
+  std::string fileContent;
+  std::vector<std::string> expectedFirst;
+  std::vector<std::string> expectedSecond;
+  ReadBatchForTesting first;
+  ReadBatchForTesting second;
+  auto addChunk = [&fileContent](ReadBatchForTesting& batch,
+                                 std::vector<std::string>& expected,
+                                 std::string chunk) {
+    batch.add(fileContent.size(), chunk.size());
+    fileContent.append(chunk);
+    expected.push_back(std::move(chunk));
+  };
   for (size_t i = 0; i < RING_SIZE / 2; ++i) {
-    first.addRead(std::string(3, static_cast<char>('a' + (i % 26))));
+    addChunk(first, expectedFirst,
+             std::string(3, static_cast<char>('a' + (i % 26))));
   }
   for (size_t i = 0; i < 5 * RING_SIZE + 3; ++i) {
-    second.addRead(std::string(5, static_cast<char>('A' + (i % 26))));
+    addChunk(second, expectedSecond,
+             std::string(5, static_cast<char>('A' + (i % 26))));
   }
-  auto [tmpFirst, fdFirst] = makeTempFile(first.content());
-  auto [tmpSecond, fdSecond] = makeTempFile(second.content());
+  auto [tmp, fd] = makeTempFile(fileContent);
   TypeParam manager(RING_SIZE);
-  auto firstHandle = first.submitTo(manager, fdFirst);
-  auto secondHandle = second.submitTo(manager, fdSecond);
+  auto firstHandle = first.submitTo(manager, fd);
+  auto secondHandle = second.submitTo(manager, fd);
   manager.wait(secondHandle);
   manager.wait(firstHandle);
-  EXPECT_THAT(first.results(), ::testing::ElementsAreArray(first.expected()));
-  EXPECT_THAT(second.results(), ::testing::ElementsAreArray(second.expected()));
+  EXPECT_THAT(first.result(), ::testing::ElementsAreArray(expectedFirst));
+  EXPECT_THAT(second.result(), ::testing::ElementsAreArray(expectedSecond));
 }
 
 // Verify that many independent `addBatch` calls can be outstanding (submitted
