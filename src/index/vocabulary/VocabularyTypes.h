@@ -276,7 +276,8 @@ class AllocatorAsMemoryResource : public ql::pmr::memory_resource {
 };
 
 // Strong, self-contained batch-lookup result backed by a PMR monotonic buffer
-// resource. `upstream_` (if set) must outlive `buffer_` so deallocation can
+// resource and by the results that an untracked builder took over without a
+// copy. `upstream_` (if set) must outlive `buffer_` so deallocation can
 // still charge the memory tracker; members are destroyed in reverse order.
 class ArenaVocabBatchBuilder;
 
@@ -291,10 +292,12 @@ class PmrVocabBatchLookupData : public VocabBatchStorage {
   PmrVocabBatchLookupData(
       Passkey, std::unique_ptr<ql::pmr::memory_resource> upstream,
       std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer,
-      std::vector<std::string_view> views)
+      std::vector<std::string_view> views,
+      std::vector<VocabBatchLookupResult> retainedResults)
       : VocabBatchStorage(std::move(views)),
         upstream_{std::move(upstream)},
-        buffer_{std::move(buffer)} {}
+        buffer_{std::move(buffer)},
+        retainedResults_{std::move(retainedResults)} {}
 
   static VocabBatchLookupResult asResult(
       std::shared_ptr<PmrVocabBatchLookupData> self) {
@@ -305,6 +308,9 @@ class PmrVocabBatchLookupData : public VocabBatchStorage {
  private:
   std::unique_ptr<ql::pmr::memory_resource> upstream_;
   std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
+  // Results whose views were taken over without a copy (see
+  // `ArenaVocabBatchBuilder::appendResult`).
+  std::vector<VocabBatchLookupResult> retainedResults_;
 };
 
 // _____________________________________________________________________________
@@ -423,6 +429,7 @@ class ArenaVocabBatchBuilder {
   std::unique_ptr<ql::pmr::memory_resource> upstream_;
   std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
   std::vector<std::string_view> views_;
+  std::vector<VocabBatchLookupResult> retainedResults_;
 
   void initBuffer(ql::pmr::memory_resource* resource) {
     buffer_ = std::make_unique<ql::pmr::monotonic_buffer_resource>(resource);
@@ -504,22 +511,37 @@ class ArenaVocabBatchBuilder {
     }
   }
 
+  // Append all words of `result`. A builder that charges an
+  // `AllocatorWithLimit` copies them into its arena (`appendWords`), so that
+  // the words count against the budget. An untracked builder has no budget to
+  // charge, so it keeps `result` alive in the finalized result and takes over
+  // its views without a copy.
+  void appendResult(VocabBatchLookupResult result) {
+    if (upstream_ != nullptr) {
+      appendWords(result);
+      return;
+    }
+    views_.insert(views_.end(), result.begin(), result.end());
+    retainedResults_.push_back(std::move(result));
+  }
+
   // ___________________________________________________________________________
   // Finalize and return the immutable batch result.
   [[nodiscard]] VocabBatchLookupResult finalize() && {
     AD_CONTRACT_CHECK(!views_.empty());
     auto data = std::make_shared<PmrVocabBatchLookupData>(
         PmrVocabBatchLookupData::Passkey{}, std::move(upstream_),
-        std::move(buffer_), std::move(views_));
+        std::move(buffer_), std::move(views_), std::move(retainedResults_));
     return PmrVocabBatchLookupData::asResult(std::move(data));
   }
 };
 
-// Append every word from `result` to `builder`. The copied bytes no longer
-// depend on the lifetime of `result` after this function returns.
-inline void appendVocabBatchLookupResult(const VocabBatchLookupResult& result,
+// Append every word from `result` to `builder` (see
+// `ArenaVocabBatchBuilder::appendResult`). The appended views stay valid as
+// long as the finalized result of `builder` lives.
+inline void appendVocabBatchLookupResult(VocabBatchLookupResult result,
                                          ArenaVocabBatchBuilder& builder) {
-  builder.appendWords(result);
+  builder.appendResult(std::move(result));
 }
 
 // Whether `Vocab` provides the two-argument `lookupBatch` overload that

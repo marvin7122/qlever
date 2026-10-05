@@ -41,7 +41,8 @@ class UnicodeVocabulary {
   }
 
   // Append the words for `indices` to `builder`. Delegate when the underlying
-  // vocabulary supports this protocol. Otherwise copy its owning result.
+  // vocabulary supports this protocol. Otherwise hand its result to
+  // `ArenaVocabBatchBuilder::appendResult`.
   void lookupBatch(ql::span<const size_t> indices,
                    ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());

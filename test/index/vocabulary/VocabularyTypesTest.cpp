@@ -329,6 +329,42 @@ TEST(VocabBatchLookupData, ArenaVocabBatchBuilderAppendWordsCopiesAllWords) {
 }
 
 // _____________________________________________________________________________
+TEST(VocabBatchLookupData, UntrackedBuilderAppendResultTakesOverViews) {
+  VocabBatchLookupResult result;
+  const char* sourceData = nullptr;
+  {
+    auto source = StringVectorVocabBatchLookupData::fromWords({"one", "two"});
+    sourceData = source[1].data();
+    ArenaVocabBatchBuilder builder(3);
+    builder.appendWord("zero");
+    builder.appendResult(std::move(source));
+    result = std::move(builder).finalize();
+  }
+  // No copy: the view points into the retained `source`, which outlives the
+  // builder and the scope above.
+  EXPECT_EQ(result[2].data(), sourceData);
+  EXPECT_THAT(result, ::testing::ElementsAre("zero", "one", "two"));
+}
+
+// _____________________________________________________________________________
+TEST(PmrVocabBatchLookupData, TrackedBuilderAppendResultCopiesWords) {
+  auto alloc = ad_utility::makeUnlimitedAllocator<Id>();
+  auto source = StringVectorVocabBatchLookupData::fromWords({"one", "two"});
+  ArenaVocabBatchBuilder builder(2, alloc);
+  builder.appendResult(source);
+  auto result = std::move(builder).finalize();
+  EXPECT_NE(result[0].data(), source[0].data());
+  EXPECT_THAT(result, ::testing::ElementsAre("one", "two"));
+
+  auto limited = ad_utility::makeAllocatorWithLimit<Id>(8_B);
+  ArenaVocabBatchBuilder limitedBuilder(1, limited);
+  EXPECT_THROW(
+      limitedBuilder.appendResult(StringVectorVocabBatchLookupData::fromWords(
+          {"this string is definitely more than eight bytes"})),
+      ad_utility::detail::AllocationExceedsLimitException);
+}
+
+// _____________________________________________________________________________
 TEST(PmrVocabBatchLookupData, AppendWordsChargesTheAllocator) {
   auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
   ArenaVocabBatchBuilder builder(1, alloc);
