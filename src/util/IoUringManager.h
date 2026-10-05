@@ -207,6 +207,13 @@ class IoUringPolicy {
   // Wait for one CQE and update the in-flight bookkeeping.
   void drainOneCqe();
 
+  // Reap every CQE that is already available, without waiting.
+  void drainReadyCqes();
+
+  // Consume `cqe` and update the in-flight bookkeeping. Throws if the read
+  // failed or read fewer bytes than requested (after the bookkeeping).
+  void processCqe(io_uring_cqe* cqe);
+
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;

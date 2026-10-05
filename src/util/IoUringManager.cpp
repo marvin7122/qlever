@@ -116,9 +116,14 @@ void IoUringPolicy::addBatch(int fd,
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
       io_uring_submit(&ring_);
-      while (numInFlightReadRequests_ >= ringSize_) {
-        drainOneCqe();
-      }
+      // Block for one completion, then also reap every completion that is
+      // already available. Reaping only the one completion would leave the
+      // ring full again after the next read is prepared, so every further read
+      // of a batch larger than the ring would cost its own `io_uring_enter`.
+      // On page-cache hits, the reads complete during the submit, so this
+      // frees the whole ring with that one submit.
+      drainOneCqe();
+      drainReadyCqes();
     }
 
     // Claim the next free SQE. The check above guarantees a slot is available,
@@ -163,14 +168,28 @@ void IoUringPolicy::wait(BatchHandle handle) {
 }
 
 //______________________________________________________________________________
-void ad_utility::IoUringPolicy::drainOneCqe() {
+void IoUringPolicy::drainOneCqe() {
   // Block until at least one completion queue entry (CQE) is available.
   io_uring_cqe* cqe = nullptr;
   int ret = io_uring_wait_cqe(&ring_, &cqe);
   if (ret < 0) {
     AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
   }
+  processCqe(cqe);
+}
 
+//______________________________________________________________________________
+void IoUringPolicy::drainReadyCqes() {
+  // `io_uring_peek_cqe` returns a CQE only if one is already available; it
+  // never waits and never enters the kernel.
+  io_uring_cqe* cqe = nullptr;
+  while (io_uring_peek_cqe(&ring_, &cqe) == 0 && cqe != nullptr) {
+    processCqe(cqe);
+  }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::processCqe(io_uring_cqe* cqe) {
   // Recover the read's result (`cqe->res`) and the request id we stored in the
   // SQE, then consume the CQE so its slot is freed. Do this before any throw.
   const int numBytesRead = cqe->res;
