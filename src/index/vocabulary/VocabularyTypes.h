@@ -477,6 +477,33 @@ class ArenaVocabBatchBuilder {
     views_.emplace_back(mem, word.size());
   }
 
+  // Copy all words of `result` into the arena with one allocation for their
+  // total size. Equivalent to calling `appendWord` for each word, but without
+  // one arena allocation per word and without growing the arena in many small
+  // blocks.
+  void appendWords(const VocabBatchLookupResult& result) {
+    size_t totalSize = 0;
+    for (std::string_view word : result) {
+      totalSize += word.size();
+    }
+    views_.reserve(views_.size() + result.size());
+    if (totalSize == 0) {
+      views_.insert(views_.end(), result.size(), std::string_view{""});
+      return;
+    }
+    ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
+    char* mem = allocator.allocate(totalSize);
+    for (std::string_view word : result) {
+      if (word.empty()) {
+        views_.emplace_back("");
+        continue;
+      }
+      std::memcpy(mem, word.data(), word.size());
+      views_.emplace_back(mem, word.size());
+      mem += word.size();
+    }
+  }
+
   // ___________________________________________________________________________
   // Finalize and return the immutable batch result.
   [[nodiscard]] VocabBatchLookupResult finalize() && {
@@ -492,9 +519,7 @@ class ArenaVocabBatchBuilder {
 // depend on the lifetime of `result` after this function returns.
 inline void appendVocabBatchLookupResult(const VocabBatchLookupResult& result,
                                          ArenaVocabBatchBuilder& builder) {
-  for (std::string_view word : result) {
-    builder.appendWord(word);
-  }
+  builder.appendWords(result);
 }
 
 // Whether `Vocab` provides the two-argument `lookupBatch` overload that

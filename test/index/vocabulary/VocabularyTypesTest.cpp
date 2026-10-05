@@ -311,6 +311,33 @@ TEST(VocabBatchLookupData, ArenaVocabBatchBuilderKeepsViewsAlive) {
 }
 
 // _____________________________________________________________________________
+TEST(VocabBatchLookupData, ArenaVocabBatchBuilderAppendWordsCopiesAllWords) {
+  VocabBatchLookupResult result;
+  {
+    auto source =
+        StringVectorVocabBatchLookupData::fromWords({"one", "", "three"});
+    ArenaVocabBatchBuilder builder(1);
+    builder.appendWord("zero");
+    builder.appendWords(source);
+    // A result of only empty words needs no arena allocation.
+    builder.appendWords(StringVectorVocabBatchLookupData::fromWords({""}));
+    result = std::move(builder).finalize();
+    // The copied views do not point into `source`.
+    EXPECT_NE(result[1].data(), source[0].data());
+  }
+  EXPECT_THAT(result, ::testing::ElementsAre("zero", "one", "", "three", ""));
+}
+
+// _____________________________________________________________________________
+TEST(PmrVocabBatchLookupData, AppendWordsChargesTheAllocator) {
+  auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
+  ArenaVocabBatchBuilder builder(1, alloc);
+  EXPECT_THROW(builder.appendWords(StringVectorVocabBatchLookupData::fromWords(
+                   {"this string is definitely more than eight bytes"})),
+               ad_utility::detail::AllocationExceedsLimitException);
+}
+
+// _____________________________________________________________________________
 TEST(PmrVocabBatchLookupData, LimitedAllocatorThrowsWhenArenaExceedsBudget) {
   auto alloc = ad_utility::makeAllocatorWithLimit<Id>(8_B);
   ArenaVocabBatchBuilder builder(1, alloc);
