@@ -14,6 +14,7 @@
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
 #include "util/CancellationHandle.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 namespace {
 
@@ -382,6 +383,108 @@ TEST_F(ConstructTripleGeneratorTest, idCacheIsSharedAcrossBatches) {
   const EvaluatedTerm& fromBatch0 = collected.front().subject_;
   const EvaluatedTerm& fromBatch1 = collected.back().subject_;
   EXPECT_EQ(fromBatch0.get(), fromBatch1.get());
+}
+
+// =============================================================================
+// Tests for the runtime parameter `construct-export-pipeline-depth`
+// =============================================================================
+
+// Evaluate a template with a variable and a blank node over two tables with
+// more than two batches each and return the formatted Turtle output.
+static std::string formatTwoTablesAsTurtle(
+    const Index& index, QueryExecutionContext& qec,
+    ad_utility::SharedCancellationHandle handle, std::array<Id, 3> ids) {
+  constexpr size_t N1 = 2 * ConstructTripleGenerator::BATCH_SIZE + 7;
+  constexpr size_t N2 = ConstructTripleGenerator::BATCH_SIZE + 3;
+  std::vector<std::vector<IntOrId>> rows1;
+  std::vector<std::vector<IntOrId>> rows2;
+  for (size_t i = 0; i < N1; ++i) {
+    rows1.push_back({ids[i % 3], i % 5 == 0 ? U : ids[(i + 1) % 3]});
+  }
+  for (size_t i = 0; i < N2; ++i) {
+    rows2.push_back({ids[(i + 2) % 3], ids[i % 3]});
+  }
+  auto result1 = std::make_shared<const Result>(
+      makeIdTableFromVector(rows1), std::vector<ColumnIndex>{}, LocalVocab{});
+  auto result2 = std::make_shared<const Result>(
+      makeIdTableFromVector(rows2), std::vector<ColumnIndex>{}, LocalVocab{});
+  std::vector<TableWithRange> tables{
+      {TableConstRefWithVocab{result1->idTableView(), result1->localVocab()},
+       ql::views::iota(uint64_t{0}, uint64_t{N1})},
+      {TableConstRefWithVocab{result2->idTableView(), result2->localVocab()},
+       ql::views::iota(uint64_t{1}, uint64_t{N2})}};
+  Triples templateTriples{
+      std::array<GraphTerm, 3>{Variable{"?x"}, iriV("<p>"), Variable{"?y"}},
+      std::array<GraphTerm, 3>{BlankNode{false, "b"}, iriV("<q>"),
+                               Variable{"?x"}}};
+  VariableToColumnMap varMap;
+  varMap[Variable{"?x"}] = makeAlwaysDefinedColumn(0);
+  varMap[Variable{"?y"}] = makePossiblyUndefinedColumn(1);
+  auto range = ConstructTripleGenerator::generateFormattedTriples(
+      templateTriples, varMap,
+      ad_utility::InputRangeTypeErased<TableWithRange>{std::move(tables)}, 0,
+      ad_utility::MediaType::turtle,
+      EvaluationConfig{index, std::move(handle), qec});
+  std::string out;
+  for (const auto& s : range) {
+    out += s;
+  }
+  return out;
+}
+
+// Every pipeline depth yields the same output as the evaluation on the
+// consuming thread (depth 0), across several batches and two tables.
+TEST_F(ConstructTripleGeneratorTest, pipelineDepthDoesNotChangeOutput) {
+  auto format = [this]() {
+    return formatTwoTablesAsTurtle(index_, *qec_, makeHandle(),
+                                   {idS_, idP_, idO_});
+  };
+  std::string sequential;
+  {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::constructExportPipelineDepth_>(0);
+    sequential = format();
+  }
+  ASSERT_FALSE(sequential.empty());
+  for (size_t depth : {1, 2, 3, 8}) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::constructExportPipelineDepth_>(depth);
+    EXPECT_EQ(format(), sequential) << "depth " << depth;
+  }
+}
+
+// With a pipeline, an exception of the evaluating thread (here: the query was
+// cancelled before the first batch) reaches the consumer.
+TEST_F(ConstructTripleGeneratorTest, pipelinePropagatesCancellation) {
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportPipelineDepth_>(2);
+  auto handle = makeHandle();
+  handle->cancel(ad_utility::CancellationState::MANUAL);
+  EXPECT_ANY_THROW(
+      formatTwoTablesAsTurtle(index_, *qec_, handle, {idS_, idP_, idO_}));
+}
+
+// A pipelined range that is destroyed before it is exhausted stops its
+// evaluating thread (the destructor returns instead of blocking on the full
+// queue).
+TEST_F(ConstructTripleGeneratorTest, pipelinedRangeCanBeAbandoned) {
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportPipelineDepth_>(1);
+  constexpr size_t N = 4 * ConstructTripleGenerator::BATCH_SIZE;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  {
+    auto range = ConstructTripleGenerator::evaluateTables(
+        templateTriples, varMap,
+        singleTableRange(makeTableWithRange(*result, 0, N)), 0, makeConfig());
+    auto first = range.get();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_THAT(first.value(), matchTriple("<s>", "<p>", "<o>"));
+  }
+  SUCCEED();
 }
 
 // =============================================================================

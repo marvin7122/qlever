@@ -284,6 +284,16 @@ struct RuntimeParameters {
   // client earlier. If false, every chunk has the fixed size of 1 MiB.
   Bool adaptiveExportChunkSize_{true, "adaptive-export-chunk-size"};
 
+  // The number of CONSTRUCT export batches (`ConstructTripleGenerator`, 1024
+  // result rows each) that are evaluated ahead of the formatting. With 0, one
+  // thread evaluates a batch (computes the next result block, resolves the
+  // `Id`s, including the vocabulary reads, and instantiates the template
+  // triples) and then formats it. With N > 0, a separate thread evaluates the
+  // batches and hands them to the formatting thread through a queue of N
+  // batches, so that the vocabulary reads and the decoding of later batches
+  // overlap with the formatting of the current one.
+  SizeT constructExportPipelineDepth_{0, "construct-export-pipeline-depth"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
