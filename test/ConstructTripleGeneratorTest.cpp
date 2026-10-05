@@ -477,12 +477,13 @@ TEST_F(ConstructTripleGeneratorTest, pipelinedRangeCanBeAbandoned) {
   VariableToColumnMap varMap;
   varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
   {
-    auto range = ConstructTripleGenerator::evaluateTables(
+    auto range = ConstructTripleGenerator::generateFormattedTriples(
         templateTriples, varMap,
-        singleTableRange(makeTableWithRange(*result, 0, N)), 0, makeConfig());
+        singleTableRange(makeTableWithRange(*result, 0, N)), 0,
+        ad_utility::MediaType::csv, makeConfig());
     auto first = range.get();
     ASSERT_TRUE(first.has_value());
-    EXPECT_THAT(first.value(), matchTriple("<s>", "<p>", "<o>"));
+    EXPECT_EQ(first.value(), "<s>,<p>,<o>\n");
   }
   SUCCEED();
 }
