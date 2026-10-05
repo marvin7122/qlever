@@ -315,6 +315,31 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
               ::testing::ElementsAreArray(scenario.expected()));
 }
 
+// A batch that overflows the ring while an earlier batch is still outstanding:
+// making room in the ring reaps every completion that is available, including
+// those of the earlier batch, which must still be attributed to it. Waiting on
+// the earlier batch afterwards returns at once, also in reverse order.
+TYPED_TEST(IoUringManagerTest, RingOverflowReapsCompletionsOfEarlierBatch) {
+  constexpr size_t RING_SIZE = 16;
+  SequentialReadScenarioForTesting first;
+  SequentialReadScenarioForTesting second;
+  for (size_t i = 0; i < RING_SIZE / 2; ++i) {
+    first.addRead(std::string(3, static_cast<char>('a' + (i % 26))));
+  }
+  for (size_t i = 0; i < 5 * RING_SIZE + 3; ++i) {
+    second.addRead(std::string(5, static_cast<char>('A' + (i % 26))));
+  }
+  auto [tmpFirst, fdFirst] = makeTempFile(first.content());
+  auto [tmpSecond, fdSecond] = makeTempFile(second.content());
+  TypeParam manager(RING_SIZE);
+  auto firstHandle = first.submitTo(manager, fdFirst);
+  auto secondHandle = second.submitTo(manager, fdSecond);
+  manager.wait(secondHandle);
+  manager.wait(firstHandle);
+  EXPECT_THAT(first.results(), ::testing::ElementsAreArray(first.expected()));
+  EXPECT_THAT(second.results(), ::testing::ElementsAreArray(second.expected()));
+}
+
 // Verify that many independent `addBatch` calls can be outstanding (submitted
 // to the kernel but not yet waited on) at once, and that the manager tracks
 // each batch's completion correctly. M batches of one read each are submitted
