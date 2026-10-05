@@ -12,6 +12,7 @@
 
 #include <unistd.h>
 
+#include <numeric>
 #include <stdexcept>
 
 #include "util/Exception.h"
@@ -56,7 +57,10 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+IoUringPolicy::IoUringPolicy(unsigned ringSize)
+    : ringSize_(ringSize), inFlightReads_(ringSize), freeSlots_(ringSize) {
+  // Initially every slot is free.
+  std::iota(freeSlots_.begin(), freeSlots_.end(), size_t{0});
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
   // submission queue. liburing rounds the requested size up to a power of two,
@@ -137,17 +141,19 @@ void IoUringPolicy::addBatch(int fd,
                        static_cast<unsigned>(numBytesToRead),
                        static_cast<__u64>(fileOffset));
 
-    // Tag the SQE with a unique request id and record its metadata (the batch
-    // it belongs to and how many bytes it should read). io_uring copies the
-    // request id (the SQE's `user_data`) verbatim into the matching completion,
-    // so `drainOneCqe` can recover it.
-    const uint64_t requestId = nextRequestIdToAssign_++;
-    inFlightReadsByRequestId_[requestId] = InFlightRead{handle, numBytesToRead};
-    // Store the id in the pointer-sized `user_data` field, which every
+    // Record the read's metadata (the batch it belongs to and how many bytes
+    // it should read) in a free slot and tag the SQE with the slot index.
+    // io_uring copies the tag (the SQE's `user_data`) verbatim into the
+    // matching completion, so `processCqe` can recover it.
+    AD_CORRECTNESS_CHECK(!freeSlots_.empty());
+    const size_t slot = freeSlots_.back();
+    freeSlots_.pop_back();
+    inFlightReads_[slot] = InFlightRead{handle, numBytesToRead};
+    // Store the slot in the pointer-sized `user_data` field, which every
     // liburing version provides. The 64-bit `io_uring_sqe_set_data64` helper
     // requires a very recent liburing that older images (e.g. the gcc11 CI
     // image with its distro liburing) do not have yet.
-    io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(requestId));
+    io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(slot));
     numInFlightReadRequests_++;
   }
   // Flush the remaining prepared SQEs to the kernel (the loop above only
@@ -190,21 +196,19 @@ void IoUringPolicy::drainReadyCqes() {
 
 //______________________________________________________________________________
 void IoUringPolicy::processCqe(io_uring_cqe* cqe) {
-  // Recover the read's result (`cqe->res`) and the request id we stored in the
-  // SQE, then consume the CQE so its slot is freed. Do this before any throw.
+  // Recover the read's result (`cqe->res`) and the slot we stored in the SQE,
+  // then consume the CQE so its ring entry is freed. Do this before any throw.
   const int numBytesRead = cqe->res;
-  // Recover the id via the pointer-sized `user_data` field, see `addBatch`.
-  const uint64_t requestId =
-      reinterpret_cast<uint64_t>(io_uring_cqe_get_data(cqe));
+  // Recover the slot via the pointer-sized `user_data` field, see `addBatch`.
+  const auto slot = reinterpret_cast<uintptr_t>(io_uring_cqe_get_data(cqe));
   io_uring_cqe_seen(&ring_, cqe);
   numInFlightReadRequests_--;
 
-  // Every reaped CQE corresponds to exactly one in-flight read whose id we
-  // inserted in `addBatch`, so the entry must be present.
-  auto reqIt = inFlightReadsByRequestId_.find(requestId);
-  AD_CORRECTNESS_CHECK(reqIt != inFlightReadsByRequestId_.end());
-  const InFlightRead inFlightRead = reqIt->second;
-  inFlightReadsByRequestId_.erase(reqIt);
+  // Every reaped CQE corresponds to exactly one in-flight read whose slot we
+  // took in `addBatch`.
+  AD_CORRECTNESS_CHECK(slot < inFlightReads_.size());
+  const InFlightRead inFlightRead = inFlightReads_[slot];
+  freeSlots_.push_back(slot);
 
   // `cqe->res` < 0 is `-errno`.
   if (numBytesRead < 0) {

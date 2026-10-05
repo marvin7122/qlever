@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
@@ -187,22 +188,20 @@ class IoUringPolicy {
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
-  // fewer bytes than expected can be detected). See
-  // `inFlightReadsByRequestId_`.
+  // fewer bytes than expected can be detected). See `inFlightReads_`.
   struct InFlightRead {
     BatchHandle batchHandle;
     size_t expectedNumBytes;
   };
 
-  // Monotonically increasing counter that mints a unique request id for each
-  // individual read. The id is stored in the SQE's `user_data` and recovered
-  // from the matching CQE to look up the read's `InFlightRead` metadata.
-  uint64_t nextRequestIdToAssign_ = 0;
-
-  // Maps a read's request id to its metadata. An entry is inserted when the
-  // read is prepared in `addBatch` and erased when its completion is reaped in
-  // `drainOneCqe`.
-  ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
+  // The metadata of the in-flight reads, one slot per ring entry. At most
+  // `ringSize_` reads are in flight (see `addBatch`), so a read always finds a
+  // free slot. The slot index is stored in the SQE's `user_data` and recovered
+  // from the matching CQE. A slot is taken when its read is prepared in
+  // `addBatch` and released when its completion is reaped in `processCqe`.
+  std::vector<InFlightRead> inFlightReads_;
+  // The indices of the slots of `inFlightReads_` that are not in use.
+  std::vector<size_t> freeSlots_;
 
   // Wait for one CQE and update the in-flight bookkeeping.
   void drainOneCqe();
