@@ -11,8 +11,10 @@
 // small synthetic vocabularies behind a
 // `PolymorphicVocabulary` and tiny batches, comparing sequential per-word
 // `operator[]` lookups against a single `lookupBatch` call and against the
-// arena-based `lookupBatch(indices, builder)` overload. The compressed
-// vocabulary exercises the builder path (direct decode into the arena), the
+// arena-based `lookupBatch(indices, builder)` overload, once with an untracked
+// builder and once with a builder that charges an `AllocatorWithLimit`. The
+// compressed vocabulary exercises the builder path (direct decode into the
+// arena), the
 // uncompressed vocabulary exercises the copy path (its result is copied into
 // the builder). The "concrete" measurement opens the same files with the
 // concrete vocabulary type (no `std::visit`), which separates the cost of the
@@ -36,6 +38,7 @@
 #include "index/vocabulary/VocabularyInternalExternal.h"
 #include "index/vocabulary/VocabularyType.h"
 #include "index/vocabulary/VocabularyTypes.h"
+#include "util/AllocatorWithLimit.h"
 #include "util/Exception.h"
 
 namespace ad_benchmark {
@@ -179,6 +182,21 @@ class PolymorphicVocabLookupBatchMicroBenchmark : public BenchmarkInterface {
         size_t totalBytes = 0;
         for (size_t repetition = 0; repetition < repetitions; ++repetition) {
           ArenaVocabBatchBuilder builder(batch_.size());
+          vocab.lookupBatch(batch_, builder);
+          auto result = std::move(builder).finalize();
+          for (const auto& word : result) {
+            totalBytes += word.size();
+          }
+        }
+        return totalBytes;
+      });
+      // The same, with a builder that charges a (shared, unlimited)
+      // `AllocatorWithLimit`, as a budget-tracked caller would construct it.
+      addMeasurement(group, "batched lookupBatch with tracked builder", [&] {
+        size_t totalBytes = 0;
+        const auto allocator = ad_utility::makeUnlimitedAllocator<Id>();
+        for (size_t repetition = 0; repetition < repetitions; ++repetition) {
+          ArenaVocabBatchBuilder builder(batch_.size(), allocator);
           vocab.lookupBatch(batch_, builder);
           auto result = std::move(builder).finalize();
           for (const auto& word : result) {
