@@ -14,14 +14,13 @@
 // arena-based `lookupBatch(indices, builder)` overload, once with an untracked
 // builder and once with a builder that charges an `AllocatorWithLimit`. The
 // compressed vocabulary exercises the builder path (direct decode into the
-// arena), the uncompressed vocabulary exercises the fallback path (its result
-// is handed to `ArenaVocabBatchBuilder::appendResult`: copied by the tracked
-// builder, taken over without a copy by the untracked builder). The "concrete"
-// measurement opens the same files with the concrete vocabulary type (no
-// `std::visit`), which separates the cost of the polymorphic dispatch from the
-// cost of the underlying batched lookup. This is complemented by
-// `PolymorphicVocabLookupBatchEndToEndBenchmark`, which measures the full
-// write-open-batch pipeline at scale.
+// arena), the
+// uncompressed vocabulary exercises the copy path (its result is copied into
+// the builder). The "concrete" measurement opens the same files with the
+// concrete vocabulary type (no `std::visit`), which separates the cost of the
+// polymorphic dispatch from the cost of the underlying batched lookup. This
+// is complemented by `PolymorphicVocabLookupBatchEndToEndBenchmark`, which
+// measures the full write-open-batch pipeline at scale.
 
 #include <cerrno>
 #include <cstdlib>

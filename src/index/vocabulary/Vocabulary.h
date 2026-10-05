@@ -131,8 +131,7 @@ class Vocabulary {
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   // Append the words for `indices` to `builder`. Delegate when the underlying
-  // vocabulary supports this protocol. Otherwise hand its result to
-  // `ArenaVocabBatchBuilder::appendResult`.
+  // vocabulary supports this protocol. Otherwise copy its owning result.
   void lookupBatch(ql::span<const size_t> indices,
                    ArenaVocabBatchBuilder& builder) const;
 
