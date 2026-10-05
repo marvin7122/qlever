@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
@@ -80,6 +81,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // Finish the writing. After this no more calls to `operator()` are allowed.
     void finishImpl() override;
   };
+
+  // The words are stored under the base filename itself, the IDs and offsets
+  // in an additional file (see `offsetSuffix_`).
+  static FileSuffixes fileSuffixes() {
+    return {"", std::string{offsetSuffix_}};
+  }
 
   // Open the vocabulary from file. It must have been previously written to
   // this file via a `WordWriter`.
@@ -193,6 +200,14 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   struct OffsetPair {
     uint64_t offset_;
     uint64_t nextOffset_;
+
+    [[nodiscard]] uint64_t offset() const noexcept { return offset_; }
+    // The word's size in bytes (`nextOffset_ - offset_`); the offsets must
+    // be well-formed, which is checked.
+    [[nodiscard]] size_t wordSize() const {
+      AD_CORRECTNESS_CHECK(nextOffset_ >= offset_);
+      return nextOffset_ - offset_;
+    }
   };
 
   // The state of a split-phase lookup: owns the pooled I/O manager (removed
@@ -226,6 +241,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     std::optional<ad_utility::BatchManagerBase::BatchHandle> offsetBatch_;
     // The target buffers of the submitted offset read.
     std::vector<OffsetPair> offsetPairs_;
+    // Whether this lookup uses the page-cache fast path (see
+    // `vocabulary-iouring-page-cache-fast-path`). Fixed by `beginLookup`, so
+    // both phases of one lookup take the same path.
+    bool pageCacheFastPath_ = false;
 
     // Hand the `manager_` back to the pool. Used by `finish` and the
     // destructor; the handle owns the manager until one of them runs.
@@ -235,9 +254,33 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched
   // read via `manager`, and return it as a `VocabBatchLookupResult`.
-  VocabBatchLookupResult readStrings(
-      ad_utility::BatchManagerBase& manager,
-      ql::span<const OffsetPair> offsetPairs) const;
+  // `offsetPairs` must be non-empty (guaranteed by `lookupBatch`, which
+  // rejects empty input; the `ContiguousVocabBatchBuilder` requires it). With
+  // `pageCacheFastPath`, the words that are in the page cache are read with
+  // `readPageCacheHits` (adjacent words in one call), and only the others go
+  // through `manager`.
+  VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
+                                     ql::span<const OffsetPair> offsetPairs,
+                                     bool pageCacheFastPath) const;
+
+  // Submit the reads of `numBytes[i]` bytes at `offsets[i]` of `fd` into
+  // `buffers[i]` for every `i` in `positions` to `manager` as one batch,
+  // without waiting. Return `std::nullopt` (and submit nothing) if
+  // `positions` is empty.
+  static std::optional<ad_utility::BatchManagerBase::BatchHandle>
+  submitThroughManager(ad_utility::BatchManagerBase& manager, int fd,
+                       ql::span<const size_t> numBytes,
+                       ql::span<const uint64_t> offsets,
+                       ql::span<char*> buffers,
+                       ql::span<const size_t> positions);
+
+  // Read `numBytes[i]` bytes at `offsets[i]` of `fd` into `buffers[i]` for
+  // every `i` in `positions` through `manager` and wait for them.
+  static void readThroughManager(ad_utility::BatchManagerBase& manager, int fd,
+                                 ql::span<const size_t> numBytes,
+                                 ql::span<const uint64_t> offsets,
+                                 ql::span<char*> buffers,
+                                 ql::span<const size_t> positions);
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H

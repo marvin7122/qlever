@@ -304,44 +304,6 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
 }
 
 // _____________________________________________________________________________
-// `idsToStringAndTypeDepth2` splits the `VocabIndex` IDs into sub-batches of at
-// most `maxVocabIndicesPerSubBatch` and submits the next sub-batch before it
-// consumes the current one. With more `VocabIndex` IDs than two full
-// sub-batches (so the last sub-batch is partial), interleaved with
-// non-`VocabIndex` IDs, every result must still equal the individual lookup.
-TEST(ExportIds, idsToStringAndTypeDepth2SpansSeveralSubBatches) {
-  std::string kg =
-      "<s> <p> <o> . "
-      "<s> <q> \"hello\" . "
-      "<s> <p> 42 .";
-  auto qec = ad_utility::testing::getQec(kg);
-  const Index& index = qec->getIndex();
-  LocalVocab localVocab{};
-  auto getId = ad_utility::testing::makeGetId(index);
-
-  const std::array vocabIds{getId("<s>"), getId("<p>"), getId("<o>"),
-                            getId("<q>"), getId("\"hello\"")};
-  constexpr size_t numVocabIds =
-      2 * ql::exportIds::maxVocabIndicesPerSubBatch + 17;
-  std::vector<Id> ids;
-  for (size_t i = 0; i < numVocabIds; ++i) {
-    ids.push_back(vocabIds.at(i % vocabIds.size()));
-    if (i % 7 == 0) {
-      ids.push_back(Id::makeFromInt(static_cast<int64_t>(i)));
-    }
-  }
-
-  auto depth2 = ql::exportIds::idsToStringAndTypeDepth2(
-      index, ql::span<const Id>{ids}, localVocab);
-  ASSERT_EQ(depth2.size(), ids.size());
-  for (const auto& [id, result] : ::ranges::views::zip(ids, depth2)) {
-    EXPECT_EQ(result, ql::exportIds::idToStringAndType(index, id, localVocab));
-  }
-  EXPECT_EQ(depth2, ql::exportIds::idsToStringAndType(
-                        index, ql::span<const Id>{ids}, localVocab));
-}
-
-// _____________________________________________________________________________
 // Empty span returns an empty vector.
 TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");

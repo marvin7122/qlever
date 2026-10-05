@@ -1,7 +1,13 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Julian Mundhahs (mundhahj@informatik.uni-freiburg.de)
-//          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022        Julian Mundhahs <mundhahj@informatik.uni-freiburg.de>, UFR
+// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_TEST_UTIL_GTESTHELPERS_H
 #define QLEVER_TEST_UTIL_GTESTHELPERS_H
@@ -15,7 +21,9 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <vector>
 
+#include "backports/algorithm.h"
 #include "backports/concepts.h"
 #include "backports/three_way_comparison.h"
 #include "util/Log.h"
@@ -111,17 +119,34 @@ https://github.com/google/googletest/blob/main/docs/reference/matchers.md#matche
 // capture log output and make assertions about it. This macro enforces that
 // `level` is the runtime log level for the remainder of the enclosing scope, by
 // declaring an `ad_utility::ScopedLogLevel` object that restores the previous
-// level when the scope is left. If the compile-time `LOGLEVEL` is less verbose
-// than `level`, the test is skipped instead: such log levels are compiled out
-// and can never become the runtime log level, so the test could never pass.
-#define ENFORCE_LOG_LEVEL_OR_SKIP(level)                                     \
-  if (LOGLEVEL < ad_utility::LogLevel{level}) {                              \
-    GTEST_SKIP() << "This test requires a compile-time log level of at "     \
-                    "least "                                                 \
-                 << ad_utility::LogLevel{level}.toString() << ", but it is " \
-                 << ad_utility::LogLevel{LOGLEVEL}.toString();               \
-  }                                                                          \
-  ad_utility::ScopedLogLevel AD_SCOPED_LOG_LEVEL_NAME(__COUNTER__) { level }
+// level when the scope is left. If `ad_utility::compileTimeLogLevel` is less
+// verbose than `level`, the test is skipped instead: such log levels are
+// compiled out and can never become the runtime log level, so the test could
+// never pass. The `level` is the plain name of a log level, for example
+// `ENFORCE_LOG_LEVEL_OR_SKIP(INFO)`.
+#define ENFORCE_LOG_LEVEL_OR_SKIP(level)                                      \
+  if (ad_utility::compileTimeLogLevel < ad_utility::LogLevel::Enum::level) {  \
+    GTEST_SKIP()                                                              \
+        << "This test requires a compile-time log level of at least "         \
+        << ad_utility::LogLevel{ad_utility::LogLevel::Enum::level}.toString() \
+        << ", but it is "                                                     \
+        << ad_utility::LogLevel{ad_utility::compileTimeLogLevel}.toString();  \
+  }                                                                           \
+  ad_utility::ScopedLogLevel AD_SCOPED_LOG_LEVEL_NAME(__COUNTER__) {          \
+    ad_utility::LogLevel::Enum::level                                         \
+  }
+
+// _____________________________________________________________________________
+// Skip the enclosing test if the `_NO_TIMING_TESTS` CMake option is set. Use
+// this in tests that depend on the actual duration of `sleep` or on similar
+// timings, which are unreliable on some platforms (in particular macOS). Note
+// that the macro has to be used as a statement (with a trailing semicolon).
+#ifdef _QLEVER_NO_TIMING_TESTS
+#define QLEVER_SKIP_TEST_IF_FLAKY_TIMING \
+  GTEST_SKIP() << "because `_QLEVER_NO_TIMING_TESTS` is defined"
+#else
+#define QLEVER_SKIP_TEST_IF_FLAKY_TIMING static_assert(true)
+#endif
 
 // _____________________________________________________________________________
 // Redirect the global logging stream to `stream` and return an `absl::Cleanup`
@@ -308,6 +333,14 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 }
 
 // _____________________________________________________________________________
+// Sanitizes the given raw gtest name by replacing every '/' with '_'.
+// (parameterized tests embed '/' in their names). Shared implementation of
+// `gtestCurrentTestName` and `gtestCurrentTestSuiteName`.
+inline std::string sanitizeGtestName(const std::string& name) {
+  return absl::StrReplaceAll(name, {{"/", "_"}});
+}
+
+// _____________________________________________________________________________
 // Returns "<TestSuiteName>_<TestName>" for the currently running gtest, with
 // any '/' replaced by '_' (parameterized tests embed '/' in their names).
 // If `assertInGtestEnvironment` is true (the default), crashes if called
@@ -320,12 +353,25 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   if (assertInGtestEnvironment) {
     AD_CORRECTNESS_CHECK(testInfo != nullptr);
   }
-  if (testInfo == nullptr) {
-    return "";
+  return testInfo == nullptr
+             ? ""
+             : sanitizeGtestName(absl::StrCat(testInfo->test_suite_name(), "_",
+                                              testInfo->name()));
+}
+
+// _____________________________________________________________________________
+// Return the name of the currently running test suite, with any '/' replaced
+// by '_' (parameterized test suites embed '/' in their names).
+// Can be called inside `SetUpTestSuite()` / `TearDownTestSuite()` or during a
+// test.
+inline std::string gtestCurrentTestSuiteName(
+    bool assertInGtestEnvironment = true) {
+  const auto* testSuite =
+      ::testing::UnitTest::GetInstance()->current_test_suite();
+  if (assertInGtestEnvironment) {
+    AD_CORRECTNESS_CHECK(testSuite != nullptr);
   }
-  return absl::StrReplaceAll(
-      absl::StrCat(testInfo->test_suite_name(), "_", testInfo->name()),
-      {{"/", "_"}});
+  return testSuite == nullptr ? "" : sanitizeGtestName(testSuite->name());
 }
 
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H

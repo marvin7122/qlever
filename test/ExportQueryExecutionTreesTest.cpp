@@ -17,6 +17,7 @@
 #include "util/ParseableDuration.h"
 #include "util/ParsedQueryTestHelpers.h"
 #include "util/RuntimeParametersTestHelpers.h"
+#include "util/Views.h"
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
@@ -48,7 +49,7 @@ std::string runQueryStreamableResult(
   auto qet = qp.createExecutionTree(pq);
   ad_utility::Timer timer(ad_utility::Timer::Started);
   auto strGenerator = ExportQueryExecutionTrees::computeResult(
-      pq, qet, mediaType, timer, std::move(cancellationHandle));
+      pq, *qet, mediaType, timer, std::move(cancellationHandle));
 
   std::string result;
   for (const auto& block : strGenerator) {
@@ -78,7 +79,7 @@ nlohmann::json runJSONQuery(const std::string& kg, const std::string& query,
   ad_utility::Timer timer{ad_utility::Timer::Started};
   std::string resStr;
   for (auto c : ExportQueryExecutionTrees::computeResult(
-           pq, qet, mediaType, timer, std::move(cancellationHandle))) {
+           pq, *qet, mediaType, timer, std::move(cancellationHandle))) {
     resStr += c;
   }
   return nlohmann::json::parse(resStr);
@@ -1657,7 +1658,7 @@ TEST_P(StreamableMediaTypesFixture, CancellationCancelsStream) {
   ad_utility::Timer timer(ad_utility::Timer::Started);
   EXPECT_ANY_THROW(([&]() {
     [[maybe_unused]] auto generator = ExportQueryExecutionTrees::computeResult(
-        pq, qet, GetParam(), timer, std::move(cancellationHandle));
+        pq, *qet, GetParam(), timer, std::move(cancellationHandle));
   }()));
 }
 
@@ -1889,14 +1890,14 @@ TEST(ExportQueryExecutionTrees, verifyQleverJsonContainsValidMetadata) {
   std::this_thread::sleep_for(1ms);
 
   auto jsonStream = ExportQueryExecutionTrees::computeResultAsQLeverJSON(
-      pq, qet, pq._limitOffset, timer, std::move(cancellationHandle));
+      pq, *qet, pq._limitOffset, timer, std::move(cancellationHandle));
 
   std::string aggregateString{};
   for (std::string_view chunk : jsonStream) {
     aggregateString += chunk;
   }
   nlohmann::json json = nlohmann::json::parse(aggregateString);
-  auto originalRuntimeInfo = qet.getRootOperation()->runtimeInfo();
+  auto originalRuntimeInfo = qet->getRootOperation()->runtimeInfo();
 
   EXPECT_EQ(json["query"], query);
   EXPECT_EQ(json["status"], "OK");
@@ -1973,6 +1974,50 @@ TEST(ExportQueryExecutionTrees, convertGeneratorForChunkedTransfer) {
 }
 
 // _____________________________________________________________________________
+// With `adaptive-export-chunk-size` (the default), the chunked transfer starts
+// with a 64 KiB chunk and doubles the chunk size after every chunk up to the
+// 1 MiB buffer of the `stream_generator`. The concatenated bytes are the same
+// as without it.
+TEST(ExportQueryExecutionTrees, adaptiveExportChunkSize) {
+  using S = ad_utility::streams::stream_generator;
+  EXPECT_TRUE(
+      getRuntimeParameter<&RuntimeParameters::adaptiveExportChunkSize_>());
+  constexpr size_t KiB = size_t{1} << 10;
+  // 3 MiB of output, yielded in pieces that do not align with chunk borders.
+  auto generate = []() -> S {
+    std::string piece;
+    for (size_t i : ad_utility::integerRange(size_t{3} * 1024)) {
+      piece.assign(KiB, static_cast<char>('a' + i % 26));
+      co_yield std::string_view{piece}.substr(0, 1000);
+      co_yield std::string_view{piece}.substr(1000);
+    }
+  };
+  auto chunkSizesAndBytes = [&generate]() {
+    std::vector<size_t> sizes;
+    std::string bytes;
+    for (const std::string& chunk :
+         ExportQueryExecutionTrees::convertStreamGeneratorForChunkedTransfer(
+             generate())) {
+      sizes.push_back(chunk.size());
+      bytes.append(chunk);
+    }
+    return std::pair{std::move(sizes), std::move(bytes)};
+  };
+
+  auto [adaptiveSizes, adaptiveBytes] = chunkSizesAndBytes();
+  EXPECT_THAT(adaptiveSizes,
+              ElementsAre(64 * KiB, 128 * KiB, 256 * KiB, 512 * KiB, 1024 * KiB,
+                          1024 * KiB, 64 * KiB));
+
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::adaptiveExportChunkSize_>(
+          false);
+  auto [fixedSizes, fixedBytes] = chunkSizesAndBytes();
+  EXPECT_THAT(fixedSizes, ElementsAre(1024 * KiB, 1024 * KiB, 1024 * KiB));
+  EXPECT_EQ(adaptiveBytes, fixedBytes);
+}
+
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, compensateForLimitOffsetClause) {
   auto* qec = ad_utility::testing::getQec();
 
@@ -2029,7 +2074,7 @@ TEST(ExportQueryExecutionTrees, EncodedIriManagerUsage) {
       std::make_shared<ad_utility::CancellationHandle<>>();
   std::string result;
   for (const auto& chunk : ExportQueryExecutionTrees::computeResult(
-           parsedQuery, qet, ad_utility::MediaType::sparqlXml, timer,
+           parsedQuery, *qet, ad_utility::MediaType::sparqlXml, timer,
            std::move(cancellationHandle2))) {
     result += chunk;
   }
@@ -2047,7 +2092,7 @@ TEST(ExportQueryExecutionTrees, EncodedIriManagerUsage) {
       std::make_shared<ad_utility::CancellationHandle<>>();
   std::string tsvResult;
   for (const auto& chunk : ExportQueryExecutionTrees::computeResult(
-           parsedQuery, qet, ad_utility::MediaType::tsv, tsvTimer,
+           parsedQuery, *qet, ad_utility::MediaType::tsv, tsvTimer,
            std::move(cancellationHandle3))) {
     tsvResult += chunk;
   }
@@ -2266,3 +2311,22 @@ INSTANTIATE_TEST_SUITE_P(
         LruWindowParam{5, "abcde"},
         // window 10: all duplicates are caught, 5 unique triples remain.
         LruWindowParam{10, "abcde"}));
+
+// _____________________________________________________________________________
+// With `use-fast-export-stream-formatter`, the Turtle export of a CONSTRUCT
+// query is formatted by `FastExportStreamFormatter`; the bytes must not change.
+TEST(ExportQueryExecutionTrees, ConstructTurtleFastFormatterProducesSameBytes) {
+  const std::string kg =
+      "<s> <p> \"plain\" . <s> <p> \"with \\\"quotes\\\" and \\\\ and \\n\" ."
+      " <s> <q> 42 . <s> <q> \"3.5\"^^<http://www.w3.org/2001/XMLSchema#double>"
+      " . <s> <r> \"text\"@en . <s> <r> _:b .";
+  const std::string query = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }";
+  auto run = [&](bool useFastFormatter) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::useFastExportStreamFormatter_>(useFastFormatter);
+    return runQueryStreamableResult(kg, query, ad_utility::MediaType::turtle);
+  };
+  const std::string legacy = run(false);
+  EXPECT_THAT(legacy, ::testing::HasSubstr("\\\"quotes\\\""));
+  EXPECT_EQ(run(true), legacy);
+}

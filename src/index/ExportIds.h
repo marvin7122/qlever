@@ -266,6 +266,11 @@ void resolveNonVocabIndexIds(
   });
 }
 
+// Split-phase building blocks of `resolveVocabIndexIds`:
+// `beginResolveVocabIndexIds` submits the vocabulary lookup for the
+// `VocabIndex` IDs at `positions` without blocking, and
+// `finishResolveVocabIndexIds` waits for it and writes each result into its
+// slot in `results`.
 inline std::unique_ptr<VocabLookupHandleBase> beginResolveVocabIndexIds(
     const Index& index, ql::span<const Id> ids,
     ql::span<const size_t> positions) {
@@ -285,7 +290,9 @@ void finishResolveVocabIndexIds(
     const EscapeFunction& escapeFunction) {
   auto vocabStrings =
       index.getImpl().getVocab().finishLookup(std::move(handle));
-  for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, positions)) {
+  // `vocabStrings` is in the same order as `positions`, so zip scatters each
+  // looked-up string back to the position it came from.
+  for (auto&& [sv, i] : ::ranges::views::zip(vocabStrings, positions)) {
     results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
                                              returnOnlyLiterals>(
         LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);

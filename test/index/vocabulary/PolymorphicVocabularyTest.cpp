@@ -28,13 +28,11 @@ bool isWithHoles(VocabularyType::Enum vocabType) {
          vocabType == VocabularyType::Enum::InMemoryCompressedWithHoles;
 }
 
-// Delete all the files that the writers of the vocabularies with holes create
-// in addition to the file with the given basename. Do not warn about files that
-// were never created.
-void deleteAuxiliaryVocabFiles(const std::string& filename) {
-  for (const auto& suffix : {".ids", ".words", ".words.ids", ".codebooks"}) {
-    ad_utility::deleteFile(absl::StrCat(filename, suffix), false);
-  }
+// An `absl::Cleanup` that deletes all the files that a vocabulary of the given
+// `type` with the given base `filename` consists of.
+auto getFileCleanup(VocabularyType type, const std::string& filename) {
+  return vocabulary_test::makeVocabFileCleanup(
+      filename, PolymorphicVocabulary::fileSuffixes(type));
 }
 
 // Write the `vocabulary_test::defaultTestWords` with the given (non-contiguous)
@@ -60,7 +58,7 @@ void writeVocabWithHoles(VocabularyType::Enum vocabType,
   } else {
     ASSERT_EQ(vocabType, VocabularyType::Enum::InMemoryCompressedWithHoles);
     CompressedVocabulary<VocabularyInMemoryBinSearch>::WordWriter writer{
-        absl::StrCat(filename, ".words"), absl::StrCat(filename, ".codebooks")};
+        filename};
     writeWords(writer);
   }
 }
@@ -72,10 +70,7 @@ void testForVocabTypeWithHoles(VocabularyType::Enum vocabType) {
   VocabularyType type{vocabType};
   std::string filename =
       absl::StrCat("polymorphicVocabularyTest.", type.toString(), ".vocab");
-  absl::Cleanup cleanup = [&filename] {
-    ad_utility::deleteFile(filename, false);
-    deleteAuxiliaryVocabFiles(filename);
-  };
+  auto cleanup = getFileCleanup(type, filename);
 
   // The `WordWriterBase` interface cannot express the explicit indices that a
   // vocabulary with holes requires.
@@ -135,6 +130,7 @@ void testForVocabType(VocabularyType::Enum vocabType) {
   VocabularyType type{vocabType};
   std::string filename =
       absl::StrCat("polymorphicVocabularyTest.", type.toString(), ".vocab");
+  auto cleanup = getFileCleanup(type, filename);
 
   auto writerPtr = PolymorphicVocabulary::makeDiskWriterPtr(filename, type);
   auto& writer = *writerPtr;
@@ -198,11 +194,6 @@ void setupVocab(PolymorphicVocabulary& vocab, VocabularyType::Enum vocabType,
     vocabulary_test::writeWordsAndFinish(*writerPtr);
   }
   vocab.open(filename, type);
-  if (isWithHoles(vocabType)) {
-    // The vocabularies with holes load all their contents into RAM in `open`,
-    // so the files that are not deleted by the caller can be deleted here.
-    deleteAuxiliaryVocabFiles(filename);
-  }
 }
 }  // namespace
 
@@ -218,14 +209,50 @@ TEST(PolymorphicVocabulary, basicTests) {
 // `VocabularyType`.
 TEST(PolymorphicVocabulary, lookupBatchMatchesIndividualLookups) {
   for (auto vocabType : VocabularyType::all()) {
-    auto [filename, cleanup] = ad_utility::testing::filenameForTesting();
+    auto [temporaryFile, cleanup] = ad_utility::testing::filenameForTesting();
+    std::string filename = temporaryFile.string();
+    auto deleteFiles = getFileCleanup(VocabularyType{vocabType}, filename);
     PolymorphicVocabulary vocab;
-    setupVocab(vocab, vocabType, filename.string());
+    setupVocab(vocab, vocabType, filename);
 
     std::array<size_t, 6> indices{2, 0, 3, 1, 1, 0};
     auto result = vocab.lookupBatch(indices);
     vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
                                                                   indices);
+  }
+}
+
+// The `lookupBatch(indices, builder)` overload must append, for each requested
+// index and in input order, exactly what `vocab[]` returns. Compressed
+// alternatives decode into the builder's arena, all others copy their result
+// into it; iterating over every `VocabularyType` reaches both branches. Two
+// calls append to the same builder, and the words stay valid after the
+// vocabulary is closed, because the builder owns them.
+TEST(PolymorphicVocabulary, lookupBatchWithBuilderMatchesIndividualLookups) {
+  for (auto vocabType : VocabularyType::all()) {
+    auto [filename, cleanup] = ad_utility::testing::filenameForTesting();
+    PolymorphicVocabulary vocab;
+    setupVocab(vocab, vocabType, filename.string());
+
+    const std::array<size_t, 4> first{2, 0, 3, 1};
+    const std::array<size_t, 2> second{1, 1};
+    std::vector<std::string> expected;
+    for (size_t index : std::array<size_t, 6>{2, 0, 3, 1, 1, 1}) {
+      expected.emplace_back(vocab[index]);
+    }
+
+    ArenaVocabBatchBuilder builder(expected.size());
+    vocab.lookupBatch(first, builder);
+    vocab.lookupBatch(second, builder);
+    vocab.close();
+    auto result = std::move(builder).finalize();
+    EXPECT_THAT(result, ::testing::ElementsAreArray(expected))
+        << VocabularyType{vocabType}.toString();
+
+    ArenaVocabBatchBuilder unused(1);
+    AD_EXPECT_THROW_WITH_MESSAGE(
+        vocab.lookupBatch(ql::span<const size_t>{}, unused),
+        ::testing::HasSubstr("!indices.empty()"));
   }
 }
 
@@ -235,9 +262,11 @@ TEST(PolymorphicVocabulary, lookupBatchMatchesIndividualLookups) {
 // `finishLookup` rejects a null handle. Checked for every `VocabularyType`.
 TEST(PolymorphicVocabulary, beginFinishLookupMatchesIndividualLookups) {
   for (auto vocabType : VocabularyType::all()) {
-    auto [filename, cleanup] = ad_utility::testing::filenameForTesting();
+    auto [temporaryFile, cleanup] = ad_utility::testing::filenameForTesting();
+    std::string filename = temporaryFile.string();
+    auto deleteFiles = getFileCleanup(VocabularyType{vocabType}, filename);
     PolymorphicVocabulary vocab;
-    setupVocab(vocab, vocabType, filename.string());
+    setupVocab(vocab, vocabType, filename);
 
     std::array<size_t, 6> indices{2, 0, 3, 1, 1, 0};
     auto result = vocab.finishLookup(vocab.beginLookup(indices));
@@ -252,9 +281,11 @@ TEST(PolymorphicVocabulary, beginFinishLookupMatchesIndividualLookups) {
 // `VocabularyType`.
 TEST(PolymorphicVocabulary, lookupBatchesStreamedMatchesIndividualLookups) {
   for (auto vocabType : VocabularyType::all()) {
-    auto [filename, cleanup] = ad_utility::testing::filenameForTesting();
+    auto [temporaryFile, cleanup] = ad_utility::testing::filenameForTesting();
+    std::string filename = temporaryFile.string();
+    auto deleteFiles = getFileCleanup(VocabularyType{vocabType}, filename);
     PolymorphicVocabulary vocab;
-    setupVocab(vocab, vocabType, filename.string());
+    setupVocab(vocab, vocabType, filename);
 
     std::vector<std::vector<size_t>> batches{{2, 0}, {1}, {0, 3, 1}};
     // `VocabLookupInput` takes ownership of the batches, so keep a copy to
@@ -265,6 +296,25 @@ TEST(PolymorphicVocabulary, lookupBatchesStreamedMatchesIndividualLookups) {
 
     vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
         vocab, streamed, expectedBatches);
+  }
+}
+
+// The geo cell grid (see `GeoVocabulary`) is forwarded to the underlying
+// vocabulary if that is a `SplitVocabulary` with a `GeoVocabulary`, and
+// ignored otherwise.
+TEST(PolymorphicVocabulary, geoCellGrid) {
+  for (auto vocabType : VocabularyType::all()) {
+    PolymorphicVocabulary vocab;
+    vocab.resetToType(VocabularyType{vocabType});
+    EXPECT_FALSE(vocab.getGeoCellGrid().has_value());
+    ad_utility::GeoCellGrid grid{3};
+    vocab.setGeoCellGrid(grid);
+    bool isGeoSplit =
+        vocabType == VocabularyType::Enum::OnDiskCompressedGeoSplit;
+    EXPECT_EQ(vocab.getGeoCellGrid().has_value(), isGeoSplit);
+    if (isGeoSplit) {
+      EXPECT_EQ(vocab.getGeoCellGrid().value(), grid);
+    }
   }
 }
 

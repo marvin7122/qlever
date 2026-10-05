@@ -138,10 +138,13 @@ add_compile_definitions(QLEVER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
+
+addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
 add_subdirectory(libqlever)
+add_subdirectory(parallelBlockMerge)
 
 OPTION(_DISABLE_EMSCRIPTEN_PROBLEMATIC_TESTS "Disable some tests that cause undefined symbol errors when building with Emscripten." OFF)
 
@@ -172,6 +175,10 @@ addLinkAndDiscoverTest(SparqlParserTest sparqlParser engine sparqlExpressions)
 addLinkAndDiscoverTest(VariableCounterTest sparqlParser engine)
 
 addLinkAndDiscoverTest(StringUtilsTest qlever_util)
+
+addLinkAndDiscoverTest(RegexSetTest qlever_util)
+
+addLinkAndDiscoverTest(BinaryDiffApplierTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
@@ -276,6 +283,8 @@ addLinkAndDiscoverTest(VectorWithMemoryLimitTest)
 
 addLinkAndDiscoverTestNoLibs(AllocatorPmrTest)
 
+addLinkAndDiscoverTestNoLibs(AllocateSharedTest)
+
 addLinkAndDiscoverTestNoLibs(AllocatorBackendTest)
 
 addLinkAndDiscoverTestNoLibs(AlignedAllocatorTest)
@@ -296,7 +305,11 @@ addLinkAndDiscoverTestNoLibs(ConstructDeduplicationModeTest)
 
 addLinkAndDiscoverTest(ZstdCompressionTest zstd ${cmake_thread_libs_init})
 
+addLinkAndDiscoverTest(CompressedBlockFileTest zstd ${cmake_thread_libs_init})
+
 addLinkAndDiscoverTest(TaskQueueTest)
+
+addLinkAndDiscoverTest(TaskQueueOnExecutorTest)
 
 addLinkAndDiscoverTest(SetOfIntervalsTest sparqlExpressions)
 
@@ -329,6 +342,8 @@ addLinkAndDiscoverTestNoLibs(IteratorTest)
 addLinkAndDiscoverTestNoLibs(ViewsTest)
 
 addLinkAndDiscoverTestNoLibs(TakeUntilInclusiveViewTest)
+
+addLinkAndDiscoverTestNoLibs(ChunkedIotaViewTest)
 
 addLinkAndDiscoverTest(ForwardTest)
 
@@ -391,11 +406,22 @@ endif ()
 
 addLinkAndDiscoverTest(HttpProxyConfigTest http)
 
+# The `fetch`-based implementation of the HTTP client that replaces the
+# Boost.Beast-based one for Emscripten (see `HttpClientEmscripten.cpp`) can of
+# course only be tested in a WebAssembly build.
+if (EMSCRIPTEN)
+    addLinkAndDiscoverTest(HttpClientEmscriptenTest http)
+endif ()
+
 addLinkAndDiscoverTestNoLibs(CallFixedSizeTest)
 
 addLinkAndDiscoverTestNoLibs(ConstexprUtilsTest)
 
 addLinkAndDiscoverTestNoLibs(ResetWhenMovedTest)
+
+addLinkAndDiscoverTestNoLibs(NoCopyNoMoveTest)
+
+addLinkAndDiscoverTestNoLibs(CopyOnWritePtrTest)
 
 addLinkAndDiscoverTestSerial(TimerTest)
 
@@ -481,6 +507,8 @@ if (EMSCRIPTEN)
     set_source_files_properties(AsioHelpersTest.cpp PROPERTIES COMPILE_OPTIONS "-O1")
 endif ()
 
+addLinkAndDiscoverTest(AsyncResourcePoolTest)
+
 addLinkAndDiscoverTest(UniqueCleanupTest)
 
 addLinkAndDiscoverTest(WebSocketSessionTest http)
@@ -498,8 +526,6 @@ addLinkAndDiscoverTest(MessageSenderTest http)
 addLinkAndDiscoverTestNoLibs(CancellationHandleTest qlever_util)
 
 addLinkAndDiscoverTestSerial(ProgressBarTest qlever_util)
-
-addLinkAndDiscoverTest(CachingMemoryResourceTest)
 
 addLinkAndDiscoverTestNoLibs(ParallelMultiwayMergeTest)
 
@@ -543,6 +569,8 @@ addLinkAndDiscoverTest(TripleSerializerTest)
 
 addLinkAndDiscoverTest(GeometryInfoTest qlever_util)
 
+addLinkAndDiscoverTest(GeoCellGridTest vocabulary)
+
 addLinkAndDiscoverTest(QueryRewriteUtilTest engine)
 
 addLinkAndDiscoverTest(HttpErrorTest engine)
@@ -581,6 +609,8 @@ addLinkAndDiscoverTest(ExternalValuesTest engine)
 
 addLinkAndDiscoverTest(ConstructBatchEvaluatorTest engine)
 
+addLinkAndDiscoverTest(FastExportStreamFormatterTest engine rdfEscaping)
+
 addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
 addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
@@ -595,8 +625,12 @@ addLinkAndDiscoverTest(LogTest)
 
 addLinkAndDiscoverTest(QueryEventLogTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(GlobalExecutorTest qlever_util)
+
 addLinkAndDiscoverTest(MetricsTest metrics)
 
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(AdaptiveChunkSizerTest qlever_util)

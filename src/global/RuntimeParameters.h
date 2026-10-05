@@ -1,6 +1,12 @@
-//   Copyright 2024, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
@@ -209,6 +215,17 @@ struct RuntimeParameters {
   Bool enableMaterializedViewQueryRewrite_{
       true, "enable-materialized-view-query-rewrite"};
 
+  // When matching materialized views using pattern-based query rewriting, the
+  // maximum number of candidate assignments tried by the backtracking
+  // algorithm. `0` disables pattern-based rewriting.
+  SizeT materializedViewPatternMatchNumAssignments_{
+      100'000, "materialized-view-pattern-match-num-assignments"};
+
+  // When matching materialized views using pattern-based query rewriting, the
+  // maximum number of replacement plans collected.
+  SizeT materializedViewPatternMatchNumReplacementPlans_{
+      500, "materialized-view-pattern-match-num-replacement-plans"};
+
   // A list of IRI prefixes that are allowed as `SERVICE` endpoints. If empty
   // (the default), all IRIs are allowed. If non-empty, `SERVICE` requests to
   // IRIs that do not start with any of the given prefixes are rejected.
@@ -220,6 +237,17 @@ struct RuntimeParameters {
   // debug caching issues, and to get rid of the overhead of caching (in
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
+
+  // If set to true, `VocabularyOnDisk::lookupBatch` first reads the vocabulary
+  // words (and their offsets) that are in the page cache with non-blocking
+  // `preadv2(RWF_NOWAIT)` calls (adjacent ranges coalesced into one call) and
+  // submits only the remaining reads to its `io_uring` ring. A read that hits
+  // the page cache then costs a share of one syscall instead of an `io_uring`
+  // submission and completion; a read that misses costs one extra failed
+  // syscall per run of adjacent ranges. On by default: it removes the
+  // warm-cache cost of the ring and also speeds up cold exports.
+  Bool vocabularyIouringPageCacheFastPath_{
+      true, "vocabulary-iouring-page-cache-fast-path"};
 
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
@@ -243,6 +271,18 @@ struct RuntimeParameters {
   // triples (per template triple); bounded memory, partial deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
+
+  // If set to `true` (the default), the Turtle export of CONSTRUCT queries
+  // formats the triples with `FastExportStreamFormatter` into strings of about
+  // 64 KiB (`formatTriplesAsTurtleInBatches`) instead of building a
+  // `std::string` per term and per triple (`formatTerm`/`formatTriple`). The
+  // output is byte-identical; `false` selects the previous path.
+  Bool useFastExportStreamFormatter_{true, "use-fast-export-stream-formatter"};
+
+  // If true, the chunks of a streamed query result start at 64 KiB and double
+  // after every chunk up to the fixed 1 MiB, so that the first bytes reach the
+  // client earlier. If false, every chunk has the fixed size of 1 MiB.
+  Bool adaptiveExportChunkSize_{true, "adaptive-export-chunk-size"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE

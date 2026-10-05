@@ -10,11 +10,14 @@
 
 #include "index/vocabulary/VocabularyInternalExternal.h"
 
-#include <string>
-#include <vector>
+#include <absl/strings/str_cat.h>
 
-#include "backports/algorithm.h"
-#include "util/TransparentFunctors.h"
+#include <memory>
+#include <optional>
+#include <range/v3/view/enumerate.hpp>
+#include <string>
+#include <string_view>
+#include <utility>
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
@@ -35,34 +38,33 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
 std::unique_ptr<VocabLookupHandleBase> VocabularyInternalExternal::beginLookup(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  auto handle = std::make_unique<MixedLookupHandle>();
-  handle->vocab_ = this;
-  handle->numIndices_ = indices.size();
 
-  std::vector<size_t> externalIndices;
-  externalIndices.reserve(indices.size());
-  handle->internalWords_.reserve(indices.size());
-  handle->internalPositions_.reserve(indices.size());
-  handle->externalPositions_.reserve(indices.size());
-
-  // Classify each index: RAM hits are resolved immediately, disk misses are
-  // collected into `externalIndices` for one batched on-disk lookup.
-  for (auto [pos, idx] : ::ranges::views::enumerate(indices)) {
-    auto fromInternal = internalVocab_[idx];
-    if (fromInternal.has_value()) {
-      handle->internalWords_.emplace_back(*fromInternal);
-      handle->internalPositions_.push_back(pos);
+  // One pass over `indices`: a word of the internal vocabulary is placed as a
+  // view into that vocabulary (no copy); all other indices are collected, with
+  // their positions in `indices`, for one batched lookup in the external
+  // vocabulary. The internal vocabulary has "holes", so each index needs one
+  // membership probe (an allocation-free binary search); indices at or past
+  // `internalVocab_.endIndex()` are known misses and skip the search.
+  auto handle = std::unique_ptr<MixedLookupHandle>(
+      new MixedLookupHandle(*this, indices.size()));
+  const uint64_t internalEnd = internalVocab_.endIndex();
+  for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+    auto internalWord = index < internalEnd ? internalVocab_[index]
+                                            : std::optional<std::string_view>{};
+    if (internalWord.has_value()) {
+      handle->assembler_.assignUnownedViewAtPosition(position,
+                                                     internalWord.value());
     } else {
-      externalIndices.push_back(idx);
-      handle->externalPositions_.push_back(pos);
+      handle->externalSlots_.addPair(index, position);
     }
   }
 
-  // Submit the reads for all disk misses in one non-blocking `beginLookup`.
-  if (!externalIndices.empty()) {
-    handle->externalHandle_ = externalVocab_.beginLookup(externalIndices);
+  // Submit the reads for all external words in one non-blocking
+  // `beginLookup`; `finish` waits for them.
+  if (!handle->externalSlots_.empty()) {
+    handle->externalHandle_ = externalVocab_.beginLookup(
+        handle->externalSlots_.getUnderlyingIndices());
   }
-
   return handle;
 }
 
@@ -75,29 +77,27 @@ VocabBatchLookupResult VocabularyInternalExternal::finishLookup(
 
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::MixedLookupHandle::finish() {
-  auto data = std::make_shared<MixedVocabBatchLookupData>();
-  data->internalWords_ = std::move(internalWords_);
-  data->views_.resize(numIndices_);
-  if (externalHandle_) {
-    data->diskResult_ =
-        vocab_->externalVocab_.finishLookup(std::move(externalHandle_));
-    for (auto&& [position, word] :
-         ::ranges::views::zip(externalPositions_, *data->diskResult_)) {
-      data->views_[position] = word;
-    }
+  if (externalSlots_.empty()) {
+    return std::move(assembler_).finalizeVocabBatchLookupResult();
   }
-  for (auto&& [position, word] :
-       ::ranges::views::zip(internalPositions_, data->internalWords_)) {
-    data->views_[position] = word;
+  AD_CORRECTNESS_CHECK(externalHandle_ != nullptr);
+  auto external =
+      vocab_->externalVocab_.finishLookup(std::move(externalHandle_));
+  if (externalSlots_.size() == numIndices_) {
+    // No internal hit: the positions are `0, 1, ...`, so the external batch
+    // already is the result.
+    return external;
   }
-  return MixedVocabBatchLookupData::asResult(std::move(data));
+  assembler_.scatterSubBatchResultAtPositions(
+      std::move(external), externalSlots_.getResultPositions());
+  return std::move(assembler_).finalizeVocabBatchLookupResult();
 }
 
 // _____________________________________________________________________________
 VocabularyInternalExternal::WordWriter::WordWriter(const std::string& filename,
                                                    size_t milestoneDistance)
-    : internalWriter_{filename + ".internal"},
-      externalWriter_{filename + ".external"},
+    : internalWriter_{absl::StrCat(filename, internalSuffix)},
+      externalWriter_{absl::StrCat(filename, externalSuffix)},
       milestoneDistance_{milestoneDistance} {}
 
 // _____________________________________________________________________________
@@ -131,8 +131,8 @@ VocabularyInternalExternal::WordWriter::~WordWriter() {
 void VocabularyInternalExternal::open(const std::string& filename) {
   AD_LOG_INFO << "Reading vocabulary from file " << filename << " ..."
               << std::endl;
-  internalVocab_.open(filename + ".internal");
-  externalVocab_.open(filename + ".external");
+  internalVocab_.open(absl::StrCat(filename, internalSuffix));
+  externalVocab_.open(absl::StrCat(filename, externalSuffix));
   AD_LOG_INFO << "Done, number of words: " << size() << std::endl;
   AD_LOG_INFO << "Number of words in internal vocabulary (these are also part "
                  "of the external vocabulary): "

@@ -10,6 +10,8 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include "VocabularyTestHelpers.h"
 #include "index/vocabulary/StringSortComparator.h"
 #include "index/vocabulary/UnicodeVocabulary.h"

@@ -10,13 +10,16 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <fcntl.h>
 #include <gmock/gmock.h>
+#include <unistd.h>
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
 #include "util/Forward.h"
@@ -35,7 +38,7 @@ class VocabularyCreator {
  public:
   explicit VocabularyCreator(std::string filename)
       : vocabFilename_{std::move(filename)} {
-    ad_utility::deleteFile(vocabFilename_, false);
+    deleteVocabularyFiles<VocabularyOnDisk>(vocabFilename_);
   }
   // Move-only: a moved-from creator has an empty filename and deletes nothing.
   VocabularyCreator(VocabularyCreator&& other) noexcept
@@ -47,7 +50,7 @@ class VocabularyCreator {
 
   ~VocabularyCreator() {
     if (!vocabFilename_.empty()) {
-      ad_utility::deleteFile(vocabFilename_);
+      deleteVocabularyFiles<VocabularyOnDisk>(vocabFilename_);
     }
   }
 
@@ -125,6 +128,26 @@ VocabularyOnDiskHandle createExampleVocabulary() {
   return createVocabularyFromWords({"alpha", "delta", "beta", "42", "gamma"});
 }
 
+// Drop the pages of both files of the vocabulary created by
+// `createExampleVocabulary` from the page cache, so that the reads of the
+// page-cache fast path (`preadv2(RWF_NOWAIT)`) miss with `EAGAIN` and go
+// through the batch manager instead. Best effort: on file systems that ignore
+// `POSIX_FADV_DONTNEED` (e.g. tmpfs) or without `posix_fadvise` the pages stay
+// cached, and the tests below then check the hit path only.
+void evictExampleVocabularyFromPageCache() {
+#ifdef POSIX_FADV_DONTNEED
+  auto filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  for (const auto& file : {filename, absl::StrCat(filename, ".offsets")}) {
+    int fd = ::open(file.c_str(), O_RDONLY);
+    ASSERT_GE(fd, 0) << file;
+    // Only clean pages can be dropped.
+    ::fdatasync(fd);
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    ::close(fd);
+  }
+#endif
+}
+
 // Create a `VocabularyOnDisk` from `words` and assert that `scanAll` yields
 // exactly those words in order: both as bare words and as `IndexAndWord`s with
 // contiguous indices `0, 1, 2, ...` (also across batch boundaries).
@@ -177,10 +200,7 @@ TEST(VocabularyOnDisk, EmptyVocabulary) {
 TEST(VocabularyOnDisk, ReadLegacyMmapVectorOffsetsFormat) {
   std::string vocabFilename = "vocabularyOnDisk.legacyMmapFormat";
   std::string offsetsFilename = vocabFilename + ".offsets";
-  absl::Cleanup cleanup{[&]() {
-    ad_utility::deleteFile(vocabFilename);
-    ad_utility::deleteFile(offsetsFilename);
-  }};
+  auto cleanup = makeVocabFileCleanup<VocabularyOnDisk>(vocabFilename);
 
   const std::array<std::string_view, 7> words{
       "alpha",
@@ -273,6 +293,56 @@ TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
                                                                 indices);
 }
 
+// With `vocabulary-iouring-page-cache-fast-path`, the words and offsets that
+// are in the page cache are read before the batch manager sees the rest. The
+// result must be byte-identical to the result without the fast path, for runs
+// of consecutive indices as well as for reordered and duplicated indices.
+TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
+  // The fast path is on by default; restore the default after the test.
+  absl::Cleanup resetParameter{[]() {
+    setRuntimeParameter<
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(true);
+  }};
+  setRuntimeParameter<&RuntimeParameters::vocabularyIouringPageCacheFastPath_>(
+      false);
+  auto withoutFastPath = vocab->lookupBatch(indices);
+  setRuntimeParameter<&RuntimeParameters::vocabularyIouringPageCacheFastPath_>(
+      true);
+  auto withFastPath = vocab->lookupBatch(indices);
+  EXPECT_THAT(withFastPath, ::testing::ElementsAreArray(withoutFastPath));
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, withFastPath, indices);
+}
+
+// With the fast path, the offsets and words that miss the page cache are
+// submitted to the batch manager: `beginLookup` submits the offset pairs of the
+// missed runs without waiting, `finishLookup` waits for them and then reads the
+// missed words. The result must be the same as for cached files, for runs of
+// consecutive indices as well as for reordered and duplicated indices.
+TEST(VocabularyOnDisk, PageCacheFastPathMissesGoThroughTheManager) {
+  auto vocab = createExampleVocabulary();
+  ASSERT_TRUE(getRuntimeParameter<
+              &RuntimeParameters::vocabularyIouringPageCacheFastPath_>());
+  std::array<size_t, 9> indices{0, 1, 2, 4, 3, 3, 1, 2, 0};
+  evictExampleVocabularyFromPageCache();
+  auto result = vocab->lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
+                                                                indices);
+  // Two lookups in flight at the same time (as in the depth-2 pipeline of the
+  // CONSTRUCT export), finished in submission order.
+  evictExampleVocabularyFromPageCache();
+  auto first = vocab->beginLookup(indices);
+  auto second = vocab->beginLookup(ql::span<const size_t>{indices}.subspan(3));
+  auto firstResult = vocab->finishLookup(std::move(first));
+  auto secondResult = vocab->finishLookup(std::move(second));
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, firstResult, indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, secondResult, ql::span<const size_t>{indices}.subspan(3));
+}
+
 // An empty batch is an invalid request and must throw.
 TEST(VocabularyOnDisk, LookupBatchEmptyThrows) {
   auto vocab = createExampleVocabulary();
@@ -300,10 +370,25 @@ TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
 TEST(VocabularyOnDisk, DroppedInFlightHandleReturnsManager) {
   auto vocab = createExampleVocabulary();
   std::array<size_t, 3> indices{4, 0, 2};
+  // The fast path is on by default; restore the default after the test.
+  absl::Cleanup resetParameter{[]() {
+    setRuntimeParameter<
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(true);
+  }};
   // Drop more handles than the pool has managers. If a dropped handle kept its
-  // manager, `beginLookup` would block on the empty pool.
-  for (size_t round = 0; round < 2 * NUM_VOCAB_BATCH_IO_MANAGERS; ++round) {
-    auto handle = vocab->beginLookup(indices);
+  // manager, `beginLookup` would block on the empty pool. Without the fast
+  // path, every handle has a submitted offset batch that its destructor must
+  // drain; with the fast path and evicted files, the missed offsets are
+  // submitted the same way.
+  for (bool fastPath : {false, true}) {
+    setRuntimeParameter<
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(fastPath);
+    for (size_t round = 0; round < 2 * NUM_VOCAB_BATCH_IO_MANAGERS; ++round) {
+      if (fastPath) {
+        evictExampleVocabularyFromPageCache();
+      }
+      auto handle = vocab->beginLookup(indices);
+    }
   }
   auto result = vocab->finishLookup(vocab->beginLookup(indices));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,

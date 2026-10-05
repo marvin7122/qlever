@@ -35,6 +35,11 @@ class VocabularyInternalExternal {
   VocabularyOnDisk externalVocab_;
 
  public:
+  // These suffixes are appended to the base filename in order to get the base
+  // filenames of the internal and the external vocabulary.
+  static constexpr std::string_view internalSuffix = ".internal";
+  static constexpr std::string_view externalSuffix = ".external";
+
   /// Construct an empty vocabulary
   VocabularyInternalExternal() = default;
 
@@ -62,9 +67,15 @@ class VocabularyInternalExternal {
   // vocabulary.
   auto scanAll() const { return externalVocab_.scanAll(); }
 
-  // Resolve `indices` in request order. Words present in `internalVocab_` are
-  // taken from RAM. The remaining indices are resolved in one
-  // `externalVocab_.lookupBatch` call (the on-disk path).
+  //____________________________________________________________________________
+  // Look up the words for `indices` and return them in the order of
+  // `indices`. `indices` must not be empty. Words of the internal vocabulary
+  // are returned as views into this vocabulary (no copy), all other words are
+  // read with one batched lookup in the external vocabulary, whose buffer is
+  // owned by the result. Lifetime: the result must not be used after this
+  // vocabulary is closed or destroyed (the index outlives every query, so
+  // this holds for lookups during query processing). Implemented as
+  // `beginLookup` + `finishLookup`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   // Split-phase variant: RAM-cached indices are resolved immediately; the
@@ -149,6 +160,17 @@ class VocabularyInternalExternal {
     void finishImpl() override;
   };
 
+  // The files of the internal and the external vocabulary, which are stored
+  // under the base filename plus `internalSuffix`/`externalSuffix`.
+  static FileSuffixes fileSuffixes() {
+    FileSuffixes suffixes;
+    addFileSuffixesWithPrefix(suffixes, internalSuffix,
+                              VocabularyInMemoryBinSearch::fileSuffixes());
+    addFileSuffixesWithPrefix(suffixes, externalSuffix,
+                              VocabularyOnDisk::fileSuffixes());
+    return suffixes;
+  }
+
   // Return a `unique_ptr<WordWriter>` that writes to the given `filename`.
   static auto makeDiskWriterPtr(const std::string& filename) {
     return std::make_unique<WordWriter>(filename);
@@ -178,6 +200,11 @@ class VocabularyInternalExternal {
   }
 
  private:
+  // The state of a split-phase lookup: the words of the internal vocabulary
+  // are already placed in `assembler_` by `beginLookup`; the lookup of the
+  // remaining words in the external vocabulary (`externalSlots_`) is in
+  // flight until `finish` waits for it and scatters its words into the
+  // assembled result.
   class MixedLookupHandle : public VocabLookupHandleBase {
    public:
     VocabBatchLookupResult finish() override;
@@ -187,13 +214,20 @@ class VocabularyInternalExternal {
     // The handle is only reachable through `VocabLookupHandleBase`.
     friend class VocabularyInternalExternal;
 
-    // The vocabulary that created this handle. It must outlive the handle.
-    const VocabularyInternalExternal* vocab_ = nullptr;
+    MixedLookupHandle(const VocabularyInternalExternal& vocab,
+                      size_t numIndices)
+        : vocab_{&vocab}, numIndices_{numIndices}, assembler_{numIndices} {}
+
+    // The vocabulary that created this handle. It must outlive the handle
+    // (and the result, see `lookupBatch`).
+    const VocabularyInternalExternal* vocab_;
+    size_t numIndices_;
+    MultiSourceVocabBatchAssembler assembler_;
+    // The indices that are looked up in the external vocabulary, with their
+    // positions in the result. Owned by the handle, because the external
+    // lookup may still be in flight after the caller's span is gone.
+    MarkerIndicesAndPositions externalSlots_;
     std::unique_ptr<VocabLookupHandleBase> externalHandle_;
-    std::vector<std::string> internalWords_;
-    std::vector<size_t> internalPositions_;
-    std::vector<size_t> externalPositions_;
-    size_t numIndices_ = 0;
   };
 
   // The common implementation of `lower_bound`, `upper_bound`,

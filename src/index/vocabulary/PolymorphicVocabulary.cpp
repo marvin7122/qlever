@@ -9,7 +9,10 @@
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 
+#include <type_traits>
+
 #include "engine/CallFixedSize.h"
+#include "util/Exception.h"
 
 // _____________________________________________________________________________
 void PolymorphicVocabulary::open(const std::string& filename) {
@@ -58,6 +61,22 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
     ql::span<const size_t> indices) const {
   return std::visit(
       [&indices](const auto& vocab) { return vocab.lookupBatch(indices); },
+      vocab_);
+}
+
+// _____________________________________________________________________________
+void PolymorphicVocabulary::lookupBatch(ql::span<const size_t> indices,
+                                        ArenaVocabBatchBuilder& builder) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  std::visit(
+      [&indices, &builder](const auto& vocab) {
+        if constexpr (SupportsBuilderLookupBatch<
+                          std::decay_t<decltype(vocab)>>) {
+          vocab.lookupBatch(indices, builder);
+        } else {
+          appendVocabBatchLookupResult(vocab.lookupBatch(indices), builder);
+        }
+      },
       vocab_);
 }
 
@@ -111,6 +130,28 @@ std::unique_ptr<WordWriterBase> PolymorphicVocabulary::makeDiskWriterPtr(
   PolymorphicVocabulary dummyVocab;
   dummyVocab.resetToType(type);
   return dummyVocab.makeDiskWriterPtr(filename);
+}
+
+// _____________________________________________________________________________
+FileSuffixes PolymorphicVocabulary::fileSuffixes(VocabularyType type) {
+  // The names of the enum values are the same as the type aliases for the
+  // implementations, so we can shorten the following code using a macro.
+#undef AD_CASE
+#define AD_CASE(vocabType)              \
+  case VocabularyType::Enum::vocabType: \
+    return vocabType::fileSuffixes()
+
+  switch (type.value()) {
+    AD_CASE(InMemoryUncompressed);
+    AD_CASE(OnDiskUncompressed);
+    AD_CASE(InMemoryCompressed);
+    AD_CASE(OnDiskCompressed);
+    AD_CASE(OnDiskCompressedGeoSplit);
+    AD_CASE(InMemoryUncompressedWithHoles);
+    AD_CASE(InMemoryCompressedWithHoles);
+    default:
+      AD_FAIL();
+  }
 }
 
 // _____________________________________________________________________________
