@@ -72,6 +72,9 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(vocabularyIouringPageCacheFastPath_);
+  add(ioUringAdaptiveBatchEnabled_);
+  add(ioUringAdaptiveBatchMinSize_);
+  add(ioUringAdaptiveBatchMaxSize_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
@@ -98,6 +101,8 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  ioUringAdaptiveBatchMinSize_.setParameterConstraint(mustBeStrictlyPositive);
+  ioUringAdaptiveBatchMaxSize_.setParameterConstraint(mustBeStrictlyPositive);
 }
 
 // _____________________________________________________________________________
