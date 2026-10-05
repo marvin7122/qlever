@@ -10,8 +10,11 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <fcntl.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -35,13 +38,22 @@ namespace {
 
 using namespace ::testing;
 
+// Unique suffix for `TempFile` paths below: several `TempFile`s can be alive
+// in one test, and reusing one path would truncate the same inode on each
+// creation, so every live file would read the last-written content.
+int nextTempFileId() {
+  static int id = 0;
+  return id++;
+}
+
 // Writes `content` to a temporary file and keeps it open for reading.
 // `fd()` exposes the file descriptor; the file is removed from disk on
 // destruction. Use `makeTempFile` below to get the file and its fd in one step.
 class TempFile {
  public:
   explicit TempFile(std::string_view content)
-      : path_{absl::StrCat(gtestCurrentTestName(), ".tmp")} {
+      : path_{absl::StrCat(gtestCurrentTestName(), "-", nextTempFileId(),
+                           ".tmp")} {
     // Open for reading and writing (`"w+b"`): the tests read from this file's
     // `fd()` via `pread`/io_uring.
     readFile_ = ad_utility::File{path_, "w+b"};
@@ -481,6 +493,51 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
+// Require `IoUringPolicy` to use fixed-file slots for its two stable vocabulary
+// files, the offsets file and the word-data file. Reject a third descriptor
+// instead of accepting it without fixed-file registration.
+TEST(IoUringPolicy, thirdVocabularyFileIsRejected) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  // Bind the pairs (not just `.second`): the `TempFile` must stay alive while
+  // the policy reads from its descriptor, otherwise the descriptor is closed
+  // and its number recycled (e.g. by the ring itself), and registration
+  // rejects the recycled descriptor.
+  const auto firstFile = makeTempFile("AAAA");
+  const auto secondFile = makeTempFile("BBBB");
+  const auto thirdFile = makeTempFile("CCCC");
+  const int firstFd = firstFile.second;
+  const int secondFd = secondFile.second;
+  const int thirdFd = thirdFile.second;
+  ad_utility::IoUringPolicy policy{64};
+
+  std::string firstBuffer(4, '\0');
+  std::string secondBuffer(4, '\0');
+  std::string thirdBuffer(4, '\0');
+  const std::array<size_t, 1> sizes{4};
+  const std::array<uint64_t, 1> offsets{0};
+  std::array<char*, 1> firstBuffers{firstBuffer.data()};
+  std::array<char*, 1> secondBuffers{secondBuffer.data()};
+  std::array<char*, 1> thirdBuffers{thirdBuffer.data()};
+
+  const auto submit = [&](int fd, auto& buffers, uint64_t batchIndex) {
+    policy.addBatch(fd, sizes, offsets, buffers, batchIndex);
+    policy.wait(batchIndex);
+  };
+  submit(firstFd, firstBuffers, 0);
+  submit(secondFd, secondBuffers, 1);
+  // The two fixed-file reads must actually read the right file's data, not
+  // just succeed: this is what the `ownerFd`/`registeredFd` slot mapping in
+  // `FixedFileSlots` is for.
+  EXPECT_EQ(firstBuffer, "AAAA");
+  EXPECT_EQ(secondBuffer, "BBBB");
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      policy.addBatch(thirdFd, sizes, offsets, thirdBuffers, 2),
+      HasSubstr("at most two vocabulary files"));
+}
+
 // Drop the manager while reads are still in flight (submitted but never
 // waited). `IoUringPolicy`'s destructor drains the outstanding completions
 // (and logs a warning) before tearing down the ring, so the kernel is done
@@ -693,5 +750,145 @@ TEST(ReadPageCacheHits, emptyBatchAndContract) {
   std::vector<char*> targets{buffer.data(), buffer.data() + 4};
   EXPECT_ANY_THROW(
       ad_utility::readPageCacheHits(fd, numBytes, offsets, targets));
+}
+
+// Test double for the injected system calls of `FixedFileSlots`: `dup` returns
+// `fd + 100` (or fails with `EMFILE` while `failDup` is set), the install
+// returns `installResult`, and every call is recorded.
+struct FakeFixedFileSyscalls {
+  bool failDup = false;
+  int installResult = 0;
+  std::vector<int> dupCalls;
+  std::vector<std::pair<unsigned, int>> installCalls;
+  std::vector<int> closeCalls;
+
+  ad_utility::FixedFileSlots makeSlots() {
+    return ad_utility::FixedFileSlots{
+        [this](unsigned slot, int registeredFd) {
+          installCalls.emplace_back(slot, registeredFd);
+          return installResult;
+        },
+        [this](int fd) {
+          dupCalls.push_back(fd);
+          if (failDup) {
+            errno = EMFILE;
+            return -1;
+          }
+          return fd + 100;
+        },
+        [this](int fd) { closeCalls.push_back(fd); }};
+  }
+};
+
+// Assign slots in registration order, `dup` and install each descriptor once,
+// and return the same slot for a known descriptor without further calls.
+TEST(FixedFileSlots, assignsSlotsInOrderAndReusesThem) {
+  FakeFixedFileSyscalls fake;
+  auto slots = fake.makeSlots();
+  EXPECT_EQ(slots.numUsedSlots(), 0u);
+  EXPECT_EQ(slots.slotFor(3), 0u);
+  EXPECT_EQ(slots.slotFor(5), 1u);
+  EXPECT_EQ(slots.slotFor(3), 0u);
+  EXPECT_EQ(slots.slotFor(5), 1u);
+  EXPECT_EQ(slots.numUsedSlots(), 2u);
+  EXPECT_THAT(fake.dupCalls, ElementsAre(3, 5));
+  EXPECT_THAT(fake.installCalls,
+              ElementsAre(std::pair{0u, 103}, std::pair{1u, 105}));
+  EXPECT_THAT(fake.closeCalls, IsEmpty());
+}
+
+// Reject a third descriptor before any system call, and keep the two
+// registered slots usable.
+TEST(FixedFileSlots, thirdDescriptorIsRejected) {
+  FakeFixedFileSyscalls fake;
+  auto slots = fake.makeSlots();
+  slots.slotFor(3);
+  slots.slotFor(5);
+  AD_EXPECT_THROW_WITH_MESSAGE(slots.slotFor(7),
+                               HasSubstr("at most two vocabulary files"));
+  EXPECT_THAT(fake.dupCalls, ElementsAre(3, 5));
+  EXPECT_EQ(fake.installCalls.size(), 2u);
+  EXPECT_EQ(slots.numUsedSlots(), 2u);
+  EXPECT_EQ(slots.slotFor(5), 1u);
+}
+
+// A failed `dup` throws with the errno text, installs nothing, and leaves the
+// slot free for a later attempt.
+TEST(FixedFileSlots, dupFailureLeavesTableUnchanged) {
+  FakeFixedFileSyscalls fake;
+  auto slots = fake.makeSlots();
+  fake.failDup = true;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      slots.slotFor(3),
+      AllOf(HasSubstr("dup failed"), HasSubstr(std::strerror(EMFILE))));
+  EXPECT_THAT(fake.installCalls, IsEmpty());
+  EXPECT_THAT(fake.closeCalls, IsEmpty());
+  EXPECT_EQ(slots.numUsedSlots(), 0u);
+  fake.failDup = false;
+  EXPECT_EQ(slots.slotFor(3), 0u);
+  EXPECT_EQ(slots.numUsedSlots(), 1u);
+}
+
+// A failed install closes the duplicate (no descriptor leaks), reports the
+// slot and error, and leaves the slot free for a later attempt.
+TEST(FixedFileSlots, installFailureClosesTheDuplicate) {
+  FakeFixedFileSyscalls fake;
+  auto slots = fake.makeSlots();
+  fake.installResult = -EBUSY;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      slots.slotFor(3),
+      AllOf(HasSubstr("io_uring_register_files_update failed"),
+            HasSubstr("slot 0"), HasSubstr("error " + std::to_string(EBUSY))));
+  EXPECT_THAT(fake.closeCalls, ElementsAre(103));
+  EXPECT_EQ(slots.numUsedSlots(), 0u);
+  fake.installResult = 0;
+  EXPECT_EQ(slots.slotFor(3), 0u);
+  EXPECT_THAT(fake.closeCalls, ElementsAre(103));
+}
+
+// `releaseAll` closes every duplicate exactly once and frees the slots; the
+// destructor then closes nothing twice. Without an explicit release, the
+// destructor closes the duplicates.
+TEST(FixedFileSlots, releaseAndDestructionCloseEachDuplicateOnce) {
+  FakeFixedFileSyscalls fake;
+  {
+    auto slots = fake.makeSlots();
+    slots.slotFor(3);
+    slots.slotFor(5);
+    slots.releaseAll();
+    EXPECT_THAT(fake.closeCalls, UnorderedElementsAre(103, 105));
+    EXPECT_EQ(slots.numUsedSlots(), 0u);
+    slots.releaseAll();
+  }
+  EXPECT_EQ(fake.closeCalls.size(), 2u);
+
+  FakeFixedFileSyscalls fake2;
+  {
+    auto slots = fake2.makeSlots();
+    slots.slotFor(4);
+  }
+  EXPECT_THAT(fake2.closeCalls, ElementsAre(104));
+}
+
+// With the default `dup` and `close`, the table holds a real duplicate of the
+// caller's descriptor and closes it on destruction; the caller's descriptor
+// stays open.
+TEST(FixedFileSlots, defaultSyscallsDupAndCloseARealDescriptor) {
+  auto [tmp, fd] = makeTempFile("AAAA");
+  int installedFd = -1;
+  {
+    ad_utility::FixedFileSlots slots{[&installedFd](unsigned, int dupFd) {
+      installedFd = dupFd;
+      return 0;
+    }};
+    EXPECT_EQ(slots.slotFor(fd), 0u);
+    ASSERT_GE(installedFd, 0);
+    EXPECT_NE(installedFd, fd);
+    EXPECT_NE(fcntl(installedFd, F_GETFD), -1);
+  }
+  errno = 0;
+  EXPECT_EQ(fcntl(installedFd, F_GETFD), -1);
+  EXPECT_EQ(errno, EBADF);
+  EXPECT_NE(fcntl(fd, F_GETFD), -1);
 }
 }  // namespace
