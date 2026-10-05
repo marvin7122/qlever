@@ -32,6 +32,32 @@
 
 namespace ad_utility {
 
+// BENCHMARK INSTRUMENTATION (bench branch only, not for upstream): process-wide
+// counters of the vocabulary read path, logged once per query by the server.
+struct VocabIoStats {
+  uint64_t offsetLookups = 0;         // indices requested in the offsets phase
+  uint64_t offsetFastPathMissed = 0;  // of those, sent to the manager
+  uint64_t wordLookups = 0;           // words requested in the words phase
+  uint64_t wordFastPathMissed = 0;    // of those, sent to the manager
+  uint64_t ringSqes = 0;              // reads submitted to an io_uring ring
+  uint64_t ringSubmitCalls = 0;       // io_uring_submit calls
+  uint64_t fastPathPreadv2Calls = 0;  // preadv2(RWF_NOWAIT) calls
+  VocabIoStats operator-(const VocabIoStats& o) const {
+    return {offsetLookups - o.offsetLookups,
+            offsetFastPathMissed - o.offsetFastPathMissed,
+            wordLookups - o.wordLookups,
+            wordFastPathMissed - o.wordFastPathMissed,
+            ringSqes - o.ringSqes,
+            ringSubmitCalls - o.ringSubmitCalls,
+            fastPathPreadv2Calls - o.fastPathPreadv2Calls};
+  }
+};
+VocabIoStats vocabIoStatsSnapshot();
+namespace vocabIoStats {
+void addOffsetPhase(uint64_t requested, uint64_t missed);
+void addWordPhase(uint64_t requested, uint64_t missed);
+}  // namespace vocabIoStats
+
 template <typename T>
 CPP_requires(ReadPolicy_,
              requires(T& policy, int fd, ql::span<const size_t> numBytes,

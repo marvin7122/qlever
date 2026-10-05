@@ -36,6 +36,7 @@
 #include "parser/SparqlParser.h"
 #include "util/AsioHelpers.h"
 #include "util/Exception.h"
+#include "util/IoUringManager.h"
 #include "util/MemorySize/MemorySize.h"
 #include "util/ParseException.h"
 #include "util/ParseableDuration.h"
@@ -1242,9 +1243,21 @@ CPP_template_def(typename RequestT, typename SendT)(
 
   // This actually processes the query and sends the result in the
   // requested format.
+  const ad_utility::VocabIoStats vocabIoStatsBefore =
+      ad_utility::vocabIoStatsSnapshot();
   co_await sendStreamableResponse(request, AD_FWD(send), mediaType,
                                   plannedQuery.value(), requestTimer,
                                   cancellationHandle);
+  {
+    const auto st = ad_utility::vocabIoStatsSnapshot() - vocabIoStatsBefore;
+    AD_LOG_INFO << "VOCAB_IO_STATS offsetLookups=" << st.offsetLookups
+                << " offsetMissed=" << st.offsetFastPathMissed
+                << " wordLookups=" << st.wordLookups
+                << " wordMissed=" << st.wordFastPathMissed
+                << " ringSqes=" << st.ringSqes
+                << " ringSubmits=" << st.ringSubmitCalls
+                << " preadv2Calls=" << st.fastPathPreadv2Calls << std::endl;
+  }
   // Print the runtime info. This needs to be done after the query
   // was computed.
   AD_LOG_INFO << "Done processing query and sending result"

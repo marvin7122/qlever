@@ -202,6 +202,7 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     target = reinterpret_cast<char*>(&offsetPair);
   }
   if (!pageCacheFastPath) {
+    ad_utility::vocabIoStats::addOffsetPhase(numIndices, numIndices);
     manager.wait(
         manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
     return offsetPairs;
@@ -251,6 +252,7 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
       offsetPairs[i] = OffsetPair{runStart[i - begin], runStart[i - begin + 1]};
     }
   }
+  ad_utility::vocabIoStats::addOffsetPhase(numIndices, missedPositions.size());
   readThroughManager(manager, offsetsFile_.fd(), sizes, fileOffsets, targets,
                      missedPositions);
   return offsetPairs;
@@ -283,9 +285,11 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   if (pageCacheFastPath) {
     auto missed = ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets,
                                                 targetSpan);
+    ad_utility::vocabIoStats::addWordPhase(sizes.size(), missed.size());
     readThroughManager(manager, file_.fd(), sizes, fileOffsets, targetSpan,
                        missed);
   } else {
+    ad_utility::vocabIoStats::addWordPhase(sizes.size(), sizes.size());
     manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targetSpan));
   }
   return std::move(builder).finalize();

@@ -25,6 +25,32 @@
 
 namespace ad_utility {
 
+namespace {
+std::atomic<uint64_t> statOffsetLookups{0};
+std::atomic<uint64_t> statOffsetMissed{0};
+std::atomic<uint64_t> statWordLookups{0};
+std::atomic<uint64_t> statWordMissed{0};
+std::atomic<uint64_t> statRingSqes{0};
+std::atomic<uint64_t> statRingSubmits{0};
+std::atomic<uint64_t> statPreadv2Calls{0};
+}  // namespace
+
+VocabIoStats vocabIoStatsSnapshot() {
+  constexpr auto r = std::memory_order_relaxed;
+  return {statOffsetLookups.load(r), statOffsetMissed.load(r),
+          statWordLookups.load(r),   statWordMissed.load(r),
+          statRingSqes.load(r),      statRingSubmits.load(r),
+          statPreadv2Calls.load(r)};
+}
+void vocabIoStats::addOffsetPhase(uint64_t requested, uint64_t missed) {
+  statOffsetLookups.fetch_add(requested, std::memory_order_relaxed);
+  statOffsetMissed.fetch_add(missed, std::memory_order_relaxed);
+}
+void vocabIoStats::addWordPhase(uint64_t requested, uint64_t missed) {
+  statWordLookups.fetch_add(requested, std::memory_order_relaxed);
+  statWordMissed.fetch_add(missed, std::memory_order_relaxed);
+}
+
 //______________________________________________________________________________
 FixedFileSlots::FixedFileSlots(InstallFunction install, DupFunction dupFd,
                                CloseFunction closeFd)
@@ -166,6 +192,7 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
     // See https://man7.org/linux/man-pages/man2/preadv2.2.html: with
     // `RWF_NOWAIT`, the call fails with `EAGAIN` (or returns fewer bytes)
     // instead of waiting for the storage device when data is not cached.
+    statPreadv2Calls.fetch_add(1, std::memory_order_relaxed);
     const ssize_t numBytesRead =
         preadv2(fd, iovecs.data(), static_cast<int>(iovecs.size()),
                 static_cast<off_t>(offsets[runBegin]), RWF_NOWAIT);
@@ -302,6 +329,7 @@ void IoUringPolicy::addBatch(int fd,
     if (numInFlightReadRequests_ >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
+      statRingSubmits.fetch_add(1, std::memory_order_relaxed);
       io_uring_submit(&ring_);
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
@@ -328,10 +356,12 @@ void IoUringPolicy::addBatch(int fd,
     inFlightReadsByRequestId_[requestId] = InFlightRead{handle, numBytesToRead};
     io_uring_sqe_set_data64(sqe, requestId);
     numInFlightReadRequests_++;
+    statRingSqes.fetch_add(1, std::memory_order_relaxed);
   }
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
+  statRingSubmits.fetch_add(1, std::memory_order_relaxed);
   io_uring_submit(&ring_);
 }
 
