@@ -84,3 +84,21 @@ TEST(StringTest, ResizeAndOverwriteMoveOnlyOperation) {
   ql::resize_and_overwrite(s, text.size(), std::move(op));
   EXPECT_EQ(s, text);
 }
+
+// _____________________________________________________________________________
+// Lvalue operations are copied (taken by value), so the caller's copy is left
+// unchanged.
+TEST(StringTest, ResizeAndOverwriteLvalueOperationIsCopied) {
+  std::string s;
+  size_t numCalls = 0;
+  auto op = [numCalls](char* buf, size_t count) mutable {
+    ++numCalls;
+    std::memset(buf, 'a', count);
+    return numCalls;
+  };
+  ql::resize_and_overwrite(s, 3, op);
+  EXPECT_EQ(s, "a");
+  // Calling the original still starts at zero calls.
+  char buf[1];
+  EXPECT_EQ(op(buf, 1), 1u);
+}

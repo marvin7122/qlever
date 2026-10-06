@@ -21,8 +21,9 @@ namespace ql {
 
 // C++17-compatible backport of C++23's
 // `std::basic_string::resize_and_overwrite` as a free function taking the
-// string first. Unlike the standard (oversize result is UB), both branches
-// enforce `newSize <= count` via `AD_CONTRACT_CHECK`.
+// string first. As in the standard, `op` is taken by value and invoked as an
+// rvalue. Unlike the standard (oversize result is UB), both branches enforce
+// `newSize <= count` via `AD_CONTRACT_CHECK`.
 CPP_template(typename CharT, typename Traits, typename Allocator,
              typename Operation)(
     requires ql::concepts::invocable<Operation, CharT*, size_t>&&
@@ -32,8 +33,8 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
             size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
                                                                  Allocator>&
                                                    str,
-                                               size_t count, Operation&& op) {
-  // Forward to the standard member when `__cpp_lib_string_resize_and_overwrite
+                                               size_t count, Operation op) {
+  // Use the standard member when `__cpp_lib_string_resize_and_overwrite
   // >= 202110L` (C++23, P1072R10); otherwise `resize` (zero-fills), overwrite,
   // then shrink. Same end state; only the fallback pays for the fill.
   // P1072R10 (basic_string::resize_and_overwrite):
@@ -42,17 +43,16 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
   // https://web.archive.org/web/20251223023007/http://eel.is/c++draft/version.syn
 #if defined(__cpp_lib_string_resize_and_overwrite) && \
     __cpp_lib_string_resize_and_overwrite >= 202110L
-  // Move `op` into the lambda (standard takes it by value as
-  // `std::move(op)(p, count)`); `mutable` keeps mutable callables working.
-  str.resize_and_overwrite(count, [op = std::forward<Operation>(op), count](
-                                      CharT* data, size_t n) mutable {
-    const size_t newSize = std::move(op)(data, n);
-    AD_CONTRACT_CHECK(newSize <= count);
-    return newSize;
-  });
+  // `mutable` so that `std::move(op)` can call a non-const `operator()`.
+  str.resize_and_overwrite(
+      count, [op = std::move(op), count](CharT* data, size_t n) mutable {
+        const size_t newSize = std::move(op)(data, n);
+        AD_CONTRACT_CHECK(newSize <= count);
+        return newSize;
+      });
 #else
   str.resize(count);
-  const size_t newSize = std::forward<Operation>(op)(str.data(), count);
+  const size_t newSize = std::move(op)(str.data(), count);
   AD_CONTRACT_CHECK(newSize <= count);
   str.resize(newSize);
 #endif
