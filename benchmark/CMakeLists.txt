@@ -42,4 +42,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(TieVsArrayBenchmark engine testUtil)
 
+    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst ${CMAKE_DL_LIBS})
+
 endif()
