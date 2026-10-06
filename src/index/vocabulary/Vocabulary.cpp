@@ -308,6 +308,18 @@ VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
 
 // _____________________________________________________________________________
 template <typename S, typename C, typename I>
+VocabBatchLookupResult Vocabulary<S, C, I>::lookupBatch(
+    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  if constexpr (requires { vocabulary_.lookupBatch(indices, builder); }) {
+    return vocabulary_.lookupBatch(indices, builder);
+  } else {
+    return vocabulary_.lookupBatch(indices);
+  }
+}
+
+// _____________________________________________________________________________
+template <typename S, typename C, typename I>
 VocabLookupOutput Vocabulary<S, C, I>::lookupBatchesStreamed(
     VocabLookupInput input) const {
   return vocabulary_.lookupBatchesStreamed(std::move(input));
