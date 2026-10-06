@@ -1161,8 +1161,7 @@ CPP_template_def(typename RequestT, typename SendT)(
                 << std::endl;
   } else {
     AD_LOG_INFO << ExportPipelineRouter::describeDecision(
-                       parsedQuery, params, exportHeader,
-                       ExportEngineMode::LegacyV1)
+                       mode, params, exportHeader, ExportEngineMode::LegacyV1)
                 << std::endl;
   }
 
