@@ -1,12 +1,23 @@
-// Copyright 2026, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Marvin Stoetzel <marvin.stoetzel@mailbox.org>
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
+#include <absl/functional/any_invocable.h>
+#include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <boost/asio/post.hpp>
+#include <boost/asio/static_thread_pool.hpp>
 #include <chrono>
+#include <functional>
 #include <future>
 #include <memory>
 #include <set>
@@ -16,6 +27,7 @@
 #include <vector>
 
 #include "engine/export_v2/ElasticExportScheduler.h"
+#include "engine/export_v2/ExportJobState.h"
 #include "util/GTestHelpers.h"
 #include "util/http/websocket/QueryId.h"
 
@@ -886,4 +898,171 @@ TEST(ElasticExportSchedulerTest, OwnedMorselDerivesJobIdFromState) {
 
 TEST(ElasticExportSchedulerTest, OwnedMorselNullStateThrows) {
   EXPECT_THROW(OwnedMorsel(nullptr, 0, 0), ad_utility::Exception);
+}
+
+// -----------------------------------------------------------------------------
+// Server wiring validation.
+// -----------------------------------------------------------------------------
+// Mirror the wiring in `Server::Server` (a poster onto `queryThreadPool_`, a
+// cap of the pool size on outstanding morsels, and the attachment to the query
+// registry) against a real `boost::asio::static_thread_pool`. Check three
+// invariants: The number of morsels in flight never exceeds the pool size,
+// a second registered query stops helper admission, and once that query ends
+// pending morsels become eligible again but are re-posted only when slots
+// free, still within the pool size.
+
+namespace {
+// Return true as soon as `condition` holds and false once `timeout` has
+// passed; the caller asserts on the result and reports the observed state.
+// Call `std::this_thread::yield()` instead of `std::this_thread::sleep_for`
+// between checks, so the poll observes the blocked tasks as soon as they start.
+bool pollUntil(const std::function<bool()>& condition,
+               std::chrono::milliseconds timeout = 10s) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (true) {
+    if (condition()) {
+      return true;
+    }
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::yield();
+  }
+}
+}  // namespace
+
+TEST(ElasticExportSchedulerTest, ProductionWiringBoundsPoolAndYieldsToLoad) {
+  constexpr size_t poolSize = 4;
+  boost::asio::static_thread_pool pool(poolSize);
+  std::atomic<size_t> postedCount{0};
+  ElasticExportScheduler scheduler(
+      [&pool, &postedCount](absl::AnyInvocable<void()> work) {
+        postedCount.fetch_add(1, std::memory_order_relaxed);
+        // `boost::asio::post` requires a copyable handler, `AnyInvocable` is
+        // move-only.
+        const auto sharedWork =
+            std::make_shared<absl::AnyInvocable<void()>>(std::move(work));
+        boost::asio::post(pool, [sharedWork]() { (*sharedWork)(); });
+      },
+      64);
+  scheduler.setMaxConcurrentMorsels(poolSize);
+  ad_utility::websocket::QueryRegistry registry;
+  scheduler.attachToQueryRegistry(registry);
+
+  // The export query itself is the only registered query, so
+  // `activeForegroundQueries()` is within the default limit of one foreground
+  // query for helper admission.
+  const auto exportQuery = registry.uniqueId("SELECT ?x WHERE { ?x ?p ?o }");
+  EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
+
+  auto sessionA = scheduler.createSession<std::string>();
+  auto sessionB = scheduler.createSession<std::string>();
+  // With `setOrdered(false)`, `consumeNextResult()` runs the oldest pending
+  // morsel inline, which the consume loop at the end relies on.
+  sessionA.setOrdered(false);
+  sessionB.setOrdered(false);
+  EXPECT_EQ(sessionA.state(), SessionState::HelpersEligible);
+
+  // Block every morsel that reaches a thread of `pool` until `gateOpen` is set,
+  // so the pool saturates deterministically: `poolSize` morsels occupy the
+  // threads of `pool`, the rest stay pending in the scheduler.
+  std::atomic<size_t> blockedTasksStarted{0};
+  std::atomic<size_t> inFlight{0};
+  std::atomic<size_t> maxInFlight{0};
+  std::atomic<bool> gateOpen{false};
+  // Set `gateOpen` and wait for `pool` on every exit, so a failed assertion
+  // cannot leave the threads of `pool` spinning on `gateOpen`. An exception
+  // from `pool.wait()` here terminates the test binary, which is the intended
+  // outcome for a broken thread pool.
+  const absl::Cleanup openGateOnExit{[&gateOpen, &pool]() {
+    gateOpen.store(true);
+    pool.wait();
+  }};
+  const auto blockingTask = [&]() -> std::string {
+    // `fetch_add` returns the previous value, so add one for the new count.
+    const size_t inFlightNow = inFlight.fetch_add(1) + 1;
+    // Raise `maxInFlight` to `inFlightNow` unless another task already stored
+    // a larger value (a lock-free atomic maximum); the test checks
+    // `maxInFlight <= poolSize` at the end.
+    size_t observedMax = maxInFlight.load();
+    while (inFlightNow > observedMax &&
+           !maxInFlight.compare_exchange_weak(observedMax, inFlightNow)) {
+    }
+    blockedTasksStarted.fetch_add(1);
+    // Spin rather than block: `gateOpen` is only set at the end of the test
+    // (or by `openGateOnExit`), and the spinning tasks keep `pool` saturated.
+    while (!gateOpen.load()) {
+      std::this_thread::yield();
+    }
+    inFlight.fetch_sub(1);
+    return "blocked";
+  };
+  for (size_t i = 0; i < poolSize; ++i) {
+    sessionA.submitMorsel(blockingTask);
+    sessionB.submitMorsel(blockingTask);
+  }
+  // Two sessions share `poolSize` slots: `poolSize` morsels are posted
+  // synchronously and `poolSize` stay pending.
+  EXPECT_EQ(postedCount.load(), poolSize);
+  ASSERT_TRUE(pollUntil([&] { return blockedTasksStarted.load() == poolSize; }))
+      << "only " << blockedTasksStarted.load() << " of " << poolSize
+      << " blocked morsels started within the timeout";
+  EXPECT_LE(maxInFlight.load(), poolSize);
+
+  // A second registered query exceeds the limit of one foreground query, so
+  // helper admission stops and new morsels run inline on the consuming thread
+  // instead of taking pool threads. These morsels go to a fresh session: the
+  // unordered consumption of `sessionA` would run one of its gate-blocked
+  // pending morsels inline and deadlock, because the gate only opens after
+  // this block.
+  {
+    // `foregroundQuery` is registered for this scope only; its destruction at
+    // the end of the scope ends the query and fires `onForegroundQueryEnded`.
+    const auto foregroundQuery =
+        registry.uniqueId("SELECT ?y WHERE { ?y ?p ?o }");
+    EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
+    auto sessionC = scheduler.createSession<std::string>();
+    EXPECT_EQ(sessionC.state(), SessionState::PrimaryOnly);
+    sessionC.setOrdered(false);
+    for (size_t i = 0; i < poolSize; ++i) {
+      sessionC.submitMorsel([i]() { return absl::StrCat("inline_", i); });
+    }
+    EXPECT_EQ(postedCount.load(), poolSize);
+    std::vector<std::string> expected;
+    std::vector<std::string> consumed;
+    for (size_t i = 0; i < poolSize; ++i) {
+      expected.push_back(absl::StrCat("inline_", i));
+      consumed.push_back(sessionC.consumeNextResult());
+    }
+    EXPECT_EQ(consumed, expected);
+    EXPECT_FALSE(sessionC.hasMoreResults());
+  }
+  // The second query has ended, but all `poolSize` slots are still taken by
+  // the blocked morsels, so the cap `setMaxConcurrentMorsels(poolSize)` keeps
+  // the pending ones from being posted.
+  EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
+  EXPECT_EQ(postedCount.load(), poolSize);
+
+  gateOpen.store(true);
+  // Wait until `pool` has no work left rather than for thread exit. The
+  // completion of each blocked morsel posts one pending morsel, and
+  // `pool.wait()` returns only after those have run as well.
+  pool.wait();
+
+  // The pending morsels were posted to `pool` once slots became free, without
+  // exceeding `poolSize` morsels in flight.
+  EXPECT_EQ(postedCount.load(), 2u * poolSize);
+  std::vector<std::string> consumedA;
+  std::vector<std::string> consumedB;
+  for (size_t i = 0; i < poolSize; ++i) {
+    consumedA.push_back(sessionA.consumeNextResult());
+    consumedB.push_back(sessionB.consumeNextResult());
+  }
+  EXPECT_THAT(consumedA, ::testing::Each(::testing::Eq("blocked")));
+  EXPECT_THAT(consumedA, ::testing::SizeIs(poolSize));
+  EXPECT_THAT(consumedB, ::testing::Each(::testing::Eq("blocked")));
+  EXPECT_THAT(consumedB, ::testing::SizeIs(poolSize));
+  EXPECT_FALSE(sessionA.hasMoreResults());
+  EXPECT_FALSE(sessionB.hasMoreResults());
+  EXPECT_LE(maxInFlight.load(), poolSize);
 }
