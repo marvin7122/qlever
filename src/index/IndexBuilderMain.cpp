@@ -194,6 +194,7 @@ int main(int argc, char** argv) {
   std::vector<string> defaultGraphs;
   std::vector<bool> parseParallel;
   std::string materializedViewsJson;
+  ad_utility::NonNegative numThreads{config.numThreads_};
   // NOTE: Not parsed into `config.indexRowsPerBlock_` directly, because
   // `boost::program_options` cannot parse a `std::optional<size_t>` (see the
   // `validate` functions in `util/ProgramOptionsHelpers.h`). `NonNegative` also
@@ -367,7 +368,7 @@ int main(int argc, char** argv) {
   add("log-level",
       optionFactory.getProgramOption<&RuntimeParameters::logLevel_>(),
       logLevelDescription.c_str());
-  add("num-threads,j", po::value(&config.numThreads_),
+  add("num-threads,j", po::value(&numThreads),
       "The number of threads used during the index build. Must be at least 1. "
       "Default: the number of hardware threads of the machine. NOTE: Currently "
       "the first pass (parsing the input and creating the partial "
@@ -393,6 +394,7 @@ int main(int argc, char** argv) {
       return EXIT_SUCCESS;
     }
     po::notify(optionsMap);
+    config.numThreads_ = numThreads;
   } catch (const std::exception& e) {
     std::cerr << "Error in command-line argument: " << e.what() << std::endl;
     std::cerr << boostOptions << std::endl;
