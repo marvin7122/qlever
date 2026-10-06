@@ -776,7 +776,8 @@ TEST(Union, getCostEstimate) {
 // Pushing a `LIMIT` into the children can change the algorithm and with it the
 // sort order of an `OptionalJoin` inside them, see the caution note on
 // `Operation::applyLimitOffset`. Check that the sort order which the merging
-// implementation requires of the children is restored in that case.
+// implementation requires of the children and the correct sorted prefix are
+// preserved in that case.
 TEST(Union, limitPushdownRestoresSortOrderOfChildren) {
   using Var = Variable;
   auto* qec = ad_utility::testing::getQec();
@@ -792,33 +793,62 @@ TEST(Union, limitPushdownRestoresSortOrderOfChildren) {
     // Deliberately unsorted, so that the `OptionalJoin` wraps it in a `Sort`,
     // which is a precondition for the index nested loop join.
     auto right = ad_utility::makeExecutionTree<ValuesForTesting>(
-        qec, makeIdTableFromVector({{2, 20}, {1, 10}, {0, 0}}),
+        qec, makeIdTableFromVector({{2, 20}, {1, 10}, {0, 0}, {0, 10}}),
         Vars{Var{"?a"}, Var{"?c"}});
     return ad_utility::makeExecutionTree<OptionalJoin>(qec, std::move(left),
                                                        std::move(right));
   };
-  auto other = ad_utility::makeExecutionTree<ValuesForTesting>(
-      qec, makeIdTableFromVector({{7, 70}, {8, 80}}),
-      Vars{Var{"?a"}, Var{"?d"}}, false, std::vector<ColumnIndex>{0});
+  auto makeUnion = [&]() {
+    auto other = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, makeIdTableFromVector({{7, 70}, {8, 80}}),
+        Vars{Var{"?a"}, Var{"?d"}}, false, std::vector<ColumnIndex>{0});
+    // The result of the union has to be sorted on `?a`, which is its column 0.
+    return Union{qec, makeOptionalJoin(), std::move(other),
+                 std::vector<ColumnIndex>{0}};
+  };
+  auto materialize = [qec](Union& unionOperation, bool requestLaziness) {
+    qec->getQueryTreeCache().clearAll();
+    auto result = unionOperation.getResult(
+        true, requestLaziness ? ComputationMode::LAZY_IF_SUPPORTED
+                              : ComputationMode::FULLY_MATERIALIZED);
+    if (result->isFullyMaterialized()) {
+      return result->cloneIdTable();
+    }
+    IdTable table{unionOperation.getResultWidth(), qec->getAllocator()};
+    for (const auto& block : result->idTables()) {
+      table.insertAtEnd(block.idTable_);
+    }
+    return table;
+  };
+  auto unlimitedUnion = makeUnion();
+  auto reference = materialize(unlimitedUnion, false);
 
-  // The result of the union has to be sorted on `?a`, which is its column 0.
-  Union unionOperation{qec, makeOptionalJoin(), std::move(other),
-                       std::vector<ColumnIndex>{0}};
-  auto expectChildrenAreSorted =
-      [&unionOperation](ad_utility::source_location loc =
-                            AD_CURRENT_SOURCE_LOC()) {
-        auto trace = generateLocationTrace(loc);
-        for (const auto* child : unionOperation.getChildren()) {
-          EXPECT_TRUE(child->getRootOperation()->isSortedBy({0}));
-        }
-      };
-  // Both children are already sorted, so the constructor added no `Sort`.
-  expectChildrenAreSorted();
+  for (bool requestLaziness : {false, true}) {
+    SCOPED_TRACE(requestLaziness);
+    for (uint64_t offset : {0, 1}) {
+      SCOPED_TRACE(offset);
+      auto unionOperation = makeUnion();
+      // Either bound makes the optional join's left input smaller than its
+      // right input. Truncating its new unsorted output loses a key-0 row.
+      unionOperation.applyLimitOffset({2, offset});
+      IdTable expected{reference.numColumns(), qec->getAllocator()};
+      for (size_t i = offset; i < offset + 2; ++i) {
+        expected.push_back(reference.at(i));
+      }
+      EXPECT_EQ(materialize(unionOperation, requestLaziness), expected);
 
-  // The limit is small enough to make the left input of the `OptionalJoin`
-  // smaller than its right input.
-  unionOperation.applyLimitOffset({2});
-  expectChildrenAreSorted();
+      auto children = unionOperation.getChildren();
+      EXPECT_TRUE(children.at(0)
+                      ->getRootOperation()
+                      ->getLimitOffset()
+                      .isUnconstrained());
+      EXPECT_EQ(children.at(1)->getRootOperation()->getLimitOffset(),
+                LimitOffsetClause{2 + offset});
+      for (const auto* child : children) {
+        EXPECT_TRUE(child->getRootOperation()->isSortedBy({0}));
+      }
+    }
+  }
 }
 
 // _____________________________________________________________________________

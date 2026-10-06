@@ -412,17 +412,16 @@ void Union::onLimitOffsetChanged(const LimitOffsetClause&) {
   // matter whether they are concatenated or merged according to `targetOrder_`.
   for (size_t i = 0; i < _subtrees.size(); ++i) {
     auto& subtree = _subtrees.at(i);
-    subtree = subtree->clone();
-    subtree->applyLimitOffset(LimitOffsetClause{limit + offset});
+    auto candidate = subtree->clone();
+    candidate->applyLimitOffset(LimitOffsetClause{limit + offset});
 
-    // The pushdown may have un-sorted `subtree`, while both the merging
-    // implementation and our `resultSortedOn()` require the subtrees to be
-    // sorted, so restore that order (see the caution note on
-    // `Operation::applyLimitOffset`).
-    if (!targetOrder_.empty()) {
-      subtree = QueryExecutionTree::createSortedTree(std::move(subtree),
-                                                     sortOrderForSubtree(i));
+    // An unsorted prefix may omit rows required by the sorted merge. Sorting
+    // after truncation cannot repair this, so keep the original sorted subtree.
+    if (!targetOrder_.empty() &&
+        !candidate->getRootOperation()->isSortedBy(sortOrderForSubtree(i))) {
+      continue;
     }
+    subtree = std::move(candidate);
   }
 }
 
