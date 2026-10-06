@@ -36,8 +36,8 @@ namespace ad_utility::vocabulary_merger::detail {
 // The stages of the merging pipeline that run asynchronously to the merging
 // thread (stages 2 to 4 in the comment above `mergeVocabulary`). Use the
 // `VocabularyMergePipeline` alias below; the type of the third stage is a
-// template parameter only so that the tests can inject a writer that fails
-// (the real `IdMapBatchWriter` cannot, see `runAndCatchException`).
+// template parameter so that tests can also inject a writer with deterministic
+// failures, in addition to exercising real ID map I/O failures.
 //
 // NOTE: Each of the queues has exactly one worker thread, so the batches are
 // processed in exactly the order in which the merging thread creates them, and
@@ -137,9 +137,10 @@ class VocabularyMergePipelineImpl {
     idMapWriterQueue_.finish();
     // Propagate an exception from one of the stages to the caller. NOTE: All
     // the queues have been joined, so reading `exception_` here is safe. The ID
-    // maps are deliberately not finished on this path (their destructors do
-    // that, and they do not throw), so that a failure of that cleanup cannot
-    // hide the original exception.
+    // maps are deliberately not explicitly finished on this path. Their
+    // batch-specific destructor cleanup discards writes during unwinding or
+    // after an ID map failure, and otherwise catches cleanup-only errors, so
+    // cleanup cannot hide the original stage exception.
     if (exception_) {
       std::rethrow_exception(exception_);
     }
@@ -154,14 +155,8 @@ class VocabularyMergePipelineImpl {
   // `exception_`). Once a batch has failed, the remaining batches are skipped,
   // because their words could no longer be written consistently anyway.
   //
-  // NOTE: Of the two stages that are wrapped in this, only the writing of the
-  // words can currently fail (via the `wordCallback`); the writing of the ID
-  // maps cannot, because a failed write to a file is silently ignored
-  // (`FileWriteSerializer::serializeBytes` in
-  // `util/Serializer/FileSerializer.h` discards the number of bytes that
-  // `ad_utility::File::write` returns). The wrapping of the latter is
-  // deliberate nevertheless, so that a future ID map writer that does report
-  // its errors doesn't terminate the process.
+  // Both word callbacks and checked ID map seek/write/flush operations can
+  // fail. Neither failure may escape its queue's worker thread.
   template <typename F>
   void runAndCatchException(const F& task) {
     if (hasFailed_) {

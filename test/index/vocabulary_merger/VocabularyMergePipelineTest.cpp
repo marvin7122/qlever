@@ -10,6 +10,7 @@
 #include <gmock/gmock.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -19,6 +20,7 @@
 
 #include "../../util/GTestHelpers.h"
 #include "VocabularyMergerTestHelpers.h"
+#include "backports/filesystem.h"
 #include "index/vocabulary_merger/IdMap.h"
 #include "index/vocabulary_merger/MergePipeline.h"
 #include "index/vocabulary_merger/WordBatchBuilder.h"
@@ -43,9 +45,8 @@ namespace {
 const std::string partialVocabBasename = "vocab-";
 
 // An ID map writer (the third stage of the pipeline) that fails on the first
-// batch. The real `IdMapBatchWriter` cannot fail (see
-// `VocabularyMergePipelineImpl::runAndCatchException`), so this is the only way
-// to test that a failure of that stage is propagated.
+// batch. This deterministically exercises propagation and skipped batches;
+// separate tests below exercise actual I/O failures in `IdMapBatchWriter`.
 class ThrowingIdMapBatchWriter {
  public:
   // Same interface as the `IdMapBatchWriter`, but the argument is ignored
@@ -105,6 +106,130 @@ void expectFailureIsPropagated(
                                         std::runtime_error);
 }
 }  // namespace
+
+#if GTEST_HAS_DEATH_TEST && defined(__unix__)
+namespace {
+class VocabularyMergePipelineDeathTest : public ::testing::Test {
+ private:
+  std::string oldStyle_;
+
+ protected:
+  void SetUp() override {
+    oldStyle_ = ::testing::FLAGS_gtest_death_test_style;
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    if (!ql::filesystem::exists("/dev/full")) {
+      GTEST_SKIP() << "/dev/full is unavailable";
+    }
+  }
+  void TearDown() override {
+    ::testing::FLAGS_gtest_death_test_style = oldStyle_;
+  }
+};
+
+template <typename WordCallback>
+void pushDuplicateWord(VocabularyMergePipeline& pipeline,
+                       WordCallback& wordCallback,
+                       const ad_utility::RegexSet& regexes,
+                       size_t occurrences) {
+  WordBatchBuilder builder;
+  auto push = makePush(pipeline, wordCallback, regexes);
+  std::vector<ad_utility::vocabulary_merger::detail::QueueWord> words;
+  for (size_t i = 0; i < occurrences; ++i) {
+    words.push_back(makeQueueWord("\"a\"", false, 0, i));
+  }
+  builder.addMergedWords(std::move(words), lessThan, push);
+  builder.finish(push);
+}
+
+void exerciseWordStageFailure(bool catchOutside) {
+  const std::string originalMessage = "Original word-stage failure";
+  auto wordCallback = [&](std::string_view, bool) -> uint64_t {
+    throw std::runtime_error{originalMessage};
+  };
+  ad_utility::RegexSet noRegexes;
+  bool caughtOutside = false;
+  try {
+    std::vector<std::string> filenames{"/dev/full"};
+    VocabularyMergePipeline pipeline{
+        ad_utility::InputRangeTypeErased{filenames}};
+    pushDuplicateWord(pipeline, wordCallback, noRegexes, 1);
+    try {
+      pipeline.finish();
+      ADD_FAILURE() << "Expected the word-stage error";
+    } catch (const std::runtime_error& error) {
+      EXPECT_TRUE(pipeline.hasFailed());
+      EXPECT_EQ(error.what(), originalMessage);
+      if (catchOutside) {
+        throw;
+      }
+    }
+    // No entries reached the ID writer, but its pending vector header still
+    // targets /dev/full. Cleanup after this catch must swallow its own error.
+  } catch (const std::runtime_error& error) {
+    caughtOutside = true;
+    EXPECT_EQ(error.what(), originalMessage);
+  }
+  EXPECT_EQ(caughtOutside, catchOutside);
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST_F(VocabularyMergePipelineDeathTest, realIdMapIoFailureIsPropagated) {
+  auto run = [] {
+    size_t numWords = 0;
+    auto wordCallback = makeCountingWordCallback(numWords);
+    ad_utility::RegexSet noRegexes;
+    std::string originalMessage;
+    bool caughtOutside = false;
+    try {
+      std::vector<std::string> filenames{"/dev/full"};
+      VocabularyMergePipeline pipeline{
+          ad_utility::InputRangeTypeErased{filenames}};
+      const size_t occurrences =
+          idMapWriterBufferSize.getBytes() / sizeof(IdMapEntry) + 17;
+      pushDuplicateWord(pipeline, wordCallback, noRegexes, occurrences);
+      // finish joins the worker queues; there is no polling for hasFailed.
+      try {
+        pipeline.finish();
+        ADD_FAILURE() << "Expected the real ID map writer to fail";
+      } catch (const std::exception& error) {
+        EXPECT_TRUE(pipeline.hasFailed());
+        EXPECT_THAT(error.what(),
+                    ::testing::HasSubstr("ID map file /dev/full"));
+        originalMessage = error.what();
+        throw;
+      }
+    } catch (const std::exception& error) {
+      caughtOutside = true;
+      EXPECT_EQ(error.what(), originalMessage);
+    }
+    EXPECT_TRUE(caughtOutside);
+    EXPECT_EQ(numWords, 1u);
+    std::_Exit(::testing::Test::HasFailure() ? 1 : 0);
+  };
+  EXPECT_EXIT(run(), ::testing::ExitedWithCode(0), "");
+}
+
+// _____________________________________________________________________________
+TEST_F(VocabularyMergePipelineDeathTest,
+       wordStageErrorSurvivesCleanupDuringUnwinding) {
+  auto run = [] {
+    exerciseWordStageFailure(true);
+    std::_Exit(::testing::Test::HasFailure() ? 1 : 0);
+  };
+  EXPECT_EXIT(run(), ::testing::ExitedWithCode(0), "");
+}
+
+// _____________________________________________________________________________
+TEST_F(VocabularyMergePipelineDeathTest,
+       wordStageErrorSurvivesCleanupAfterCatch) {
+  auto run = [] {
+    exerciseWordStageFailure(false);
+    std::_Exit(::testing::Test::HasFailure() ? 1 : 0);
+  };
+  EXPECT_EXIT(run(), ::testing::ExitedWithCode(0), "");
+}
+#endif
 
 // _____________________________________________________________________________
 // Push the batches of a `WordBatchBuilder` through the pipeline (which is the

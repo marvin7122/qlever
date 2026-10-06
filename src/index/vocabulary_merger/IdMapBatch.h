@@ -12,6 +12,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -54,32 +56,67 @@ class IdMapBatchFileWriteSerializer {
  public:
   using SerializerType = ad_utility::serialization::WriteSerializerTag;
   using FileHandleCache =
-      ad_utility::util::LRUCache<std::string,
-                                 std::unique_ptr<ad_utility::File>>;
+      ad_utility::util::LRUCache<std::string, std::unique_ptr<std::ofstream>>;
+
+  // Shared by all maps and their owning batch writer. After the first failure,
+  // normal operations rethrow it; implicit cleanup instead discards pending
+  // bytes and headers before the generic serializer destructors can do I/O.
+  struct BatchState {
+    FileHandleCache fileHandles_{64};
+    std::exception_ptr failure_;
+    bool discardWrites_ = false;
+    // A writer created during another object's cleanup can still do normal I/O.
+    const int numExceptionsAtCreation_ = std::uncaught_exceptions();
+
+    void rethrowFailure() const {
+      if (failure_) {
+        std::rethrow_exception(failure_);
+      }
+    }
+  };
 
  private:
   std::string filename_;
   uint64_t position_ = 0;
-  std::shared_ptr<FileHandleCache> fileHandles_;
+  std::shared_ptr<BatchState> state_;
 
  public:
   IdMapBatchFileWriteSerializer(std::string filename,
-                                std::shared_ptr<FileHandleCache> fileHandles)
-      : filename_{std::move(filename)}, fileHandles_{std::move(fileHandles)} {
+                                std::shared_ptr<BatchState> state)
+      : filename_{std::move(filename)}, state_{std::move(state)} {
     // Create/truncate each file exactly once, without retaining its descriptor.
-    ad_utility::File file{filename_, "w"};
+    auto file = ad_utility::makeOfstream(
+        filename_, std::ios::binary | std::ios::out | std::ios::trunc);
   }
 
   void serializeBytes(const char* bytes, size_t numBytes) {
-    const auto& file =
-        fileHandles_->getOrCompute(filename_, [](const std::string& filename) {
-          return std::make_unique<ad_utility::File>(filename, "r+");
-        });
-    AD_CONTRACT_CHECK(file->seek(static_cast<off_t>(position_), SEEK_SET),
-                      "Seeking in ID map file ", filename_, " failed");
-    AD_CONTRACT_CHECK(file->write(bytes, numBytes) == numBytes,
-                      "Short write to ID map file ", filename_);
-    position_ += numBytes;
+    // Also protect partially constructed batch writers, whose destructor body
+    // never runs when opening a later file throws.
+    if (state_->discardWrites_ ||
+        std::uncaught_exceptions() > state_->numExceptionsAtCreation_) {
+      return;
+    }
+    state_->rethrowFailure();
+    try {
+      const auto& file = state_->fileHandles_.getOrCompute(
+          filename_, [](const std::string& filename) {
+            return std::make_unique<std::ofstream>(ad_utility::makeOfstream(
+                filename, std::ios::binary | std::ios::in | std::ios::out));
+          });
+      file->seekp(static_cast<std::streamoff>(position_));
+      AD_CONTRACT_CHECK(*file, "Seeking in ID map file ", filename_, " failed");
+      file->write(bytes, static_cast<std::streamsize>(numBytes));
+      AD_CONTRACT_CHECK(*file, "Writing to ID map file ", filename_, " failed");
+      // Surface buffered device errors here, not during stream destruction.
+      file->flush();
+      AD_CONTRACT_CHECK(*file, "Flushing ID map file ", filename_, " failed");
+      position_ += numBytes;
+    } catch (...) {
+      if (!state_->failure_) {
+        state_->failure_ = std::current_exception();
+      }
+      throw;
+    }
   }
 
   [[nodiscard]] uint64_t getSerializationPosition() const { return position_; }
@@ -104,9 +141,45 @@ class IdMapBatchWriter {
   using Writer =
       ad_utility::serialization::VectorIncrementalSerializer<IdMapEntry,
                                                              WriteSerializer>;
+  // Declared before the writers so it also outlives partial-construction
+  // cleanup. Per-file serializers retain this same state.
+  std::shared_ptr<IdMapBatchFileWriteSerializer::BatchState> state_;
   // The buffered ID map writers, one per partial vocabulary. They share at
   // most 64 open file handles, independent of the number of vocabularies.
   std::vector<Writer> idMapWriters_;
+
+  static void logCleanupFailure(std::exception_ptr failure) noexcept {
+    try {
+      try {
+        std::rethrow_exception(failure);
+      } catch (const std::exception& error) {
+        AD_LOG_ERROR << "Implicit ID map cleanup failed: " << error.what()
+                     << '\n';
+      } catch (...) {
+        AD_LOG_ERROR
+            << "Implicit ID map cleanup failed with an unknown error\n";
+      }
+    } catch (...) {
+      // Logging must not turn best-effort cleanup into termination either.
+    }
+  }
+
+  void cleanup() noexcept {
+    if (!state_) {
+      return;
+    }
+    if (state_->failure_ ||
+        std::uncaught_exceptions() > state_->numExceptionsAtCreation_) {
+      state_->discardWrites_ = true;
+      return;
+    }
+    try {
+      finish();
+    } catch (...) {
+      state_->discardWrites_ = true;
+      logCleanupFailure(std::current_exception());
+    }
+  }
 
  public:
   // Create the ID map for each of the partial vocabularies, in the files
@@ -118,16 +191,28 @@ class IdMapBatchWriter {
   // a `LocalIdxToBatchMapping` is checked by `mergeVocabulary` (see
   // `index/VocabularyMergerImpl.h`).
   explicit IdMapBatchWriter(
-      ad_utility::InputRangeTypeErased<std::string> idMapFilenames) {
-    // The cache is retained only by the per-file serializers, so destroying
-    // all of them closes and flushes the cached files.
-    auto fileHandles =
-        std::make_shared<IdMapBatchFileWriteSerializer::FileHandleCache>(64);
+      ad_utility::InputRangeTypeErased<std::string> idMapFilenames)
+      : state_{std::make_shared<IdMapBatchFileWriteSerializer::BatchState>()} {
     for (const std::string& filename : idMapFilenames) {
       idMapWriters_.emplace_back(
-          WriteSerializer{IdMapBatchFileWriteSerializer{filename, fileHandles},
+          WriteSerializer{IdMapBatchFileWriteSerializer{filename, state_},
                           idMapWriterBufferSize});
     }
+  }
+
+  ~IdMapBatchWriter() noexcept { cleanup(); }
+  IdMapBatchWriter(const IdMapBatchWriter&) = delete;
+  IdMapBatchWriter& operator=(const IdMapBatchWriter&) = delete;
+  IdMapBatchWriter(IdMapBatchWriter&&) noexcept = default;
+  IdMapBatchWriter& operator=(IdMapBatchWriter&& other) noexcept {
+    if (this != &other) {
+      cleanup();
+      // The old state's discard flag is set before destroying failed buffers.
+      idMapWriters_.clear();
+      state_ = std::move(other.state_);
+      idMapWriters_ = std::move(other.idMapWriters_);
+    }
+    return *this;
   }
 
   // Write all the mappings of the `batch` to their respective ID maps.
@@ -140,6 +225,9 @@ class IdMapBatchWriter {
   // access pattern. This is local to this stage and doesn't affect any of the
   // other stages of the pipeline.
   void writeBatch(const IdMapBatch& batch) {
+    if (state_) {
+      state_->rethrowFailure();
+    }
     AD_LOG_TRACE << "Start writing a batch of ID map entries\n";
     const auto& globalIds = batch.globalIds_;
     const auto& localIdxMappings = batch.localIdxMappings_;
@@ -156,15 +244,20 @@ class IdMapBatchWriter {
   }
 
   // Flush and close all the ID maps. After this, no more batches may be
-  // written. NOTE: This is also done implicitly by the destructor, because the
-  // destructor of each incremental writer calls its `finish()`.
+  // written. Explicit calls propagate errors; destructor cleanup is best effort
+  // and cannot mask an exception from an earlier pipeline stage.
   void finish() {
+    if (!state_) {
+      return;
+    }
+    state_->rethrowFailure();
     for (auto& idMapWriter : idMapWriters_) {
       idMapWriter.finish();
     }
     // finish() patches the headers but retains the underlying serializers.
-    // Release them (and their shared cache) to close/flush all files now.
+    // Release them and then the shared cache to close all checked streams now.
     idMapWriters_.clear();
+    state_.reset();
   }
 };
 }  // namespace ad_utility::vocabulary_merger::detail

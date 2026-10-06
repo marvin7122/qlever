@@ -12,7 +12,10 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if GTEST_HAS_DEATH_TEST && defined(__unix__)
@@ -20,6 +23,7 @@
 #endif
 
 #include "VocabularyMergerTestHelpers.h"
+#include "backports/filesystem.h"
 #include "index/vocabulary_merger/IdMapBatch.h"
 
 using namespace ad_utility::vocabulary_merger;
@@ -103,7 +107,7 @@ int exerciseManyIdMaps(size_t numFiles, bool explicitFinish,
         writer.finish();
         writer.finish();
         // Read while the writer is still alive: finish must release the cache
-        // and flush all FILE buffers, including the final size headers.
+        // and flush all stream buffers, including the final size headers.
         return checkReadback();
       }
       errorCode = 23;
@@ -132,6 +136,169 @@ TEST(IdMapBatchWriter, manyEmptyMaps) {
 }
 
 #if GTEST_HAS_DEATH_TEST && defined(__unix__)
+namespace {
+class IdMapBatchIoFailureDeathTest : public ::testing::Test {
+ private:
+  std::string oldStyle_;
+
+ protected:
+  void SetUp() override {
+    oldStyle_ = ::testing::FLAGS_gtest_death_test_style;
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    if (!ql::filesystem::exists("/dev/full")) {
+      GTEST_SKIP() << "/dev/full is unavailable";
+    }
+  }
+  void TearDown() override {
+    ::testing::FLAGS_gtest_death_test_style = oldStyle_;
+  }
+};
+
+IdMapBatch makeLargeBatch() {
+  const size_t numEntries =
+      idMapWriterBufferSize.getBytes() / sizeof(IdMapEntry) + 17;
+  std::vector<LocalIdxToBatchMapping> mappings;
+  for (size_t i = 0; i < numEntries; ++i) {
+    mappings.push_back({0, 0, L(i)});
+  }
+  return makeBatch(mappings, {V(10)});
+}
+
+template <typename F>
+std::string expectIoFailure(const F& operation) {
+  try {
+    operation();
+  } catch (const std::exception& error) {
+    EXPECT_THAT(error.what(), ::testing::HasSubstr("ID map file /dev/full"));
+    return error.what();
+  }
+  ADD_FAILURE() << "Expected a checked ID map I/O failure";
+  return {};
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST_F(IdMapBatchIoFailureDeathTest, destructorOnlyIoFailure) {
+  auto run = [] {
+    {
+      std::vector<std::string> filenames{"/dev/full"};
+      IdMapBatchWriter writer{ad_utility::InputRangeTypeErased{filenames}};
+      writer.writeBatch(makeBatch({{0, 0, L(7)}}, {V(10)}));
+    }
+    std::_Exit(0);
+  };
+  EXPECT_EXIT(run(), ::testing::ExitedWithCode(0), "");
+}
+
+// _____________________________________________________________________________
+TEST_F(IdMapBatchIoFailureDeathTest, largeWriteFailureCaughtBeforeDestruction) {
+  auto run = [] {
+    {
+      std::vector<std::string> filenames{"/dev/full"};
+      IdMapBatchWriter writer{ad_utility::InputRangeTypeErased{filenames}};
+      auto first =
+          expectIoFailure([&] { writer.writeBatch(makeLargeBatch()); });
+      // A small batch would normally stay buffered. Even that operation must
+      // rethrow the first error without touching the damaged cache/buffer.
+      EXPECT_EQ(expectIoFailure([&] {
+                  writer.writeBatch(makeBatch({{0, 0, L(7)}}, {V(10)}));
+                }),
+                first);
+      EXPECT_EQ(expectIoFailure([&] { writer.finish(); }), first);
+      EXPECT_EQ(expectIoFailure([&] { writer.finish(); }), first);
+    }
+    std::_Exit(::testing::Test::HasFailure() ? 1 : 0);
+  };
+  EXPECT_EXIT(run(), ::testing::ExitedWithCode(0), "");
+}
+
+// _____________________________________________________________________________
+TEST_F(IdMapBatchIoFailureDeathTest, largeWriteFailureDuringUnwinding) {
+  auto run = [] {
+    expectIoFailure([] {
+      std::vector<std::string> filenames{"/dev/full"};
+      IdMapBatchWriter writer{ad_utility::InputRangeTypeErased{filenames}};
+      writer.writeBatch(makeLargeBatch());
+    });
+    // The original I/O exception reached the catch outside the writer scope.
+    std::_Exit(::testing::Test::HasFailure() ? 1 : 0);
+  };
+  EXPECT_EXIT(run(), ::testing::ExitedWithCode(0), "");
+}
+
+// _____________________________________________________________________________
+TEST_F(IdMapBatchIoFailureDeathTest, bufferedFinishFailure) {
+  auto run = [] {
+    {
+      std::vector<std::string> filenames{"/dev/full"};
+      IdMapBatchWriter writer{ad_utility::InputRangeTypeErased{filenames}};
+      writer.writeBatch(makeBatch({{0, 0, L(7)}}, {V(10)}));
+      auto first = expectIoFailure([&] { writer.finish(); });
+      EXPECT_EQ(expectIoFailure([&] { writer.finish(); }), first);
+      EXPECT_EQ(expectIoFailure([&] {
+                  writer.writeBatch(makeBatch({{0, 0, L(8)}}, {V(11)}));
+                }),
+                first);
+    }
+    std::_Exit(::testing::Test::HasFailure() ? 1 : 0);
+  };
+  EXPECT_EXIT(run(), ::testing::ExitedWithCode(0), "");
+}
+
+// _____________________________________________________________________________
+TEST_F(IdMapBatchIoFailureDeathTest, partialConstructionFailure) {
+  auto run = [] {
+    auto [ordinaryFiles, cleanup] =
+        makePartialVocabularyFilenamesInFreshDirectory(partialVocabBasename, 1);
+    // Only the fresh ordinary directory is cleaned up; /dev/full never is.
+    std::vector<std::string> filenames{
+        "/dev/full", "nonexistent-directory/" + ordinaryFiles.idMapFiles_[0]};
+    try {
+      IdMapBatchWriter writer{ad_utility::InputRangeTypeErased{filenames}};
+      ADD_FAILURE() << "Expected the second file to fail to open";
+    } catch (const std::runtime_error& error) {
+      EXPECT_THAT(error.what(), ::testing::HasSubstr("Could not open file"));
+      EXPECT_THAT(error.what(), ::testing::HasSubstr("nonexistent-directory/"));
+    }
+    // Run cleanup before exiting the subprocess.
+  };
+  EXPECT_EXIT(
+      {
+        run();
+        std::_Exit(::testing::Test::HasFailure() ? 1 : 0);
+      },
+      ::testing::ExitedWithCode(0), "");
+}
+
+// _____________________________________________________________________________
+TEST_F(IdMapBatchIoFailureDeathTest, moveAssignmentReplacesFailedDestination) {
+  auto run = [] {
+    auto [ordinaryFiles, cleanup] =
+        makePartialVocabularyFilenamesInFreshDirectory(partialVocabBasename, 1);
+    {
+      std::vector<std::string> fullFiles{"/dev/full"};
+      IdMapBatchWriter destination{ad_utility::InputRangeTypeErased{fullFiles}};
+      expectIoFailure([&] { destination.writeBatch(makeLargeBatch()); });
+      IdMapBatchWriter source{
+          ad_utility::InputRangeTypeErased{ordinaryFiles.idMapFiles_}};
+      source.writeBatch(makeBatch({{0, 0, L(7)}}, {V(10)}));
+      destination = std::move(source);
+      source.finish();
+      destination.writeBatch(makeBatch({{0, 0, L(8)}}, {V(11)}));
+      destination.finish();
+    }
+    EXPECT_THAT(getIdMapFromFile(ordinaryFiles.idMapFiles_[0]),
+                ::testing::ElementsAre(IdMapEntry{L(7), V(10)},
+                                       IdMapEntry{L(8), V(11)}));
+  };
+  EXPECT_EXIT(
+      {
+        run();
+        std::_Exit(::testing::Test::HasFailure() ? 1 : 0);
+      },
+      ::testing::ExitedWithCode(0), "");
+}
+
 // _____________________________________________________________________________
 TEST(IdMapBatchWriterDeathTest, moreMapsThanFileDescriptorLimit) {
   struct rlimit limit {};
@@ -160,6 +327,62 @@ TEST(IdMapBatchWriterDeathTest, moreMapsThanFileDescriptorLimit) {
   EXPECT_EXIT(checkDescriptorLimit(), ::testing::ExitedWithCode(0), "");
 }
 #endif
+
+// _____________________________________________________________________________
+TEST(IdMapBatchWriter, createdAndFinishedDuringUnwinding) {
+  auto [filenames, cleanup] =
+      makePartialVocabularyFilenamesInFreshDirectory(partialVocabBasename, 1);
+  const std::string originalMessage = "Original outer error";
+  bool callbackRan = false;
+  try {
+    absl::Cleanup writeDuringUnwinding{[&] {
+      callbackRan = true;
+      EXPECT_GT(std::uncaught_exceptions(), 0);
+      IdMapBatchWriter writer{
+          ad_utility::InputRangeTypeErased{filenames.idMapFiles_}};
+      writer.writeBatch(makeBatch({{0, 0, L(7)}}, {V(10)}));
+      writer.finish();
+    }};
+    throw std::runtime_error{originalMessage};
+  } catch (const std::runtime_error& error) {
+    EXPECT_EQ(error.what(), originalMessage);
+  }
+  EXPECT_TRUE(callbackRan);
+  EXPECT_THAT(getIdMapFromFile(filenames.idMapFiles_[0]),
+              ::testing::ElementsAre(IdMapEntry{L(7), V(10)}));
+}
+
+// _____________________________________________________________________________
+TEST(IdMapBatchWriter, moveConstructionAndAssignment) {
+  auto [filenames, cleanup] =
+      makePartialVocabularyFilenamesInFreshDirectory(partialVocabBasename, 2);
+  {
+    std::vector<std::string> sourceFiles{filenames.idMapFiles_[0]};
+    std::vector<std::string> destinationFiles{filenames.idMapFiles_[1]};
+    IdMapBatchWriter source{ad_utility::InputRangeTypeErased{sourceFiles}};
+    source.writeBatch(makeBatch({{0, 0, L(7)}}, {V(10)}));
+    IdMapBatchWriter moved{std::move(source)};
+    source.finish();
+    moved.writeBatch(makeBatch({{0, 0, L(8)}}, {V(11)}));
+    IdMapBatchWriter destination{
+        ad_utility::InputRangeTypeErased{destinationFiles}};
+    destination.writeBatch(makeBatch({{0, 0, L(9)}}, {V(12)}));
+    destination = std::move(moved);
+    moved.finish();
+    // Self assignment must not finish or discard the transferred writers.
+    auto* alias = &destination;
+    destination = std::move(*alias);
+    destination.writeBatch(makeBatch({{0, 0, L(10)}}, {V(13)}));
+    destination.finish();
+    destination.finish();
+  }
+  EXPECT_THAT(
+      getIdMapFromFile(filenames.idMapFiles_[0]),
+      ::testing::ElementsAre(IdMapEntry{L(7), V(10)}, IdMapEntry{L(8), V(11)},
+                             IdMapEntry{L(10), V(13)}));
+  EXPECT_THAT(getIdMapFromFile(filenames.idMapFiles_[1]),
+              ::testing::ElementsAre(IdMapEntry{L(9), V(12)}));
+}
 
 // _____________________________________________________________________________
 // The `IdMapBatchWriter` distributes the mappings of its batches over one ID
