@@ -34,7 +34,7 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
             size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
                                                                  Allocator>&
                                                    str,
-                                               size_t count, Operation&& op) {
+                                               size_t count, Operation op) {
   // `__cpp_lib_string_resize_and_overwrite` is the standard feature-test
   // macro for `std::basic_string::resize_and_overwrite` (C++23, P1072R10);
   // `202110L` is the value of the adopted version. If the standard library
@@ -50,19 +50,18 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
   // https://web.archive.org/web/20251223023007/http://eel.is/c++draft/version.syn
 #if defined(__cpp_lib_string_resize_and_overwrite) && \
     __cpp_lib_string_resize_and_overwrite >= 202110L
-  // Move `op` into the lambda like the standard, which takes its operation
-  // by value and invokes it as `std::move(op)(p, count)`. Capturing the
-  // forwarding reference by reference would dangle for move-only rvalue
-  // callables. The lambda is `mutable` so mutable callables keep working.
-  str.resize_and_overwrite(count, [op = std::forward<Operation>(op), count](
-                                      CharT* data, size_t n) mutable {
-    const size_t newSize = std::move(op)(data, n);
-    AD_CONTRACT_CHECK(newSize <= count);
-    return newSize;
-  });
+  // Like the standard, take the operation by value and invoke the stored
+  // operation as an rvalue in both branches. Move it into the native branch's
+  // mutable lambda so move-only and mutable callables keep working.
+  str.resize_and_overwrite(
+      count, [op = std::move(op), count](CharT* data, size_t n) mutable {
+        const size_t newSize = std::move(op)(data, n);
+        AD_CONTRACT_CHECK(newSize <= count);
+        return newSize;
+      });
 #else
   str.resize(count);
-  const size_t newSize = std::forward<Operation>(op)(str.data(), count);
+  const size_t newSize = std::move(op)(str.data(), count);
   AD_CONTRACT_CHECK(newSize <= count);
   str.resize(newSize);
 #endif

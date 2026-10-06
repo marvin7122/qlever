@@ -15,6 +15,61 @@
 
 #include "backports/string.h"
 
+namespace {
+struct RefQualifiedOperation {
+  size_t calls_ = 0;
+
+  size_t operator()(char* buf, size_t) & {
+    ++calls_;
+    buf[0] = 'l';
+    return 1;
+  }
+
+  size_t operator()(char* buf, size_t) && {
+    EXPECT_EQ(++calls_, 1u);
+    buf[0] = 'r';
+    buf[1] = 'v';
+    return 2;
+  }
+};
+
+struct RvalueOnlyOperation {
+  size_t calls_ = 0;
+
+  size_t operator()(char* buf, size_t) && {
+    EXPECT_EQ(++calls_, 1u);
+    buf[0] = 'r';
+    return 1;
+  }
+};
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(StringTest, ResizeAndOverwriteInvokesStoredOperationAsRvalue) {
+  std::string s;
+  RefQualifiedOperation op;
+  ql::resize_and_overwrite(s, 2, op);
+  EXPECT_EQ(s, "rv");
+  EXPECT_EQ(op.calls_, 0u);
+
+  const RefQualifiedOperation constOp;
+  ql::resize_and_overwrite(s, 2, constOp);
+  EXPECT_EQ(s, "rv");
+  EXPECT_EQ(constOp.calls_, 0u);
+
+  ql::resize_and_overwrite(s, 2, RefQualifiedOperation{});
+  EXPECT_EQ(s, "rv");
+}
+
+// _____________________________________________________________________________
+TEST(StringTest, ResizeAndOverwriteCopiesRvalueOnlyLvalueOperation) {
+  std::string s;
+  RvalueOnlyOperation op;
+  ql::resize_and_overwrite(s, 1, op);
+  EXPECT_EQ(s, "r");
+  EXPECT_EQ(op.calls_, 0u);
+}
+
 // _____________________________________________________________________________
 TEST(StringTest, ResizeAndOverwriteExactSize) {
   std::string s = "initial";
