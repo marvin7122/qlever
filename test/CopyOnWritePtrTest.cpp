@@ -91,6 +91,23 @@ TEST(CopyOnWritePtr, writeThroughOriginalKeepsSnapshotsIntact) {
   EXPECT_FALSE(original.isShared());
 }
 
+// Complete mutable access before taking a snapshot, then reacquire it for the
+// next mutation so that the snapshot keeps its value.
+TEST(CopyOnWritePtr, scopedMutableAccessBeforeSnapshot) {
+  CopyOnWritePtr<std::string> original{"hello"};
+  {
+    auto& value = original.write();
+    value += " world";
+  }
+  CopyOnWritePtr<std::string> snapshot = original;
+  {
+    auto& value = original.write();
+    value += "!";
+  }
+  EXPECT_EQ(*snapshot, "hello world");
+  EXPECT_EQ(*original, "hello world!");
+}
+
 // Test that with three pointers to one value, a write through one of them
 // clones only that one and the other two keep sharing.
 TEST(CopyOnWritePtr, sharingIsTransitive) {

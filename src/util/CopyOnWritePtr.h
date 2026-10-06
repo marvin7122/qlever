@@ -22,21 +22,29 @@ namespace ad_utility {
 // is cheap, because the copies share the pointee. Reading is always possible
 // via the `const` accessors. Writing is only possible via `write()`, which
 // clones the pointee first if (and only if) it is shared with another
-// `CopyOnWritePtr`, so that a mutation never affects any copy that was made
-// before. This is the building block for large structures of which frequent
-// snapshots are taken, but where each mutation between two snapshots only
-// touches a small part.
+// `CopyOnWritePtr`, so that, subject to the mutable-access lifetime rule below,
+// a mutation never affects any copy that was made before. This is the building
+// block for large structures of which frequent snapshots are taken, but where
+// each mutation between two snapshots only touches a small part.
+//
+// Mutable-access lifetime rule: Stop using the mutable reference returned by
+// `write()` and any pointers or references derived from it before copying or
+// snapshotting the owning `CopyOnWritePtr`, or otherwise sharing its pointee.
+// For later mutations, reacquire mutable access through `write()` rather than
+// reusing the earlier reference or any pointers or references derived from it.
 //
 // A `CopyOnWritePtr` is never null: the default constructor creates a
 // value-initialized `T`. The only exception is a moved-from `CopyOnWritePtr`,
 // which may only be assigned to or destroyed.
 //
-// IMPORTANT NOTE: Creating a copy of a `CopyOnWritePtr` and calling `write()`
-// on a `CopyOnWritePtr` that shares the same pointee must never happen
-// concurrently. They have to be synchronized externally, typically by the write
-// lock of the structure that owns the `CopyOnWritePtr`s. For example, the
-// copies for the snapshots of the delta triples are created and the updates
-// are applied under the same lock.
+// IMPORTANT NOTE: Creating a copy of a `CopyOnWritePtr` must never happen
+// concurrently with `write()` or any mutations through its result on a
+// `CopyOnWritePtr` that shares the same pointee. External synchronization must
+// span both the call to `write()` and all mutations through the returned
+// reference or any pointers or references derived from it, not merely the call.
+// Typically this uses the write lock of the structure that owns the
+// `CopyOnWritePtr`s. For example, the copies for the snapshots of the delta
+// triples are created and the updates are applied under the same lock.
 //
 // Otherwise the following can happen: thread A calls `write()` and sees that
 // the pointee is not shared, thread B then creates a copy, and thread A mutates
@@ -46,10 +54,10 @@ namespace ad_utility {
 // also clone on every write, and avoiding exactly that clone when the pointee
 // is not shared is the point of this class.
 //
-// Everything else is safe without further synchronization: reading via any copy
-// (also concurrently with a `write()` on another copy, which operates on a
-// clone), and also destroying a copy concurrently with a `write()`, which at
-// worst causes one unnecessary clone.
+// Subject to the lifetime rule above, everything else is safe without further
+// synchronization: reading via any copy (also concurrently with a `write()` on
+// another copy, which operates on a clone), and also destroying a copy
+// concurrently with a `write()`, which at worst causes one unnecessary clone.
 template <typename T>
 class CopyOnWritePtr {
   static_assert(std::is_copy_constructible_v<T>,
@@ -81,8 +89,11 @@ class CopyOnWritePtr {
 
   // Write access. Clones the pointee first if it is shared with another
   // `CopyOnWritePtr`, so that the other `CopyOnWritePtr`s keep seeing the old
-  // value. See the IMPORTANT note in the class comment for the synchronization
-  // requirements.
+  // value, provided the mutable-access lifetime rule in the class comment is
+  // respected. Stop using the returned reference and any pointers or references
+  // derived from it before copying/snapshotting this pointer or otherwise
+  // sharing its pointee; reacquire through `write()` for later mutations. See
+  // the IMPORTANT note for synchronization of the call and all mutations.
   T& write() {
     AD_CONTRACT_CHECK(ptr_ != nullptr);
     if (isShared()) {
