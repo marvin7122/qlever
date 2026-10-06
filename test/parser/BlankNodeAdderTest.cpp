@@ -99,4 +99,46 @@ TEST(BlankNodeAdderTest, mappingIsAccountedForInTheMemoryLimit) {
   EXPECT_THROW(addManyBlankNodes(),
                ad_utility::detail::AllocationExceedsLimitException);
 }
+
+// _____________________________________________________________________________
+TEST(BlankNodeAdderTest, aLongLabelExceedingTheMemoryLimitIsNotInserted) {
+  ad_utility::BlankNodeManager manager;
+  auto allocator =
+      ad_utility::makeAllocatorWithLimit<BlankNodeAdder::Map::value_type>(
+          MemorySize::bytes(512));
+  BlankNodeAdder adder{&manager, allocator};
+  const auto memoryLeftBefore = allocator.amountMemoryLeft();
+  const std::string label(16 * 1024, 'b');
+
+  EXPECT_THROW(adder.getBlankNodeIndexForLabelWithoutPrefix(label),
+               ad_utility::detail::AllocationExceedsLimitException);
+  EXPECT_THAT(adder.map_, testing::IsEmpty());
+  EXPECT_EQ(allocator.amountMemoryLeft(), memoryLeftBefore);
+}
+
+// _____________________________________________________________________________
+TEST(BlankNodeAdderTest, longLabelMemoryIsAccountedForAndReleased) {
+  ad_utility::BlankNodeManager manager;
+  const auto budget = MemorySize::bytes(64 * 1024);
+  auto allocator =
+      ad_utility::makeAllocatorWithLimit<BlankNodeAdder::Map::value_type>(
+          budget);
+  const std::string label(16 * 1024, 'b');
+  {
+    BlankNodeAdder adder{&manager, allocator};
+    Id id = adder.getBlankNodeIndexForLabelWithoutPrefix(label);
+    EXPECT_EQ(id.getDatatype(), Datatype::BlankNodeIndex);
+    EXPECT_TRUE(
+        adder.localVocab_.isBlankNodeIndexContained(id.getBlankNodeIndex()));
+    const auto memoryLeftAfterInsertion = allocator.amountMemoryLeft();
+    EXPECT_GE(budget - memoryLeftAfterInsertion,
+              MemorySize::bytes(label.size()));
+    EXPECT_EQ(adder.getBlankNodeIndexForLabelWithoutPrefix(label), id);
+    EXPECT_EQ(allocator.amountMemoryLeft(), memoryLeftAfterInsertion);
+    EXPECT_EQ(adder.getBlankNodeIndex("_:" + label), id);
+    EXPECT_EQ(allocator.amountMemoryLeft(), memoryLeftAfterInsertion);
+    EXPECT_THAT(adder.map_, testing::SizeIs(1));
+  }
+  EXPECT_EQ(allocator.amountMemoryLeft(), budget);
+}
 }  // namespace
