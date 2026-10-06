@@ -52,4 +52,8 @@ if (NOT _NO_BENCHMARK)
     addAndLinkBenchmark(CompressedVocabLookupBatchEndToEndBenchmark vocabulary
         fsst)
 
+    addAndLinkBenchmark(VocabularyBatchLookupMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(VocabularyBatchLookupEndToEndBenchmark vocabulary)
+
 endif()
