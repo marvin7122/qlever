@@ -217,10 +217,10 @@ void Server::run() {
   // before any heavy startup work. The lightweight flag read and log line
   // below intentionally precede it.
   // Read once at startup (fixed for the lifetime of `HttpServer`; changing
-  // `use-send-zc` at runtime has no effect): enable the `IORING_OP_SEND_ZC`
+  // `use-send-zc` at runtime has no effect): enable the `IORING_OP_SENDMSG_ZC`
   // zero-copy path for chunked `streamable_body` export responses.
   const bool useSendZC = getRuntimeParameter<&RuntimeParameters::useSendZC_>();
-  AD_LOG_INFO << "Zero-copy socket sends (IORING_OP_SEND_ZC) for export "
+  AD_LOG_INFO << "Zero-copy socket sends (IORING_OP_SENDMSG_ZC) for export "
               << "responses are " << (useSendZC ? "ENABLED" : "disabled")
               << std::endl;
   auto httpServer =

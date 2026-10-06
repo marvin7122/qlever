@@ -136,7 +136,7 @@ struct RuntimeParameters {
   // Maximum size for the body of requests that the server will process.
   MemorySizeParameter requestBodyLimit_{ad_utility::MemorySize::gigabytes(1),
                                         "request-body-limit"};
-  // Enable `IORING_OP_SEND_ZC` zero-copy socket sends via Linux `io_uring`
+  // Enable `IORING_OP_SENDMSG_ZC` zero-copy socket sends via Linux `io_uring`
   // for chunked `streamable_body` HTTP responses (the export path for
   // `SELECT`/`CONSTRUCT` results) instead of the default `Boost.Beast` write
   // path. Off by default; enable for A/B experiments. Takes effect at server
