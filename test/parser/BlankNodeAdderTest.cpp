@@ -11,6 +11,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <string>
 #include <vector>
 
 #include "parser/BlankNodeAdder.h"
@@ -98,5 +99,62 @@ TEST(BlankNodeAdderTest, mappingIsAccountedForInTheMemoryLimit) {
   };
   EXPECT_THROW(addManyBlankNodes(),
                ad_utility::detail::AllocationExceedsLimitException);
+}
+
+// _____________________________________________________________________________
+TEST(BlankNodeAdderTest, longLabelExceedsMemoryLimitWithoutInsertion) {
+  ad_utility::BlankNodeManager manager;
+  auto allocator =
+      ad_utility::makeAllocatorWithLimit<BlankNodeAdder::Map::value_type>(
+          MemorySize::bytes(512));
+  BlankNodeAdder adder{&manager, allocator};
+  const auto memoryBefore = allocator.amountMemoryLeft();
+  const std::string label(4096, 'b');
+
+  EXPECT_THROW(adder.getBlankNodeIndexForLabelWithoutPrefix(label),
+               ad_utility::detail::AllocationExceedsLimitException);
+  EXPECT_THAT(adder.map_, testing::IsEmpty());
+  EXPECT_EQ(allocator.amountMemoryLeft(), memoryBefore);
+
+  const Id id = adder.getBlankNodeIndex("_:short");
+  EXPECT_EQ(id.getDatatype(), Datatype::BlankNodeIndex);
+  EXPECT_EQ(adder.getBlankNodeIndex("_:short"), id);
+  EXPECT_THAT(adder.map_, testing::SizeIs(1));
+}
+
+// _____________________________________________________________________________
+TEST(BlankNodeAdderTest, longLabelMemoryIsAccountedForAndReleased) {
+  ad_utility::BlankNodeManager manager;
+  auto allocator =
+      ad_utility::makeAllocatorWithLimit<BlankNodeAdder::Map::value_type>(
+          MemorySize::bytes(16 * 1024));
+  const auto memoryBefore = allocator.amountMemoryLeft();
+  const std::string label(4096, 'b');
+  {
+    BlankNodeAdder adder{&manager, allocator};
+    const Id id = adder.getBlankNodeIndexForLabelWithoutPrefix(label);
+    const auto memoryAfterInsertion = allocator.amountMemoryLeft();
+    EXPECT_GE(memoryBefore.getBytes() - memoryAfterInsertion.getBytes(),
+              label.size());
+
+    // A repeated lookup materializes another label only temporarily.
+    EXPECT_EQ(adder.getBlankNodeIndexForLabelWithoutPrefix(label), id);
+    EXPECT_EQ(allocator.amountMemoryLeft(), memoryAfterInsertion);
+    EXPECT_EQ(adder.getBlankNodeIndex("_:" + label), id);
+    EXPECT_EQ(allocator.amountMemoryLeft(), memoryAfterInsertion);
+    EXPECT_THAT(adder.map_, testing::SizeIs(1));
+  }
+  EXPECT_EQ(allocator.amountMemoryLeft(), memoryBefore);
+}
+
+// _____________________________________________________________________________
+TEST(BlankNodeAdderTest, emptyLabelIsResolvedConsistently) {
+  ad_utility::BlankNodeManager manager;
+  BlankNodeAdder adder{&manager};
+  const Id id = adder.getBlankNodeIndexForLabelWithoutPrefix("");
+  EXPECT_EQ(id.getDatatype(), Datatype::BlankNodeIndex);
+  EXPECT_EQ(adder.getBlankNodeIndexForLabelWithoutPrefix(""), id);
+  EXPECT_EQ(adder.getBlankNodeIndex("_:"), id);
+  EXPECT_THAT(adder.map_, testing::SizeIs(1));
 }
 }  // namespace

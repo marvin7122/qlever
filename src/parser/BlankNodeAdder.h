@@ -12,6 +12,7 @@
 #ifndef QLEVER_SRC_PARSER_BLANKNODEADDER_H
 #define QLEVER_SRC_PARSER_BLANKNODEADDER_H
 
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -31,8 +32,18 @@
 // it assigns its own dense range of blank node indices, see
 // `VocabularyMerger::getNextBlankNodeIndex`.
 struct BlankNodeAdder {
+  using Label = std::basic_string<char, std::char_traits<char>,
+                                  ad_utility::AllocatorWithLimit<char>>;
+  struct LabelHash {
+    size_t operator()(const Label& label) const {
+      return std::hash<std::string_view>{}(
+          std::string_view{label.data(), label.size()});
+    }
+  };
+
   // The type of the mapping from labels to IDs, and the type of its allocator.
-  using Map = ad_utility::HashMapWithMemoryLimit<std::string, Id>;
+  using Map = ad_utility::HashMapWithMemoryLimit<Label, Id, LabelHash,
+                                                 std::equal_to<Label>>;
   using Allocator = Map::allocator_type;
 
   // The used blank node IDs are stored in the `LocalVocab` via the
