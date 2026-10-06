@@ -90,26 +90,53 @@ jobs:
             ~/go/pkg/mod
             ~/.npm
           key: ocr-build-linux-x64-48cc191fc147f0b4642e9658717805f6a3dfefa5-40f1582b2485089dde7abd97c1529aa768e1baff
-      - name: Mark the review as pending on the PR commit
-        # Comment-triggered runs belong to the default branch, so GitHub does
-        # not list them among the PR's checks. A commit status on the PR's head
-        # commit makes the running review visible there.
+      # Comment-triggered runs belong to the default branch, so GitHub does not
+      # list them among the PR's checks. A check run of the OCR app on the PR's
+      # head commit makes the review visible there (falls back to a commit
+      # status when the app token is unavailable or lacks `checks: write`).
+      - name: Mint App token for the check run
+        id: app-token-check
+        if: ${{ vars.OCR_FANOUT_APP_ID != '' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+          owner: marvin7122
+          repositories: qlever
+      - name: Start the check run on the PR commit
+        id: check-start
+        continue-on-error: true
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          APP_TOKEN: ${{ steps.app-token-check.outputs.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || steps.pr-context.outputs.head_sha }}
         with:
           script: |
-            const sha = context.payload.pull_request?.head?.sha
-              || '${{ steps.pr-context.outputs.head_sha }}';
+            const sha = process.env.HEAD_SHA;
             if (!sha) return;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { owner, repo } = context.repo;
+            if (process.env.APP_TOKEN) {
+              try {
+                const appClient = github.getOctokit(process.env.APP_TOKEN);
+                const { data } = await appClient.rest.checks.create({
+                  owner, repo, name: 'OCR fan-out review', head_sha: sha,
+                  status: 'in_progress', details_url: runUrl,
+                  output: { title: 'Review running', summary: `[Actions run](${runUrl})` },
+                });
+                core.setOutput('check_run_id', String(data.id));
+                return;
+              } catch (e) {
+                core.warning(`checks.create failed (${e.status}); using a commit status`);
+              }
+            }
             await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha,
-              state: 'pending',
-              context: 'OCR fan-out review',
-              description: 'Review running',
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              owner, repo, sha, state: 'pending', context: 'OCR fan-out review',
+              description: 'Review running', target_url: runUrl,
             });
       - name: Review pull request with fan-out project rules
+        id: ocr
         uses: marvin7122/open-code-review@34ed9d2925e550cf7edb97f3751c6cada6f89d9c
         with:
           # Deliberately the job-scoped GITHUB_TOKEN, not an App installation
@@ -193,25 +220,66 @@ jobs:
                 body: `${stamp}\n${body}`,
               });
             }
-      - name: Mark the review result on the PR commit
+      - name: Mint App token to finish the check run
+        id: app-token-finish
+        if: ${{ always() && vars.OCR_FANOUT_APP_ID != '' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+          owner: marvin7122
+          repositories: qlever
+      - name: Finish the check run on the PR commit
         if: always()
+        continue-on-error: true
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
+          # Fresh token: the one minted at the start expires after one hour.
+          APP_TOKEN: ${{ steps.app-token-finish.outputs.token }}
+          CHECK_RUN_ID: ${{ steps.check-start.outputs.check_run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || steps.pr-context.outputs.head_sha }}
           JOB_STATUS: ${{ job.status }}
+          COMMENTS_TOTAL: ${{ steps.ocr.outputs.comments_total }}
+          COMMENTS_INLINE: ${{ steps.ocr.outputs.comments_inline }}
+          COMMENTS_ROUTED: ${{ steps.ocr.outputs.comments_routed }}
+          COMMENTS_FAILED: ${{ steps.ocr.outputs.comments_failed }}
+          SUMMARY_URL: ${{ steps.ocr.outputs.summary_comment_url }}
         with:
           script: |
-            const sha = context.payload.pull_request?.head?.sha
-              || '${{ steps.pr-context.outputs.head_sha }}';
+            const sha = process.env.HEAD_SHA;
             if (!sha) return;
-            const ok = process.env.JOB_STATUS === 'success';
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const status = process.env.JOB_STATUS;
+            const ok = status === 'success';
+            const n = (k) => process.env[k] || '0';
+            const title = ok ? `${n('COMMENTS_TOTAL')} finding(s)` : `Review ${status}`;
+            const summary = [
+              `- Findings: ${n('COMMENTS_TOTAL')}`,
+              `- Posted inline: ${n('COMMENTS_INLINE')}`,
+              `- In the summary comment: ${n('COMMENTS_ROUTED')}`,
+              `- Failed to post: ${n('COMMENTS_FAILED')}`,
+              process.env.SUMMARY_URL ? `- [Summary comment](${process.env.SUMMARY_URL})` : '',
+              `- [Actions run](${runUrl})`,
+            ].filter(Boolean).join('\n');
+            if (process.env.CHECK_RUN_ID && process.env.APP_TOKEN) {
+              try {
+                const appClient = github.getOctokit(process.env.APP_TOKEN);
+                await appClient.rest.checks.update({
+                  owner, repo, check_run_id: Number(process.env.CHECK_RUN_ID),
+                  status: 'completed',
+                  conclusion: ok ? 'success' : (status === 'cancelled' ? 'cancelled' : 'failure'),
+                  output: { title, summary },
+                });
+                return;
+              } catch (e) {
+                core.warning(`checks.update failed (${e.status}); using a commit status`);
+              }
+            }
             await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha,
-              state: ok ? 'success' : 'failure',
-              context: 'OCR fan-out review',
-              description: ok ? 'Review finished' : `Review ${process.env.JOB_STATUS}`,
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              owner, repo, sha, state: ok ? 'success' : 'failure',
+              context: 'OCR fan-out review', description: title, target_url: runUrl,
             });
       - name: Remove isolated npm prefix
         if: always()
