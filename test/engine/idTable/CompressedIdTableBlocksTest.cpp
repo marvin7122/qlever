@@ -176,6 +176,42 @@ TEST(CompressedIdTableBlocks, onlyTheRequestedRowsAreWritten) {
 }
 
 // _____________________________________________________________________________
+TEST(CompressedIdTableBlocks, aDefaultEmptyTableWithColumnsRoundTrips) {
+  static constexpr size_t numColumns = 3;
+  for (const auto& compression : compressionLevels()) {
+    SCOPED_TRACE(compression.has_value() ? "compressed" : "uncompressed");
+    CompressedBlockFile file{gtestCurrentTestName(), compression};
+    IdTable table{numColumns, ad_utility::testing::makeAllocator()};
+    ASSERT_EQ(table.numRows(), 0u);
+    ASSERT_EQ(table.numColumns(), numColumns);
+    for (const auto& column : table.getColumns()) {
+      ASSERT_EQ(column.data(), nullptr);
+    }
+
+    auto metadata = writeBlock(file, table, 0, 0);
+    EXPECT_EQ(metadata.numRows_, 0u);
+    ASSERT_EQ(metadata.numColumns(), numColumns);
+    size_t expectedOffset = 0;
+    for (const auto& column : metadata.columns_) {
+      EXPECT_EQ(column.uncompressedSize_, 0u);
+      EXPECT_EQ(column.offsetInFile_, expectedOffset);
+      expectedOffset += column.compressedSize_;
+      if (compression.has_value()) {
+        EXPECT_GT(column.compressedSize_, 0u);
+      } else {
+        EXPECT_EQ(column.compressedSize_, 0u);
+      }
+    }
+
+    auto block =
+        readBlock(file, metadata, ad_utility::testing::makeAllocator());
+    EXPECT_EQ(block.numRows(), 0u);
+    EXPECT_EQ(block.numColumns(), numColumns);
+    EXPECT_THAT(tableRows(block), ::testing::IsEmpty());
+  }
+}
+
+// _____________________________________________________________________________
 TEST(CompressedIdTableBlocks, blocksOfSeveralTablesAreIndependent) {
   CompressedBlockFile file{gtestCurrentTestName()};
   auto first = makeTable(2, {0, 1, 2, 3});
