@@ -13,6 +13,7 @@
 #include "util/BitUtils.h"
 #include "util/Exception.h"
 #include "util/Forward.h"
+#include "util/OnDestructionDontThrowDuringStackUnwinding.h"
 #include "util/TypeTraits.h"
 
 /**
@@ -367,6 +368,9 @@ CPP_template(typename T, typename S)(
 // restore the serialization position that the `serializer` had before. Use
 // this to fill in a placeholder (for example a size that is only known at the
 // end) that has been written to a fixed position earlier.
+// Restoration is also attempted if element serialization throws; bytes already
+// written are not rolled back. If restoration also throws during unwinding, the
+// original serialization exception is preserved.
 //
 // NOTE: The `serializer` has to support `get/setSerializationPosition`, which
 // not all `WriteSerializer`s do. For a `BufferedWriteSerializer` (which cannot
@@ -379,9 +383,13 @@ CPP_template(typename S, typename T)(
                                                           uint64_t position,
                                                           const T& element) {
   auto previousPosition = serializer.getSerializationPosition();
+  auto restorePosition =
+      ad_utility::makeOnDestructionDontThrowDuringStackUnwinding(
+          [&serializer, previousPosition] {
+            serializer.setSerializationPosition(previousPosition);
+          });
   serializer.setSerializationPosition(position);
   serializer << element;
-  serializer.setSerializationPosition(previousPosition);
 }
 
 }  // namespace ad_utility::serialization

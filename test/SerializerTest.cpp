@@ -9,6 +9,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <stdexcept>
+
 #include "backports/span.h"
 #include "util/GTestHelpers.h"
 #include "util/MemorySize/MemorySize.h"
@@ -1405,6 +1408,57 @@ TEST(BufferedWriteSerializer, SerializeAtPosition) {
     EXPECT_EQ(read, trailer) << "block size was " << blockSize;
     reader >> read;
     EXPECT_EQ(read, trailer) << "block size was " << blockSize;
+  }
+}
+
+// _____________________________________________________________________________
+namespace {
+struct WriteThenThrow {
+  uint32_t value_ = 42;
+  AD_SERIALIZE_FRIEND_FUNCTION(WriteThenThrow) {
+    serializer | arg.value_;
+    throw std::runtime_error{"serialization failed"};
+  }
+};
+
+template <typename Writer>
+void checkSerializeAtPositionRestoresAfterError(Writer& writer,
+                                                const std::string& filename) {
+  writer << uint32_t{0};
+  writer << uint32_t{12345};
+  const auto previousPosition = writer.getSerializationPosition();
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      serializeAtPosition(writer, 0, WriteThenThrow{}),
+      ::testing::StrEq("serialization failed"), std::runtime_error);
+  ASSERT_EQ(writer.getSerializationPosition(), previousPosition);
+  writer << uint32_t{67890};
+  writer.close();
+
+  FileReadSerializer reader{filename};
+  std::array<uint32_t, 3> values{};
+  reader >> values;
+  // The partial write remains, but neither the existing trailer nor the
+  // appended value is overwritten.
+  EXPECT_THAT(values, ::testing::ElementsAre(42, 12345, 67890));
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(FileWriteSerializer, SerializeAtPositionRestoresAfterError) {
+  const std::string filename = gtestCurrentTestName();
+  auto cleanup = absl::Cleanup{[&filename] { deleteFile(filename); }};
+  FileWriteSerializer writer{filename};
+  checkSerializeAtPositionRestoresAfterError(writer, filename);
+}
+
+// _____________________________________________________________________________
+TEST(BufferedWriteSerializer, SerializeAtPositionRestoresAfterError) {
+  const std::string filename = gtestCurrentTestName();
+  auto cleanup = absl::Cleanup{[&filename] { deleteFile(filename); }};
+  for (MemorySize blockSize : {1_B, 3_B, 64_B, 1024_B}) {
+    SCOPED_TRACE(absl::StrCat("block size: ", blockSize.getBytes()));
+    BufferedWriteSerializer writer{FileWriteSerializer{filename}, blockSize};
+    checkSerializeAtPositionRestoresAfterError(writer, filename);
   }
 }
 
