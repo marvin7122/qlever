@@ -71,6 +71,8 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(constructExportPipelineDepth_);
+  add(constructExportPipelineSplitLookup_);
   add(vocabularyIouringPageCacheFastPath_);
 
   // Propagate runtime log level changes immediately to the global atomic in

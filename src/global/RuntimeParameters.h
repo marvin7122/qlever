@@ -272,6 +272,27 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // The number of CONSTRUCT export batches (`ConstructTripleGenerator`, 1024
+  // result rows each) that are evaluated ahead of the formatting. With 0, one
+  // thread evaluates a batch (computes the next result block, resolves the
+  // `Id`s, including the vocabulary reads, and instantiates the template
+  // triples) and then formats it. With N > 0, a separate thread evaluates the
+  // batches and hands them to the formatting thread through a queue of N
+  // batches, so that the vocabulary reads and the decoding of later batches
+  // overlap with the formatting of the current one.
+  SizeT constructExportPipelineDepth_{0, "construct-export-pipeline-depth"};
+
+  // Only with `construct-export-pipeline-depth` N > 0 and without CONSTRUCT
+  // deduplication: if true, the evaluation of a batch is split across two
+  // threads, so that the export runs in three stages: the first thread
+  // computes the result blocks, looks up the `Id`s in the cache and submits
+  // the vocabulary lookup of a batch; the second thread waits for that lookup,
+  // decodes the words and instantiates the triples; the consuming thread
+  // formats them. Each stage hands its batches to the next one through a
+  // queue of N batches.
+  Bool constructExportPipelineSplitLookup_{
+      false, "construct-export-pipeline-split-lookup"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

@@ -79,7 +79,9 @@ class ConstructTripleGenerator {
   // Lazily evaluates all `TableWithRange` values from `rowIndices`, processes
   // them in batches of `BATCH_SIZE` rows, and returns a flat range of
   // `EvaluatedTriple`. Duplicate triples are handled according to
-  // `config.mode_`.
+  // `config.mode_`. With the runtime parameter
+  // `construct-export-pipeline-depth` N > 0, a separate thread evaluates the
+  // batches up to N batches ahead of the consumer.
   static InputRangeTypeErased<EvaluatedTriple> evaluateTables(
       const Triples& templateTriples,
       const VariableToColumnMap& variableColumns,
