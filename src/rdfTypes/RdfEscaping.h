@@ -1,12 +1,19 @@
-// Copyright 2021, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+// Copyright 2021 - 2026 The QLever Authors, in particular:
+//
+// 2021 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_RDFESCAPING_H
 #define QLEVER_RDFESCAPING_H
 
 #include <sstream>
 #include <string>
+#include <string_view>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "global/TypedIndex.h"
@@ -144,6 +151,21 @@ std::string escapeForCsv(std::string input);
  * for more information.
  */
 std::string escapeForTsv(std::string input);
+
+// Append `input` to `out` with the same escaping as `escapeForCsv`: if `input`
+// contains `"`, `,`, `\r` or `\n`, wrap it in quotes and double each `"`,
+// otherwise append it unchanged. Keep the existing content of `out`. Unlike
+// `escapeForCsv`, do not create a separate string for the escaped field. The
+// `input` must not point into `out`, since appending may reallocate `out`; this
+// is checked.
+void appendEscapedForCsv(std::string& out, std::string_view input);
+
+// Append `input` to `out` with the same escaping as `escapeForTsv`: replace
+// each tab by a space and each newline by the two characters `\` and `n`. Keep
+// the existing content of `out`. Unlike `escapeForTsv`, do not create a
+// separate string for the escaped field. The `input` must not point into `out`,
+// since appending may reallocate `out`; this is checked.
+void appendEscapedForTsv(std::string& out, std::string_view input);
 
 // Escape a string to be compatible with XML.
 std::string escapeForXml(std::string input);
