@@ -15,6 +15,7 @@
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "../../util/PageCacheReadTestHelpers.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "global/RuntimeParameters.h"
@@ -269,6 +270,21 @@ TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
   auto result = vocab->lookupBatch(indices);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
                                                                 indices);
+}
+
+// `vocabulary-iouring-ring-size` is read when the vocabulary is opened. A ring
+// with fewer slots than the reads of a batch (here: one slot) must wait for
+// completions and still return every word.
+TEST(VocabularyOnDisk, LookupBatchWithRingSmallerThanBatch) {
+  auto ringSize = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyIouringRingSize_>(size_t{1});
+  // Send every read through the batch manager.
+  auto noFastPath = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(false);
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(indices), indices);
 }
 
 // With `vocabulary-iouring-page-cache-fast-path`, the words and offsets that

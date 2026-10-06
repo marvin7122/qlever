@@ -249,6 +249,15 @@ struct RuntimeParameters {
   Bool vocabularyIouringPageCacheFastPath_{
       true, "vocabulary-iouring-page-cache-fast-path"};
 
+  // The number of submission queue entries of each `io_uring` ring that
+  // `VocabularyOnDisk` uses for `lookupBatch`, i.e. the maximum number of
+  // vocabulary reads that one batch lookup keeps in flight. A batch with more
+  // reads waits for completions before submitting the rest. The rings are
+  // created when the index is loaded, so a change only takes effect after a
+  // server restart (set it with `--set-runtime-parameter`). Must be in
+  // [1, 32768] (the kernel limit for `io_uring_queue_init`).
+  SizeT vocabularyIouringRingSize_{256, "vocabulary-iouring-ring-size"};
+
   // The number of WHERE-result rows in one CONSTRUCT export batch. Each batch
   // resolves the vocabulary words of its `Id`s with one `lookupBatch` call, so
   // this also bounds how many vocabulary reads one lookup can issue at once.

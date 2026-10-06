@@ -377,8 +377,12 @@ void VocabularyOnDisk::open(const std::string& filename) {
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
+  // The ring size is read once here, so changing the runtime parameter only
+  // affects vocabularies that are opened afterwards (i.e. after a restart).
   bool preferIoUring = true;
+  const auto ringSize = static_cast<unsigned>(
+      getRuntimeParameter<&RuntimeParameters::vocabularyIouringRingSize_>());
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring, ringSize));
   }
 }

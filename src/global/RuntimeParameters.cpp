@@ -72,6 +72,7 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(vocabularyIouringPageCacheFastPath_);
+  add(vocabularyIouringRingSize_);
   add(constructExportRowBatchSize_);
 
   // Propagate runtime log level changes immediately to the global atomic in
@@ -100,6 +101,16 @@ RuntimeParameters::RuntimeParameters() {
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
   constructExportRowBatchSize_.setParameterConstraint(mustBeStrictlyPositive);
+  vocabularyIouringRingSize_.setParameterConstraint(
+      [](size_t value, std::string_view parameterName) {
+        // `IORING_MAX_ENTRIES` in the kernel (`io_uring/io_uring.h`).
+        constexpr size_t maxRingSize = 32768;
+        if (value == 0 || value > maxRingSize) {
+          throw std::runtime_error{absl::StrCat("Parameter ", parameterName,
+                                                " must be in [1, ", maxRingSize,
+                                                "], was ", value)};
+        }
+      });
 }
 
 // _____________________________________________________________________________
