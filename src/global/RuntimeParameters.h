@@ -244,6 +244,19 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // Number of WHERE-result rows in one CONSTRUCT export chunk. Each chunk
+  // sorts its `Id`s and resolves the cache misses with one vocabulary
+  // `lookupBatch`, then formats triples. For on-disk vocabularies the lookups
+  // are blocking `pread`s in `Id` order, so a larger chunk gives denser, more
+  // sequential file offsets that the kernel readahead can serve; words held
+  // in memory (e.g. `languages-internal`) gain nothing. Smaller values can
+  // yield the first HTTP body bytes sooner. Must be >= 1. Default
+  // 8192: sweep `construct-row-batch-sweep-1` (#64) measured -4.4% elapsed
+  // vs 1024 at a +0.7s time-to-first-byte cost on Wikidata German-label
+  // CONSTRUCT. `ConstructTripleGenerator::BATCH_SIZE` (1024) remains only
+  // as the test constant.
+  SizeT constructExportRowBatchSize_{8192, "construct-export-row-batch-size"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

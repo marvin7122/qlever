@@ -13,6 +13,7 @@
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "global/RuntimeParameters.h"
 
 namespace qlever::constructExport {
 
@@ -93,8 +94,9 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
-  return ranges::views::chunk(std::move(rowView),
-                              ConstructTripleGenerator::BATCH_SIZE) |
+  const size_t batchSize =
+      getRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>();
+  return ranges::views::chunk(std::move(rowView), batchSize) |
          ql::views::transform([tableWithVocab, context = std::move(context),
                                tableRowOffset](auto chunkView) {
            return computeBatch(tableWithVocab, chunkView, context,
