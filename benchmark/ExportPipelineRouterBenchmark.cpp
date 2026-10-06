@@ -24,20 +24,24 @@ int main(int argc, char** argv) {
   size_t numQueries = 1'000'000;
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg != "-p" && !arg.empty() &&
-        std::isdigit(static_cast<unsigned char>(arg[0]))) {
-      size_t parsedLength = 0;
-      try {
-        numQueries = std::stoull(arg, &parsedLength);
-      } catch (const std::exception& e) {
-        std::cerr << "Invalid iteration count '" << arg << "': " << e.what()
-                  << '\n';
-        return 1;
-      }
-      if (parsedLength != arg.size()) {
-        std::cerr << "Invalid iteration count '" << arg << "'\n";
-        return 1;
-      }
+    if (arg == "-p") {
+      continue;
+    }
+    if (arg.empty() || !std::isdigit(static_cast<unsigned char>(arg[0]))) {
+      std::cerr << "Invalid iteration count '" << arg << "'\n";
+      return 1;
+    }
+    size_t parsedLength = 0;
+    try {
+      numQueries = std::stoull(arg, &parsedLength);
+    } catch (const std::exception& e) {
+      std::cerr << "Invalid iteration count '" << arg << "': " << e.what()
+                << '\n';
+      return 1;
+    }
+    if (parsedLength != arg.size()) {
+      std::cerr << "Invalid iteration count '" << arg << "'\n";
+      return 1;
     }
   }
   // The reported rates divide by `numQueries`, so reject zero iterations.
