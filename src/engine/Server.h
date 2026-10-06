@@ -184,9 +184,21 @@ class Server {
   // turn requires a type with linkage.
   class MockSend {
    public:
+    bool consumeBody_ = false;
+
     Awaitable<void> operator()(auto response) {
       using Sent = std::decay_t<decltype(response)>;
       if constexpr (std::is_same_v<Sent, ResponseT>) {
+        if (consumeBody_) {
+          // Consume while referenced query/plan objects are alive, like a real
+          // sender, then retain an owned body for assertions.
+          std::string body;
+          for (const auto& chunk : response.body()) {
+            body += chunk;
+          }
+          response.body() =
+              ad_utility::httpUtils::detail::toGenerator(std::move(body));
+        }
         response_ = std::move(response);
       }
       co_return;

@@ -1145,16 +1145,28 @@ CPP_template_def(typename RequestT, typename SendT)(
   const ExportSendMode sendMode =
       ExportPipelineRouter::selectSendMode(params, exportSendHeader);
 
-  AD_LOG_INFO << ExportPipelineRouter::describeDecision(
-                     parsedQuery, params, exportHeader,
-                     ExportEngineMode::LegacyV1)
-              << std::endl;
-
 #if defined(QLEVER_ENABLE_EXPORT_V2)
   const bool useV2 =
       mode == ExportEngineMode::FastStreamingV2 &&
       ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
                                 mediaType);
+#else
+  const bool useV2 = false;
+#endif
+
+  if (mode == ExportEngineMode::FastStreamingV2 && !useV2) {
+    AD_LOG_INFO << "ExportEngine: LegacyV1 [Reason: Fallback to Legacy V1 "
+                   "(V2 unavailable or unsupported query, media type or "
+                   "execution plan)]"
+                << std::endl;
+  } else {
+    AD_LOG_INFO << ExportPipelineRouter::describeDecision(
+                       parsedQuery, params, exportHeader,
+                       ExportEngineMode::LegacyV1)
+                << std::endl;
+  }
+
+#if defined(QLEVER_ENABLE_EXPORT_V2)
   if (useV2 && sendMode == ExportSendMode::ScatterGather) {
     using ad_utility::content_encoding::CompressionMethod;
     const bool hasMiddleware =
@@ -1232,7 +1244,6 @@ CPP_template_def(typename RequestT, typename SendT)(
                 << ad_utility::toString(mediaType) << " export" << std::endl;
   }
 #else
-  (void)mode;
   (void)sendMode;
 #endif
 

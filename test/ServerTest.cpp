@@ -506,6 +506,123 @@ TEST(ServerTest, metricsEndpoint) {
 }
 
 // _____________________________________________________________________________
+namespace {
+// Capture only request processing and export, not server/index setup.
+auto processExportRequest(serverTestHelpers::ServerForTesting& server,
+                          serverTestHelpers::ReqT request,
+                          const std::string& mediaType) {
+  request.set(boost::beast::http::field::accept, mediaType);
+  auto [cleanup, logStream] = setGlobalLoggingStreamToStringStream();
+  auto response = server.processAndConsumeResponseBody(request);
+  EXPECT_THAT(response, StatusIs(http::status::ok));
+  EXPECT_THAT(response, ContentTypeIs(mediaType));
+  auto body =
+      serverTestHelpers::responseBodyToString(std::move(response.body()));
+  return std::pair{std::move(body), logStream.str()};
+}
+
+void expectLegacyExportFallback(const std::string& log) {
+  EXPECT_THAT(log, testing::HasSubstr(
+                       "ExportEngine: LegacyV1 [Reason: Fallback to Legacy V1 "
+                       "(V2 unavailable or unsupported query, media type or "
+                       "execution plan)]"));
+  EXPECT_THAT(
+      log, testing::Not(testing::HasSubstr("ExportEngine: FastStreamingV2")));
+  EXPECT_THAT(log, testing::Not(testing::HasSubstr("Fast-Path V2 selected")));
+  EXPECT_THAT(log, testing::Not(testing::HasSubstr("Using ExportEngineV2")));
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(ServerTest, exportEngineDecisionSupportedExports) {
+  ENFORCE_LOG_LEVEL_OR_SKIP(INFO);
+  serverTestHelpers::ServerForTesting server{
+      1, "accessToken", serverTestHelpers::getDefaultConfig()};
+  for (bool useHeader : {false, true}) {
+    auto request = makePostRequest(useHeader ? "/" : "/?fast-export=1",
+                                   "application/sparql-query",
+                                   "SELECT ?s WHERE { ?s <b> <c> }");
+    if (useHeader) {
+      request.set("X-QLever-Export-Engine", "v2");
+    }
+    const std::string mediaType =
+        useHeader ? "text/tab-separated-values" : "text/csv";
+    auto [body, log] = processExportRequest(server, request, mediaType);
+    EXPECT_EQ(body, useHeader ? "?s\n<a>\n" : "s\na\n");
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+    EXPECT_THAT(log, testing::HasSubstr("ExportEngine: FastStreamingV2"));
+    EXPECT_THAT(log, testing::HasSubstr("Fast-Path V2 selected"));
+    EXPECT_THAT(log, testing::HasSubstr("Using ExportEngineV2"));
+#else
+    expectLegacyExportFallback(log);
+#endif
+  }
+}
+
+// _____________________________________________________________________________
+TEST(ServerTest, exportEngineDecisionUnsupportedMediaType) {
+  ENFORCE_LOG_LEVEL_OR_SKIP(INFO);
+  serverTestHelpers::ServerForTesting server{
+      1, "accessToken", serverTestHelpers::getDefaultConfig()};
+  auto request = makePostRequest("/?fast-export=1", "application/sparql-query",
+                                 "SELECT ?s WHERE { ?s <b> <c> }");
+  auto [body, log] =
+      processExportRequest(server, request, "application/sparql-results+json");
+  auto result = json::parse(body);
+  EXPECT_EQ(result.at("head").at("vars"), json::array({"s"}));
+  EXPECT_EQ(result.at("results").at("bindings"),
+            json::array({{{"s", {{"type", "uri"}, {"value", "a"}}}}}));
+  expectLegacyExportFallback(log);
+}
+
+// _____________________________________________________________________________
+TEST(ServerTest, exportEngineDecisionUnsupportedExecutionPlan) {
+  ENFORCE_LOG_LEVEL_OR_SKIP(INFO);
+  const std::string query = "SELECT (1 AS ?x) WHERE {}";
+  // Verify that this AST-eligible query actually has an unsupported child plan.
+  auto qec = getQec("<a> <b> <c>");
+  auto parsedQuery = parseQuery(query);
+  QueryPlanner planner{qec,
+                       std::make_shared<ad_utility::CancellationHandle<>>()};
+  auto qet = planner.createExecutionTree(parsedQuery);
+  const auto children = qet->getRootOperation()->getChildren();
+  ASSERT_EQ(children.size(), 1u);
+  EXPECT_EQ(children.front()->getRootOperation()->getDescriptor(),
+            "NeutralElement");
+
+  serverTestHelpers::ServerForTesting server{
+      1, "accessToken", serverTestHelpers::getDefaultConfig()};
+  auto request =
+      makePostRequest("/?fast-export=1", "application/sparql-query", query);
+  auto [body, log] = processExportRequest(server, request, "text/csv");
+  EXPECT_EQ(body, "x\n1\n");
+  expectLegacyExportFallback(log);
+}
+
+// _____________________________________________________________________________
+TEST(ServerTest, exportEngineDecisionLegacyRoutes) {
+  ENFORCE_LOG_LEVEL_OR_SKIP(INFO);
+  serverTestHelpers::ServerForTesting server{
+      1, "accessToken", serverTestHelpers::getDefaultConfig()};
+  for (bool explicitV1 : {false, true}) {
+    auto request = makePostRequest(explicitV1 ? "/?fast-export=0" : "/",
+                                   "application/sparql-query",
+                                   "SELECT ?s WHERE { ?s <b> <c> }");
+    auto [body, log] = processExportRequest(server, request, "text/csv");
+    EXPECT_EQ(body, "s\na\n");
+    EXPECT_THAT(log, testing::HasSubstr("ExportEngine: LegacyV1"));
+    EXPECT_THAT(
+        log,
+        testing::HasSubstr(
+            explicitV1 ? "Legacy V1 selected (explicitly requested via query "
+                         "parameter or header override)"
+                       : "Legacy V1 selected (default standard relational "
+                         "pipeline)"));
+    EXPECT_THAT(log, testing::Not(testing::HasSubstr("Fast-Path V2 selected")));
+  }
+}
+
+// _____________________________________________________________________________
 TEST(ServerTest, pingEndpoint) {
   auto [cleanup, logStream] = setGlobalLoggingStreamToStringStream();
 
