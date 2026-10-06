@@ -363,7 +363,15 @@ void IoUringPolicy::addBatch(int fd,
     if (readIntoSlot) {
       read.slot = acquireSlot();
     }
-    io_uring_sqe* sqe = claimSqe();
+    io_uring_sqe* sqe = nullptr;
+    try {
+      sqe = claimSqe();
+    } catch (...) {
+      if (readIntoSlot) {
+        freeSlots_.push_back(read.slot);
+      }
+      throw;
+    }
     // Record the read's parameters in the SQE (this only sets the SQE's
     // fields; the request is not handed to the kernel until a later
     // `io_uring_submit`).
