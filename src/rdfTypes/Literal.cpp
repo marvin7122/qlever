@@ -174,11 +174,12 @@ Literal Literal::fromEscapedRdfLiteral(
     std::string_view rdfContentWithQuotes,
     std::optional<std::variant<Iri, std::string>> descriptor) {
   std::string storage;
-  // Unescaping never makes the content longer, and `rdfContentWithQuotes`
-  // already contains at least the two quotes that are added below, so this is
-  // an upper bound for the size of the complete literal. Reserving it up front
-  // (instead of `absl::StrCat`) requires only a single allocation.
-  storage.reserve(rdfContentWithQuotes.size() + maxSuffixSize(descriptor));
+  // Reserve the exact decoded content size, two quotes, and an upper bound for
+  // the descriptor. This requires only a single allocation without retaining
+  // excess capacity for escape sequences that decode to fewer bytes.
+  storage.reserve(
+      RdfEscaping::unescapedLiteralSizeWithQuotesRemoved(rdfContentWithQuotes) +
+      2 + maxSuffixSize(descriptor));
   storage.push_back(quote);
   RdfEscaping::unescapeLiteralWithQuotesRemoved(rdfContentWithQuotes, storage);
   storage.push_back(quote);
@@ -204,10 +205,10 @@ Literal Literal::literalWithoutQuotes(
     std::string_view rdfContentWithoutQuotes,
     std::optional<std::variant<Iri, std::string>> descriptor) {
   std::string storage;
-  // See `fromEscapedRdfLiteral` for why this is an upper bound and why we
-  // reserve.
-  storage.reserve(rdfContentWithoutQuotes.size() + 2 +
-                  maxSuffixSize(descriptor));
+  // Reserve the exact decoded content size, two quotes, and an upper bound for
+  // the descriptor, as in `fromEscapedRdfLiteral`.
+  storage.reserve(RdfEscaping::unescapedLiteralSize(rdfContentWithoutQuotes) +
+                  2 + maxSuffixSize(descriptor));
   storage.push_back(quote);
   RdfEscaping::unescapeLiteral(rdfContentWithoutQuotes, storage);
   storage.push_back(quote);

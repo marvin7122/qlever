@@ -12,6 +12,13 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <variant>
+
 #include "../util/GTestHelpers.h"
 #include "../util/IndexTestHelpers.h"
 #include "index/IndexImpl.h"
@@ -287,6 +294,60 @@ TEST(LiteralTest, LiteralTestWithLanguagetag) {
   EXPECT_EQ("Hallo Welt", asStringViewUnsafe(literal.getContent()));
   EXPECT_EQ("de", asStringViewUnsafe(literal.getLanguageTag()));
   EXPECT_THROW(literal.getDatatype(), ad_utility::Exception);
+}
+
+// _____________________________________________________________________________
+TEST(LiteralTest, EscapedContentDoesNotRetainRawInputCapacity) {
+  constexpr size_t repetitions = 4096;
+  std::string escaped;
+  for (size_t i = 0; i < repetitions; ++i) {
+    escaped += R"(\U00000041)";
+  }
+  const std::string decoded(repetitions, 'A');
+  using Descriptor = std::optional<std::variant<Iri, std::string>>;
+  const std::array<Descriptor, 5> descriptors{
+      std::nullopt, std::string{"en"}, std::string{"@de"},
+      Iri::fromIriref(myDatatypeWithBrackets),
+      Iri::fromIriref("<http://www.w3.org/2001/XMLSchema#string>")};
+  for (size_t i = 0; i < descriptors.size(); ++i) {
+    SCOPED_TRACE(i);
+    const auto& descriptor = descriptors[i];
+    std::string suffix;
+    if (i == 1) {
+      suffix = "@en";
+    } else if (i == 2) {
+      suffix = "@de";
+    } else if (i == 3) {
+      suffix = absl::StrCat("^^", myDatatypeWithBrackets);
+    }
+    auto check = [&](Literal literal) {
+      EXPECT_EQ(asStringViewUnsafe(literal.getContent()), decoded);
+      EXPECT_EQ(literal.hasLanguageTag(), i == 1 || i == 2);
+      EXPECT_EQ(literal.hasDatatype(), i == 3);
+      if (literal.hasLanguageTag()) {
+        EXPECT_EQ(asStringViewUnsafe(literal.getLanguageTag()),
+                  i == 1 ? "en" : "de");
+      }
+      if (literal.hasDatatype()) {
+        EXPECT_EQ(asStringViewUnsafe(literal.getDatatype()), myDatatype);
+      }
+      const auto expected = absl::StrCat("\"", decoded, "\"", suffix);
+      EXPECT_EQ(literal.toStringRepresentation(), expected);
+      // Allow allocation rounding without depending on a library's exact
+      // capacity policy, but reject storage proportional to the raw escapes.
+      const auto& representation = literal.toStringRepresentation();
+      EXPECT_LT(representation.capacity(), escaped.size() / 2);
+      std::string moved = std::move(literal).toStringRepresentation();
+      EXPECT_EQ(moved, expected);
+      EXPECT_LT(moved.capacity(), escaped.size() / 2);
+    };
+    check(Literal::literalWithoutQuotes(escaped, descriptor));
+    for (std::string_view quotes : {"\"", "'", "\"\"\"", "'''"}) {
+      SCOPED_TRACE(quotes);
+      check(Literal::fromEscapedRdfLiteral(
+          absl::StrCat(quotes, escaped, quotes), descriptor));
+    }
+  }
 }
 
 // _____________________________________________________________________________

@@ -3,7 +3,13 @@
 // Authors: Robin Textor-Falconi (textorr@informatik.uni-freiburg.de)
 //          Hannah bast <bast@cs.uni-freiburg.de>
 
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
+
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "../util/GTestHelpers.h"
 #include "rdfTypes/RdfEscaping.h"
@@ -98,6 +104,88 @@ TEST(RdfEscapingTest, unescapeLiteral) {
   };
   ASSERT_EQ("Hello \" \\World", f(R"(Hello \" \\World)"));
   ASSERT_EQ("Hello World", f("Hello World"));
+}
+
+// ___________________________________________________________________________
+TEST(RdfEscapingTest, unescapedLiteralSize) {
+  const std::vector<std::pair<std::string_view, std::string>> cases{
+      {std::string_view{}, ""},
+      {"", ""},
+      {"unchanged ä", "unchanged ä"},
+      {R"(\t\n\r\b\f\"\'\\)", "\t\n\r\b\f\"'\\"},
+      {R"(\u0041)", "A"},
+      {R"(\u00E4)", "\u00e4"},
+      {R"(\u2702)", "\u2702"},
+      {R"(\U00000041)", "A"},
+      {R"(\U000000E4)", "\u00e4"},
+      {R"(\U00002702)", "\u2702"},
+      {R"(\U0001F600)", "\U0001F600"},
+      {R"(\u0000)", std::string(1, '\0')},
+      {R"(\U00000000)", std::string(1, '\0')},
+      {std::string_view{"a\0b", 3}, std::string{"a\0b", 3}},
+      {R"(\uD800)", "\uFFFD"},
+      {R"(\uDFFF)", "\uFFFD"},
+      {R"(\U0000D800)", "\uFFFD"},
+      {R"(\U00110000)", "\uFFFD"},
+      {R"(\UFFFFFFFF)", "\uFFFD"},
+      {R"(before\n\u00E4\U0001F600after)", "before\n\u00e4\U0001F600after"}};
+  for (const auto& [input, expected] : cases) {
+    SCOPED_TRACE(input);
+    std::string decoded;
+    unescapeLiteral(input, decoded);
+    EXPECT_EQ(decoded, expected);
+    EXPECT_EQ(unescapedLiteralSize(input), decoded.size());
+    for (std::string_view quotes : {"\"", "'", "\"\"\"", "'''"}) {
+      SCOPED_TRACE(quotes);
+      const auto quoted = absl::StrCat(quotes, input, quotes);
+      decoded.clear();
+      unescapeLiteralWithQuotesRemoved(quoted, decoded);
+      EXPECT_EQ(decoded, expected);
+      EXPECT_EQ(unescapedLiteralSizeWithQuotesRemoved(quoted), decoded.size());
+    }
+  }
+}
+
+// ___________________________________________________________________________
+TEST(RdfEscapingTest, unescapedLiteralSizeValidation) {
+  auto exceptionMessage = [](auto operation) {
+    try {
+      operation();
+      ADD_FAILURE() << "Expected a decoding exception";
+      return std::string{};
+    } catch (const ad_utility::Exception& e) {
+      return std::string{e.what()};
+    }
+  };
+  auto checkQuotedError = [&](std::string_view input) {
+    const auto countMessage = exceptionMessage(
+        [&] { (void)unescapedLiteralSizeWithQuotesRemoved(input); });
+    const auto decodeMessage = exceptionMessage([&] {
+      std::string decoded;
+      unescapeLiteralWithQuotesRemoved(input, decoded);
+    });
+    EXPECT_EQ(countMessage, decodeMessage);
+    EXPECT_THAT(countMessage, ::testing::HasSubstr("Assertion"));
+  };
+  for (std::string_view input : {R"(unknown\z)", "trailing\\"}) {
+    SCOPED_TRACE(input);
+    EXPECT_EQ(exceptionMessage([&] { (void)unescapedLiteralSize(input); }),
+              exceptionMessage([&] {
+                std::string decoded;
+                unescapeLiteral(input, decoded);
+              }));
+    for (std::string_view quotes : {"\"", "'", "\"\"\"", "'''"}) {
+      checkQuotedError(absl::StrCat(quotes, input, quotes));
+    }
+  }
+  for (std::string_view input :
+       {std::string_view{}, std::string_view{""}, std::string_view{"no quotes"},
+        std::string_view{"\"missing end"}, std::string_view{"missing start'"},
+        std::string_view{R"("mismatched')"},
+        std::string_view{R"("""mismatched''')"}}) {
+    SCOPED_TRACE(input);
+    checkQuotedError(input);
+  }
 }
 
 // ___________________________________________________________________________
