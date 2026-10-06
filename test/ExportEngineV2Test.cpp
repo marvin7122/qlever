@@ -17,7 +17,6 @@
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
 #include "index/LocalVocabContext.h"
-#include "rdfTypes/RdfEscaping.h"
 #include "util/AllocatorTestHelpers.h"
 #include "util/GTestHelpers.h"
 
@@ -115,7 +114,6 @@ TEST(ExportEngineV2Test, SerializeTableChunkRendersLocalVocabForEachFormat) {
   LocalVocab localVocab;
   auto allocator = makeAllocator();
   IdTable table{2, allocator};
-  std::string expectedTsv;
   int64_t row = 0;
   for (std::string_view representation :
        {"\"plain\"", "\"bonjour\"@fr", "\"typed\"^^<http://example.org/type>",
@@ -124,10 +122,6 @@ TEST(ExportEngineV2Test, SerializeTableChunkRendersLocalVocabForEachFormat) {
         LocalVocabEntry::fromStringRepresentation(std::string{representation},
                                                   context));
     table.push_back({Id::makeFromInt(row), Id::makeFromLocalVocabIndex(index)});
-    expectedTsv += std::to_string(row) + "\t" +
-                   RdfEscaping::escapeForTsv(
-                       localVocab.getWord(index).toStringRepresentation()) +
-                   "\n";
     ++row;
   }
 
@@ -139,7 +133,11 @@ TEST(ExportEngineV2Test, SerializeTableChunkRendersLocalVocabForEachFormat) {
 
   ScatterGatherChunkBuilder tsvBuilder;
   auto tsv = serializeTableChunk(table, localVocab, RowFormat::Tsv, tsvBuilder);
-  EXPECT_EQ(tsv.toString(), expectedTsv);
+  EXPECT_EQ(tsv.toString(),
+            "0\t\"plain\"\n1\t\"bonjour\"@fr\n"
+            "2\t\"typed\"^^<http://example.org/type>\n"
+            "3\t<http://example.org/iri>\n4\t\"\"\n"
+            "5\t\"comma,\"quote\"\\nline tab\"\n");
 }
 
 TEST(ExportEngineV2Test, SerializeTableChunkRejectsIndexBackedIds) {
