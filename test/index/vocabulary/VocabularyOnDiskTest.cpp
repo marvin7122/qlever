@@ -335,6 +335,10 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
     GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not available";
   }
   using pageCacheReadTestHelpers::ScopedPageCacheRead;
+  // This test injects `preadv2` results; reads from the resident mappings
+  // would bypass the injection once the first lookup has marked the pages.
+  auto noResidentReads = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyMmapResidentReads_>(false);
   auto vocab = createExampleVocabulary();
   // Runs of consecutive indices, reordered and duplicated indices.
   std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
