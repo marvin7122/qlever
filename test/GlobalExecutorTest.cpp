@@ -11,6 +11,8 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <future>
 #include <thread>
 #include <vector>
@@ -19,6 +21,33 @@
 #include "util/Exception.h"
 #include "util/GTestHelpers.h"
 #include "util/GlobalExecutor.h"
+
+#if GTEST_HAS_DEATH_TEST
+// _____________________________________________________________________________
+TEST(GlobalExecutorDeathTest, processExitDoesNotJoinBlockedTasks) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_EXIT(
+      {
+        ad_utility::setGlobalExecutorNumThreads(1);
+        std::promise<void> started;
+        auto startedFuture = started.get_future();
+        ad_utility::net::post(ad_utility::globalExecutor(), [&started]() {
+          started.set_value();
+          while (true) {
+            std::this_thread::sleep_for(std::chrono::hours{1});
+          }
+        });
+        startedFuture.wait();
+        // Bound the failure time if teardown incorrectly joins the pool.
+        std::thread([]() {
+          std::this_thread::sleep_for(std::chrono::seconds{2});
+          std::_Exit(1);
+        }).detach();
+        std::exit(0);
+      },
+      ::testing::ExitedWithCode(0), "");
+}
+#endif
 
 // NOTE: The global executor is a process-wide singleton, so none of the
 // following tests may assume that the pool doesn't exist yet. They are

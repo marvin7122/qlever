@@ -82,16 +82,16 @@ size_t globalExecutorNumThreads() {
 
 // _____________________________________________________________________________
 ql::any_io_executor globalExecutor() {
-  // NOTE: The initialization of a function-local static is thread-safe, so the
-  // lambda (and with it the marking of the configuration as final) runs exactly
-  // once.
-  static boost::asio::thread_pool pool{[]() {
+  // Static initialization is thread-safe and retries after a failure. Keep the
+  // pool alive for the process lifetime without joining it during teardown.
+  static auto* pool = []() {
     auto& conf = config();
     std::lock_guard lock{conf.mutex_};
+    auto* pool = new boost::asio::thread_pool{conf.numThreads_};
     conf.poolWasCreated_ = true;
-    return conf.numThreads_;
-  }()};
-  return pool.get_executor();
+    return pool;
+  }();
+  return pool->get_executor();
 }
 
 }  // namespace ad_utility
