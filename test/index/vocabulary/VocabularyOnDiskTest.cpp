@@ -276,15 +276,31 @@ TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
 // with fewer slots than the reads of a batch (here: one slot) must wait for
 // completions and still return every word.
 TEST(VocabularyOnDisk, LookupBatchWithRingSmallerThanBatch) {
+#ifndef QLEVER_HAS_IO_URING
+  GTEST_SKIP() << "io_uring support is not compiled in";
+#else
   auto ringSize = setRuntimeParameterForTest<
       &RuntimeParameters::vocabularyIouringRingSize_>(size_t{1});
   // Send every read through the batch manager.
   auto noFastPath = setRuntimeParameterForTest<
       &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(false);
   auto vocab = createExampleVocabulary();
+  // Check every manager created by `open`: initialization can fall back to
+  // synchronous I/O even when io_uring support is compiled in.
+  for (size_t i = 0; i < vocab->ioManagers_->maxSize(); ++i) {
+    auto manager = vocab->ioManagers_->pop();
+    ASSERT_TRUE(manager.has_value());
+    if (dynamic_cast<ad_utility::BatchManager<ad_utility::IoUringPolicy>*>(
+            manager->get()) == nullptr) {
+      GTEST_SKIP() << "io_uring initialization failed; vocabulary uses "
+                      "synchronous I/O";
+    }
+    ASSERT_TRUE(vocab->ioManagers_->push(std::move(*manager)));
+  }
   std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       *vocab, vocab->lookupBatch(indices), indices);
+#endif
 }
 
 // With `vocabulary-iouring-page-cache-fast-path`, the words and offsets that

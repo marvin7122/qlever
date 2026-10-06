@@ -314,6 +314,7 @@ TEST_F(ConstructTripleGeneratorTest, rowBatchSizeIsConfigurable) {
   VariableToColumnMap varMap;
   varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
   for (size_t batchSize : {size_t{1}, size_t{3}, size_t{4096}}) {
+    SCOPED_TRACE(batchSize);
     auto reset = setRuntimeParameterForTest<
         &RuntimeParameters::constructExportRowBatchSize_>(batchSize);
     auto table = makeTableWithRange(*result, 0, N);
@@ -321,6 +322,22 @@ TEST_F(ConstructTripleGeneratorTest, rowBatchSizeIsConfigurable) {
     ASSERT_EQ(collected.size(), N) << "batch size " << batchSize;
     for (const auto& triple : collected) {
       EXPECT_THAT(triple, matchTriple("<s>", "<p>", "<o>"));
+    }
+
+    if (batchSize < N) {
+      auto handle = makeHandle();
+      auto range = ConstructTripleGenerator::generateStringTriples(
+          templateTriples, varMap, singleTableRange(table), 0,
+          makeConfig(handle));
+      ASSERT_TRUE(range.get().has_value());
+      handle->cancel(ad_utility::CancellationState::MANUAL);
+
+      // Cancellation leaves the remaining rows of the first batch readable.
+      for (size_t row = 1; row < batchSize; ++row) {
+        ASSERT_TRUE(range.get().has_value());
+      }
+      // The next row starts a new batch and must observe the cancellation.
+      EXPECT_THROW(range.get(), ad_utility::CancellationException);
     }
   }
 }
