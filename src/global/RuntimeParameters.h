@@ -291,8 +291,9 @@ struct RuntimeParameters {
   // triples) and then formats it. With N > 0, a separate thread evaluates the
   // batches and hands them to the formatting thread through a queue of N
   // batches, so that the vocabulary reads and the decoding of later batches
-  // overlap with the formatting of the current one.
-  SizeT constructExportPipelineDepth_{0, "construct-export-pipeline-depth"};
+  // overlap with the formatting of the current one. Default 2 (with the split
+  // lookup below).
+  SizeT constructExportPipelineDepth_{2, "construct-export-pipeline-depth"};
 
   // Only with `construct-export-pipeline-depth` N > 0 and without CONSTRUCT
   // deduplication: if true, the evaluation of a batch is split across two
@@ -303,7 +304,7 @@ struct RuntimeParameters {
   // formats them. Each stage hands its batches to the next one through a
   // queue of N batches.
   Bool constructExportPipelineSplitLookup_{
-      false, "construct-export-pipeline-split-lookup"};
+      true, "construct-export-pipeline-split-lookup"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
