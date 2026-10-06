@@ -287,6 +287,61 @@ TEST_F(ConstructBatchEvaluatorTest, localVocabIdBypassesIdCache) {
   EXPECT_TRUE(idCache.tryGet(idO_).has_value());
 }
 
+// `prepareBatch` followed by `completeBatch` (the split evaluation of the
+// three-stage CONSTRUCT export pipeline) yields the result of `evaluateBatch`,
+// also after the `IdTable` and the `LocalVocab` of the batch are gone, and
+// keeps a `LocalVocabIndex` Id out of the cache.
+TEST_F(ConstructBatchEvaluatorTest, prepareAndCompleteMatchEvaluateBatch) {
+  const auto& ctx = qec_->getLocalVocabContext();
+  Id idLocal =
+      Id::makeFromLocalVocabIndex(localVocab_.getIndexAndAddIfNotContained(
+          LocalVocabEntry::literalWithoutQuotes("local-word", ctx)));
+  auto idTable = makeIdTableFromVector({{idS_, idLocal},
+                                        {idO_, Id::makeFromInt(42)},
+                                        {idS_, getId_("\"hello\"")},
+                                        {idQ_, Id::makeUndefined()},
+                                        {idS_, idP_}});
+  IdCache idCache{1024};
+  const auto expected = evaluateIdTable({0, 1}, idTable, idCache);
+
+  SynchronizedIdCache sharedCache{IdCache{1024}};
+  // A cache hit for a value that was resolved before.
+  sharedCache.wlock()->getOrCompute(
+      idQ_, [&](const Id&) { return expected.getVariable(0, 3); });
+  std::optional<PreparedBatch> prepared;
+  {
+    LocalVocab copyOfLocalVocab = localVocab_.clone();
+    IdTable copy = idTable.clone();
+    const BatchEvaluationContext batch{copy.asStaticView<0>(), 0,
+                                       copy.numRows()};
+    prepared = ConstructBatchEvaluator::prepareBatch(
+        std::vector<ColumnIndex>{0, 1}, batch, copyOfLocalVocab, index_,
+        sharedCache);
+  }
+  // `<s>`, `<o>`, `"hello"` and `<p>` need a vocabulary read; `<q>` is a hit.
+  ASSERT_TRUE(prepared->lookup_ != nullptr);
+  const auto result =
+      ConstructBatchEvaluator::completeBatch(*prepared, index_, sharedCache);
+  ASSERT_EQ(result.numRows_, expected.numRows_);
+  for (ColumnIndex column : {0, 1}) {
+    for (size_t row = 0; row < expected.numRows_; ++row) {
+      const auto& actualTerm = result.getVariable(column, row);
+      const auto& expectedTerm = expected.getVariable(column, row);
+      ASSERT_EQ(actualTerm.has_value(), expectedTerm.has_value());
+      if (expectedTerm.has_value()) {
+        EXPECT_EQ(actualTerm.value()->rdfTermString_,
+                  expectedTerm.value()->rdfTermString_);
+        EXPECT_EQ(actualTerm.value()->rdfTermDataType_,
+                  expectedTerm.value()->rdfTermDataType_);
+      }
+    }
+  }
+  auto lockedCache = sharedCache.wlock();
+  EXPECT_FALSE(lockedCache->tryGet(idLocal).has_value());
+  EXPECT_TRUE(lockedCache->tryGet(idS_).has_value());
+  EXPECT_TRUE(lockedCache->tryGet(Id::makeFromInt(42)).has_value());
+}
+
 // Simulates the `IdTable` that would result from:
 //   CONSTRUCT { ?s <p> ?o } WHERE { ?s <p> ?o }
 // against a dataset with repeated subjects. The `IdTable` has two variable
