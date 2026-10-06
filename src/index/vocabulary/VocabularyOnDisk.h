@@ -23,6 +23,7 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/ResidentFileMapping.h"
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 
@@ -45,6 +46,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
+
+  // Read-only mappings of `file_` and `offsetsFile_` with the pages that this
+  // process has read before (see `vocabulary-mmap-resident-reads`).
+  ad_utility::ResidentFileMapping wordsMapping_;
+  ad_utility::ResidentFileMapping offsetsMapping_;
 
   // Pool of persistent `BatchIoManager`s for `lookupBatch`.
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
@@ -201,9 +207,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // With `pageCacheFastPath`, each run of consecutive indices is first read as
   // one range of the `.offsets` file with `readPageCacheHits`, and only the
   // pairs of the runs that were not in the page cache go through `manager`.
+  // With `residentReads`, runs whose pages are known resident are copied
+  // from `offsetsMapping_` first (see `readResidentOrPageCacheHits`).
   std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
                                           ql::span<const size_t> indices,
-                                          bool pageCacheFastPath) const;
+                                          bool pageCacheFastPath,
+                                          bool residentReads) const;
 
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched
@@ -213,9 +222,21 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // `pageCacheFastPath`, the words that are in the page cache are read with
   // `readPageCacheHits` (adjacent words in one call), and only the others go
   // through `manager`.
+  // With `residentReads`, words whose pages are known resident are copied
+  // from `wordsMapping_` first.
   VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
                                      ql::span<const OffsetPair> offsetPairs,
-                                     bool pageCacheFastPath) const;
+                                     bool pageCacheFastPath,
+                                     bool residentReads) const;
+
+  // Serve the reads whose pages are known resident in `mapping` (if not null)
+  // from the mapping, then the others with `readPageCacheHits`; mark the pages
+  // of the reads served by `readPageCacheHits` resident. Return the indices
+  // (ascending) of the reads that were served by neither.
+  static std::vector<size_t> readResidentOrPageCacheHits(
+      const ad_utility::ResidentFileMapping* mapping, int fd,
+      ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+      ql::span<char*> buffers);
 
   // Read `numBytes[i]` bytes at `offsets[i]` of `fd` into `buffers[i]` for
   // every `i` in `positions` through `manager` and wait for them.
