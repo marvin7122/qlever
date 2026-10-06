@@ -1196,6 +1196,44 @@ TEST(ParserTest, Group) {
 }
 
 // _____________________________________________________________________________
+TEST(ParserTest, LanguageFilterPostProcessingUnrepresentableTags) {
+  for (const std::string& filter :
+       {"(LANG(?y) = \"@en\")", "(LANG(?y) IN (\"en\", \"@en\"))",
+        "(LANG(?y) = \"en\" || LANG(?y) = \"@en\")",
+        "(LANG(?y) IN (\"en\", \"\"))"}) {
+    SCOPED_TRACE(filter);
+    ParsedQuery q =
+        parseQuery("SELECT * { ?s <label> ?y . ?s <otherLabel> ?y . FILTER " +
+                   filter + " }");
+    ASSERT_EQ(q._rootGraphPattern._filters.size(), 1u);
+    EXPECT_EQ(q._rootGraphPattern._filters[0].expression_.getDescriptor(),
+              filter);
+    ASSERT_EQ(q._rootGraphPattern._graphPatterns.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<p::BasicGraphPattern>(
+        q._rootGraphPattern._graphPatterns[0]));
+    EXPECT_THAT(
+        q._rootGraphPattern._graphPatterns[0].getBasic()._triples,
+        ::testing::ElementsAre(
+            SparqlTriple{Var{"?s"}, PropertyPath::fromIri(iri("<label>")),
+                         Var{"?y"}},
+            SparqlTriple{Var{"?s"}, PropertyPath::fromIri(iri("<otherLabel>")),
+                         Var{"?y"}}));
+  }
+
+  ParsedQuery q =
+      parseQuery("SELECT * { ?s ?p ?y . FILTER (LANG(?y) = \"@en\") }");
+  ASSERT_EQ(q._rootGraphPattern._filters.size(), 1u);
+  EXPECT_EQ(q._rootGraphPattern._filters[0].expression_.getDescriptor(),
+            "(LANG(?y) = \"@en\")");
+  ASSERT_EQ(q._rootGraphPattern._graphPatterns.size(), 1u);
+  ASSERT_TRUE(std::holds_alternative<p::BasicGraphPattern>(
+      q._rootGraphPattern._graphPatterns[0]));
+  EXPECT_THAT(
+      q._rootGraphPattern._graphPatterns[0].getBasic()._triples,
+      ::testing::ElementsAre(SparqlTriple{Var{"?s"}, Var{"?p"}, Var{"?y"}}));
+}
+
+// _____________________________________________________________________________
 TEST(ParserTest, LanguageFilterPostProcessing) {
   auto makeTaggedPath = [](std::string_view iriString, std::string langTag) {
     return PropertyPath::fromIri(iri(iriString).withLanguageTag(langTag));

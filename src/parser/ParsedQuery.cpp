@@ -271,7 +271,10 @@ bool ParsedQuery::GraphPattern::addLanguageFilter(
   AD_CORRECTNESS_CHECK(!langTags.empty());
   // Since most literals have an empty language tag we don't create extra
   // triples for them, so we can't use this optimization.
-  if (langTags.contains("")) {
+  // Leading '@' tags can't be represented by the tagged predicates either.
+  if (ql::ranges::any_of(langTags, [](const auto& langTag) {
+        return langTag.empty() || ql::starts_with(langTag, '@');
+      })) {
     return false;
   }
   // Find all triples where the object is the `variable` and the predicate is
