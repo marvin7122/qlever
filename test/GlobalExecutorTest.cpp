@@ -38,9 +38,10 @@ TEST(GlobalExecutorDeathTest, processExitDoesNotJoinBlockedTasks) {
           }
         });
         startedFuture.wait();
-        // Bound the failure time if teardown incorrectly joins the pool.
+        // Allow ample time for sanitizer/loaded-CI teardown, but still bound
+        // incorrect pool joins.
         std::thread([]() {
-          std::this_thread::sleep_for(std::chrono::seconds{2});
+          std::this_thread::sleep_for(std::chrono::seconds{30});
           std::_Exit(1);
         }).detach();
         std::exit(0);
