@@ -48,6 +48,8 @@ if (NOT _NO_BENCHMARK)
     target_compile_options(SerializerMicroBenchmark PRIVATE
         $<$<CXX_COMPILER_ID:GNU>:-Wno-mismatched-new-delete>)
 
+    addAndLinkBenchmark(ChunkStreamingBenchmark engine testUtil)
+
     addAndLinkBenchmark(PrefixCompressorBenchmark)
 
     addAndLinkBenchmark(VocabBatchLookupBenchmark vocabulary)
