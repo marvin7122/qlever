@@ -64,14 +64,30 @@ TEST(SparqlExpressionGenerators, resultGeneratorSetOfIntervals) {
   }
   {
     ad_utility::SetOfIntervals s{{{3, 11}}};
-    auto consumeGen = [&]() {
-      auto gen = sparqlExpression::detail::resultGenerator(s, 10);
-      for (auto&& unused : gen) {
-        (void)unused;
-      }
-    };
-    AD_EXPECT_THROW_WITH_MESSAGE(
-        consumeGen(), ::testing::HasSubstr(
-                          "exceeds the total size of the evaluation context"));
+    auto generator = sparqlExpression::detail::resultGenerator(s, 10);
+    std::vector<Id> res;
+    ql::ranges::copy(generator, std::back_inserter(res));
+    EXPECT_THAT(res, ::testing::ElementsAre(f, f, f, t, t, t, t, t, t, t));
   }
+
+  using S = ad_utility::SetOfIntervals;
+  auto checkPrefix = [](const S& set, size_t size,
+                        const std::vector<Id>& expected) {
+    auto generator = sparqlExpression::detail::resultGenerator(set, size);
+    std::vector<Id> res;
+    ql::ranges::copy(generator, std::back_inserter(res));
+    EXPECT_EQ(res, expected);
+  };
+  const auto complement = S::Complement{}(S{{{1, 2}}});
+  checkPrefix(complement, 3, {t, f, t});
+  checkPrefix(S::Complement{}(S{}), 3, {t, t, t});
+  checkPrefix(complement, 0, {});
+  checkPrefix(S{{{3, 5}}}, 3, {f, f, f});
+  checkPrefix(S{{{4, 6}}}, 3, {f, f, f});
+
+  auto transformed = sparqlExpression::detail::resultGenerator(
+      complement, 3, [](Id id) { return id.getBool() ? 42 : -1; });
+  std::vector<int> transformedRes;
+  ql::ranges::copy(transformed, std::back_inserter(transformedRes));
+  EXPECT_THAT(transformedRes, ::testing::ElementsAre(42, -1, 42));
 }

@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <initializer_list>
 #include <unordered_set>
 
 #include "engine/sparqlExpressions/SetOfIntervals.h"
@@ -165,8 +166,24 @@ TEST(SetOfIntervals, toIdVector) {
 
   ASSERT_EQ(result, expected);
 
-  // An interval must not extend beyond the requested target size.
-  SetOfIntervals tooLarge{{{0, 9}}};
-  ASSERT_THROW(SetOfIntervals::toIdVector(tooLarge, 8, allocator),
-               ad_utility::Exception);
+  auto checkClipping = [&allocator](const SetOfIntervals& set,
+                                    std::initializer_list<bool> values) {
+    VectorWithMemoryLimit<Id> expected{allocator};
+    for (bool value : values) {
+      expected.push_back(Id::makeFromBool(value));
+    }
+    EXPECT_EQ(SetOfIntervals::toIdVector(set, expected.size(), allocator),
+              expected);
+  };
+
+  // Materialization clips intervals to the finite target size.
+  checkClipping(SetOfIntervals{{{0, 9}}},
+                {true, true, true, true, true, true, true, true});
+  checkClipping(Complement{}(intervals),
+                {true, false, false, true, true, false, true, true});
+  checkClipping(Complement{}(SetOfIntervals{}), {true, true, true});
+  checkClipping(Complement{}(intervals), {});
+  checkClipping(SetOfIntervals{{{3, 5}}}, {false, false, false});
+  checkClipping(SetOfIntervals{{{4, 6}}}, {false, false, false});
+  checkClipping(SetOfIntervals{{{1, 5}}}, {false, true, true});
 }

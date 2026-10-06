@@ -467,6 +467,64 @@ TEST(SparqlExpression, logicalOperators) {
 }
 
 // _____________________________________________________________________________
+TEST(SparqlExpression, logicalOperatorsWithComplementAndFiniteVector) {
+  using S = ad_utility::SetOfIntervals;
+  TestContext testContext;
+  testContext.context._beginIndex = 0;
+  testContext.context._endIndex = 3;
+  const auto& allocator = testContext.qec->getAllocator();
+  V<Id> expected{{B(true), B(false), B(true)}, allocator};
+
+  for (bool isAnd : {true, false}) {
+    for (bool reversed : {false, true}) {
+      SCOPED_TRACE(isAnd ? "AND" : "OR");
+      SCOPED_TRACE(reversed);
+      SparqlExpression::Ptr intervals =
+          std::make_unique<SingleUseExpression>(S::Complement{}(S{{{1, 2}}}));
+      V<Id> values{{B(isAnd), B(isAnd), B(isAnd)}, allocator};
+      SparqlExpression::Ptr vector =
+          std::make_unique<SingleUseExpression>(std::move(values));
+      if (reversed) {
+        std::swap(intervals, vector);
+      }
+      auto expression =
+          isAnd ? makeAndExpression(std::move(intervals), std::move(vector))
+                : makeOrExpression(std::move(intervals), std::move(vector));
+      auto result = expression->evaluate(&testContext.context);
+      ASSERT_THAT(result, ::testing::VariantWith<V<Id>>(
+                              sparqlExpressionResultMatcher(expected)));
+    }
+  }
+}
+
+// _____________________________________________________________________________
+TEST(SparqlExpression, addComplementAndFiniteVector) {
+  using S = ad_utility::SetOfIntervals;
+  TestContext testContext;
+  testContext.context._beginIndex = 0;
+  testContext.context._endIndex = 3;
+  const auto& allocator = testContext.qec->getAllocator();
+  V<Id> expected{{I(1), I(0), I(1)}, allocator};
+
+  for (bool reversed : {false, true}) {
+    SCOPED_TRACE(reversed);
+    SparqlExpression::Ptr intervals =
+        std::make_unique<SingleUseExpression>(S::Complement{}(S{{{1, 2}}}));
+    V<Id> zeros{{I(0), I(0), I(0)}, allocator};
+    SparqlExpression::Ptr vector =
+        std::make_unique<SingleUseExpression>(std::move(zeros));
+    if (reversed) {
+      std::swap(intervals, vector);
+    }
+    auto expression =
+        makeAddExpression(std::move(intervals), std::move(vector));
+    auto result = expression->evaluate(&testContext.context);
+    ASSERT_THAT(result, ::testing::VariantWith<V<Id>>(
+                            sparqlExpressionResultMatcher(expected)));
+  }
+}
+
+// _____________________________________________________________________________
 TEST(SparqlExpression, multiplyExpressionWithVariable) {
   TestContext testContext;
 

@@ -96,14 +96,15 @@ struct SetOfIntervals {
 
     size_t previousEnd = 0;
     for (const auto& [begin, end] : set._intervals) {
-      AD_CONTRACT_CHECK(end <= targetSize,
-                        "The size of a `SetOfIntervals` exceeds the total size "
-                        "of the evaluation context.");
+      if (begin >= targetSize) {
+        break;
+      }
+      const auto clippedEnd = std::min(end, targetSize);
 
       result.insert(result.end(), begin - previousEnd, Id::makeFromBool(false));
-      result.insert(result.end(), end - begin, Id::makeFromBool(true));
+      result.insert(result.end(), clippedEnd - begin, Id::makeFromBool(true));
 
-      previousEnd = end;
+      previousEnd = clippedEnd;
     }
 
     result.insert(result.end(), targetSize - previousEnd,
