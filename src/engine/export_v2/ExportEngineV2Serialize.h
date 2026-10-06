@@ -69,11 +69,11 @@ inline ScatterGatherChunk serializeTableChunk(
       } else if (id.getDatatype() == Datatype::Undefined) {
         // empty string for undef
       } else if (id.getDatatype() == Datatype::LocalVocabIndex) {
-        // Same source as `ql::exportIds::getLiteralOrIriFromVocabIndex`: the
-        // entry already is a `LiteralOrIri`, so its string representation is
-        // the exported cell content.
-        std::string_view raw = localVocab.getWord(id.getLocalVocabIndex())
-                                   .toStringRepresentation();
+        // CSV uses bare content; TSV preserves the full RDF representation.
+        const auto& word = localVocab.getWord(id.getLocalVocabIndex());
+        std::string_view raw = format == RowFormat::Csv
+                                   ? asStringViewUnsafe(word.getContent())
+                                   : word.toStringRepresentation();
         appendEscaped(raw);
       } else {
         AD_THROW(
