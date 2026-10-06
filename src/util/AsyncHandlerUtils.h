@@ -22,9 +22,10 @@ namespace ad_utility {
 // Wrap a completion `handler` with the signature
 // `void(std::exception_ptr, Payload)` such that it is never run inline, but
 // always `post`ed onto the executor that is associated with it (or onto
-// `defaultExecutor`, if it has none of its own). The resulting handler may
-// hence safely be invoked directly, in particular from within a strand,
-// because the actual work of `handler` then runs outside of that strand.
+// `defaultExecutor`, if it has none of its own). The wrapper may be invoked
+// directly, including within a strand: `handler` never runs inline on the
+// caller's stack. Its associated executor may still be that strand; no executor
+// or strand hop is guaranteed.
 //
 // NOTE: This is not the same as `boost::asio::bind_executor`, for three
 // reasons. First, `bind_executor` only *associates* an executor with a
