@@ -18,8 +18,9 @@
 // class *why* it may not be copied (or moved), whenever that reason is not
 // obvious.
 //
-// Both are empty classes, so deriving from them does not increase the size of
-// the derived class (empty base optimization).
+// Both are empty classes, so deriving from them typically does not increase the
+// size of the derived class (empty base optimization). This is not guaranteed
+// for all layouts, for example when there are repeated bases of the same type.
 //
 // NOTE: The destructors are deliberately `protected` and non-virtual, because
 // these classes are an implementation detail of the derived class and never a
