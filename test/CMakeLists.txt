@@ -251,7 +251,10 @@ else ()
     linkAndDiscoverTest(TokenTest sparqlParser qlever_util)
 endif ()
 
-addLinkAndDiscoverTestNoLibs(RdfParserTest index)
+# This target tests coroutine-only parsers that are absent in the reduced build.
+if (NOT REDUCED_FEATURE_SET_FOR_CPP17)
+    addLinkAndDiscoverTestNoLibs(RdfParserTest index)
+endif ()
 
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
