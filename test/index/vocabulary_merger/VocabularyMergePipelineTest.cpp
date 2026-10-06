@@ -11,6 +11,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -117,8 +118,39 @@ class VocabularyMergePipelineDeathTest : public ::testing::Test {
   void SetUp() override {
     oldStyle_ = ::testing::FLAGS_gtest_death_test_style;
     ::testing::FLAGS_gtest_death_test_style = "threadsafe";
-    if (!ql::filesystem::exists("/dev/full")) {
-      GTEST_SKIP() << "/dev/full is unavailable";
+    ql::error_code error;
+    const bool isCharacterDevice =
+        ql::filesystem::is_character_file("/dev/full", error);
+    if (error) {
+      GTEST_SKIP() << "Cannot stat /dev/full: " << error.message();
+    }
+    if (!isCharacterDevice) {
+      GTEST_SKIP() << "/dev/full is unavailable or is not a character device";
+    }
+    // Probe both open modes used by the ID map writer without involving
+    // production code, so genuine writer regressions still fail the tests.
+    std::ofstream create{"/dev/full",
+                         std::ios::binary | std::ios::out | std::ios::trunc};
+    if (!create.is_open()) {
+      GTEST_SKIP() << "Cannot open /dev/full for truncating creation";
+    }
+    create.close();
+    if (create.fail()) {
+      GTEST_SKIP() << "Cannot close /dev/full after truncating creation";
+    }
+    std::ofstream probe{"/dev/full",
+                        std::ios::binary | std::ios::in | std::ios::out};
+    if (!probe.is_open()) {
+      GTEST_SKIP() << "Cannot reopen /dev/full for reading and writing";
+    }
+    probe.seekp(0);
+    if (probe.fail()) {
+      GTEST_SKIP() << "Cannot seek to the start of /dev/full";
+    }
+    probe.put('x');
+    probe.flush();
+    if (!probe.fail()) {
+      GTEST_SKIP() << "/dev/full does not fail when writing and flushing";
     }
   }
   void TearDown() override {
