@@ -1034,7 +1034,7 @@ TEST(ElasticExportSchedulerTest, ProductionWiringBoundsPoolAndYieldsToLoad) {
       expected.push_back(absl::StrCat("inline_", i));
       consumed.push_back(sessionC.consumeNextResult());
     }
-    EXPECT_THAT(consumed, ::testing::ElementsAreArray(expected));
+    EXPECT_EQ(consumed, expected);
     EXPECT_FALSE(sessionC.hasMoreResults());
   }
   // The second query has ended, but all `poolSize` slots are still taken by
