@@ -201,6 +201,23 @@ TEST(GetPrefilterExpressionFromSparqlExpression,
   // Same expected value for <http://example.org/42> == ?x.
   evalAndEqualityCheck(eqSprql(encodedIri, var),
                        pr(eq(encodedId.value()), var));
+  evalAndEqualityCheck(neqSprql(var, encodedIri),
+                       pr(neq(encodedId.value()), var));
+  evalAndEqualityCheck(neqSprql(encodedIri, var),
+                       pr(neq(encodedId.value()), var));
+  evalAndEqualityCheck(inSprqlExpr(var, encodedIri),
+                       pr(inExpr({encodedId.value()}), var));
+
+  // Ordered prefilters can't safely compare encoded and vocabulary IRIs.
+  // Check all four operators, both operand orders, and explicit IdExpressions.
+  for (auto makeOrdered : {ltSprql, leSprql, gtSprql, geSprql}) {
+    evalAndEqualityCheck(makeOrdered(var, encodedIri));
+    evalAndEqualityCheck(makeOrdered(encodedIri, var));
+    evalAndEqualityCheck(makeOrdered(var, encodedId.value()));
+    evalAndEqualityCheck(makeOrdered(encodedId.value(), var));
+    evalAndEqualityCheck(notSprqlExpr(makeOrdered(var, encodedIri)));
+    evalAndEqualityCheck(notSprqlExpr(makeOrdered(encodedIri, var)));
+  }
 
   // A non-encodable IRI still yields a `LocalVocabEntry`.
   const std::string nonEncodedIriStr = "<http://example.org/noDigits>";
@@ -209,6 +226,10 @@ TEST(GetPrefilterExpressionFromSparqlExpression,
       context.encodeAsId(nonEncodedIri.toStringRepresentation()).has_value());
   evalAndEqualityCheck(eqSprql(var, nonEncodedIri),
                        pr(eq(LVE(nonEncodedIriStr, context)), var));
+  evalAndEqualityCheck(ltSprql(var, nonEncodedIri),
+                       pr(lt(LVE(nonEncodedIriStr, context)), var));
+  evalAndEqualityCheck(ltSprql(nonEncodedIri, var),
+                       pr(gt(LVE(nonEncodedIriStr, context)), var));
 }
 
 //______________________________________________________________________________

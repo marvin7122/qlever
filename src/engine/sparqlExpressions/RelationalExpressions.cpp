@@ -461,6 +461,14 @@ RelationalExpression<comp>::getPrefilterExpressionForMetadata(
     const auto& optReferenceValue =
         detail::getIdOrLocalVocabEntryFromLiteralExpression(child1, context);
     if (!optReferenceValue.has_value()) return {};
+    if constexpr (comp != Comparison::EQ && comp != Comparison::NE) {
+      // Ordered metadata prefilters don't support comparisons across encoded
+      // IRIs and vocabulary representations.
+      if (const auto* id = std::get_if<Id>(&optReferenceValue.value());
+          id && id->getDatatype() == Datatype::EncodedVal) {
+        return {};
+      }
+    }
     return prefilterExpressions::detail::makePrefilterExpressionVec<comp>(
         optReferenceValue.value(), variable, reversed, prefilterDate);
   };
