@@ -13,7 +13,9 @@
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "global/RuntimeParameters.h"
 #include "util/CancellationHandle.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 namespace {
 
@@ -298,6 +300,28 @@ TEST_F(ConstructTripleGeneratorTest, acrossBatchBoundary) {
   ASSERT_EQ(collected.size(), N);
   for (const auto& triple : collected) {
     EXPECT_THAT(triple, matchTriple("<s>", "<p>", "<o>"));
+  }
+}
+
+// The runtime parameter `construct-export-row-batch-size` sets the batch size.
+// Batches of one row, batches that do not divide the number of rows, and one
+// batch larger than the table all yield every row.
+TEST_F(ConstructTripleGeneratorTest, rowBatchSizeIsConfigurable) {
+  constexpr size_t N = 5;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  for (size_t batchSize : {size_t{1}, size_t{3}, size_t{4096}}) {
+    auto reset = setRuntimeParameterForTest<
+        &RuntimeParameters::constructExportRowBatchSize_>(batchSize);
+    auto table = makeTableWithRange(*result, 0, N);
+    auto collected = run(templateTriples, varMap, table);
+    ASSERT_EQ(collected.size(), N) << "batch size " << batchSize;
+    for (const auto& triple : collected) {
+      EXPECT_THAT(triple, matchTriple("<s>", "<p>", "<o>"));
+    }
   }
 }
 
