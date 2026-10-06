@@ -654,9 +654,7 @@ TEST(IndexScan, getResultSizeOfScanWithGraphFilters) {
                        bool estimateIsExact) {
     IndexScan scan{qec, Permutation::PSO, triple, std::move(graphs)};
     EXPECT_EQ(scan.sizeEstimateIsExactForTesting(), estimateIsExact);
-    if (estimateIsExact) {
-      EXPECT_EQ(scan.getSizeEstimate(), 40);
-    }
+    EXPECT_EQ(scan.getSizeEstimate(), 40);
     // Materialize the result rather than using the metadata-based exact size.
     EXPECT_EQ(scan.computeResultOnlyForTesting().idTableView().numRows(),
               expectedRows);
