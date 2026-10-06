@@ -306,6 +306,10 @@ TEST_F(ConstructTripleGeneratorTest, acrossBatchBoundary) {
 // batch 0, cancelling the handle causes the next get() call (which would start
 // batch 1) to throw.
 TEST_F(ConstructTripleGeneratorTest, cancellationThrowsBetweenBatches) {
+  // The batch-granular cancellation check is a property of the evaluation on
+  // the consuming thread; with a pipeline the evaluating threads run ahead.
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportPipelineDepth_>(0);
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
 
   std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
@@ -333,6 +337,10 @@ TEST_F(ConstructTripleGeneratorTest, cancellationThrowsBetweenBatches) {
 // Cancelling mid-batch does not interrupt the current batch: the remaining
 // triples of that batch are still returned.
 TEST_F(ConstructTripleGeneratorTest, cannotCancelDuringBatch) {
+  // The batch-granular cancellation check is a property of the evaluation on
+  // the consuming thread; with a pipeline the evaluating threads run ahead.
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportPipelineDepth_>(0);
   // Two rows. Both should fit inside a single batch (make sure via assert).
   static_assert(2 < ConstructTripleGenerator::BATCH_SIZE);
   auto result = makeResult(makeIdTableFromVector({{idS_}, {idO_}}));
