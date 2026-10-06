@@ -30,7 +30,6 @@ TEST(StringTest, ResizeAndOverwriteExactSize) {
 
 // _____________________________________________________________________________
 TEST(StringTest, ResizeAndOverwriteSmallerSize) {
-  // Start with enough capacity so that truncation must happen in place.
   std::string s(10, 'x');
   const char* dataBefore = s.data();
   const std::string full = "abcdefghij";
@@ -64,8 +63,7 @@ TEST(StringTest, ResizeAndOverwriteZeroCapacity) {
 }
 
 // _____________________________________________________________________________
-// Negative test: an operation returning more than the granted size violates
-// the contract on both the fallback and the C++23 branch.
+// Oversize results violate the contract on both branches.
 TEST(StringTest, ResizeAndOverwriteOversizedResultThrows) {
   std::string s;
   ASSERT_THROW(ql::resize_and_overwrite(s, 4, [](char*, size_t) { return 5u; }),
@@ -73,8 +71,7 @@ TEST(StringTest, ResizeAndOverwriteOversizedResultThrows) {
 }
 
 // _____________________________________________________________________________
-// A move-only operation passed as an rvalue must work: the backport moves it
-// into the C++23 branch lambda instead of capturing a reference to it.
+// Move-only rvalue operations work via the moved-into lambda.
 TEST(StringTest, ResizeAndOverwriteMoveOnlyOperation) {
   std::string s;
   const std::string text = "move-only";
@@ -86,4 +83,22 @@ TEST(StringTest, ResizeAndOverwriteMoveOnlyOperation) {
   };
   ql::resize_and_overwrite(s, text.size(), std::move(op));
   EXPECT_EQ(s, text);
+}
+
+// _____________________________________________________________________________
+// Lvalue operations are copied (taken by value), so the caller's copy is left
+// unchanged.
+TEST(StringTest, ResizeAndOverwriteLvalueOperationIsCopied) {
+  std::string s;
+  size_t numCalls = 0;
+  auto op = [numCalls](char* buf, size_t count) mutable {
+    ++numCalls;
+    std::memset(buf, 'a', count);
+    return numCalls;
+  };
+  ql::resize_and_overwrite(s, 3, op);
+  EXPECT_EQ(s, "a");
+  // Calling the original still starts at zero calls.
+  char buf[1];
+  EXPECT_EQ(op(buf, 1), 1u);
 }
