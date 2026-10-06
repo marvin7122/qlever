@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 #include "backports/span.h"
@@ -999,10 +1000,72 @@ TEST(ByteBufferWriteSerializer, serializeAtPositionOutOfRangeThrows) {
   // starts inside the data but reaches past its end.
   AD_EXPECT_THROW_WITH_MESSAGE(
       serializeAtPosition(writer, sizeof(uint32_t), char{0}),
-      ::testing::HasSubstr("position_ + numBytes <= data_.size()"));
+      ::testing::HasSubstr("numBytes <= data_.size() - position_"));
   AD_EXPECT_THROW_WITH_MESSAGE(
       serializeAtPosition(writer, 1, uint32_t{7}),
-      ::testing::HasSubstr("position_ + numBytes <= data_.size()"));
+      ::testing::HasSubstr("numBytes <= data_.size() - position_"));
+}
+
+namespace {
+struct RawBytesForOverwrite {
+  const char* data_;
+  size_t numBytes_;
+  AD_SERIALIZE_FRIEND_FUNCTION(RawBytesForOverwrite) {
+    serializer.serializeBytes(arg.data_, arg.numBytes_);
+  }
+};
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(ByteBufferWriteSerializer, serializeAtPositionOverflowAndBoundaries) {
+  auto test = []<bool aligned>() {
+    serialization::ByteBufferWriteSerializerT<aligned> writer;
+    const std::array<char, 4> original{'a', 'b', 'c', 'd'};
+    writer.serializeBytes(original.data(), original.size());
+
+    auto expectFailure = [&](size_t position, const auto& element,
+                             const char* diagnostic) {
+      const auto previousData = writer.data();
+      const auto previousPosition = writer.getCurrentPosition();
+      AD_EXPECT_THROW_WITH_MESSAGE(
+          serializeAtPosition(writer, position, element),
+          ::testing::HasSubstr(diagnostic));
+      EXPECT_EQ(writer.data(), previousData);
+      EXPECT_EQ(writer.getCurrentPosition(), previousPosition);
+    };
+
+    const auto max = std::numeric_limits<size_t>::max();
+    expectFailure(max, char{'x'}, "position_ <= data_.size()");
+    expectFailure(max - 1, RawBytesForOverwrite{original.data(), 4},
+                  "position_ <= data_.size()");
+    const char byte = 'x';
+    // The count must be rejected before forming an impossible source range.
+    expectFailure(1, RawBytesForOverwrite{&byte, max},
+                  "numBytes <= data_.size() - position_");
+    expectFailure(writer.data().size() + 1, RawBytesForOverwrite{&byte, 0},
+                  "position_ <= data_.size()");
+
+    const auto previousData = writer.data();
+    const auto previousPosition = writer.getCurrentPosition();
+    EXPECT_NO_THROW(serializeAtPosition(writer, previousPosition,
+                                        RawBytesForOverwrite{&byte, 0}));
+    EXPECT_EQ(writer.data(), previousData);
+    EXPECT_EQ(writer.getCurrentPosition(), previousPosition);
+
+    // Both a full-buffer patch and one ending exactly at the boundary work.
+    const std::array<char, 4> replacement{'w', 'x', 'y', 'z'};
+    EXPECT_NO_THROW(serializeAtPosition(
+        writer, 0,
+        RawBytesForOverwrite{replacement.data(), replacement.size()}));
+    EXPECT_THAT(writer.data(), ::testing::ElementsAre('w', 'x', 'y', 'z'));
+    EXPECT_EQ(writer.getCurrentPosition(), previousPosition);
+    EXPECT_NO_THROW(serializeAtPosition(
+        writer, 1, RawBytesForOverwrite{original.data(), original.size() - 1}));
+    EXPECT_THAT(writer.data(), ::testing::ElementsAre('w', 'a', 'b', 'c'));
+    EXPECT_EQ(writer.getCurrentPosition(), previousPosition);
+  };
+  test.template operator()<false>();
+  test.template operator()<true>();
 }
 
 // _____________________________________________________________________________

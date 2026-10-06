@@ -80,7 +80,8 @@ class ByteBufferWriteSerializerT : public NoCopy {
         : data_{data}, position_{position} {}
 
     void serializeBytes(const char* bytePointer, size_t numBytes) {
-      AD_CONTRACT_CHECK(position_ + numBytes <= data_.size());
+      AD_CONTRACT_CHECK(position_ <= data_.size());
+      AD_CONTRACT_CHECK(numBytes <= data_.size() - position_);
       std::copy(bytePointer, bytePointer + numBytes, data_.begin() + position_);
       position_ += numBytes;
     }
