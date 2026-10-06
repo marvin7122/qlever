@@ -67,10 +67,16 @@ size_t readLeadingPageCacheHits(int fd, ql::span<const size_t> numBytesToRead,
   AD_CONTRACT_CHECK(offsets.size() == numBytesToRead.size() &&
                     buffers.size() == numBytesToRead.size());
 #ifdef RWF_NOWAIT
+  if (!pageCacheFastPathSupported.load(std::memory_order_relaxed)) {
+    return 0;
+  }
   for (size_t i = 0; i < numBytesToRead.size(); ++i) {
     iovec target{buffers[i], numBytesToRead[i]};
     const ssize_t numBytesRead =
         preadv2(fd, &target, 1, static_cast<off_t>(offsets[i]), RWF_NOWAIT);
+    if (numBytesRead < 0 && errno == EOPNOTSUPP) {
+      pageCacheFastPathSupported.store(false, std::memory_order_relaxed);
+    }
     if (numBytesRead < 0 ||
         static_cast<size_t>(numBytesRead) != numBytesToRead[i]) {
       return i;

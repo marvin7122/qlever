@@ -1215,24 +1215,19 @@ CPP_template_def(typename RequestT, typename SendT)(
   // resume (observed on SELECT CSV even for the LegacyV1 branch).
   cppcoro::generator<std::string> responseGenerator =
 #if defined(QLEVER_ENABLE_EXPORT_V2)
-      (mode == ExportEngineMode::FastStreamingV2 &&
-       ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
-                                 mediaType))
-          ? ExportEngineV2::computeResult(
-                parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-                cancellationHandle, exportScheduler_.get())
-          : ExportQueryExecutionTrees::computeResult(
-                parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-                requestTimer, std::move(cancellationHandle));
+      useV2 ? ExportEngineV2::computeResult(
+                  parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+                  cancellationHandle, exportScheduler_.get())
+            : ExportQueryExecutionTrees::computeResult(
+                  parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+                  requestTimer, std::move(cancellationHandle));
 #else
       ExportQueryExecutionTrees::computeResult(
           parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
           requestTimer, std::move(cancellationHandle));
 #endif
 #if defined(QLEVER_ENABLE_EXPORT_V2)
-  if (mode == ExportEngineMode::FastStreamingV2 &&
-      ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
-                                mediaType)) {
+  if (useV2) {
     AD_LOG_INFO << "Using ExportEngineV2 for "
                 << ad_utility::toString(mediaType) << " export" << std::endl;
   }
