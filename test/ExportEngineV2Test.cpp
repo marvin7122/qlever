@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include "engine/export_v2/AsyncChunkPipeline.h"
 #include "engine/export_v2/ExportEngineV2Serialize.h"
 #include "engine/idTable/IdTable.h"
@@ -60,7 +62,29 @@ TEST(ExportEngineV2Test, SerializeTableChunkRendersIndexFreeDatatypes) {
   ScatterGatherChunkBuilder builder;
 
   auto chunk = serializeTableChunk(table, localVocab, RowFormat::Csv, builder);
-  EXPECT_EQ(chunk.toString(), "true,1.500000,\n");
+  EXPECT_EQ(chunk.toString(), "true,1.5,\n");
+}
+
+TEST(ExportEngineV2Test, SerializeTableChunkRendersLegacyDoubles) {
+  auto allocator = makeAllocator();
+  IdTable table{8, allocator};
+  constexpr double infinity = std::numeric_limits<double>::infinity();
+  table.push_back({Id::makeFromDouble(1.5), Id::makeFromDouble(1.0),
+                   Id::makeFromDouble(-0.0), Id::makeFromDouble(0.25),
+                   Id::makeFromDouble(std::numeric_limits<double>::quiet_NaN()),
+                   Id::makeFromDouble(infinity), Id::makeFromDouble(-infinity),
+                   Id::makeFromDouble(1e-20)});
+
+  LocalVocab localVocab;
+  for (RowFormat format : {RowFormat::Csv, RowFormat::Tsv}) {
+    SCOPED_TRACE(static_cast<int>(format));
+    ScatterGatherChunkBuilder builder;
+    auto chunk = serializeTableChunk(table, localVocab, format, builder);
+    EXPECT_EQ(chunk.toString(),
+              format == RowFormat::Csv
+                  ? "1.5,1.0,-0.0,0.25,NaN,INF,-INF,1e-20\n"
+                  : "1.5\t1.0\t-0.0\t0.25\tNaN\tINF\t-INF\t1e-20\n");
+  }
 }
 
 TEST(ExportEngineV2Test, SerializeTableChunkRejectsIndexBackedIds) {
