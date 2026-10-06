@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 
 #include "util/Exception.h"
 #include "util/TypeTraits.h"
@@ -50,12 +51,16 @@ constexpr int bitMaskSizeForValue(uint64_t maxValue) {
 
 // Round `offset` up to the next multiple of `alignment`, which has to be a
 // power of two (see `absl::has_single_bit`). For example, `alignUp(13, 8)` is
-// `16`, and `alignUp(16, 8)` is again `16`.
+// `16`, and `alignUp(16, 8)` is again `16`. Throws if the aligned offset is not
+// representable as a `size_t`.
 constexpr size_t alignUp(size_t offset, size_t alignment) {
   // NOTE: This function is called in tight loops, so the check is only an
   // expensive check, although it is rather cheap.
   AD_EXPENSIVE_CHECK(absl::has_single_bit(alignment));
-  return (offset + alignment - 1) & ~(alignment - 1);
+  const auto mask = alignment - 1;
+  AD_CONTRACT_CHECK(offset <= std::numeric_limits<size_t>::max() - mask,
+                    "aligned offset is not representable");
+  return (offset + mask) & ~mask;
 }
 
 namespace detail {
