@@ -163,12 +163,11 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 }
 
 // _____________________________________________________________________________
-void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
-                                          int fd,
-                                          ql::span<const size_t> numBytes,
-                                          ql::span<const uint64_t> offsets,
-                                          ql::span<char*> buffers,
-                                          ql::span<const size_t> positions) {
+void VocabularyOnDisk::readThroughManager(
+    ad_utility::BatchManagerBase& manager, int fd,
+    ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+    ql::span<char*> buffers, ql::span<const size_t> positions,
+    const ad_utility::BatchReadOptions& options) {
   if (positions.empty()) {
     return;
   }
@@ -180,8 +179,8 @@ void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
   auto selectedNumBytes = select(numBytes);
   auto selectedOffsets = select(offsets);
   auto selectedBuffers = select(buffers);
-  manager.wait(
-      manager.addBatch(fd, selectedNumBytes, selectedOffsets, selectedBuffers));
+  manager.wait(manager.addBatch(fd, selectedNumBytes, selectedOffsets,
+                                selectedBuffers, options));
 }
 
 // _____________________________________________________________________________
@@ -202,8 +201,8 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     target = reinterpret_cast<char*>(&offsetPair);
   }
   if (!pageCacheFastPath) {
-    manager.wait(
-        manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
+    manager.wait(manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets,
+                                  targets, batchReadOptions(true)));
     return offsetPairs;
   }
 
@@ -252,7 +251,7 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     }
   }
   readThroughManager(manager, offsetsFile_.fd(), sizes, fileOffsets, targets,
-                     missedPositions);
+                     missedPositions, batchReadOptions(true));
   return offsetPairs;
 }
 
@@ -282,12 +281,48 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     auto missed =
         ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets, targets);
     readThroughManager(manager, file_.fd(), sizes, fileOffsets,
-                       ql::span<char*>{targets}, missed);
+                       ql::span<char*>{targets}, missed,
+                       batchReadOptions(false));
   } else {
     manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets,
-                                  ql::span<char*>{targets}));
+                                  ql::span<char*>{targets},
+                                  batchReadOptions(false)));
   }
   return std::move(builder).finalize();
+}
+
+// _____________________________________________________________________________
+ad_utility::BatchReadOptions VocabularyOnDisk::batchReadOptions(
+    bool forOffsetsFile) const {
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers =
+      ad_utility::useRegisteredBuffersForVocabularyReads.load(
+          std::memory_order_relaxed);
+  if (options.useRegisteredBuffers &&
+      ad_utility::useDirectIoForVocabularyReads.load(
+          std::memory_order_relaxed)) {
+    AD_CORRECTNESS_CHECK(directIoFiles_ != nullptr);
+    auto& files = *directIoFiles_;
+    std::call_once(files.opened_, [&files]() {
+      auto openDirect = [](auto& file, const std::string& name) {
+        try {
+          file.open(name, /*useDirectIo=*/true);
+          AD_LOG_INFO << "Opened " << name
+                      << " with O_DIRECT for batched vocabulary reads"
+                      << std::endl;
+        } catch (const std::exception& e) {
+          AD_LOG_WARN << "Could not open " << name << " with O_DIRECT ("
+                      << e.what() << "); its batched reads use the page cache"
+                      << std::endl;
+        }
+      };
+      openDirect(files.words_, files.filename_);
+      openDirect(files.offsets_, absl::StrCat(files.filename_, offsetSuffix_));
+    });
+    options.directIoFd =
+        forOffsetsFile ? files.offsets_.fd() : files.words_.fd();
+  }
+  return options;
 }
 
 // _____________________________________________________________________________
@@ -371,6 +406,9 @@ void VocabularyOnDisk::open(const std::string& filename) {
       ad_utility::MmapVectorMetaData::readFromFile(offsetsFile_).size_;
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
+
+  directIoFiles_ = std::make_unique<DirectIoFiles>();
+  directIoFiles_->filename_ = filename;
 
   // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
