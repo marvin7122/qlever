@@ -20,6 +20,8 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/Serializer/Serializer.h"
 
+namespace ad_utility::vocabulary {
+
 // A vocabulary that stores all words in memory. The vocabulary supports
 // "holes", meaning that the indices of the contained words don't have to be
 // contiguous (but ascending). All accesses are implemented using binary search.
@@ -139,6 +141,17 @@ class VocabularyInMemoryBinSearch
 
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
+    // Indices past the largest stored index are out of range (missing indices
+    // *below* it are holes and yield a placeholder, see
+    // `wordAsStringOrPlaceholder`). Compare against the last stored index
+    // rather than `endIndex()`: the latter is one past the last index and
+    // wraps to 0 for a vocabulary containing the valid index `UINT64_MAX`
+    // (which the writer accepts), wrongly rejecting that lookup.
+    const auto storedIndices = this->indices();
+    for (size_t idx : indices) {
+      AD_CONTRACT_CHECK(storedIndices.empty() ||
+                        static_cast<uint64_t>(idx) <= storedIndices.back());
+    }
     return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
   }
 
@@ -202,5 +215,7 @@ class VocabularyInMemoryBinSearch
   // zero-copy view is read-only).
   Indices& ownedIndices() { return std::get<Indices>(indices_); }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORYBINSEARCH_H
