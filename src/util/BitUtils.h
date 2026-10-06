@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 
 #include "util/Exception.h"
 #include "util/TypeTraits.h"
@@ -55,7 +56,9 @@ constexpr size_t alignUp(size_t offset, size_t alignment) {
   // NOTE: This function is called in tight loops, so the check is only an
   // expensive check, although it is rather cheap.
   AD_EXPENSIVE_CHECK(absl::has_single_bit(alignment));
-  return (offset + alignment - 1) & ~(alignment - 1);
+  const size_t paddingMask = alignment - 1;
+  AD_CONTRACT_CHECK(offset <= std::numeric_limits<size_t>::max() - paddingMask);
+  return (offset + paddingMask) & ~paddingMask;
 }
 
 namespace detail {

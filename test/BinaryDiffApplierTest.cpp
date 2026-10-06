@@ -15,6 +15,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -162,6 +163,29 @@ TEST(BinaryDiffApplier, alignmentHasToBeAPowerOfTwo) {
     otherDiff.addAlign(alignment);
     EXPECT_EQ(otherDiff.targetSize(), alignment);
   }
+}
+
+// _____________________________________________________________________________
+TEST(BinaryDiffApplier, alignmentOverflowLeavesDiffUnchanged) {
+  constexpr size_t largestAlignment =
+      size_t{1} << (std::numeric_limits<size_t>::digits - 1);
+  BinaryDiffApplier diff;
+  diff.addInsert(toBytes("x"));
+  diff.addAlign(largestAlignment);
+  EXPECT_EQ(diff.targetSize(), largestAlignment);
+  diff.addInsert(toBytes("y"));
+  const auto targetSize = diff.targetSize();
+  const auto instructions = diff.instructions();
+
+  // Only the instructions are stored; do not allocate the enormous target.
+  EXPECT_THROW(diff.addAlign(largestAlignment), ad_utility::Exception);
+  EXPECT_EQ(diff.targetSize(), targetSize);
+  EXPECT_EQ(diff.instructions(), instructions);
+  EXPECT_EQ(diff.targetSize(), largestAlignment + 1);
+  EXPECT_THAT(
+      diff.instructions(),
+      ElementsAre(insertInstruction("x"), alignInstruction(largestAlignment),
+                  insertInstruction("y")));
 }
 
 // _____________________________________________________________________________

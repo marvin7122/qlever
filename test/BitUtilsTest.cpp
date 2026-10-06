@@ -134,6 +134,21 @@ TEST(BitUtils, alignUp) {
   // The alignment may also be large.
   EXPECT_EQ(alignUp(1, uint64_t{1} << 40), uint64_t{1} << 40);
 
+  // Rounding up must not wrap around, including at the largest alignment.
+  constexpr size_t max = std::numeric_limits<size_t>::max();
+  constexpr size_t largestAlignment =
+      size_t{1} << (std::numeric_limits<size_t>::digits - 1);
+  static_assert(alignUp(max, 1) == max);
+  static_assert(alignUp(max - 1, 2) == max - 1);
+  static_assert(alignUp(largestAlignment, largestAlignment) ==
+                largestAlignment);
+  EXPECT_EQ(alignUp(max, 1), max);
+  EXPECT_EQ(alignUp(max - 1, 2), max - 1);
+  EXPECT_EQ(alignUp(largestAlignment, largestAlignment), largestAlignment);
+  EXPECT_THROW(alignUp(max, 2), ad_utility::Exception);
+  EXPECT_THROW(alignUp(largestAlignment + 1, largestAlignment),
+               ad_utility::Exception);
+
   // An alignment that is not a power of two is a precondition violation, which
   // is only checked if the expensive checks are enabled.
   if constexpr (ad_utility::areExpensiveChecksEnabled) {
