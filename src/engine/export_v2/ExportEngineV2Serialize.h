@@ -63,7 +63,7 @@ inline ScatterGatherChunk serializeTableChunk(
       if (id.getDatatype() == Datatype::Int) {
         builder.appendCopy(std::to_string(id.getInt()));
       } else if (id.getDatatype() == Datatype::Double) {
-        builder.appendCopy(std::to_string(id.getDouble()));
+        builder.appendCopy(detail::formatLegacyDouble(id.getDouble()));
       } else if (id.getDatatype() == Datatype::Bool) {
         builder.appendCopy(id.getBoolLiteral());
       } else if (id.getDatatype() == Datatype::Undefined) {
