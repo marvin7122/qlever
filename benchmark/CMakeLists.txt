@@ -44,4 +44,8 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(VocabBatchLookupBenchmark vocabulary)
 
+    addAndLinkBenchmark(PolymorphicVocabLookupBatchMicroBenchmark vocabulary)
+
+    addAndLinkBenchmark(PolymorphicVocabLookupBatchEndToEndBenchmark vocabulary)
+
 endif()
