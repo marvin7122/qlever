@@ -9,6 +9,9 @@
 #ifndef QLEVER_SRC_ENGINE_CONSTRUCTBATCHEVALUATOR_H
 #define QLEVER_SRC_ENGINE_CONSTRUCTBATCHEVALUATOR_H
 
+#include <absl/container/inlined_vector.h>
+
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -16,9 +19,11 @@
 #include "engine/idTable/IdTable.h"
 #include "index/Index.h"
 #include "index/LocalVocab.h"
+#include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
 #include "util/LruCacheWithStatistics.h"
+#include "util/Synchronized.h"
 
 namespace qlever::constructExport {
 
@@ -48,6 +53,37 @@ struct BatchEvaluationResult {
 
 using IdCache =
     ad_utility::util::LRUCacheWithStatistics<Id, std::optional<EvaluatedTerm>>;
+
+// An `IdCache` that the two evaluating threads of the three-stage CONSTRUCT
+// export pipeline share (see `ConstructBatchEvaluator::prepareBatch`).
+using SynchronizedIdCache = ad_utility::Synchronized<IdCache>;
+
+// The first part of the evaluation of a batch (see
+// `ConstructBatchEvaluator::prepareBatch`): the values of all `Id`s that were
+// found in the `IdCache` or need no vocabulary read, and the submitted
+// vocabulary lookup of the remaining `VocabIndex` `Id`s. It owns everything it
+// refers to, so it stays valid after the result block it was prepared from has
+// been destroyed.
+struct PreparedBatch {
+  struct Column {
+    ColumnIndex columnIndex_ = 0;
+    // One entry per row of the batch; the rows of `pendingIds_` are filled by
+    // `completeBatch`.
+    EvaluatedVariableValues values_;
+    // The `VocabIndex` `Id`s of the column that still have to be looked up
+    // (unique, sorted), and for each of them the rows of the batch that hold
+    // it.
+    std::vector<Id> pendingIds_;
+    std::vector<absl::InlinedVector<size_t, 3>> pendingRows_;
+  };
+  size_t numRows_ = 0;
+  // The row id of the first row of the batch, used for blank node labels.
+  size_t blankNodeBaseId_ = 0;
+  std::vector<Column> columns_;
+  // One lookup for the `pendingIds_` of all columns, in the order of
+  // `columns_`; null iff no column has a pending `Id`.
+  std::unique_ptr<VocabLookupHandleBase> lookup_;
+};
 
 // Identifies a contiguous sub-range of rows of an `IdTable` that forms one
 // batch.
@@ -88,6 +124,23 @@ class ConstructBatchEvaluator {
       ql::span<const ColumnIndex> variableColumnIndices,
       const BatchEvaluationContext& evaluationContext,
       const LocalVocab& localVocab, const Index& index, IdCache& idCache);
+
+  // `evaluateBatch` split into two parts that can run on different threads.
+  // `prepareBatch` needs the result block of `evaluationContext` (and
+  // `localVocab`) only while it runs: it looks up every `Id` in `idCache`,
+  // resolves the misses that need no vocabulary read (encoded values, local
+  // vocabulary entries), and submits one vocabulary lookup for the remaining
+  // `VocabIndex` `Id`s without waiting for it. `completeBatch` waits for that
+  // lookup, inserts the new values into `idCache`, and returns the same
+  // result as `evaluateBatch`.
+  static PreparedBatch prepareBatch(
+      ql::span<const ColumnIndex> variableColumnIndices,
+      const BatchEvaluationContext& evaluationContext,
+      const LocalVocab& localVocab, const Index& index,
+      SynchronizedIdCache& idCache);
+  static BatchEvaluationResult completeBatch(PreparedBatch& prepared,
+                                             const Index& index,
+                                             SynchronizedIdCache& idCache);
 
  private:
   // Evaluate a single variable (identified by its `IdTable` column index)
