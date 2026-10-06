@@ -9,7 +9,10 @@
 
 #include "global/RuntimeParameters.h"
 
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+
+#include <limits>
 
 #include "backports/algorithm.h"
 #include "util/Algorithm.h"
@@ -70,6 +73,10 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(vocabularyIouringPageCacheFastPath_);
+  add(vocabularyNvmePassthrough_);
+  add(vocabularyNvmeNamespaceId_);
+  add(vocabularyNvmeMaxGapBlocks_);
+  add(vocabularyNvmeMaxBufferedMedianGap_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
@@ -96,6 +103,14 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  vocabularyNvmeNamespaceId_.setParameterConstraint(
+      [](size_t value, std::string_view parameterName) {
+        if (value == 0 || value > std::numeric_limits<uint32_t>::max()) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName,
+              " must be a nonzero 32-bit NVMe namespace id, was ", value)};
+        }
+      });
 }
 
 // _____________________________________________________________________________

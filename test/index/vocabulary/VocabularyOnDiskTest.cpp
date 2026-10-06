@@ -14,8 +14,10 @@
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "backports/filesystem.h"
 #include "global/RuntimeParameters.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
@@ -356,4 +358,229 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
     for ([[maybe_unused]] auto& r : streamed) {
     }
   });
+}
+
+namespace {
+// A batch manager that stands in for the device: it records every read that
+// is submitted to it and serves it with a blocking `pread`.
+class RecordingBatchManager : public ad_utility::BatchManagerBase {
+ public:
+  struct Read {
+    int fd_;
+    uint64_t offset_;
+    size_t numBytes_;
+  };
+  explicit RecordingBatchManager(std::shared_ptr<std::vector<Read>> reads)
+      : reads_{std::move(reads)} {}
+
+  BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
+                       ql::span<const uint64_t> offsets,
+                       ql::span<char*> buffers) override {
+    for (const auto& [n, offset, buffer] :
+         ::ranges::views::zip(numBytes, offsets, buffers)) {
+      reads_->push_back(Read{fd, offset, n});
+      ad_utility::SyncIoPolicy::readFullyOrThrow(fd, buffer, n, offset);
+    }
+    return nextHandle_++;
+  }
+  void wait(BatchHandle) override {}
+
+ private:
+  std::shared_ptr<std::vector<Read>> reads_;
+  BatchHandle nextHandle_ = 0;
+};
+
+// Ten words of 3000 bytes each ("aaa...", "bbb...", ...), stored back to back.
+std::vector<std::string> tenLargeWords() {
+  std::vector<std::string> words;
+  for (char c = 'a'; c < 'a' + 10; ++c) {
+    words.emplace_back(3000, c);
+  }
+  return words;
+}
+
+// Create a vocabulary from `words` with NVMe passthrough enabled (on a regular
+// words file), with the given gap parameters, and let `reads` record every
+// read of its batch lookups.
+struct NvmeVocabularyForTesting {
+  std::shared_ptr<std::vector<RecordingBatchManager::Read>> reads_ =
+      std::make_shared<std::vector<RecordingBatchManager::Read>>();
+  VocabularyOnDiskHandle vocabulary_;
+
+  NvmeVocabularyForTesting(const std::vector<std::string>& words,
+                           size_t maxGapBlocks, size_t maxBufferedMedianGap)
+      : vocabulary_{[&]() {
+          auto a = setRuntimeParameterForTest<
+              &RuntimeParameters::vocabularyNvmePassthrough_>(true);
+          auto b = setRuntimeParameterForTest<
+              &RuntimeParameters::vocabularyNvmeMaxGapBlocks_>(maxGapBlocks);
+          auto c = setRuntimeParameterForTest<
+              &RuntimeParameters::vocabularyNvmeMaxBufferedMedianGap_>(
+              ad_utility::MemorySize::bytes(maxBufferedMedianGap));
+          return createVocabularyFromWords(words);
+        }()} {
+    std::vector<std::unique_ptr<ad_utility::BatchManagerBase>> managers;
+    managers.push_back(std::make_unique<RecordingBatchManager>(reads_));
+    vocabulary_->setIoManagersForTesting(std::move(managers));
+  }
+
+  // The recorded reads of the words file through `fd`.
+  std::vector<RecordingBatchManager::Read> readsOf(int fd) const {
+    std::vector<RecordingBatchManager::Read> result;
+    for (const auto& read : *reads_) {
+      if (read.fd_ == fd) {
+        result.push_back(read);
+      }
+    }
+    return result;
+  }
+};
+}  // namespace
+
+// Without `vocabulary-nvme-passthrough`, all reads of the words file go through
+// the one words file descriptor, as before.
+TEST(VocabularyOnDisk, NvmePassthroughIsOffByDefault) {
+  auto vocab = createExampleVocabulary();
+  auto [passthroughFd, bufferedFd] = vocab->wordsFileDescriptorsForTesting();
+  EXPECT_EQ(passthroughFd, bufferedFd);
+}
+
+// A scattered batch (median gap above the threshold) is read from the
+// passthrough file descriptor as whole-block runs, one per word with the gap
+// allowance of zero, and the result is byte-identical.
+TEST(VocabularyOnDisk, NvmePassthroughScatteredBatchReadsWholeBlocks) {
+  const auto words = tenLargeWords();
+  NvmeVocabularyForTesting nvmeVocab{words, /*maxGapBlocks=*/0,
+                                     /*maxBufferedMedianGap=*/1024};
+  auto& vocab = *nvmeVocab.vocabulary_;
+  auto [passthroughFd, bufferedFd] = vocab.wordsFileDescriptorsForTesting();
+  ASSERT_NE(passthroughFd, bufferedFd);
+  // Gaps of 12000 and 9000 bytes.
+  std::array<size_t, 3> indices{9, 0, 5};
+  auto result = vocab.lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
+                                                                indices);
+  const auto commands = nvmeVocab.readsOf(passthroughFd);
+  ASSERT_EQ(commands.size(), 3u);
+  const uint64_t fileSize = 10 * 3000;
+  for (const auto& command : commands) {
+    EXPECT_EQ(command.offset_ % 512, 0u);
+    // Whole blocks, except for the last block of the file.
+    EXPECT_TRUE(command.numBytes_ % 512 == 0 ||
+                command.offset_ + command.numBytes_ == fileSize);
+  }
+  EXPECT_TRUE(nvmeVocab.readsOf(bufferedFd).empty());
+}
+
+// The gap allowance merges the words of a scattered batch into fewer, larger
+// commands (here: one command of at most 128 KiB for words that span 30000
+// bytes).
+TEST(VocabularyOnDisk, NvmePassthroughGapAllowanceMergesCommands) {
+  const auto words = tenLargeWords();
+  NvmeVocabularyForTesting nvmeVocab{words, /*maxGapBlocks=*/256,
+                                     /*maxBufferedMedianGap=*/1024};
+  auto& vocab = *nvmeVocab.vocabulary_;
+  std::array<size_t, 3> indices{9, 0, 5};
+  auto result = vocab.lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
+                                                                indices);
+  const auto commands =
+      nvmeVocab.readsOf(vocab.wordsFileDescriptorsForTesting().first);
+  ASSERT_EQ(commands.size(), 1u);
+  EXPECT_EQ(commands[0].offset_, 0u);
+  EXPECT_EQ(commands[0].numBytes_, 10u * 3000);
+}
+
+// A dense batch (median gap at most the threshold) is read through the
+// buffered file descriptor, one exact read per word, like without passthrough.
+TEST(VocabularyOnDisk, NvmePassthroughDenseBatchReadsBuffered) {
+  const auto words = tenLargeWords();
+  NvmeVocabularyForTesting nvmeVocab{words, /*maxGapBlocks=*/32,
+                                     /*maxBufferedMedianGap=*/1024};
+  auto& vocab = *nvmeVocab.vocabulary_;
+  auto [passthroughFd, bufferedFd] = vocab.wordsFileDescriptorsForTesting();
+  // Gaps 0, 0, 3000 (median 0).
+  std::array<size_t, 4> indices{3, 1, 2, 5};
+  auto result = vocab.lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
+                                                                indices);
+  EXPECT_TRUE(nvmeVocab.readsOf(passthroughFd).empty());
+  const auto reads = nvmeVocab.readsOf(bufferedFd);
+  ASSERT_EQ(reads.size(), 4u);
+  for (const auto& [read, index] : ::ranges::views::zip(reads, indices)) {
+    EXPECT_EQ(read.offset_, index * 3000);
+    EXPECT_EQ(read.numBytes_, 3000u);
+  }
+}
+
+// A batch with a single word has no locality to exploit and is read with
+// passthrough; empty words are never read.
+TEST(VocabularyOnDisk, NvmePassthroughSingleAndEmptyWords) {
+  std::vector<std::string> words{"", "alpha", "", "beta"};
+  NvmeVocabularyForTesting nvmeVocab{words, 32, 1024};
+  auto& vocab = *nvmeVocab.vocabulary_;
+  std::array<size_t, 3> indices{0, 3, 2};
+  auto result = vocab.lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
+                                                                indices);
+  const auto commands =
+      nvmeVocab.readsOf(vocab.wordsFileDescriptorsForTesting().first);
+  ASSERT_EQ(commands.size(), 1u);
+  // The words file has 9 bytes, so the one block is cut at its end.
+  EXPECT_EQ(commands[0].offset_, 0u);
+  EXPECT_EQ(commands[0].numBytes_, 9u);
+}
+
+// With the real batch managers, every access path returns the same words with
+// NVMe passthrough enabled (on a regular file) as without: batch lookups of
+// dense, scattered, duplicate and empty words (also with the page-cache fast
+// path), `operator[]`, and `scanAll`.
+TEST(VocabularyOnDisk, NvmePassthroughIsByteIdentical) {
+  auto words = tenLargeWords();
+  words.insert(words.begin() + 4, "");
+  words.push_back("tail");
+  auto enabled = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyNvmePassthrough_>(true);
+  auto threshold = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyNvmeMaxBufferedMedianGap_>(
+      ad_utility::MemorySize::bytes(1024));
+  auto vocab = createVocabularyFromWords(words);
+  auto [passthroughFd, bufferedFd] = vocab->wordsFileDescriptorsForTesting();
+  EXPECT_NE(passthroughFd, bufferedFd);
+  std::vector<std::vector<size_t>> batches{
+      {0, 1, 2, 3}, {11, 0, 6}, {4, 4, 10, 11}, {5}, {7, 7, 7}};
+  for (bool pageCacheFastPath : {false, true}) {
+    auto fastPath = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(
+        pageCacheFastPath);
+    for (const auto& indices : batches) {
+      auto result = vocab->lookupBatch(indices);
+      ASSERT_EQ(result.size(), indices.size());
+      for (const auto& [word, index] : ::ranges::views::zip(result, indices)) {
+        EXPECT_EQ(word, words[index]) << "at index " << index;
+      }
+    }
+  }
+  for (size_t i = 0; i < words.size(); ++i) {
+    EXPECT_EQ((*vocab)[i], words[i]);
+  }
+  EXPECT_THAT(scanAllToVector(vocab->scanAll()),
+              ::testing::ElementsAreArray(words));
+}
+
+// With NVMe passthrough enabled, a words file that is a character device, but
+// not an NVMe generic character device, fails when the vocabulary is opened.
+TEST(VocabularyOnDisk, NvmePassthroughRejectsOtherCharacterDevices) {
+  std::string filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  VocabularyCreator creator{filename};
+  creator.createVocabulary({"alpha", "beta"});
+  // Replace the words file by a symbolic link to `/dev/null`.
+  ad_utility::deleteFile(filename);
+  ql::filesystem::create_symlink("/dev/null", filename);
+  auto enabled = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyNvmePassthrough_>(true);
+  VocabularyOnDisk vocabulary;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      vocabulary.open(filename),
+      ::testing::HasSubstr("not an NVMe generic character device"));
 }

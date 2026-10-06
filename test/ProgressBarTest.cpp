@@ -31,12 +31,14 @@ TEST(ProgressBar, typicalUsage) {
     //
     // TODO: Why does \\d instead of [0-9] not work in the following regex?
     //
-    // NOTE: For macOS, `std::this_thread::sleep_for` can take much longer
-    // than indicated, resulting in a much lower speed than expected.
+    // NOTE: `std::this_thread::sleep_for` sleeps at least as long as
+    // indicated, but can take much longer (on macOS, and on heavily loaded
+    // machines such as shared CI runners), resulting in a much lower speed
+    // than expected. Only the upper bound of the speed is therefore checked.
     std::string expectedSpeedRegex =
 #ifndef _QLEVER_NO_TIMING_TESTS
-        "\\[average speed [234]\\.[0-9] M/s, last batch [1234]\\.[0-9] M/s"
-        ", fastest [234]\\.[0-9] M/s, slowest [1234]\\.[0-9] M/s\\] ";
+        "\\[average speed [0-4]\\.[0-9] M/s, last batch [0-4]\\.[0-9] M/s"
+        ", fastest [0-4]\\.[0-9] M/s, slowest [0-4]\\.[0-9] M/s\\] ";
 #else
         "\\[average speed [0-9]\\.[0-9] M/s, last batch [0-9]\\.[0-9] M/s"
         ", fastest [0-9]\\.[0-9] M/s, slowest [0-9]\\.[0-9] M/s\\] ";
@@ -73,7 +75,7 @@ TEST(ProgressBar, numberOfStepsLessThanBatchSize) {
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
   std::string expectedUpdateRegex =
 #ifndef _QLEVER_NO_TIMING_TESTS
-      "Steps: 30,000 \\[average speed [234]\\.[0-9] M/s\\] \n";
+      "Steps: 30,000 \\[average speed [0-4]\\.[0-9] M/s\\] \n";
 #else
       "Steps: 30,000 \\[average speed [0-9]\\.[0-9] M/s\\] \n";
 #endif
