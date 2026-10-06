@@ -36,4 +36,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(GroupByHashMapBenchmark engine testUtil gtest gmock)
 
+    addAndLinkBenchmark(PforDeltaBitPackingBenchmark global qlever_util)
+
 endif()
