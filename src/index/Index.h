@@ -95,8 +95,10 @@ class Index {
   const IndexImpl& getPimpl() const { return *pimpl_; }
 
   // Create an index from a file. Will write vocabulary and on-disk index data.
-  // `numThreads` is the number of threads used during the index build; it must
-  // be at least 1.
+  // `numThreads` controls the initial parsing/partial-vocabulary work and the
+  // conversion from local to global IDs. It must be at least 1 and is not a
+  // build-wide thread limit; merging and permutation creation use their own
+  // parallelism.
   // NOTE: The index can not directly be used after this call, but has to be
   // setup by `createFromOnDiskIndex` after this call.
   void createFromFiles(const std::vector<InputFileSpecification>& files,
