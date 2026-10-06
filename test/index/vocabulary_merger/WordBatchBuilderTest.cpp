@@ -62,6 +62,27 @@ std::string fillWord(size_t i) { return absl::StrFormat("\"word%08d\"", i); }
 }  // namespace
 
 // _____________________________________________________________________________
+TEST(WordBatchBuilder, defaultConstructedWordUsesPartialVocabularyZero) {
+  QueueWord word;
+  EXPECT_EQ(word.partialFileId_, 0u);
+  word.entry_ = makeQueueWord("\"a\"", false, 1, 42).entry_;
+
+  std::vector<WordBatch> batches;
+  auto collect = [&batches](WordBatch batch) {
+    batches.push_back(std::move(batch));
+  };
+  WordBatchBuilder builder;
+  builder.addMergedWords({std::move(word)}, lessThan, collect);
+  builder.finish(collect);
+
+  ASSERT_EQ(batches.size(), 1u);
+  EXPECT_THAT(wordsOf(batches[0]),
+              ::testing::ElementsAre(Pair("\"a\"", false)));
+  EXPECT_THAT(mappingsOf(batches[0]),
+              ::testing::ElementsAre(Mapping{0, 0, 42}));
+}
+
+// _____________________________________________________________________________
 // The duplicates are eliminated, and each occurrence of a word yields one ID
 // index mapping that refers to the distinct word it belongs to.
 TEST(WordBatchBuilder, deduplicationAndMappings) {
