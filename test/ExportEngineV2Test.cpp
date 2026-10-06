@@ -6,14 +6,18 @@
 // You may not use this file except in compliance with the License,
 // which can be found in the `LICENSE` file at the root of this project.
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <limits>
+#include <string>
 
 #include "engine/export_v2/AsyncChunkPipeline.h"
 #include "engine/export_v2/ExportEngineV2Serialize.h"
 #include "engine/idTable/IdTable.h"
 #include "global/Id.h"
+#include "index/LocalVocabContext.h"
+#include "rdfTypes/RdfEscaping.h"
 #include "util/AllocatorTestHelpers.h"
 #include "util/GTestHelpers.h"
 
@@ -25,6 +29,24 @@
 using namespace ql::engine::export_v2;
 using namespace qlever::export_v2;
 using ad_utility::testing::makeAllocator;
+
+namespace {
+class MockLocalVocabContext : public LocalVocabContext {
+ public:
+  using VocabBounds = LocalVocabContext::VocabBounds;
+  MOCK_METHOD(int, compareWords, (std::string_view, std::string_view),
+              (const, override));
+  MOCK_METHOD(VocabBounds, getPositionOfWord, (std::string_view),
+              (const, override));
+  MOCK_METHOD(bool, hasSecondaryVocabulary, (), (const, override));
+  MOCK_METHOD(std::optional<SecondaryVocabIndex>, getSecondaryVocabIndex,
+              (std::string_view), (const, override));
+  MOCK_METHOD(std::optional<Id>, encodeAsId, (std::string_view),
+              (const, override));
+  MOCK_METHOD(ad_utility::BlankNodeManager*, getBlankNodeManager, (),
+              (const, override));
+};
+}  // namespace
 
 TEST(ExportEngineV2Test, SerializeTableChunkCsv) {
   auto allocator = makeAllocator();
@@ -85,6 +107,39 @@ TEST(ExportEngineV2Test, SerializeTableChunkRendersLegacyDoubles) {
                   ? "1.5,1.0,-0.0,0.25,NaN,INF,-INF,1e-20\n"
                   : "1.5\t1.0\t-0.0\t0.25\tNaN\tINF\t-INF\t1e-20\n");
   }
+}
+
+TEST(ExportEngineV2Test, SerializeTableChunkRendersLocalVocabForEachFormat) {
+  // No context calls are expected: serialization only reads the stored word.
+  ::testing::StrictMock<MockLocalVocabContext> context;
+  LocalVocab localVocab;
+  auto allocator = makeAllocator();
+  IdTable table{2, allocator};
+  std::string expectedTsv;
+  int64_t row = 0;
+  for (std::string_view representation :
+       {"\"plain\"", "\"bonjour\"@fr", "\"typed\"^^<http://example.org/type>",
+        "<http://example.org/iri>", "\"\"", "\"comma,\"quote\"\nline\ttab\""}) {
+    auto index = localVocab.getIndexAndAddIfNotContained(
+        LocalVocabEntry::fromStringRepresentation(std::string{representation},
+                                                  context));
+    table.push_back({Id::makeFromInt(row), Id::makeFromLocalVocabIndex(index)});
+    expectedTsv += std::to_string(row) + "\t" +
+                   RdfEscaping::escapeForTsv(
+                       localVocab.getWord(index).toStringRepresentation()) +
+                   "\n";
+    ++row;
+  }
+
+  ScatterGatherChunkBuilder csvBuilder;
+  auto csv = serializeTableChunk(table, localVocab, RowFormat::Csv, csvBuilder);
+  EXPECT_EQ(csv.toString(),
+            "0,plain\n1,bonjour\n2,typed\n3,http://example.org/iri\n4,\n"
+            "5,\"comma,\"\"quote\"\"\nline\ttab\"\n");
+
+  ScatterGatherChunkBuilder tsvBuilder;
+  auto tsv = serializeTableChunk(table, localVocab, RowFormat::Tsv, tsvBuilder);
+  EXPECT_EQ(tsv.toString(), expectedTsv);
 }
 
 TEST(ExportEngineV2Test, SerializeTableChunkRejectsIndexBackedIds) {
