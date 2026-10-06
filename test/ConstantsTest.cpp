@@ -8,7 +8,11 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
+
+#include <cstddef>
+#include <limits>
 
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
@@ -48,6 +52,18 @@ TEST(Constants, constructExportRowBatchSizeIsStrictlyPositive) {
       std::runtime_error);
   EXPECT_NO_THROW(
       setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(1));
+  // `views::chunk` takes the batch size as a signed `std::ptrdiff_t`.
+  constexpr auto maxBatchSize =
+      static_cast<size_t>(std::numeric_limits<std::ptrdiff_t>::max());
+  EXPECT_NO_THROW(
+      setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(
+          maxBatchSize));
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(
+          maxBatchSize + 1),
+      AllOf(HasSubstr("construct-export-row-batch-size"),
+            HasSubstr(absl::StrCat(maxBatchSize + 1))),
+      std::runtime_error);
 }
 
 // _____________________________________________________________________________

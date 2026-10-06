@@ -9,6 +9,8 @@
 
 #include "engine/ConstructTripleGenerator.h"
 
+#include <cstddef>
+
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
@@ -94,8 +96,10 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
-  const size_t batchSize =
-      getRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>();
+  // The parameter's constraint guarantees that the batch size fits into the
+  // signed difference type that `views::chunk` expects.
+  const auto batchSize = static_cast<std::ptrdiff_t>(
+      getRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>());
   return ranges::views::chunk(std::move(rowView), batchSize) |
          ql::views::transform([tableWithVocab, context = std::move(context),
                                tableRowOffset](auto chunkView) {

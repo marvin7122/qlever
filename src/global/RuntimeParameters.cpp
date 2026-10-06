@@ -11,6 +11,9 @@
 
 #include <absl/strings/str_join.h>
 
+#include <cstddef>
+#include <limits>
+
 #include "backports/algorithm.h"
 #include "util/Algorithm.h"
 
@@ -100,7 +103,18 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
-  constructExportRowBatchSize_.setParameterConstraint(mustBeStrictlyPositive);
+  constructExportRowBatchSize_.setParameterConstraint(
+      [](size_t value, std::string_view parameterName) {
+        // The CONSTRUCT export splits its rows with `views::chunk`, which takes
+        // the batch size as the (signed) difference type of the row range.
+        constexpr size_t maxBatchSize =
+            static_cast<size_t>(std::numeric_limits<std::ptrdiff_t>::max());
+        if (value == 0 || value > maxBatchSize) {
+          throw std::runtime_error{
+              absl::StrCat("Parameter ", parameterName, " must be in [1, ",
+                           maxBatchSize, "], was ", value)};
+        }
+      });
   vocabularyIouringRingSize_.setParameterConstraint(
       [](size_t value, std::string_view parameterName) {
         // `IORING_MAX_ENTRIES` in the kernel (`io_uring/io_uring.h`).
