@@ -260,6 +260,16 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // Pipeline depth of the batched reads in `VocabularyOnDisk`. The default of
+  // `1` keeps the two phases of `lookupBatch` sequential: all offsets are read
+  // before the first word is read. With a value `d >= 2`, `lookupBatch` splits
+  // its indices into sub-batches, keeps the offset reads of up to `d`
+  // sub-batches in flight, and submits the word reads of a sub-batch as soon
+  // as its offsets are known. `lookupBatchesStreamed` keeps the offset reads
+  // of up to `d` batches of its input in flight. Values below `1` are treated
+  // as `1`.
+  SizeT vocabularyIouringPipelineDepth_{1, "vocabulary-iouring-pipeline-depth"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

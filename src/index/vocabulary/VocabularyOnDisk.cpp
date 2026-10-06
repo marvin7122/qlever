@@ -15,7 +15,10 @@
 
 #include <algorithm>
 #include <array>
+#include <deque>
+#include <numeric>
 
+#include "backports/algorithm.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
@@ -163,14 +166,14 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 }
 
 // _____________________________________________________________________________
-void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
-                                          int fd,
-                                          ql::span<const size_t> numBytes,
-                                          ql::span<const uint64_t> offsets,
-                                          ql::span<char*> buffers,
-                                          ql::span<const size_t> positions) {
+std::optional<ad_utility::BatchManagerBase::BatchHandle>
+VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
+                                       int fd, ql::span<const size_t> numBytes,
+                                       ql::span<const uint64_t> offsets,
+                                       ql::span<char*> buffers,
+                                       ql::span<const size_t> positions) {
   if (positions.empty()) {
-    return;
+    return std::nullopt;
   }
   auto select = [&positions](auto values) {
     return ::ranges::to_vector(
@@ -180,31 +183,35 @@ void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
   auto selectedNumBytes = select(numBytes);
   auto selectedOffsets = select(offsets);
   auto selectedBuffers = select(buffers);
-  manager.wait(
-      manager.addBatch(fd, selectedNumBytes, selectedOffsets, selectedBuffers));
+  return manager.addBatch(fd, selectedNumBytes, selectedOffsets,
+                          selectedBuffers);
 }
 
 // _____________________________________________________________________________
-std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
+VocabularyOnDisk::PendingOffsetRead VocabularyOnDisk::submitOffsetPairs(
     ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
     bool pageCacheFastPath) const {
+  AD_CONTRACT_CHECK(!indices.empty());
   // For each requested index `i`, read its offset together with the next offset
-  // (which bounds the string) as one 16-byte pair from `.offsets`.
+  // (which bounds the string) as one 16-byte pair from `.offsets`. The target
+  // buffers are owned by the returned `PendingOffsetRead`, so the caller's
+  // `indices` span may go out of scope while the reads are in flight.
   const size_t numIndices = indices.size();
-  std::vector<OffsetPair> offsetPairs(numIndices);
-  std::vector<size_t> sizes(numIndices, sizeof(OffsetPair));
+  PendingOffsetRead pending;
+  pending.offsetPairs_.resize(numIndices);
+  std::vector sizes(numIndices, sizeof(OffsetPair));
   std::vector<uint64_t> fileOffsets(numIndices);
   std::vector<char*> targets(numIndices);
-  for (auto&& [fileOffset, index, target, offsetPair] :
-       ::ranges::views::zip(fileOffsets, indices, targets, offsetPairs)) {
+  for (auto&& [fileOffset, index, target, offsetPair] : ::ranges::views::zip(
+           fileOffsets, indices, targets, pending.offsetPairs_)) {
     AD_CONTRACT_CHECK(index < size());
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
   if (!pageCacheFastPath) {
-    manager.wait(
-        manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
-    return offsetPairs;
+    pending.handle_ =
+        manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets);
+    return pending;
   }
 
   // The pairs of consecutive indices overlap in the file, so read each run of
@@ -248,21 +255,39 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     }
     const uint64_t* runStart = runOffsets.data() + begin + run;
     for (size_t i = begin; i < end; ++i) {
-      offsetPairs[i] = OffsetPair{runStart[i - begin], runStart[i - begin + 1]};
+      pending.offsetPairs_[i] =
+          OffsetPair{runStart[i - begin], runStart[i - begin + 1]};
     }
   }
-  readThroughManager(manager, offsetsFile_.fd(), sizes, fileOffsets, targets,
-                     missedPositions);
-  return offsetPairs;
+  pending.handle_ = submitThroughManager(manager, offsetsFile_.fd(), sizes,
+                                         fileOffsets, targets, missedPositions);
+  return pending;
 }
 
 // _____________________________________________________________________________
-VocabBatchLookupResult VocabularyOnDisk::readStrings(
+std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::waitOffsetPairs(
+    ad_utility::BatchManagerBase& manager, PendingOffsetRead& pending) {
+  if (pending.handle_.has_value()) {
+    manager.wait(pending.handle_.value());
+  }
+  return std::move(pending.offsetPairs_);
+}
+
+// _____________________________________________________________________________
+std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
+    ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
+    bool pageCacheFastPath) const {
+  auto pending = submitOffsetPairs(manager, indices, pageCacheFastPath);
+  return waitOffsetPairs(manager, pending);
+}
+
+// _____________________________________________________________________________
+VocabularyOnDisk::PendingStringRead VocabularyOnDisk::submitStrings(
     ad_utility::BatchManagerBase& manager,
     ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath) const {
-  // Read the string data. String `i` starts at `offset_` with length
-  // `nextOffset_ - offset_`; the strings are packed contiguously into the
-  // builder's buffer, with one precomputed view per word at its fixed offset.
+  // String `i` starts at `offset_` with length `nextOffset_ - offset_`; the
+  // strings are packed contiguously into the builder's buffer, with one
+  // precomputed view per word at its fixed offset.
   const size_t numIndices = offsetPairs.size();
   std::vector<size_t> sizes(numIndices);
   std::vector<uint64_t> fileOffsets(numIndices);
@@ -272,22 +297,40 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     fileOffset = offsetPair.offset_;
   }
 
-  // `lookupBatch` rejects empty input, so `sizes` is non-empty here, as the
-  // builder requires.
-  ContiguousVocabBatchBuilder builder(sizes);
-  // Bind the returned array: the reads take spans, and the pointers must stay
-  // alive until all reads have completed.
-  auto targets = builder.targets();
-  if (pageCacheFastPath) {
-    auto missed =
-        ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets, targets);
-    readThroughManager(manager, file_.fd(), sizes, fileOffsets,
-                       ql::span<char*>{targets}, missed);
-  } else {
-    manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets,
-                                  ql::span<char*>{targets}));
+  // Every caller passes a non-empty batch, so `sizes` is non-empty here, as
+  // the builder requires. The builder's buffer is heap-allocated, so the read
+  // targets stay valid when the returned `PendingStringRead` is moved.
+  PendingStringRead pending{ContiguousVocabBatchBuilder{sizes}, std::nullopt};
+  auto targets = pending.builder_.targets();
+  if (!pageCacheFastPath) {
+    pending.handle_ = manager.addBatch(file_.fd(), sizes, fileOffsets,
+                                       ql::span<char*>{targets});
+    return pending;
   }
-  return std::move(builder).finalize();
+  auto missed =
+      ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets, targets);
+  pending.handle_ =
+      submitThroughManager(manager, file_.fd(), sizes, fileOffsets,
+                           ql::span<char*>{targets}, missed);
+  return pending;
+}
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyOnDisk::readStrings(
+    ad_utility::BatchManagerBase& manager,
+    ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath) const {
+  auto pending = submitStrings(manager, offsetPairs, pageCacheFastPath);
+  if (pending.handle_.has_value()) {
+    manager.wait(pending.handle_.value());
+  }
+  return std::move(pending.builder_).finalize();
+}
+
+// _____________________________________________________________________________
+bool VocabularyOnDisk::pageCacheFastPathIsEnabled() {
+  return getRuntimeParameter<
+             &RuntimeParameters::vocabularyIouringPageCacheFastPath_>() &&
+         ad_utility::pageCacheFastPathIsSupported();
 }
 
 // _____________________________________________________________________________
@@ -306,19 +349,197 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "`VocabularyOnDisk::lookupBatch`");
   }};
 
-  const bool pageCacheFastPath =
-      getRuntimeParameter<
-          &RuntimeParameters::vocabularyIouringPageCacheFastPath_>() &&
-      ad_utility::pageCacheFastPathIsSupported();
+  const bool pageCacheFastPath = pageCacheFastPathIsEnabled();
+  const size_t pipelineDepth = getRuntimeParameter<
+      &RuntimeParameters::vocabularyIouringPipelineDepth_>();
+  if (pipelineDepth >= 2) {
+    return lookupBatchPipelined(*manager, indices, pipelineDepth,
+                                PIPELINE_SUB_BATCH_SIZE, pageCacheFastPath);
+  }
   auto offsetPairs = readOffsetPairs(*manager, indices, pageCacheFastPath);
   return readStrings(*manager, offsetPairs, pageCacheFastPath);
 }
 
 // _____________________________________________________________________________
+VocabBatchLookupResult VocabularyOnDisk::lookupBatchPipelined(
+    ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
+    size_t pipelineDepth, size_t subBatchSize, bool pageCacheFastPath) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  AD_CONTRACT_CHECK(pipelineDepth > 0 && subBatchSize > 0);
+  // Check every index before the first read is submitted, so that an
+  // out-of-range index throws while no read is in flight.
+  AD_CONTRACT_CHECK(ql::ranges::all_of(
+      indices, [this](size_t index) { return index < size(); }));
+
+  const size_t numSubBatches =
+      (indices.size() + subBatchSize - 1) / subBatchSize;
+  auto subBatch = [&indices, subBatchSize](size_t i) {
+    const size_t begin = i * subBatchSize;
+    return indices.subspan(begin,
+                           std::min(subBatchSize, indices.size() - begin));
+  };
+
+  std::deque<PendingOffsetRead> pendingOffsetReads;
+  // The word reads of each sub-batch go into that sub-batch's own builder,
+  // because they are submitted as soon as its offsets are known, before the
+  // total size of all words is known.
+  std::vector<PendingStringRead> pendingWordReads;
+  pendingWordReads.reserve(numSubBatches);
+  // If anything below throws, wait for all reads that are still in flight
+  // before their target buffers (in `pendingOffsetReads` and
+  // `pendingWordReads`) die. Waiting for a batch that already completed
+  // returns immediately.
+  absl::Cleanup drainReads{[&manager, &pendingOffsetReads,
+                            &pendingWordReads]() {
+    ad_utility::terminateIfThrows(
+        [&]() {
+          for (const auto& pending : pendingOffsetReads) {
+            if (pending.handle_.has_value()) {
+              manager.wait(pending.handle_.value());
+            }
+          }
+          for (const auto& pending : pendingWordReads) {
+            if (pending.handle_.has_value()) {
+              manager.wait(pending.handle_.value());
+            }
+          }
+        },
+        "draining in-flight reads in `VocabularyOnDisk::lookupBatchPipelined`");
+  }};
+
+  size_t numSubmitted = 0;
+  for (size_t i = 0; i < numSubBatches; ++i) {
+    // Keep the offset reads of up to `pipelineDepth` sub-batches in flight.
+    for (; numSubmitted < std::min(numSubBatches, i + pipelineDepth);
+         ++numSubmitted) {
+      pendingOffsetReads.push_back(submitOffsetPairs(
+          manager, subBatch(numSubmitted), pageCacheFastPath));
+    }
+    auto offsetPairs = waitOffsetPairs(manager, pendingOffsetReads.front());
+    pendingOffsetReads.pop_front();
+    // Submit the word reads of sub-batch `i` without waiting for them, so they
+    // overlap with the offset reads of the following sub-batches.
+    pendingWordReads.push_back(
+        submitStrings(manager, offsetPairs, pageCacheFastPath));
+  }
+  for (const auto& pending : pendingWordReads) {
+    if (pending.handle_.has_value()) {
+      manager.wait(pending.handle_.value());
+    }
+  }
+
+  // All reads have completed. Concatenate the sub-batch results without
+  // copying the words: the assembled result co-owns every sub-batch buffer.
+  MultiSourceVocabBatchAssembler assembler{indices.size()};
+  std::vector<size_t> resultPositions;
+  for (size_t i = 0; i < numSubBatches; ++i) {
+    auto subBatchResult = std::move(pendingWordReads[i].builder_).finalize();
+    resultPositions.resize(subBatchResult.size());
+    std::iota(resultPositions.begin(), resultPositions.end(), i * subBatchSize);
+    assembler.scatterSubBatchResultAtPositions(std::move(subBatchResult),
+                                               resultPositions);
+  }
+  pendingWordReads.clear();
+  return std::move(assembler).finalizeVocabBatchLookupResult();
+}
+
+// _____________________________________________________________________________
 VocabLookupOutput VocabularyOnDisk::lookupBatchesStreamed(
     VocabLookupInput rangeOfIndexBatches) const {
-  return ad_utility::vocabulary::lookupBatchesStreamed(
-      *this, std::move(rangeOfIndexBatches));
+  return lookupBatchesStreamed(
+      std::move(rangeOfIndexBatches),
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyIouringPipelineDepth_>());
+}
+
+// _____________________________________________________________________________
+VocabLookupOutput VocabularyOnDisk::lookupBatchesStreamed(
+    VocabLookupInput rangeOfIndexBatches, size_t pipelineDepth) const {
+  if (pipelineDepth < 2) {
+    // Depth 1 (or 0, treated as 1) is the historical drain-per-batch behavior:
+    // each batch completes fully before the next batch submits.
+    return ad_utility::vocabulary::lookupBatchesStreamed(
+        *this, std::move(rangeOfIndexBatches));
+  }
+  // Pipelined behavior: keep up to `pipelineDepth` batches' offset reads in
+  // flight on a single pooled I/O manager, so batch N+1's offset reads issue
+  // while batch N's strings are read and consumed.
+  struct PipelineState {
+    const VocabularyOnDisk* vocabulary_;
+    VocabLookupInput input_;
+    size_t pipelineDepth_;
+    bool pageCacheFastPath_;
+    std::unique_ptr<ad_utility::BatchManagerBase> manager_;
+    std::deque<VocabularyOnDisk::PendingOffsetRead> pending_;
+    bool inputExhausted_ = false;
+
+    PipelineState(const VocabularyOnDisk* vocabulary, VocabLookupInput input,
+                  size_t pipelineDepth, bool pageCacheFastPath)
+        : vocabulary_{vocabulary},
+          input_{std::move(input)},
+          pipelineDepth_{pipelineDepth},
+          pageCacheFastPath_{pageCacheFastPath} {}
+
+    ~PipelineState() {
+      // If the stream is abandoned early (or a pull throws), drain the offset
+      // reads first: they target `pending_` buffers that die with this state,
+      // so the manager must be idle before it goes back to the pool.
+      if (manager_) {
+        ad_utility::terminateIfThrows(
+            [this]() {
+              for (const auto& pending : pending_) {
+                if (pending.handle_.has_value()) {
+                  manager_->wait(pending.handle_.value());
+                }
+              }
+              pending_.clear();
+              vocabulary_->ioManagers_->push(std::move(manager_));
+            },
+            "draining in-flight offset reads and returning the `IoManager` in "
+            "`VocabularyOnDisk::lookupBatchesStreamed`");
+      }
+    }
+
+    // Return the next batch of the stream, or `std::nullopt` at its end.
+    std::optional<VocabBatchLookupResult> next() {
+      // Pop the manager lazily on the first pull, so merely creating the
+      // stream (like the sequential path) acquires no pool slot.
+      if (!manager_) {
+        manager_ = vocabulary_->ioManagers_->pop().value();
+      }
+      // Submit ahead until the pipeline is full or the input is exhausted.
+      while (!inputExhausted_ && pending_.size() < pipelineDepth_) {
+        std::optional<std::vector<size_t>> indices = input_.get();
+        if (!indices.has_value()) {
+          inputExhausted_ = true;
+          break;
+        }
+        pending_.push_back(vocabulary_->submitOffsetPairs(
+            *manager_, indices.value(), pageCacheFastPath_));
+      }
+      if (pending_.empty()) {
+        // Input exhausted and nothing left in flight: return the manager and
+        // end the stream.
+        ad_utility::terminateIfThrows(
+            [this]() { vocabulary_->ioManagers_->push(std::move(manager_)); },
+            "returning the `IoManager` to the pool in "
+            "`VocabularyOnDisk::lookupBatchesStreamed`");
+        return std::nullopt;
+      }
+      // Pop the oldest batch only after its reads completed, so that the
+      // destructor still drains them if the wait throws.
+      std::vector<OffsetPair> offsetPairs =
+          waitOffsetPairs(*manager_, pending_.front());
+      pending_.pop_front();
+      return vocabulary_->readStrings(*manager_, offsetPairs,
+                                      pageCacheFastPath_);
+    }
+  };
+  auto state = std::make_shared<PipelineState>(
+      this, std::move(rangeOfIndexBatches), pipelineDepth,
+      pageCacheFastPathIsEnabled());
+  return VocabLookupOutput{ad_utility::InputRangeFromGetCallable{
+      [state]() { return state->next(); }}};
 }
 
 // _____________________________________________________________________________
