@@ -20,11 +20,9 @@
 
 #include <atomic>
 #include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/associated_executor.hpp>
 #include <boost/asio/async_result.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
-#include <boost/asio/post.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <concepts>
@@ -34,6 +32,7 @@
 #include <utility>
 
 #include "util/AsioHelpers.h"
+#include "util/AsyncHandlerUtils.h"
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
 #include "util/Forward.h"
@@ -270,25 +269,9 @@ class InOrderBlockSink : public ad_utility::NoCopyNoMove {
                      CompletionToken&& completionToken) {
     return net::async_initiate<CompletionToken, void(std::exception_ptr, T)>(
         [this, awaitable = std::move(awaitable)](auto handler) mutable {
-          auto executor = net::get_associated_executor(handler, executor_);
-          net::co_spawn(
-              strand_, std::move(awaitable),
-              [executor, handler = std::move(handler)](
-                  std::exception_ptr exception, T result) mutable {
-                // IMPORTANT: This deliberately uses `net::post` and not
-                // `net::dispatch`, so that a completion handler never runs
-                // while the strand is held, see the IMPORTANT note in the class
-                // comment above. `net::dispatch` would invoke the handler
-                // *inline* whenever the calling thread already belongs to the
-                // target executor, which is exactly the case for a producer
-                // whose handler is bound to the thread pool that also runs this
-                // strand.
-                net::post(executor, [handler = std::move(handler),
-                                     exception = std::move(exception),
-                                     result = std::move(result)]() mutable {
-                  std::move(handler)(std::move(exception), std::move(result));
-                });
-              });
+          net::co_spawn(strand_, std::move(awaitable),
+                        ad_utility::makeHandlerExecutorAware<T>(
+                            std::move(handler), executor_));
         },
         completionToken);
   }
