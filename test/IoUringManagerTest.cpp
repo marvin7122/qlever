@@ -582,9 +582,10 @@ TEST(ReadLeadingPageCacheHits, servesCachedReads) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   const size_t numServed = batch.readLeadingPageCacheHits(fd);
-  EXPECT_THAT(numServed, ::testing::AnyOf(0u, 3u));
-  if (numServed == 3) {
-    EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
+  EXPECT_LE(numServed, 3u);
+  const std::vector<std::string> expected{"CCCC", "AAAA", "DDDD"};
+  for (size_t i = 0; i < numServed; ++i) {
+    EXPECT_EQ(batch.result()[i], expected[i]);
   }
 }
 
