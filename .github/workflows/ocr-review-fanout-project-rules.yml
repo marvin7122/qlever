@@ -1,9 +1,14 @@
 name: OpenCodeReview (fan-out project rules)
 
 on:
-  # Minimal PR profile 2026-09-28: no pull_request_target trigger, so no
-  # automatic review on PR pushes. Reviews run on demand only, via a
-  # maintainer comment (see the job `if:` below).
+  # Gating policy 2026-10-06: the fan-out runs only after the fast AI
+  # reviewers are done, signalled by the `ocr-ready` label (added by the
+  # author/agent once all bot checks concluded) or by marking the PR ready
+  # for review. No trigger on push/open: bot fix commits must not invalidate
+  # a running 7h review. Re-adding the label (off/on) forces a fresh run on
+  # a moved head. Manual override stays: `/open-code-review-fanout`.
+  pull_request_target:
+    types: [ready_for_review, reopened, labeled]
   issue_comment:
     types: [created]
 
@@ -28,13 +33,18 @@ concurrency:
 jobs:
   review-fanout-project-rules:
     if: >-
-      (github.event.issue.pull_request &&
-       github.event.comment.user.type != 'Bot' &&
-       (github.event.comment.author_association == 'MEMBER' ||
-        github.event.comment.author_association == 'OWNER' ||
-        github.event.comment.author_association == 'COLLABORATOR') &&
-       (startsWith(github.event.comment.body, '/open-code-review-fanout') ||
-        startsWith(github.event.comment.body, '@open-code-review-fanout')))
+      ((github.event_name == 'pull_request_target' &&
+        (github.event.action == 'ready_for_review' ||
+         github.event.action == 'reopened' ||
+         (github.event.action == 'labeled' &&
+          github.event.label.name == 'ocr-ready'))) ||
+       (github.event.issue.pull_request &&
+        github.event.comment.user.type != 'Bot' &&
+        (github.event.comment.author_association == 'MEMBER' ||
+         github.event.comment.author_association == 'OWNER' ||
+         github.event.comment.author_association == 'COLLABORATOR') &&
+        (startsWith(github.event.comment.body, '/open-code-review-fanout') ||
+         startsWith(github.event.comment.body, '@open-code-review-fanout'))))
     # GitHub-hosted: this job is LLM-API-bound, not CPU-bound, so it must
     # not occupy fleet compile runners (CI speedup 2026-09-24).
     runs-on: ubuntu-latest
