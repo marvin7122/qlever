@@ -11,6 +11,7 @@
 #define QLEVER_SRC_UTIL_ASYNCHANDLERUTILS_H
 
 #include <boost/asio/associated_executor.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/post.hpp>
 #include <exception>
 #include <utility>
@@ -26,6 +27,7 @@ namespace ad_utility {
 // directly, including within a strand: `handler` never runs inline on the
 // caller's stack. Its associated executor may still be that strand; no executor
 // or strand hop is guaranteed.
+// Work on the selected executor is retained until delivery or abandonment.
 //
 // NOTE: This is not the same as `boost::asio::bind_executor`, for three
 // reasons. First, `bind_executor` only *associates* an executor with a
@@ -43,9 +45,12 @@ auto makeHandlerExecutorAware(Handler handler,
                               const ql::any_io_executor& defaultExecutor) {
   auto executor =
       boost::asio::get_associated_executor(handler, defaultExecutor);
-  return [handler = std::move(handler), executor](std::exception_ptr exception,
-                                                  Payload payload) mutable {
+  auto workGuard = boost::asio::make_work_guard(executor);
+  return [handler = std::move(handler), executor,
+          workGuard = std::move(workGuard)](std::exception_ptr exception,
+                                            Payload payload) mutable {
     boost::asio::post(executor, [handler = std::move(handler),
+                                 workGuard = std::move(workGuard),
                                  exception = std::move(exception),
                                  payload = std::move(payload)]() mutable {
       std::move(handler)(std::move(exception), std::move(payload));
