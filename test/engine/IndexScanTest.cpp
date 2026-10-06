@@ -636,6 +636,41 @@ TEST(IndexScan, getResultSizeOfScanFromRelationMetadata) {
 }
 
 // _____________________________________________________________________________
+TEST(IndexScan, getResultSizeOfScanWithGraphFilters) {
+  std::string kg;
+  for (size_t i = 0; i < 40; ++i) {
+    kg += absl::StrCat("<x", i, "> <p> <y", i, "> <g", i < 20 ? 1 : 2, "> .\n");
+  }
+  TestIndexConfig config{kg};
+  config.indexType = qlever::Filetype::NQuad;
+  config.rowsPerBlock = 2;
+  auto qec = getQec(std::move(config));
+  auto getId = makeGetId(qec->getIndex());
+  const auto& pso = qec->getIndex().getImpl().getPermutation(Permutation::PSO);
+  ASSERT_TRUE(pso.metaData().getMetaDataIfPresent(getId("<p>")).has_value());
+
+  SparqlTripleSimple triple{Variable{"?x"}, iri("<p>"), Variable{"?y"}};
+  auto checkScan = [&](IndexScan::Graphs graphs, size_t expectedRows,
+                       bool estimateIsExact) {
+    IndexScan scan{qec, Permutation::PSO, triple, std::move(graphs)};
+    EXPECT_EQ(scan.sizeEstimateIsExactForTesting(), estimateIsExact);
+    if (estimateIsExact) {
+      EXPECT_EQ(scan.getSizeEstimate(), 40);
+    }
+    // Materialize the result rather than using the metadata-based exact size.
+    EXPECT_EQ(scan.computeResultOnlyForTesting().idTableView().numRows(),
+              expectedRows);
+  };
+  checkScan(IndexScan::Graphs::All(), 40, true);
+  checkScan(IndexScan::Graphs::Whitelist({TripleComponent{iri("<g1>")}}), 20,
+            false);
+  checkScan(IndexScan::Graphs::Blacklist(TripleComponent{iri("<g1>")}), 20,
+            false);
+  checkScan(IndexScan::Graphs::Whitelist({TripleComponent{iri("<absent>")}}), 0,
+            false);
+}
+
+// _____________________________________________________________________________
 TEST(IndexScan, getResultSizeOfScanWithDeltaTriples) {
   auto index = std::make_shared<Index>(
       makeTestIndex("getResultSizeOfScanWithDeltaTriples",

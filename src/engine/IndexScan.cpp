@@ -423,10 +423,11 @@ std::pair<bool, size_t> IndexScan::computeSizeEstimate() const {
   // triples, the estimate is the same, but marked as inexact. This is also
   // what the general case below computes, because it counts the located
   // triples of a block as inserted and as deleted at the same time (see
-  // `LocatedTriplesPerBlock::numTriples`). Prefiltered scans and small
-  // relations that share a block with other relations (and hence have no
-  // metadata entry) use the general case.
-  if (numVariables() == 2 && !scanSpecAndBlocksIsPrefiltered_) {
+  // `LocatedTriplesPerBlock::numTriples`). Prefiltered scans, graph-filtered
+  // scans, and small relations that share a block with other relations (and
+  // hence have no metadata entry) use the general case.
+  if (numVariables() == 2 && !scanSpecAndBlocksIsPrefiltered_ &&
+      graphsToFilter_.areAllGraphsAllowed()) {
     const auto& col0Id = scanSpecAndBlocks_.scanSpec_.col0Id();
     AD_CORRECTNESS_CHECK(col0Id.has_value());
     auto metadata = permutation().metaData().getMetaDataIfPresent(*col0Id);
@@ -445,13 +446,16 @@ std::pair<bool, size_t> IndexScan::computeSizeEstimate() const {
     }
   }
 
-  // For other scans, sum up the size estimates for each block.
+  // For other scans, sum up the size estimates for each block. The metadata
+  // counts all graphs, so graph-filtered estimates are inexact even if the
+  // lower and upper bounds agree.
   //
   // NOTE: Starting from C++20, we could use `std::midpoint` to compute the
   // mean of `lower` and `upper` in a safe way.
   auto [lower, upper] = permutation().getSizeEstimateForScan(
       scanSpecAndBlocks_, locatedTriplesState());
-  return {lower == upper, lower + (upper - lower) / 2};
+  return {lower == upper && graphsToFilter_.areAllGraphsAllowed(),
+          lower + (upper - lower) / 2};
 }
 
 // _____________________________________________________________________________
