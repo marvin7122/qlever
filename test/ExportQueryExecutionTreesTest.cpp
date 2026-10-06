@@ -2266,3 +2266,58 @@ INSTANTIATE_TEST_SUITE_P(
         LruWindowParam{5, "abcde"},
         // window 10: all duplicates are caught, 5 unique triples remain.
         LruWindowParam{10, "abcde"}));
+
+// _____________________________________________________________________________
+// The batched vocabulary lookups (`lookupBatch`) of the different vocabulary
+// types return views into differently owned storage (e.g. borrowed views into
+// the in-memory part and into one external batch for the on-disk
+// `VocabularyInternalExternal`). The exported bytes must be identical for all
+// of them.
+TEST(ExportQueryExecutionTrees, ExportIsIdenticalForAllVocabularyTypes) {
+  // Literals longer than the small-string buffer, IRIs, a language tag, and
+  // repeated terms within one batch.
+  std::string kg =
+      "<s1> <p> \"a literal that is longer than the small string buffer\" . "
+      "<s1> <q> <o1> . <s2> <p> \"short\"@en . <s2> <q> <o1> . "
+      "<s3> <p> \"a literal that is longer than the small string buffer\" .";
+  auto exportWith = [&kg](ad_utility::VocabularyType type,
+                          const std::string& query,
+                          ad_utility::MediaType mediaType) {
+    ad_utility::testing::TestIndexConfig config{kg};
+    config.vocabularyType = type;
+    auto qec = ad_utility::testing::getQec(std::move(config));
+    qec->clearCacheUnpinnedOnly();
+    auto cancellationHandle =
+        std::make_shared<ad_utility::CancellationHandle<>>();
+    QueryPlanner qp{qec, cancellationHandle};
+    auto pq = parseQuery(query);
+    auto qet = qp.createExecutionTree(pq);
+    ad_utility::Timer timer{ad_utility::Timer::Started};
+    std::string result;
+    for (const auto& block : ExportQueryExecutionTrees::computeResult(
+             pq, qet, mediaType, timer, std::move(cancellationHandle))) {
+      result += block;
+    }
+    return result;
+  };
+  const std::string construct =
+      "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o";
+  const std::string select =
+      "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o";
+  using ad_utility::VocabularyType;
+  const auto expectedConstruct =
+      exportWith(VocabularyType::InMemoryUncompressed, construct,
+                 ad_utility::MediaType::turtle);
+  const auto expectedSelect = exportWith(VocabularyType::InMemoryUncompressed,
+                                         select, ad_utility::MediaType::tsv);
+  EXPECT_THAT(expectedConstruct,
+              HasSubstr("a literal that is longer than the small string"));
+  for (auto type : VocabularyType::allForIndexBuilding_) {
+    VocabularyType vocabType{type};
+    SCOPED_TRACE(vocabType.toString());
+    EXPECT_EQ(exportWith(vocabType, construct, ad_utility::MediaType::turtle),
+              expectedConstruct);
+    EXPECT_EQ(exportWith(vocabType, select, ad_utility::MediaType::tsv),
+              expectedSelect);
+  }
+}
