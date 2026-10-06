@@ -151,6 +151,7 @@ class ExportJobStateBase {
   virtual void onHelperLeaseAcquired(uint64_t leaseEpoch) = 0;
   virtual void onHelperLeaseReleased(uint64_t leaseEpoch) = 0;
   virtual void executeHelperTask(size_t morselIndex, uint64_t leaseEpoch) = 0;
+  virtual void onMorselFailed(size_t morselIndex, std::exception_ptr error) = 0;
   [[nodiscard]] virtual bool isCancelled() const noexcept = 0;
 };
 
@@ -321,8 +322,10 @@ class ElasticExportScheduler {
   // Build the closure for a posted morsel; completion decrements the share
   // accounting and admits waiting morsels, including on the throwing path.
   // The original morsel exception takes precedence over a completion-path
-  // failure (e.g. a throwing poster while reposting drained morsels).
-  absl::AnyInvocable<void()> makePostedWork(OwnedMorsel morsel);
+  // failure (e.g. a throwing poster while reposting drained morsels). Errors
+  // are stored for the coordinator; none escape the pool handler.
+  absl::AnyInvocable<void()> makePostedWork(
+      OwnedMorsel morsel, std::shared_ptr<std::atomic<bool>> executionStarted);
   // Completion path shared by the success and throwing continuations:
   // decrement under the lock, then post newly admittable morsels without it.
   void onPostedMorselFinished(uint64_t jobId);
@@ -540,16 +543,30 @@ class ExportJobState final
       // instead of waiting on a `Running` slot forever.
       std::lock_guard<std::mutex> lock(mutex_);
       slots_[morselIndex].error_ = std::current_exception();
-      slots_[morselIndex].status_ = MorselStatus::Cancelled;
+      slots_[morselIndex].status_ = MorselStatus::Failed;
       slots_[morselIndex].profile_.completedAt_ =
           std::chrono::steady_clock::now();
       slots_[morselIndex].profile_.wallDuration_ =
           slots_[morselIndex].profile_.completedAt_ - startWall;
       slots_[morselIndex].profile_.cpuDuration_ = getCpuDuration() - startCpu;
-      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Cancelled;
+      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Failed;
       cv_.notify_all();
       throw;
     }
+  }
+
+  void onMorselFailed(size_t morselIndex, std::exception_ptr error) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& slot = slots_.at(morselIndex);
+    // A task error takes precedence over a later completion/reposting error.
+    if (slot.error_ || slot.consumed_) {
+      return;
+    }
+    slot.error_ = std::move(error);
+    slot.profile_.completedAt_ = std::chrono::steady_clock::now();
+    slot.status_ = MorselStatus::Failed;
+    slot.profile_.finalStatus_ = MorselStatus::Failed;
+    cv_.notify_all();
   }
 
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
@@ -681,9 +698,7 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Cancelled) {
-        // A helper worker converted a task exception into this terminal
-        // state (see `executeHelperTask`): surface the original failure
-        // instead of hanging on a slot that will never complete.
+        // Surface any stored failure before reporting cancellation.
         std::exception_ptr error = slots_[index].error_;
         lock.unlock();
         if (error) {
@@ -745,23 +760,26 @@ class ExportJobState final
         // finished unconsumed slot and re-select: emitting whichever morsel
         // is ready avoids head-of-line blocking behind the selected one.
         // Ordered sessions preserve slot order and keep waiting. A
-        // `Cancelled` wakeup means the worker stored a task failure (handled
-        // above on the next loop iteration).
+        // `Failed` wakeup means a task or scheduler failure was stored
+        // (handled above on the next loop iteration).
         cv_.wait(lock, [&] {
           return slots_[index].status_ == MorselStatus::Completed ||
+                 slots_[index].status_ == MorselStatus::Failed ||
                  slots_[index].status_ == MorselStatus::Cancelled ||
                  cancelled_.load(std::memory_order_relaxed) ||
-                 (!ordered_ && std::any_of(slots_.begin(), slots_.end(),
-                                           [](const Slot& slot) {
-                                             return !slot.consumed_ &&
-                                                    slot.status_ ==
-                                                        MorselStatus::Completed;
-                                           }));
+                 (!ordered_ &&
+                  std::any_of(
+                      slots_.begin(), slots_.end(), [](const Slot& slot) {
+                        return !slot.consumed_ &&
+                               (slot.status_ == MorselStatus::Completed ||
+                                slot.status_ == MorselStatus::Failed);
+                      }));
         });
         if (!ordered_ && slots_[index].status_ != MorselStatus::Completed) {
           for (size_t i = 0; i < slots_.size(); ++i) {
             if (!slots_[i].consumed_ &&
-                slots_[i].status_ == MorselStatus::Completed) {
+                (slots_[i].status_ == MorselStatus::Completed ||
+                 slots_[i].status_ == MorselStatus::Failed)) {
               index = i;
               break;
             }

@@ -9,6 +9,8 @@
 
 #include "engine/export_v2/ElasticExportScheduler.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <algorithm>
 #include <exception>
 #include <optional>
@@ -281,14 +283,25 @@ void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
   // Never holds `queueMutex_` here (see `enqueueMorsel`): `poster_` may run
   // the closure inline, and its completion path takes `queueMutex_` again.
   const uint64_t jobId = morsel.jobId_;
+  auto jobState = morsel.jobState_;
+  const size_t morselIndex = morsel.morselIndex_;
+  std::shared_ptr<std::atomic<bool>> executionStarted;
   try {
-    poster_(makePostedWork(std::move(morsel)));
+    executionStarted = std::make_shared<std::atomic<bool>>(false);
+    poster_(makePostedWork(std::move(morsel), executionStarted));
   } catch (...) {
-    // The morsel was counted at admission time, before posting: release its
-    // reservation (and admit waiting morsels for the freed share) so a
-    // throwing poster cannot permanently block the session. The exception
-    // itself propagates unchanged.
-    onPostedMorselFinished(jobId);
+    auto postingException = std::current_exception();
+    // Once execution starts, the closure owns completion accounting, even
+    // when the poster throws after invoking it inline.
+    if (!executionStarted || !executionStarted->load()) {
+      try {
+        onPostedMorselFinished(jobId);
+      } catch (...) {
+        // Preserve the original posting error for both the caller and the
+        // coordinator if rollback also fails.
+        jobState->onMorselFailed(morselIndex, postingException);
+      }
+    }
     throw;
   }
 }
@@ -300,9 +313,12 @@ void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
 void ElasticExportScheduler::postReadyBatch(std::vector<OwnedMorsel> batch) {
   std::exception_ptr firstFailure;
   for (auto& morsel : batch) {
+    auto jobState = morsel.jobState_;
+    const size_t morselIndex = morsel.morselIndex_;
     try {
       postReady(std::move(morsel));
     } catch (...) {
+      jobState->onMorselFailed(morselIndex, std::current_exception());
       if (firstFailure == nullptr) {
         firstFailure = std::current_exception();
       }
@@ -314,30 +330,28 @@ void ElasticExportScheduler::postReadyBatch(std::vector<OwnedMorsel> batch) {
 }
 
 absl::AnyInvocable<void()> ElasticExportScheduler::makePostedWork(
-    OwnedMorsel morsel) {
+    OwnedMorsel morsel, std::shared_ptr<std::atomic<bool>> executionStarted) {
   const uint64_t jobId = morsel.jobId_;
-  return [this, jobId, morsel = std::move(morsel)]() mutable {
-    // Capture the morsel failure first: `onPostedMorselFinished` drains and
-    // reposts pending morsels, and a throwing poster on that path must not
-    // replace the original morsel exception.
-    std::exception_ptr morselException;
+  auto jobState = morsel.jobState_;
+  const size_t morselIndex = morsel.morselIndex_;
+  return [this, jobId, jobState = std::move(jobState), morselIndex,
+          executionStarted = std::move(executionStarted),
+          morsel = std::move(morsel)]() mutable {
+    executionStarted->store(true);
     try {
       runPostedMorsel(std::move(morsel));
     } catch (...) {
-      morselException = std::current_exception();
+      // Pool handlers must not throw. The coordinator consumes the stored
+      // task error after `runPostedMorsel` releases the helper lease.
+      jobState->onMorselFailed(morselIndex, std::current_exception());
     }
     try {
       // Account completion exactly once on every path, so shares cannot clog
       // on throwing tasks.
       onPostedMorselFinished(jobId);
     } catch (...) {
-      if (morselException != nullptr) {
-        std::rethrow_exception(morselException);
-      }
-      throw;
-    }
-    if (morselException != nullptr) {
-      std::rethrow_exception(morselException);
+      // Keep the original task error if completion or reposting also fails.
+      jobState->onMorselFailed(morselIndex, std::current_exception());
     }
   };
 }
@@ -442,8 +456,9 @@ void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
   if (targetJobState && !targetJobState->isCancelled() &&
       submissionEpoch == leaseEpoch) {
     targetJobState->onHelperLeaseAcquired(leaseEpoch);
+    absl::Cleanup releaseHelper{
+        [&] { targetJobState->onHelperLeaseReleased(leaseEpoch); }};
     targetJobState->executeHelperTask(targetMorselIndex, leaseEpoch);
-    targetJobState->onHelperLeaseReleased(leaseEpoch);
   }
 }
 
@@ -524,7 +539,7 @@ void ElasticExportScheduler::workerLoop() {
         } catch (...) {
           // An exception must never escape the worker thread: that would call
           // `std::terminate`. `executeHelperTask` converts a task failure
-          // into a terminal `Cancelled` slot state (storing the exception and
+          // into a terminal `Failed` slot state (storing the exception and
           // notifying waiters) before rethrowing, so the release below still
           // runs and `consumeNextResult` rethrows the original failure.
         }
