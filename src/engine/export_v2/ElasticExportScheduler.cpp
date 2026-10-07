@@ -223,6 +223,16 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
     std::vector<OwnedMorsel> readyToPost;
     {
       std::lock_guard<std::mutex> lock(queueMutex_);
+      const auto identity = std::pair{morsel.jobId_, morsel.morselIndex_};
+      auto [it, inserted] =
+          submissionEpochs_.try_emplace(identity, morsel.submissionEpoch_);
+      if (!inserted) {
+        it->second = std::max(it->second, morsel.submissionEpoch_);
+        return true;
+      }
+      // An allocation failure while reserving or queuing a new identity must
+      // not leave a phantom duplicate that suppresses a later retry.
+      absl::Cleanup eraseIdentity{[&] { submissionEpochs_.erase(identity); }};
       const size_t live = liveSessionCount_.load(std::memory_order_relaxed);
       const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
       const size_t share = fairShareUnsafe(live);
@@ -236,8 +246,10 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
         // not count the morsel a second time.
         accountOutstandingUnsafe(morsel.jobId_);
         toPost.emplace(std::move(morsel));
+        std::move(eraseIdentity).Cancel();
       } else {
         pendingAdmission_.push_back(std::move(morsel));
+        std::move(eraseIdentity).Cancel();
         // The session may sit at its base share while total capacity is
         // still free (an indivisible max/live leaves a remainder): run the
         // admission loop now so remainder slots fill promptly instead of
@@ -297,10 +309,10 @@ void ElasticExportScheduler::postReady(OwnedMorsel morsel,
         // Direct rollback may enter the iterative batch drain once. A batch
         // owns its drain, so only release this reservation on its failure.
         if (drainPendingOnFailure) {
-          onPostedMorselFinished(jobId);
+          onPostedMorselFinished(jobId, morselIndex);
         } else {
           std::lock_guard<std::mutex> lock(queueMutex_);
-          decrementOutstandingUnsafe(jobId);
+          decrementOutstandingUnsafe(jobId, morselIndex);
         }
       } catch (...) {
         // Preserve the original posting error for both the caller and the
@@ -358,7 +370,7 @@ absl::AnyInvocable<void()> ElasticExportScheduler::makePostedWork(
     try {
       // Account completion exactly once on every path, so shares cannot clog
       // on throwing tasks.
-      onPostedMorselFinished(jobId);
+      onPostedMorselFinished(jobId, morselIndex);
     } catch (...) {
       // Keep the original task error if completion or reposting also fails.
       jobState->onMorselFailed(morselIndex, std::current_exception());
@@ -366,11 +378,12 @@ absl::AnyInvocable<void()> ElasticExportScheduler::makePostedWork(
   };
 }
 
-void ElasticExportScheduler::onPostedMorselFinished(uint64_t jobId) {
+void ElasticExportScheduler::onPostedMorselFinished(uint64_t jobId,
+                                                    size_t morselIndex) {
   std::vector<OwnedMorsel> readyToPost;
   {
     std::lock_guard<std::mutex> lock(queueMutex_);
-    decrementOutstandingUnsafe(jobId);
+    decrementOutstandingUnsafe(jobId, morselIndex);
     readyToPost = drainPendingAdmissionUnsafe();
   }
   // Outside the lock: posting may run work inline (see `enqueueMorsel`).
@@ -385,12 +398,15 @@ size_t ElasticExportScheduler::committedOutstandingUnsafe(
   return it != outstandingPerSession_.end() ? it->second : 0;
 }
 
-void ElasticExportScheduler::decrementOutstandingUnsafe(uint64_t jobId) {
+void ElasticExportScheduler::decrementOutstandingUnsafe(uint64_t jobId,
+                                                        size_t morselIndex) {
   auto it = outstandingPerSession_.find(jobId);
   AD_CORRECTNESS_CHECK(it != outstandingPerSession_.end(),
                        "Completion without outstanding morsel");
   AD_CORRECTNESS_CHECK(it->second > 0, "Outstanding count underflow");
   AD_CORRECTNESS_CHECK(totalOutstanding_ > 0, "Total outstanding underflow");
+  AD_CORRECTNESS_CHECK(submissionEpochs_.erase({jobId, morselIndex}) == 1,
+                       "Completion without tracked morsel identity");
   if (--(it->second) == 0) {
     outstandingPerSession_.erase(it);
   }
@@ -406,7 +422,15 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
   pendingAdmission_.erase(
       std::remove_if(
           pendingAdmission_.begin(), pendingAdmission_.end(),
-          [](const OwnedMorsel& m) { return m.jobState_->isCancelled(); }),
+          [this](const OwnedMorsel& m) {
+            if (!m.jobState_->isCancelled()) {
+              return false;
+            }
+            AD_CORRECTNESS_CHECK(
+                submissionEpochs_.erase({m.jobId_, m.morselIndex_}) == 1,
+                "Cancellation without tracked morsel identity");
+            return true;
+          }),
       pendingAdmission_.end());
   // Admit one pending morsel and account it as outstanding.
   auto admitIt = [this, &readyToPost](auto it) {
@@ -454,6 +478,16 @@ void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
   if (stopping_.load(std::memory_order_relaxed) ||
       !isHelperAdmissionEligibleUnsafe()) {
     return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    auto it = submissionEpochs_.find({morsel.jobId_, morsel.morselIndex_});
+    AD_CORRECTNESS_CHECK(it != submissionEpochs_.end(),
+                         "Execution without tracked morsel identity");
+    // Demand may have resubmitted this identity while its one closure was
+    // deferred. Use the latest requested epoch, then unlock before leases or
+    // job-state callbacks, which may themselves enqueue more work.
+    morsel.submissionEpoch_ = it->second;
   }
   auto targetJobState = std::move(morsel.jobState_);
   const size_t targetMorselIndex = morsel.morselIndex_;

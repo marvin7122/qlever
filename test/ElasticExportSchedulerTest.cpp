@@ -696,6 +696,150 @@ struct DeferredPoster {
 };
 }  // namespace
 
+TEST(ElasticExportSchedulerTest, DemandResubmissionCoalescesPosterMorsels) {
+  for (size_t demandChanges : {size_t{1}, size_t{4}}) {
+    SCOPED_TRACE(demandChanges);
+    DeferredPoster deferred;
+    ElasticExportScheduler scheduler([&](absl::AnyInvocable<void()> work) {
+      deferred.post(std::move(work));
+    });
+    scheduler.setMaxConcurrentMorsels(1);
+    scheduler.onForegroundQueryStarted();
+    auto session = scheduler.createSession<int>();
+    const auto initialEpoch = session.currentEpoch();
+    std::vector<size_t> executions(3, 0);
+    std::vector<uint64_t> executionEpochs(3, 0);
+    for (size_t i = 0; i < executions.size(); ++i) {
+      session.submitMorsel([&, i] {
+        ++executions[i];
+        executionEpochs[i] = session.currentEpoch();
+        return static_cast<int>(i * 10);
+      });
+    }
+    ASSERT_EQ(deferred.totalPosted_, 1u);
+    for (size_t i = 0; i < demandChanges; ++i) {
+      scheduler.onForegroundQueryStarted();
+      scheduler.onForegroundQueryEnded();
+      EXPECT_EQ(deferred.totalPosted_, 1u);
+    }
+    const auto latestEpoch = scheduler.demandEpoch();
+    ASSERT_GT(latestEpoch, initialEpoch);
+    // An older duplicate must not downgrade either the posted identity or
+    // either pending identity after demand has refreshed them.
+    for (size_t i = 0; i < executions.size(); ++i) {
+      EXPECT_TRUE(scheduler.enqueueMorsel(OwnedMorsel(
+          session.sharedState(), session.jobId(), initialEpoch, i)));
+    }
+    EXPECT_EQ(deferred.totalPosted_, 1u);
+    deferred.runToIdle();
+    EXPECT_EQ(deferred.totalPosted_, 3u);
+    EXPECT_EQ(executions, (std::vector<size_t>{1, 1, 1}));
+    EXPECT_EQ(executionEpochs,
+              (std::vector<uint64_t>{latestEpoch, latestEpoch, latestEpoch}));
+    auto profiles = session.inspectMorselProfiles();
+    ASSERT_EQ(profiles.size(), 3u);
+    for (size_t i = 0; i < profiles.size(); ++i) {
+      EXPECT_TRUE(profiles[i].executedByHelper_);
+      EXPECT_EQ(profiles[i].finalStatus_, MorselStatus::Completed);
+      EXPECT_EQ(session.consumeNextResult(), static_cast<int>(i * 10));
+    }
+    EXPECT_FALSE(session.hasMoreResults());
+    EXPECT_EQ(session.activeHelpers(), 0u);
+    EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+  }
+}
+
+TEST(ElasticExportSchedulerTest, ConcurrentPosterEnqueueCoalescesIdentity) {
+  DeferredPoster deferred;
+  std::mutex posterMutex;
+  ElasticExportScheduler scheduler([&](absl::AnyInvocable<void()> work) {
+    std::lock_guard<std::mutex> lock(posterMutex);
+    deferred.post(std::move(work));
+  });
+  scheduler.setMaxConcurrentMorsels(64);
+  auto session = scheduler.createSession<int>();
+  size_t executions = 0;
+  const auto index = session.submitMorsel([&] {
+    ++executions;
+    return 42;
+  });
+  auto state = session.sharedState();
+  const auto epoch = session.currentEpoch();
+  std::promise<void> startPromise;
+  auto start = startPromise.get_future().share();
+  std::atomic<size_t> rejected{0};
+  std::vector<std::thread> threads;
+  for (size_t i = 0; i < 16; ++i) {
+    threads.emplace_back([&] {
+      start.wait();
+      for (size_t repeat = 0; repeat < 32; ++repeat) {
+        if (!scheduler.enqueueMorsel(
+                OwnedMorsel(state, state->jobId(), epoch, index))) {
+          rejected.fetch_add(1);
+        }
+      }
+    });
+  }
+  startPromise.set_value();
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  // Poster access above is synchronized; after joins only this thread uses it.
+  EXPECT_EQ(rejected.load(), 0u);
+  EXPECT_EQ(deferred.totalPosted_, 1u);
+  deferred.runToIdle();
+  EXPECT_EQ(deferred.totalPosted_, 1u);
+  EXPECT_EQ(executions, 1u);
+  EXPECT_EQ(session.consumeNextResult(), 42);
+  EXPECT_TRUE(session.inspectMorselProfiles()[index].executedByHelper_);
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+
+  // Tracking lasts only through completion, not forever for this identity.
+  EXPECT_TRUE(scheduler.enqueueMorsel(
+      OwnedMorsel(state, state->jobId(), epoch, index)));
+  EXPECT_EQ(deferred.totalPosted_, 2u);
+  deferred.runToIdle();
+  EXPECT_EQ(executions, 1u);
+}
+
+TEST(ElasticExportSchedulerTest, CancellationReleasesPosterIdentities) {
+  DeferredPoster deferred;
+  ElasticExportScheduler scheduler(
+      [&](absl::AnyInvocable<void()> work) { deferred.post(std::move(work)); });
+  scheduler.setMaxConcurrentMorsels(1);
+  auto cancelled = scheduler.createSession<int>();
+  size_t executions = 0;
+  for (size_t i = 0; i < 3; ++i) {
+    cancelled.submitMorsel([&] {
+      ++executions;
+      return -1;
+    });
+  }
+  EXPECT_EQ(deferred.totalPosted_, 1u);
+  cancelled.cancel();
+  deferred.runToIdle();
+  EXPECT_EQ(deferred.totalPosted_, 1u);
+  EXPECT_EQ(executions, 0u);
+  // Probe release of both the canceled posted identity and the two purged
+  // pending identities. Each retry posts immediately, then no-ops on cancel.
+  for (size_t i = 0; i < 3; ++i) {
+    EXPECT_TRUE(scheduler.enqueueMorsel(
+        OwnedMorsel(cancelled.sharedState(), cancelled.jobId(),
+                    cancelled.currentEpoch(), i)));
+    EXPECT_EQ(deferred.totalPosted_, i + 2);
+    deferred.runToIdle();
+  }
+  EXPECT_EQ(executions, 0u);
+  auto recovery = scheduler.createSession<int>();
+  recovery.submitMorsel([] { return 7; });
+  EXPECT_EQ(deferred.totalPosted_, 5u);
+  deferred.runToIdle();
+  EXPECT_EQ(recovery.consumeNextResult(), 7);
+  EXPECT_TRUE(recovery.inspectMorselProfiles()[0].executedByHelper_);
+  EXPECT_EQ(cancelled.activeHelpers(), 0u);
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+}
+
 TEST(ElasticExportSchedulerTest, EvenSplitAcrossSessions) {
   DeferredPoster deferred;
   size_t postedCount = 0;
@@ -952,11 +1096,55 @@ TEST(ElasticExportSchedulerTest, PosterFailureBeforeExecutionReleasesShare) {
   AD_EXPECT_THROW_WITH_MESSAGE(session.submitMorsel([] { return 1; }),
                                ::testing::HasSubstr("posting failed"));
   failPost = false;
+  // Retry the very same slot: rollback must release its identity as well as
+  // its share, or this enqueue silently coalesces with a vanished closure.
+  EXPECT_TRUE(scheduler.enqueueMorsel(OwnedMorsel(
+      session.sharedState(), session.jobId(), session.currentEpoch(), 0)));
+  EXPECT_EQ(deferred.totalPosted_, 1u);
   session.submitMorsel([] { return 2; });
   EXPECT_EQ(deferred.totalPosted_, 1u);
   EXPECT_NO_THROW(deferred.runToIdle());
+  EXPECT_EQ(deferred.totalPosted_, 2u);
   EXPECT_EQ(session.consumeNextResult(), 1);
   EXPECT_EQ(session.consumeNextResult(), 2);
+  EXPECT_TRUE(session.inspectMorselProfiles()[0].executedByHelper_);
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+}
+
+TEST(ElasticExportSchedulerTest, RepostingFailureReleasesIdentityForRetry) {
+  DeferredPoster deferred;
+  size_t posts = 0;
+  ElasticExportScheduler scheduler([&](absl::AnyInvocable<void()> work) {
+    if (++posts == 2) {
+      throw std::runtime_error("reposting failed");
+    }
+    deferred.post(std::move(work));
+  });
+  scheduler.setMaxConcurrentMorsels(1);
+  auto session = scheduler.createSession<int>();
+  session.submitMorsel([] { return 1; });
+  session.submitMorsel([] { return 2; });
+  EXPECT_NO_THROW(deferred.runToIdle());
+  EXPECT_EQ(posts, 2u);
+  // The batch rollback branch also releases identity tracking. A failed slot
+  // remains failed; this retry tests admission, not retrying its task/error.
+  EXPECT_TRUE(scheduler.enqueueMorsel(OwnedMorsel(
+      session.sharedState(), session.jobId(), session.currentEpoch(), 1)));
+  EXPECT_EQ(posts, 3u);
+  EXPECT_EQ(deferred.totalPosted_, 2u);
+  EXPECT_NO_THROW(deferred.runToIdle());
+  // Completion/reposting errors remain visible to both affected slots.
+  AD_EXPECT_THROW_WITH_MESSAGE(session.consumeNextResult(),
+                               ::testing::HasSubstr("reposting failed"));
+  AD_EXPECT_THROW_WITH_MESSAGE(session.consumeNextResult(),
+                               ::testing::HasSubstr("reposting failed"));
+  session.submitMorsel([] { return 3; });
+  EXPECT_EQ(posts, 4u);
+  deferred.runToIdle();
+  EXPECT_EQ(session.consumeNextResult(), 3);
+  EXPECT_TRUE(session.inspectMorselProfiles()[2].executedByHelper_);
+  EXPECT_EQ(session.activeHelpers(), 0u);
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
 }
 
 TEST(ElasticExportSchedulerTest, RepostingFailureReachesAffectedCoordinators) {

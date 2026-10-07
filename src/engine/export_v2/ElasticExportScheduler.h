@@ -25,9 +25,11 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "util/Exception.h"
+#include "util/HashMap.h"
 #include "util/http/websocket/QueryId.h"
 
 namespace ad_utility::export_v2 {
@@ -334,7 +336,7 @@ class ElasticExportScheduler {
       OwnedMorsel morsel, std::shared_ptr<std::atomic<bool>> executionStarted);
   // Completion path shared by the success and throwing continuations:
   // decrement under the lock, then post newly admittable morsels without it.
-  void onPostedMorselFinished(uint64_t jobId);
+  void onPostedMorselFinished(uint64_t jobId, size_t morselIndex);
   // Read the outstanding count without inserting a zero entry for sessions
   // that only hold pending morsels. queueMutex_ held.
   [[nodiscard]] size_t committedOutstandingUnsafe(uint64_t jobId) const;
@@ -344,7 +346,7 @@ class ElasticExportScheduler {
   // queueMutex_. queueMutex_ held.
   [[nodiscard]] std::vector<OwnedMorsel> drainPendingAdmissionUnsafe();
   // Decrement accounting for one finished morsel. queueMutex_ held.
-  void decrementOutstandingUnsafe(uint64_t jobId);
+  void decrementOutstandingUnsafe(uint64_t jobId, size_t morselIndex);
   // Base per-session share from the live count: at least one, so every
   // session keeps its progress floor. Pure computation, no locking. When
   // `max` is not divisible by the live count, the truncated remainder is
@@ -381,6 +383,13 @@ class ElasticExportScheduler {
   // itself is invisible, so this map is the share accounting.
   std::unordered_map<uint64_t, size_t> outstandingPerSession_;
   std::deque<OwnedMorsel> pendingAdmission_;
+  // Poster transport only: every pending or posted-but-unfinished identity
+  // retains its latest requested epoch. Demand resubmission refreshes this
+  // entry instead of queuing or reserving the same morsel again. Keep tracking
+  // through admission; erase on completion, posting rollback, or pending
+  // cancel. Guarded by queueMutex_, like the pending queue and outstanding
+  // counters.
+  ad_utility::HashMap<std::pair<uint64_t, size_t>, uint64_t> submissionEpochs_;
   size_t totalOutstanding_{0};
 
   mutable std::mutex sessionsMutex_;
