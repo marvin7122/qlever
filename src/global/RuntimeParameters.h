@@ -262,9 +262,9 @@ struct RuntimeParameters {
   // prefetches the rank directory block of the index this many positions ahead
   // in the batch, and (in a second pass) the offsets and the first bytes of
   // the in-RAM words that many and twice that many positions ahead. 0 turns
-  // prefetching off.
+  // prefetching off. The default 8 was the best of 4/8/16/32 on Wikidata.
   SizeT vocabularyInternalRankPrefetchDistance_{
-      0, "vocabulary-internal-rank-prefetch-distance"};
+      8, "vocabulary-internal-rank-prefetch-distance"};
 
   // If set to true, the rank directory above is allocated 2 MiB-aligned and
   // marked for transparent huge pages (`madvise(MADV_HUGEPAGE)`), so that a
