@@ -21,10 +21,17 @@ permissions:
 concurrency:
   # Comments that are not a review command (e.g. the bot's own result or error
   # comments) get a group of their own, so they cannot cancel a running review.
+  # Same for labels other than ocr-ready: a routine label change must not
+  # cancel a running fan-out via cancel-in-progress (Qodo/Greptile/Cubic on
+  # PR 259).
   group: >-
     ${{ github.event_name == 'issue_comment' &&
     !startsWith(github.event.comment.body, '/open-code-review-fanout') &&
     !startsWith(github.event.comment.body, '@open-code-review-fanout') &&
+    format('ocr-fanout-project-rules-ignored-{0}', github.run_id) ||
+    github.event_name == 'pull_request_target' &&
+    github.event.action == 'labeled' &&
+    github.event.label.name != 'ocr-ready' &&
     format('ocr-fanout-project-rules-ignored-{0}', github.run_id) ||
     format('ocr-fanout-project-rules-{0}', github.event.pull_request.number ||
     github.event.issue.number || github.run_id) }}
@@ -32,12 +39,20 @@ concurrency:
 
 jobs:
   review-fanout-project-rules:
+    # pull_request_target runs in base-repo context with secrets and billed
+    # inference: only maintainers may trigger it (Cubic P1 on PR 259 —
+    # external contributors can raise ready_for_review / reopened on their
+    # own PRs). Label application already implies triage access.
     if: >-
       ((github.event_name == 'pull_request_target' &&
-        (github.event.action == 'ready_for_review' ||
-         github.event.action == 'reopened' ||
+        (github.event.pull_request.author_association == 'MEMBER' ||
+         github.event.pull_request.author_association == 'OWNER' ||
+         github.event.pull_request.author_association == 'COLLABORATOR') &&
+        ((github.event.action == 'ready_for_review' ||
+          github.event.action == 'reopened') ||
          (github.event.action == 'labeled' &&
-          github.event.label.name == 'ocr-ready'))) ||
+          github.event.label.name == 'ocr-ready' &&
+          github.event.pull_request.state == 'open'))) ||
        (github.event.issue.pull_request &&
         github.event.comment.user.type != 'Bot' &&
         (github.event.comment.author_association == 'MEMBER' ||
