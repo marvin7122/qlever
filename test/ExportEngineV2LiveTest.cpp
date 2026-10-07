@@ -27,6 +27,7 @@
 #include "engine/ExportQueryExecutionTrees.h"
 #include "engine/QueryPlanner.h"
 #include "engine/export_v2/ExportEngineV2.h"
+#include "index/IndexImpl.h"
 #include "parser/SparqlParser.h"
 #include "util/GTestHelpers.h"
 #include "util/IndexTestHelpers.h"
@@ -88,7 +89,7 @@ Exports runAllEngines(
 void expectV2EqualsLegacy(
     const ad_utility::testing::TestIndexConfig& config,
     const std::string& query,
-    ad_utility::source_location l = ad_utility::source_location::current()) {
+    ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
   auto trace = generateLocationTrace(l);
   for (auto mediaType : {MediaType::csv, MediaType::tsv}) {
     auto exports = runAllEngines(config, query, mediaType);
@@ -216,7 +217,7 @@ std::vector<std::string> sortedLines(const std::string& text) {
 void expectConstructV2EqualsLegacy(
     const ad_utility::testing::TestIndexConfig& config,
     const std::string& query, bool expectEmpty = false,
-    ad_utility::source_location l = ad_utility::source_location::current()) {
+    ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
   auto trace = generateLocationTrace(l);
   ad_utility::export_v2::ElasticExportScheduler scheduler{4};
   const bool ordered =
