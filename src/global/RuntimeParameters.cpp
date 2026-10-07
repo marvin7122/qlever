@@ -74,6 +74,7 @@ RuntimeParameters::RuntimeParameters() {
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
   add(vocabularyIouringPageCacheFastPath_);
+  add(vocabularyInternalRankLookup_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is

@@ -18,6 +18,8 @@
 #include <string_view>
 #include <utility>
 
+#include "global/RuntimeParameters.h"
+
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   auto fromInternal = internalVocab_[i];
@@ -36,16 +38,19 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // view into that vocabulary (no copy); all other indices are collected, with
   // their positions in `indices`, for one batched lookup in the external
   // vocabulary. The internal vocabulary has "holes", so each index needs one
-  // membership probe (an allocation-free binary search); indices at or past
-  // `internalVocab_.endIndex()` are known misses and skip the search.
+  // membership probe: one cache line with the rank directory (see
+  // `vocabulary-internal-rank-lookup`), else a binary search; indices at or
+  // past `internalVocab_.endIndex()` are known misses and skip the probe.
   MultiSourceVocabBatchAssembler assembler(indices.size());
   MarkerIndicesAndPositions externalSlots;
   const uint64_t internalEnd = internalVocab_.endIndex();
   for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
-    auto internalWord = index < internalEnd ? internalVocab_[index]
-                                            : std::optional<std::string_view>{};
-    if (internalWord.has_value()) {
-      assembler.assignUnownedViewAtPosition(position, internalWord.value());
+    auto internalPosition = index < internalEnd
+                                ? internalVocab_.positionOfIndex(index)
+                                : std::nullopt;
+    if (internalPosition.has_value()) {
+      assembler.assignUnownedViewAtPosition(
+          position, internalVocab_.wordAtPosition(internalPosition.value()));
     } else {
       externalSlots.addPair(index, position);
     }
@@ -110,4 +115,12 @@ void VocabularyInternalExternal::open(const std::string& filename) {
   AD_LOG_INFO << "Number of words in internal vocabulary (these are also part "
                  "of the external vocabulary): "
               << internalVocab_.size() << std::endl;
+  if (getRuntimeParameter<
+          &RuntimeParameters::vocabularyInternalRankLookup_>()) {
+    internalVocab_.buildIndexRankDirectory();
+    AD_LOG_INFO << "Rank directory of the internal vocabulary: "
+                << internalVocab_.indexRankDirectoryNumBytes() << " bytes for "
+                << internalVocab_.endIndex() << " vocabulary indices"
+                << std::endl;
+  }
 }

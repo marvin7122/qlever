@@ -249,6 +249,15 @@ struct RuntimeParameters {
   Bool vocabularyIouringPageCacheFastPath_{
       true, "vocabulary-iouring-page-cache-fast-path"};
 
+  // If set to true, loading a vocabulary that keeps some of its words in RAM
+  // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
+  // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).
+  // Checking whether an index is in RAM, and finding its word there, then
+  // costs one cache line instead of a binary search over the sorted indices of
+  // the words in RAM. Costs 8/7 bits per vocabulary index. Read when the index
+  // is loaded; changing it later has no effect.
+  Bool vocabularyInternalRankLookup_{true, "vocabulary-internal-rank-lookup"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.
