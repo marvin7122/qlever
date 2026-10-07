@@ -37,12 +37,21 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
 // _____________________________________________________________________________
 std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
     uint64_t index) const {
+  if (indexRankDirectory_.has_value()) {
+    return indexRankDirectory_->rankIfContained(index);
+  }
   auto indices = this->indices();
   auto it = ql::ranges::lower_bound(indices, index);
   if (it != indices.end() && *it == index) {
     return static_cast<size_t>(it - indices.begin());
   }
   return std::nullopt;
+}
+
+// _____________________________________________________________________________
+void VocabularyInMemoryBinSearch::buildIndexRankDirectory() {
+  indexRankDirectory_.reset();
+  indexRankDirectory_.emplace(indices(), endIndex());
 }
 
 // _____________________________________________________________________________
@@ -104,6 +113,7 @@ VocabularyInMemoryBinSearch::makeDiskWriterPtr(
 void VocabularyInMemoryBinSearch::close() {
   words_.clear();
   indices_.emplace<Indices>();
+  indexRankDirectory_.reset();
 }
 
 // _____________________________________________________________________________
