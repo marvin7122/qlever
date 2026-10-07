@@ -223,6 +223,17 @@ bool reserveForMorsel(ScatterGatherChunkBuilder& builder, uint64_t rowsDone,
   return true;
 }
 
+// The OFFSET that is still to be applied to the result of `qet`. Like Legacy
+// `compensateForLimitOffsetClause`: when the root operation already applied
+// the OFFSET (e.g. an `IndexScan`), its result starts at the first row to
+// export. Re-applying the LIMIT is harmless, so it is never compensated.
+uint64_t offsetLeftToApply(const QueryExecutionTree& qet,
+                           const LimitOffsetClause& limitOffset) {
+  return qet.handlesLimitOffset() == LimitOffsetHandling::NONE
+             ? limitOffset._offset
+             : 0;
+}
+
 // Serializes the rows `[begin, end)` of `segment`'s block into `builder`.
 // There is one per request (SELECT CSV/TSV or CONSTRUCT), shared by all morsel
 // tasks of that request, so calls must be safe from concurrent threads. It
@@ -324,6 +335,14 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
+  // The order of the morsels follows the clause the user wrote, the rows to
+  // skip follow the plan (see `offsetLeftToApply`).
+  const bool ordered = limitOffset._limit.has_value() ||
+                       limitOffset._offset != 0 ||
+                       limitOffset.textLimit_.has_value() ||
+                       limitOffset.exportLimit_.has_value();
+  limitOffset._offset = offsetLeftToApply(qet, limitOffset);
+
   constexpr uint64_t rowsPerMorsel = 8192;
   if (scheduler == nullptr) {
     // No session exists here, so nothing can revoke: serialize each plan
@@ -352,10 +371,6 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
                  "queryThreadPool_ (no extra V2 threads)"
               << std::endl;
   auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
-  const bool ordered = limitOffset._limit.has_value() ||
-                       limitOffset._offset != 0 ||
-                       limitOffset.textLimit_.has_value() ||
-                       limitOffset.exportLimit_.has_value();
   session.setOrdered(ordered);
   // The plans own their blocks, so workers can serialize after the driver
   // moved on. No table or vocabulary clone: one shared owner per block.

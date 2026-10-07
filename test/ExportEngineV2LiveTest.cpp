@@ -141,6 +141,14 @@ const std::vector<std::string> queries{
     "FILTER(LANG(?o) = \"en\") }",
     // All columns.
     "SELECT * WHERE { ?s ?p ?o }",
+    // The `IndexScan` applies the OFFSET itself; V2 must not skip the rows a
+    // second time.
+    "SELECT ?s ?o WHERE { ?s <http://example.org/label> ?o } OFFSET 3",
+    "SELECT ?s ?o WHERE { ?s <http://example.org/label> ?o } LIMIT 4 "
+    "OFFSET 2",
+    // An OFFSET that the root operation (a join) does not apply.
+    "SELECT ?s ?o WHERE { ?s <http://example.org/label> ?o . ?s ?p ?o } "
+    "LIMIT 5 OFFSET 1",
 };
 
 TEST(ExportEngineV2LiveTest, SmallIndexMatchesLegacy) {
