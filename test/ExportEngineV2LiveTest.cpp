@@ -20,6 +20,7 @@
 #include "engine/ExportQueryExecutionTrees.h"
 #include "engine/QueryPlanner.h"
 #include "engine/export_v2/ExportEngineV2.h"
+#include "index/IndexImpl.h"
 #include "parser/SparqlParser.h"
 #include "util/GTestHelpers.h"
 #include "util/IndexTestHelpers.h"
@@ -77,7 +78,7 @@ Exports runAllEngines(ad_utility::testing::TestIndexConfig config,
 void expectV2EqualsLegacy(
     const ad_utility::testing::TestIndexConfig& config,
     const std::string& query,
-    ad_utility::source_location l = ad_utility::source_location::current()) {
+    ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
   auto trace = generateLocationTrace(l);
   for (auto mediaType : {MediaType::csv, MediaType::tsv}) {
     auto exports = runAllEngines(config, query, mediaType);
