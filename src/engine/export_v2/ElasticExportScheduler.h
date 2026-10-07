@@ -283,7 +283,7 @@ class ElasticExportScheduler {
         std::memory_order_relaxed);
   }
 
-  /// Policy for sessions created without an explicit one. Defaults to
+  /// Set policy for sessions created without an explicit one. Default to
   /// `Exclusive`; the server passes the runtime parameter
   /// `export-v2-helper-policy` per session instead.
   void setHelperPolicy(HelperPolicy policy) noexcept {
@@ -337,7 +337,10 @@ class ElasticExportScheduler {
     return nextJobId_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  /// Create a typed ExportWorkSession.
+  /// Create a typed `ExportWorkSession`.
+  /// Create a typed ExportWorkSession. If `policy` is `nullopt` the session
+  /// inherits `helperPolicy()` (runtime parameter `export-v2-helper-policy`);
+  /// fair sessions start with quota 0 and are rebalanced immediately.
   template <typename ResultType = std::string>
   ExportWorkSession<ResultType> createSession(
       std::optional<HelperPolicy> policy = std::nullopt);
@@ -353,7 +356,10 @@ class ElasticExportScheduler {
                                   uint64_t submissionEpoch,
                                   uint64_t leaseEpoch);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
-  // Fair helper loops limit themselves by quota and are always admitted.
+  /// Whether `morsel` may run on a helper thread. Exclusive-policy slot
+  /// morsels require `isHelperAdmissionEligibleUnsafe()`; fair-policy
+  /// helper loops (`kHelperLoop`) are always admissible and enforce quota
+  /// inside `runHelperLoop()`.
   [[nodiscard]] bool isAdmissibleUnsafe(
       const OwnedMorsel& morsel) const noexcept;
 
@@ -504,7 +510,7 @@ class ExportJobState final
         startSlotUnsafe(index, startWall, true);
         task = std::move(slots_[index].task_);
       }
-      // A failure is stored in the slot and rethrown to the consumer.
+      // A failure is stored as a terminal `Cancelled` slot and later rethrown by `consumeNextResult`; `runHelperLoop` keeps looping and never propagates.
       runClaimedTask(index, std::move(task), startWall);
     }
     onHelperLeaseReleased(currentEpoch());
@@ -598,8 +604,8 @@ class ExportJobState final
       task = std::move(slots_[morselIndex].task_);
     }
 
-    if (auto error = runClaimedTask(morselIndex, std::move(task), startWall)) {
-      // Rethrowing lets `runLeasedHelperTask` keep its never-escape guarantee
+    if (const auto error = runClaimedTask(morselIndex, std::move(task), startWall)) {
+      // Rethrow to let `runLeasedHelperTask` keep its never-escape guarantee
       // while `consumeNextResult` observes the stored failure instead of
       // waiting on a `Running` slot forever.
       std::rethrow_exception(error);
@@ -1179,7 +1185,7 @@ ExportWorkSession<ResultType> ElasticExportScheduler::createSession(
   const HelperPolicy sessionPolicy = policy.value_or(helperPolicy());
   uint64_t jId = nextJobId();
   uint64_t epoch = demandEpoch();
-  // A fair session starts without helpers; the rebalance below assigns its
+  // Start fair sessions without helpers; assign quota in rebalance below
   // quota before the first morsel is submitted.
   SessionState initialState =
       (sessionPolicy == HelperPolicy::Exclusive &&

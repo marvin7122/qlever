@@ -198,7 +198,7 @@ void ElasticExportScheduler::rebalanceFairQuotas() {
   // registered, so creation order is the start order of the export queries.
   std::vector<std::shared_ptr<ExportJobStateBase>> running;
   {
-    std::lock_guard<std::mutex> lock(sessionsMutex_);
+    std::lock_guard<std::mutex> lock{sessionsMutex_};
     sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
                                    [&running](const auto& weak) {
                                      auto shared = weak.lock();
@@ -351,7 +351,7 @@ void ElasticExportScheduler::workerLoop() {
     uint64_t leaseId = 0;
 
     {
-      std::unique_lock<std::mutex> lock(queueMutex_);
+      std::unique_lock<std::mutex> lock{queueMutex_};
       workAvailableCv_.wait(lock, [this] {
         return stopping_.load(std::memory_order_relaxed) ||
                (!queue_.empty() && isAdmissibleUnsafe(queue_.front()));

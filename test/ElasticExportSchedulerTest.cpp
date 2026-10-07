@@ -645,8 +645,8 @@ bool eventually(Predicate predicate, std::chrono::milliseconds timeout = 5s) {
   return predicate();
 }
 
-// Mirrors `CheckpointMorselRunner`: serializes rows [begin, end) and checks
-// the session epoch after every `checkEvery` rows. On an epoch change it
+// Mirror `CheckpointMorselRunner`: serialize rows [`begin`, `end`) and check
+// the session epoch after every `checkEvery` row. On an epoch change it
 // resubmits the unprocessed tail and returns the rows done so far. Every row
 // increments its counter once, so a lost or duplicated row is visible.
 struct RangeTask {
@@ -661,7 +661,7 @@ struct RangeTask {
   std::string operator()() const {
     const uint64_t epoch = state_->currentEpoch();
     std::string done;
-    for (size_t pos = begin_; pos < end_; ++pos) {
+    for (size_t pos{begin_}; pos < end_; ++pos) {
       (*counts_)[pos].fetch_add(1);
       done += std::to_string(pos) + ",";
       if (perRow_.count() > 0) {
@@ -697,7 +697,7 @@ void submitRanges(ExportWorkSession<std::string>& session,
                   std::chrono::microseconds perRow, bool checkpoints) {
   for (size_t i = 0; i < numMorsels; ++i) {
     session.submitMorsel(RangeTask{session.sharedState(), counts,
-                                   i * rowsPerMorsel, (i + 1) * rowsPerMorsel,
+                                   i * rowsPerMorsel, (i + size_t{1}) * rowsPerMorsel,
                                    perRow, 1, checkpoints});
   }
 }
@@ -708,8 +708,8 @@ void submitRanges(ExportWorkSession<std::string>& session,
 // remainder to the earliest queries, one thread is the coordinator.
 TEST(ElasticExportSchedulerTest, FairThreadQuotaFormula) {
   for (size_t m : {1u, 2u, 5u, 8u}) {
-    for (size_t n = 1; n <= m + 1; ++n) {
-      size_t sum = 0;
+    for (size_t n = 1u; n <= m + size_t{1}; ++n) {
+      size_t sum{0};
       for (size_t rank = 0; rank < n; ++rank) {
         const size_t total =
             ElasticExportScheduler::fairThreadQuota(m, n, rank);
@@ -720,7 +720,7 @@ TEST(ElasticExportSchedulerTest, FairThreadQuotaFormula) {
                     total);
         }
         EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(m, n, rank),
-                  total > 0 ? total - 1 : 0);
+                  total > 0u ? total - size_t{1} : size_t{0});
         if (n >= m) {
           EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(m, n, rank), 0u);
         }
@@ -737,15 +737,14 @@ TEST(ElasticExportSchedulerTest, FairThreadQuotaFormula) {
   EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 9, 0), 0u);
 }
 
-// Live sessions get their quota by start order; a finishing query hands its
-// threads to the remaining sessions.
+// Live Fair sessions get helperQuota() by start order via fairThreadQuota(m,n,rank); when a query finishes, m/n is recomputed over remaining n.
 TEST(ElasticExportSchedulerTest, FairQuotasFollowSessionStartOrder) {
-  ElasticExportScheduler scheduler(5, 64);
+  ElasticExportScheduler scheduler{5, 64};
   scheduler.setHelperPolicy(HelperPolicy::Fair);
   for (int i = 0; i < 3; ++i) {
     scheduler.onForegroundQueryStarted();
   }
-  auto s0 = scheduler.createSession<std::string>();
+  auto s0{scheduler.createSession<std::string>()};
   auto s1 = scheduler.createSession<std::string>();
   auto s2 = scheduler.createSession<std::string>();
   EXPECT_EQ(s0.helperPolicy(), HelperPolicy::Fair);
@@ -833,7 +832,7 @@ TEST(ElasticExportSchedulerTest, FairShrinkOnArrivalGrowOnFinish) {
   sessionB.drainRemainingResults();
   scheduler.onForegroundQueryEnded();
   EXPECT_EQ(sessionA.helperQuota(), 3u);
-  EXPECT_TRUE(eventually([&] { return sessionA.activeHelpers() == 3; }));
+  EXPECT_TRUE(eventually([&] { return sessionA.activeHelpers() == 3u; }));
 
   sessionA.drainRemainingResults();
   expectEveryRowOnce(*counts);
@@ -841,7 +840,7 @@ TEST(ElasticExportSchedulerTest, FairShrinkOnArrivalGrowOnFinish) {
 }
 
 // Ordered sessions have no checkpoints: surplus helpers leave after their
-// running morsel, and slot order is preserved.
+// running morsels, and slot order is preserved.
 TEST(ElasticExportSchedulerTest, FairOrderedSessionShrinksAfterMorsel) {
   ElasticExportScheduler scheduler(4, 256);
   scheduler.setHelperPolicy(HelperPolicy::Fair);
@@ -870,8 +869,7 @@ TEST(ElasticExportSchedulerTest, FairOrderedSessionShrinksAfterMorsel) {
   scheduler.onForegroundQueryEnded();
 }
 
-// Many arrivals and departures while the coordinator consumes: every
-// revocation splits running morsels, no row is lost or duplicated.
+// Many arrivals/departures while the coordinator consumes: a revocation that hits a running checkpoint-enabled morsel splits it at the next checkpoint (resubmitting the tail), otherwise the morsel runs to completion; no row is lost or duplicated.
 TEST(ElasticExportSchedulerTest, FairRepeatedRevocationLosesNoRow) {
   ElasticExportScheduler scheduler(4, 1024);
   scheduler.setHelperPolicy(HelperPolicy::Fair);
@@ -892,10 +890,10 @@ TEST(ElasticExportSchedulerTest, FairRepeatedRevocationLosesNoRow) {
       std::this_thread::sleep_for(200us);
     }
   });
-  size_t rows = 0;
+  size_t rows{0};
   while (session.hasMoreResults()) {
     const std::string part = session.consumeNextResult();
-    rows += std::count(part.begin(), part.end(), ',');
+    rows += static_cast<size_t>(std::count(part.begin(), part.end(), ','));
   }
   stop = true;
   churn.join();
@@ -931,9 +929,9 @@ TEST(ElasticExportSchedulerTest, FairConcurrentSessionsStress) {
     exports.emplace_back([&, s] {
       scheduler.onForegroundQueryStarted();
       auto session = scheduler.createSession<std::string>();
-      session.setOrdered(s % 2 == 0 ? false : true);
+      session.setOrdered(s % 2u == 0u ? false : true);
       submitRanges(session, counts[s], numMorsels, rowsPerMorsel, 2us,
-                   s % 2 == 0);
+                   s % 2u == 0u);
       while (session.hasMoreResults()) {
         session.consumeNextResult();
         size_t quota = session.helperQuota();
