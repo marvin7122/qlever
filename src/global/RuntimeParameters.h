@@ -250,6 +250,17 @@ struct RuntimeParameters {
   // SELECTs with at most three columns take this path.
   Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
 
+  // How Export V2 shares the query thread pool among concurrent queries (see
+  // `HelperPolicy` in `ElasticExportScheduler.h`). "fair": each of the `n`
+  // running queries gets floor(m/n) of the `m` pool threads (the first m mod n
+  // queries one more), its coordinator included. "exclusive": helpers only
+  // while no other query is running.
+  String exportV2HelperPolicy_{"fair", "export-v2-helper-policy"};
+
+  // If positive, every Export V2 session logs its active helper count at most
+  // this often (milliseconds); 0 disables the trace.
+  SizeT exportV2HelperLogIntervalMs_{0, "export-v2-helper-log-interval-ms"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

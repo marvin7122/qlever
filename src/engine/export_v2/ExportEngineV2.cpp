@@ -285,13 +285,16 @@ struct CheckpointMorselRunner {
 
   absl::AnyInvocable<ScatterGatherChunkBuilder()> makeTask(
       ExportMorsel plan) const {
-    const uint64_t epoch = state_->currentEpoch();
-    return [*this, plan = std::move(plan), epoch]() mutable {
-      return run(std::move(plan), epoch);
+    return [*this, plan = std::move(plan)]() mutable {
+      return run(std::move(plan));
     };
   }
 
-  ScatterGatherChunkBuilder run(ExportMorsel plan, uint64_t epoch) const {
+  ScatterGatherChunkBuilder run(ExportMorsel plan) const {
+    // The epoch is sampled when the morsel starts, not when it is planned: a
+    // morsel that starts after a revocation already runs within the new
+    // quota and must not be split again.
+    const uint64_t epoch = state_->currentEpoch();
     ScatterGatherChunkBuilder builder;
     const size_t numSegments = plan.segments_.size();
     for (size_t s = 0; s < numSegments; ++s) {
@@ -385,7 +388,12 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   AD_LOG_INFO << "ExportEngineV2 streaming lazy result blocks to morsels on "
                  "queryThreadPool_ (no extra V2 threads)"
               << std::endl;
-  auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
+  const auto policy =
+      getRuntimeParameter<&RuntimeParameters::exportV2HelperPolicy_>() ==
+              "exclusive"
+          ? ad_utility::export_v2::HelperPolicy::Exclusive
+          : ad_utility::export_v2::HelperPolicy::Fair;
+  auto session = scheduler->createSession<ScatterGatherChunkBuilder>(policy);
   const auto& limitOffset = parsedQuery._limitOffset;
   const bool ordered = limitOffset._limit.has_value() ||
                        limitOffset._offset != 0 ||
@@ -412,12 +420,36 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     cancellationHandle->throwIfCancelled();
     session.submitMorsel(runner.makeTask(std::move(plan)));
   }
+  // Optional helper trace for concurrency measurements.
+  const auto logInterval = std::chrono::milliseconds{
+      getRuntimeParameter<&RuntimeParameters::exportV2HelperLogIntervalMs_>()};
+  auto nextLog = std::chrono::steady_clock::now();
+  auto logHelpers = [&session, logInterval, policy, &nextLog](bool force) {
+    if (logInterval.count() == 0) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && now < nextLog) {
+      return;
+    }
+    nextLog = now + logInterval;
+    AD_LOG_INFO << "ExportEngineV2 helpers job=" << session.jobId()
+                << " policy=" << ad_utility::export_v2::toString(policy)
+                << " active=" << session.activeHelpers()
+                << " quota=" << session.helperQuota()
+                << " state=" << ad_utility::export_v2::toString(session.state())
+                << " consumed=" << session.consumedSlots() << "/"
+                << session.totalSlots() << std::endl;
+  };
+  logHelpers(true);
   while (session.hasMoreResults()) {
     auto builder = session.consumeNextResult();
+    logHelpers(false);
     if (!builder.empty()) {
       co_yield std::move(builder);
     }
   }
+  logHelpers(true);
 }
 
 }  // namespace
