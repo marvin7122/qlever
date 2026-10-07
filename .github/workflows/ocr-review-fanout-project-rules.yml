@@ -160,7 +160,7 @@ jobs:
             '${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json'
       - name: Review pull request with fan-out project rules
         id: ocr
-        uses: marvin7122/open-code-review@34ed9d2925e550cf7edb97f3751c6cada6f89d9c
+        uses: marvin7122/open-code-review@3461ba0df7fba00fbb44376803e9a1d86d56026d # fix/fanout-custom-rules: fan-out honors --rule chunks
         with:
           # Deliberately the job-scoped GITHUB_TOKEN, not an App installation
           # token: installation tokens expire after 1 hour, but large-diff
