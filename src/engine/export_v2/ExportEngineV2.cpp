@@ -94,6 +94,13 @@ class ResolvedColumn {
 
  public:
   explicit ResolvedColumn(size_t numRows) : cells_(numRows) {}
+  // Pinned: after `finish`, cells view `scratch_`, whose bytes may live inside
+  // the object (small-string buffer), so a moved or copied column would
+  // dangle.
+  ResolvedColumn(const ResolvedColumn&) = delete;
+  ResolvedColumn& operator=(const ResolvedColumn&) = delete;
+  ResolvedColumn(ResolvedColumn&&) = delete;
+  ResolvedColumn& operator=(ResolvedColumn&&) = delete;
 
   // Point `row` at `text`, which must outlive this column (vocabulary batch).
   void setView(size_t row, std::string_view text) {
