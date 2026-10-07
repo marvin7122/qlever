@@ -414,8 +414,8 @@ TEST(VocabularyInMemoryBinSearch, makeDiskWriterPtrThrows) {
 
 namespace {
 // For a vocabulary with the given (strictly ascending) `indices`, check that
-// `positionOfIndex` and `positionsOfIndices` give the same results with and
-// without the rank directory, for every index in `[0, endIndex() + 70)`, in
+// `positionOfIndex` gives the same results with and without the rank
+// directory, for every index in `[0, endIndex() + 70)`, in
 // ascending, random, and repeated order.
 void expectRankDirectoryMatchesBinarySearch(
     const std::string& filename, const std::vector<uint64_t>& indices,
@@ -441,7 +441,7 @@ void expectRankDirectoryMatchesBinarySearch(
     repeated.push_back(queries[pick(gen)]);
   }
 
-  auto positionsByBinarySearch = [&vocab](const std::vector<size_t>& batch) {
+  auto positionsOf = [&vocab](const std::vector<size_t>& batch) {
     std::vector<std::optional<size_t>> result;
     for (size_t index : batch) {
       result.push_back(vocab.positionOfIndex(index));
@@ -456,31 +456,25 @@ void expectRankDirectoryMatchesBinarySearch(
                                            : std::optional{static_cast<size_t>(
                                                  it - indices.begin())});
   }
-  EXPECT_EQ(positionsByBinarySearch(queries), expected);
-  const auto expectedShuffled = positionsByBinarySearch(shuffled);
-  const auto expectedRepeated = positionsByBinarySearch(repeated);
-
-  // The galloping pass without the rank directory.
-  EXPECT_EQ(vocab.positionsOfIndices(queries), expected);
-  EXPECT_EQ(vocab.positionsOfIndices(shuffled), expectedShuffled);
-  EXPECT_EQ(vocab.positionsOfIndices(repeated), expectedRepeated);
-  EXPECT_TRUE(vocab.positionsOfIndices(std::vector<size_t>{}).empty());
+  EXPECT_EQ(positionsOf(queries), expected);
+  const auto expectedShuffled = positionsOf(shuffled);
+  const auto expectedRepeated = positionsOf(repeated);
 
   // The rank directory.
   vocab.buildIndexRankDirectory();
   ASSERT_TRUE(vocab.hasIndexRankDirectory());
   EXPECT_EQ(vocab.indexRankDirectoryNumBytes(),
             64 * ((vocab.endIndex() + 447) / 448));
-  EXPECT_EQ(positionsByBinarySearch(queries), expected);
-  EXPECT_EQ(positionsByBinarySearch(shuffled), expectedShuffled);
-  EXPECT_EQ(vocab.positionsOfIndices(repeated), expectedRepeated);
+  EXPECT_EQ(positionsOf(queries), expected);
+  EXPECT_EQ(positionsOf(shuffled), expectedShuffled);
+  EXPECT_EQ(positionsOf(repeated), expectedRepeated);
   for (size_t position = 0; position < indices.size(); ++position) {
     EXPECT_EQ(vocab[indices[position]], std::optional{words[position]});
   }
 
   // A rebuild gives the same result; `close` removes the directory.
   vocab.buildIndexRankDirectory();
-  EXPECT_EQ(vocab.positionsOfIndices(shuffled), expectedShuffled);
+  EXPECT_EQ(positionsOf(shuffled), expectedShuffled);
   vocab.close();
   EXPECT_FALSE(vocab.hasIndexRankDirectory());
   EXPECT_EQ(vocab.positionOfIndex(0), std::nullopt);

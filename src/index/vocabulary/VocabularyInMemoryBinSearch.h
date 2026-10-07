@@ -105,14 +105,6 @@ class VocabularyInMemoryBinSearch
   // constant time after `buildIndexRankDirectory`, a binary search otherwise.
   std::optional<size_t> positionOfIndex(uint64_t index) const;
 
-  // Same as `positionOfIndex` for each of the `indices` (in any order, with
-  // repetitions allowed). The result is in the order of `indices`. Without the
-  // rank directory, this sorts a copy of `indices` and finds all of them in one
-  // galloping pass over the sorted vocabulary indices, instead of one full
-  // binary search per index.
-  std::vector<std::optional<size_t>> positionsOfIndices(
-      ql::span<const size_t> indices) const;
-
   // Build a bit vector over `[0, endIndex())` with one bit per vocabulary index
   // (set if the index is contained) plus rank counters, which `positionOfIndex`
   // then uses instead of the binary search. Costs `8/7 * endIndex()` bits (see

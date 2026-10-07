@@ -258,13 +258,6 @@ struct RuntimeParameters {
   // is loaded; changing it later has no effect.
   Bool vocabularyInternalRankLookup_{true, "vocabulary-internal-rank-lookup"};
 
-  // If set to true (and `vocabulary-internal-rank-lookup` is off),
-  // `VocabularyInternalExternal::lookupBatch` sorts a copy of the batch and
-  // finds the words in RAM with one galloping pass over the sorted indices of
-  // these words, instead of one binary search per index.
-  Bool vocabularyInternalSortedBatchLookup_{
-      false, "vocabulary-internal-sorted-batch-lookup"};
-
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.
