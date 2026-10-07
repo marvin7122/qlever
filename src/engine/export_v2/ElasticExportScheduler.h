@@ -331,7 +331,8 @@ class ElasticExportScheduler {
   // accounting and admits waiting morsels, including on the throwing path.
   // The original morsel exception takes precedence over a completion-path
   // failure (e.g. a throwing poster while reposting drained morsels). Errors
-  // are stored for the coordinator; none escape the pool handler.
+  // are stored for the coordinator without rewriting completed results; none
+  // escape the pool handler.
   absl::AnyInvocable<void()> makePostedWork(
       OwnedMorsel morsel, std::shared_ptr<std::atomic<bool>> executionStarted);
   // Completion path shared by the success and throwing continuations:
@@ -574,7 +575,9 @@ class ExportJobState final
     std::lock_guard<std::mutex> lock(mutex_);
     auto& slot = slots_.at(morselIndex);
     // A task error takes precedence over a later completion/reposting error.
-    if (slot.error_ || slot.consumed_) {
+    // Completed or consumed results must never be rewritten by such errors.
+    if (slot.error_ || slot.consumed_ ||
+        slot.status_ == MorselStatus::Completed) {
       return;
     }
     slot.error_ = std::move(error);

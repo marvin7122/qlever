@@ -1136,6 +1136,72 @@ TEST(ElasticExportSchedulerTest, PosterThrowsAfterExecutionStarts) {
   }
 }
 
+TEST(ElasticExportSchedulerTest, BatchPostExecutionFailurePreservesResults) {
+  for (bool threaded : {false, true}) {
+    for (bool ordered : {true, false}) {
+      SCOPED_TRACE(threaded);
+      SCOPED_TRACE(ordered);
+      DeferredPoster deferred;
+      size_t posts = 0;
+      std::vector<MorselProfile> completedProfiles;
+      std::function<void()> captureCompletedProfiles;
+      ElasticExportScheduler scheduler([&](absl::AnyInvocable<void()> work) {
+        if (++posts == 2) {
+          if (threaded) {
+            std::thread worker(std::move(work));
+            worker.join();
+          } else {
+            work();
+          }
+          captureCompletedProfiles();
+          throw std::runtime_error("post-execution failure");
+        }
+        deferred.post(std::move(work));
+      });
+      scheduler.setMaxConcurrentMorsels(1);
+      auto session = scheduler.createSession<int>();
+      session.setOrdered(ordered);
+      captureCompletedProfiles = [&] {
+        completedProfiles = session.inspectMorselProfiles();
+        ASSERT_EQ(completedProfiles.size(), 2u);
+        for (const auto& profile : completedProfiles) {
+          EXPECT_EQ(profile.finalStatus_, MorselStatus::Completed);
+          EXPECT_TRUE(profile.executedByHelper_);
+        }
+      };
+      session.submitMorsel([] { return 1; });
+      session.submitMorsel([] { return 2; });
+      ASSERT_EQ(posts, 1u);
+      EXPECT_NO_THROW(deferred.runToIdle());
+      EXPECT_EQ(posts, 2u);
+      auto profiles = session.inspectMorselProfiles();
+      ASSERT_EQ(profiles.size(), 2u);
+      ASSERT_EQ(completedProfiles.size(), 2u);
+      for (size_t i = 0; i < profiles.size(); ++i) {
+        EXPECT_EQ(profiles[i].finalStatus_, MorselStatus::Completed);
+        EXPECT_TRUE(profiles[i].executedByHelper_);
+        EXPECT_EQ(profiles[i].completedAt_, completedProfiles[i].completedAt_);
+        EXPECT_EQ(profiles[i].wallDuration_,
+                  completedProfiles[i].wallDuration_);
+        EXPECT_EQ(profiles[i].cpuDuration_, completedProfiles[i].cpuDuration_);
+      }
+      EXPECT_EQ(session.consumeNextResult(), 1);
+      EXPECT_EQ(session.consumeNextResult(), 2);
+      EXPECT_FALSE(session.hasMoreResults());
+      EXPECT_EQ(session.activeHelpers(), 0u);
+      EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+
+      session.submitMorsel([] { return 3; });
+      EXPECT_EQ(posts, 3u);
+      deferred.runToIdle();
+      EXPECT_EQ(session.consumeNextResult(), 3);
+      EXPECT_TRUE(session.inspectMorselProfiles()[2].executedByHelper_);
+      EXPECT_EQ(session.activeHelpers(), 0u);
+      EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+    }
+  }
+}
+
 TEST(ElasticExportSchedulerTest, PosterFailureBeforeExecutionReleasesShare) {
   DeferredPoster deferred;
   bool failPost = true;
@@ -1187,9 +1253,11 @@ TEST(ElasticExportSchedulerTest, RepostingFailureReleasesIdentityForRetry) {
   EXPECT_EQ(posts, 3u);
   EXPECT_EQ(deferred.totalPosted_, 2u);
   EXPECT_NO_THROW(deferred.runToIdle());
-  // Completion/reposting errors remain visible to both affected slots.
-  AD_EXPECT_THROW_WITH_MESSAGE(session.consumeNextResult(),
-                               ::testing::HasSubstr("reposting failed"));
+  // Reposting failure cannot overwrite the successful first slot.
+  EXPECT_EQ(session.consumeNextResult(), 1);
+  EXPECT_EQ(session.inspectMorselProfiles()[0].finalStatus_,
+            MorselStatus::Completed);
+  EXPECT_TRUE(session.inspectMorselProfiles()[0].executedByHelper_);
   AD_EXPECT_THROW_WITH_MESSAGE(session.consumeNextResult(),
                                ::testing::HasSubstr("reposting failed"));
   session.submitMorsel([] { return 3; });
@@ -1201,13 +1269,16 @@ TEST(ElasticExportSchedulerTest, RepostingFailureReleasesIdentityForRetry) {
   EXPECT_EQ(scheduler.activeHelperCount(), 0u);
 }
 
-TEST(ElasticExportSchedulerTest, RepostingFailureReachesAffectedCoordinators) {
+TEST(ElasticExportSchedulerTest, RepostingFailureOnlyReachesFailedMorsels) {
   for (bool ordered : {true, false}) {
     SCOPED_TRACE(ordered);
     DeferredPoster deferred;
     size_t posts = 0;
+    MorselProfile completedProfile;
+    std::function<void()> captureCompletedProfile;
     ElasticExportScheduler scheduler([&](absl::AnyInvocable<void()> work) {
       if (++posts == 2) {
+        captureCompletedProfile();
         throw std::runtime_error("reposting failed");
       }
       deferred.post(std::move(work));
@@ -1217,15 +1288,29 @@ TEST(ElasticExportSchedulerTest, RepostingFailureReachesAffectedCoordinators) {
     auto second = scheduler.createSession<int>();
     first.setOrdered(ordered);
     second.setOrdered(ordered);
+    captureCompletedProfile = [&] {
+      auto profiles = first.inspectMorselProfiles();
+      ASSERT_EQ(profiles.size(), 1u);
+      completedProfile = profiles[0];
+      EXPECT_EQ(completedProfile.finalStatus_, MorselStatus::Completed);
+      EXPECT_TRUE(completedProfile.executedByHelper_);
+    };
     first.submitMorsel([] { return 1; });
     second.submitMorsel([] { return 2; });
     second.submitMorsel([] { return 3; });
 
     EXPECT_NO_THROW(deferred.runToIdle());
     EXPECT_EQ(posts, 3u);
-    // Completion and reposting errors are visible to both affected sessions.
-    AD_EXPECT_THROW_WITH_MESSAGE(first.consumeNextResult(),
-                                 ::testing::HasSubstr("reposting failed"));
+    // Only the actually failed morsel reports the reposting error. The first
+    // session keeps its completed result and its original completion profile.
+    auto profiles = first.inspectMorselProfiles();
+    ASSERT_EQ(profiles.size(), 1u);
+    EXPECT_EQ(profiles[0].finalStatus_, completedProfile.finalStatus_);
+    EXPECT_EQ(profiles[0].completedAt_, completedProfile.completedAt_);
+    EXPECT_EQ(profiles[0].wallDuration_, completedProfile.wallDuration_);
+    EXPECT_EQ(profiles[0].cpuDuration_, completedProfile.cpuDuration_);
+    EXPECT_TRUE(profiles[0].executedByHelper_);
+    EXPECT_EQ(first.consumeNextResult(), 1);
     AD_EXPECT_THROW_WITH_MESSAGE(second.consumeNextResult(),
                                  ::testing::HasSubstr("reposting failed"));
     EXPECT_EQ(second.consumeNextResult(), 3);
@@ -1332,10 +1417,13 @@ TEST(ElasticExportSchedulerTest, PersistentPosterFailureDrainsIteratively) {
       EXPECT_EQ(executed, completionTriggered ? 1u : 0u);
       EXPECT_EQ(session.activeHelpers(), 0u);
       EXPECT_EQ(scheduler.activeHelperCount(), 0u);
-      AD_EXPECT_THROW_WITH_MESSAGE(
-          session.consumeNextResult(),
-          ::testing::StrEq(completionTriggered ? "first backlog posting failure"
-                                               : "original posting failure"));
+      if (completionTriggered) {
+        EXPECT_EQ(session.consumeNextResult(), 0);
+      } else {
+        AD_EXPECT_THROW_WITH_MESSAGE(
+            session.consumeNextResult(),
+            ::testing::StrEq("original posting failure"));
+      }
       AD_EXPECT_THROW_WITH_MESSAGE(
           session.consumeNextResult(),
           ::testing::StrEq("first backlog posting failure"));
@@ -1346,8 +1434,11 @@ TEST(ElasticExportSchedulerTest, PersistentPosterFailureDrainsIteratively) {
       }
       auto profiles = session.inspectMorselProfiles();
       ASSERT_EQ(profiles.size(), waitingMorsels + 1);
-      for (const auto& profile : profiles) {
-        EXPECT_EQ(profile.finalStatus_, MorselStatus::Failed);
+      EXPECT_EQ(profiles[0].finalStatus_, completionTriggered
+                                              ? MorselStatus::Completed
+                                              : MorselStatus::Failed);
+      for (size_t i = 1; i < profiles.size(); ++i) {
+        EXPECT_EQ(profiles[i].finalStatus_, MorselStatus::Failed);
       }
       EXPECT_FALSE(session.hasMoreResults());
 

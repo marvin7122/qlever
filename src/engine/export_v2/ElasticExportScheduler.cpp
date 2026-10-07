@@ -372,7 +372,8 @@ absl::AnyInvocable<void()> ElasticExportScheduler::makePostedWork(
       // on throwing tasks.
       onPostedMorselFinished(jobId, morselIndex);
     } catch (...) {
-      // Keep the original task error if completion or reposting also fails.
+      // Preserve completed results and original task errors when completion
+      // or reposting fails.
       jobState->onMorselFailed(morselIndex, std::current_exception());
     }
   };
