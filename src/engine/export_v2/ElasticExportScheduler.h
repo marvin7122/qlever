@@ -337,8 +337,7 @@ class ElasticExportScheduler {
     return nextJobId_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  /// Create a typed `ExportWorkSession`.
-  /// Create a typed ExportWorkSession. If `policy` is `nullopt` the session
+  /// Create a typed `ExportWorkSession`. If `policy` is `nullopt` the session
   /// inherits `helperPolicy()` (runtime parameter `export-v2-helper-policy`);
   /// fair sessions start with quota 0 and are rebalanced immediately.
   template <typename ResultType = std::string>
