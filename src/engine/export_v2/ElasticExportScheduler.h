@@ -5,6 +5,7 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <gtest/gtest_prod.h>
 
 #include <algorithm>
 #include <atomic>
@@ -16,15 +17,19 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "util/Exception.h"
+#include "util/HashMap.h"
 #include "util/http/websocket/QueryId.h"
 
 namespace ad_utility::export_v2 {
@@ -149,6 +154,7 @@ class ExportJobStateBase {
   virtual void onHelperLeaseAcquired(uint64_t leaseEpoch) = 0;
   virtual void onHelperLeaseReleased(uint64_t leaseEpoch) = 0;
   virtual void executeHelperTask(size_t morselIndex, uint64_t leaseEpoch) = 0;
+  virtual void onMorselFailed(size_t morselIndex, std::exception_ptr error) = 0;
   [[nodiscard]] virtual bool isCancelled() const noexcept = 0;
 };
 
@@ -176,8 +182,14 @@ template <typename ResultType>
 class ExportWorkSession;
 
 // -----------------------------------------------------------------------------
-// ElasticExportScheduler: Isolated Thread Pool & Concurrency Coordinator
+// ElasticExportScheduler: Shared-Pool Morsel Coordinator with Even-Split
+// Admission
 // -----------------------------------------------------------------------------
+// Execution happens on Server::queryThreadPool_ through the poster transport
+// (or dedicated threads in tests). Admission is enforced here: each live
+// session holds an even share of in-flight morsels, newcomers queue
+// first-in first-out past capacity, and every session keeps at least one
+// morsel in flight. No caller tracks shares; submit and consume stay unchanged.
 
 class ElasticExportScheduler {
  public:
@@ -239,6 +251,16 @@ class ElasticExportScheduler {
     return maxQueueCapacity_;
   }
 
+  /// Cap on concurrently outstanding morsels across all sessions. Defaults to
+  /// unlimited (SIZE_MAX, so the admission limit is effectively disabled and
+  /// existing callers behave as before); production wiring sets it to the
+  /// pool thread count to enable even-split admission.
+  void setMaxConcurrentMorsels(size_t count) {
+    AD_CONTRACT_CHECK(count >= 1,
+                      "Need at least one in-flight morsel for progress");
+    maxConcurrentMorsels_.store(count, std::memory_order_relaxed);
+  }
+
   /// Set the maximum number of active queries allowed for helper admission.
   /// Defaults to 1 (i.e. only the export query itself is running).
   void setMaxForegroundQueriesForHelperAdmission(size_t count) noexcept {
@@ -282,13 +304,70 @@ class ElasticExportScheduler {
   ExportWorkSession<ResultType> createSession();
 
  private:
+  FRIEND_TEST(ElasticExportSchedulerTest,
+              LiveSessionCountTracksConcurrentRegistration);
+
   void workerLoop();
   void runPostedMorsel(OwnedMorsel morsel);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
+  // Reserve one outstanding slot for `jobId`. Every posted morsel is
+  // counted exactly once, at admission time (under the lock), so posting
+  // itself never touches the counters. queueMutex_ held.
+  void accountOutstandingUnsafe(uint64_t jobId);
+  // Hand an already-accounted morsel to `poster_`. Never holds `queueMutex_`
+  // while invoking `poster_`: a synchronous poster runs the closure inline,
+  // and completion takes the non-recursive `queueMutex_` again, so holding
+  // it here would deadlock. A throwing `poster_` releases the morsel's
+  // reservation before the exception propagates. Direct posting rollback
+  // may enter the iterative batch drain once; batch posting leaves draining
+  // to its caller instead, so failures cannot nest the admission chain.
+  void postReady(OwnedMorsel morsel, bool drainPendingOnFailure = true);
+  // Hand several already-accounted morsels to `poster_` without holding
+  // `queueMutex_`. Owns the iterative drain of waiting morsels after each
+  // batch, even on posting failure, so no accounted morsel is stranded.
+  // Rethrows the first failure only after all admission rounds finish.
+  void postReadyBatch(std::vector<OwnedMorsel> batch);
+  // Build the closure for a posted morsel; completion decrements the share
+  // accounting and admits waiting morsels, including on the throwing path.
+  // The original morsel exception takes precedence over a completion-path
+  // failure (e.g. a throwing poster while reposting drained morsels). Errors
+  // are stored for the coordinator without rewriting completed results; none
+  // escape the pool handler.
+  absl::AnyInvocable<void()> makePostedWork(
+      OwnedMorsel morsel, std::shared_ptr<std::atomic<bool>> executionStarted);
+  // Completion path shared by the success and throwing continuations:
+  // decrement under the lock, then post newly admittable morsels without it.
+  void onPostedMorselFinished(uint64_t jobId, size_t morselIndex);
+  // Read the outstanding count without inserting a zero entry for sessions
+  // that only hold pending morsels. queueMutex_ held.
+  [[nodiscard]] size_t committedOutstandingUnsafe(uint64_t jobId) const;
+  // Select admittable pending morsels in two phases (below-base-share
+  // sessions first, then remainder slots in queue FIFO order), account them as
+  // outstanding, and return them; the caller posts them WITHOUT holding
+  // queueMutex_. queueMutex_ held.
+  [[nodiscard]] std::vector<OwnedMorsel> drainPendingAdmissionUnsafe();
+  // Decrement accounting for one finished morsel. queueMutex_ held.
+  void decrementOutstandingUnsafe(uint64_t jobId, size_t morselIndex);
+  // Base per-session share from the live count: at least one, so every
+  // session keeps its progress floor. Pure computation, no locking. When
+  // `max` is not divisible by the live count, the truncated remainder is
+  // admitted in queue FIFO order by `drainPendingAdmissionUnsafe`, so no
+  // capacity is stranded. The max is a best-effort snapshot: a concurrent
+  // `setMaxConcurrentMorsels` may shift shares transiently, and every drain
+  // re-reads the current value.
+  [[nodiscard]] size_t fairShareUnsafe(size_t liveSessions) const noexcept {
+    const size_t max = maxConcurrentMorsels_.load(std::memory_order_relaxed);
+    const size_t live = std::max(liveSessions, size_t{1});
+    return std::max(size_t{1}, max / live);
+  }
 
   WorkPoster poster_;
   const size_t maxQueueCapacity_;
   std::atomic<size_t> maxForegroundQueriesForHelperAdmission_{1};
+  std::atomic<size_t> maxConcurrentMorsels_{std::numeric_limits<size_t>::max()};
+  // Live session count, maintained at register and prune points so admission
+  // never takes sessionsMutex_ while holding queueMutex_.
+  std::atomic<size_t> liveSessionCount_{0};
   std::atomic<uint64_t> demandEpoch_{1};
   std::atomic<size_t> activeForegroundQueries_{0};
   std::atomic<uint64_t> nextJobId_{1};
@@ -300,6 +379,19 @@ class ElasticExportScheduler {
   std::condition_variable workAvailableCv_;
   std::condition_variable queueNotFullCv_;
   std::deque<OwnedMorsel> queue_;
+  // Posted-but-unfinished morsels per session plus the first-in first-out
+  // overflow they wait in. Guarded by queueMutex_; the asio pool depth
+  // itself is invisible, so this map is the share accounting.
+  std::unordered_map<uint64_t, size_t> outstandingPerSession_;
+  std::deque<OwnedMorsel> pendingAdmission_;
+  // Poster transport only: every pending or posted-but-unfinished identity
+  // retains its latest requested epoch. Demand resubmission refreshes this
+  // entry instead of queuing or reserving the same morsel again. Keep tracking
+  // through admission; erase on completion, posting rollback, or pending
+  // cancel. Guarded by queueMutex_, like the pending queue and outstanding
+  // counters.
+  ad_utility::HashMap<std::pair<uint64_t, size_t>, uint64_t> submissionEpochs_;
+  size_t totalOutstanding_{0};
 
   mutable std::mutex sessionsMutex_;
   std::vector<std::weak_ptr<ExportJobStateBase>> sessions_;
@@ -467,16 +559,32 @@ class ExportJobState final
       // instead of waiting on a `Running` slot forever.
       std::lock_guard<std::mutex> lock(mutex_);
       slots_[morselIndex].error_ = std::current_exception();
-      slots_[morselIndex].status_ = MorselStatus::Cancelled;
+      slots_[morselIndex].status_ = MorselStatus::Failed;
       slots_[morselIndex].profile_.completedAt_ =
           std::chrono::steady_clock::now();
       slots_[morselIndex].profile_.wallDuration_ =
           slots_[morselIndex].profile_.completedAt_ - startWall;
       slots_[morselIndex].profile_.cpuDuration_ = getCpuDuration() - startCpu;
-      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Cancelled;
+      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Failed;
       cv_.notify_all();
       throw;
     }
+  }
+
+  void onMorselFailed(size_t morselIndex, std::exception_ptr error) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& slot = slots_.at(morselIndex);
+    // A task error takes precedence over a later completion/reposting error.
+    // Completed or consumed results must never be rewritten by such errors.
+    if (slot.error_ || slot.consumed_ ||
+        slot.status_ == MorselStatus::Completed) {
+      return;
+    }
+    slot.error_ = std::move(error);
+    slot.profile_.completedAt_ = std::chrono::steady_clock::now();
+    slot.status_ = MorselStatus::Failed;
+    slot.profile_.finalStatus_ = MorselStatus::Failed;
+    cv_.notify_all();
   }
 
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
@@ -608,9 +716,7 @@ class ExportJobState final
       }
 
       if (slots_[index].status_ == MorselStatus::Cancelled) {
-        // A helper worker converted a task exception into this terminal
-        // state (see `executeHelperTask`): surface the original failure
-        // instead of hanging on a slot that will never complete.
+        // Surface any stored failure before reporting cancellation.
         std::exception_ptr error = slots_[index].error_;
         lock.unlock();
         if (error) {
@@ -672,23 +778,26 @@ class ExportJobState final
         // finished unconsumed slot and re-select: emitting whichever morsel
         // is ready avoids head-of-line blocking behind the selected one.
         // Ordered sessions preserve slot order and keep waiting. A
-        // `Cancelled` wakeup means the worker stored a task failure (handled
-        // above on the next loop iteration).
+        // `Failed` wakeup means a task or scheduler failure was stored
+        // (handled above on the next loop iteration).
         cv_.wait(lock, [&] {
           return slots_[index].status_ == MorselStatus::Completed ||
+                 slots_[index].status_ == MorselStatus::Failed ||
                  slots_[index].status_ == MorselStatus::Cancelled ||
                  cancelled_.load(std::memory_order_relaxed) ||
-                 (!ordered_ && std::any_of(slots_.begin(), slots_.end(),
-                                           [](const Slot& slot) {
-                                             return !slot.consumed_ &&
-                                                    slot.status_ ==
-                                                        MorselStatus::Completed;
-                                           }));
+                 (!ordered_ &&
+                  std::any_of(
+                      slots_.begin(), slots_.end(), [](const Slot& slot) {
+                        return !slot.consumed_ &&
+                               (slot.status_ == MorselStatus::Completed ||
+                                slot.status_ == MorselStatus::Failed);
+                      }));
         });
         if (!ordered_ && slots_[index].status_ != MorselStatus::Completed) {
           for (size_t i = 0; i < slots_.size(); ++i) {
             if (!slots_[i].consumed_ &&
-                slots_[i].status_ == MorselStatus::Completed) {
+                (slots_[i].status_ == MorselStatus::Completed ||
+                 slots_[i].status_ == MorselStatus::Failed)) {
               index = i;
               break;
             }

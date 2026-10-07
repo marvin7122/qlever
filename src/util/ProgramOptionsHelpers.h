@@ -37,7 +37,7 @@ CPP_template(typename ConvertFromString)(
 
 // An implicit wrapper that can be implicitly converted to and from `size_t`.
 // When using it as a target value in `boost::program_options` it will only
-// accept positive values because of the `validate` function below.
+// accept non-negative values because of the `validate` function below.
 class NonNegative {
  public:
   operator size_t() const { return _value; }
@@ -48,8 +48,15 @@ class NonNegative {
   size_t _value;
 };
 
-CPP_template(typename Stream, typename NN)(
-    requires ad_utility::SimilarTo<NN, NonNegative>) Stream&
+// Like NonNegative, but parsing as a program option requires at least one.
+class Positive : public NonNegative {
+ public:
+  using NonNegative::NonNegative;
+};
+
+CPP_template(typename Stream,
+             typename NN)(requires(ad_utility::SimilarTo<NN, NonNegative> ||
+                                   ad_utility::SimilarTo<NN, Positive>)) Stream&
 operator<<(Stream& stream, NN&& nonNegative) {
   return stream << static_cast<size_t>(nonNegative);
 }
@@ -68,6 +75,20 @@ inline void validate(boost::any& v, const std::vector<std::string>& values,
   }
 
   v = NonNegative{boost::lexical_cast<size_t>(s)};
+}
+
+// Reuse non-negative parsing, but reject zero for positive program options.
+inline void validate(boost::any& v, const std::vector<std::string>& values,
+                     Positive*, int) {
+  using namespace boost::program_options;
+  validators::check_first_occurrence(v);
+  boost::any parsed;
+  validate(parsed, values, static_cast<NonNegative*>(nullptr), 0);
+  size_t count = boost::any_cast<NonNegative>(parsed);
+  if (count == 0) {
+    throw invalid_option_value(validators::get_single_string(values));
+  }
+  v = Positive{count};
 }
 
 // This function is required  to use `std::optional` in

@@ -48,14 +48,14 @@ int main(int argc, char** argv) {
 
   // Init variables that may or may not be
   // filled / set depending on the options.
-  using ad_utility::NonNegative;
+  using ad_utility::Positive;
 
   qlever::EngineConfig config;
   std::string accessToken;
   bool noAccessCheck = false;
   unsigned short port;
   bool metricsEnabled = false;
-  NonNegative numSimultaneousQueries = 1;
+  Positive numSimultaneousQueries = 1;
   bool noMetricsLog = false;
   bool noResourceUsageLog = false;
   uint32_t resourceUsageIntervalS = 2;
@@ -82,8 +82,9 @@ int main(int argc, char** argv) {
       "If set to true, no access-token check is performed for restricted API "
       "calls (default: false).");
   add("num-simultaneous-queries,j",
-      po::value<NonNegative>(&numSimultaneousQueries)->default_value(1),
-      "The number of queries that can be processed simultaneously.");
+      po::value<Positive>(&numSimultaneousQueries)->default_value(1),
+      "The number of queries that can be processed simultaneously (at least "
+      "1).");
   add("memory-max-size,m",
       po::value<ad_utility::MemorySize>()
           ->default_value(DEFAULT_MEM_FOR_QUERIES)

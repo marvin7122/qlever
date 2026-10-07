@@ -100,10 +100,11 @@ class PolymorphicVocabulary {
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
-  // Same as `lookupBatch(indices)`, but decode into `builder`: natively
-  // when the active alternative has a batched leaf, sequentially otherwise.
-  // The builder is always populated on return because callers finalize it
-  // unconditionally.
+  // Same as `lookupBatch(indices)`, but fill `builder` directly when the
+  // underlying vocabulary supports it; otherwise copy single-shot words into
+  // it. In either case, finalize `builder` exactly once and return that result.
+  // A successful call consumes `builder`, leaving it moved-from; it must not
+  // be reused.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const;
 

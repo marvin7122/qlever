@@ -536,6 +536,7 @@ addLinkAndDiscoverTest(CachingMemoryResourceTest)
 addLinkAndDiscoverTestNoLibs(ParallelMultiwayMergeTest)
 
 addLinkAndDiscoverTest(ParseableDurationTest)
+addLinkAndDiscoverTestNoLibs(ProgramOptionsHelpersTest Boost::program_options)
 
 addLinkAndDiscoverTest(ConstantsTest)
 
