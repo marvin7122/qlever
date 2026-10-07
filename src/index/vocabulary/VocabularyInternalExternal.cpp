@@ -15,6 +15,8 @@
 #include <string_view>
 #include <utility>
 
+#include "global/RuntimeParameters.h"
+
 namespace ad_utility::vocabulary {
 
 // _____________________________________________________________________________
@@ -155,5 +157,13 @@ void VocabularyInternalExternal::open(const std::string& filename) {
   AD_LOG_INFO << "Number of words in internal vocabulary (these are also part "
                  "of the external vocabulary): "
               << internalVocab_.size() << std::endl;
+  if (getRuntimeParameter<
+          &RuntimeParameters::vocabularyInternalRankLookup_>()) {
+    internalVocab_.buildIndexRankDirectory();
+    AD_LOG_INFO << "Rank directory of the internal vocabulary: "
+                << internalVocab_.indexRankDirectoryNumBytes() << " bytes for "
+                << internalVocab_.endIndex() << " vocabulary indices"
+                << std::endl;
+  }
 }
 }  // namespace ad_utility::vocabulary

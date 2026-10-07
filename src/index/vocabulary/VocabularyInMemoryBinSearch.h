@@ -14,6 +14,7 @@
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
+#include "util/BitVectorWithRank.h"
 #include "util/CompactStringVector.h"
 #include "util/Exception.h"
 #include "util/Serializer/FileSerializer.h"
@@ -50,6 +51,9 @@ class VocabularyInMemoryBinSearch
   // `fromZeroCopyDeserializer`).
   Words words_;
   std::variant<Indices, IndicesView> indices_;
+  // Optional constant-time replacement for the binary search in
+  // `positionOfIndex` (see `buildIndexRankDirectory`).
+  std::optional<ad_utility::BitVectorWithRank> indexRankDirectory_;
 
  public:
   // Construct an empty vocabulary
@@ -94,8 +98,24 @@ class VocabularyInMemoryBinSearch
 
   // Return the position (i.e. the offset into the words) of the word with the
   // given vocabulary `index`, or `std::nullopt` if `index` is not contained in
-  // this vocabulary (which can happen because of the "holes", see above).
+  // this vocabulary (which can happen because of the "holes", see above). Takes
+  // constant time after `buildIndexRankDirectory`, a binary search otherwise.
   std::optional<size_t> positionOfIndex(uint64_t index) const;
+
+  // Build a bit vector over `[0, endIndex())` with one bit per vocabulary index
+  // (set if the index is contained) plus rank counters, which `positionOfIndex`
+  // then uses instead of the binary search. Costs `8/7 * endIndex()` bits (see
+  // `ad_utility::BitVectorWithRank`). Calling it again rebuilds the directory.
+  void buildIndexRankDirectory();
+
+  // Whether `buildIndexRankDirectory` was called (since the last `close`).
+  bool hasIndexRankDirectory() const { return indexRankDirectory_.has_value(); }
+
+  // The number of bytes of the rank directory, 0 if it was not built.
+  size_t indexRankDirectoryNumBytes() const {
+    return indexRankDirectory_.has_value() ? indexRankDirectory_->numBytes()
+                                           : 0;
+  }
 
   // Return the vocabulary index of the word at the given `position`. The
   // `position` must be smaller than `size()`.
@@ -206,6 +226,7 @@ class VocabularyInMemoryBinSearch
     } else {
       auto& indices = arg.indices_.template emplace<Indices>();
       serializer | indices;
+      arg.indexRankDirectory_.reset();
     }
   }
 

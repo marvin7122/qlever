@@ -11,6 +11,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <numeric>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -19,6 +21,7 @@
 #include "index/vocabulary/VocabularyInternalExternal.h"
 #include "util/Exception.h"
 #include "util/Forward.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 namespace {
 using namespace vocabulary_test;
@@ -203,4 +206,75 @@ TEST(VocabularyInternalExternal, ScanAll) {
 TEST(VocabularyInternalExternal, ScanAllEmptyVocabulary) {
   auto vocab = createVocabulary("ScanAllEmpty")(std::vector<std::string>{});
   EXPECT_TRUE(scanAllToVector(vocab.scanAll()).empty());
+}
+
+namespace {
+// Delete all files that a `VocabularyInternalExternal::WordWriter` for the
+// given `filename` creates. Do not warn about files that were never created.
+void deleteInternalExternalFiles(const std::string& filename) {
+  for (const char* fileSuffix :
+       {".internal", ".internal.ids", ".external", ".external.offsets"}) {
+    ad_utility::deleteFile(filename + fileSuffix, false);
+  }
+}
+}  // namespace
+
+// _____________________________________________________________________________
+// `lookupBatch` and `operator[]` return the same words with and without the
+// rank directory of the internal vocabulary
+// (`vocabulary-internal-rank-lookup`), for random sparse and dense sets of
+// internal words and random batches with repetitions.
+TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
+  const std::string filename =
+      "LookupBatchIsIndependentOfInternalLookupMode" + suffix;
+  for (double internalDensity : {0.0, 0.01, 0.3, 0.9, 1.0}) {
+    deleteInternalExternalFiles(filename);
+    std::mt19937_64 gen{static_cast<uint64_t>(internalDensity * 100) + 1};
+    std::bernoulli_distribution isInternal{internalDensity};
+    std::vector<std::string> words;
+    {
+      // A milestone distance larger than the vocabulary, so that only the
+      // first word and the random internal words are in RAM.
+      ad_utility::vocabulary::VocabularyInternalExternal::WordWriter writer{
+          filename, 1'000'000};
+      for (size_t i = 0; i < 3000; ++i) {
+        words.push_back(absl::StrCat("word", 1'000'000 + i));
+        EXPECT_EQ(writer(words.back(), !isInternal(gen)), i);
+      }
+      writer.finish();
+    }
+    std::uniform_int_distribution<size_t> pick{0, words.size() - 1};
+    std::vector<std::vector<size_t>> batches{{0}, {words.size() - 1}};
+    for (size_t batchSize : {1, 7, 500, 4000}) {
+      std::vector<size_t> batch;
+      for (size_t i = 0; i < batchSize; ++i) {
+        batch.push_back(pick(gen));
+      }
+      batches.push_back(std::move(batch));
+    }
+    std::vector<size_t> all(words.size());
+    std::iota(all.begin(), all.end(), size_t{0});
+    batches.push_back(all);
+    ql::ranges::reverse(all);
+    batches.push_back(all);
+
+    for (bool rankLookup : {false, true}) {
+      auto cleanupRank = setRuntimeParameterForTest<
+          &RuntimeParameters::vocabularyInternalRankLookup_>(rankLookup);
+      ad_utility::vocabulary::VocabularyInternalExternal vocab;
+      vocab.open(filename);
+      EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(), rankLookup);
+      for (const auto& batch : batches) {
+        std::vector<std::string> expected;
+        for (size_t index : batch) {
+          expected.push_back(words.at(index));
+          ASSERT_EQ(vocab[index], words.at(index));
+        }
+        EXPECT_THAT(vocab.lookupBatch(batch),
+                    ::testing::ElementsAreArray(expected))
+            << "rank lookup " << rankLookup << ", density " << internalDensity;
+      }
+    }
+  }
+  deleteInternalExternalFiles(filename);
 }
