@@ -963,6 +963,120 @@ TEST(ElasticExportSchedulerTest, RollbackPreservesOriginalPostingFailure) {
   EXPECT_EQ(posts, 3u);
 }
 
+TEST(ElasticExportSchedulerTest, PersistentPosterFailureDrainsIteratively) {
+  constexpr size_t waitingMorsels = 4096;
+  for (bool completionTriggered : {false, true}) {
+    for (size_t admissionWidth : {size_t{1}, size_t{4}}) {
+      SCOPED_TRACE(completionTriggered);
+      SCOPED_TRACE(admissionWidth);
+      DeferredPoster deferred;
+      size_t posts = 0;
+      size_t executed = 0;
+      bool failPost = true;
+      std::function<void()> submitWaitingMorsels;
+      std::function<void()> checkEarlierFailure;
+      ElasticExportScheduler scheduler([&](absl::AnyInvocable<void()> work) {
+        ++posts;
+        if (posts == 1) {
+          if (!completionTriggered) {
+            submitWaitingMorsels();
+            throw std::runtime_error("original posting failure");
+          }
+        } else if (failPost) {
+          if (posts == 3) {
+            // The previous failed post must be terminal before the next
+            // attempt, rather than waiting for recursive rollback to unwind.
+            checkEarlierFailure();
+          }
+          throw std::runtime_error(posts == 2
+                                       ? "first backlog posting failure"
+                                       : "later backlog posting failure");
+        }
+        deferred.post(std::move(work));
+      });
+      scheduler.setMaxConcurrentMorsels(1);
+      auto session = scheduler.createSession<int>();
+      submitWaitingMorsels = [&] {
+        for (size_t i = 0; i < waitingMorsels; ++i) {
+          session.submitMorsel([&] {
+            ++executed;
+            return -1;
+          });
+        }
+        EXPECT_EQ(posts, 1u);
+        scheduler.setMaxConcurrentMorsels(admissionWidth);
+      };
+      checkEarlierFailure = [&] {
+        auto profiles = session.inspectMorselProfiles();
+        ASSERT_EQ(profiles.size(), waitingMorsels + 1);
+        EXPECT_EQ(profiles[1].finalStatus_, MorselStatus::Failed);
+      };
+      auto firstMorsel = [&] {
+        ++executed;
+        return 0;
+      };
+      if (completionTriggered) {
+        session.submitMorsel(firstMorsel);
+        submitWaitingMorsels();
+        EXPECT_NO_THROW(deferred.runToIdle());
+      } else {
+        AD_EXPECT_THROW_WITH_MESSAGE(
+            session.submitMorsel(firstMorsel),
+            ::testing::StrEq("original posting failure"));
+      }
+      EXPECT_EQ(posts, waitingMorsels + 1);
+      EXPECT_TRUE(deferred.posted_.empty());
+      EXPECT_EQ(executed, completionTriggered ? 1u : 0u);
+      EXPECT_EQ(session.activeHelpers(), 0u);
+      EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+      AD_EXPECT_THROW_WITH_MESSAGE(
+          session.consumeNextResult(),
+          ::testing::StrEq(completionTriggered ? "first backlog posting failure"
+                                               : "original posting failure"));
+      AD_EXPECT_THROW_WITH_MESSAGE(
+          session.consumeNextResult(),
+          ::testing::StrEq("first backlog posting failure"));
+      for (size_t i = 1; i < waitingMorsels; ++i) {
+        AD_EXPECT_THROW_WITH_MESSAGE(
+            session.consumeNextResult(),
+            ::testing::StrEq("later backlog posting failure"));
+      }
+      auto profiles = session.inspectMorselProfiles();
+      ASSERT_EQ(profiles.size(), waitingMorsels + 1);
+      for (const auto& profile : profiles) {
+        EXPECT_EQ(profile.finalStatus_, MorselStatus::Failed);
+      }
+      EXPECT_FALSE(session.hasMoreResults());
+
+      // Every reservation must be restored, not just one: a full fresh
+      // batch posts immediately and executes on helpers, never the primary.
+      failPost = false;
+      for (size_t i = 0; i < admissionWidth; ++i) {
+        session.submitMorsel([&, i] {
+          ++executed;
+          return static_cast<int>(i);
+        });
+      }
+      EXPECT_EQ(posts, waitingMorsels + 1 + admissionWidth);
+      EXPECT_EQ(deferred.posted_.size(), admissionWidth);
+      EXPECT_NO_THROW(deferred.runToIdle());
+      for (size_t i = 0; i < admissionWidth; ++i) {
+        EXPECT_EQ(session.consumeNextResult(), static_cast<int>(i));
+      }
+      profiles = session.inspectMorselProfiles();
+      for (size_t i = waitingMorsels + 1; i < profiles.size(); ++i) {
+        EXPECT_EQ(profiles[i].finalStatus_, MorselStatus::Completed);
+        EXPECT_TRUE(profiles[i].executedByHelper_);
+      }
+      EXPECT_EQ(executed, (completionTriggered ? 1u : 0u) + admissionWidth);
+      EXPECT_FALSE(session.hasMoreResults());
+      EXPECT_TRUE(deferred.posted_.empty());
+      EXPECT_EQ(session.activeHelpers(), 0u);
+      EXPECT_EQ(scheduler.activeHelperCount(), 0u);
+    }
+  }
+}
+
 TEST(ElasticExportSchedulerTest, InlineTaskFailureReachesCoordinator) {
   for (bool ordered : {true, false}) {
     SCOPED_TRACE(ordered);

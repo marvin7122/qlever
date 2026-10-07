@@ -312,12 +312,14 @@ class ElasticExportScheduler {
   // while invoking `poster_`: a synchronous poster runs the closure inline,
   // and completion takes the non-recursive `queueMutex_` again, so holding
   // it here would deadlock. A throwing `poster_` releases the morsel's
-  // reservation (and admits waiting morsels for the freed share) before
-  // the exception propagates, so the share accounting cannot leak.
-  void postReady(OwnedMorsel morsel);
+  // reservation before the exception propagates. Direct posting rollback
+  // may enter the iterative batch drain once; batch posting leaves draining
+  // to its caller instead, so failures cannot nest the admission chain.
+  void postReady(OwnedMorsel morsel, bool drainPendingOnFailure = true);
   // Hand several already-accounted morsels to `poster_` without holding
-  // `queueMutex_`. Keeps posting after a single failure so no accounted
-  // morsel is stranded, then rethrows the first failure.
+  // `queueMutex_`. Owns the iterative drain of waiting morsels after each
+  // batch, even on posting failure, so no accounted morsel is stranded.
+  // Rethrows the first failure only after all admission rounds finish.
   void postReadyBatch(std::vector<OwnedMorsel> batch);
   // Build the closure for a posted morsel; completion decrements the share
   // accounting and admits waiting morsels, including on the throwing path.

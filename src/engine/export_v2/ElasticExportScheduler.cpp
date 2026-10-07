@@ -279,7 +279,8 @@ void ElasticExportScheduler::accountOutstandingUnsafe(uint64_t jobId) {
   ++totalOutstanding_;
 }
 
-void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
+void ElasticExportScheduler::postReady(OwnedMorsel morsel,
+                                       bool drainPendingOnFailure) {
   // Never holds `queueMutex_` here (see `enqueueMorsel`): `poster_` may run
   // the closure inline, and its completion path takes `queueMutex_` again.
   const uint64_t jobId = morsel.jobId_;
@@ -295,7 +296,14 @@ void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
     // when the poster throws after invoking it inline.
     if (!executionStarted || !executionStarted->load()) {
       try {
-        onPostedMorselFinished(jobId);
+        // Direct rollback may enter the iterative batch drain once. A batch
+        // owns its drain, so only release this reservation on its failure.
+        if (drainPendingOnFailure) {
+          onPostedMorselFinished(jobId);
+        } else {
+          std::lock_guard<std::mutex> lock(queueMutex_);
+          decrementOutstandingUnsafe(jobId);
+        }
       } catch (...) {
         // Preserve the original posting error for both the caller and the
         // coordinator if rollback also fails.
@@ -307,22 +315,26 @@ void ElasticExportScheduler::postReady(OwnedMorsel morsel) {
 }
 
 // Post several already-accounted morsels without holding `queueMutex_`. A
-// throwing poster rolls its own morsel back via `postReady`; keep posting
-// the rest so no accounted morsel is stranded, then rethrow the first
-// failure.
+// throwing poster releases its reservation via `postReady`, but this batch
+// owns the iterative admission drain. Attempt the whole current batch before
+// draining the next round, then rethrow the first failure across all rounds.
 void ElasticExportScheduler::postReadyBatch(std::vector<OwnedMorsel> batch) {
   std::exception_ptr firstFailure;
-  for (auto& morsel : batch) {
-    auto jobState = morsel.jobState_;
-    const size_t morselIndex = morsel.morselIndex_;
-    try {
-      postReady(std::move(morsel));
-    } catch (...) {
-      jobState->onMorselFailed(morselIndex, std::current_exception());
-      if (firstFailure == nullptr) {
-        firstFailure = std::current_exception();
+  while (!batch.empty()) {
+    for (auto& morsel : batch) {
+      auto jobState = morsel.jobState_;
+      const size_t morselIndex = morsel.morselIndex_;
+      try {
+        postReady(std::move(morsel), false);
+      } catch (...) {
+        jobState->onMorselFailed(morselIndex, std::current_exception());
+        if (firstFailure == nullptr) {
+          firstFailure = std::current_exception();
+        }
       }
     }
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    batch = drainPendingAdmissionUnsafe();
   }
   if (firstFailure != nullptr) {
     std::rethrow_exception(firstFailure);
