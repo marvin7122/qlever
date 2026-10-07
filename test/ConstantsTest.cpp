@@ -66,26 +66,6 @@ TEST(Constants, constructExportRowBatchSizeIsStrictlyPositive) {
       std::runtime_error);
 }
 
-// _____________________________________________________________________________
-TEST(Constants, vocabularyIouringRingSizeIsInKernelRange) {
-  auto reset = setRuntimeParameterForTest<
-      &RuntimeParameters::vocabularyIouringRingSize_>(size_t{256});
-  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
-      setRuntimeParameter<&RuntimeParameters::vocabularyIouringRingSize_>(0),
-      AllOf(HasSubstr("vocabulary-iouring-ring-size"), HasSubstr("was 0")),
-      std::runtime_error);
-  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
-      setRuntimeParameter<&RuntimeParameters::vocabularyIouringRingSize_>(
-          32769),
-      AllOf(HasSubstr("vocabulary-iouring-ring-size"), HasSubstr("32769")),
-      std::runtime_error);
-  EXPECT_NO_THROW(
-      setRuntimeParameter<&RuntimeParameters::vocabularyIouringRingSize_>(1));
-  EXPECT_NO_THROW(
-      setRuntimeParameter<&RuntimeParameters::vocabularyIouringRingSize_>(
-          32768));
-}
-
 namespace {
 constexpr std::string_view hi = "hi";
 constexpr std::string_view bye = "-bye";

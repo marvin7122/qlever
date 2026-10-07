@@ -11,8 +11,6 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
-#include <gtest/gtest_prod.h>
-
 #include <memory>
 #include <string>
 #include <string_view>
@@ -33,8 +31,6 @@
 // then binary search for a string can be performed.
 class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
  private:
-  FRIEND_TEST(VocabularyOnDisk, LookupBatchWithRingSmallerThanBatch);
-
   // The offset of a word in the underlying file.
   using Offset = uint64_t;
   // The file in which the words are stored.
