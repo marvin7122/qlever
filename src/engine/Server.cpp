@@ -1022,17 +1022,23 @@ CPP_template_def(typename RequestT, typename SendT)(
               << std::endl;
 
 #if defined(QLEVER_ENABLE_EXPORT_V2)
+  using ad_utility::content_encoding::CompressionMethod;
   const bool useV2 =
       mode == ExportEngineMode::FastStreamingV2 &&
       ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
                                 mediaType);
+  const bool hasMiddleware =
+      plannedQuery.parsedQuery().responseMiddleware_.has_value();
+  const CompressionMethod compression =
+      ad_utility::content_encoding::getCompressionMethodForRequest(request);
+  // Compressed V2 responses: compress per morsel on the helper threads
+  // instead of serially on the send path. A response middleware rewrites the
+  // response afterwards, so it keeps the serial path.
+  const bool useV2ParallelCompression =
+      useV2 && compression != CompressionMethod::NONE && !hasMiddleware &&
+      getRuntimeParameter<&RuntimeParameters::exportV2ParallelCompression_>();
   if (useV2 && sendMode == ExportSendMode::ScatterGather) {
-    using ad_utility::content_encoding::CompressionMethod;
-    const bool hasMiddleware =
-        plannedQuery.parsedQuery().responseMiddleware_.has_value();
-    const bool wantsCompression =
-        ad_utility::content_encoding::getCompressionMethodForRequest(request) !=
-        CompressionMethod::NONE;
+    const bool wantsCompression = compression != CompressionMethod::NONE;
     if (hasMiddleware || wantsCompression) {
       AD_LOG_INFO << "export-send=iovec requested; falling back to "
                      "concatenated strings (compression or response middleware)"
@@ -1079,15 +1085,16 @@ CPP_template_def(typename RequestT, typename SendT)(
   // resume (observed on SELECT CSV even for the LegacyV1 branch).
   cppcoro::generator<std::string> responseGenerator =
 #if defined(QLEVER_ENABLE_EXPORT_V2)
-      (mode == ExportEngineMode::FastStreamingV2 &&
-       ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
-                                 mediaType))
-          ? ExportEngineV2::computeResult(
+      useV2ParallelCompression
+          ? ExportEngineV2::computeCompressedResult(
                 parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-                cancellationHandle, exportScheduler_.get())
-          : ExportQueryExecutionTrees::computeResult(
-                parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
-                requestTimer, std::move(cancellationHandle));
+                cancellationHandle, exportScheduler_.get(), compression)
+      : useV2 ? ExportEngineV2::computeResult(
+                    parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+                    cancellationHandle, exportScheduler_.get())
+              : ExportQueryExecutionTrees::computeResult(
+                    parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
+                    requestTimer, std::move(cancellationHandle));
 #else
       ExportQueryExecutionTrees::computeResult(
           parsedQuery, plannedQuery.queryExecutionTree(), mediaType,
@@ -1098,15 +1105,28 @@ CPP_template_def(typename RequestT, typename SendT)(
       ExportEngineV2::canHandle(parsedQuery, plannedQuery.queryExecutionTree(),
                                 mediaType)) {
     AD_LOG_INFO << "Using ExportEngineV2 for "
-                << ad_utility::toString(mediaType) << " export" << std::endl;
+                << ad_utility::toString(mediaType) << " export"
+                << (useV2ParallelCompression
+                        ? " (parallel per-morsel response compression)"
+                        : "")
+                << std::endl;
   }
 #else
   (void)mode;
   (void)sendMode;
 #endif
 
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+  auto response =
+      useV2ParallelCompression
+          ? ad_utility::httpUtils::createOkResponsePreEncoded(
+                std::move(responseGenerator), request, mediaType, compression)
+          : ad_utility::httpUtils::createOkResponse(
+                std::move(responseGenerator), request, mediaType);
+#else
   auto response = ad_utility::httpUtils::createOkResponse(
       std::move(responseGenerator), request, mediaType);
+#endif
   if (plannedQuery.parsedQuery().responseMiddleware_.has_value()) {
     response =
         plannedQuery.parsedQuery().responseMiddleware_.value().applyQuery(

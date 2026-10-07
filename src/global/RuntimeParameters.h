@@ -221,6 +221,13 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // If true, Export Engine V2 (`fast-export=1`) serves a response that the
+  // client accepts compressed (`Accept-Encoding: deflate` or `gzip`) by
+  // compressing every morsel on the helper thread that serialized it and
+  // framing the blocks as one stream (pigz scheme). If false, it falls back
+  // to the serial compression of the whole stream on the HTTP send path.
+  Bool exportV2ParallelCompression_{true, "export-v2-parallel-compression"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.
