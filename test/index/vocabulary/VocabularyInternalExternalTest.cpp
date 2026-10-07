@@ -205,9 +205,10 @@ TEST(VocabularyInternalExternal, ScanAllEmptyVocabulary) {
 
 // _____________________________________________________________________________
 // `lookupBatch` and `operator[]` return the same words with and without the
-// rank directory of the internal vocabulary
-// (`vocabulary-internal-rank-lookup`), for random sparse and dense sets of
-// internal words and random batches with repetitions.
+// rank directory of the internal vocabulary (`vocabulary-internal-rank-lookup`)
+// and with and without the sorted batch lookup
+// (`vocabulary-internal-sorted-batch-lookup`), for random sparse and dense sets
+// of internal words and random batches with repetitions.
 TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
   const std::string filename =
       "LookupBatchIsIndependentOfInternalLookupMode" + suffix;
@@ -242,20 +243,26 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
     batches.push_back(all);
 
     for (bool rankLookup : {false, true}) {
-      auto cleanupRank = setRuntimeParameterForTest<
-          &RuntimeParameters::vocabularyInternalRankLookup_>(rankLookup);
-      VocabularyInternalExternal vocab;
-      vocab.open(filename);
-      EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(), rankLookup);
-      for (const auto& batch : batches) {
-        std::vector<std::string> expected;
-        for (size_t index : batch) {
-          expected.push_back(words.at(index));
-          ASSERT_EQ(vocab[index], words.at(index));
+      for (bool sortedBatchLookup : {false, true}) {
+        auto cleanupRank = setRuntimeParameterForTest<
+            &RuntimeParameters::vocabularyInternalRankLookup_>(rankLookup);
+        auto cleanupSorted = setRuntimeParameterForTest<
+            &RuntimeParameters::vocabularyInternalSortedBatchLookup_>(
+            sortedBatchLookup);
+        VocabularyInternalExternal vocab;
+        vocab.open(filename);
+        EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(), rankLookup);
+        for (const auto& batch : batches) {
+          std::vector<std::string> expected;
+          for (size_t index : batch) {
+            expected.push_back(words.at(index));
+            ASSERT_EQ(vocab[index], words.at(index));
+          }
+          EXPECT_THAT(vocab.lookupBatch(batch),
+                      ::testing::ElementsAreArray(expected))
+              << "rank lookup " << rankLookup << ", sorted batch lookup "
+              << sortedBatchLookup << ", density " << internalDensity;
         }
-        EXPECT_THAT(vocab.lookupBatch(batch),
-                    ::testing::ElementsAreArray(expected))
-            << "rank lookup " << rankLookup << ", density " << internalDensity;
       }
     }
   }

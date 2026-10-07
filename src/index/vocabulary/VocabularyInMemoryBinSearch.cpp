@@ -6,6 +6,9 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
+#include <numeric>
+
 using std::string;
 
 // _____________________________________________________________________________
@@ -46,6 +49,46 @@ std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
     return static_cast<size_t>(it - indices.begin());
   }
   return std::nullopt;
+}
+
+// _____________________________________________________________________________
+std::vector<std::optional<size_t>>
+VocabularyInMemoryBinSearch::positionsOfIndices(
+    ql::span<const size_t> indices) const {
+  std::vector<std::optional<size_t>> result(indices.size());
+  if (indexRankDirectory_.has_value()) {
+    for (size_t i = 0; i < indices.size(); ++i) {
+      result[i] = positionOfIndex(indices[i]);
+    }
+    return result;
+  }
+  std::vector<size_t> order(indices.size());
+  std::iota(order.begin(), order.end(), size_t{0});
+  ql::ranges::sort(order, std::less<>{},
+                   [&indices](size_t i) { return indices[i]; });
+  // Invariant: all vocabulary indices before position `lo` are smaller than
+  // the current (and hence every later) requested index.
+  auto all = this->indices();
+  size_t lo = 0;
+  for (size_t i : order) {
+    const uint64_t index = indices[i];
+    // Gallop forward from `lo` until `all[hi] >= index`, then binary search in
+    // the last step.
+    size_t hi = lo;
+    size_t step = 1;
+    while (hi < all.size() && all[hi] < index) {
+      lo = hi + 1;
+      hi += step;
+      step *= 2;
+    }
+    hi = std::min(hi, all.size());
+    auto it = std::lower_bound(all.begin() + lo, all.begin() + hi, index);
+    lo = static_cast<size_t>(it - all.begin());
+    if (it != all.end() && *it == index) {
+      result[i] = lo;
+    }
+  }
+  return result;
 }
 
 // _____________________________________________________________________________

@@ -39,20 +39,34 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // their positions in `indices`, for one batched lookup in the external
   // vocabulary. The internal vocabulary has "holes", so each index needs one
   // membership probe: one cache line with the rank directory (see
-  // `vocabulary-internal-rank-lookup`), else a binary search; indices at or
-  // past `internalVocab_.endIndex()` are known misses and skip the probe.
+  // `vocabulary-internal-rank-lookup`), else a binary search per index, or
+  // optionally one galloping pass over the sorted batch (see
+  // `vocabulary-internal-sorted-batch-lookup`).
   MultiSourceVocabBatchAssembler assembler(indices.size());
   MarkerIndicesAndPositions externalSlots;
-  const uint64_t internalEnd = internalVocab_.endIndex();
-  for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
-    auto internalPosition = index < internalEnd
-                                ? internalVocab_.positionOfIndex(index)
-                                : std::nullopt;
+  auto placeWord = [&](size_t position, size_t index,
+                       std::optional<size_t> internalPosition) {
     if (internalPosition.has_value()) {
       assembler.assignUnownedViewAtPosition(
           position, internalVocab_.wordAtPosition(internalPosition.value()));
     } else {
       externalSlots.addPair(index, position);
+    }
+  };
+  if (!internalVocab_.hasIndexRankDirectory() &&
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyInternalSortedBatchLookup_>()) {
+    auto internalPositions = internalVocab_.positionsOfIndices(indices);
+    for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+      placeWord(position, index, internalPositions[position]);
+    }
+  } else {
+    // Indices at or past `internalVocab_.endIndex()` are known misses.
+    const uint64_t internalEnd = internalVocab_.endIndex();
+    for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+      placeWord(position, index,
+                index < internalEnd ? internalVocab_.positionOfIndex(index)
+                                    : std::nullopt);
     }
   }
 
