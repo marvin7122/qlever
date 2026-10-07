@@ -356,6 +356,8 @@ addLinkAndDiscoverTestNoLibs(AsyncStreamTest)
 
 addLinkAndDiscoverTest(BitUtilsTest)
 
+addLinkAndDiscoverTestNoLibs(BitVectorWithRankTest)
+
 addLinkAndDiscoverTest(NBitIntegerTest)
 
 addLinkAndDiscoverTestNoLibs(GeoPointTest rdfTypes)
