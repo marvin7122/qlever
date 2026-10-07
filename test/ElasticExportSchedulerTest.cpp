@@ -423,6 +423,67 @@ TEST(ElasticExportSchedulerTest, ConcurrentMultiSessionStressTest) {
   queryChanger.join();
 }
 
+namespace ad_utility::export_v2 {
+
+TEST(ElasticExportSchedulerTest, LiveSessionCountTracksConcurrentRegistration) {
+  ElasticExportScheduler scheduler([](absl::AnyInvocable<void()>) {});
+  scheduler.onForegroundQueryStarted();
+
+  constexpr size_t numSessions = 1000;
+  // Only the registration thread modifies this vector. Keep every state alive
+  // until both threads have joined, so snapshots never remove expired sessions.
+  std::vector<std::shared_ptr<ExportJobState<int>>> states;
+  states.reserve(numSessions);
+  std::promise<void> startPromise;
+  auto start = startPromise.get_future().share();
+  std::atomic<bool> registrationDone{false};
+  std::atomic<bool> demandDone{false};
+
+  std::thread registrationThread([&]() {
+    start.wait();
+    for (size_t i = 0; i < numSessions; ++i) {
+      auto session = scheduler.createSession<int>();
+      states.push_back(session.sharedState());
+      std::this_thread::yield();
+    }
+    registrationDone.store(true);
+  });
+  std::thread demandThread([&]() {
+    start.wait();
+    for (size_t i = 0; i < numSessions; ++i) {
+      // With one initial foreground query, both callbacks take a snapshot.
+      scheduler.onForegroundQueryStarted();
+      scheduler.onForegroundQueryEnded();
+    }
+    demandDone.store(true);
+  });
+
+  size_t mismatches = 0;
+  startPromise.set_value();
+  do {
+    {
+      std::lock_guard<std::mutex> lock(scheduler.sessionsMutex_);
+      if (scheduler.liveSessionCount_.load(std::memory_order_relaxed) !=
+          scheduler.sessions_.size()) {
+        ++mismatches;
+      }
+    }
+    std::this_thread::yield();
+  } while (!registrationDone.load() || !demandDone.load());
+
+  registrationThread.join();
+  demandThread.join();
+  EXPECT_EQ(mismatches, 0u);
+  {
+    std::lock_guard<std::mutex> lock(scheduler.sessionsMutex_);
+    EXPECT_EQ(scheduler.sessions_.size(), numSessions);
+    EXPECT_EQ(scheduler.liveSessionCount_.load(std::memory_order_relaxed),
+              numSessions);
+  }
+}
+
+}  // namespace ad_utility::export_v2
+
 // -----------------------------------------------------------------------------
 // Test 10: Unordered Emission Consumes Every Morsel Exactly Once
 // -----------------------------------------------------------------------------

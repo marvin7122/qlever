@@ -148,9 +148,8 @@ void ElasticExportScheduler::onForegroundQueryStarted() {
                            return true;
                          }),
           sessions_.end());
+      liveSessionCount_.store(aliveSessions.size(), std::memory_order_relaxed);
     }
-
-    liveSessionCount_.store(aliveSessions.size(), std::memory_order_relaxed);
 
     for (auto& session : aliveSessions) {
       session->onDemandChanged(current, newEpoch);
@@ -190,9 +189,8 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
                            return true;
                          }),
           sessions_.end());
+      liveSessionCount_.store(aliveSessions.size(), std::memory_order_relaxed);
     }
-
-    liveSessionCount_.store(aliveSessions.size(), std::memory_order_relaxed);
 
     for (auto& session : aliveSessions) {
       session->onDemandChanged(current, newEpoch);

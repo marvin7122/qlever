@@ -5,6 +5,7 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <gtest/gtest_prod.h>
 
 #include <algorithm>
 #include <atomic>
@@ -301,6 +302,9 @@ class ElasticExportScheduler {
   ExportWorkSession<ResultType> createSession();
 
  private:
+  FRIEND_TEST(ElasticExportSchedulerTest,
+              LiveSessionCountTracksConcurrentRegistration);
+
   void workerLoop();
   void runPostedMorsel(OwnedMorsel morsel);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
