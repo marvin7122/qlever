@@ -13,6 +13,7 @@
 
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructDeduplicator.h"
+#include "engine/ConstructRowBatchSchedule.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "global/RuntimeParameters.h"
@@ -83,28 +84,42 @@ CPP_template(typename ChunkView)(requires ranges::range<ChunkView>)
                           blankNodeBaseId, deduplication);
 }
 
-// Chunks `table` into batches and evaluates each one. Takes `TableWithRange` by
-// value and stores only value-captures in the returned view so the pipeline is
-// self-contained w.r.t. the `table` handle (no reference to a caller's
-// `TableWithRange` / parameter can dangle). `TableWithRange` itself is a cheap
-// non-owning handle (`IdTableView` + `LocalVocab` ref); the underlying result
-// storage must still outlive the whole export, as with every other CONSTRUCT
-// export path.
+// Splits `table` into row batches (see `ConstructRowBatchSchedule` and the
+// runtime parameters `construct-export-initial-row-batch-size` and
+// `construct-export-row-batch-size`) and evaluates each one. Takes
+// `TableWithRange` by value and stores only value-captures in the returned
+// view so the pipeline is self-contained w.r.t. the `table` handle (no
+// reference to a caller's `TableWithRange` / parameter can dangle).
+// `TableWithRange` itself is a cheap non-owning handle (`IdTableView` +
+// `LocalVocab` ref); the underlying result storage must still outlive the
+// whole export, as with every other CONSTRUCT export path.
+// `rowsBefore` is the number of rows of the same export in earlier tables;
+// the batch sizes keep growing across tables (see
+// `ConstructRowBatchSchedule::initialBatchSizeAfter`).
 auto processTableBatches(TableWithRange table, BatchEvalContext context,
-                         size_t tableRowOffset) {
-  // Copy the cheap pieces out first so neither `chunk` nor the transform
-  // lambda retain a reference into the by-value `table` parameter.
-  auto rowView = table.view_;
+                         size_t tableRowOffset, size_t rowsBefore) {
+  // Copy the cheap pieces out first so the transform lambdas do not retain a
+  // reference into the by-value `table` parameter.
+  const uint64_t firstRow = table.view_.empty() ? 0 : table.view_.front();
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
-  // The parameter's constraint guarantees that the batch size fits into the
-  // signed difference type that `views::chunk` expects.
-  const auto batchSize = static_cast<std::ptrdiff_t>(
-      getRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>());
-  return ranges::views::chunk(std::move(rowView), batchSize) |
+  const size_t maxBatchSize =
+      getRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>();
+  const ConstructRowBatchSchedule schedule{
+      static_cast<size_t>(ql::ranges::size(table.view_)),
+      ConstructRowBatchSchedule::initialBatchSizeAfter(
+          rowsBefore,
+          getRuntimeParameter<
+              &RuntimeParameters::constructExportInitialRowBatchSize_>(),
+          maxBatchSize),
+      maxBatchSize};
+  return ql::views::iota(size_t{0}, schedule.numBatches()) |
+         ql::views::transform([schedule, firstRow](size_t k) {
+           return ql::ranges::iota_view<uint64_t, uint64_t>{
+               firstRow + schedule.begin(k), firstRow + schedule.end(k)};
+         }) |
          ql::views::transform([tableWithVocab, context = std::move(context),
-                               tableRowOffset](auto chunkView) {
-           return computeBatch(tableWithVocab, chunkView, context,
-                               tableRowOffset);
+                               tableRowOffset](auto batch) {
+           return computeBatch(tableWithVocab, batch, context, tableRowOffset);
          }) |
          ql::views::join;
 }
@@ -134,7 +149,8 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
       [preprocessedTemplate = std::move(preprocessedTemplatePtr),
        index = config.index_, cancellationHandle = config.cancellationHandle_,
        cache = std::move(cache), deduplicator = std::move(deduplicator),
-       accumulatedRowOffset = rowOffset](const TableWithRange& table) mutable {
+       accumulatedRowOffset = rowOffset,
+       rowOffset](const TableWithRange& table) mutable {
         const size_t numRowsOfTable = ql::ranges::size(table.view_);
 
         const size_t tableRowOffset = accumulatedRowOffset;
@@ -142,7 +158,8 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
 
         const BatchEvalContext context{*preprocessedTemplate, index, cache,
                                        cancellationHandle, deduplicator};
-        return processTableBatches(table, context, tableRowOffset);
+        return processTableBatches(table, context, tableRowOffset,
+                                   tableRowOffset - rowOffset);
       };
 
   auto pipeline = std::move(rowIndices) |
