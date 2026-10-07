@@ -262,19 +262,28 @@ SelectedColumns selectedColumns(const ParsedQuery& parsedQuery,
 // each morsel to completion for deterministic prefixes.
 constexpr uint64_t kRevocationCheckRows = 1024;
 
+// A morsel must have serialized this many rows before its size is
+// extrapolated: a few rows give a noisy bytes-per-row estimate.
+constexpr uint64_t kMinRowsForMorselEstimate = 256;
+
 // Once the first `rowsDone` of a morsel's `rowsTotal` rows are serialized,
 // grow the copy buffer to the extrapolated morsel size (plus 1/8 slack), so
 // the remaining windows append without reallocating and re-copying the bytes
 // already written. A low estimate only costs the usual geometric growth.
-void reserveForMorsel(ScatterGatherChunkBuilder& builder, uint64_t rowsDone,
+// Returns true when no further call is needed for this morsel.
+bool reserveForMorsel(ScatterGatherChunkBuilder& builder, uint64_t rowsDone,
                       uint64_t rowsTotal) {
-  if (rowsDone == 0 || rowsDone >= rowsTotal || builder.empty()) {
-    return;
+  if (rowsDone >= rowsTotal) {
+    return true;
+  }
+  if (rowsDone < kMinRowsForMorselEstimate || builder.empty()) {
+    return false;
   }
   const auto estimate = static_cast<size_t>(
       static_cast<double>(builder.size()) * static_cast<double>(rowsTotal) /
       static_cast<double>(rowsDone));
   builder.reserveCopied(estimate + estimate / 8);
+  return true;
 }
 
 // Builds morsel tasks with cooperative revocation checkpoints (unordered
@@ -307,6 +316,7 @@ struct CheckpointMorselRunner {
     ScatterGatherChunkBuilder builder;
     const size_t numSegments = plan.segments_.size();
     uint64_t rowsDone = 0;
+    bool reserved = false;
     for (size_t s = 0; s < numSegments; ++s) {
       auto& seg = plan.segments_[s];
       uint64_t pos = seg.begin_;
@@ -317,10 +327,10 @@ struct CheckpointMorselRunner {
             seg.block_->idTable_.asStaticView<0>(), seg.block_->localVocab_,
             format_, builder, *index_, *columnsPtr_, pos, windowEnd,
             *latticePtr_);
-        if (rowsDone == 0) {
-          reserveForMorsel(builder, windowEnd - pos, plan.numRows_);
-        }
         rowsDone += windowEnd - pos;
+        if (!reserved) {
+          reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
+        }
         pos = windowEnd;
         if (pos < seg.end_ || s + 1 < numSegments) {
           if (state_->isCancelled()) {
@@ -384,17 +394,17 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
       uint64_t rowsDone = 0;
+      bool reserved = false;
       for (const auto& segment : plan.segments_) {
         ExportEngineV2::appendSerializedRows(
             segment.block_->idTable_.asStaticView<0>(),
             segment.block_->localVocab_, format, builder, index,
             columns.indices_, segment.begin_, segment.end_,
             columns.lattice_.columns_);
-        if (rowsDone == 0) {
-          reserveForMorsel(builder, segment.end_ - segment.begin_,
-                           plan.numRows_);
-        }
         rowsDone += segment.end_ - segment.begin_;
+        if (!reserved) {
+          reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
+        }
       }
       if (!builder.empty()) {
         co_yield std::move(builder);
