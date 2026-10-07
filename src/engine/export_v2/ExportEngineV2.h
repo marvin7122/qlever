@@ -24,6 +24,7 @@
 #include "parser/ParsedQuery.h"
 #include "util/CancellationHandle.h"
 #include "util/Generator.h"
+#include "util/http/ContentEncodingHelper.h"
 #include "util/http/MediaTypes.h"
 
 namespace ql::engine::export_v2 {
@@ -95,6 +96,19 @@ class ExportEngineV2 {
       ad_utility::MediaType mediaType,
       ad_utility::SharedCancellationHandle cancellationHandle,
       ad_utility::export_v2::ElasticExportScheduler* scheduler = nullptr);
+
+  // Same serialize as `computeResult`, but the yielded bytes are ONE zlib
+  // (`DEFLATE`) or gzip (`GZIP`) stream of that output, for a response with
+  // `Content-Encoding` set to `method`. Each morsel is compressed on the
+  // thread that serialized it (see `ad_utility::streams::ParallelDeflate`);
+  // the coordinator only writes the header, the blocks, and the trailer.
+  // Requires `canHandle` and `method != NONE`; does not fall back to Legacy.
+  static cppcoro::generator<std::string> computeCompressedResult(
+      const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+      ad_utility::MediaType mediaType,
+      ad_utility::SharedCancellationHandle cancellationHandle,
+      ad_utility::export_v2::ElasticExportScheduler* scheduler,
+      ad_utility::content_encoding::CompressionMethod method);
 
   // Same serialize as `computeResult`, but each morsel is a ScatterGatherChunk
   // for `export-send=iovec`. Requires `canHandle`; does not fall back to

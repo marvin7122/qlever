@@ -4,7 +4,10 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 #include "util/http/HttpUtils.h"
 #include "util/http/beast.h"
@@ -88,4 +91,48 @@ TEST(HttpUtils, GetStringBodyRequest) {
   EXPECT_EQ(result.at(http::field::content_type), "text/plain");
   EXPECT_EQ(result.at(http::field::authorization), "Bearer token123");
   EXPECT_EQ(result.body(), "new body");
+}
+
+namespace {
+cppcoro::generator<std::string> yieldStrings(std::vector<std::string> parts) {
+  for (auto& part : parts) {
+    co_yield part;
+  }
+}
+
+std::string drainBody(ad_utility::httpUtils::ResponseT& response) {
+  std::string out;
+  for (const auto& part : response.body()) {
+    out += part;
+  }
+  return out;
+}
+}  // namespace
+
+// ___________________________________________________________________________
+TEST(HttpUtils, CreateOkResponsePreEncoded) {
+  namespace http = boost::beast::http;
+  using ad_utility::content_encoding::CompressionMethod;
+  // The client accepts both; the producer chose the encoding.
+  http::request<http::string_body> request{http::verb::get, "/", 11};
+  request.set(http::field::accept_encoding, "gzip, deflate");
+  for (auto [method, name] :
+       {std::pair{CompressionMethod::DEFLATE, std::string_view{"deflate"}},
+        std::pair{CompressionMethod::GZIP, std::string_view{"gzip"}}}) {
+    auto response = ad_utility::httpUtils::createOkResponsePreEncoded(
+        yieldStrings({"\x78\x01", "pre-", "encoded"}), request,
+        ad_utility::MediaType::csv, method);
+    EXPECT_EQ(response.result(), http::status::ok);
+    EXPECT_EQ(response[http::field::content_encoding], name);
+    EXPECT_EQ(response[http::field::content_type], "text/csv");
+    // The bytes pass through unchanged: no second compression.
+    EXPECT_EQ(drainBody(response), "\x78\x01pre-encoded");
+  }
+
+  // `NONE` sets no `Content-Encoding`.
+  auto plain = ad_utility::httpUtils::createOkResponsePreEncoded(
+      yieldStrings({"a,b\n"}), request, ad_utility::MediaType::csv,
+      CompressionMethod::NONE);
+  EXPECT_EQ(plain.count(http::field::content_encoding), 0u);
+  EXPECT_EQ(drainBody(plain), "a,b\n");
 }

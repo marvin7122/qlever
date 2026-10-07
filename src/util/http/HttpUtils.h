@@ -152,6 +152,24 @@ CPP_template(typename RequestType)(
   }
 }
 
+// Assign a generator whose bytes are ALREADY encoded with `method` (for
+// example by a producer that compresses in parallel) to the body of the
+// response, and set the matching `Content-Encoding` header. Unlike `setBody`,
+// this never compresses again. Like `setBody`, the generator runs on its own
+// thread (`runStreamAsync`), overlapping production with sending.
+inline void setPreEncodedBody(
+    ResponseT& response, cppcoro::generator<std::string>&& generator,
+    ad_utility::content_encoding::CompressionMethod method) {
+  auto asyncGenerator = streams::runStreamAsync(std::move(generator), 100);
+  response.body() = [](auto range) -> cppcoro::generator<std::string> {
+    for (auto& value : range) {
+      co_yield value;
+    }
+  }(std::move(asyncGenerator));
+  ad_utility::content_encoding::setContentEncodingHeaderForCompressionMethod(
+      method, response);
+}
+
 CPP_template(typename RequestType)(requires HttpRequest<RequestType>) ResponseT
     createHttpResponseFromGenerator(cppcoro::generator<std::string>&& body,
                                     http::status status,
@@ -251,6 +269,21 @@ CPP_template(typename RequestType)(
                                             MediaType mediaType) {
   return createHttpResponseFromGenerator(std::move(generator), http::status::ok,
                                          request, mediaType, true);
+}
+
+// Create a HttpResponse with status 200 OK from a generator whose bytes are
+// already encoded with `method` (see `setPreEncodedBody`).
+CPP_template(typename RequestType)(requires HttpRequest<RequestType>) ResponseT
+    createOkResponsePreEncoded(
+        cppcoro::generator<std::string>&& generator, const RequestType& request,
+        MediaType mediaType,
+        ad_utility::content_encoding::CompressionMethod method) {
+  ResponseT response{http::status::ok, request.version()};
+  response.set(http::field::content_type, toString(mediaType));
+  setPreEncodedBody(response, std::move(generator), method);
+  response.keep_alive(request.keep_alive());
+  response.prepare_payload();
+  return response;
 }
 
 // Create a HttpResponse from a string with status 200 OK and mime type
