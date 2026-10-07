@@ -266,6 +266,14 @@ struct RuntimeParameters {
   SizeT vocabularyInternalRankPrefetchDistance_{
       0, "vocabulary-internal-rank-prefetch-distance"};
 
+  // If set to true, the rank directory above is allocated 2 MiB-aligned and
+  // marked for transparent huge pages (`madvise(MADV_HUGEPAGE)`), so that a
+  // lookup costs one cache miss instead of one cache miss plus one TLB miss.
+  // Only has an effect if transparent huge pages are in "always" or "madvise"
+  // mode. Read when the index is loaded.
+  Bool vocabularyInternalRankHugePages_{false,
+                                        "vocabulary-internal-rank-hugepages"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

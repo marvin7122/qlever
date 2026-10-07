@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <limits>
 #include <numeric>
 #include <optional>
@@ -16,18 +17,17 @@
 #include <vector>
 
 #include "util/BitVectorWithRank.h"
+#include "util/HugePages.h"
 
 using ad_utility::BitVectorWithRank;
 
 namespace {
 
-// Check `rankIfContained` for every value in `[0, universeSize + 70)` against
-// the definition: the position of the value in `sortedValues`, if contained.
-void expectRanksMatchDefinition(const std::vector<uint64_t>& sortedValues,
-                                uint64_t universeSize) {
-  BitVectorWithRank bits{sortedValues, universeSize};
-  EXPECT_EQ(bits.universeSize(), universeSize);
-  EXPECT_EQ(bits.numBytes(), 64 * ((universeSize + 447) / 448));
+// Check `rankIfContained` of `bits` (built from `sortedValues` and
+// `universeSize`), see below.
+void expectRanksMatchDefinitionImpl(const BitVectorWithRank& bits,
+                                    const std::vector<uint64_t>& sortedValues,
+                                    uint64_t universeSize) {
   size_t nextPosition = 0;
   for (uint64_t value = 0; value < universeSize + 70; ++value) {
     std::optional<uint64_t> expected;
@@ -44,6 +44,26 @@ void expectRanksMatchDefinition(const std::vector<uint64_t>& sortedValues,
   bits.prefetch(0);
   bits.prefetch(universeSize);
   bits.prefetch(std::numeric_limits<uint64_t>::max());
+}
+
+// Check `rankIfContained` for every value in `[0, universeSize + 70)` against
+// the definition: the position of the value in `sortedValues`, if contained.
+// Both with and without huge pages, which only change the allocation.
+void expectRanksMatchDefinition(const std::vector<uint64_t>& sortedValues,
+                                uint64_t universeSize) {
+  for (bool useHugePages : {false, true}) {
+    BitVectorWithRank bits{sortedValues, universeSize, useHugePages};
+    const size_t numBytes = 64 * ((universeSize + 447) / 448);
+    EXPECT_EQ(bits.universeSize(), universeSize);
+    EXPECT_EQ(bits.numBytes(), numBytes);
+    const size_t alignment =
+        useHugePages ? BitVectorWithRank::hugePageSize : size_t{64};
+    EXPECT_EQ(bits.numAllocatedBytes(),
+              (numBytes + alignment - 1) / alignment * alignment);
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(bits.allocationBegin()) % alignment,
+              0);
+    expectRanksMatchDefinitionImpl(bits, sortedValues, universeSize);
+  }
 }
 
 // A random strictly ascending subset of `[0, universeSize)`, each value
@@ -116,4 +136,42 @@ TEST(BitVectorWithRank, InvalidInputThrows) {
   EXPECT_THROW((BitVectorWithRank{repeated, 10}), ad_utility::Exception);
   std::vector<uint64_t> outOfRange{2, 10};
   EXPECT_THROW((BitVectorWithRank{outOfRange, 10}), ad_utility::Exception);
+}
+
+// _____________________________________________________________________________
+TEST(BitVectorWithRank, MoveLeavesEmptySet) {
+  std::vector<uint64_t> values{1, 500};
+  BitVectorWithRank bits{values, 1000, true};
+  BitVectorWithRank moved{std::move(bits)};
+  EXPECT_EQ(moved.rankIfContained(500), 1);
+  EXPECT_EQ(bits.universeSize(), 0);
+  EXPECT_EQ(bits.rankIfContained(500), std::nullopt);
+  bits = std::move(moved);
+  EXPECT_EQ(bits.rankIfContained(500), 1);
+  EXPECT_EQ(moved.numBytes(), 0);
+}
+
+// _____________________________________________________________________________
+TEST(HugePages, ModeAndAnonHugePageBytes) {
+  using namespace ad_utility;
+  EXPECT_EQ(selectedTransparentHugePagesMode("always [madvise] never\n"),
+            "madvise");
+  EXPECT_EQ(selectedTransparentHugePagesMode("[always] madvise never"),
+            "always");
+  EXPECT_EQ(selectedTransparentHugePagesMode("garbage"), "unknown");
+  auto mode = transparentHugePagesMode();
+  EXPECT_TRUE(mode == "always" || mode == "madvise" || mode == "never" ||
+              mode == "unknown")
+      << mode;
+  // On Linux, `/proc/self/smaps` is readable; the result is at most the size
+  // of the mappings that overlap the range.
+  std::vector<uint64_t> values{0, 1'000'000};
+  BitVectorWithRank bits{values, 4'000'000, true};
+  auto hugeBytes =
+      anonHugePageBytes(bits.allocationBegin(), bits.numAllocatedBytes());
+  ASSERT_TRUE(hugeBytes.has_value());
+  if (mode == "never") {
+    EXPECT_EQ(hugeBytes.value(), 0);
+  }
+  EXPECT_EQ(anonHugePageBytes(nullptr, 0), 0);
 }
