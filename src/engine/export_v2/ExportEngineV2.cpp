@@ -30,9 +30,11 @@
 #include "engine/Sort.h"
 #include "engine/Values.h"
 #include "engine/export_v2/ColumnLattice.h"
+#include "engine/export_v2/ConstructRowSerializer.h"
 #include "engine/export_v2/ExportMorselPlanner.h"
 #include "engine/export_v2/ResolvedColumn.h"
 #include "global/Id.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
@@ -415,6 +417,46 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSelectMorsels(
       std::move(serialize), std::move(cancellationHandle), scheduler);
 }
 
+// The CONSTRUCT Turtle/N-Triples morsels: the instantiated template of every
+// row, no header. The serializer numbers blank nodes from the OFFSET that is
+// still applied, exactly like Legacy.
+cppcoro::generator<ScatterGatherChunkBuilder> buildConstructMorsels(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    ad_utility::MediaType mediaType,
+    ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  const auto& limitOffset = parsedQuery._limitOffset;
+  auto index = qet.getQec()->getIndexSharedPtr();
+  auto serializer = std::make_shared<const ConstructRowSerializer>(
+      parsedQuery.constructClause().triples_, qet.getVariableColumns(), *index,
+      mediaType, offsetLeftToApply(qet, limitOffset));
+  auto serialize = std::make_shared<const SegmentSerializer>(
+      [serializer = std::move(serializer), index = std::move(index)](
+          const ExportMorselSegment& segment, uint64_t begin, uint64_t end,
+          ScatterGatherChunkBuilder& builder) {
+        serializer->appendRows(segment.block_->idTable_.asStaticView<0>(),
+                               segment.block_->localVocab_, *index, begin, end,
+                               segment.rowsExportedBeforeBlock_, builder);
+      });
+  return serializeMorsels(qet, limitOffset, std::nullopt, std::move(serialize),
+                          std::move(cancellationHandle), scheduler);
+}
+
+// The morsels of `parsedQuery` in `mediaType`. Requires `canHandle`.
+cppcoro::generator<ScatterGatherChunkBuilder> buildMorsels(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    ad_utility::MediaType mediaType,
+    ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  if (parsedQuery.hasConstructClause()) {
+    return buildConstructMorsels(parsedQuery, qet, mediaType,
+                                 std::move(cancellationHandle), scheduler);
+  }
+  return buildSelectMorsels(parsedQuery, qet,
+                            ExportEngineV2::rowFormatFor(mediaType).value(),
+                            std::move(cancellationHandle), scheduler);
+}
+
 }  // namespace
 
 // True when every operation in the tree rooted at `operation` is one the V2
@@ -450,13 +492,18 @@ static bool operationTreeIsSupported(const ::Operation& operation) {
 bool ExportEngineV2::canHandle(const ParsedQuery& parsedQuery,
                                ad_utility::MediaType mediaType) noexcept {
   using enum ad_utility::MediaType;
-  if (!parsedQuery.hasSelectClause()) {
-    return false;
+  if (parsedQuery.hasSelectClause()) {
+    return mediaType == csv || mediaType == tsv;
   }
-  if (mediaType != csv && mediaType != tsv) {
-    return false;
+  if (parsedQuery.hasConstructClause()) {
+    // CONSTRUCT CSV/TSV and a deduplicating CONSTRUCT stay on Legacy.
+    return ConstructRowSerializer::supportsMediaType(mediaType) &&
+           std::holds_alternative<ad_utility::DeduplicationMode::None>(
+               getRuntimeParameter<
+                   &RuntimeParameters::constructDeduplication_>()
+                   .value_);
   }
-  return true;
+  return false;
 }
 
 // _____________________________________________________________________________
@@ -634,9 +681,8 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
     co_return;
   }
 
-  const auto format = rowFormatFor(mediaType).value();
-  for (auto builder : buildSelectMorsels(parsedQuery, qet, format,
-                                         cancellationHandle, scheduler)) {
+  for (auto builder : buildMorsels(parsedQuery, qet, mediaType,
+                                   cancellationHandle, scheduler)) {
     co_yield std::move(builder).finalizeToString();
   }
 }
@@ -652,10 +698,8 @@ cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
   // GCC rewrites this function as a coroutine frame and rejected
   // `std::thread` + `AsyncChunkPipeline` locals (91a9a7845). Overlap with
   // HTTP send is `runStreamAsync` in `Server::sendStreamableResponse`.
-  const auto format = rowFormatFor(mediaType).value();
-  for (auto builder :
-       buildSelectMorsels(parsedQuery, qet, format,
-                          std::move(cancellationHandle), scheduler)) {
+  for (auto builder : buildMorsels(parsedQuery, qet, mediaType,
+                                   std::move(cancellationHandle), scheduler)) {
     auto chunk = std::move(builder).finalize();
     if (!chunk.empty()) {
       co_yield std::move(chunk);
