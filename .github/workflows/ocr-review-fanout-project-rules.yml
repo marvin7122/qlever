@@ -48,14 +48,20 @@ jobs:
     # GitHub-hosted: this job is LLM-API-bound, not CPU-bound, so it must
     # not occupy fleet compile runners (CI speedup 2026-09-24).
     runs-on: ubuntu-latest
-    # Full fan-out project-rules reviews need ~3.5-4h on larger diffs: runs
-    # 35110677564 and 35288058721 were both killed at exactly the old
-    # 180 min limit while the review agent was still streaming progress.
-    # 360 is the GitHub-hosted cap; large diffs may now time out where the
-    # old 1800 min self-hosted limit survived. If that happens, split the
-    # review (smaller diffs) rather than moving back to the fleet.
+    # Split 2026-10-06: run 36405730670 proved one hosted job cannot finish
+    # large diffs (killed at the 6h platform cap mid-review on PR 209). The
+    # 243 project rules are dealt into OCR_CHUNKS deterministic chunks
+    # (.opencodereview/split_rules.py); each leg publishes its own findings,
+    # so a slow leg can no longer sink the rest. Bump OCR_CHUNKS (and the
+    # matrix below to match) if legs approach the cap. More legs also mean
+    # more parallel LLM streams against the router rate limits.
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     timeout-minutes: 360
     env:
+      OCR_CHUNKS: 16
       # Path-independent build cache: the action checkout lands at a different
       # absolute path every run, which would defeat GOCACHE without this.
       GOFLAGS: -trimpath
@@ -131,7 +137,7 @@ jobs:
               try {
                 const appClient = github.getOctokit(process.env.APP_TOKEN);
                 const { data } = await appClient.rest.checks.create({
-                  owner, repo, name: 'OCR fan-out review', head_sha: sha,
+                  owner, repo, name: `OCR fan-out review (chunk ${{ matrix.chunk }}/${{ env.OCR_CHUNKS }})`, head_sha: sha,
                   status: 'in_progress', details_url: runUrl,
                   output: { title: 'Review running', summary: `[Actions run](${runUrl})` },
                 });
@@ -142,9 +148,26 @@ jobs:
               }
             }
             await github.rest.repos.createCommitStatus({
-              owner, repo, sha, state: 'pending', context: 'OCR fan-out review',
+              owner, repo, sha, state: 'pending', context: `OCR fan-out review (chunk ${{ matrix.chunk }}/${{ env.OCR_CHUNKS }})`,
               description: 'Review running', target_url: runUrl,
             });
+      # The review action checks out the PR itself (fork-safe); this sparse
+      # checkout exists only so the splitter and rule file below are present.
+      # It resolves to the base branch, never the PR head: rule chunks must
+      # come from trusted refs even though only data files are read.
+      - name: Fetch rule splitter (sparse, base ref)
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            .opencodereview/split_rules.py
+            .opencodereview/rule.json
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+      - name: Generate this leg's rule chunk
+        run: |
+          python3 .opencodereview/split_rules.py \
+            .opencodereview/rule.json "$OCR_CHUNKS" '${{ matrix.chunk }}' \
+            '${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json'
       - name: Review pull request with fan-out project rules
         id: ocr
         uses: marvin7122/open-code-review@34ed9d2925e550cf7edb97f3751c6cada6f89d9c
@@ -166,7 +189,7 @@ jobs:
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
           ocr_install_from: source
           fan_out_project_rules: 'true'
-          rule: .opencodereview/rule.json
+          rule: ${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json
           review_concurrency: '1'
           effort: high
           sticky_summary: 'false'
