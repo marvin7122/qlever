@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "global/RuntimeParameters.h"
+#include "util/HugePages.h"
 
 namespace ad_utility::vocabulary {
 
@@ -207,11 +208,24 @@ void VocabularyInternalExternal::open(const std::string& filename) {
               << internalVocab_.size() << std::endl;
   if (getRuntimeParameter<
           &RuntimeParameters::vocabularyInternalRankLookup_>()) {
-    internalVocab_.buildIndexRankDirectory();
+    const bool useHugePages = getRuntimeParameter<
+        &RuntimeParameters::vocabularyInternalRankHugePages_>();
+    internalVocab_.buildIndexRankDirectory(useHugePages);
     AD_LOG_INFO << "Rank directory of the internal vocabulary: "
                 << internalVocab_.indexRankDirectoryNumBytes() << " bytes for "
                 << internalVocab_.endIndex() << " vocabulary indices"
                 << std::endl;
+    if (useHugePages) {
+      const auto [begin, size] = internalVocab_.indexRankDirectoryAllocation();
+      const auto hugeBytes = ad_utility::anonHugePageBytes(begin, size);
+      AD_LOG_INFO << "Huge pages for the rank directory requested "
+                  << "(transparent huge pages: "
+                  << ad_utility::transparentHugePagesMode() << "): "
+                  << (hugeBytes.has_value() ? std::to_string(hugeBytes.value())
+                                            : std::string{"unknown"})
+                  << " of " << size << " allocated bytes on huge pages"
+                  << std::endl;
+    }
   }
 }
 }  // namespace ad_utility::vocabulary

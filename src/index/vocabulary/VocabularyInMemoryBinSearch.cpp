@@ -48,9 +48,9 @@ std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
 }
 
 // _____________________________________________________________________________
-void VocabularyInMemoryBinSearch::buildIndexRankDirectory() {
+void VocabularyInMemoryBinSearch::buildIndexRankDirectory(bool useHugePages) {
   indexRankDirectory_.reset();
-  indexRankDirectory_.emplace(indices(), endIndex());
+  indexRankDirectory_.emplace(indices(), endIndex(), useHugePages);
 }
 
 // _____________________________________________________________________________

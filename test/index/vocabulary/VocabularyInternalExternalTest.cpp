@@ -258,9 +258,13 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
     ql::ranges::reverse(all);
     batches.push_back(all);
 
-    for (bool rankLookup : {false, true}) {
+    for (auto [rankLookup, hugePages] :
+         {std::pair{false, false}, std::pair{true, false},
+          std::pair{true, true}}) {
       auto cleanupRank = setRuntimeParameterForTest<
           &RuntimeParameters::vocabularyInternalRankLookup_>(rankLookup);
+      auto cleanupHugePages = setRuntimeParameterForTest<
+          &RuntimeParameters::vocabularyInternalRankHugePages_>(hugePages);
       ad_utility::vocabulary::VocabularyInternalExternal vocab;
       vocab.open(filename);
       EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(), rankLookup);
@@ -278,8 +282,9 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
           }
           EXPECT_THAT(vocab.lookupBatch(batch),
                       ::testing::ElementsAreArray(expected))
-              << "rank lookup " << rankLookup << ", prefetch distance "
-              << prefetchDistance << ", density " << internalDensity;
+              << "rank lookup " << rankLookup << ", huge pages " << hugePages
+              << ", prefetch distance " << prefetchDistance << ", density "
+              << internalDensity;
         }
       }
     }

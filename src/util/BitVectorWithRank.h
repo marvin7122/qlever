@@ -11,12 +11,16 @@
 #define QLEVER_SRC_UTIL_BITVECTORWITHRANK_H
 
 #include <absl/numeric/bits.h>
+#include <sys/mman.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <memory>
+#include <new>
 #include <optional>
-#include <vector>
+#include <utility>
 
 #include "backports/span.h"
 #include "util/Exception.h"
@@ -33,10 +37,16 @@ namespace ad_utility {
 // therefore reads one cache line and adds at most 7 popcounts. The memory is
 // `64 * ceil(universeSize / 448)` bytes, that is 8/7 bits per integer of the
 // universe, independent of how many integers are contained.
+//
+// With `useHugePages`, the blocks are allocated 2 MiB-aligned and marked with
+// `madvise(MADV_HUGEPAGE)`, so that (if transparent huge pages are enabled at
+// least in "madvise" mode) a large set occupies few TLB entries: a random query
+// then costs one cache miss instead of one cache miss plus one TLB miss.
 class BitVectorWithRank {
  public:
   static constexpr size_t wordsPerBlock = 7;
   static constexpr uint64_t bitsPerBlock = wordsPerBlock * 64;
+  static constexpr size_t hugePageSize = size_t{1} << 21;
 
  private:
   struct alignas(64) Block {
@@ -45,19 +55,64 @@ class BitVectorWithRank {
   };
   static_assert(sizeof(Block) == 64);
 
-  std::vector<Block> blocks_;
+  struct FreeDeleter {
+    void operator()(Block* blocks) const { std::free(blocks); }
+  };
+  std::unique_ptr<Block[], FreeDeleter> blocks_;
+  size_t numBlocks_ = 0;
+  size_t numAllocatedBytes_ = 0;
   uint64_t universeSize_ = 0;
+
+  // Allocate `numBlocks_` zero blocks, see `useHugePages` above.
+  void allocateBlocks(bool useHugePages) {
+    if (numBlocks_ == 0) {
+      return;
+    }
+    const size_t alignment = useHugePages ? hugePageSize : sizeof(Block);
+    // `std::aligned_alloc` requires the size to be a multiple of the alignment.
+    numAllocatedBytes_ =
+        (numBlocks_ * sizeof(Block) + alignment - 1) / alignment * alignment;
+    void* memory = std::aligned_alloc(alignment, numAllocatedBytes_);
+    if (memory == nullptr) {
+      throw std::bad_alloc{};
+    }
+#ifdef MADV_HUGEPAGE
+    if (useHugePages) {
+      // Only a hint: if it fails, the blocks simply stay on regular pages.
+      (void)madvise(memory, numAllocatedBytes_, MADV_HUGEPAGE);
+    }
+#endif
+    blocks_.reset(static_cast<Block*>(memory));
+    for (size_t i = 0; i < numBlocks_; ++i) {
+      new (&blocks_[i]) Block{};
+    }
+  }
 
  public:
   // The empty set over the empty universe.
   BitVectorWithRank() = default;
 
+  // Move-only. A moved-from object is the empty set over the empty universe.
+  BitVectorWithRank(BitVectorWithRank&& other) noexcept
+      : blocks_{std::move(other.blocks_)},
+        numBlocks_{std::exchange(other.numBlocks_, 0)},
+        numAllocatedBytes_{std::exchange(other.numAllocatedBytes_, 0)},
+        universeSize_{std::exchange(other.universeSize_, 0)} {}
+  BitVectorWithRank& operator=(BitVectorWithRank&& other) noexcept {
+    blocks_ = std::move(other.blocks_);
+    numBlocks_ = std::exchange(other.numBlocks_, 0);
+    numAllocatedBytes_ = std::exchange(other.numAllocatedBytes_, 0);
+    universeSize_ = std::exchange(other.universeSize_, 0);
+    return *this;
+  }
+
   // Build the set of the given `sortedValues`, which must be strictly
   // ascending and smaller than `universeSize`.
   BitVectorWithRank(ql::span<const uint64_t> sortedValues,
-                    uint64_t universeSize)
-      : blocks_((universeSize + bitsPerBlock - 1) / bitsPerBlock),
+                    uint64_t universeSize, bool useHugePages = false)
+      : numBlocks_{(universeSize + bitsPerBlock - 1) / bitsPerBlock},
         universeSize_{universeSize} {
+    allocateBlocks(useHugePages);
     std::optional<uint64_t> previous;
     for (uint64_t value : sortedValues) {
       AD_CONTRACT_CHECK(value < universeSize_);
@@ -68,7 +123,8 @@ class BitVectorWithRank {
                                                           << (offset % 64);
     }
     uint64_t rank = 0;
-    for (Block& block : blocks_) {
+    for (size_t i = 0; i < numBlocks_; ++i) {
+      Block& block = blocks_[i];
       block.rankBefore_ = rank;
       for (uint64_t word : block.bits_) {
         rank += static_cast<uint64_t>(absl::popcount(word));
@@ -114,7 +170,12 @@ class BitVectorWithRank {
   uint64_t universeSize() const { return universeSize_; }
 
   // The number of bytes of the bits and rank counters.
-  size_t numBytes() const { return blocks_.size() * sizeof(Block); }
+  size_t numBytes() const { return numBlocks_ * sizeof(Block); }
+
+  // The allocated memory (`numBytes()` rounded up to the alignment), for
+  // example to check how much of it is backed by huge pages.
+  const void* allocationBegin() const { return blocks_.get(); }
+  size_t numAllocatedBytes() const { return numAllocatedBytes_; }
 };
 
 }  // namespace ad_utility

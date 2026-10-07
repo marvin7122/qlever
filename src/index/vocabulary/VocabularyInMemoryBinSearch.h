@@ -7,6 +7,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "backports/algorithm.h"
@@ -106,7 +107,9 @@ class VocabularyInMemoryBinSearch
   // (set if the index is contained) plus rank counters, which `positionOfIndex`
   // then uses instead of the binary search. Costs `8/7 * endIndex()` bits (see
   // `ad_utility::BitVectorWithRank`). Calling it again rebuilds the directory.
-  void buildIndexRankDirectory();
+  // With `useHugePages`, the directory is allocated on transparent huge pages
+  // if the system allows it (see `ad_utility::BitVectorWithRank`).
+  void buildIndexRankDirectory(bool useHugePages = false);
 
   // Prefetch hints for a batch of lookups (no effect on results): load what
   // `positionOfIndex(index)` reads (the rank directory block, nothing without
@@ -127,6 +130,16 @@ class VocabularyInMemoryBinSearch
 
   // Whether `buildIndexRankDirectory` was called (since the last `close`).
   bool hasIndexRankDirectory() const { return indexRankDirectory_.has_value(); }
+
+  // The allocated memory of the rank directory (`{nullptr, 0}` if it was not
+  // built), for example to check how much of it is backed by huge pages.
+  std::pair<const void*, size_t> indexRankDirectoryAllocation() const {
+    if (!indexRankDirectory_.has_value()) {
+      return {nullptr, 0};
+    }
+    return {indexRankDirectory_->allocationBegin(),
+            indexRankDirectory_->numAllocatedBytes()};
+  }
 
   // The number of bytes of the rank directory, 0 if it was not built.
   size_t indexRankDirectoryNumBytes() const {
