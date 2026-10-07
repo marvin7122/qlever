@@ -218,7 +218,7 @@ class ElasticExportScheduler {
   // Dedicated std::thread workers (unit tests).
   explicit ElasticExportScheduler(size_t numThreads = 0,
                                   size_t queueCapacity = 1024);
-  // Live V2: post CPU morsels onto Server::queryThreadPool_ so we do not
+  // Live V2: post CPU morsels onto `Server::queryThreadPool_` so we do not
   // create a second pool. When another query is registered, admission
   // stops and in-flight tasks no-op; the coordinator serializes itself.
   // `poolSize` is the number of threads `poster` runs work on (`m` of the
@@ -337,7 +337,8 @@ class ElasticExportScheduler {
     return nextJobId_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  /// Create a typed `ExportWorkSession`. If `policy` is `nullopt` the session
+  /// Create a typed `ExportWorkSession`.
+  /// Create a typed ExportWorkSession. If `policy` is `nullopt` the session
   /// inherits `helperPolicy()` (runtime parameter `export-v2-helper-policy`);
   /// fair sessions start with quota 0 and are rebalanced immediately.
   template <typename ResultType = std::string>

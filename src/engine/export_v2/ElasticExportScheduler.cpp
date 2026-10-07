@@ -193,7 +193,7 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
 }
 
 void ElasticExportScheduler::rebalanceFairQuotas() {
-  std::lock_guard<std::mutex> rebalanceLock(rebalanceMutex_);
+  std::lock_guard<std::mutex> rebalanceLock{rebalanceMutex_};
   // Live sessions in creation order. A session is created while its query is
   // registered, so creation order is the start order of the export queries.
   std::vector<std::shared_ptr<ExportJobStateBase>> running;

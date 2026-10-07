@@ -659,8 +659,8 @@ struct RangeTask {
   bool checkpoints_{true};
 
   std::string operator()() const {
-    const uint64_t epoch = state_->currentEpoch();
-    std::string done;
+    const uint64_t epoch{state_->currentEpoch()};
+    std::string done{};
     for (size_t pos{begin_}; pos < end_; ++pos) {
       (*counts_)[pos].fetch_add(1);
       done += std::to_string(pos) + ",";
@@ -670,7 +670,7 @@ struct RangeTask {
       const bool checkpoint = (pos + 1 - begin_) % checkEvery_ == 0;
       if (checkpoints_ && checkpoint && pos + 1 < end_ &&
           state_->currentEpoch() != epoch) {
-        RangeTask tail = *this;
+        RangeTask tail{*this};
         tail.begin_ = pos + 1;
         EXPECT_TRUE(state_->trySubmitMorsel(tail));
         return done;
@@ -685,7 +685,7 @@ auto makeCounts(size_t numRows) {
 }
 
 void expectEveryRowOnce(const std::vector<std::atomic<int>>& counts) {
-  for (size_t i = 0; i < counts.size(); ++i) {
+  for (size_t i{0}; i < counts.size(); ++i) {
     ASSERT_EQ(counts[i].load(), 1) << "row " << i;
   }
 }
@@ -858,7 +858,7 @@ TEST(ElasticExportSchedulerTest, FairOrderedSessionShrinksAfterMorsel) {
 
   for (size_t i = 0; i < numMorsels; ++i) {
     std::string expected;
-    for (size_t pos = i * rowsPerMorsel; pos < (i + 1) * rowsPerMorsel; ++pos) {
+    for (size_t pos = i * rowsPerMorsel; pos < (i + size_t{1}) * rowsPerMorsel; ++pos) {
       expected += std::to_string(pos) + ",";
     }
     EXPECT_EQ(session.consumeNextResult(), expected);
@@ -882,7 +882,7 @@ TEST(ElasticExportSchedulerTest, FairRepeatedRevocationLosesNoRow) {
   submitRanges(session, counts, numMorsels, rowsPerMorsel, 5us, true);
 
   std::atomic<bool> stop{false};
-  std::thread churn([&] {
+  std::thread churn{[&] {
     while (!stop.load()) {
       scheduler.onForegroundQueryStarted();
       std::this_thread::sleep_for(200us);
@@ -919,8 +919,8 @@ TEST(ElasticExportSchedulerTest, FairConcurrentSessionsStress) {
       scheduler.onForegroundQueryEnded();
     }
   });
-  std::vector<std::thread> exports;
-  std::vector<std::shared_ptr<std::vector<std::atomic<int>>>> counts;
+  std::vector<std::thread> exports{};
+  std::vector<std::shared_ptr<std::vector<std::atomic<int>>>> counts{};
   for (size_t s = 0; s < numSessions; ++s) {
     counts.push_back(makeCounts(numMorsels * rowsPerMorsel));
   }
