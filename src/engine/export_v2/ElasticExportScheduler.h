@@ -178,6 +178,8 @@ class ExportJobStateBase {
   // may use; posts helper loops up to the new quota or triggers a checkpoint
   // shrink. Returns the previous quota.
   virtual size_t applyHelperQuota(size_t helpers) = 0;
+  template <typename T, typename = std::enable_if_t<std::is_same_v<T, bool>>>
+  size_t applyHelperQuota(T) = delete;
   // Body of one posted helper thread: runs pending morsels until none is left,
   // the session ends, or the session is above its quota.
   virtual void runHelperLoop() = 0;
@@ -1177,8 +1179,8 @@ template <typename ResultType>
 ExportWorkSession<ResultType> ElasticExportScheduler::createSession(
     std::optional<HelperPolicy> policy) {
   const HelperPolicy sessionPolicy = policy.value_or(helperPolicy());
-  uint64_t jId = nextJobId();
-  uint64_t epoch = demandEpoch();
+  const uint64_t jId = nextJobId();
+  const uint64_t epoch = demandEpoch();
   // A fair session starts without helpers; the rebalance below assigns its
   // quota before the first morsel is submitted.
   SessionState initialState =
