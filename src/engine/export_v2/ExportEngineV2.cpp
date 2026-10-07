@@ -40,39 +40,173 @@
 namespace ql::engine::export_v2 {
 namespace {
 
-// Escape `input` for CSV/TSV. Uses SimdEscapeClassifier as a fast reject filter
-// before falling back to the legacy RdfEscaping path (required for CSV
-// quoting).
+// True when `text` needs CSV/TSV escaping. SimdEscapeClassifier is the fast
+// reject filter; the rare positive goes through the legacy RdfEscaping path
+// (required for CSV quoting).
 template <RowFormat Format>
-std::string escapeCell(std::string input) {
-  if (input.empty()) {
-    return input;
-  }
+bool needsEscaping(std::string_view text) {
+  constexpr auto escapeFormat =
+      Format == RowFormat::Csv ? EscapeFormat::Csv : EscapeFormat::Tsv;
+  return !text.empty() &&
+         SimdEscapeClassifier::findFirstEscapeSimd<escapeFormat>(text) !=
+             std::string_view::npos;
+}
+
+template <RowFormat Format>
+std::string escapeForFormat(std::string_view text) {
   if constexpr (Format == RowFormat::Csv) {
-    if (SimdEscapeClassifier::findFirstEscapeSimd<EscapeFormat::Csv>(input) ==
-        std::string_view::npos) {
-      return input;
-    }
-    return RdfEscaping::escapeForCsv(std::move(input));
+    return RdfEscaping::escapeForCsv(std::string{text});
   } else {
     static_assert(Format == RowFormat::Tsv);
-    if (SimdEscapeClassifier::findFirstEscapeSimd<EscapeFormat::Tsv>(input) ==
-        std::string_view::npos) {
-      return input;
-    }
-    return RdfEscaping::escapeForTsv(std::move(input));
+    return RdfEscaping::escapeForTsv(std::string{text});
   }
 }
 
-using ResolvedCell = std::optional<std::pair<std::string, const char*>>;
-
+// Escape `input` for CSV/TSV (the `escapeFunction` of `idToStringAndType`).
 template <RowFormat Format>
-std::vector<ResolvedCell> resolveColumn(const Index& index,
-                                        ql::span<const Id> ids,
-                                        const LocalVocab& localVocab) {
+std::string escapeCell(std::string input) {
+  if (!needsEscaping<Format>(input)) {
+    return input;
+  }
+  return escapeForFormat<Format>(input);
+}
+
+// The text of one output column for a window of rows. A cell views either a
+// decoded vocabulary word (kept alive by `batch_`, no copy) or `scratch_`
+// (escaped words, values encoded in the `Id`, local-vocab words). Undefined
+// and unbound cells are empty views: Legacy and V2 both serialize them as an
+// empty field, exactly like an empty string.
+class ResolvedColumn {
+ private:
+  std::vector<std::string_view> cells_;
+  std::string scratch_;
+  // Cells whose text lives in `scratch_`: (row, offset, size). `scratch_` may
+  // reallocate while the column is resolved, so these become views only in
+  // `finish`.
+  struct ScratchCell {
+    size_t row_;
+    size_t offset_;
+    size_t size_;
+  };
+  std::vector<ScratchCell> scratchCells_;
+  ad_utility::vocabulary::VocabBatchLookupResult batch_;
+  size_t totalBytes_ = 0;
+
+ public:
+  explicit ResolvedColumn(size_t numRows) : cells_(numRows) {}
+
+  // Point `row` at `text`, which must outlive this column (vocabulary batch).
+  void setView(size_t row, std::string_view text) {
+    cells_[row] = text;
+    totalBytes_ += text.size();
+  }
+
+  // Copy `text` into the column's scratch buffer.
+  void setCopy(size_t row, std::string_view text) {
+    if (text.empty()) {
+      return;
+    }
+    scratchCells_.push_back({row, scratch_.size(), text.size()});
+    scratch_.append(text);
+    totalBytes_ += text.size();
+  }
+
+  void keepAlive(ad_utility::vocabulary::VocabBatchLookupResult batch) {
+    batch_ = std::move(batch);
+  }
+
+  // Turn the scratch cells into views. Call once, after the last `set*`.
+  void finish() {
+    for (const auto& cell : scratchCells_) {
+      cells_[cell.row_] =
+          std::string_view{scratch_.data() + cell.offset_, cell.size_};
+    }
+  }
+
+  [[nodiscard]] std::string_view operator[](size_t row) const {
+    return cells_[row];
+  }
+  [[nodiscard]] size_t totalBytes() const { return totalBytes_; }
+};
+
+// Write the cell for `word` into `column`, with the same text as
+// `literalOrIriToStringAndType<Format == Csv>(word, escapeCell<Format>)`:
+// blank nodes unescaped, CSV the bare content, TSV the full representation,
+// escaped if needed. Without escaping the cell is a view into `word`'s
+// storage, so `word` must outlive `column` unless `copy` is set.
+template <RowFormat Format>
+void setWordCell(ResolvedColumn& column, size_t row,
+                 const ad_utility::triple_component::LiteralOrIriView& word,
+                 bool copy) {
+  auto set = [&](std::string_view text) {
+    copy ? column.setCopy(row, text) : column.setView(row, text);
+  };
+  if (word.isIri()) {
+    if (auto blankNode = ql::exportIds::blankNodeIriToString(word.getIri())) {
+      set(blankNode.value());
+      return;
+    }
+  }
+  std::string_view text;
+  if constexpr (Format == RowFormat::Csv) {
+    text = asStringViewUnsafe(word.getContent());
+  } else {
+    text = word.toStringRepresentation();
+  }
+  if (needsEscaping<Format>(text)) {
+    column.setCopy(row, escapeForFormat<Format>(text));
+  } else {
+    set(text);
+  }
+}
+
+// Resolve a column that is not uniformly encoded. `VocabIndex` ids go through
+// one batched vocabulary lookup and become views into the decoded batch.
+// Encoded IRIs are decoded once and copied into the scratch buffer. All other
+// ids take the generic `idToStringAndType` path.
+template <RowFormat Format>
+void resolveMixedColumn(ResolvedColumn& column, const Index& index,
+                        ql::span<const Id> ids, const LocalVocab& localVocab) {
   constexpr bool removeQuotes = Format == RowFormat::Csv;
-  return ql::exportIds::idsToStringAndType<removeQuotes>(index, ids, localVocab,
-                                                         escapeCell<Format>);
+  using LiteralOrIriView = ad_utility::triple_component::LiteralOrIriView;
+  std::vector<size_t> vocabRows;
+  std::vector<size_t> vocabIndices;
+  for (size_t row = 0; row < ids.size(); ++row) {
+    const Id id = ids[row];
+    switch (id.getDatatype()) {
+      case Datatype::VocabIndex:
+        vocabRows.push_back(row);
+        vocabIndices.push_back(id.getVocabIndex().get());
+        break;
+      case Datatype::EncodedVal: {
+        const std::string iri =
+            index.getImpl().encodedIriManager().toString(id);
+        setWordCell<Format>(
+            column, row, LiteralOrIriView::fromStringRepresentation(iri), true);
+        break;
+      }
+      default: {
+        auto cell = ql::exportIds::idToStringAndType<removeQuotes>(
+            index, id, localVocab, escapeCell<Format>);
+        if (cell.has_value()) {
+          column.setCopy(row, cell.value().first);
+        }
+      }
+    }
+  }
+  if (!vocabRows.empty()) {
+    ad_utility::vocabulary::ArenaVocabBatchBuilder builder(
+        vocabIndices.size(), index.getImpl().allocator());
+    auto words = index.getImpl().getVocab().lookupBatch(vocabIndices, builder);
+    AD_CORRECTNESS_CHECK(words.size() == vocabRows.size());
+    auto word = words.begin();
+    for (size_t row : vocabRows) {
+      setWordCell<Format>(column, row,
+                          LiteralOrIriView::fromStringRepresentation(*word++),
+                          false);
+    }
+    column.keepAlive(std::move(words));
+  }
 }
 
 std::string makeHeaderLine(const parsedQuery::SelectClause& selectClause,
@@ -361,7 +495,8 @@ void ExportEngineV2::appendSerializedRows(
 
   // Uniform encoded columns (Int/Double/Bool/Date/...) use the same
   // idToStringAndTypeForEncodedValue bytes as Legacy. Mixed or vocab columns
-  // still go through idsToStringAndType / lookupBatch. Compile-time
+  // go through `resolveMixedColumn` (one batched `lookupBatch` for the
+  // `VocabIndex` ids, the `idToStringAndType` bytes for the rest). Compile-time
   // MonomorphicRowSerializer stays off: its to_chars doubles and IRI brackets
   // do not match SELECT CSV (MonomorphicSerializersTest).
   const size_t n = static_cast<size_t>(rowEnd - rowBegin);
@@ -371,7 +506,7 @@ void ExportEngineV2::appendSerializedRows(
            d == SecondaryVocabIndex || d == WordVocabIndex ||
            d == TextRecordIndex || d == EncodedVal;
   };
-  std::vector<std::vector<ResolvedCell>> resolved(numOutputCols);
+  std::vector<std::optional<ResolvedColumn>> resolved(numOutputCols);
   for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
     const auto col = columnAt(outCol);
     if (!col.has_value()) {
@@ -406,43 +541,47 @@ void ExportEngineV2::appendSerializedRows(
         }
       }
     }
+    auto& column = resolved[outCol].emplace(n);
     if (uniformEncoded) {
-      resolved[outCol].resize(n);
       for (size_t i = 0; i < n; ++i) {
-        resolved[outCol][i] =
-            ql::exportIds::idToStringAndTypeForEncodedValue(ids[i]);
+        auto cell = ql::exportIds::idToStringAndTypeForEncodedValue(ids[i]);
+        if (cell.has_value()) {
+          column.setCopy(i, cell.value().first);
+        }
       }
     } else if (format == RowFormat::Csv) {
-      resolved[outCol] = resolveColumn<RowFormat::Csv>(index, ids, localVocab);
+      resolveMixedColumn<RowFormat::Csv>(column, index, ids, localVocab);
     } else {
-      resolved[outCol] = resolveColumn<RowFormat::Tsv>(index, ids, localVocab);
+      resolveMixedColumn<RowFormat::Tsv>(column, index, ids, localVocab);
     }
-    AD_CORRECTNESS_CHECK(resolved[outCol].size() == n);
+    column.finish();
   }
 
-  // Assemble the whole window into one string with a single coalesced append.
-  // Per-cell appends would create one builder segment per cell (millions of
-  // segments per morsel, ~600 s for 1M H-size rows, measured). One append
-  // per window keeps segments per morsel in the single digits; the extra
-  // coalescing copy is linear and far cheaper than that segment overhead.
+  // Write the rows straight into the builder's copy buffer: the exact window
+  // size is known, so the buffer grows at most once per window and every
+  // cell's bytes are copied exactly once (from the decoded vocabulary batch or
+  // the column's scratch buffer). This also keeps one builder segment per
+  // window run instead of one per cell.
   const char separator = format == RowFormat::Csv ? ',' : '\t';
-  std::string out;
-  for (size_t i = 0; i < n; ++i) {
-    for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
-      if (outCol > 0) {
-        out.push_back(separator);
-      }
-      if (resolved[outCol].empty()) {
-        continue;
-      }
-      auto& cell = resolved[outCol][i];
-      if (cell.has_value()) {
-        out.append(std::move(cell.value().first));
-      }
+  size_t windowBytes = n * numOutputCols;  // separators and newlines
+  for (const auto& column : resolved) {
+    if (column.has_value()) {
+      windowBytes += column->totalBytes();
     }
-    out.push_back('\n');
   }
-  builder.appendCopy(out);
+  builder.appendCopiedWith(windowBytes, [&](std::string& out) {
+    for (size_t i = 0; i < n; ++i) {
+      for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
+        if (outCol > 0) {
+          out.push_back(separator);
+        }
+        if (resolved[outCol].has_value()) {
+          out.append((*resolved[outCol])[i]);
+        }
+      }
+      out.push_back('\n');
+    }
+  });
 }
 
 ScatterGatherChunk ExportEngineV2::serializeTableChunk(
