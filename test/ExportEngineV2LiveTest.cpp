@@ -169,12 +169,13 @@ TEST(ExportEngineV2LiveTest, SmallIndexMatchesLegacy) {
   }
 }
 
-// More rows than one revocation window (1024) and one morsel (8192), with a
-// tiny permutation block size, so a morsel spans many blocks and windows
-// (exercises the per-morsel reservation and in-place window appends).
+// More rows than one revocation window (1024) and one morsel (8192): 300
+// triples times 40 VALUES rows. The test index builder uses two triples per
+// partial vocabulary, so the row count comes from the cartesian product, not
+// from more triples (which would exhaust the file descriptors).
 TEST(ExportEngineV2LiveTest, ManyRowsMatchLegacy) {
   std::string turtle;
-  for (size_t i = 0; i < 10'000; ++i) {
+  for (size_t i = 0; i < 300; ++i) {
     const std::string n = std::to_string(i);
     turtle += "<http://example.org/" + n + "> <http://example.org/label> ";
     switch (i % 5) {
@@ -194,10 +195,18 @@ TEST(ExportEngineV2LiveTest, ManyRowsMatchLegacy) {
         turtle += "\"\" .\n";
     }
   }
+  std::string values;
+  for (size_t k = 0; k < 40; ++k) {
+    values +=
+        k % 2 == 0 ? std::to_string(k) : "\"v," + std::to_string(k) + "\"";
+    values += " ";
+  }
   for (const auto& vocabularyType : vocabularyTypes) {
     expectV2EqualsLegacy(
         makeConfig(turtle, vocabularyType),
-        "SELECT ?s ?o WHERE { ?s <http://example.org/label> ?o }");
+        "SELECT ?s ?o ?k WHERE { ?s <http://example.org/label> "
+        "?o . VALUES ?k { " +
+            values + "} }");
   }
 }
 
