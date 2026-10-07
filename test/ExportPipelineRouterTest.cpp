@@ -208,6 +208,88 @@ TEST(ExportPipelineRouterTest, DescribeDecisionDiagnostics) {
   }
 }
 
+TEST(ExportPipelineRouterTest, DescribePrecomputedDecisionDiagnostics) {
+  auto selectQuery = parse("SELECT * WHERE { ?s ?p ?o }");
+  auto askQuery = parse("ASK WHERE { ?s ?p ?o }");
+  auto unionQuery = parse("SELECT * WHERE { { ?s ?p ?o } UNION { ?a ?b ?c } }");
+
+  const std::string v2 =
+      "ExportEngine: FastStreamingV2 [Reason: Fast-Path V2 selected (eligible "
+      "export query with explicit or default opt-in)]";
+  const std::string explicitV1 =
+      "ExportEngine: LegacyV1 [Reason: Legacy V1 selected (explicitly "
+      "requested "
+      "via query parameter or header override)]";
+  const std::string defaultV1 =
+      "ExportEngine: LegacyV1 [Reason: Legacy V1 selected (default standard "
+      "relational pipeline)]";
+  const std::string requestedFallback =
+      "ExportEngine: LegacyV1 [Reason: Fallback to Legacy V1 (fast-path "
+      "requested but query is ineligible for V2 streaming)]";
+  const std::string defaultFallback =
+      "ExportEngine: LegacyV1 [Reason: Fallback to Legacy V1 (server default "
+      "is V2 but query is ineligible for V2 streaming)]";
+
+  auto check = [&](const ParsedQuery& query,
+                   const ExportPipelineRouter::ParamValueMap& params,
+                   std::optional<std::string_view> header,
+                   ExportEngineMode serverDefault,
+                   ExportEngineMode expectedMode, const std::string& expected) {
+    const auto mode = ExportPipelineRouter::selectEngine(query, params, header,
+                                                         serverDefault);
+    EXPECT_EQ(mode, expectedMode);
+    const auto description = ExportPipelineRouter::describeDecision(
+        mode, params, header, serverDefault);
+    EXPECT_EQ(description, expected);
+    EXPECT_EQ(description, ExportPipelineRouter::describeDecision(
+                               query, params, header, serverDefault));
+  };
+
+  ExportPipelineRouter::ParamValueMap params;
+  params["fast-export"] = {"1"};
+  check(selectQuery, params, std::nullopt, ExportEngineMode::LegacyV1,
+        ExportEngineMode::FastStreamingV2, v2);
+  check(askQuery, params, std::nullopt, ExportEngineMode::LegacyV1,
+        ExportEngineMode::LegacyV1, requestedFallback);
+  check(unionQuery, params, std::nullopt, ExportEngineMode::LegacyV1,
+        ExportEngineMode::LegacyV1, requestedFallback);
+
+  params["fast-export"] = {"0"};
+  check(selectQuery, params, std::nullopt, ExportEngineMode::FastStreamingV2,
+        ExportEngineMode::LegacyV1, explicitV1);
+  check(askQuery, params, "v2", ExportEngineMode::FastStreamingV2,
+        ExportEngineMode::LegacyV1, explicitV1);
+
+  params.clear();
+  params["export-engine"] = {"v2"};
+  check(selectQuery, params, std::nullopt, ExportEngineMode::LegacyV1,
+        ExportEngineMode::FastStreamingV2, v2);
+  params["export-engine"] = {"legacy"};
+  check(selectQuery, params, std::nullopt, ExportEngineMode::FastStreamingV2,
+        ExportEngineMode::LegacyV1, explicitV1);
+
+  params.clear();
+  check(selectQuery, params, "v2", ExportEngineMode::LegacyV1,
+        ExportEngineMode::FastStreamingV2, v2);
+  check(selectQuery, params, "v1", ExportEngineMode::FastStreamingV2,
+        ExportEngineMode::LegacyV1, explicitV1);
+  check(selectQuery, params, std::nullopt, ExportEngineMode::FastStreamingV2,
+        ExportEngineMode::FastStreamingV2, v2);
+  check(selectQuery, params, std::nullopt, ExportEngineMode::LegacyV1,
+        ExportEngineMode::LegacyV1, defaultV1);
+  check(askQuery, params, std::nullopt, ExportEngineMode::FastStreamingV2,
+        ExportEngineMode::LegacyV1, defaultFallback);
+}
+
+TEST(ExportPipelineRouterTest, DescribeDecisionTrustsPrecomputedMode) {
+  ExportPipelineRouter::ParamValueMap params;
+  // No query or opt-in is supplied: the formatter must trust the chosen mode.
+  EXPECT_EQ(ExportPipelineRouter::describeDecision(
+                ExportEngineMode::FastStreamingV2, params),
+            "ExportEngine: FastStreamingV2 [Reason: Fast-Path V2 selected "
+            "(eligible export query with explicit or default opt-in)]");
+}
+
 TEST(ExportPipelineRouterTest, SelectSendModeDefaultIsConcatenatedString) {
   ExportPipelineRouter::ParamValueMap params;
   EXPECT_EQ(ExportPipelineRouter::selectSendMode(params),

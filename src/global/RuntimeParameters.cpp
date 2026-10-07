@@ -71,6 +71,7 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(exportV2MonomorphicRows_);
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
   add(vocabularyIouringPageCacheFastPath_);

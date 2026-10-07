@@ -119,8 +119,10 @@ class ServerForTesting {
   // cannot use the instance method below because it creates a fresh
   // `io_context` per request (see `serverIntegrationKeepPreviousIndexDirs`
   // in `IndexRebuilderTest.cpp` for why that is unsafe there).
-  static boost::asio::awaitable<ResT> process(Server& server, ReqT& request) {
+  static boost::asio::awaitable<ResT> process(Server& server, ReqT& request,
+                                              bool consumeBody = false) {
     Server::MockSend mockSend;
+    mockSend.consumeBody_ = consumeBody;
     co_await server.process(request, mockSend);
     co_return std::move(mockSend.response_);
   }
@@ -131,6 +133,14 @@ class ServerForTesting {
   ResT process(const ReqT& request) {
     return runOnFreshIoContext(request, [](Server* server, ReqT& request) {
       return ServerForTesting::process(*server, request);
+    });
+  }
+
+  // Consume the response in the sender before the request lifetime ends, then
+  // return an owned body for assertions.
+  ResT processAndConsumeResponseBody(const ReqT& request) {
+    return runOnFreshIoContext(request, [](Server* server, ReqT& request) {
+      return ServerForTesting::process(*server, request, true);
     });
   }
 

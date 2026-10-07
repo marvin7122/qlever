@@ -170,15 +170,13 @@ class ExportPipelineRouter {
   }
 
   // ___________________________________________________________________________
-  // Return a detailed diagnostic string explaining the routing decision.
+  // Format a mode already returned by `selectEngine` for the same request
+  // metadata and server default. Reuse that decision without inspecting the
+  // query AST or repeating selection or eligibility checks.
   [[nodiscard]] static std::string describeDecision(
-      const ParsedQuery& query, const ParamValueMap& parameters,
+      ExportEngineMode selected, const ParamValueMap& parameters,
       std::optional<std::string_view> exportHeader = std::nullopt,
       ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) {
-    ExportEngineMode selected =
-        selectEngine(query, parameters, exportHeader, serverDefault);
-    bool eligible = isEligibleForFastStreaming(query);
-
     std::string reason;
     if (selected == ExportEngineMode::FastStreamingV2) {
       reason =
@@ -225,12 +223,11 @@ class ExportPipelineRouter {
         reason =
             "Legacy V1 selected (explicitly requested via query parameter or "
             "header override)";
-      } else if (explicitlyRequestedV2 && !eligible) {
+      } else if (explicitlyRequestedV2) {
         reason =
             "Fallback to Legacy V1 (fast-path requested but query is "
             "ineligible for V2 streaming)";
-      } else if (serverDefault == ExportEngineMode::FastStreamingV2 &&
-                 !eligible) {
+      } else if (serverDefault == ExportEngineMode::FastStreamingV2) {
         reason =
             "Fallback to Legacy V1 (server default is V2 but query is "
             "ineligible for V2 streaming)";
@@ -241,6 +238,16 @@ class ExportPipelineRouter {
 
     return absl::StrCat("ExportEngine: ", toString(selected),
                         " [Reason: ", reason, "]");
+  }
+
+  // Convenience wrapper for callers that have not selected an engine yet.
+  [[nodiscard]] static std::string describeDecision(
+      const ParsedQuery& query, const ParamValueMap& parameters,
+      std::optional<std::string_view> exportHeader = std::nullopt,
+      ExportEngineMode serverDefault = ExportEngineMode::LegacyV1) {
+    const auto selected =
+        selectEngine(query, parameters, exportHeader, serverDefault);
+    return describeDecision(selected, parameters, exportHeader, serverDefault);
   }
 
  private:
