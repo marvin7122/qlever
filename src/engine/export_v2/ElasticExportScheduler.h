@@ -178,6 +178,8 @@ class ExportJobStateBase {
   // may use; posts helper loops up to the new quota or triggers a checkpoint
   // shrink. Returns the previous quota.
   virtual size_t applyHelperQuota(size_t helpers) = 0;
+  template <typename T, typename = std::enable_if_t<std::is_same_v<T, bool>>>
+  size_t applyHelperQuota(T) = delete;
   // Body of one posted helper thread: runs pending morsels until none is left,
   // the session ends, or the session is above its quota.
   virtual void runHelperLoop() = 0;
@@ -287,10 +289,10 @@ class ElasticExportScheduler {
   /// `Exclusive`; the server passes the runtime parameter
   /// `export-v2-helper-policy` per session instead.
   void setHelperPolicy(HelperPolicy policy) noexcept {
-    helperPolicy_.store(policy, std::memory_order_relaxed);
+    helperPolicy_.store(policy, std::memory_order_seq_cst);
   }
   [[nodiscard]] HelperPolicy helperPolicy() const noexcept {
-    return helperPolicy_.load(std::memory_order_relaxed);
+    return helperPolicy_.load(std::memory_order_seq_cst);
   }
 
   /// `m`: threads shared among sessions (pool size or dedicated workers).
@@ -466,8 +468,8 @@ class ExportJobState final
         // checkpoint, hand their unprocessed tail back as a new pending
         // slot and return; the surplus helper loops then exit (see
         // `runHelperLoop`). Ordered morsels finish first.
-        currentEpoch_.fetch_add(1, std::memory_order_relaxed);
-        state_.store(SessionState::Revoking, std::memory_order_relaxed);
+        currentEpoch_.fetch_add(1, std::memory_order_release);
+        state_.store(SessionState::Revoking, std::memory_order_release);
       } else {
         state_.store(helperQuota_ > 0 ? SessionState::HelpersEligible
                                       : SessionState::PrimaryOnly,
@@ -980,7 +982,8 @@ class ExportJobState final
   }
 
   // Post reserved helper loops (outside `mutex_`). A loop the scheduler
-  // refuses (shutdown) is un-reserved; the coordinator runs its work inline.
+  // refuses (shutdown) is un-reserved; remaining pending morsels will be
+  // executed by the coordinator fallback (see `consumeNextResult`).
   void postHelperLoops(size_t count) {
     if (count == 0) {
       return;
@@ -1177,8 +1180,8 @@ template <typename ResultType>
 ExportWorkSession<ResultType> ElasticExportScheduler::createSession(
     std::optional<HelperPolicy> policy) {
   const HelperPolicy sessionPolicy = policy.value_or(helperPolicy());
-  uint64_t jId = nextJobId();
-  uint64_t epoch = demandEpoch();
+  const uint64_t jId = nextJobId();
+  const uint64_t epoch = demandEpoch();
   // A fair session starts without helpers; the rebalance below assigns its
   // quota before the first morsel is submitted.
   SessionState initialState =
