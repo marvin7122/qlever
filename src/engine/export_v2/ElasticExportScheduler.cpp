@@ -10,6 +10,8 @@
 
 #include <algorithm>
 
+#include "util/Log.h"
+
 namespace ad_utility::export_v2 {
 
 // -----------------------------------------------------------------------------
@@ -72,6 +74,7 @@ ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
     threadCount = std::max(1u, std::thread::hardware_concurrency());
   }
 
+  poolSize_ = threadCount;
   workers_.reserve(threadCount);
   try {
     for (size_t i = 0; i < threadCount; ++i) {
@@ -87,10 +90,13 @@ ElasticExportScheduler::ElasticExportScheduler(size_t numThreads,
 }
 
 ElasticExportScheduler::ElasticExportScheduler(WorkPoster poster,
+                                               size_t poolSize,
                                                size_t queueCapacity)
     : poster_{std::move(poster)},
+      poolSize_{poolSize},
       maxQueueCapacity_{queueCapacity > 0 ? queueCapacity : 1024} {
   AD_CONTRACT_CHECK(static_cast<bool>(poster_));
+  AD_CONTRACT_CHECK(poolSize_ > 0);
 }
 
 ElasticExportScheduler::~ElasticExportScheduler() { shutdown(); }
@@ -145,6 +151,7 @@ void ElasticExportScheduler::onForegroundQueryStarted() {
       session->onDemandChanged(current, newEpoch);
     }
   }
+  rebalanceFairQuotas();
 }
 
 void ElasticExportScheduler::onForegroundQueryEnded() {
@@ -180,6 +187,48 @@ void ElasticExportScheduler::onForegroundQueryEnded() {
 
     for (auto& session : aliveSessions) {
       session->onDemandChanged(current, newEpoch);
+    }
+  }
+  rebalanceFairQuotas();
+}
+
+void ElasticExportScheduler::rebalanceFairQuotas() {
+  std::lock_guard<std::mutex> rebalanceLock(rebalanceMutex_);
+  // Live sessions in creation order. A session is created while its query is
+  // registered, so creation order is the start order of the export queries.
+  std::vector<std::shared_ptr<ExportJobStateBase>> running;
+  {
+    std::lock_guard<std::mutex> lock(sessionsMutex_);
+    sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
+                                   [&running](const auto& weak) {
+                                     auto shared = weak.lock();
+                                     if (!shared) {
+                                       return true;
+                                     }
+                                     if (!shared->isClosed()) {
+                                       running.push_back(std::move(shared));
+                                     }
+                                     return false;
+                                   }),
+                    sessions_.end());
+  }
+  // `n` counts every registered query (exports and others); sessions created
+  // without a registered query (unit tests) count as queries too.
+  const size_t m = poolSize_;
+  const size_t n =
+      std::max({activeForegroundQueries(), running.size(), size_t{1}});
+  for (size_t rank = 0; rank < running.size(); ++rank) {
+    auto& session = running[rank];
+    if (session->helperPolicy() != HelperPolicy::Fair) {
+      continue;
+    }
+    const size_t helpers = fairHelperQuota(m, n, rank);
+    const size_t previous = session->applyHelperQuota(helpers);
+    if (previous != helpers) {
+      AD_LOG_INFO << "ExportEngineV2 helper quota job=" << session->jobId()
+                  << " rank=" << rank << " n=" << n << " m=" << m << " helpers "
+                  << previous << " -> " << helpers << " (active "
+                  << session->activeHelpers() << ")" << std::endl;
     }
   }
 }
@@ -221,7 +270,7 @@ bool ElasticExportScheduler::enqueueMorsel(OwnedMorsel morsel) {
 
 void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
   if (stopping_.load(std::memory_order_relaxed) ||
-      !isHelperAdmissionEligibleUnsafe()) {
+      !isAdmissibleUnsafe(morsel)) {
     return;
   }
   auto targetJobState = std::move(morsel.jobState_);
@@ -239,6 +288,13 @@ void ElasticExportScheduler::runPostedMorsel(OwnedMorsel morsel) {
 void ElasticExportScheduler::runLeasedHelperTask(
     ExportJobStateBase* targetJobState, size_t targetMorselIndex,
     uint64_t submissionEpoch, uint64_t leaseEpoch) {
+  if (targetJobState != nullptr &&
+      targetMorselIndex == OwnedMorsel::kHelperLoop) {
+    // Fair helper loop: limits itself by quota, never by epoch. Task
+    // failures are stored in their slots, nothing escapes.
+    targetJobState->runHelperLoop();
+    return;
+  }
   if (targetJobState == nullptr || targetJobState->isCancelled() ||
       submissionEpoch != leaseEpoch) {
     return;
@@ -278,6 +334,12 @@ bool ElasticExportScheduler::isHelperAdmissionEligibleUnsafe() const noexcept {
              std::memory_order_relaxed);
 }
 
+bool ElasticExportScheduler::isAdmissibleUnsafe(
+    const OwnedMorsel& morsel) const noexcept {
+  return morsel.morselIndex_ == OwnedMorsel::kHelperLoop ||
+         isHelperAdmissionEligibleUnsafe();
+}
+
 void ElasticExportScheduler::workerLoop() {
   while (true) {
     std::shared_ptr<ExportJobStateBase> targetJobState;
@@ -291,14 +353,14 @@ void ElasticExportScheduler::workerLoop() {
       std::unique_lock<std::mutex> lock(queueMutex_);
       workAvailableCv_.wait(lock, [this] {
         return stopping_.load(std::memory_order_relaxed) ||
-               (!queue_.empty() && isHelperAdmissionEligibleUnsafe());
+               (!queue_.empty() && isAdmissibleUnsafe(queue_.front()));
       });
 
       if (stopping_.load(std::memory_order_relaxed) && queue_.empty()) {
         break;
       }
 
-      if (queue_.empty() || !isHelperAdmissionEligibleUnsafe()) {
+      if (queue_.empty() || !isAdmissibleUnsafe(queue_.front())) {
         if (stopping_.load(std::memory_order_relaxed)) {
           // Shutdown with work still queued but helpers ineligible: never
           // start new work here, otherwise the worker spins on the wait

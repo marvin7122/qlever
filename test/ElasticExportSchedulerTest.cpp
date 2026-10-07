@@ -326,7 +326,7 @@ TEST(ElasticExportSchedulerTest, ThrowingPostedMorselDoesNotEscapePoolThread) {
       [&posted](absl::AnyInvocable<void()> task) {
         posted.push_back(std::move(task));
       },
-      64);
+      2, 64);
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
   auto session = scheduler.createSession<std::string>();
