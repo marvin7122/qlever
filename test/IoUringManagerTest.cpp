@@ -558,6 +558,28 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
+// An error while making room for the next read interrupts `addBatch`. Waiting
+// afterwards must only account for reads that were actually queued.
+TEST(IoUringPolicyTest, ErrorDuringRefillDoesNotCountUnqueuedReads) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is not available at runtime";
+  }
+
+  constexpr unsigned ringSize = 8;
+  constexpr size_t numRequests = ringSize + 1;
+  char buffer = '\0';
+  std::vector<size_t> numBytes(numRequests, 1);
+  std::vector<uint64_t> offsets(numRequests, 0);
+  std::vector<char*> buffers(numRequests, &buffer);
+  ad_utility::IoUringPolicy policy(ringSize);
+  constexpr ad_utility::IoUringPolicy::BatchHandle handle = 0;
+
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      policy.addBatch(-1, numBytes, offsets, buffers, handle),
+      HasSubstr("I/O error in IoUringPolicy"));
+  EXPECT_NO_THROW(policy.wait(handle));
+}
+
 // Drop the manager while reads are still in flight (submitted but never
 // waited). `IoUringPolicy`'s destructor drains the outstanding completions
 // (and logs a warning) before tearing down the ring, so the kernel is done

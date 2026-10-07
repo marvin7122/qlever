@@ -243,8 +243,6 @@ void IoUringPolicy::addBatch(int fd,
   if (numReadRequestsToPerform == 0) {
     return;
   }
-  numOutstandingReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
-
   for (const auto& [numBytesToRead, fileOffset, targetBuf] :
        ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
                             targetBufferPerRequest)) {
@@ -283,6 +281,7 @@ void IoUringPolicy::addBatch(int fd,
         OutstandingRead{handle, numBytesToRead};
     io_uring_sqe_set_data64(sqe, requestId);
     numOutstandingReadRequests_++;
+    numOutstandingReadRequestsPerBatch_[handle]++;
   }
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
