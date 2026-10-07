@@ -218,7 +218,7 @@ class ElasticExportScheduler {
   // Dedicated std::thread workers (unit tests).
   explicit ElasticExportScheduler(size_t numThreads = 0,
                                   size_t queueCapacity = 1024);
-  // Live V2: post CPU morsels onto Server::queryThreadPool_ so we do not
+  // Live V2: post CPU morsels onto `Server::queryThreadPool_` so we do not
   // create a second pool. When another query is registered, admission
   // stops and in-flight tasks no-op; the coordinator serializes itself.
   // `poolSize` is the number of threads `poster` runs work on (`m` of the
@@ -337,7 +337,7 @@ class ElasticExportScheduler {
     return nextJobId_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  /// Create a typed ExportWorkSession.
+  /// Create a typed `ExportWorkSession`.
   template <typename ResultType = std::string>
   ExportWorkSession<ResultType> createSession(
       std::optional<HelperPolicy> policy = std::nullopt);
@@ -598,7 +598,7 @@ class ExportJobState final
       task = std::move(slots_[morselIndex].task_);
     }
 
-    if (auto error = runClaimedTask(morselIndex, std::move(task), startWall)) {
+    if (const auto error = runClaimedTask(morselIndex, std::move(task), startWall)) {
       // Rethrowing lets `runLeasedHelperTask` keep its never-escape guarantee
       // while `consumeNextResult` observes the stored failure instead of
       // waiting on a `Running` slot forever.
