@@ -159,7 +159,7 @@ const std::vector<std::string> queries{
     "SELECT ?s ?o WHERE { ?s <http://example.org/label> ?o } LIMIT 4 "
     "OFFSET 2",
     // An OFFSET that the root operation (a join) does not apply.
-    "SELECT ?s ?o WHERE { ?s <http://example.org/label> ?o . ?s ?p ?o } "
+    "SELECT ?s ?o WHERE { ?s <http://example.org/label> ?o . ?s ?p ?x } "
     "LIMIT 5 OFFSET 1",
 };
 
@@ -285,7 +285,7 @@ const std::vector<std::string> constructQueries{
     "CONSTRUCT { ?s <http://example.org/has> _:b . _:b <http://example.org/v> "
     "?o } WHERE { ?s <http://example.org/label> ?o } LIMIT 4 OFFSET 2",
     "CONSTRUCT { ?s <http://example.org/has> _:b . _:b <http://example.org/v> "
-    "?o } WHERE { ?s <http://example.org/label> ?o . ?s ?p ?o } "
+    "?o } WHERE { ?s <http://example.org/label> ?o . ?s ?p ?x } "
     "LIMIT 5 OFFSET 1",
     // Language filter, as in the Wikidata benchmark query.
     "CONSTRUCT { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?o } "
@@ -364,7 +364,7 @@ TEST(ExportEngineV2LiveTest, ConstructManyRowsMatchLegacy) {
         config,
         "CONSTRUCT { ?s <http://example.org/node> _:b . _:b "
         "<http://example.org/v> ?o } WHERE { ?s <http://example.org/label> ?o "
-        ". ?s ?p ?o } LIMIT 9000 OFFSET 333");
+        ". ?s ?p ?x } LIMIT 9000 OFFSET 333");
   }
 }
 
