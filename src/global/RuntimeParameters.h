@@ -258,6 +258,14 @@ struct RuntimeParameters {
   // is loaded; changing it later has no effect.
   Bool vocabularyInternalRankLookup_{true, "vocabulary-internal-rank-lookup"};
 
+  // With the rank directory above, `VocabularyInternalExternal::lookupBatch`
+  // prefetches the rank directory block of the index this many positions ahead
+  // in the batch, and (in a second pass) the offsets and the first bytes of
+  // the in-RAM words that many and twice that many positions ahead. 0 turns
+  // prefetching off.
+  SizeT vocabularyInternalRankPrefetchDistance_{
+      0, "vocabulary-internal-rank-prefetch-distance"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

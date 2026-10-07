@@ -469,8 +469,13 @@ void expectRankDirectoryMatchesBinarySearch(
   EXPECT_EQ(positionsOf(shuffled), expectedShuffled);
   EXPECT_EQ(positionsOf(repeated), expectedRepeated);
   for (size_t position = 0; position < indices.size(); ++position) {
+    // The prefetch hints do not change anything.
+    vocab.prefetchPositionOfIndex(indices[position]);
+    vocab.prefetchWordOffsetsAtPosition(position);
+    vocab.prefetchWordAtPosition(position);
     EXPECT_EQ(vocab[indices[position]], std::optional{words[position]});
   }
+  vocab.prefetchPositionOfIndex(std::numeric_limits<uint64_t>::max());
 
   // A rebuild gives the same result; `close` removes the directory.
   vocab.buildIndexRankDirectory();

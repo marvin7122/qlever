@@ -111,6 +111,23 @@ class VocabularyInMemoryBinSearch
   // `ad_utility::BitVectorWithRank`). Calling it again rebuilds the directory.
   void buildIndexRankDirectory();
 
+  // Prefetch hints for a batch of lookups (no effect on results): load what
+  // `positionOfIndex(index)` reads (the rank directory block, nothing without
+  // the directory), the offsets of the word at `position`, and the first
+  // bytes of that word. `prefetchWordAtPosition` reads the offsets, so they
+  // should have been prefetched before.
+  void prefetchPositionOfIndex(uint64_t index) const {
+    if (indexRankDirectory_.has_value()) {
+      indexRankDirectory_->prefetch(index);
+    }
+  }
+  void prefetchWordOffsetsAtPosition(size_t position) const {
+    words_.prefetchOffsets(position);
+  }
+  void prefetchWordAtPosition(size_t position) const {
+    __builtin_prefetch(wordAtPosition(position).data());
+  }
+
   // Whether `buildIndexRankDirectory` was called (since the last `close`).
   bool hasIndexRankDirectory() const { return indexRankDirectory_.has_value(); }
 

@@ -40,6 +40,10 @@ void expectRanksMatchDefinition(const std::vector<uint64_t>& sortedValues,
   }
   EXPECT_EQ(bits.rankIfContained(std::numeric_limits<uint64_t>::max()),
             std::nullopt);
+  // Prefetching is only a hint, also outside the universe.
+  bits.prefetch(0);
+  bits.prefetch(universeSize);
+  bits.prefetch(std::numeric_limits<uint64_t>::max());
 }
 
 // A random strictly ascending subset of `[0, universeSize)`, each value
