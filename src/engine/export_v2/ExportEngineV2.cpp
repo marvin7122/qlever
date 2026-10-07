@@ -35,6 +35,7 @@
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
+#include "util/InputRangeUtils.h"
 #include "util/Log.h"
 #include "util/ParallelDeflate.h"
 #include "util/Timer.h"
@@ -214,6 +215,20 @@ struct CheckpointMorselRunner {
   }
 };
 
+// The result blocks of `result`. A fully materialized result (for example a
+// small or cached one) has no lazy `idTables()`; it is served as a single
+// block (a copy, because the morsel plans own their blocks).
+Result::LazyResult resultBlocks(std::shared_ptr<const Result> result) {
+  if (!result->isFullyMaterialized()) {
+    return result->idTables();
+  }
+  return Result::LazyResult{
+      ad_utility::lazySingleValueRange([result = std::move(result)]() {
+        return Result::IdTableVocabPair{result->cloneIdTable(),
+                                        result->localVocab().clone()};
+      })};
+}
+
 // Morsels with no bytes are not emitted.
 bool isEmptyMorsel(const ScatterGatherChunkBuilder& builder) {
   return builder.empty();
@@ -262,7 +277,7 @@ buildSerializedMorsels(const ParsedQuery& parsedQuery,
     // No session exists here, so nothing can revoke: serialize each plan
     // directly without checkpoints.
     for (auto&& plan : planExportMorsels(
-             result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
+             resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
       for (const auto& segment : plan.segments_) {
@@ -305,7 +320,7 @@ buildSerializedMorsels(const ParsedQuery& parsedQuery,
                                               !ordered,
                                               finish};
   for (auto&& plan : planExportMorsels(
-           result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
+           resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
     session.submitMorsel(runner.makeTask(std::move(plan)));
   }
