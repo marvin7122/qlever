@@ -665,3 +665,9 @@ if (QLEVER_ENABLE_EXPORT_V2)
         target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     endif()
 endif ()
+
+# End-to-end parallel response compression of Export V2 (needs the engine and
+# a test index, unlike the light-link smoke tests above).
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2CompressionTest index engine sparqlParser)
+endif ()
