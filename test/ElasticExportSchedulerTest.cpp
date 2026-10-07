@@ -672,7 +672,9 @@ struct RangeTask {
           state_->currentEpoch() != epoch) {
         RangeTask tail = *this;
         tail.begin_ = pos + 1;
-        EXPECT_TRUE(state_->trySubmitMorsel(tail));
+        const bool ok = state_->trySubmitMorsel(tail);
+        assert(ok);
+        (void)ok;
         return done;
       }
     }
@@ -859,7 +861,7 @@ TEST(ElasticExportSchedulerTest, FairOrderedSessionShrinksAfterMorsel) {
 
   for (size_t i = 0; i < numMorsels; ++i) {
     std::string expected;
-    for (size_t pos = i * rowsPerMorsel; pos < (i + 1) * rowsPerMorsel; ++pos) {
+    for (size_t pos = i * rowsPerMorsel; pos < (i + size_t{1}) * rowsPerMorsel; ++pos) {
       expected += std::to_string(pos) + ",";
     }
     EXPECT_EQ(session.consumeNextResult(), expected);
@@ -884,7 +886,7 @@ TEST(ElasticExportSchedulerTest, FairRepeatedRevocationLosesNoRow) {
   submitRanges(session, counts, numMorsels, rowsPerMorsel, 5us, true);
 
   std::atomic<bool> stop{false};
-  std::thread churn([&] {
+  ad_utility::JThread churn([&] {
     while (!stop.load()) {
       scheduler.onForegroundQueryStarted();
       std::this_thread::sleep_for(200us);
@@ -914,14 +916,14 @@ TEST(ElasticExportSchedulerTest, FairConcurrentSessionsStress) {
   constexpr size_t numMorsels = 60;
   constexpr size_t rowsPerMorsel = 50;
   std::atomic<bool> stop{false};
-  std::thread churn([&] {
+  ad_utility::JThread churn([&] {
     while (!stop.load()) {
       scheduler.onForegroundQueryStarted();
       std::this_thread::sleep_for(300us);
       scheduler.onForegroundQueryEnded();
     }
   });
-  std::vector<std::thread> exports;
+  std::vector<ad_utility::JThread> exports;
   std::vector<std::shared_ptr<std::vector<std::atomic<int>>>> counts;
   for (size_t s = 0; s < numSessions; ++s) {
     counts.push_back(makeCounts(numMorsels * rowsPerMorsel));
