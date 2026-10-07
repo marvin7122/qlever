@@ -287,10 +287,10 @@ class ElasticExportScheduler {
   /// `Exclusive`; the server passes the runtime parameter
   /// `export-v2-helper-policy` per session instead.
   void setHelperPolicy(HelperPolicy policy) noexcept {
-    helperPolicy_.store(policy, std::memory_order_relaxed);
+    helperPolicy_.store(policy, std::memory_order_seq_cst);
   }
   [[nodiscard]] HelperPolicy helperPolicy() const noexcept {
-    return helperPolicy_.load(std::memory_order_relaxed);
+    return helperPolicy_.load(std::memory_order_seq_cst);
   }
 
   /// `m`: threads shared among sessions (pool size or dedicated workers).
@@ -466,8 +466,8 @@ class ExportJobState final
         // checkpoint, hand their unprocessed tail back as a new pending
         // slot and return; the surplus helper loops then exit (see
         // `runHelperLoop`). Ordered morsels finish first.
-        currentEpoch_.fetch_add(1, std::memory_order_relaxed);
-        state_.store(SessionState::Revoking, std::memory_order_relaxed);
+        currentEpoch_.fetch_add(1, std::memory_order_release);
+        state_.store(SessionState::Revoking, std::memory_order_release);
       } else {
         state_.store(helperQuota_ > 0 ? SessionState::HelpersEligible
                                       : SessionState::PrimaryOnly,
@@ -980,7 +980,8 @@ class ExportJobState final
   }
 
   // Post reserved helper loops (outside `mutex_`). A loop the scheduler
-  // refuses (shutdown) is un-reserved; the coordinator runs its work inline.
+  // refuses (shutdown) is un-reserved; remaining pending morsels will be
+  // executed by the coordinator fallback (see `consumeNextResult`).
   void postHelperLoops(size_t count) {
     if (count == 0) {
       return;
