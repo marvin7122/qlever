@@ -225,10 +225,11 @@ void ElasticExportScheduler::rebalanceFairQuotas() {
     const size_t helpers = fairHelperQuota(m, n, rank);
     const size_t previous = session->applyHelperQuota(helpers);
     if (previous != helpers) {
-      AD_LOG_INFO << "ExportEngineV2 helper quota job=" << session->jobId()
-                  << " rank=" << rank << " n=" << n << " m=" << m << " helpers "
-                  << previous << " -> " << helpers << " (active "
-                  << session->activeHelpers() << ")" << std::endl;
+      AD_LOG_DEBUG << "ExportEngineV2 helper quota job=" << session->jobId()
+                   << " rank=" << rank << " n=" << n << " m=" << m
+                   << " helpers " << previous << " -> " << helpers
+                   << " (active " << session->activeHelpers() << ")"
+                   << std::endl;
     }
   }
 }
