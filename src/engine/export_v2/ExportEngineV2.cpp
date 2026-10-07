@@ -415,11 +415,6 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
                                       format,
                                       !ordered,
                                       monomorphicRows};
-  for (auto&& plan : planExportMorsels(
-           resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
-    cancellationHandle->throwIfCancelled();
-    session.submitMorsel(runner.makeTask(std::move(plan)));
-  }
   // Optional helper trace for concurrency measurements.
   const auto logInterval = std::chrono::milliseconds{
       getRuntimeParameter<&RuntimeParameters::exportV2HelperLogIntervalMs_>()};
@@ -442,9 +437,30 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
                 << session.totalSlots() << std::endl;
   };
   logHelpers(true);
-  while (session.hasMoreResults()) {
+  // Keep a small window of work available to the pool without pulling the
+  // entire lazy result or retaining all serialized builders. Use the session
+  // counters so remainders submitted at revocation checkpoints also count.
+  const size_t maxInFlight = std::max(size_t{1}, 2 * scheduler->poolSize());
+  auto consume = [&]() {
+    cancellationHandle->throwIfCancelled();
     auto builder = session.consumeNextResult();
+    cancellationHandle->throwIfCancelled();
     logHelpers(false);
+    return builder;
+  };
+  for (auto&& plan : planExportMorsels(
+           resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
+    cancellationHandle->throwIfCancelled();
+    session.submitMorsel(runner.makeTask(std::move(plan)));
+    while (session.totalSlots() - session.consumedSlots() >= maxInFlight) {
+      auto builder = consume();
+      if (!builder.empty()) {
+        co_yield std::move(builder);
+      }
+    }
+  }
+  while (session.hasMoreResults()) {
+    auto builder = consume();
     if (!builder.empty()) {
       co_yield std::move(builder);
     }
