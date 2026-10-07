@@ -352,6 +352,8 @@ addLinkAndDiscoverTest(ForwardTest)
 
 addLinkAndDiscoverTestNoLibs(CompressorStreamTest Boost::iostreams)
 
+addLinkAndDiscoverTestNoLibs(ParallelDeflateTest parallelDeflate)
+
 addLinkAndDiscoverTestNoLibs(AsyncStreamTest)
 
 addLinkAndDiscoverTest(BitUtilsTest)

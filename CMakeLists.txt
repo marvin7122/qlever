@@ -421,6 +421,10 @@ else ()
 endif ()
 
 
+### ZLIB (direct use by the parallel response compression, `ParallelDeflate`;
+# Boost.Iostreams already depends on it)
+find_package(ZLIB REQUIRED)
+
 ######################################
 # BOOST
 ######################################

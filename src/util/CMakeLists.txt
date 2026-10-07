@@ -19,4 +19,8 @@ qlever_target_link_libraries(antlrErrorHandling stringUtils antlr4_umbrella)
 add_library(qlever_util ParseableDuration.cpp UnitOfMeasurement.cpp Conversions.cpp Date.cpp DateYearDuration.cpp Duration.cpp CancellationHandle.cpp LazyJsonParser.cpp BlankNodeManager.cpp IoUringManager.cpp FilesystemHelpers.cpp QueryEventLog.cpp ResourceMonitor.cpp)
 qlever_target_link_libraries(qlever_util antlrErrorHandling s2 pb_util pb_util_geo pb_util_json rdfTypes antlr4_umbrella)
 
+# Parallel (pigz-style) deflate framing for HTTP response compression.
+add_library(parallelDeflate ParallelDeflate.cpp)
+qlever_target_link_libraries(parallelDeflate ZLIB::ZLIB)
+
 add_subdirectory(metrics)
