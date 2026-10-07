@@ -1177,8 +1177,8 @@ template <typename ResultType>
 ExportWorkSession<ResultType> ElasticExportScheduler::createSession(
     std::optional<HelperPolicy> policy) {
   const HelperPolicy sessionPolicy = policy.value_or(helperPolicy());
-  uint64_t jId = nextJobId();
-  uint64_t epoch = demandEpoch();
+  const uint64_t jId = nextJobId();
+  const uint64_t epoch = demandEpoch();
   // A fair session starts without helpers; the rebalance below assigns its
   // quota before the first morsel is submitted.
   SessionState initialState =

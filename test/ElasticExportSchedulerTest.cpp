@@ -672,7 +672,11 @@ struct RangeTask {
           state_->currentEpoch() != epoch) {
         RangeTask tail{*this};
         tail.begin_ = pos + 1;
-        EXPECT_TRUE(state_->trySubmitMorsel(tail));
+        // Check tail resubmit thread-safely; verify on main thread.
+        // e.g. store success in atomic<bool> or AD_CONTRACT_CHECK
+        auto ok = state_->trySubmitMorsel(tail);
+        AD_CONTRACT_CHECK(ok);
+        // or: tailSubmitOk->store(ok); and main thread ASSERT_TRUE(tailSubmitOk->load());
         return done;
       }
     }
