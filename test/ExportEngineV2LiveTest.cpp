@@ -36,27 +36,46 @@ struct Exports {
   std::string v2Chunks_;
 };
 
+// V2 streams the lazy result blocks (`Result::idTables`), so it needs a root
+// operation that is computed lazily. A fully materialized root result (e.g.
+// a cached result, or VALUES) is outside this test's scope.
+bool rootResultIsLazy(QueryExecutionContext* qec, const ParsedQuery& parsed) {
+  qec->clearCacheUnpinnedOnly();
+  auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
+  QueryPlanner qp{qec, handle};
+  auto qet = qp.createExecutionTree(parsed);
+  return !qet.getResult(true)->isFullyMaterialized();
+}
+
 Exports runAllEngines(ad_utility::testing::TestIndexConfig config,
                       const std::string& query, MediaType mediaType) {
   auto qec = ad_utility::testing::getQec(std::move(config));
-  qec->clearCacheUnpinnedOnly();
   const auto& encodedIriManager = qec->getIndex().getImpl().encodedIriManager();
   auto parsed = SparqlParser::parseQuery(&encodedIriManager, query, {});
-  Exports result;
-  {
+  // Every engine run plans afresh on an empty cache: a cached (fully
+  // materialized) result from the previous run would not be lazy.
+  auto plan = [&]() {
+    qec->clearCacheUnpinnedOnly();
     auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
     QueryPlanner qp{qec, handle};
-    auto qet = qp.createExecutionTree(parsed);
+    return std::pair{qp.createExecutionTree(parsed), handle};
+  };
+  Exports result;
+  {
+    auto [qet, handle] = plan();
     ad_utility::Timer timer{ad_utility::Timer::Started};
     for (const auto& block : ExportQueryExecutionTrees::computeResult(
              parsed, qet, mediaType, timer, handle)) {
       result.legacy_ += block;
     }
   }
+  if (!rootResultIsLazy(qec, parsed)) {
+    ADD_FAILURE() << "root result is fully materialized, V2 cannot stream it: "
+                  << query;
+    return result;
+  }
   {
-    auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
-    QueryPlanner qp{qec, handle};
-    auto qet = qp.createExecutionTree(parsed);
+    auto [qet, handle] = plan();
     EXPECT_TRUE(ExportEngineV2::canHandle(parsed, qet, mediaType)) << query;
     for (const auto& block :
          ExportEngineV2::computeResult(parsed, qet, mediaType, handle)) {
@@ -64,9 +83,7 @@ Exports runAllEngines(ad_utility::testing::TestIndexConfig config,
     }
   }
   {
-    auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
-    QueryPlanner qp{qec, handle};
-    auto qet = qp.createExecutionTree(parsed);
+    auto [qet, handle] = plan();
     for (const auto& chunk :
          ExportEngineV2::computeResultChunks(parsed, qet, mediaType, handle)) {
       result.v2Chunks_ += chunk.toString();
