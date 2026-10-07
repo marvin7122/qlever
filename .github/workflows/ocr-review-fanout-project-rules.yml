@@ -205,7 +205,11 @@ jobs:
           ocr_install_from: source
           fan_out_project_rules: 'true'
           rule: ${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json
-          review_concurrency: '1'
+          # One file at a time per leg ran a 34-part PR for >6 h and hit the
+          # 360-min job timeout (run 37594125409). Four parallel reviews per
+          # leg (16 legs -> up to 64 LLM requests) keep a large diff well
+          # inside the limit.
+          review_concurrency: '4'
           effort: high
           sticky_summary: 'false'
           incremental: 'true'
