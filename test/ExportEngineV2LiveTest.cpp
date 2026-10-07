@@ -39,7 +39,7 @@ struct Exports {
 // V2 streams the lazy result blocks (`Result::idTables`), so it needs a root
 // operation that is computed lazily. A fully materialized root result (e.g.
 // a cached result, or VALUES) is outside this test's scope.
-bool rootResultIsLazy(QueryExecutionContext* qec, const ParsedQuery& parsed) {
+bool rootResultIsLazy(QueryExecutionContext* qec, ParsedQuery& parsed) {
   qec->clearCacheUnpinnedOnly();
   auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
   QueryPlanner qp{qec, handle};
