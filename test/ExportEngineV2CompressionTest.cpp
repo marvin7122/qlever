@@ -51,8 +51,9 @@ std::string inflateAll(std::string_view compressed, int windowBits) {
   return out;
 }
 
-// A knowledge graph with `numSubjects` rows for `?s <p> ?o`, enough for
-// several 8192-row morsels.
+// A knowledge graph with `numSubjects` rows for `?s <p> ?o`. 8500 rows give
+// two 8192-row morsels while staying below the open-file limit of the test
+// index builder (it writes one partial vocabulary per few dozen triples).
 std::string makeKg(size_t numSubjects) {
   std::string kg;
   for (size_t i = 0; i < numSubjects; ++i) {
@@ -126,12 +127,12 @@ class ExportEngineV2CompressionTest
 // Without a scheduler the morsels are serialized in order, so the inflated
 // stream must equal the uncompressed output byte for byte.
 TEST_P(ExportEngineV2CompressionTest, SerialMorselsAreByteIdentical) {
-  const auto kg = makeKg(20'000);
+  const auto kg = makeKg(8'500);
   for (auto mediaType :
        {ad_utility::MediaType::csv, ad_utility::MediaType::tsv}) {
     auto [plain, compressed] = runBoth(kg, "SELECT ?s ?o WHERE { ?s <p> ?o }",
                                        mediaType, GetParam(), nullptr);
-    ASSERT_GT(plain.size(), 100'000u);
+    ASSERT_GT(plain.size(), 100'000u);  // two morsels
     EXPECT_LT(compressed.size(), plain.size());
     for (int windowBits : windowBitsFor(GetParam())) {
       EXPECT_EQ(inflateAll(compressed, windowBits), plain);
@@ -144,7 +145,7 @@ TEST_P(ExportEngineV2CompressionTest, SerialMorselsAreByteIdentical) {
 TEST_P(ExportEngineV2CompressionTest, OrderedHelperMorselsAreByteIdentical) {
   ElasticExportScheduler scheduler{4, 64};
   auto [plain, compressed] =
-      runBoth(makeKg(20'000), "SELECT ?s ?o WHERE { ?s <p> ?o } LIMIT 17000",
+      runBoth(makeKg(8'500), "SELECT ?s ?o WHERE { ?s <p> ?o } LIMIT 8400",
               ad_utility::MediaType::csv, GetParam(), &scheduler);
   for (int windowBits : windowBitsFor(GetParam())) {
     EXPECT_EQ(inflateAll(compressed, windowBits), plain);
@@ -157,7 +158,7 @@ TEST_P(ExportEngineV2CompressionTest, OrderedHelperMorselsAreByteIdentical) {
 TEST_P(ExportEngineV2CompressionTest, UnorderedHelperMorselsHaveTheSameRows) {
   ElasticExportScheduler scheduler{4, 64};
   auto [plain, compressed] =
-      runBoth(makeKg(20'000), "SELECT ?s ?o WHERE { ?s <p> ?o }",
+      runBoth(makeKg(8'500), "SELECT ?s ?o WHERE { ?s <p> ?o }",
               ad_utility::MediaType::csv, GetParam(), &scheduler);
   for (int windowBits : windowBitsFor(GetParam())) {
     const auto inflated = inflateAll(compressed, windowBits);
