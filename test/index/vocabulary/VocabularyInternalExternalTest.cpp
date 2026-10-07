@@ -10,12 +10,12 @@
 #include <string>
 #include <vector>
 
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyInternalExternal.h"
 #include "util/Exception.h"
 #include "util/Forward.h"
-#include "util/RuntimeParametersTestHelpers.h"
 
 namespace {
 using namespace vocabulary_test;
