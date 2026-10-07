@@ -37,8 +37,69 @@
 #include "util/Log.h"
 #include "util/Timer.h"
 
+#include <sys/syscall.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <mutex>
+
 namespace ql::engine::export_v2 {
 namespace {
+
+// DIAGNOSTIC ONLY (branch diag/v2-utilisation, not for merge): when the
+// environment variable `QLEVER_V2_DIAG_DIR` is set, every V2 export session
+// records per-morsel execution intervals (thread id, wall and thread-CPU
+// time) and the coordinator's phase timestamps, and writes them as CSV files
+// into that directory when the session ends. Timestamps are
+// CLOCK_MONOTONIC nanoseconds, comparable with `time.monotonic_ns()`.
+namespace v2diag {
+inline int64_t nowNs() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+inline int64_t toNs(std::chrono::steady_clock::time_point t) {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             t.time_since_epoch())
+      .count();
+}
+inline int64_t threadCpuNs() {
+  struct timespec ts;
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+  return static_cast<int64_t>(ts.tv_sec) * 1000000000 + ts.tv_nsec;
+}
+inline long threadId() { return static_cast<long>(syscall(SYS_gettid)); }
+inline const char* dir() {
+  static const char* d = std::getenv("QLEVER_V2_DIAG_DIR");
+  return d;
+}
+struct MorselRec {
+  uint64_t rows_;
+  long tid_;
+  int64_t t0_;
+  int64_t t1_;
+  int64_t cpu_;
+  bool partial_;
+};
+struct Recorder {
+  std::mutex mutex_;
+  std::vector<MorselRec> morsels_;
+  void add(const MorselRec& rec) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    morsels_.push_back(rec);
+  }
+};
+// Coordinator events: (kind, index, t_ns, value).
+struct Event {
+  const char* kind_;
+  uint64_t index_;
+  int64_t t_;
+  int64_t value_;
+};
+}  // namespace v2diag
 
 // Escape `input` for CSV/TSV. Uses SimdEscapeClassifier as a fast reject filter
 // before falling back to the legacy RdfEscaping path (required for CSV
@@ -138,6 +199,7 @@ struct CheckpointMorselRunner {
   std::shared_ptr<const Index> index_;
   RowFormat format_ = RowFormat::Csv;
   bool checkpoints_ = false;
+  std::shared_ptr<v2diag::Recorder> diag_;
 
   absl::AnyInvocable<ScatterGatherChunkBuilder()> makeTask(
       ExportMorsel plan) const {
@@ -148,6 +210,19 @@ struct CheckpointMorselRunner {
   }
 
   ScatterGatherChunkBuilder run(ExportMorsel plan, uint64_t epoch) const {
+    if (!diag_) {
+      return runImpl(std::move(plan), epoch);
+    }
+    const int64_t t0 = v2diag::nowNs();
+    const int64_t c0 = v2diag::threadCpuNs();
+    const uint64_t rows = plan.numRows_;
+    auto result = runImpl(std::move(plan), epoch);
+    diag_->add({rows, v2diag::threadId(), t0, v2diag::nowNs(),
+                v2diag::threadCpuNs() - c0, false});
+    return result;
+  }
+
+  ScatterGatherChunkBuilder runImpl(ExportMorsel plan, uint64_t epoch) const {
     ScatterGatherChunkBuilder builder;
     const size_t numSegments = plan.segments_.size();
     for (size_t s = 0; s < numSegments; ++s) {
@@ -201,6 +276,16 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
     RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle,
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  const bool diagOn = scheduler != nullptr && v2diag::dir() != nullptr;
+  std::vector<v2diag::Event> diagEvents;
+  const long coordTid = v2diag::threadId();
+  const int64_t coordCpu0 = v2diag::threadCpuNs();
+  auto ev = [&](const char* kind, uint64_t i, int64_t value) {
+    if (diagOn) {
+      diagEvents.push_back({kind, i, v2diag::nowNs(), value});
+    }
+  };
+  ev("enter", 0, coordTid);
   const auto& selectClause = parsedQuery.selectClause();
   const auto columns = selectedColumns(parsedQuery, qet, selectClause);
   const Index& index = qet.getQec()->getIndex();
@@ -208,11 +293,14 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   {
     ScatterGatherChunkBuilder header;
     header.appendOwned(makeHeaderLine(selectClause, format));
+    ev("header_yield", 0, 0);
     co_yield std::move(header);
+    ev("header_resumed", 0, 0);
   }
 
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
+  ev("getresult_done", 0, v2diag::threadCpuNs() - coordCpu0);
 
   constexpr uint64_t rowsPerMorsel = 8192;
   if (scheduler == nullptr) {
@@ -259,17 +347,66 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
                                       latticePtr,
                                       qet.getQec()->getIndexSharedPtr(),
                                       format,
-                                      !ordered};
+                                      !ordered,
+                                      diagOn ? std::make_shared<v2diag::Recorder>()
+                                             : nullptr};
+  uint64_t numSubmitted = 0;
+  ev("plan_begin", 0, 0);
   for (auto&& plan : planExportMorsels(
            result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
+    ev("submit", numSubmitted, static_cast<int64_t>(plan.numRows_));
     session.submitMorsel(runner.makeTask(std::move(plan)));
+    ++numSubmitted;
   }
+  ev("submit_done", numSubmitted, v2diag::threadCpuNs() - coordCpu0);
+  uint64_t numConsumed = 0;
   while (session.hasMoreResults()) {
+    ev("consume_begin", numConsumed, 0);
     auto builder = session.consumeNextResult();
+    ev("consume_end", numConsumed, 0);
     if (!builder.empty()) {
       co_yield std::move(builder);
+      ev("yield_resumed", numConsumed, 0);
     }
+    ++numConsumed;
+  }
+  ev("drain_done", numConsumed, v2diag::threadCpuNs() - coordCpu0);
+  if (diagOn) {
+    const std::string prefix = absl::StrCat(
+        v2diag::dir(), "/v2diag-", static_cast<long>(getpid()), "-",
+        session.jobId(), "-", v2diag::nowNs());
+    {
+      std::ofstream out(prefix + "-coord.csv");
+      out << "kind,index,t_ns,value\n";
+      for (const auto& e : diagEvents) {
+        out << e.kind_ << ',' << e.index_ << ',' << e.t_ << ',' << e.value_
+            << '\n';
+      }
+    }
+    {
+      std::ofstream out(prefix + "-morsels.csv");
+      out << "rows,tid,t0_ns,t1_ns,cpu_ns\n";
+      std::lock_guard<std::mutex> lock(runner.diag_->mutex_);
+      for (const auto& m : runner.diag_->morsels_) {
+        out << m.rows_ << ',' << m.tid_ << ',' << m.t0_ << ',' << m.t1_ << ','
+            << m.cpu_ << '\n';
+      }
+    }
+    {
+      std::ofstream out(prefix + "-slots.csv");
+      out << "slot,submitted_ns,started_ns,completed_ns,helper,cpu_ns,status\n";
+      for (const auto& p : session.inspectMorselProfiles()) {
+        out << p.morselIndex_ << ',' << v2diag::toNs(p.submittedAt_) << ','
+            << v2diag::toNs(p.startedAt_) << ','
+            << v2diag::toNs(p.completedAt_) << ','
+            << (p.executedByHelper_ ? 1 : 0) << ',' << p.cpuDuration_.count()
+            << ',' << ad_utility::export_v2::toString(p.finalStatus_) << '\n';
+      }
+    }
+    AD_LOG_INFO << "V2DIAG coordinator tid " << coordTid << " submitted "
+                << numSubmitted << " morsels, consumed " << numConsumed
+                << ", files " << prefix << "-*.csv" << std::endl;
   }
 }
 
