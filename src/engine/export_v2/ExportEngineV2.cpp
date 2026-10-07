@@ -593,6 +593,8 @@ void ExportEngineV2::appendSerializedRows(
            d == TextRecordIndex || d == EncodedVal;
   };
   std::vector<std::vector<ResolvedCell>> resolved(numOutputCols);
+  const bool simdValidityBitmask =
+      getRuntimeParameter<&RuntimeParameters::exportV2SimdValidityBitmask_>();
   for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
     const auto col = columnAt(outCol);
     if (!col.has_value()) {
@@ -636,9 +638,7 @@ void ExportEngineV2::appendSerializedRows(
         resolved[outCol][i] =
             ql::exportIds::idToStringAndTypeForEncodedValue(ids[i]);
       }
-    } else if (colLattice == ColumnLattice::Union &&
-               getRuntimeParameter<
-                   &RuntimeParameters::exportV2SimdValidityBitmask_>()) {
+    } else if (colLattice == ColumnLattice::Union && simdValidityBitmask) {
       // Union/mixed columns are where wide `OPTIONAL`/`UNION` output puts
       // most of its unbound cells; use the SIMD validity fast path there.
       if (format == RowFormat::Csv) {

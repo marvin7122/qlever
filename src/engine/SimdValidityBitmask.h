@@ -398,15 +398,9 @@ class SimdValidityScanner {
   // Fast check whether all 64 ValueIds in the batch are unbound (all zero).
   [[nodiscard]] static inline bool isAllUnbound64(
       const ValueId* data) noexcept {
-    uint64_t words[64];
-    copyBatch64Bits(data, words);
-#if defined(QLEVER_SIMD_X86)
-    if (cpuSupportsAvx2()) {
-      return detail::isAllUnbound64Avx2(words);
-    }
-#endif
+    AD_CONTRACT_CHECK(data != nullptr);
     for (size_t i = 0; i < 64; ++i) {
-      if (words[i] != 0) {
+      if (data[i].getBits() != 0) {
         return false;
       }
     }
