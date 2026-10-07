@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "global/RuntimeParameters.h"
 
@@ -53,14 +54,61 @@ static IndexPartition partitionIndicesBySource(
   result.diskSlots_.reserve(indices.size());
   result.internalWords_.reserve(indices.size());
 
-  for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
-    const auto& fromInternal = internalVocab[idx];
-    if (fromInternal.has_value()) {
-      result.internalSlots_.addPair(idx, i);
-      result.internalWords_.push_back(fromInternal.value());
+  // Indices at or past `internalVocab.endIndex()` are known misses and skip
+  // the membership probe. With the rank directory (see
+  // `vocabulary-internal-rank-lookup`), the probe is one cache line; without
+  // it, a binary search over the sorted indices of the in-RAM words.
+  const uint64_t internalEnd = internalVocab.endIndex();
+  auto internalPositionOf = [&](size_t index) -> std::optional<size_t> {
+    return index < internalEnd ? internalVocab.positionOfIndex(index)
+                               : std::nullopt;
+  };
+  auto place = [&](size_t i, size_t index,
+                   std::optional<size_t> internalPosition) {
+    if (internalPosition.has_value()) {
+      result.internalSlots_.addPair(index, i);
+      result.internalWords_.push_back(
+          internalVocab.wordAtPosition(internalPosition.value()));
     } else {
-      result.diskSlots_.addPair(idx, i);
+      result.diskSlots_.addPair(index, i);
     }
+  };
+
+  // Results do not depend on the prefetch distance.
+  const size_t distance =
+      internalVocab.hasIndexRankDirectory()
+          ? getRuntimeParameter<
+                &RuntimeParameters::vocabularyInternalRankPrefetchDistance_>()
+          : 0;
+  if (distance == 0) {
+    for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
+      place(i, idx, internalPositionOf(idx));
+    }
+    return result;
+  }
+
+  // With the rank directory, each probe is one cache miss in the directory,
+  // and each in-RAM word one more in its offsets and one in its bytes. Issue
+  // these loads ahead (see `vocabulary-internal-rank-prefetch-distance`), so
+  // that they overlap instead of stalling one after another.
+  const size_t n = indices.size();
+  std::vector<std::optional<size_t>> internalPositions(n);
+  for (size_t i = 0; i < n; ++i) {
+    if (i + distance < n) {
+      internalVocab.prefetchPositionOfIndex(indices[i + distance]);
+    }
+    internalPositions[i] = internalPositionOf(indices[i]);
+  }
+  for (size_t i = 0; i < n; ++i) {
+    if (i + 2 * distance < n && internalPositions[i + 2 * distance]) {
+      internalVocab.prefetchWordOffsetsAtPosition(
+          internalPositions[i + 2 * distance].value());
+    }
+    if (i + distance < n && internalPositions[i + distance]) {
+      internalVocab.prefetchWordAtPosition(
+          internalPositions[i + distance].value());
+    }
+    place(i, indices[i], internalPositions[i]);
   }
   return result;
 }

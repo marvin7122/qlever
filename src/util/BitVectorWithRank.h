@@ -101,6 +101,15 @@ class BitVectorWithRank {
     return rank;
   }
 
+  // Hint the CPU to load the cache line that `rankIfContained(value)` reads,
+  // so that a later call does not stall on it. No effect if `value >=
+  // universeSize()`.
+  void prefetch(uint64_t value) const {
+    if (value < universeSize_) {
+      __builtin_prefetch(&blocks_[value / bitsPerBlock]);
+    }
+  }
+
   // One more than the largest value that the set can contain.
   uint64_t universeSize() const { return universeSize_; }
 

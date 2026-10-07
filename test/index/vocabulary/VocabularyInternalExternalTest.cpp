@@ -264,15 +264,23 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
       ad_utility::vocabulary::VocabularyInternalExternal vocab;
       vocab.open(filename);
       EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(), rankLookup);
-      for (const auto& batch : batches) {
-        std::vector<std::string> expected;
-        for (size_t index : batch) {
-          expected.push_back(words.at(index));
-          ASSERT_EQ(vocab[index], words.at(index));
+      // The prefetch distance (only used with the rank directory) must not
+      // change the results, also when it exceeds the batch size.
+      for (size_t prefetchDistance : {0, 1, 4, 32, 100'000}) {
+        auto cleanupPrefetch = setRuntimeParameterForTest<
+            &RuntimeParameters::vocabularyInternalRankPrefetchDistance_>(
+            prefetchDistance);
+        for (const auto& batch : batches) {
+          std::vector<std::string> expected;
+          for (size_t index : batch) {
+            expected.push_back(words.at(index));
+            ASSERT_EQ(vocab[index], words.at(index));
+          }
+          EXPECT_THAT(vocab.lookupBatch(batch),
+                      ::testing::ElementsAreArray(expected))
+              << "rank lookup " << rankLookup << ", prefetch distance "
+              << prefetchDistance << ", density " << internalDensity;
         }
-        EXPECT_THAT(vocab.lookupBatch(batch),
-                    ::testing::ElementsAreArray(expected))
-            << "rank lookup " << rankLookup << ", density " << internalDensity;
       }
     }
   }
