@@ -69,6 +69,8 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(exportV2MonomorphicRows_);
+  add(exportV2HelperPolicy_);
+  add(exportV2HelperLogIntervalMs_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
@@ -95,6 +97,14 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  exportV2HelperPolicy_.setParameterConstraint(
+      [](const std::string& value, std::string_view parameterName) {
+        if (!ad_utility::contains(std::array<std::string_view, 2>{"fair", "exclusive"}, value)) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName,
+              " must be \"fair\" or \"exclusive\", was \"", value, "\"")};
+        }
+      });
 }
 
 // _____________________________________________________________________________

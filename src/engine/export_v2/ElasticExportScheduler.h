@@ -46,6 +46,26 @@ enum class SessionState {
   Closed     // Session finished or cancelled; no new work accepted
 };
 
+/// How the scheduler shares the `m` pool threads among export sessions.
+///
+/// `Exclusive` (the original policy): a session may use helpers only while at
+/// most `maxForegroundQueriesForHelperAdmission()` queries (default 1, i.e.
+/// the export itself) are registered. Any further query revokes all helpers
+/// of every running session; they come back when the count drops again.
+///
+/// `Fair`: the `m` threads are split among the `n` running queries (see
+/// `ElasticExportScheduler::fairThreadQuota`). Every session keeps at most
+/// `quota - 1` helper threads besides its own coordinator thread. Each query
+/// arrival or departure recomputes all quotas: sessions above their new quota
+/// shrink at the next revocation checkpoint (unordered sessions, at most
+/// `kRevocationCheckRows` rows) or after the running morsel (ordered sessions);
+/// sessions below it post helpers for their pending morsels right away.
+enum class HelperPolicy { Exclusive, Fair };
+
+inline std::string_view toString(HelperPolicy policy) noexcept {
+  return policy == HelperPolicy::Fair ? "fair" : "exclusive";
+}
+
 /// Status of an individual work morsel slot.
 enum class MorselStatus {
   Pending,    // Work submitted, awaiting execution
@@ -149,9 +169,24 @@ class ExportJobStateBase {
   virtual void onHelperLeaseReleased(uint64_t leaseEpoch) = 0;
   virtual void executeHelperTask(size_t morselIndex, uint64_t leaseEpoch) = 0;
   [[nodiscard]] virtual bool isCancelled() const noexcept = 0;
+
+  // Fair policy only (see `HelperPolicy::Fair`).
+  [[nodiscard]] virtual HelperPolicy helperPolicy() const noexcept = 0;
+  [[nodiscard]] virtual bool isClosed() const noexcept = 0;
+  [[nodiscard]] virtual size_t activeHelpers() const noexcept = 0;
+  // Set the number of helper threads (excluding the coordinator) this session
+  // may use; posts helper loops up to the new quota or triggers a checkpoint
+  // shrink. Returns the previous quota.
+  virtual size_t applyHelperQuota(size_t helpers) = 0;
+  // Body of one posted helper thread: runs pending morsels until none is left,
+  // the session ends, or the session is above its quota.
+  virtual void runHelperLoop() = 0;
 };
 
 struct OwnedMorsel {
+  // `morselIndex_` of a fair-policy helper loop (not a single slot).
+  static constexpr size_t kHelperLoop = static_cast<size_t>(-1);
+
   std::shared_ptr<ExportJobStateBase> jobState_;
   uint64_t jobId_{0};
   uint64_t submissionEpoch_{0};
@@ -183,12 +218,14 @@ class ElasticExportScheduler {
   // Dedicated std::thread workers (unit tests).
   explicit ElasticExportScheduler(size_t numThreads = 0,
                                   size_t queueCapacity = 1024);
-  // Live V2: post CPU morsels onto Server::queryThreadPool_ so we do not
+  // Live V2: post CPU morsels onto `Server::queryThreadPool_` so we do not
   // create a second pool. When another query is registered, admission
   // stops and in-flight tasks no-op; the coordinator serializes itself.
+  // `poolSize` is the number of threads `poster` runs work on (`m` of the
+  // fair policy).
   using WorkPoster = absl::AnyInvocable<void(absl::AnyInvocable<void()>)>;
-  explicit ElasticExportScheduler(WorkPoster poster,
-                                  size_t queueCapacity = 1024);
+  ElasticExportScheduler(WorkPoster poster, size_t poolSize,
+                         size_t queueCapacity = 1024);
   ~ElasticExportScheduler();
 
   ElasticExportScheduler(const ElasticExportScheduler&) = delete;
@@ -246,6 +283,42 @@ class ElasticExportScheduler {
         std::memory_order_relaxed);
   }
 
+  /// Policy for sessions created without an explicit one. Defaults to
+  /// `Exclusive`; the server passes the runtime parameter
+  /// `export-v2-helper-policy` per session instead.
+  void setHelperPolicy(HelperPolicy policy) noexcept {
+    helperPolicy_.store(policy, std::memory_order_relaxed);
+  }
+  [[nodiscard]] HelperPolicy helperPolicy() const noexcept {
+    return helperPolicy_.load(std::memory_order_relaxed);
+  }
+
+  /// `m`: threads shared among sessions (pool size or dedicated workers).
+  [[nodiscard]] size_t poolSize() const noexcept { return poolSize_; }
+
+  /// Fair-policy quota rule. `m` pool threads, `n` running queries, `rank`
+  /// is the 0-based start order among the running export sessions. A query
+  /// gets `floor(m / n)` threads in total, the first `m mod n` queries one
+  /// more; the coordinator thread of the session is one of them, so it may
+  /// use `quota - 1` helpers. For `n >= m` every query gets at most one
+  /// thread, i.e. no helpers. Returns the total (coordinator included).
+  [[nodiscard]] static constexpr size_t fairThreadQuota(size_t m, size_t n,
+                                                        size_t rank) noexcept {
+    if (n == 0) {
+      return m;
+    }
+    return m / n + (rank < m % n ? 1 : 0);
+  }
+  [[nodiscard]] static constexpr size_t fairHelperQuota(size_t m, size_t n,
+                                                        size_t rank) noexcept {
+    const size_t total = fairThreadQuota(m, n, rank);
+    return total > 0 ? total - 1 : 0;
+  }
+
+  /// Recompute and apply the fair quotas of all live fair-policy sessions.
+  /// Called on every query start/end and session creation.
+  void rebalanceFairQuotas();
+
   /// Shut down the thread pool and join all worker threads.
   void shutdown();
 
@@ -264,9 +337,10 @@ class ElasticExportScheduler {
     return nextJobId_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  /// Create a typed ExportWorkSession.
+  /// Create a typed `ExportWorkSession`.
   template <typename ResultType = std::string>
-  ExportWorkSession<ResultType> createSession();
+  ExportWorkSession<ResultType> createSession(
+      std::optional<HelperPolicy> policy = std::nullopt);
 
  private:
   void workerLoop();
@@ -279,9 +353,16 @@ class ElasticExportScheduler {
                                   uint64_t submissionEpoch,
                                   uint64_t leaseEpoch);
   [[nodiscard]] bool isHelperAdmissionEligibleUnsafe() const noexcept;
+  // Fair helper loops limit themselves by quota and are always admitted.
+  [[nodiscard]] bool isAdmissibleUnsafe(
+      const OwnedMorsel& morsel) const noexcept;
 
   WorkPoster poster_;
+  size_t poolSize_{0};
   const size_t maxQueueCapacity_;
+  std::atomic<HelperPolicy> helperPolicy_{HelperPolicy::Exclusive};
+  // Serializes `rebalanceFairQuotas` so quotas are applied in event order.
+  std::mutex rebalanceMutex_;
   std::atomic<size_t> maxForegroundQueriesForHelperAdmission_{1};
   std::atomic<uint64_t> demandEpoch_{1};
   std::atomic<size_t> activeForegroundQueries_{0};
@@ -326,9 +407,11 @@ class ExportJobState final
   };
 
   ExportJobState(uint64_t jobId, ElasticExportScheduler* scheduler,
-                 uint64_t initialEpoch, SessionState initialState)
+                 uint64_t initialEpoch, SessionState initialState,
+                 HelperPolicy policy = HelperPolicy::Exclusive)
       : jobId_{jobId},
         scheduler_{scheduler},
+        policy_{policy},
         state_{initialState},
         currentEpoch_{initialEpoch} {
     AD_CONTRACT_CHECK(scheduler_ != nullptr);
@@ -344,12 +427,95 @@ class ExportJobState final
     return state_.load(std::memory_order_relaxed);
   }
 
-  [[nodiscard]] size_t activeHelpers() const noexcept {
+  [[nodiscard]] size_t activeHelpers() const noexcept override {
     return activeHelpers_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] HelperPolicy helperPolicy() const noexcept override {
+    return policy_;
+  }
+
+  [[nodiscard]] bool isClosed() const noexcept override {
+    return closed_.load(std::memory_order_relaxed);
+  }
+
+  // Fair policy: current helper quota and posted helper loops (started or
+  // still queued in the pool).
+  [[nodiscard]] size_t helperQuota() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return helperQuota_;
+  }
+  [[nodiscard]] size_t postedHelpers() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return helpersPosted_;
+  }
+
+  size_t applyHelperQuota(size_t helpers) override {
+    AD_CONTRACT_CHECK(policy_ == HelperPolicy::Fair);
+    size_t previous = 0;
+    size_t toPost = 0;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      previous = helperQuota_;
+      if (closed_ || cancelled_) {
+        return previous;
+      }
+      helperQuota_ = helpers;
+      if (helpersPosted_ > helperQuota_) {
+        // Shrink: running unordered morsels compare the epoch at every
+        // checkpoint, hand their unprocessed tail back as a new pending
+        // slot and return; the surplus helper loops then exit (see
+        // `runHelperLoop`). Ordered morsels finish first.
+        currentEpoch_.fetch_add(1, std::memory_order_relaxed);
+        state_.store(SessionState::Revoking, std::memory_order_relaxed);
+      } else {
+        state_.store(helperQuota_ > 0 ? SessionState::HelpersEligible
+                                      : SessionState::PrimaryOnly,
+                     std::memory_order_relaxed);
+        toPost = reserveHelperLoopsUnsafe();
+      }
+      cv_.notify_all();
+    }
+    postHelperLoops(toPost);
+    return previous;
+  }
+
+  void runHelperLoop() override {
+    AD_CONTRACT_CHECK(policy_ == HelperPolicy::Fair);
+    onHelperLeaseAcquired(currentEpoch());
+    while (true) {
+      size_t index = 0;
+      absl::AnyInvocable<ResultType()> task;
+      auto startWall = std::chrono::steady_clock::now();
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (cancelled_ || closed_ || helpersPosted_ > helperQuota_ ||
+            !claimNextPendingUnsafe(&index)) {
+          --helpersPosted_;
+          if (helpersPosted_ <= helperQuota_ &&
+              state_.load(std::memory_order_relaxed) ==
+                  SessionState::Revoking) {
+            state_.store(helperQuota_ > 0 ? SessionState::HelpersEligible
+                                          : SessionState::PrimaryOnly,
+                         std::memory_order_relaxed);
+          }
+          break;
+        }
+        startSlotUnsafe(index, startWall, true);
+        task = std::move(slots_[index].task_);
+      }
+      // A failure is stored in the slot and rethrown to the consumer.
+      runClaimedTask(index, std::move(task), startWall);
+    }
+    onHelperLeaseReleased(currentEpoch());
   }
 
   void onDemandChanged(size_t activeForegroundQueries,
                        uint64_t newEpoch) override {
+    if (policy_ == HelperPolicy::Fair) {
+      // Fair sessions follow `applyHelperQuota` instead.
+      return;
+    }
     std::vector<size_t> pendingIndicesToEnqueue;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -397,7 +563,9 @@ class ExportJobState final
     AD_CORRECTNESS_CHECK(prev > 0, "Underflow in activeHelpers_");
     if (prev == 1) {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (state_.load(std::memory_order_relaxed) == SessionState::Revoking) {
+      // Fair sessions leave `Revoking` in `runHelperLoop` once at quota.
+      if (policy_ == HelperPolicy::Exclusive &&
+          state_.load(std::memory_order_relaxed) == SessionState::Revoking) {
         state_.store(SessionState::PrimaryOnly, std::memory_order_relaxed);
       }
       cv_.notify_all();
@@ -426,46 +594,15 @@ class ExportJobState final
           state_.load(std::memory_order_relaxed) == SessionState::Closed) {
         return;
       }
-      slots_[morselIndex].status_ = MorselStatus::Running;
-      slots_[morselIndex].profile_.startedAt_ = startWall;
-      slots_[morselIndex].profile_.queueDelay_ =
-          startWall - slots_[morselIndex].profile_.submittedAt_;
-      slots_[morselIndex].profile_.executedByHelper_ = true;
+      startSlotUnsafe(morselIndex, startWall, true);
       task = std::move(slots_[morselIndex].task_);
     }
 
-    auto startCpu = getCpuDuration();
-    try {
-      ResultType result = task();
-      auto endCpu = getCpuDuration();
-      auto endWall = std::chrono::steady_clock::now();
-
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        slots_[morselIndex].result_ = std::move(result);
-        slots_[morselIndex].status_ = MorselStatus::Completed;
-        slots_[morselIndex].profile_.completedAt_ = endWall;
-        slots_[morselIndex].profile_.wallDuration_ = endWall - startWall;
-        slots_[morselIndex].profile_.cpuDuration_ = endCpu - startCpu;
-        slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Completed;
-        cv_.notify_all();
-      }
-    } catch (...) {
-      // Convert the exception into a terminal slot state and wake the
-      // consumer: rethrowing lets `runLeasedHelperTask` keep its never-escape
-      // guarantee while `consumeNextResult` observes the stored failure
-      // instead of waiting on a `Running` slot forever.
-      std::lock_guard<std::mutex> lock(mutex_);
-      slots_[morselIndex].error_ = std::current_exception();
-      slots_[morselIndex].status_ = MorselStatus::Cancelled;
-      slots_[morselIndex].profile_.completedAt_ =
-          std::chrono::steady_clock::now();
-      slots_[morselIndex].profile_.wallDuration_ =
-          slots_[morselIndex].profile_.completedAt_ - startWall;
-      slots_[morselIndex].profile_.cpuDuration_ = getCpuDuration() - startCpu;
-      slots_[morselIndex].profile_.finalStatus_ = MorselStatus::Cancelled;
-      cv_.notify_all();
-      throw;
+    if (const auto error = runClaimedTask(morselIndex, std::move(task), startWall)) {
+      // Rethrowing lets `runLeasedHelperTask` keep its never-escape guarantee
+      // while `consumeNextResult` observes the stored failure instead of
+      // waiting on a `Running` slot forever.
+      std::rethrow_exception(error);
     }
   }
 
@@ -604,12 +741,8 @@ class ExportJobState final
 
       if (slots_[index].status_ == MorselStatus::Pending) {
         // Single-core fallback: execute directly on coordinator thread
-        slots_[index].status_ = MorselStatus::Running;
         auto startWall = std::chrono::steady_clock::now();
-        slots_[index].profile_.startedAt_ = startWall;
-        slots_[index].profile_.queueDelay_ =
-            startWall - slots_[index].profile_.submittedAt_;
-        slots_[index].profile_.executedByHelper_ = false;
+        startSlotUnsafe(index, startWall, false);
         primaryTask = std::move(slots_[index].task_);
 
         lock.unlock();
@@ -708,6 +841,7 @@ class ExportJobState final
         slot.profile_.finalStatus_ = MorselStatus::Cancelled;
       }
     }
+    pendingCount_ = 0;
     cv_.notify_all();
   }
 
@@ -735,6 +869,7 @@ class ExportJobState final
   bool appendAndEnqueue(absl::AnyInvocable<ResultType()> task, size_t* index) {
     bool shouldEnqueue = false;
     uint64_t epochToSubmit = 0;
+    size_t helperLoopsToPost = 0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (closed_ || cancelled_) {
@@ -747,17 +882,117 @@ class ExportJobState final
       slot.profile_.morselIndex_ = *index;
       slot.profile_.submittedAt_ = std::chrono::steady_clock::now();
       slots_.push_back(std::move(slot));
-      epochToSubmit = currentEpoch_.load(std::memory_order_relaxed);
-      if (state_.load(std::memory_order_relaxed) ==
-          SessionState::HelpersEligible) {
-        shouldEnqueue = true;
+      ++pendingCount_;
+      if (policy_ == HelperPolicy::Fair) {
+        helperLoopsToPost = reserveHelperLoopsUnsafe();
+      } else {
+        epochToSubmit = currentEpoch_.load(std::memory_order_relaxed);
+        if (state_.load(std::memory_order_relaxed) ==
+            SessionState::HelpersEligible) {
+          shouldEnqueue = true;
+        }
       }
     }
+    postHelperLoops(helperLoopsToPost);
     if (shouldEnqueue) {
       scheduler_->enqueueMorsel(
           OwnedMorsel(this->shared_from_this(), jobId_, epochToSubmit, *index));
     }
     return true;
+  }
+
+  // Pending -> Running transition shared by the coordinator, slot helpers and
+  // fair helper loops. Requires `mutex_`.
+  void startSlotUnsafe(size_t index,
+                       std::chrono::steady_clock::time_point startWall,
+                       bool byHelper) {
+    AD_CORRECTNESS_CHECK(slots_[index].status_ == MorselStatus::Pending);
+    AD_CORRECTNESS_CHECK(pendingCount_ > 0);
+    --pendingCount_;
+    slots_[index].status_ = MorselStatus::Running;
+    slots_[index].profile_.startedAt_ = startWall;
+    slots_[index].profile_.queueDelay_ =
+        startWall - slots_[index].profile_.submittedAt_;
+    slots_[index].profile_.executedByHelper_ = byHelper;
+  }
+
+  // Run a claimed (Running) slot's task on a helper thread and store its
+  // result, or its failure as a terminal `Cancelled` state; wakes the
+  // consumer either way. Returns the failure, if any.
+  std::exception_ptr runClaimedTask(
+      size_t index, absl::AnyInvocable<ResultType()> task,
+      std::chrono::steady_clock::time_point startWall) {
+    auto startCpu = getCpuDuration();
+    try {
+      ResultType result = task();
+      auto endCpu = getCpuDuration();
+      auto endWall = std::chrono::steady_clock::now();
+      std::lock_guard<std::mutex> lock(mutex_);
+      slots_[index].result_ = std::move(result);
+      slots_[index].status_ = MorselStatus::Completed;
+      slots_[index].profile_.completedAt_ = endWall;
+      slots_[index].profile_.wallDuration_ = endWall - startWall;
+      slots_[index].profile_.cpuDuration_ = endCpu - startCpu;
+      slots_[index].profile_.finalStatus_ = MorselStatus::Completed;
+      cv_.notify_all();
+      return nullptr;
+    } catch (...) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      slots_[index].error_ = std::current_exception();
+      slots_[index].status_ = MorselStatus::Cancelled;
+      slots_[index].profile_.completedAt_ = std::chrono::steady_clock::now();
+      slots_[index].profile_.wallDuration_ =
+          slots_[index].profile_.completedAt_ - startWall;
+      slots_[index].profile_.cpuDuration_ = getCpuDuration() - startCpu;
+      slots_[index].profile_.finalStatus_ = MorselStatus::Cancelled;
+      cv_.notify_all();
+      return slots_[index].error_;
+    }
+  }
+
+  // Fair policy: claim the lowest pending slot. Slots never return to
+  // `Pending` and new slots are appended, so the scan cursor only advances.
+  // Requires `mutex_`.
+  bool claimNextPendingUnsafe(size_t* index) {
+    if (pendingCount_ == 0) {
+      return false;
+    }
+    while (pendingCursor_ < slots_.size() &&
+           slots_[pendingCursor_].status_ != MorselStatus::Pending) {
+      ++pendingCursor_;
+    }
+    AD_CORRECTNESS_CHECK(pendingCursor_ < slots_.size());
+    *index = pendingCursor_;
+    return true;
+  }
+
+  // Fair policy: number of helper loops to post so that the posted loops
+  // reach the quota, but no more than there are pending morsels. Counts them
+  // as posted. Requires `mutex_`.
+  size_t reserveHelperLoopsUnsafe() {
+    if (closed_ || cancelled_ || helpersPosted_ >= helperQuota_) {
+      return 0;
+    }
+    const size_t toPost =
+        std::min(helperQuota_ - helpersPosted_, pendingCount_);
+    helpersPosted_ += toPost;
+    return toPost;
+  }
+
+  // Post reserved helper loops (outside `mutex_`). A loop the scheduler
+  // refuses (shutdown) is un-reserved; the coordinator runs its work inline.
+  void postHelperLoops(size_t count) {
+    if (count == 0) {
+      return;
+    }
+    auto self = this->shared_from_this();
+    for (size_t i = 0; i < count; ++i) {
+      if (!scheduler_->enqueueMorsel(OwnedMorsel(self, jobId_, currentEpoch(),
+                                                 OwnedMorsel::kHelperLoop))) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        --helpersPosted_;
+      }
+    }
   }
 
   static std::chrono::nanoseconds getCpuDuration() noexcept {
@@ -773,6 +1008,7 @@ class ExportJobState final
 
   const uint64_t jobId_;
   ElasticExportScheduler* const scheduler_;
+  const HelperPolicy policy_;
   std::atomic<SessionState> state_{SessionState::PrimaryOnly};
   std::atomic<uint64_t> currentEpoch_{1};
   std::atomic<size_t> activeHelpers_{0};
@@ -791,6 +1027,15 @@ class ExportJobState final
   // False when row order is semantically irrelevant (no LIMIT/OFFSET/export
   // limit): morsels emit in completion order instead of slot order.
   bool ordered_{true};
+  // Slots in `Pending` state; maintained by `appendAndEnqueue`,
+  // `startSlotUnsafe` and `cancel`.
+  size_t pendingCount_{0};
+  // Fair policy (all guarded by `mutex_`): no pending slot below this index.
+  size_t pendingCursor_{0};
+  // Helper threads (coordinator excluded) this session may use.
+  size_t helperQuota_{0};
+  // Helper loops posted and not yet exited (running or queued in the pool).
+  size_t helpersPosted_{0};
 };
 
 // -----------------------------------------------------------------------------
@@ -836,6 +1081,21 @@ class ExportWorkSession {
   [[nodiscard]] size_t activeHelpers() const noexcept {
     AD_CONTRACT_CHECK(state_ != nullptr);
     return state_->activeHelpers();
+  }
+
+  [[nodiscard]] HelperPolicy helperPolicy() const noexcept {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    return state_->helperPolicy();
+  }
+
+  [[nodiscard]] size_t helperQuota() const {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    return state_->helperQuota();
+  }
+
+  [[nodiscard]] size_t postedHelpers() const {
+    AD_CONTRACT_CHECK(state_ != nullptr);
+    return state_->postedHelpers();
   }
 
   size_t submitMorsel(absl::AnyInvocable<ResultType()> task) {
@@ -914,17 +1174,25 @@ class ExportWorkSession {
 // -----------------------------------------------------------------------------
 
 template <typename ResultType>
-ExportWorkSession<ResultType> ElasticExportScheduler::createSession() {
+ExportWorkSession<ResultType> ElasticExportScheduler::createSession(
+    std::optional<HelperPolicy> policy) {
+  const HelperPolicy sessionPolicy = policy.value_or(helperPolicy());
   uint64_t jId = nextJobId();
   uint64_t epoch = demandEpoch();
+  // A fair session starts without helpers; the rebalance below assigns its
+  // quota before the first morsel is submitted.
   SessionState initialState =
-      (activeForegroundQueries() <= maxForegroundQueriesForHelperAdmission())
+      (sessionPolicy == HelperPolicy::Exclusive &&
+       activeForegroundQueries() <= maxForegroundQueriesForHelperAdmission())
           ? SessionState::HelpersEligible
           : SessionState::PrimaryOnly;
 
-  auto state = std::make_shared<ExportJobState<ResultType>>(jId, this, epoch,
-                                                            initialState);
+  auto state = std::make_shared<ExportJobState<ResultType>>(
+      jId, this, epoch, initialState, sessionPolicy);
   registerSession(state);
+  if (sessionPolicy == HelperPolicy::Fair) {
+    rebalanceFairQuotas();
+  }
   return ExportWorkSession<ResultType>(std::move(state));
 }
 
