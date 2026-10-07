@@ -137,6 +137,8 @@ class Vocabulary {
   // exactly once. Otherwise the single-shot words are copied into `builder`
   // (no builder-taking overload below us), or the inner wrapper's
   // already-finalized result is returned directly.
+  // A successful call consumes the caller's `builder`, leaving it moved-from;
+  // it must not be reused.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
                                      ArenaVocabBatchBuilder& builder) const;
 
