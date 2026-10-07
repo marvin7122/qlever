@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <arpa/inet.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -351,6 +352,13 @@ TEST(ZeroCopyChunkSender, SocketBackendOverTcpLoopback) {
       received.append(buffer.data(), static_cast<size_t>(n));
     }
   }};
+  absl::Cleanup cleanupConnection{[&] {
+    // EOF unblocks recv if an exception prevents sending all expected bytes.
+    ::shutdown(sendFd, SHUT_WR);
+    reader.join();
+    ::close(sendFd);
+    ::close(recvFd);
+  }};
   {
     ZeroCopyChunkSender sender{SocketSendBackend{}, sendFd, 4};
     for (auto& body : bodies) {
@@ -366,8 +374,6 @@ TEST(ZeroCopyChunkSender, SocketBackendOverTcpLoopback) {
       EXPECT_GT(sender.numNotifications(), 0u);
     }
   }
-  reader.join();
-  ::close(sendFd);
-  ::close(recvFd);
+  std::move(cleanupConnection).Invoke();
   EXPECT_EQ(received, expected);
 }
