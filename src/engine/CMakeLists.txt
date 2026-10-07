@@ -42,6 +42,11 @@ if (NOT REDUCED_FEATURE_SET_FOR_CPP17)
     target_link_libraries(engine PUBLIC http)
 endif()
 
+# Export V2 compresses HTTP responses per morsel (`ParallelDeflate`).
+if (QLEVER_ENABLE_EXPORT_V2)
+    target_link_libraries(engine PUBLIC parallelDeflate)
+endif ()
+
 # Don't build the `server` library at all when the server (and the tests
 # linking it) are disabled for Emscripten: compiling `Server.cpp` crashes
 # emsdk 6.0.2's clang in the `WebAssemblyLateEHPrepare` backend pass (the
