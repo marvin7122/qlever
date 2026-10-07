@@ -9,6 +9,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -107,6 +108,25 @@ TEST(ExportMorselPlanner, AccumulatesSmallBlocksIntoMorsels) {
   // The first morsel spans two blocks.
   EXPECT_NE(morsels[0].segments_.front().block_.get(),
             morsels[0].segments_.back().block_.get());
+}
+
+// Every segment knows how many rows the earlier blocks exported (CONSTRUCT
+// blank-node labels). Skipped rows of the OFFSET do not count.
+TEST(ExportMorselPlanner, RecordsRowsExportedBeforeBlock) {
+  auto input = makeInput({{{1}, {2}, {3}}, {{4}, {5}, {6}, {7}}, {{8}, {9}}});
+  std::vector<ExportMorsel> morsels;
+  plannedRows(std::move(input).generator(), LimitOffsetClause{._offset = 1}, 4,
+              &morsels);
+  std::vector<std::array<uint64_t, 3>> segments;
+  for (const auto& morsel : morsels) {
+    for (const auto& segment : morsel.segments_) {
+      segments.push_back(
+          {segment.begin_, segment.end_, segment.rowsExportedBeforeBlock_});
+    }
+  }
+  using A = std::array<uint64_t, 3>;
+  EXPECT_THAT(segments, ::testing::ElementsAre(A{1, 3, 0}, A{0, 2, 2},
+                                               A{2, 4, 2}, A{0, 2, 6}));
 }
 
 TEST(ExportMorselPlanner, LimitStopsPulling) {

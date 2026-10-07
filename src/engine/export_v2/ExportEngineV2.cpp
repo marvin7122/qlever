@@ -275,7 +275,9 @@ struct CheckpointMorselRunner {
           if (checkpoints_ && state_->currentEpoch() != epoch) {
             ExportMorsel remainder;
             if (pos < seg.end_) {
-              remainder.segments_.push_back({seg.block_, pos, seg.end_});
+              auto tail = seg;
+              tail.begin_ = pos;
+              remainder.segments_.push_back(std::move(tail));
               remainder.numRows_ += seg.end_ - pos;
             }
             for (size_t r = s + 1; r < numSegments; ++r) {
