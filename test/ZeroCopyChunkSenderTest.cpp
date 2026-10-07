@@ -44,8 +44,13 @@ struct FakeState {
   std::vector<uint64_t> cancelled_;
   // Called by `waitEvent` when no event is queued (the test "kernel").
   std::function<void()> onWait_;
-  size_t numWaits_ = 0;
-  size_t numOutstandingAtSubmit_ = 0;
+struct FakeState {
+  std::vector<Submission> submissions_;
+  std::deque<ZeroCopySendEvent> events_;
+  std::vector<uint64_t> cancelled_;
+  // Called by `waitEvent` when no event is queued (the test "kernel").
+  std::function<void()> onWait_;
+};
 };
 
 // A send backend under full control of the test: every send is recorded and
