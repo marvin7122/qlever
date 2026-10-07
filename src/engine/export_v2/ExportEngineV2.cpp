@@ -30,6 +30,7 @@
 #include "engine/Values.h"
 #include "engine/export_v2/ColumnLattice.h"
 #include "engine/export_v2/ExportMorselPlanner.h"
+#include "engine/export_v2/ResolvedColumn.h"
 #include "global/Id.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
@@ -70,71 +71,6 @@ std::string escapeCell(std::string input) {
   }
   return escapeForFormat<Format>(input);
 }
-
-// The text of one output column for a window of rows. A cell views either a
-// decoded vocabulary word (kept alive by `batch_`, no copy) or `scratch_`
-// (escaped words, values encoded in the `Id`, local-vocab words). Undefined
-// and unbound cells are empty views: Legacy and V2 both serialize them as an
-// empty field, exactly like an empty string.
-class ResolvedColumn {
- private:
-  std::vector<std::string_view> cells_;
-  std::string scratch_;
-  // Cells whose text lives in `scratch_`: (row, offset, size). `scratch_` may
-  // reallocate while the column is resolved, so these become views only in
-  // `finish`.
-  struct ScratchCell {
-    size_t row_;
-    size_t offset_;
-    size_t size_;
-  };
-  std::vector<ScratchCell> scratchCells_;
-  ad_utility::vocabulary::VocabBatchLookupResult batch_;
-  size_t totalBytes_ = 0;
-
- public:
-  explicit ResolvedColumn(size_t numRows) : cells_(numRows) {}
-  // Pinned: after `finish`, cells view `scratch_`, whose bytes may live inside
-  // the object (small-string buffer), so a moved or copied column would
-  // dangle.
-  ResolvedColumn(const ResolvedColumn&) = delete;
-  ResolvedColumn& operator=(const ResolvedColumn&) = delete;
-  ResolvedColumn(ResolvedColumn&&) = delete;
-  ResolvedColumn& operator=(ResolvedColumn&&) = delete;
-
-  // Point `row` at `text`, which must outlive this column (vocabulary batch).
-  void setView(size_t row, std::string_view text) {
-    cells_[row] = text;
-    totalBytes_ += text.size();
-  }
-
-  // Copy `text` into the column's scratch buffer.
-  void setCopy(size_t row, std::string_view text) {
-    if (text.empty()) {
-      return;
-    }
-    scratchCells_.push_back({row, scratch_.size(), text.size()});
-    scratch_.append(text);
-    totalBytes_ += text.size();
-  }
-
-  void keepAlive(ad_utility::vocabulary::VocabBatchLookupResult batch) {
-    batch_ = std::move(batch);
-  }
-
-  // Turn the scratch cells into views. Call once, after the last `set*`.
-  void finish() {
-    for (const auto& cell : scratchCells_) {
-      cells_[cell.row_] =
-          std::string_view{scratch_.data() + cell.offset_, cell.size_};
-    }
-  }
-
-  [[nodiscard]] std::string_view operator[](size_t row) const {
-    return cells_[row];
-  }
-  [[nodiscard]] size_t totalBytes() const { return totalBytes_; }
-};
 
 // Write the cell for `word` into `column`, with the same text as
 // `literalOrIriToStringAndType<Format == Csv>(word, escapeCell<Format>)`:
