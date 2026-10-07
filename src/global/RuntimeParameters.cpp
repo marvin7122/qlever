@@ -68,6 +68,9 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(vocabularyInternalRankLookup_);
+  add(vocabularyInternalRankPrefetchDistance_);
+  add(vocabularyInternalRankHugePages_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is

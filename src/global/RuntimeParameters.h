@@ -221,6 +221,31 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // If set to true, loading a vocabulary that keeps some of its words in RAM
+  // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
+  // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).
+  // Checking whether an index is in RAM, and finding its word there, then
+  // costs one cache line instead of a binary search over the sorted indices of
+  // the words in RAM. Costs 8/7 bits per vocabulary index. Read when the index
+  // is loaded; changing it later has no effect.
+  Bool vocabularyInternalRankLookup_{true, "vocabulary-internal-rank-lookup"};
+
+  // With the rank directory above, `VocabularyInternalExternal::lookupBatch`
+  // prefetches the rank directory block of the index this many positions ahead
+  // in the batch, and (in a second pass) the offsets and the first bytes of
+  // the in-RAM words that many and twice that many positions ahead. 0 turns
+  // prefetching off.
+  SizeT vocabularyInternalRankPrefetchDistance_{
+      0, "vocabulary-internal-rank-prefetch-distance"};
+
+  // If set to true, the rank directory above is allocated 2 MiB-aligned and
+  // marked for transparent huge pages (`madvise(MADV_HUGEPAGE)`), so that a
+  // lookup costs one cache miss instead of one cache miss plus one TLB miss.
+  // Only has an effect if transparent huge pages are in "always" or "madvise"
+  // mode. Read when the index is loaded.
+  Bool vocabularyInternalRankHugePages_{false,
+                                        "vocabulary-internal-rank-hugepages"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

@@ -143,6 +143,11 @@ class CompactVectorOfStrings {
     return {ptr, size};
   }
 
+  // Hint the CPU to load the offsets that `operator[](i)` reads.
+  void prefetchOffsets(size_t i) const {
+    __builtin_prefetch(offsetsSpan().data() + i);
+  }
+
   // Copy this class and apply the transformation `mappingFunction` to its
   // elements. The result always owns its storage.
   CPP_template(typename Func)(
