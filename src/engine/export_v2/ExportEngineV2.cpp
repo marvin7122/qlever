@@ -291,9 +291,9 @@ struct CheckpointMorselRunner {
   }
 
   ScatterGatherChunkBuilder run(ExportMorsel plan) const {
-    // The epoch is sampled when the morsel starts, not when it is planned: a
-    // morsel that starts after a revocation already runs within the new
-    // quota and must not be split again.
+    // Sample `epoch` when the morsel starts, not when it is planned, so that a
+    // morsel starting after a revocation already runs within the new quota and
+    // is not split again.
     const uint64_t epoch = state_->currentEpoch();
     ScatterGatherChunkBuilder builder;
     const size_t numSegments = plan.segments_.size();
@@ -420,7 +420,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     cancellationHandle->throwIfCancelled();
     session.submitMorsel(runner.makeTask(std::move(plan)));
   }
-  // Optional helper trace for concurrency measurements.
+  // Log helper statistics via `logHelpers` at `logInterval` for concurrency measurements.
   const auto logInterval = std::chrono::milliseconds{
       getRuntimeParameter<&RuntimeParameters::exportV2HelperLogIntervalMs_>()};
   auto nextLog = std::chrono::steady_clock::now();
