@@ -439,11 +439,6 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
     accountOutstandingUnsafe(morsel.jobId_);
     readyToPost.push_back(std::move(morsel));
   };
-  // Oldest session first means the lowest jobId, earliest in the queue on
-  // ties, which preserves first-in first-out order within each session.
-  auto oldestIt = [this]() {
-    return ql::ranges::min_element(pendingAdmission_, {}, &OwnedMorsel::jobId_);
-  };
   // Phase 1, even split: admit sessions still below the base share. Each
   // pass scans the pending queue once; the queue stays short in practice
   // (admission fills every free share eagerly), so a per-session index is
@@ -465,11 +460,11 @@ std::vector<OwnedMorsel> ElasticExportScheduler::drainPendingAdmissionUnsafe() {
     }
     admitIt(best);
   }
-  // Phase 2, remainder-oldest: `max / live` truncates, so an indivisible
+  // Phase 2, remainder-FIFO: `max / live` truncates, so an indivisible
   // capacity leaves remainder slots that no below-share session can claim.
-  // Hand them to the oldest waiting sessions instead of stranding them.
+  // Hand them to the oldest queued morsels instead of stranding them.
   while (totalOutstanding_ < max && !pendingAdmission_.empty()) {
-    admitIt(oldestIt());
+    admitIt(pendingAdmission_.begin());
   }
   return readyToPost;
 }

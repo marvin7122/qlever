@@ -341,7 +341,7 @@ class ElasticExportScheduler {
   // that only hold pending morsels. queueMutex_ held.
   [[nodiscard]] size_t committedOutstandingUnsafe(uint64_t jobId) const;
   // Select admittable pending morsels in two phases (below-base-share
-  // sessions first, then remainder slots oldest-first), account them as
+  // sessions first, then remainder slots in queue FIFO order), account them as
   // outstanding, and return them; the caller posts them WITHOUT holding
   // queueMutex_. queueMutex_ held.
   [[nodiscard]] std::vector<OwnedMorsel> drainPendingAdmissionUnsafe();
@@ -350,8 +350,8 @@ class ElasticExportScheduler {
   // Base per-session share from the live count: at least one, so every
   // session keeps its progress floor. Pure computation, no locking. When
   // `max` is not divisible by the live count, the truncated remainder is
-  // admitted oldest-first by `drainPendingAdmissionUnsafe`, so no capacity
-  // is stranded. The max is a best-effort snapshot: a concurrent
+  // admitted in queue FIFO order by `drainPendingAdmissionUnsafe`, so no
+  // capacity is stranded. The max is a best-effort snapshot: a concurrent
   // `setMaxConcurrentMorsels` may shift shares transiently, and every drain
   // re-reads the current value.
   [[nodiscard]] size_t fairShareUnsafe(size_t liveSessions) const noexcept {

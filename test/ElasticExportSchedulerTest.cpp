@@ -984,7 +984,7 @@ TEST(ElasticExportSchedulerTest, SynchronousPosterDoesNotDeadlock) {
   EXPECT_EQ(scheduler->activeHelperCount(), 0u);
 }
 
-TEST(ElasticExportSchedulerTest, RemainderSlotGoesToOldestSession) {
+TEST(ElasticExportSchedulerTest, RemainderSlotGoesToFirstQueuedMorsel) {
   DeferredPoster deferred;
   ElasticExportScheduler scheduler(
       [&deferred](absl::AnyInvocable<void()> work) {
@@ -1001,8 +1001,8 @@ TEST(ElasticExportSchedulerTest, RemainderSlotGoesToOldestSession) {
     sessionA.submitMorsel([i]() { return "a_" + std::to_string(i); });
     sessionB.submitMorsel([i]() { return "b_" + std::to_string(i); });
   }
-  // Base shares post A0 and B0; the truncated remainder slot goes to the
-  // oldest session (A), so A1 posts promptly instead of waiting for the
+  // Base shares post A0 and B0; the truncated remainder slot goes to A1,
+  // the first queued morsel, instead of waiting for the
   // next completion while capacity sits idle.
   EXPECT_EQ(deferred.totalPosted_, 3u);
 
@@ -1012,6 +1012,60 @@ TEST(ElasticExportSchedulerTest, RemainderSlotGoesToOldestSession) {
     EXPECT_EQ(sessionA.consumeNextResult(), "a_" + std::to_string(i));
     EXPECT_EQ(sessionB.consumeNextResult(), "b_" + std::to_string(i));
   }
+}
+
+TEST(ElasticExportSchedulerTest, RemainderAdmissionUsesGlobalQueueOrder) {
+  DeferredPoster deferred;
+  ElasticExportScheduler scheduler(
+      [&](absl::AnyInvocable<void()> work) { deferred.post(std::move(work)); });
+  scheduler.setMaxConcurrentMorsels(3);
+  auto sessionA = scheduler.createSession<std::string>();
+  auto sessionB = scheduler.createSession<std::string>();
+  std::vector<std::string> executions;
+  auto submit = [&](auto& session, std::string label) {
+    session.submitMorsel([&, label = std::move(label)] {
+      executions.push_back(label);
+      return label;
+    });
+  };
+  submit(sessionA, "A0");
+  submit(sessionB, "B0");
+  submit(sessionA, "A1");
+  ASSERT_EQ(deferred.totalPosted_, 3u);
+  submit(sessionB, "B1");
+  submit(sessionB, "B2");
+  submit(sessionA, "A2");
+  EXPECT_EQ(deferred.totalPosted_, 3u);
+
+  // Raising capacity makes the base share two. B1 claims B's missing base
+  // slot; the remainder then belongs to B2 at the queue front, not A2 from
+  // the older session. A3 triggers the drain and waits behind them.
+  scheduler.setMaxConcurrentMorsels(5);
+  submit(sessionA, "A3");
+  EXPECT_EQ(deferred.totalPosted_, 5u);
+  deferred.runToIdle();
+  EXPECT_EQ(deferred.totalPosted_, 7u);
+  ASSERT_EQ(executions.size(), 7u);
+  EXPECT_EQ(
+      (std::vector<std::string>{executions.begin(), executions.begin() + 5}),
+      (std::vector<std::string>{"A0", "B0", "A1", "B1", "B2"}));
+  EXPECT_THAT(executions, ::testing::UnorderedElementsAre(
+                              "A0", "A1", "A2", "A3", "B0", "B1", "B2"));
+  for (const auto& label : {"A0", "A1", "A2", "A3"}) {
+    EXPECT_EQ(sessionA.consumeNextResult(), label);
+  }
+  for (const auto& label : {"B0", "B1", "B2"}) {
+    EXPECT_EQ(sessionB.consumeNextResult(), label);
+  }
+  for (const auto* session : {&sessionA, &sessionB}) {
+    EXPECT_FALSE(session->hasMoreResults());
+    EXPECT_EQ(session->activeHelpers(), 0u);
+    for (const auto& profile : session->inspectMorselProfiles()) {
+      EXPECT_EQ(profile.finalStatus_, MorselStatus::Completed);
+      EXPECT_TRUE(profile.executedByHelper_);
+    }
+  }
+  EXPECT_EQ(scheduler.activeHelperCount(), 0u);
 }
 
 TEST(ElasticExportSchedulerTest,
