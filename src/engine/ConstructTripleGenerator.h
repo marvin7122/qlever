@@ -47,8 +47,8 @@ class ConstructTripleGenerator {
   friend class ConstructTripleGeneratorTest;
 
  public:
-  // The default number of `IdTable` rows that one batch consists of. The
-  // active value is the runtime parameter `construct-export-row-batch-size`.
+  // A batch size (number of `IdTable` rows) for tests. The active value is
+  // the runtime parameter `construct-export-row-batch-size` (default 16384).
   static constexpr size_t BATCH_SIZE = 1024;
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
@@ -79,7 +79,7 @@ class ConstructTripleGenerator {
 
   // Lazily evaluates all `TableWithRange` values from `rowIndices`, processes
   // them in batches of `construct-export-row-batch-size` rows (runtime
-  // parameter, default `BATCH_SIZE`), and returns a flat range of
+  // parameter), and returns a flat range of
   // `EvaluatedTriple`. Duplicate triples are handled according to
   // `config.mode_`.
   static InputRangeTypeErased<EvaluatedTriple> evaluateTables(

@@ -286,6 +286,10 @@ TEST_F(ConstructTripleGeneratorTest, viewSubrangeReadsCorrectRowsOfIdTable) {
 // correctly crosses the internal batch boundary and yields triples for all
 // rows.
 TEST_F(ConstructTripleGeneratorTest, acrossBatchBoundary) {
+  // Pin the batch size to `BATCH_SIZE`; the runtime default is larger.
+  auto pinBatchSize = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(
+      ConstructTripleGenerator::BATCH_SIZE);
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
 
   std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
@@ -346,6 +350,10 @@ TEST_F(ConstructTripleGeneratorTest, rowBatchSizeIsConfigurable) {
 // batch 0, cancelling the handle causes the next get() call (which would start
 // batch 1) to throw.
 TEST_F(ConstructTripleGeneratorTest, cancellationThrowsBetweenBatches) {
+  // Pin the batch size to `BATCH_SIZE`; the runtime default is larger.
+  auto pinBatchSize = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(
+      ConstructTripleGenerator::BATCH_SIZE);
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
 
   std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
@@ -402,6 +410,10 @@ TEST_F(ConstructTripleGeneratorTest, cannotCancelDuringBatch) {
 // `EvaluatedTerm` `shared_ptr` returned in batch 1 is pointer-identical to the
 // one from batch 0, proving the cache was not reset between batches.
 TEST_F(ConstructTripleGeneratorTest, idCacheIsSharedAcrossBatches) {
+  // Pin the batch size to `BATCH_SIZE`; the runtime default is larger.
+  auto pinBatchSize = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(
+      ConstructTripleGenerator::BATCH_SIZE);
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
 
   // All rows hold the same ID so the second batch is guaranteed to be a cache

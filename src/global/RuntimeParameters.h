@@ -261,8 +261,12 @@ struct RuntimeParameters {
   // The number of WHERE-result rows in one CONSTRUCT export batch. Each batch
   // resolves the vocabulary words of its `Id`s with one `lookupBatch` call, so
   // this also bounds how many vocabulary reads one lookup can issue at once.
-  // Must be strictly positive.
-  SizeT constructExportRowBatchSize_{1024, "construct-export-row-batch-size"};
+  // Must be strictly positive. Default 16384: on Wikidata it lowers the
+  // export thread's CPU time per row (fewer, larger batches); the median
+  // export time dropped by 13-27 % for the large German and English label
+  // exports and no measured cell regressed, at a time-to-first-byte cost of
+  // ~0.3 s (marvin7122/qlever-export-benchmarks, runs/batch-ring-verdict-p10).
+  SizeT constructExportRowBatchSize_{16384, "construct-export-row-batch-size"};
 
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
