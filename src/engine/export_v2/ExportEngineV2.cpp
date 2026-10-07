@@ -38,6 +38,7 @@
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
+#include "util/InputRangeUtils.h"
 #include "util/Log.h"
 #include "util/Timer.h"
 
@@ -236,6 +237,22 @@ uint64_t offsetLeftToApply(const QueryExecutionTree& qet,
              : 0;
 }
 
+// The blocks of `result` as owned pairs, which morsel segments keep alive.
+// A lazy result is streamed. A fully materialized result (for example one
+// from the query cache, or an operation that always materializes) is one
+// block: its table is cloned, because the segments own their blocks and the
+// result keeps its own copy for the cache. `Result::idTables` would reject it.
+Result::LazyResult resultBlocks(std::shared_ptr<const Result> result) {
+  if (!result->isFullyMaterialized()) {
+    return result->idTables();
+  }
+  return Result::LazyResult{
+      ad_utility::lazySingleValueRange([result = std::move(result)]() {
+        return Result::IdTableVocabPair{result->idTableView().clone(),
+                                        result->localVocab().clone()};
+      })};
+}
+
 // Serializes the rows `[begin, end)` of `segment`'s block into `builder`.
 // There is one per request (SELECT CSV/TSV or CONSTRUCT), shared by all morsel
 // tasks of that request, so calls must be safe from concurrent threads. It
@@ -350,7 +367,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
     // No session exists here, so nothing can revoke: serialize each plan
     // directly without checkpoints.
     for (auto&& plan :
-         planExportMorsels(result->idTables(), limitOffset, rowsPerMorsel)) {
+         planExportMorsels(resultBlocks(result), limitOffset, rowsPerMorsel)) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
       uint64_t rowsDone = 0;
@@ -381,7 +398,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
   const CheckpointMorselRunner runner{session.sharedState(),
                                       std::move(serialize), !ordered};
   for (auto&& plan :
-       planExportMorsels(result->idTables(), limitOffset, rowsPerMorsel)) {
+       planExportMorsels(resultBlocks(result), limitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
     session.submitMorsel(runner.makeTask(std::move(plan)));
   }
