@@ -211,6 +211,7 @@ TEST(VocabularyInternalExternal, ScanAllEmptyVocabulary) {
 TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
   const std::string filename =
       "LookupBatchIsIndependentOfInternalLookupMode" + suffix;
+  auto cleanup = makeVocabFileCleanup<VocabularyInternalExternal>(filename);
   for (double internalDensity : {0.0, 0.01, 0.3, 0.9, 1.0}) {
     deleteVocabularyFiles<VocabularyInternalExternal>(filename);
     std::mt19937_64 gen{static_cast<uint64_t>(internalDensity * 100) + 1};
@@ -272,5 +273,4 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
       }
     }
   }
-  deleteVocabularyFiles<VocabularyInternalExternal>(filename);
 }
