@@ -302,6 +302,25 @@ struct RuntimeParameters {
   // descriptor of the vocabulary files that is opened with `O_DIRECT`.
   Bool vocabularyIoUringDirectIo_{false, "vocabulary-iouring-direct-io"};
 
+  // The number of blocks of the per-thread block cache in front of the
+  // `O_DIRECT` vocabulary reads (`vocabulary-iouring-direct-io`): every block
+  // read via `O_DIRECT` is kept, and later requests for bytes in a cached
+  // block are copied from there instead of being read again. The vocabulary
+  // files are immutable after the build, so cached blocks never go stale.
+  // Each thread using the cache reserves `vocab-block-cache-size` multiplied
+  // by `vocab-block-cache-block-size` bytes for block storage; aggregate
+  // storage scales with the number of threads using it.
+  // The default of `0` disables the cache. Has no effect without
+  // `vocabulary-iouring-direct-io`.
+  SizeT vocabBlockCacheSize_{0, "vocab-block-cache-size"};
+
+  // The size in bytes of every `O_DIRECT` vocabulary read (aligned to it) and
+  // of the blocks of the cache above (`vocab-block-cache-size` counts blocks
+  // of this size). A positive multiple of 4096. Larger blocks act like
+  // readahead for requests that are close in the file and waste bandwidth on
+  // scattered ones. Has no effect without `vocabulary-iouring-direct-io`.
+  SizeT vocabBlockCacheBlockSize_{4096, "vocab-block-cache-block-size"};
+
   // If set to `true`, CONSTRUCT query export of Turtle formats the
   // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
   // formatting) instead of the legacy per-term `std::string` construction
