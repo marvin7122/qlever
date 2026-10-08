@@ -429,6 +429,59 @@ TEST(ExportIds, cachedIdToStringAndTypeStaysOnOnHighHitRate) {
 }
 
 // _____________________________________________________________________________
+// The byte budget bounds the admitted term strings: once it is exhausted,
+// lookups are computed directly (values stay correct) while admitted entries
+// keep serving hits. A budget of 0 disables the budget.
+TEST(ExportIds, cachedIdToStringAndTypeByteBudget) {
+  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  using Cache = ql::exportIds::IdToStringAndTypeCache;
+  Id id = Id::makeFromInt(7);
+  // A budget of 1 byte admits nothing: every lookup is computed directly, but
+  // the cache stays enabled.
+  Cache budgeted{Cache::Config{100, 0, 0.0, 1}};
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(
+        ql::exportIds::cachedIdToStringAndType(budgeted, index, id, localVocab),
+        ql::exportIds::idToStringAndType(index, id, localVocab));
+  }
+  EXPECT_TRUE(budgeted.enabled());
+  EXPECT_EQ(budgeted.stats().totalLookups(), 0u);
+  EXPECT_EQ(budgeted.bypassed(), 3u);
+  EXPECT_EQ(budgeted.bytesAdmitted(), 0u);
+  // An unlimited budget caches everything.
+  Cache unlimited{Cache::Config{100, 0, 0.0, 0}};
+  for (int pass = 0; pass < 2; ++pass) {
+    EXPECT_EQ(ql::exportIds::cachedIdToStringAndType(unlimited, index, id,
+                                                     localVocab),
+              ql::exportIds::idToStringAndType(index, id, localVocab));
+  }
+  EXPECT_EQ(unlimited.stats().hits_, 1u);
+  EXPECT_EQ(unlimited.stats().misses_, 1u);
+  EXPECT_GT(unlimited.bytesAdmitted(), 0u);
+  // A budget that fits exactly one entry: the first id is cached and keeps
+  // hitting, further distinct ids bypass.
+  Cache exact{Cache::Config{100, 0, 0.0, unlimited.bytesAdmitted()}};
+  for (int i = 0; i < 2; ++i) {
+    EXPECT_EQ(
+        ql::exportIds::cachedIdToStringAndType(exact, index, id, localVocab),
+        ql::exportIds::idToStringAndType(index, id, localVocab));
+  }
+  Id other = Id::makeFromInt(8);
+  EXPECT_EQ(
+      ql::exportIds::cachedIdToStringAndType(exact, index, other, localVocab),
+      ql::exportIds::idToStringAndType(index, other, localVocab));
+  EXPECT_EQ(
+      ql::exportIds::cachedIdToStringAndType(exact, index, id, localVocab),
+      ql::exportIds::idToStringAndType(index, id, localVocab));
+  EXPECT_TRUE(exact.enabled());
+  EXPECT_EQ(exact.stats().hits_, 2u);
+  EXPECT_EQ(exact.stats().misses_, 1u);
+  EXPECT_EQ(exact.bypassed(), 1u);
+}
+
+// _____________________________________________________________________________
 // Empty span returns an empty vector.
 TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");

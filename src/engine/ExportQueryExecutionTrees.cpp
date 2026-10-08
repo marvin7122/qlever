@@ -321,8 +321,12 @@ ExportQueryExecutionTrees::constructQueryResultBindingsToQLeverJSON(
 static ql::exportIds::IdToStringAndTypeCache::Config
 selectExportTermCacheConfig() {
   ql::exportIds::IdToStringAndTypeCache::Config config;
-  config.capacity_ =
-      getRuntimeParameter<&RuntimeParameters::selectExportTermCacheCapacity_>();
+  // Clamp the capacity: the runtime parameter must not override the memory
+  // bound of the cache (the byte budget bounds the strings, this caps the
+  // per-entry bookkeeping).
+  config.capacity_ = std::min(
+      getRuntimeParameter<&RuntimeParameters::selectExportTermCacheCapacity_>(),
+      ql::exportIds::IdToStringAndTypeCache::MAX_CAPACITY);
   config.windowSize_ =
       getRuntimeParameter<&RuntimeParameters::selectExportTermCacheWindow_>();
   config.minHitRate_ = getRuntimeParameter<
@@ -381,15 +385,20 @@ auto ExportQueryExecutionTrees::idTableToQLeverJSONBindings(
              [&qet, columns = std::move(columns), result = std::move(result),
               cancellationHandle = std::move(cancellationHandle),
               cache](const auto& tableWithView) {
-               // Capture the shared handles by value: the inner view can
-               // outlive the outer lambda invocation, so it must not reference
-               // the outer closure's members.
+               // Copy the per-block handles by value: the inner view can
+               // outlive this invocation (and the closure can move), so it
+               // must not reference the parameter or the closure members.
+               // Capturing the `qet` reference by value rebinds it directly
+               // to the query execution tree, which outlives the
+               // synchronously consumed export. `result` keeps the blocks
+               // alive via the captured `shared_ptr`.
+               TableConstRefWithVocab tableWithVocab =
+                   tableWithView.tableWithVocab_;
                return ql::ranges::transform_view(
                    tableWithView.view_,
-                   [&, cache, cancellationHandle](uint64_t rowIndex) {
+                   [qet, columns, tableWithVocab, cache,
+                    cancellationHandle](uint64_t rowIndex) {
                      cancellationHandle->throwIfCancelled();
-                     const TableConstRefWithVocab tableWithVocab =
-                         tableWithView.tableWithVocab_;
                      return idTableToQLeverJSONRow(
                                 qet, columns, tableWithVocab.localVocab(),
                                 rowIndex, tableWithVocab.idTable(), *cache)

@@ -10,6 +10,8 @@
 
 #include <absl/strings/str_join.h>
 
+#include <cmath>
+
 #include "backports/algorithm.h"
 #include "util/Algorithm.h"
 
@@ -99,6 +101,22 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+
+  // The minimum hit rate of the SELECT export term cache is a fraction:
+  // values above 1 would switch the cache off after the first window even at
+  // a 100% hit rate, and NaN would silently keep it on. Nonpositive values
+  // are allowed and disable the hit-rate check (see
+  // `ql::exportIds::IdToStringAndTypeCache`).
+  selectExportTermCacheMinHitRate_.setParameterConstraint(
+      [](double value, std::string_view parameterName) {
+        if (!std::isfinite(value) || value > 1.0) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName,
+              " must be finite and at most 1 (values <= 0 disable the "
+              "hit-rate check), was ",
+              value)};
+        }
+      });
 }
 
 // _____________________________________________________________________________
