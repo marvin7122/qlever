@@ -1,12 +1,14 @@
 name: OpenCodeReview (fan-out project rules)
 
 on:
-  # `synchronize` included per owner request: the fan-out review runs on
-  # every push. Note it takes hours on large diffs and `cancel-in-progress`
-  # below cancels the stale run on the next push, so actively developed PRs
-  # consume extra runner time by design.
+  # Gating policy 2026-10-06: the fan-out runs only after the fast AI
+  # reviewers are done, signalled by the `ocr-ready` label (added by the
+  # author/agent once all bot checks concluded) or by marking the PR ready
+  # for review. No trigger on push/open: bot fix commits must not invalidate
+  # a running 7h review. Re-adding the label (off/on) forces a fresh run on
+  # a moved head. Manual override stays: `/open-code-review-fanout`.
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [ready_for_review, reopened, labeled]
   issue_comment:
     types: [created]
 
@@ -14,33 +16,67 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  statuses: write
 
 concurrency:
-  group: ocr-fanout-project-rules-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  # Comments that are not a review command (e.g. the bot's own result or error
+  # comments) get a group of their own, so they cannot cancel a running review.
+  # Same for labels other than ocr-ready: a routine label change must not
+  # cancel a running fan-out via cancel-in-progress (Qodo/Greptile/Cubic on
+  # PR 259).
+  group: >-
+    ${{ github.event_name == 'issue_comment' &&
+    !startsWith(github.event.comment.body, '/open-code-review-fanout') &&
+    !startsWith(github.event.comment.body, '@open-code-review-fanout') &&
+    format('ocr-fanout-project-rules-ignored-{0}', github.run_id) ||
+    github.event_name == 'pull_request_target' &&
+    github.event.action == 'labeled' &&
+    github.event.label.name != 'ocr-ready' &&
+    format('ocr-fanout-project-rules-ignored-{0}', github.run_id) ||
+    format('ocr-fanout-project-rules-{0}', github.event.pull_request.number ||
+    github.event.issue.number || github.run_id) }}
   cancel-in-progress: true
 
 jobs:
   review-fanout-project-rules:
+    # pull_request_target runs in base-repo context with secrets and billed
+    # inference: only maintainers may trigger it (Cubic P1 on PR 259 —
+    # external contributors can raise ready_for_review / reopened on their
+    # own PRs). Label application already implies triage access.
     if: >-
-      github.event_name == 'pull_request_target' ||
-      (github.event.issue.pull_request &&
-       github.event.comment.user.type != 'Bot' &&
-       (github.event.comment.author_association == 'MEMBER' ||
-        github.event.comment.author_association == 'OWNER' ||
-        github.event.comment.author_association == 'COLLABORATOR') &&
-       (startsWith(github.event.comment.body, '/open-code-review-fanout') ||
-        startsWith(github.event.comment.body, '@open-code-review-fanout')))
+      ((github.event_name == 'pull_request_target' &&
+        (github.event.pull_request.author_association == 'MEMBER' ||
+         github.event.pull_request.author_association == 'OWNER' ||
+         github.event.pull_request.author_association == 'COLLABORATOR') &&
+        ((github.event.action == 'ready_for_review' ||
+          github.event.action == 'reopened') ||
+         (github.event.action == 'labeled' &&
+          github.event.label.name == 'ocr-ready' &&
+          github.event.pull_request.state == 'open'))) ||
+       (github.event.issue.pull_request &&
+        github.event.comment.user.type != 'Bot' &&
+        (github.event.comment.author_association == 'MEMBER' ||
+         github.event.comment.author_association == 'OWNER' ||
+         github.event.comment.author_association == 'COLLABORATOR') &&
+        (startsWith(github.event.comment.body, '/open-code-review-fanout') ||
+         startsWith(github.event.comment.body, '@open-code-review-fanout'))))
     # GitHub-hosted: this job is LLM-API-bound, not CPU-bound, so it must
     # not occupy fleet compile runners (CI speedup 2026-09-24).
     runs-on: ubuntu-latest
-    # Full fan-out project-rules reviews need ~3.5-4h on larger diffs: runs
-    # 35110677564 and 35288058721 were both killed at exactly the old
-    # 180 min limit while the review agent was still streaming progress.
-    # 360 is the GitHub-hosted cap; large diffs may now time out where the
-    # old 1800 min self-hosted limit survived. If that happens, split the
-    # review (smaller diffs) rather than moving back to the fleet.
+    # Split 2026-10-06: run 36405730670 proved one hosted job cannot finish
+    # large diffs (killed at the 6h platform cap mid-review on PR 209). The
+    # 243 project rules are dealt into OCR_CHUNKS deterministic chunks
+    # (.opencodereview/split_rules.py); each leg publishes its own findings,
+    # so a slow leg can no longer sink the rest. Bump OCR_CHUNKS (and the
+    # matrix below to match) if legs approach the cap. More legs also mean
+    # more parallel LLM streams against the router rate limits.
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     timeout-minutes: 360
     env:
+      OCR_CHUNKS: 16
       # Path-independent build cache: the action checkout lands at a different
       # absolute path every run, which would defeat GOCACHE without this.
       GOFLAGS: -trimpath
@@ -85,8 +121,71 @@ jobs:
             ~/go/pkg/mod
             ~/.npm
           key: ocr-build-linux-x64-48cc191fc147f0b4642e9658717805f6a3dfefa5-40f1582b2485089dde7abd97c1529aa768e1baff
+      # Comment-triggered runs belong to the default branch, so GitHub does not
+      # list them among the PR's checks. A check run of the OCR app on the PR's
+      # head commit makes the review visible there (falls back to a commit
+      # status when the app token is unavailable or lacks `checks: write`).
+      - name: Mint App token for the check run
+        id: app-token-check
+        if: ${{ vars.OCR_FANOUT_APP_ID != '' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+          owner: marvin7122
+          repositories: qlever
+      - name: Start the check run on the PR commit
+        id: check-start
+        continue-on-error: true
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          APP_TOKEN: ${{ steps.app-token-check.outputs.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || steps.pr-context.outputs.head_sha }}
+        with:
+          script: |
+            const sha = process.env.HEAD_SHA;
+            if (!sha) return;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { owner, repo } = context.repo;
+            if (process.env.APP_TOKEN) {
+              try {
+                const appClient = github.getOctokit(process.env.APP_TOKEN);
+                const { data } = await appClient.rest.checks.create({
+                  owner, repo, name: `OCR fan-out review (chunk ${{ matrix.chunk }}/${{ env.OCR_CHUNKS }})`, head_sha: sha,
+                  status: 'in_progress', details_url: runUrl,
+                  output: { title: 'Review running', summary: `[Actions run](${runUrl})` },
+                });
+                core.setOutput('check_run_id', String(data.id));
+                return;
+              } catch (e) {
+                core.warning(`checks.create failed (${e.status}); using a commit status`);
+              }
+            }
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha, state: 'pending', context: `OCR fan-out review (chunk ${{ matrix.chunk }}/${{ env.OCR_CHUNKS }})`,
+              description: 'Review running', target_url: runUrl,
+            });
+      # The review action checks out the PR itself (fork-safe); this sparse
+      # checkout exists only so the splitter and rule file below are present.
+      # It resolves to the base branch, never the PR head: rule chunks must
+      # come from trusted refs even though only data files are read.
+      - name: Fetch rule splitter (sparse, base ref)
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            .opencodereview/split_rules.py
+            .opencodereview/rule.json
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+      - name: Generate this leg's rule chunk
+        run: |
+          python3 .opencodereview/split_rules.py \
+            .opencodereview/rule.json "$OCR_CHUNKS" '${{ matrix.chunk }}' \
+            '${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json'
       - name: Review pull request with fan-out project rules
-        uses: marvin7122/open-code-review@34ed9d2925e550cf7edb97f3751c6cada6f89d9c
+        id: ocr
+        uses: marvin7122/open-code-review@3461ba0df7fba00fbb44376803e9a1d86d56026d # fix/fanout-custom-rules: fan-out honors --rule chunks
         with:
           # Deliberately the job-scoped GITHUB_TOKEN, not an App installation
           # token: installation tokens expire after 1 hour, but large-diff
@@ -105,8 +204,12 @@ jobs:
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
           ocr_install_from: source
           fan_out_project_rules: 'true'
-          rule: .opencodereview/rule.json
-          review_concurrency: '1'
+          rule: ${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json
+          # One file at a time per leg ran a 34-part PR for >6 h and hit the
+          # 360-min job timeout (run 37594125409). Four parallel reviews per
+          # leg (16 legs -> up to 64 LLM requests) keep a large diff well
+          # inside the limit.
+          review_concurrency: '4'
           effort: high
           sticky_summary: 'false'
           incremental: 'true'
@@ -169,6 +272,67 @@ jobs:
                 body: `${stamp}\n${body}`,
               });
             }
+      - name: Mint App token to finish the check run
+        id: app-token-finish
+        if: ${{ always() && vars.OCR_FANOUT_APP_ID != '' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+          owner: marvin7122
+          repositories: qlever
+      - name: Finish the check run on the PR commit
+        if: always()
+        continue-on-error: true
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          # Fresh token: the one minted at the start expires after one hour.
+          APP_TOKEN: ${{ steps.app-token-finish.outputs.token }}
+          CHECK_RUN_ID: ${{ steps.check-start.outputs.check_run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || steps.pr-context.outputs.head_sha }}
+          JOB_STATUS: ${{ job.status }}
+          COMMENTS_TOTAL: ${{ steps.ocr.outputs.comments_total }}
+          COMMENTS_INLINE: ${{ steps.ocr.outputs.comments_inline }}
+          COMMENTS_ROUTED: ${{ steps.ocr.outputs.comments_routed }}
+          COMMENTS_FAILED: ${{ steps.ocr.outputs.comments_failed }}
+          SUMMARY_URL: ${{ steps.ocr.outputs.summary_comment_url }}
+        with:
+          script: |
+            const sha = process.env.HEAD_SHA;
+            if (!sha) return;
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const status = process.env.JOB_STATUS;
+            const ok = status === 'success';
+            const n = (k) => process.env[k] || '0';
+            const title = ok ? `${n('COMMENTS_TOTAL')} finding(s)` : `Review ${status}`;
+            const summary = [
+              `- Findings: ${n('COMMENTS_TOTAL')}`,
+              `- Posted inline: ${n('COMMENTS_INLINE')}`,
+              `- In the summary comment: ${n('COMMENTS_ROUTED')}`,
+              `- Failed to post: ${n('COMMENTS_FAILED')}`,
+              process.env.SUMMARY_URL ? `- [Summary comment](${process.env.SUMMARY_URL})` : '',
+              `- [Actions run](${runUrl})`,
+            ].filter(Boolean).join('\n');
+            if (process.env.CHECK_RUN_ID && process.env.APP_TOKEN) {
+              try {
+                const appClient = github.getOctokit(process.env.APP_TOKEN);
+                await appClient.rest.checks.update({
+                  owner, repo, check_run_id: Number(process.env.CHECK_RUN_ID),
+                  status: 'completed',
+                  conclusion: ok ? 'success' : (status === 'cancelled' ? 'cancelled' : 'failure'),
+                  output: { title, summary },
+                });
+                return;
+              } catch (e) {
+                core.warning(`checks.update failed (${e.status}); using a commit status`);
+              }
+            }
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha, state: ok ? 'success' : 'failure',
+              context: 'OCR fan-out review', description: title, target_url: runUrl,
+            });
       - name: Remove isolated npm prefix
         if: always()
         run: rm -rf "${OCR_NPM_PREFIX:?}"
