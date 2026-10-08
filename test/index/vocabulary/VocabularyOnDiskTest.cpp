@@ -12,6 +12,8 @@
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
+#include <atomic>
+
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "../../util/PageCacheReadTestHelpers.h"
@@ -335,6 +337,44 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
     check();
   }
   EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
+}
+
+// Counts `preadv2(RWF_NOWAIT)` calls and then performs the real read.
+std::atomic<int> ownedPageReadCalls{0};
+int64_t countOwnedPageReads(int fd, const ::iovec* iov, int iovcnt,
+                            int64_t offset) {
+  ownedPageReadCalls.fetch_add(1, std::memory_order_relaxed);
+  return ad_utility::detail::systemPageCacheRead(fd, iov, iovcnt, offset);
+}
+
+// Words that share a 4 KiB page but are not adjacent in the batch are copied
+// from one page the export owns. A later batch that reads another word on
+// that page does not call `preadv2` again.
+TEST(VocabularyOnDisk, LookupBatchReusesOwnedPage) {
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not available";
+  }
+  std::vector<std::string> words;
+  words.reserve(30);
+  for (int i = 0; i < 30; ++i) {
+    words.push_back(absl::StrCat("word-", i));
+  }
+  auto vocab = createVocabularyFromWords(words);
+  std::array<size_t, 5> firstBatch{0, 2, 4, 6, 8};
+  std::array<size_t, 1> secondBatch{1};
+  using pageCacheReadTestHelpers::ScopedPageCacheRead;
+  ScopedPageCacheRead inject{&countOwnedPageReads};
+  ownedPageReadCalls.store(0);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(firstBatch), firstBatch);
+  const int readsAfterFirstBatch = ownedPageReadCalls.load();
+  // One 4096-byte read of the words file and one of the offsets file.
+  EXPECT_EQ(readsAfterFirstBatch, 2);
+  ownedPageReadCalls.store(0);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(secondBatch), secondBatch);
+  EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
+  EXPECT_EQ(ownedPageReadCalls.load(), 0);
 }
 
 // An empty batch is an invalid request and must throw.
