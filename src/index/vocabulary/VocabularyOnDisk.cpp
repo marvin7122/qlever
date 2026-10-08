@@ -258,7 +258,7 @@ std::vector<size_t> VocabularyOnDisk::copyRangesFromOwnedPage(
       inPage.push_back(Item{i, pageStart});
     }
   }
-  std::sort(inPage.begin(), inPage.end(), [](const Item& a, const Item& b) {
+  ql::ranges::sort(inPage, [](const Item& a, const Item& b) {
     return a.pageStart < b.pageStart ||
            (a.pageStart == b.pageStart && a.index < b.index);
   });
