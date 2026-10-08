@@ -7,6 +7,9 @@
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 // BMW =  Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
+
 #include "global/RuntimeParameters.h"
 
 #include <absl/strings/str_join.h>
@@ -72,6 +75,8 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(vocabularyIouringPageCacheFastPath_);
+  add(vocabularyIouringRingSize_);
+  add(vocabularyIouringReapWave_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
@@ -98,6 +103,16 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  auto mustBeInRingRange = [](size_t value, std::string_view parameterName) {
+    constexpr size_t maxValue = 32768;
+    if (value < 1 || value > maxValue) {
+      throw std::runtime_error{absl::StrCat("Parameter ", parameterName,
+                                            " must be in [1, ", maxValue,
+                                            "], was ", value)};
+    }
+  };
+  vocabularyIouringRingSize_.setParameterConstraint(mustBeInRingRange);
+  vocabularyIouringReapWave_.setParameterConstraint(mustBeInRingRange);
 }
 
 // _____________________________________________________________________________

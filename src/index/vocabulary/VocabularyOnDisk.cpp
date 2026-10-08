@@ -378,7 +378,13 @@ void VocabularyOnDisk::open(const std::string& filename) {
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
+  const auto ringSize =
+      getRuntimeParameter<&RuntimeParameters::vocabularyIouringRingSize_>();
+  const auto reapWave =
+      getRuntimeParameter<&RuntimeParameters::vocabularyIouringReapWave_>();
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    ioManagers_->push(ad_utility::makeBatchManager(
+        preferIoUring, static_cast<unsigned>(ringSize),
+        static_cast<unsigned>(reapWave)));
   }
 }

@@ -86,7 +86,8 @@ class BatchManager final : public BatchManagerBase {
  public:
   using BatchHandle = typename BatchManagerBase::BatchHandle;
 
-  explicit BatchManager(unsigned ringSize = 256) : policy_(ringSize) {}
+  explicit BatchManager(unsigned ringSize = 256, unsigned reapWave = 8)
+      : policy_(ringSize, reapWave) {}
 
   BatchManager(const BatchManager&) = delete;
   BatchManager& operator=(const BatchManager&) = delete;
@@ -132,7 +133,10 @@ struct SyncIoPolicy {
   //
   // NOTE: GCC rejects `[[maybe_unused]]` on a defaulted parameter; cast to
   // void.
-  explicit SyncIoPolicy(unsigned ringSize = 256) { (void)ringSize; }
+  explicit SyncIoPolicy(unsigned ringSize = 256, unsigned reapWave = 8) {
+    (void)ringSize;
+    (void)reapWave;
+  }
 
   ~SyncIoPolicy() = default;
   SyncIoPolicy(const SyncIoPolicy&) = delete;
@@ -175,47 +179,83 @@ class IoUringPolicy {
  private:
   io_uring ring_{};
   unsigned ringSize_;
+  unsigned reapWave_;
 
-  // Total number of reads that occupy a ring slot but have not yet been reaped
-  // via a completion queue entry (CQE), i.e. that are prepared or submitted but
-  // not yet completed. Used to detect whether the ring is full.
-  size_t numInFlightReadRequests_ = 0;
+  // Total number of outstanding reads: reads that occupy a ring slot because
+  // they are prepared (SQE filled in, not yet submitted), in flight (submitted
+  // to the kernel, not yet completed), or completed but not yet reaped via a
+  // completion queue entry (CQE). Used to detect whether the ring is full.
+  size_t numOutstandingReadRequests_ = 0;
 
-  // The same in-flight reads as `numInFlight_`, but broken down per batch:
-  // maps a batch handle to the number of its reads that have not yet completed
-  // (are "in flight"). An entry for a batch (identified by `BatchHandle`) is
-  // removed once `wait()` has observed all of its reads complete.
-  ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
+  // The same outstanding reads as `numOutstandingReadRequests_`, but broken
+  // down per batch: maps a batch handle to the number of its reads that have
+  // not yet been reaped. The entry is removed when the batch's last read is
+  // reaped, which can happen inside another batch's `wait()`.
+  ad_utility::HashMap<BatchHandle, size_t> numOutstandingReadRequestsPerBatch_;
+
+  // First error of a batch whose completion was reaped, including by another
+  // batch's `wait()`. `wait()` of this batch throws it. A static message, so
+  // the pointer stays valid.
+  ad_utility::HashMap<BatchHandle, const char*> batchErrors_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
   // fewer bytes than expected can be detected). See
-  // `inFlightReadsByRequestId_`.
-  struct InFlightRead {
+  // `outstandingReadsByRequestId_`.
+  struct OutstandingRead {
     BatchHandle batchHandle;
     size_t expectedNumBytes;
   };
 
   // Monotonically increasing counter that mints a unique request id for each
   // individual read. The id is stored in the SQE's `user_data` and recovered
-  // from the matching CQE to look up the read's `InFlightRead` metadata.
+  // from the matching CQE to look up the read's `OutstandingRead` metadata.
   uint64_t nextRequestIdToAssign_ = 0;
 
   // Maps a read's request id to its metadata. An entry is inserted when the
-  // read is prepared in `addBatch` and erased when its completion is reaped in
-  // `drainOneCqe`.
-  ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
+  // read is prepared in `addBatch` and erased when its completion is reaped.
+  ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
-  // Wait for one CQE and update the in-flight bookkeeping.
-  void drainOneCqe();
+  // Block until at least `minComplete` CQEs are ready (capped at the number
+  // of reads the kernel has received), then reap every ready CQE. A failed or
+  // short read is stored on its batch. This function does not throw for that.
+  // `minComplete` must be > 0 and at most `numOutstandingReadRequests_`.
+  void drainAtLeast(unsigned minComplete);
+
+  // Apply one completion to the bookkeeping of the outstanding reads. Always
+  // update the counts, also for a failed read. Store that batch's first error
+  // when the read failed or was short.
+  void processCqe(int numBytesRead, uint64_t requestId);
+
+  // Throw and forget the stored error of `handle`, if it has one.
+  void throwIfBatchFailed(BatchHandle handle);
+
+  // Submit all prepared SQEs to the kernel. Throw if `io_uring_submit`
+  // fails, including the error description in the message. On failure, drop
+  // the SQEs the kernel did not take and reap reads it already has.
+  void submitOrThrow();
+
+  // Forget SQEs the kernel has not consumed, then reap submitted reads.
+  // Do not submit. Call this only after `io_uring_submit` has failed, so a
+  // later submit cannot write into buffers the caller then frees.
+  void abandonFailedSubmit();
+
+  FRIEND_TEST(IoUringPolicyTest, ErrorDuringRefillDoesNotCountUnqueuedReads);
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
-  explicit IoUringPolicy(unsigned ringSize);
+  // `reapWave` is how many completions one wait asks for. It must be > 0.
+  // The default matches `REAP_WAVE`.
+  explicit IoUringPolicy(unsigned ringSize, unsigned reapWave = REAP_WAVE);
   ~IoUringPolicy();
+
+  // Default number of completions to wait for when the ring is full or
+  // `wait()` blocks. Waiting for several CQEs and reaping all ready ones in
+  // one pass amortizes `io_uring_enter` and the CQ-head update over the wave.
+  static constexpr unsigned REAP_WAVE = 8;
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain
@@ -293,11 +333,11 @@ void resetPageCacheFastPathSupport();
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
+    bool& preferIoUring, unsigned ringSize = 256, unsigned reapWave = 8) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize);
+      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize, reapWave);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
@@ -310,7 +350,7 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 #else
   preferIoUring = false;
 #endif
-  return std::make_unique<BatchManager<SyncIoPolicy>>(ringSize);
+  return std::make_unique<BatchManager<SyncIoPolicy>>(ringSize, reapWave);
 }
 
 }  // namespace ad_utility
