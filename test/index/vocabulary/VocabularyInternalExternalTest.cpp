@@ -2,6 +2,7 @@
 // Chair of Algorithms and Data Structures.
 // Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
 
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -252,18 +253,18 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
       VocabularyInternalExternal vocab;
       vocab.open(filename);
       EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(), rankLookup);
-      // The prefetch distance (only used with the rank directory) must not
-      // change the results, also when it exceeds the batch size.
-      for (size_t prefetchDistance : {0, 1, 4, 32, 100'000}) {
-        auto cleanupPrefetch = setRuntimeParameterForTest<
-            &RuntimeParameters::vocabularyInternalRankPrefetchDistance_>(
-            prefetchDistance);
-        for (const auto& batch : batches) {
-          std::vector<std::string> expected;
-          for (size_t index : batch) {
-            expected.push_back(words.at(index));
-            ASSERT_EQ(vocab[index], words.at(index));
-          }
+      for (const auto& batch : batches) {
+        std::vector<std::string> expected;
+        for (size_t index : batch) {
+          expected.push_back(words.at(index));
+          ASSERT_EQ(vocab[index], words.at(index));
+        }
+        // The prefetch distance (only used with the rank directory) must
+        // not change the results, also when it exceeds the batch size.
+        for (size_t prefetchDistance : {0, 1, 4, 32, 100'000}) {
+          auto cleanupPrefetch = setRuntimeParameterForTest<
+              &RuntimeParameters::vocabularyInternalRankPrefetchDistance_>(
+              prefetchDistance);
           EXPECT_THAT(vocab.lookupBatch(batch),
                       ::testing::ElementsAreArray(expected))
               << "rank lookup " << rankLookup << ", huge pages " << hugePages

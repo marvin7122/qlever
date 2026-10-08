@@ -9,6 +9,7 @@
 
 #include "util/HugePages.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <sstream>
@@ -22,7 +23,11 @@ std::string selectedTransparentHugePagesMode(std::string_view content) {
   if (open == std::string_view::npos || close == std::string_view::npos) {
     return "unknown";
   }
-  return std::string{content.substr(open + 1, close - open - 1)};
+  const auto mode = content.substr(open + 1, close - open - 1);
+  if (mode != "always" && mode != "madvise" && mode != "never") {
+    return "unknown";
+  }
+  return std::string{mode};
 }
 
 // _____________________________________________________________________________
@@ -41,6 +46,7 @@ std::optional<size_t> anonHugePageBytes(const void* begin, size_t size) {
   }
   const auto rangeBegin = reinterpret_cast<uintptr_t>(begin);
   const uintptr_t rangeEnd = rangeBegin + size;
+  size_t overlapBytes = 0;
   bool inOverlappingMapping = false;
   size_t result = 0;
   std::string line;
@@ -51,7 +57,14 @@ std::optional<size_t> anonHugePageBytes(const void* begin, size_t size) {
     char dash = 0;
     std::istringstream header{line};
     if (header >> std::hex >> start >> dash >> end && dash == '-') {
-      inOverlappingMapping = start < rangeEnd && rangeBegin < end;
+      // Only the intersection with the requested range counts, so that a
+      // larger enclosing mapping (e.g. the heap) cannot contribute more
+      // than the overlapped bytes. Still an upper bound: the huge pages
+      // may sit outside the intersection.
+      const uintptr_t overlapBegin = std::max(start, rangeBegin);
+      const uintptr_t overlapEnd = std::min(end, rangeEnd);
+      overlapBytes = overlapEnd > overlapBegin ? overlapEnd - overlapBegin : 0;
+      inOverlappingMapping = overlapBytes > 0;
       continue;
     }
     constexpr std::string_view key = "AnonHugePages:";
@@ -59,7 +72,7 @@ std::optional<size_t> anonHugePageBytes(const void* begin, size_t size) {
       std::istringstream value{line.substr(key.size())};
       size_t kiloBytes = 0;
       if (value >> kiloBytes) {
-        result += kiloBytes * 1024;
+        result += std::min(kiloBytes * 1024, overlapBytes);
       }
     }
   }

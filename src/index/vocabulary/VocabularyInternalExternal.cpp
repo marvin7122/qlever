@@ -171,7 +171,8 @@ void VocabularyInternalExternal::open(const std::string& filename) {
                   << ad_utility::transparentHugePagesMode() << "): "
                   << (hugeBytes.has_value() ? std::to_string(hugeBytes.value())
                                             : std::string{"unknown"})
-                  << " of " << size << " allocated bytes on huge pages"
+                  << " of " << size
+                  << " allocated bytes on huge pages (upper bound)"
                   << std::endl;
     }
   }

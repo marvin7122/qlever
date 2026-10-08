@@ -101,8 +101,11 @@ TEST(BitVectorWithRank, BlockAndWordBoundaries) {
                                 449ULL, 896ULL, 897ULL, 2000ULL}) {
     std::vector<uint64_t> values;
     for (uint64_t value = 0; value < universeSize; ++value) {
-      if (value % 64 == 0 || value % 64 == 63 || value % 448 == 447 ||
-          value + 1 == universeSize) {
+      // First and last bit of every word, the two values around the middle
+      // anchor of every block (bits 223 and 224, a genuinely block-level
+      // boundary), and the last value of the universe.
+      if (value % 64 == 0 || value % 64 == 63 || value % 448 == 223 ||
+          value % 448 == 224 || value + 1 == universeSize) {
         values.push_back(value);
       }
     }
@@ -180,8 +183,9 @@ TEST(HugePages, ModeAndAnonHugePageBytes) {
   EXPECT_TRUE(mode == "always" || mode == "madvise" || mode == "never" ||
               mode == "unknown")
       << mode;
-  // On Linux, `/proc/self/smaps` is readable; the result is at most the size
-  // of the mappings that overlap the range.
+#if defined(__linux__)
+  // On Linux, `/proc/self/smaps` is readable; the result is at most the
+  // intersection of the range with the overlapping mappings.
   std::vector<uint64_t> values{0, 1'000'000};
   BitVectorWithRank bits{values, 4'000'000, true};
   auto hugeBytes =
@@ -191,4 +195,9 @@ TEST(HugePages, ModeAndAnonHugePageBytes) {
     EXPECT_EQ(hugeBytes.value(), 0);
   }
   EXPECT_EQ(anonHugePageBytes(nullptr, 0), 0);
+#else
+  // Without `/proc/self/smaps` (e.g. on macOS) there is no huge-page
+  // information, so the result is always `std::nullopt`.
+  EXPECT_EQ(anonHugePageBytes(nullptr, 0), std::nullopt);
+#endif
 }

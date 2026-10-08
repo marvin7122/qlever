@@ -24,7 +24,9 @@
 
 // A vocabulary that stores all words in memory. The vocabulary supports
 // "holes", meaning that the indices of the contained words don't have to be
-// contiguous (but ascending). All accesses are implemented using binary search.
+// contiguous (but ascending). All accesses are implemented using binary
+// search, except `positionOfIndex` after `buildIndexRankDirectory`, which
+// then answers in constant time via a bit vector with rank counters.
 class VocabularyInMemoryBinSearch
     : public VocabularyBinarySearchMixin<VocabularyInMemoryBinSearch> {
  public:

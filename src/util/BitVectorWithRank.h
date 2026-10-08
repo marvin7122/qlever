@@ -147,7 +147,10 @@ class BitVectorWithRank {
   // ascending and smaller than `universeSize`.
   BitVectorWithRank(ql::span<const uint64_t> sortedValues,
                     uint64_t universeSize, bool useHugePages = false)
-      : numBlocks_{(universeSize + bitsPerBlock - 1) / bitsPerBlock},
+      // Quotient plus remainder check (no addition, which would overflow for
+      // universes near `UINT64_MAX` and allocate too few blocks).
+      : numBlocks_{universeSize / bitsPerBlock +
+                   (universeSize % bitsPerBlock != 0)},
         universeSize_{universeSize} {
     allocateBlocks(useHugePages);
     std::optional<uint64_t> previous;

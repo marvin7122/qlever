@@ -20,6 +20,9 @@ VocabularyInMemoryBinSearch::IndicesView VocabularyInMemoryBinSearch::indices()
 
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::open(const string& fileName) {
+  // A directory built on previous (e.g. empty) contents must not survive
+  // into the newly loaded vocabulary, where every lookup would then miss.
+  indexRankDirectory_.reset();
   AD_CORRECTNESS_CHECK(
       words_.size() == 0 && indices().empty(),
       "Calling open on the same vocabulary twice is probably a bug");
@@ -51,6 +54,11 @@ std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::buildIndexRankDirectory(bool useHugePages) {
   indexRankDirectory_.reset();
+  // If the largest contained index is `UINT64_MAX`, `endIndex()` wraps to
+  // zero; fall back to binary search instead of building a bogus directory.
+  if (!indices().empty() && endIndex() == 0) {
+    return;
+  }
   indexRankDirectory_.emplace(indices(), endIndex(), useHugePages);
 }
 

@@ -26,10 +26,11 @@ std::string transparentHugePagesMode();
 // for "always [madvise] never". Returns "unknown" if no mode is selected.
 std::string selectedTransparentHugePagesMode(std::string_view content);
 
-// The number of bytes backed by anonymous transparent huge pages
-// (`AnonHugePages` in `/proc/self/smaps`) in the memory mappings of this
-// process that overlap `[begin, begin + size)`. Returns `std::nullopt` if
-// `/proc/self/smaps` cannot be read.
+// An upper bound on the number of bytes backed by anonymous transparent
+// huge pages (`AnonHugePages` in `/proc/self/smaps`) inside `[begin, begin +
+// size)`: each overlapping mapping contributes at most its intersection
+// with the range. Returns `std::nullopt` if `/proc/self/smaps` cannot be
+// read.
 std::optional<size_t> anonHugePageBytes(const void* begin, size_t size);
 
 }  // namespace ad_utility
