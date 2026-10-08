@@ -7,6 +7,13 @@ on:
   # for review. No trigger on push/open: bot fix commits must not invalidate
   # a running 7h review. Re-adding the label (off/on) forces a fresh run on
   # a moved head. Manual override stays: `/open-code-review-fanout`.
+  # Serialization 2026-10-08: two overlapping fan-outs blew the DeepSeek
+  # concurrency limit (429 at 23 vs 20, then 402 empty-balance failures on
+  # all 16 legs of PR 280). Real reviews therefore share ONE global
+  # concurrency group with queuing (cancel-in-progress: false): a second
+  # fan-out waits for the running one instead of overlapping it. The 16 legs
+  # of a single run still start together, since they enter the group at the
+  # same time.
   pull_request_target:
     types: [ready_for_review, reopened, labeled]
   issue_comment:
@@ -20,10 +27,15 @@ permissions:
 
 concurrency:
   # Comments that are not a review command (e.g. the bot's own result or error
-  # comments) get a group of their own, so they cannot cancel a running review.
+  # comments) get a group of their own, so they never interact with a review.
   # Same for labels other than ocr-ready: a routine label change must not
-  # cancel a running fan-out via cancel-in-progress (Qodo/Greptile/Cubic on
-  # PR 259).
+  # disturb a running or queued fan-out (Qodo/Greptile/Cubic on PR 259).
+  # Real reviews share ONE global group and queue (cancel-in-progress false):
+  # overlapping fan-outs exceed the DeepSeek concurrency limit, so a second
+  # review waits for the first instead of running beside it. Queued runs
+  # whose PR head moved while waiting exit early in the freshness step
+  # below; to stop an already-running stale review, cancel it with
+  # `gh run cancel` and re-add the ocr-ready label off/on.
   group: >-
     ${{ github.event_name == 'issue_comment' &&
     !startsWith(github.event.comment.body, '/open-code-review-fanout') &&
@@ -33,9 +45,8 @@ concurrency:
     github.event.action == 'labeled' &&
     github.event.label.name != 'ocr-ready' &&
     format('ocr-fanout-project-rules-ignored-{0}', github.run_id) ||
-    format('ocr-fanout-project-rules-{0}', github.event.pull_request.number ||
-    github.event.issue.number || github.run_id) }}
-  cancel-in-progress: true
+    'ocr-fanout-project-rules-global' }}
+  cancel-in-progress: false
 
 jobs:
   review-fanout-project-rules:
@@ -101,6 +112,22 @@ jobs:
           echo "NPM_CONFIG_PREFIX=${prefix}" >> "$GITHUB_ENV"
           echo "OCR_NPM_PREFIX=${prefix}" >> "$GITHUB_ENV"
           echo "${prefix}/bin" >> "$GITHUB_PATH"
+      # Queued runs (see the global concurrency group above) may start after
+      # the PR head moved. Reviewing a stale head wastes billed inference, so
+      # compare the event head against the live head and skip the review step
+      # below on mismatch. Comment-triggered runs resolve the head live in
+      # `pr-context`, so only label/review-state events need this check.
+      - name: Check the PR head is still fresh
+        id: freshness
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          live="$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq .head.sha)"
+          if [ "$live" != "${{ github.event.pull_request.head.sha }}" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "PR head moved (${{ github.event.pull_request.head.sha }} -> ${live}); skipping this queued stale review."
+          fi
       # Hosted runners bring no Go toolchain: install the action's go.mod
       # minimum (1.25.5 at pin 34ed9d2; bump with the action pin).
       - name: Set up Go
@@ -137,6 +164,9 @@ jobs:
           repositories: qlever
       - name: Start the check run on the PR commit
         id: check-start
+        # A stale queued run (freshness step) must not leave a dangling
+        # in-progress check on the old head: it posts nothing at all.
+        if: steps.freshness.outputs.stale != 'true'
         continue-on-error: true
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
@@ -185,6 +215,9 @@ jobs:
             '${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json'
       - name: Review pull request with fan-out project rules
         id: ocr
+        # Skip queued runs whose head moved while waiting (see the freshness
+        # step); for comment-triggered runs the step never marks stale.
+        if: steps.freshness.outputs.stale != 'true'
         uses: marvin7122/open-code-review@3461ba0df7fba00fbb44376803e9a1d86d56026d # fix/fanout-custom-rules: fan-out honors --rule chunks
         with:
           # Deliberately the job-scoped GITHUB_TOKEN, not an App installation
@@ -283,7 +316,9 @@ jobs:
           owner: marvin7122
           repositories: qlever
       - name: Finish the check run on the PR commit
-        if: always()
+        # No misleading "0 findings" success status on a stale head: a queued
+        # run skipped by the freshness step posts nothing at all.
+        if: ${{ always() && steps.freshness.outputs.stale != 'true' }}
         continue-on-error: true
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
