@@ -67,7 +67,9 @@ class BitVectorWithRank {
   // when `to - from <= middleBit`.
   static uint64_t popcountRange(const std::array<uint64_t, wordsPerBlock>& bits,
                                 uint64_t from, uint64_t to) {
-    AD_CORRECTNESS_CHECK(from <= to && to <= bitsPerBlock);
+    // Per-query hot path (up to twice per rank lookup): an expensive check —
+    // active in debug/test builds, compiled out with NDEBUG.
+    AD_EXPENSIVE_CHECK(from <= to && to <= bitsPerBlock);
     if (from == to) {
       return 0;
     }

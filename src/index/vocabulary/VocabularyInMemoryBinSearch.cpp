@@ -65,7 +65,11 @@ void VocabularyInMemoryBinSearch::buildIndexRankDirectory(bool useHugePages) {
 // _____________________________________________________________________________
 uint64_t VocabularyInMemoryBinSearch::indexAtPosition(size_t position) const {
   auto indices = this->indices();
-  AD_CORRECTNESS_CHECK(position < indices.size());
+  // Hot path (once per looked-up position): a bounds check here costs
+  // measurable export CPU (profiled ~8 % across the vocab checks), so this is
+  // an expensive check — still active in debug/test builds, compiled out with
+  // NDEBUG.
+  AD_EXPENSIVE_CHECK(position < indices.size());
   return indices[position];
 }
 
@@ -78,7 +82,9 @@ uint64_t VocabularyInMemoryBinSearch::endIndex() const {
 // _____________________________________________________________________________
 std::string_view VocabularyInMemoryBinSearch::wordAtPosition(
     size_t position) const {
-  AD_CORRECTNESS_CHECK(position < words_.size());
+  // Hot path (once per looked-up word, plus once per prefetch): see
+  // `indexAtPosition` above for why this is an expensive check.
+  AD_EXPENSIVE_CHECK(position < words_.size());
   return words_[position];
 }
 
