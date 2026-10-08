@@ -72,6 +72,9 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(exportV2MonomorphicRows_);
+  add(selectExportTermCacheCapacity_);
+  add(selectExportTermCacheWindow_);
+  add(selectExportTermCacheMinHitRate_);
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
   add(vocabularyIouringPageCacheFastPath_);
@@ -101,6 +104,13 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  selectExportTermCacheMinHitRate_.setParameterConstraint(
+      [](double value, std::string_view parameterName) {
+        if (!(value >= 0.0 && value <= 1.0)) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName, " must be in [0, 1], was ", value)};
+        }
+      });
 }
 
 // _____________________________________________________________________________

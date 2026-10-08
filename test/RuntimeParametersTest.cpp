@@ -10,6 +10,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include "global/RuntimeParameters.h"
 #include "util/GTestHelpers.h"
 
@@ -64,6 +66,35 @@ TEST(RuntimeParameters, lazyIndexScanNumThreadsIsStrictlyPositive) {
       std::runtime_error);
   EXPECT_NO_THROW(params.setFromAssignment("lazy-index-scan-num-threads=1"));
   EXPECT_EQ(params.lazyIndexScanNumThreads_.get(), 1u);
+}
+
+TEST(RuntimeParameters, selectExportTermCacheMinHitRateIsInUnitInterval) {
+  RuntimeParameters params;
+  auto& parameter = params.selectExportTermCacheMinHitRate_;
+  EXPECT_DOUBLE_EQ(parameter.get(), 0.25);
+
+  for (double value : {0.0, 0.5, 1.0}) {
+    EXPECT_NO_THROW(parameter.set(value));
+    EXPECT_DOUBLE_EQ(parameter.get(), value);
+    EXPECT_NO_THROW(
+        params.setFromString(parameter.name(), std::to_string(value)));
+    EXPECT_DOUBLE_EQ(parameter.get(), value);
+  }
+
+  for (double value : {-0.1, 1.1, std::numeric_limits<double>::infinity(),
+                       -std::numeric_limits<double>::infinity(),
+                       std::numeric_limits<double>::quiet_NaN()}) {
+    AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+        parameter.set(value),
+        AllOf(HasSubstr(parameter.name()), HasSubstr("[0, 1]")),
+        std::runtime_error);
+    EXPECT_DOUBLE_EQ(parameter.get(), 1.0);
+    AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+        params.setFromString(parameter.name(), std::to_string(value)),
+        AllOf(HasSubstr(parameter.name()), HasSubstr("[0, 1]")),
+        std::runtime_error);
+    EXPECT_DOUBLE_EQ(parameter.get(), 1.0);
+  }
 }
 
 // Test that `getKeys` and `toMap` (the building blocks of
