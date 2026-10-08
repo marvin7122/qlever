@@ -187,6 +187,33 @@ void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
       manager.addBatch(fd, selectedNumBytes, selectedOffsets, selectedBuffers));
 }
 
+// The page this thread keeps for one vocabulary file. A thread that calls
+// `lookupBatch` on two vocabularies has one entry per vocabulary.
+VocabularyOnDisk::OwnedPage& VocabularyOnDisk::threadOwnedPage(
+    bool words) const {
+  struct Entry {
+    const VocabularyOnDisk* vocab = nullptr;
+    uint64_t epoch = 0;
+    OwnedPage words_;
+    OwnedPage offsets_;
+  };
+  thread_local std::vector<Entry> entries;
+  for (Entry& entry : entries) {
+    if (entry.vocab != this) {
+      continue;
+    }
+    if (entry.epoch != slotEpoch_) {
+      entry.words_ = OwnedPage{};
+      entry.offsets_ = OwnedPage{};
+      entry.epoch = slotEpoch_;
+    }
+    return words ? entry.words_ : entry.offsets_;
+  }
+  entries.push_back(Entry{this, slotEpoch_, {}, {}});
+  Entry& created = entries.back();
+  return words ? created.words_ : created.offsets_;
+}
+
 // True when `[offset, offset + length)` lies inside one 4096-byte page.
 // `pageStart` receives that page's file offset.
 bool VocabularyOnDisk::containedInOneOwnedPage(uint64_t offset, size_t length,
@@ -329,11 +356,8 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
   // copied, or a page that holds two or more of these pairs, is copied here.
   std::vector<size_t> positions(numIndices);
   std::iota(positions.begin(), positions.end(), size_t{0});
-  if (ownedPages_) {
-    std::lock_guard lock{ownedPages_->mu_};
-    positions = copyRangesFromOwnedPage(
-        ownedPages_->offsets_, offsetsFile_.fd(), fileOffsets, sizes, targets);
-  }
+  positions = copyRangesFromOwnedPage(threadOwnedPage(false), offsetsFile_.fd(),
+                                      fileOffsets, sizes, targets);
   if (positions.empty()) {
     return offsetPairs;
   }
@@ -424,11 +448,8 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   if (pageCacheFastPath) {
     std::vector<size_t> positions(numIndices);
     std::iota(positions.begin(), positions.end(), size_t{0});
-    if (ownedPages_) {
-      std::lock_guard lock{ownedPages_->mu_};
-      positions = copyRangesFromOwnedPage(ownedPages_->words_, file_.fd(),
-                                          fileOffsets, sizes, targetSpan);
-    }
+    positions = copyRangesFromOwnedPage(threadOwnedPage(true), file_.fd(),
+                                        fileOffsets, sizes, targetSpan);
     std::vector<size_t> subsetSizes;
     std::vector<uint64_t> subsetOffsets;
     std::vector<char*> subsetTargets;
@@ -529,13 +550,9 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 void VocabularyOnDisk::open(const std::string& filename) {
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
-  // The stored pages belong to the previous files. Drop them before any read
-  // uses the new descriptors.
-  if (ownedPages_) {
-    std::lock_guard lock{ownedPages_->mu_};
-    ownedPages_->words_ = OwnedPage{};
-    ownedPages_->offsets_ = OwnedPage{};
-  }
+  // The thread-local pages belong to the previous descriptors. A new epoch
+  // makes every thread drop them on its next lookup.
+  slotEpoch_ = freshSlotEpoch();
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.

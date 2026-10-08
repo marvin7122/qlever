@@ -12,8 +12,8 @@
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
 #include <array>
+#include <atomic>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -76,16 +76,19 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
       return within <= validBytes_ && length <= validBytes_ - within;
     }
   };
-  // `words_` is the page kept for the vocabulary file, and `offsets_` is the
-  // page kept for the `.offsets` file. `lookupBatch` may run on more than one
-  // thread, so `mu_` guards both pages.
-  struct OwnedPages {
-    std::mutex mu_;
-    OwnedPage words_;
-    OwnedPage offsets_;
-  };
-  mutable std::unique_ptr<OwnedPages> ownedPages_{
-      std::make_unique<OwnedPages>()};
+  // Identity of the files `open` last installed. A thread-local page stores
+  // the value it was copied under. `open` replaces this value, so a page
+  // copied from the previous descriptor no longer matches.
+  static uint64_t freshSlotEpoch() {
+    static std::atomic<uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+  }
+  uint64_t slotEpoch_{freshSlotEpoch()};
+
+  // The page this thread keeps for the words file (`words == true`) or the
+  // `.offsets` file. The entry is keyed by this object. A different epoch
+  // drops the stored bytes before they are used.
+  OwnedPage& threadOwnedPage(bool words) const;
 
   // True when `[offset, offset + length)` lies inside one 4096-byte page.
   // `pageStart` receives that page's file offset.
