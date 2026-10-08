@@ -261,8 +261,18 @@ void IoUringPolicy::addBatch(int fd,
             std::min<size_t>(reapWave_, numOutstandingReadRequests_)));
       }
       // A failure in this batch stops further queueing. Errors of other
-      // batches stay stored until their own `wait()`.
-      throwIfBatchFailed(handle);
+      // batches stay stored until their own `wait()`. This batch's buffers
+      // die when the exception leaves the caller, and the vocabulary pool
+      // keeps the manager, so finish this batch's reads before throwing.
+      if (batchErrors_.find(handle) != batchErrors_.end()) {
+        for (auto it = numOutstandingReadRequestsPerBatch_.find(handle);
+             it != numOutstandingReadRequestsPerBatch_.end();
+             it = numOutstandingReadRequestsPerBatch_.find(handle)) {
+          drainAtLeast(
+              static_cast<unsigned>(std::min<size_t>(reapWave_, it->second)));
+        }
+        throwIfBatchFailed(handle);
+      }
     }
 
     // Claim the next free SQE. The check above guarantees a slot is available,
@@ -337,15 +347,15 @@ void IoUringPolicy::submitOrThrow() {
 //______________________________________________________________________________
 void IoUringPolicy::abandonFailedSubmit() {
   // `io_uring_submit` already published these SQEs, then `io_uring_enter`
-  // failed. The kernel has not consumed them. Walk from the kernel head to
-  // the local tail and forget each read. Then rewind the tail.
+  // failed. The kernel has not consumed them. liburing 2.9 sets
+  // `IORING_SETUP_NO_SQARRAY`, so `sq.array` is null. The SQE is at
+  // `sq.sqes[idx & mask]`, the same slot `io_uring_get_sqe` fills.
   io_uring_sq& sq = ring_.sq;
   const unsigned khead = *sq.khead;
   const unsigned tail = sq.sqe_tail;
   const unsigned mask = sq.ring_mask;
   for (unsigned idx = khead; idx != tail; ++idx) {
-    const unsigned sqeIndex = sq.array[idx & mask];
-    const uint64_t requestId = sq.sqes[sqeIndex].user_data;
+    const uint64_t requestId = sq.sqes[idx & mask].user_data;
     auto reqIt = outstandingReadsByRequestId_.find(requestId);
     AD_CORRECTNESS_CHECK(reqIt != outstandingReadsByRequestId_.end());
     const BatchHandle handle = reqIt->second.batchHandle;
@@ -366,7 +376,11 @@ void IoUringPolicy::abandonFailedSubmit() {
   // Their buffers are still alive here. Do not submit the SQEs just dropped.
   while (numOutstandingReadRequests_ > io_uring_sq_ready(&ring_)) {
     io_uring_cqe* cqe = nullptr;
-    if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+    int ret = 0;
+    do {
+      ret = io_uring_wait_cqe(&ring_, &cqe);
+    } while (ret == -EINTR);
+    if (ret < 0) {
       break;
     }
     processCqe(cqe->res, io_uring_cqe_get_data64(cqe));

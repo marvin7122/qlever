@@ -18,7 +18,6 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
-#include <limits>
 #include <memory>
 #include <numeric>
 #include <sstream>
@@ -603,6 +602,8 @@ TEST(IoUringPolicyTest, ErrorDuringRefillDoesNotCountUnqueuedReads) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       policy.addBatch(-1, numBytes, offsets, buffers, handle),
       HasSubstr("I/O error in IoUringPolicy"));
+  // The throw returns only after this batch has no kernel-owned read left.
+  EXPECT_EQ(policy.numOutstandingReadRequestsPerBatch_.count(handle), 0u);
   EXPECT_NO_THROW(policy.wait(handle));
 }
 

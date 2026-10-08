@@ -240,6 +240,8 @@ class IoUringPolicy {
   // later submit cannot write into buffers the caller then frees.
   void abandonFailedSubmit();
 
+  FRIEND_TEST(IoUringPolicyTest, ErrorDuringRefillDoesNotCountUnqueuedReads);
+
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;
