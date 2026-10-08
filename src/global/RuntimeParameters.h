@@ -266,6 +266,13 @@ struct RuntimeParameters {
   SizeT vocabularyInternalRankPrefetchDistance_{
       8, "vocabulary-internal-rank-prefetch-distance"};
 
+  // If set to true, batched vocabulary lookups first sort the batch indices
+  // and look each distinct index up only once, scattering the word to all of
+  // its positions. Off by default: sorting costs O(n log n) per batch, so it
+  // only pays when batches contain many repeated indices.
+  Bool vocabularyDeduplicateBatchLookup_{
+      false, "vocabulary-deduplicate-batch-lookup"};
+
   // If set to true, the rank directory above is allocated 2 MiB-aligned and
   // marked for transparent huge pages (`madvise(MADV_HUGEPAGE)`), so that a
   // lookup costs one cache miss instead of one cache miss plus one TLB miss.

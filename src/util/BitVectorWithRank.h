@@ -32,9 +32,12 @@ namespace ad_utility {
 // constant time (one cache line per query).
 //
 // Layout: one bit per integer, split into blocks of `bitsPerBlock` (448) bits.
-// Each block occupies exactly one 64-byte cache line: the number of set bits in
-// all previous blocks (8 bytes), followed by the block's 7 bit words. A query
-// therefore reads one cache line and adds at most 7 popcounts. The memory is
+// Each block occupies exactly one 64-byte cache line: the number of set bits
+// before the middle of the block (8 bytes), followed by the block's 7 bit
+// words. Anchoring the counter in the middle (rather than at the start, as in
+// SDSL or Rank9) halves the worst case: a query reads one cache line and adds
+// at most 4 popcounts, counting down from the anchor in the first half of the
+// block and up from it in the second half. The memory is
 // `64 * ceil(universeSize / 448)` bytes, that is 8/7 bits per integer of the
 // universe, independent of how many integers are contained.
 //
@@ -47,13 +50,47 @@ class BitVectorWithRank {
   static constexpr size_t wordsPerBlock = 7;
   static constexpr uint64_t bitsPerBlock = wordsPerBlock * 64;
   static constexpr size_t hugePageSize = size_t{1} << 21;
+  // The bit offset of the anchor inside each block: queries before it count
+  // down from the anchor, queries at or after it count up.
+  static constexpr uint64_t middleBit = bitsPerBlock / 2;
 
  private:
   struct alignas(64) Block {
-    uint64_t rankBefore_ = 0;
+    // The number of contained values before `middleBit` of this block (in all
+    // previous blocks plus the first half of this block).
+    uint64_t rankAtMiddle_ = 0;
     std::array<uint64_t, wordsPerBlock> bits_{};
   };
   static_assert(sizeof(Block) == 64);
+
+  // The number of set bits in `bits[from, to)`. At most 4 words are touched
+  // when `to - from <= middleBit`.
+  static uint64_t popcountRange(const std::array<uint64_t, wordsPerBlock>& bits,
+                                uint64_t from, uint64_t to) {
+    AD_CORRECTNESS_CHECK(from <= to && to <= bitsPerBlock);
+    if (from == to) {
+      return 0;
+    }
+    const size_t firstWord = from / 64;
+    const size_t lastWord = (to - 1) / 64;
+    // Bits `[lo, hi)` of a single word (`hi == 64` means the whole top).
+    const auto wordMask = [](uint64_t lo, uint64_t hi) {
+      return (hi == 64 ? ~uint64_t{0} : ((uint64_t{1} << hi) - 1)) &
+             (~uint64_t{0} << lo);
+    };
+    const uint64_t lastHi = to - lastWord * 64;
+    uint64_t count = static_cast<uint64_t>(absl::popcount(
+        bits[firstWord] &
+        wordMask(from - firstWord * 64, firstWord == lastWord ? lastHi : 64)));
+    for (size_t i = firstWord + 1; i < lastWord; ++i) {
+      count += static_cast<uint64_t>(absl::popcount(bits[i]));
+    }
+    if (lastWord > firstWord) {
+      count += static_cast<uint64_t>(
+          absl::popcount(bits[lastWord] & wordMask(0, lastHi)));
+    }
+    return count;
+  }
 
   struct FreeDeleter {
     void operator()(Block* blocks) const { std::free(blocks); }
@@ -125,7 +162,7 @@ class BitVectorWithRank {
     uint64_t rank = 0;
     for (size_t i = 0; i < numBlocks_; ++i) {
       Block& block = blocks_[i];
-      block.rankBefore_ = rank;
+      block.rankAtMiddle_ = rank + popcountRange(block.bits_, 0, middleBit);
       for (uint64_t word : block.bits_) {
         rank += static_cast<uint64_t>(absl::popcount(word));
       }
@@ -143,18 +180,15 @@ class BitVectorWithRank {
     }
     const Block& block = blocks_[value / bitsPerBlock];
     const uint64_t offset = value % bitsPerBlock;
-    const size_t wordIdx = offset / 64;
     const uint64_t bit = uint64_t{1} << (offset % 64);
-    const uint64_t word = block.bits_[wordIdx];
-    if ((word & bit) == 0) {
+    if ((block.bits_[offset / 64] & bit) == 0) {
       return std::nullopt;
     }
-    uint64_t rank = block.rankBefore_ +
-                    static_cast<uint64_t>(absl::popcount(word & (bit - 1)));
-    for (size_t i = 0; i < wordIdx; ++i) {
-      rank += static_cast<uint64_t>(absl::popcount(block.bits_[i]));
+    // Count down from the anchor in the first half, up in the second half.
+    if (offset < middleBit) {
+      return block.rankAtMiddle_ - popcountRange(block.bits_, offset, middleBit);
     }
-    return rank;
+    return block.rankAtMiddle_ + popcountRange(block.bits_, middleBit, offset);
   }
 
   // Hint the CPU to load the cache line that `rankIfContained(value)` reads,
