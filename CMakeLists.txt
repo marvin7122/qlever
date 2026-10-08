@@ -194,6 +194,19 @@ else ()
     MESSAGE(FATAL_ERROR "QLever currently only supports the G++, LLVM-Clang++ or AppleClang compilers. Found ${CMAKE_CXX_COMPILER_ID}")
 endif ()
 
+# `ad_utility::BitVectorWithRank` popcounts up to 4 words per lookup. Without a
+# hardware popcount instruction this compiles to a `__popcountdi2` library call
+# (measured at 5.4 % of the label-export path), so enable the instruction where
+# the compiler supports it. Gated on x86-64, where every CPU since 2008 has it;
+# other architectures already get a fast builtin popcount without a flag.
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag(-mpopcnt QLEVER_COMPILER_SUPPORTS_POPCNT)
+if (QLEVER_COMPILER_SUPPORTS_POPCNT AND
+    CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-mpopcnt>)
+    message(STATUS "Hardware popcount enabled (-mpopcnt)")
+endif ()
+
 # Additionally fall back to `range-v3` whenever the C++ standard library is
 # libstdc++ older than version 12, independent of the compiler. Such versions
 # (e.g. the libstdc++ of GCC 8-11) do not yet provide `std::ranges::owning_view`,
