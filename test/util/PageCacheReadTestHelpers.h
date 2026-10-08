@@ -10,6 +10,9 @@
 #ifndef QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
 #define QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
 
+#include <sys/uio.h>
+#include <unistd.h>
+
 #include <cerrno>
 #include <cstdint>
 #include <utility>
@@ -48,6 +51,13 @@ inline int64_t nothingCached(int, const ::iovec*, int, int64_t) {
 inline int64_t notSupported(int, const ::iovec*, int, int64_t) {
   errno = EOPNOTSUPP;
   return -1;
+}
+
+// A page-cache read that serves every read deterministically with a blocking
+// `preadv` (no `RWF_NOWAIT`), independent of what the kernel has cached.
+inline int64_t everythingCached(int fd, const ::iovec* iov, int iovcnt,
+                                int64_t offset) {
+  return ::preadv(fd, iov, iovcnt, static_cast<off_t>(offset));
 }
 
 }  // namespace pageCacheReadTestHelpers

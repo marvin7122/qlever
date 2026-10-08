@@ -19,4 +19,12 @@ qlever_target_link_libraries(antlrErrorHandling stringUtils antlr4_umbrella)
 add_library(qlever_util ParseableDuration.cpp UnitOfMeasurement.cpp Conversions.cpp Date.cpp DateYearDuration.cpp Duration.cpp CancellationHandle.cpp LazyJsonParser.cpp BlankNodeManager.cpp IoUringManager.cpp FilesystemHelpers.cpp QueryEventLog.cpp ResourceMonitor.cpp)
 qlever_target_link_libraries(qlever_util antlrErrorHandling s2 pb_util pb_util_geo pb_util_json rdfTypes antlr4_umbrella)
 
+# `preadv2` and `RWF_NOWAIT` (used by the page-cache fast path in
+# `IoUringManager.cpp`) are only declared when `_GNU_SOURCE` is defined, which
+# GCC predefines but Clang does not. Without this, the fast path is silently
+# compiled out of Clang builds even on Linux.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(qlever_util PRIVATE _GNU_SOURCE)
+endif()
+
 add_subdirectory(metrics)

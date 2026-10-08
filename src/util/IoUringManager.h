@@ -249,7 +249,8 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 // `EAGAIN` (not cached), a short read (end of file, or only a prefix cached)
 // or any other error leaves the read (and, for a failed call, the rest of its
 // run) to the caller. If the kernel or file system rejects `RWF_NOWAIT`
-// (`EOPNOTSUPP`), the fast path is disabled for the rest of the process (see
+// (`EOPNOTSUPP`, `ENOSYS`, or `EINVAL`, see `readPageCacheHits`), the fast
+// path is disabled for the rest of the process (see
 // `pageCacheFastPathIsSupported`), which is logged once. Where `preadv2` with
 // `RWF_NOWAIT` is not available (outside Linux, and in Emscripten builds),
 // the function exists but serves nothing: every read is returned, and
@@ -271,8 +272,8 @@ namespace detail {
 // The one `preadv2(fd, iov, iovcnt, offset, RWF_NOWAIT)` call per run that
 // `readPageCacheHits` makes, with the same contract (the number of bytes read,
 // or -1 with `errno` set). A replaceable function pointer so that unit tests
-// can inject `EAGAIN`, short reads and `EOPNOTSUPP`; production code never
-// changes it.
+// can inject `EAGAIN`, short reads, and the errnos that disable the fast path;
+// production code never changes it.
 using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
                                   int64_t offset);
 // The default: the system call. Where it is not available it fails with
@@ -281,8 +282,8 @@ int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset);
 // The function `readPageCacheHits` calls (initially `systemPageCacheRead`).
 PageCacheRead& pageCacheRead();
-// Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
-// tests that injected one.
+// Undo the effect of a fast-path-disabling errno on
+// `pageCacheFastPathIsSupported()`, for tests that injected one.
 void resetPageCacheFastPathSupport();
 }  // namespace detail
 

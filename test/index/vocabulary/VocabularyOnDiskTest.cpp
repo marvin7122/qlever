@@ -279,6 +279,9 @@ TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
 // result must be byte-identical to the result without the fast path, for runs
 // of consecutive indices as well as for reordered and duplicated indices.
 TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not available";
+  }
   auto vocab = createExampleVocabulary();
   std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
   const bool previous = getRuntimeParameter<
@@ -298,14 +301,16 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
       *vocab, withFastPath, indices);
 }
 
-// Every other page-cache read finds nothing cached.
+// Every other page-cache read finds nothing cached; the other reads are
+// served deterministically (a blocking read, independent of what the kernel
+// has cached), so both the fast path and the batch manager are exercised.
 int64_t everyOtherReadCached(int fd, const ::iovec* iov, int iovcnt,
                              int64_t offset) {
   static size_t numCalls = 0;
   if (numCalls++ % 2 == 1) {
     return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
   }
-  return ad_utility::detail::systemPageCacheRead(fd, iov, iovcnt, offset);
+  return pageCacheReadTestHelpers::everythingCached(fd, iov, iovcnt, offset);
 }
 
 // With the fast path on, reads that the page-cache read does not serve (none,

@@ -53,7 +53,8 @@ void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
 
 namespace {
 #ifdef QL_PAGE_CACHE_FAST_PATH
-// Cleared once a `preadv2(RWF_NOWAIT)` fails with `EOPNOTSUPP`.
+// Cleared once a `preadv2(RWF_NOWAIT)` fails with `EOPNOTSUPP`, `ENOSYS`, or
+// `EINVAL` (each of which means the call is not supported here, see below).
 std::atomic<bool> pageCacheFastPathSupported{true};
 #endif
 }  // namespace
@@ -133,7 +134,14 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
     const int64_t numBytesRead = detail::pageCacheRead()(
         fd, iovecs.data(), static_cast<int>(iovecs.size()),
         static_cast<int64_t>(offsets[runBegin]));
-    if (numBytesRead < 0 && errno == EOPNOTSUPP) {
+    // Besides `EOPNOTSUPP` (file system rejects `RWF_NOWAIT`), `ENOSYS` (no
+    // `preadv2` system call on old kernels) and `EINVAL` (unknown
+    // `RWF_NOWAIT` flag on kernels before Linux 4.14) also mean the fast path
+    // is not supported here. The runs passed to one call always satisfy
+    // `1 <= iovcnt <= IOV_MAX` with valid offsets, so `EINVAL` cannot come
+    // from invalid arguments.
+    if (numBytesRead < 0 &&
+        (errno == EOPNOTSUPP || errno == ENOSYS || errno == EINVAL)) {
       if (pageCacheFastPathSupported.exchange(false)) {
         AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported for the "
                        "vocabulary files; reading them without the "
