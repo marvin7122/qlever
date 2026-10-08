@@ -45,6 +45,10 @@ class ReadOnlyMmap {
   // Requested file offset, to detect re-mapping attempts for a different
   // region (only meaningful when mapped).
   off_t fileOffset_ = 0;
+  // Identity of the mapped file, to detect re-mapping attempts for a
+  // different file at the same region (only meaningful when mapped).
+  dev_t mappedDev_ = 0;
+  ino_t mappedIno_ = 0;
 
  public:
   ReadOnlyMmap() = default;
@@ -57,7 +61,9 @@ class ReadOnlyMmap {
         mappedBytes_{std::exchange(other.mappedBytes_, 0)},
         data_{std::exchange(other.data_, nullptr)},
         numBytes_{std::exchange(other.numBytes_, 0)},
-        fileOffset_{std::exchange(other.fileOffset_, 0)} {}
+        fileOffset_{std::exchange(other.fileOffset_, 0)},
+        mappedDev_{std::exchange(other.mappedDev_, 0)},
+        mappedIno_{std::exchange(other.mappedIno_, 0)} {}
   ReadOnlyMmap& operator=(ReadOnlyMmap&& other) noexcept {
     if (this != &other) {
       unmap();
@@ -66,6 +72,8 @@ class ReadOnlyMmap {
       data_ = std::exchange(other.data_, nullptr);
       numBytes_ = std::exchange(other.numBytes_, 0);
       fileOffset_ = std::exchange(other.fileOffset_, 0);
+      mappedDev_ = std::exchange(other.mappedDev_, 0);
+      mappedIno_ = std::exchange(other.mappedIno_, 0);
     }
     return *this;
   }
@@ -73,18 +81,23 @@ class ReadOnlyMmap {
   ~ReadOnlyMmap() { unmap(); }
 
   // Map `numBytes` starting at `fileOffset` of `fd` read-only. A no-op
-  // returning `true` when this instance is already mapped *for the same
-  // region*; requesting a different region on an already-mapped instance is
-  // rejected with `false` (unmap or construct a new instance instead), so a
-  // retry with a different region can never silently keep a stale view.
-  // Returns `false` (leaving this instance unmapped) when the mapping cannot
-  // be established. Callers must only map files that are immutable after
-  // their creation: the size check below and the mapping itself are
-  // best-effort, and truncating the file afterwards can still fault (`SIGBUS`)
-  // when the bytes past the new end are touched.
+  // returning `true` when this instance is already mapped *for the same file
+  // and region*; requesting a different file or region on an already-mapped
+  // instance is rejected with `false` (unmap or construct a new instance
+  // instead), so a retry with different parameters can never silently keep a
+  // stale view. Returns `false` (leaving this instance unmapped) when the
+  // mapping cannot be established. Callers must only map files that are
+  // immutable after their creation: the size check below and the mapping
+  // itself are best-effort, and truncating the file afterwards can still fault
+  // (`SIGBUS`) when the bytes past the new end are touched.
   [[nodiscard]] bool map(int fd, size_t numBytes, off_t fileOffset = 0) {
     if (isMapped()) {
-      return numBytes == numBytes_ && fileOffset == fileOffset_;
+      struct stat fileStat {};
+      if (::fstat(fd, &fileStat) != 0) {
+        return false;
+      }
+      return numBytes == numBytes_ && fileOffset == fileOffset_ &&
+             fileStat.st_dev == mappedDev_ && fileStat.st_ino == mappedIno_;
     }
     if (numBytes == 0 || fileOffset < 0) {
       return false;
@@ -126,6 +139,8 @@ class ReadOnlyMmap {
     data_ = static_cast<const char*>(base) + delta;
     numBytes_ = numBytes;
     fileOffset_ = fileOffset;
+    mappedDev_ = fileStat.st_dev;
+    mappedIno_ = fileStat.st_ino;
     return true;
   }
 
@@ -143,6 +158,8 @@ class ReadOnlyMmap {
       data_ = nullptr;
       numBytes_ = 0;
       fileOffset_ = 0;
+      mappedDev_ = 0;
+      mappedIno_ = 0;
     }
   }
 

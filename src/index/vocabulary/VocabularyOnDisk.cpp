@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 
 #include "global/Constants.h"
 #include "util/ExceptionHandling.h"
@@ -317,6 +318,20 @@ void VocabularyOnDisk::open(const std::string& filename) {
   uint64_t numOffsets =
       ad_utility::MmapVectorMetaData::readFromFile(offsetsFile_).size_;
   AD_CORRECTNESS_CHECK(numOffsets > 0);
+  // A corrupt trailer could claim more offsets than the file holds, or a
+  // count whose byte size overflows: `size_` would then permit indices past
+  // the mapped span. Reject such counts like other trailer corruption.
+  const auto offsetsFileSize = offsetsFile_.sizeOfFile();
+  if (offsetsFileSize < ad_utility::MmapVectorMetaData::numBytes) {
+    throw ad_utility::InvalidFileException{};
+  }
+  const auto availableOffsetCount = static_cast<uint64_t>(
+      (offsetsFileSize - ad_utility::MmapVectorMetaData::numBytes) /
+      sizeof(Offset));
+  if (numOffsets > availableOffsetCount ||
+      numOffsets > std::numeric_limits<size_t>::max() / sizeof(Offset)) {
+    throw ad_utility::InvalidFileException{};
+  }
   size_ = numOffsets - 1;
 
   // Memory-map the offsets region: the `numOffsets` leading 8-byte entries.

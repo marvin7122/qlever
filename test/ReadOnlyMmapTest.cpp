@@ -115,6 +115,23 @@ TEST(ReadOnlyMmap, RemapDifferentRegionIsRejected) {
   EXPECT_EQ(suffix, "456789");
 }
 
+TEST(ReadOnlyMmap, RemapDifferentFileIsRejected) {
+  const TempFileGuard tempFile = writeTempFile("0123456789abcdef");
+  const TempFileGuard otherFile = writeTempFile("xxxxxxxxxxxxxxxx");
+  File file{tempFile.name(), "r"};
+  File other{otherFile.name(), "r"};
+
+  ReadOnlyMmap mapping;
+  ASSERT_TRUE(mapping.map(file.fd(), 16));
+  // The same size and offset, but a different file: rejected, and the
+  // original mapping is left untouched (no silent stale view).
+  EXPECT_FALSE(mapping.map(other.fd(), 16));
+  EXPECT_TRUE(mapping.isMapped());
+  std::string_view mapped{static_cast<const char*>(mapping.data()),
+                          mapping.size()};
+  EXPECT_EQ(mapped, "0123456789abcdef");
+}
+
 TEST(ReadOnlyMmap, MapsSuffixAtOffset) {
   const std::string payload = "0123456789abcdef";
   const TempFileGuard tempFile = writeTempFile(payload);

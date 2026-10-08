@@ -47,6 +47,9 @@ class VocabularyCreator {
   ~VocabularyCreator() {
     if (!vocabFilename_.empty()) {
       ad_utility::deleteFile(vocabFilename_);
+      // The word writer stores the offsets next to the words file, so remove
+      // the companion as well and leave no fixture behind.
+      ad_utility::deleteFile(vocabFilename_ + ".offsets");
     }
   }
 
