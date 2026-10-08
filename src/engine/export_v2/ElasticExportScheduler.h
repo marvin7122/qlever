@@ -598,7 +598,8 @@ class ExportJobState final
       task = std::move(slots_[morselIndex].task_);
     }
 
-    if (const auto error = runClaimedTask(morselIndex, std::move(task), startWall)) {
+    if (const auto error =
+            runClaimedTask(morselIndex, std::move(task), startWall)) {
       // Rethrowing lets `runLeasedHelperTask` keep its never-escape guarantee
       // while `consumeNextResult` observes the stored failure instead of
       // waiting on a `Running` slot forever.

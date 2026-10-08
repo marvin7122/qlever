@@ -859,7 +859,8 @@ TEST(ElasticExportSchedulerTest, FairOrderedSessionShrinksAfterMorsel) {
 
   for (size_t i = 0; i < numMorsels; ++i) {
     std::string expected;
-    for (size_t pos = i * rowsPerMorsel; pos < (i + size_t{1}) * rowsPerMorsel; ++pos) {
+    for (size_t pos = i * rowsPerMorsel; pos < (i + size_t{1}) * rowsPerMorsel;
+         ++pos) {
       expected += std::to_string(pos) + ",";
     }
     EXPECT_EQ(session.consumeNextResult(), expected);
@@ -884,7 +885,7 @@ TEST(ElasticExportSchedulerTest, FairRepeatedRevocationLosesNoRow) {
   submitRanges(session, counts, numMorsels, rowsPerMorsel, 5us, true);
 
   std::atomic<bool> stop{false};
-  std::thread churn{[&] {
+  std::thread churn([&] {
     while (!stop.load()) {
       scheduler.onForegroundQueryStarted();
       std::this_thread::sleep_for(200us);
