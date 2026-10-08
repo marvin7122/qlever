@@ -251,12 +251,13 @@ struct RuntimeParameters {
 
   // Submission-queue depth of each vocabulary `io_uring` ring. liburing rounds
   // the value up to a power of two. Legal values are 1 to 32768. The default
-  // is 256.
+  // is 256. `VocabularyOnDisk::open` reads this once when it creates the rings.
   SizeT vocabularyIouringRingSize_{256, "vocabulary-iouring-ring-size"};
 
   // How many completions one vocabulary `io_uring` wait asks for before it
   // reaps every ready completion. Legal values are 1 to 32768. The default
   // is 8. A value of 1 waits for one completion at a time.
+  // `VocabularyOnDisk::open` reads this once when it creates the rings.
   SizeT vocabularyIouringReapWave_{8, "vocabulary-iouring-reap-wave"};
 
   // Configure the amount of threads to compress and write blocks per

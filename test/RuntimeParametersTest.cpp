@@ -1,6 +1,7 @@
 // Copyright 2026 The QLever Authors, in particular:
 //
 // 2026 Hannah Bast <bast@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -64,6 +65,29 @@ TEST(RuntimeParameters, lazyIndexScanNumThreadsIsStrictlyPositive) {
       std::runtime_error);
   EXPECT_NO_THROW(params.setFromAssignment("lazy-index-scan-num-threads=1"));
   EXPECT_EQ(params.lazyIndexScanNumThreads_.get(), 1u);
+}
+
+// The vocabulary ring size and reap wave accept 1 through 32768.
+TEST(RuntimeParameters, vocabularyIoUringRingParametersStayInRange) {
+  RuntimeParameters params;
+  EXPECT_NO_THROW(params.setFromAssignment("vocabulary-iouring-ring-size=256"));
+  EXPECT_EQ(params.vocabularyIouringRingSize_.get(), 256u);
+  EXPECT_NO_THROW(params.setFromAssignment("vocabulary-iouring-reap-wave=8"));
+  EXPECT_EQ(params.vocabularyIouringReapWave_.get(), 8u);
+  EXPECT_NO_THROW(params.setFromAssignment("vocabulary-iouring-ring-size=1"));
+  EXPECT_NO_THROW(
+      params.setFromAssignment("vocabulary-iouring-ring-size=32768"));
+  EXPECT_NO_THROW(params.setFromAssignment("vocabulary-iouring-reap-wave=1"));
+  EXPECT_NO_THROW(
+      params.setFromAssignment("vocabulary-iouring-reap-wave=32768"));
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      params.setFromAssignment("vocabulary-iouring-ring-size=0"),
+      AllOf(HasSubstr("vocabulary-iouring-ring-size"), HasSubstr("[1, 32768]")),
+      std::runtime_error);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      params.setFromAssignment("vocabulary-iouring-reap-wave=32769"),
+      AllOf(HasSubstr("vocabulary-iouring-reap-wave"), HasSubstr("[1, 32768]")),
+      std::runtime_error);
 }
 
 // Test that `getKeys` and `toMap` (the building blocks of
