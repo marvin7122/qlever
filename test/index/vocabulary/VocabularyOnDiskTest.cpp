@@ -46,6 +46,8 @@ class VocabularyCreator {
 
   ~VocabularyCreator() {
     if (!vocabFilename_.empty()) {
+      // Deletes the words file and the `.offsets` companion, so no test
+      // leaves its fixture behind.
       deleteVocabularyFiles<VocabularyOnDisk>(vocabFilename_);
     }
   }
@@ -257,6 +259,32 @@ TEST(VocabularyOnDisk, ScanAllSingleWordExceedsLimit) {
   // must still be scanned; it is returned in a batch of its own even though it
   // exceeds the limit, and the surrounding small words are unaffected.
   expectScanAllYields({"before", std::string(11'000'000, 'x'), "after"});
+}
+
+// Opening a vocabulary memory-maps its `.offsets` file, so offset lookups
+// are served as pointer dereferences instead of explicit I/O.
+TEST(VocabularyOnDisk, OffsetsAreMemoryMappedAfterOpen) {
+  auto vocab = createExampleVocabulary();
+  EXPECT_TRUE(vocab->offsetsAreMemoryMapped());
+}
+
+// When the offsets mapping is unavailable (failed `map`), every lookup path
+// must transparently fall back to positioned I/O and yield the same words.
+TEST(VocabularyOnDisk, LookupBatchWorksWhenOffsetsNotMemoryMapped) {
+  auto vocab = createExampleVocabulary();
+  ASSERT_TRUE(vocab->offsetsAreMemoryMapped());
+  // Release the mapping to simulate a failed `map` in `open`.
+  vocab->offsetsMapping_.unmap();
+  ASSERT_FALSE(vocab->offsetsAreMemoryMapped());
+  EXPECT_EQ((*vocab)[0], "alpha");
+  EXPECT_EQ((*vocab)[1], "delta");
+  EXPECT_EQ((*vocab)[2], "beta");
+  EXPECT_EQ((*vocab)[3], "42");
+  EXPECT_EQ((*vocab)[4], "gamma");
+  std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
+  auto result = vocab->lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
+                                                                indices);
 }
 
 // A `lookupBatch` result must equal the individual `vocab[]` lookups for the

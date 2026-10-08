@@ -198,6 +198,8 @@ addLinkAndDiscoverTestSerialNoLibs(ConcurrentCacheTest)
 # This test also seems to use the same filenames and should be fixed.
 addLinkAndDiscoverTest(FileTest)
 
+addLinkAndDiscoverTest(ReadOnlyMmapTest)
+
 addLinkAndDiscoverTest(Simple8bTest)
 
 addLinkAndDiscoverTest(WordsAndDocsFileParserTest sparqlParser)
