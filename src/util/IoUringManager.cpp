@@ -184,7 +184,11 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+IoUringPolicy::IoUringPolicy(unsigned ringSize, unsigned reapWave)
+    : ringSize_(ringSize), reapWave_(reapWave) {
+  if (reapWave_ == 0) {
+    AD_THROW("IoUringPolicy reap wave must be > 0");
+  }
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
   // submission queue. liburing rounds the requested size up to a power of two,
@@ -208,18 +212,15 @@ IoUringPolicy::~IoUringPolicy() {
                    "so the kernel stops writing into the target buffers.\n";
   }
   // Reap the outstanding completions before tearing down the ring, so the
-  // kernel is no longer writing into any target buffer once we return. We
-  // deliberately do not call `drainAtLeast` here: it throws on I/O errors, and
-  // a destructor must not throw. We also stop if `io_uring_wait_cqe` fails, to
-  // avoid spinning forever (it would not decrement the outstanding count).
+  // kernel is no longer writing into any target buffer once we return. Do not
+  // call `drainAtLeast`: it submits unsent SQEs, and the caller may already
+  // have freed the target buffers. It can also throw, and a destructor must
+  // not throw. Stop if `io_uring_wait_cqe` fails, to avoid spinning forever
+  // (a failure does not decrement the outstanding count).
   //
-  // A failed `io_uring_submit` (see `submitOrThrow`) can leave prepared SQEs
-  // that the kernel has not consumed. They produce no completion, so retry
-  // submitting them once and wait only for the reads the kernel has actually
-  // received; the rest are discarded by `io_uring_queue_exit`.
-  if (io_uring_sq_ready(&ring_) > 0) {
-    io_uring_submit(&ring_);
-  }
+  // A failed `io_uring_submit` can leave prepared SQEs the kernel has not
+  // received. `io_uring_queue_exit` drops those SQEs. Wait only for reads the
+  // kernel has already received.
   const size_t numNeverSubmitted = io_uring_sq_ready(&ring_);
   while (numOutstandingReadRequests_ > numNeverSubmitted) {
     io_uring_cqe* cqe = nullptr;
@@ -257,8 +258,11 @@ void IoUringPolicy::addBatch(int fd,
       submitOrThrow();
       while (numOutstandingReadRequests_ >= ringSize_) {
         drainAtLeast(static_cast<unsigned>(
-            std::min<size_t>(REAP_WAVE, numOutstandingReadRequests_)));
+            std::min<size_t>(reapWave_, numOutstandingReadRequests_)));
       }
+      // A failure in this batch stops further queueing. Errors of other
+      // batches stay stored until their own `wait()`.
+      throwIfBatchFailed(handle);
     }
 
     // Claim the next free SQE. The check above guarantees a slot is available,
@@ -293,22 +297,34 @@ void IoUringPolicy::addBatch(int fd,
 void IoUringPolicy::wait(BatchHandle handle) {
   // Drain completions until this batch is gone. `processCqe` erases a batch as
   // soon as its last read completes, so a present entry always still has
-  // outstanding reads. Waiting for up to `REAP_WAVE` CQEs never waits longer
+  // outstanding reads. Waiting for up to `reapWave_` CQEs never waits longer
   // than this batch needs: it cannot finish before its own remaining reads
   // complete, and any CQE (also of other batches) counts towards the wave.
   for (auto it = numOutstandingReadRequestsPerBatch_.find(handle);
        it != numOutstandingReadRequestsPerBatch_.end();
        it = numOutstandingReadRequestsPerBatch_.find(handle)) {
     drainAtLeast(
-        static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
+        static_cast<unsigned>(std::min<size_t>(reapWave_, it->second)));
   }
+  throwIfBatchFailed(handle);
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::throwIfBatchFailed(BatchHandle handle) {
+  auto it = batchErrors_.find(handle);
+  if (it == batchErrors_.end()) {
+    return;
+  }
+  const char* message = it->second;
+  batchErrors_.erase(it);
+  AD_THROW(message);
 }
 
 //______________________________________________________________________________
 void IoUringPolicy::submitOrThrow() {
   // `io_uring_submit` returns the number of submitted SQEs or `-errno`. On
-  // failure the prepared SQEs stay in the submission queue; `drainAtLeast`
-  // and the destructor submit them again before waiting for completions.
+  // failure the prepared SQEs stay in the submission queue. `drainAtLeast`
+  // submits them again before waiting. The destructor does not submit them.
   const int ret = io_uring_submit(&ring_);
   if (ret < 0) {
     AD_THROW(absl::StrCat("io_uring_submit failed in IoUringPolicy: ",
@@ -349,9 +365,9 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   // Reap every ready CQE in chunks. `io_uring_peek_batch_cqe` does not block;
   // `io_uring_cq_advance` releases a whole chunk with one CQ-head update
   // instead of one `io_uring_cqe_seen` per CQE. Every CQE of the wave is
-  // applied to the bookkeeping before any error is thrown, so the outstanding
-  // counts stay consistent and no CQE is processed twice.
-  const char* firstErrorMessage = nullptr;
+  // applied to the bookkeeping before the caller sees an error, so the
+  // outstanding counts stay consistent and no CQE is processed twice.
+  // Each batch keeps its own first error. This function does not throw.
   std::array<io_uring_cqe*, 64> cqes{};
   while (true) {
     const unsigned n = io_uring_peek_batch_cqe(
@@ -361,21 +377,14 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
     }
     for (unsigned i = 0; i < n; ++i) {
       // Recover the id via the 64-bit `user_data` field, see `addBatch`.
-      const char* errorMessage =
-          processCqe(cqes[i]->res, io_uring_cqe_get_data64(cqes[i]));
-      if (firstErrorMessage == nullptr) {
-        firstErrorMessage = errorMessage;
-      }
+      processCqe(cqes[i]->res, io_uring_cqe_get_data64(cqes[i]));
     }
     io_uring_cq_advance(&ring_, n);
-  }
-  if (firstErrorMessage != nullptr) {
-    AD_THROW(firstErrorMessage);
   }
 }
 
 //______________________________________________________________________________
-const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
+void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
   --numOutstandingReadRequests_;
 
   // Every reaped CQE corresponds to exactly one outstanding read whose id we
@@ -397,15 +406,16 @@ const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
   }
 
   // `cqe->res` < 0 is `-errno`.
+  const char* errorMessage = nullptr;
   if (numBytesRead < 0) {
-    return "I/O error in IoUringPolicy read operation";
+    errorMessage = "I/O error in IoUringPolicy read operation";
+  } else if (static_cast<size_t>(numBytesRead) !=
+             outstandingRead.expectedNumBytes) {
+    errorMessage = "read fewer bytes than requested in IoUringPolicy";
   }
-  // A result smaller than requested (a partial read, or 0 at end of file) means
-  // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != outstandingRead.expectedNumBytes) {
-    return "read fewer bytes than requested in IoUringPolicy";
+  if (errorMessage != nullptr) {
+    batchErrors_.try_emplace(outstandingRead.batchHandle, errorMessage);
   }
-  return nullptr;
 }
 
 #endif  // QLEVER_HAS_IO_URING

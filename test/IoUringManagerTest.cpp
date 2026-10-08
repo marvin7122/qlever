@@ -337,10 +337,10 @@ TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanTinyRing) {
               ::testing::ElementsAreArray(scenario.expected()));
 }
 
-// Waiting on the last of many single-read batches reaps the CQEs of the other
-// batches in the same wave. The remaining waits then find their batches
-// already complete and must still see the correct bytes. Batch sizes that are
-// not multiples of the reap wave (1, 3, 5, ...) cover partial waves.
+// Waiting on the last-submitted batch reaps CQEs of the other batches in the
+// same wave. The remaining waits then find their batches already complete and
+// must still see the correct bytes. Batch sizes cycle through 1, 3 and 5, so
+// a wave can end on a partial batch.
 TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   constexpr size_t M = 12;
   std::string fileContent;
@@ -558,6 +558,32 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
+// Submit one good batch and one short read. Waiting on the good batch first
+// reaps the short read and must not throw. The later wait on the short read
+// throws that batch's error. The good bytes stay intact. A second wait on the
+// failed batch finds it already reaped and does not throw again.
+TEST(IoUringPolicyTest, WaitOnGoodBatchDefersBadBatchError) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is not available at runtime";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
+
+  Manager manager(64);
+  ReadBatchForTesting good;
+  good.add({{0, 4}, {4, 4}, {8, 4}});
+  ReadBatchForTesting bad;
+  bad.add(8, 16);  // past EOF: short read
+
+  auto goodHandle = good.submitTo(manager, fd);
+  auto badHandle = bad.submitTo(manager, fd);
+  EXPECT_NO_THROW(manager.wait(goodHandle));
+  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
+                               HasSubstr("read fewer bytes than requested"));
+  EXPECT_NO_THROW(manager.wait(badHandle));
+}
+
 // An error while making room for the next read interrupts `addBatch`. Waiting
 // afterwards must only account for reads that were actually queued.
 TEST(IoUringPolicyTest, ErrorDuringRefillDoesNotCountUnqueuedReads) {
