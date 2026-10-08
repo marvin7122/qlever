@@ -49,13 +49,13 @@ TEST(Constants, constructExportRowBatchSizesAreStrictlyPositive) {
       &RuntimeParameters::constructExportInitialRowBatchSize_>(size_t{1024});
   AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
       setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(0),
-      AllOf(HasSubstr("construct-export-row-batch-size"), HasSubstr("0")),
+      AllOf(HasSubstr("construct-export-row-batch-size"), HasSubstr("was 0")),
       std::runtime_error);
   AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
       setRuntimeParameter<
           &RuntimeParameters::constructExportInitialRowBatchSize_>(0),
       AllOf(HasSubstr("construct-export-initial-row-batch-size"),
-            HasSubstr("0")),
+            HasSubstr("was 0")),
       std::runtime_error);
   constexpr auto maxSize = std::numeric_limits<size_t>::max();
   EXPECT_NO_THROW(

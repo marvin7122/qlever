@@ -35,14 +35,11 @@ class ConstructRowBatchSchedule {
         maxBatchSize_{maxBatchSize},
         initialBatchSize_{std::min(initialBatchSize, maxBatchSize)} {
     AD_CONTRACT_CHECK(initialBatchSize >= 1 && maxBatchSize >= 1);
-    // The growing batches are those smaller than `maxBatchSize_`. Stop before
-    // doubling could exceed `maxBatchSize_` (and overflow).
-    for (size_t size = initialBatchSize_; size < maxBatchSize_; size *= 2) {
+    // The growing batches are those smaller than `maxBatchSize_`.
+    for (size_t size = initialBatchSize_; size < maxBatchSize_;
+         size = nextBatchSize(size, maxBatchSize_)) {
       ++numGrowingBatches_;
       rowsInGrowingBatches_ += size;
-      if (size > maxBatchSize_ / 2) {
-        break;
-      }
     }
   }
 
@@ -89,12 +86,21 @@ class ConstructRowBatchSchedule {
     size_t covered = 0;
     while (size < maxBatchSize && rowsBefore - covered >= size) {
       covered += size;
-      size = size > maxBatchSize / 2 ? maxBatchSize : size * 2;
+      size = nextBatchSize(size, maxBatchSize);
     }
     return size;
   }
 
  private:
+  // The batch size after a batch of `size` rows: twice as many rows, capped
+  // at `maxBatchSize`. Precondition: `size <= maxBatchSize`. The cap is
+  // checked via `maxBatchSize / 2`, so the doubling itself cannot overflow.
+  // Shared by the constructor and `initialBatchSizeAfter`, so the two cannot
+  // silently implement different growth sequences.
+  static size_t nextBatchSize(size_t size, size_t maxBatchSize) {
+    return size > maxBatchSize / 2 ? maxBatchSize : size * 2;
+  }
+
   size_t numRows_;
   size_t maxBatchSize_;
   size_t initialBatchSize_;
