@@ -30,6 +30,8 @@
 #include "util/Algorithm.h"
 #include "util/CompilerExtensions.h"
 #include "util/Exception.h"
+#include "util/Log.h"
+#include "util/LruCacheWithStatistics.h"
 #include "util/ValueIdentity.h"
 
 namespace ql::exportIds {
@@ -227,6 +229,218 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
     default:
       return idToStringAndTypeForEncodedValue(id);
   }
+}
+
+// Bounded cache for the SELECT export path that maps an `Id` to the result of
+// `idToStringAndType`. The cached strings are post-escaping, so one instance
+// serves a single call site (fixed template arguments and escape function).
+//
+// `Id`s of type `LocalVocabIndex` are never cached: they point into a
+// `LocalVocab` that can be destroyed while the export is still running (lazy
+// results free each block's vocabulary after it is exported), after which the
+// same address, and hence the same `Id`, can denote a different word. All
+// other `Id`s resolve identically for the whole export (the on-disk
+// vocabulary is static, the other datatypes are encoded in the `Id` bits).
+class IdToStringAndTypeCache {
+ public:
+  using Value = std::optional<std::pair<std::string, const char*>>;
+
+  // Default capacity: one cache per export call site shared by all columns.
+  // Bounds memory on distinct-heavy results while keeping frequent terms
+  // resident.
+  static constexpr size_t DEFAULT_CAPACITY = 1 << 16;
+  // Hard upper bound for `Config::capacity_`, applied when the cache is
+  // configured from the runtime parameters. The entry count alone does not
+  // bound the retained bytes (long term strings), so the byte budget below is
+  // the primary memory bound and this only caps the bookkeeping overhead.
+  static constexpr size_t MAX_CAPACITY = 1 << 20;
+  // Default admission window and threshold, see `Config`.
+  static constexpr size_t DEFAULT_WINDOW_SIZE = 1 << 13;
+  static constexpr double DEFAULT_MIN_HIT_RATE = 0.25;
+  // Default cumulative admission budget: at most this many bytes of copied
+  // term strings (plus a fixed per-entry estimate) are admitted into one
+  // cache instance. One instance serves a single export, so concurrent
+  // exports each retain at most this much outside the query memory limit.
+  static constexpr size_t DEFAULT_MAX_BYTES = 256 << 20;
+  // Rough per-entry bookkeeping overhead (hash map node, recency list node,
+  // stored `Id` and string object) charged against the byte budget.
+  static constexpr size_t BYTES_PER_ENTRY_OVERHEAD = 64;
+
+  // `capacity_ == 0` disables the cache: every lookup is computed directly.
+  // Otherwise the hit rate is checked after every `windowSize_` cached
+  // lookups. If the hit rate of that window is below `minHitRate_`, the cache
+  // is switched off for the rest of the export: on results with mostly
+  // distinct terms, the hash lookup, the LRU bookkeeping and the copy of every
+  // missed string into the cache cost more than the few hits save.
+  // `windowSize_ == 0` or `minHitRate_ <= 0` disables this check.
+  // `minHitRate_` must be finite and at most 1 (enforced for the runtime
+  // parameter); larger values would switch the cache off after the first
+  // window even at a 100% hit rate, and NaN would silently keep it on.
+  struct Config {
+    size_t capacity_ = DEFAULT_CAPACITY;
+    size_t windowSize_ = DEFAULT_WINDOW_SIZE;
+    double minHitRate_ = DEFAULT_MIN_HIT_RATE;
+    // Cumulative admission budget in bytes, see `DEFAULT_MAX_BYTES`. Lookups
+    // computed after the budget is exhausted bypass the cache (they are still
+    // correct, and previously admitted entries keep serving hits). `0`
+    // disables the budget.
+    size_t maxBytes_ = DEFAULT_MAX_BYTES;
+  };
+
+ private:
+  // Empty iff the cache is disabled by `capacity_ == 0`.
+  std::optional<ad_utility::util::LRUCacheWithStatistics<Id, Value>> cache_;
+  size_t windowSize_;
+  double minHitRate_;
+  size_t maxBytes_;
+  // False once a window's hit rate fell below `minHitRate_`.
+  bool enabled_;
+  // Number of hits at the start of the current window.
+  uint64_t hitsAtWindowStart_ = 0;
+  // Lookups computed directly because the cache is disabled or the byte
+  // budget is exhausted (excludes the `LocalVocabIndex` `Id`s, which are
+  // never cached).
+  uint64_t bypassed_ = 0;
+  // Cumulative bytes of term strings admitted into the cache, plus
+  // `BYTES_PER_ENTRY_OVERHEAD` per entry. Monotonic: evictions do not
+  // subtract, so this bounds the total allocation over the export.
+  uint64_t bytesAdmitted_ = 0;
+  // Holds the result of every lookup that does not go through the cache, so
+  // that `cachedIdToStringAndType` can return a reference in every case. It is
+  // overwritten by the next such lookup.
+  Value uncached_;
+
+ public:
+  explicit IdToStringAndTypeCache(const Config& config)
+      : windowSize_{config.windowSize_},
+        minHitRate_{config.minHitRate_},
+        maxBytes_{config.maxBytes_},
+        enabled_{config.capacity_ > 0} {
+    if (enabled_) {
+      cache_.emplace(config.capacity_);
+    }
+  }
+  explicit IdToStringAndTypeCache(size_t capacity)
+      : IdToStringAndTypeCache{Config{capacity, 0, 0.0}} {}
+
+  // Log the statistics of an export that used the cache.
+  ~IdToStringAndTypeCache() {
+    if (stats().totalLookups() + bypassed_ > 0) {
+      AD_LOG_INFO << "SELECT export term cache: capacity "
+                  << (cache_.has_value() ? cache_->capacity() : 0) << ", "
+                  << stats().hits_ << " hits, " << stats().misses_
+                  << " misses, " << bypassed_ << " bypassed, " << bytesAdmitted_
+                  << " bytes admitted, " << (enabled_ ? "enabled" : "disabled")
+                  << " at the end" << std::endl;
+    }
+  }
+
+  IdToStringAndTypeCache(const IdToStringAndTypeCache&) = delete;
+  IdToStringAndTypeCache& operator=(const IdToStringAndTypeCache&) = delete;
+
+  // Return the cached value for `id`, computing it with `compute()` on a miss.
+  // `LocalVocabIndex` `Id`s bypass the cache (see above), and so does every
+  // `Id` once the cache is disabled or the byte budget is exhausted. The
+  // reference is valid until the next call.
+  template <typename Compute>
+  const Value& getOrCompute(Id id, const Compute& compute) {
+    if (id.getDatatype() == Datatype::LocalVocabIndex) {
+      uncached_ = compute();
+      return uncached_;
+    }
+    if (!enabled_) {
+      ++bypassed_;
+      uncached_ = compute();
+      return uncached_;
+    }
+    if (auto hit = cache_->tryGet(id)) {
+      // Only the admission flag changes below, the cached entry and therefore
+      // the returned reference stay valid.
+      checkWindow();
+      return *hit;
+    }
+    Value value = compute();
+    size_t bytes = value ? value->first.size() + BYTES_PER_ENTRY_OVERHEAD : 0;
+    if (maxBytes_ > 0 && bytesAdmitted_ + bytes > maxBytes_) {
+      ++bypassed_;
+      uncached_ = std::move(value);
+      return uncached_;
+    }
+    bytesAdmitted_ += bytes;
+    // `id` is still absent (single-threaded export, no insertion above), so
+    // the lambda moves the precomputed value in and exactly one miss is
+    // counted.
+    const Value& result = cache_->getOrCompute(
+        id, [&value](const Id&) mutable { return std::move(value); });
+    // Only the admission flag changes below, the cached entry and therefore
+    // `result` stay valid.
+    checkWindow();
+    return result;
+  }
+
+  // True while lookups go through the cache. A hit after the byte budget is
+  // exhausted still returns the cached entry; only new admissions stop.
+  bool enabled() const { return enabled_; }
+
+  // Cumulative bytes admitted into the cache, see `bytesAdmitted_`.
+  uint64_t bytesAdmitted() const { return bytesAdmitted_; }
+
+  // Lookups computed directly because the cache was disabled or the byte
+  // budget was exhausted.
+  uint64_t bypassed() const { return bypassed_; }
+
+  const ad_utility::util::LRUCacheStats& stats() const {
+    static constexpr ad_utility::util::LRUCacheStats noStats{};
+    return cache_.has_value() ? cache_->stats() : noStats;
+  }
+
+ private:
+  // At the end of each window of `windowSize_` cached lookups, disable the
+  // cache if the window's hit rate is below `minHitRate_`.
+  void checkWindow() {
+    if (windowSize_ == 0 || minHitRate_ <= 0.0) {
+      return;
+    }
+    const auto& s = cache_->stats();
+    if (s.totalLookups() % windowSize_ != 0) {
+      return;
+    }
+    auto windowHits = s.hits_ - hitsAtWindowStart_;
+    hitsAtWindowStart_ = s.hits_;
+    if (static_cast<double>(windowHits) <
+        minHitRate_ * static_cast<double>(windowSize_)) {
+      enabled_ = false;
+    }
+  }
+};
+
+// Cached variant of `idToStringAndType` for the SELECT export path. Returns a
+// reference that is valid until the next lookup in `cache`.
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false, typename EscapeFunction>
+const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
+    IdToStringAndTypeCache& cache, const Index& index, Id id,
+    const LocalVocab& localVocab, const EscapeFunction& escapeFunction) {
+  return cache.getOrCompute(id, [&]() {
+    return idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+        index, id, localVocab, escapeFunction);
+  });
+}
+
+// Overload without an escape function (identity escaping). It forwards to the
+// function above with a persistent identity instance: a default-constructed
+// temporary would bind to the `escapeFunction` const reference while the
+// function returns a reference into the cache, which GCC flags as
+// `-Wdangling-reference` under `-Werror`.
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false>
+const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
+    IdToStringAndTypeCache& cache, const Index& index, Id id,
+    const LocalVocab& localVocab) {
+  static constexpr ql::identity noEscape{};
+  return cachedIdToStringAndType<removeQuotesAndAngleBrackets,
+                                 returnOnlyLiterals>(cache, index, id,
+                                                     localVocab, noEscape);
 }
 
 // Positions (indices into the `ids` span) split by datatype: `VocabIndex` ids
