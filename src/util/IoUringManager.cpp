@@ -322,13 +322,55 @@ void IoUringPolicy::throwIfBatchFailed(BatchHandle handle) {
 
 //______________________________________________________________________________
 void IoUringPolicy::submitOrThrow() {
-  // `io_uring_submit` returns the number of submitted SQEs or `-errno`. On
-  // failure the prepared SQEs stay in the submission queue. `drainAtLeast`
-  // submits them again before waiting. The destructor does not submit them.
+  // `io_uring_submit` returns the number of submitted SQEs or `-errno`.
+  // A short success can leave SQEs queued. The next `drainAtLeast` submits
+  // those, while this call still owns the buffers. A negative return means
+  // the kernel took none of the flushed SQEs. Drop them before throwing.
   const int ret = io_uring_submit(&ring_);
   if (ret < 0) {
+    abandonFailedSubmit();
     AD_THROW(absl::StrCat("io_uring_submit failed in IoUringPolicy: ",
                           std::strerror(-ret)));
+  }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::abandonFailedSubmit() {
+  // `io_uring_submit` already published these SQEs, then `io_uring_enter`
+  // failed. The kernel has not consumed them. Walk from the kernel head to
+  // the local tail and forget each read. Then rewind the tail.
+  io_uring_sq& sq = ring_.sq;
+  const unsigned khead = *sq.khead;
+  const unsigned tail = sq.sqe_tail;
+  const unsigned mask = sq.ring_mask;
+  for (unsigned idx = khead; idx != tail; ++idx) {
+    const unsigned sqeIndex = sq.array[idx & mask];
+    const uint64_t requestId = sq.sqes[sqeIndex].user_data;
+    auto reqIt = outstandingReadsByRequestId_.find(requestId);
+    AD_CORRECTNESS_CHECK(reqIt != outstandingReadsByRequestId_.end());
+    const BatchHandle handle = reqIt->second.batchHandle;
+    outstandingReadsByRequestId_.erase(reqIt);
+    AD_CORRECTNESS_CHECK(numOutstandingReadRequests_ > 0);
+    --numOutstandingReadRequests_;
+    auto batchIt = numOutstandingReadRequestsPerBatch_.find(handle);
+    AD_CORRECTNESS_CHECK(batchIt != numOutstandingReadRequestsPerBatch_.end());
+    if (--batchIt->second == 0) {
+      numOutstandingReadRequestsPerBatch_.erase(batchIt);
+    }
+  }
+  sq.sqe_head = khead;
+  sq.sqe_tail = khead;
+  io_uring_smp_store_release(sq.ktail, khead);
+
+  // Reap reads an earlier successful submit already handed to the kernel.
+  // Their buffers are still alive here. Do not submit the SQEs just dropped.
+  while (numOutstandingReadRequests_ > io_uring_sq_ready(&ring_)) {
+    io_uring_cqe* cqe = nullptr;
+    if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+      break;
+    }
+    processCqe(cqe->res, io_uring_cqe_get_data64(cqe));
+    io_uring_cqe_seen(&ring_, cqe);
   }
 }
 
@@ -336,9 +378,9 @@ void IoUringPolicy::submitOrThrow() {
 void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   AD_CORRECTNESS_CHECK(minComplete > 0);
   AD_CORRECTNESS_CHECK(minComplete <= numOutstandingReadRequests_);
-  // Submit SQEs that an earlier failed or partial `io_uring_submit` left in
-  // the submission queue. Without this, waiting for their completions would
-  // block forever, because the kernel has never seen them.
+  // A short submit can leave SQEs the kernel has not received. Submit them
+  // before waiting. A failed submit does not return to here: it drops those
+  // SQEs inside `submitOrThrow`.
   if (io_uring_sq_ready(&ring_) > 0) {
     submitOrThrow();
   }

@@ -231,8 +231,14 @@ class IoUringPolicy {
   void throwIfBatchFailed(BatchHandle handle);
 
   // Submit all prepared SQEs to the kernel. Throw if `io_uring_submit`
-  // fails, including the error description in the message.
+  // fails, including the error description in the message. On failure, drop
+  // the SQEs the kernel did not take and reap reads it already has.
   void submitOrThrow();
+
+  // Forget SQEs the kernel has not consumed, then reap submitted reads.
+  // Do not submit. Call this only after `io_uring_submit` has failed, so a
+  // later submit cannot write into buffers the caller then frees.
+  void abandonFailedSubmit();
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
