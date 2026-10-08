@@ -266,7 +266,7 @@ std::vector<size_t> VocabularyOnDisk::copyRangesFromOwnedPage(
     for (const Item& item : inPage) {
       notServed.push_back(item.index);
     }
-    std::sort(notServed.begin(), notServed.end());
+    ql::ranges::sort(notServed);
     return notServed;
   }
   size_t group = 0;
