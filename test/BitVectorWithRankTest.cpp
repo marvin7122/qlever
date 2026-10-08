@@ -130,8 +130,7 @@ TEST(BitVectorWithRank, MiddleAnchorBoundaries) {
       expectRanksMatchDefinition({value}, value + 1);
     }
     expectRanksMatchDefinition(
-        {blockBase + 223, blockBase + 224, blockBase + 225},
-        blockBase + 226);
+        {blockBase + 223, blockBase + 224, blockBase + 225}, blockBase + 226);
   }
 }
 

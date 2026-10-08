@@ -270,8 +270,8 @@ struct RuntimeParameters {
   // and look each distinct index up only once, scattering the word to all of
   // its positions. Off by default: sorting costs O(n log n) per batch, so it
   // only pays when batches contain many repeated indices.
-  Bool vocabularyDeduplicateBatchLookup_{
-      false, "vocabulary-deduplicate-batch-lookup"};
+  Bool vocabularyDeduplicateBatchLookup_{false,
+                                         "vocabulary-deduplicate-batch-lookup"};
 
   // If set to true, the rank directory above is allocated 2 MiB-aligned and
   // marked for transparent huge pages (`madvise(MADV_HUGEPAGE)`), so that a

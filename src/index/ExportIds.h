@@ -307,8 +307,9 @@ void resolveVocabIndexIds(
     // `vocabulary-deduplicate-batch-lookup`, off by default).
     std::vector<size_t> order(rawIndices.size());
     std::iota(order.begin(), order.end(), size_t{0});
-    std::sort(order.begin(), order.end(),
-              [&](size_t a, size_t b) { return rawIndices[a] < rawIndices[b]; });
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+      return rawIndices[a] < rawIndices[b];
+    });
     std::vector<size_t> uniqueIndices;
     uniqueIndices.reserve(rawIndices.size());
     // `runEnd[k]` is the first `order` position after the run of equal

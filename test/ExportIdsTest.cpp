@@ -608,9 +608,9 @@ TEST(ExportIds, resolveVocabIndexIdsDeduplicated) {
   auto getId = makeGetId(index);
 
   // Heavy duplication: each ID several times, interleaved and unsorted.
-  std::vector<Id> ids{getId("<s>"), getId("<p>"), getId("<s>"),
-                      getId("\"hello\""), getId("<p>"), getId("<o>"),
-                      getId("<s>"), getId("\"world\"@en"), getId("<p>")};
+  std::vector<Id> ids{getId("<s>"),       getId("<p>"),          getId("<s>"),
+                      getId("\"hello\""), getId("<p>"),          getId("<o>"),
+                      getId("<s>"),       getId("\"world\"@en"), getId("<p>")};
 
   auto cleanup = setRuntimeParameterForTest<
       &RuntimeParameters::vocabularyDeduplicateBatchLookup_>(true);

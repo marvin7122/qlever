@@ -186,7 +186,8 @@ class BitVectorWithRank {
     }
     // Count down from the anchor in the first half, up in the second half.
     if (offset < middleBit) {
-      return block.rankAtMiddle_ - popcountRange(block.bits_, offset, middleBit);
+      return block.rankAtMiddle_ -
+             popcountRange(block.bits_, offset, middleBit);
     }
     return block.rankAtMiddle_ + popcountRange(block.bits_, middleBit, offset);
   }
