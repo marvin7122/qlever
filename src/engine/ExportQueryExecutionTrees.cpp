@@ -371,18 +371,22 @@ auto ExportQueryExecutionTrees::idTableToQLeverJSONBindings(
     CancellationHandle cancellationHandle) {
   AD_CORRECTNESS_CHECK(result != nullptr);
 
-  auto rowIndicies = getRowIndices(limitAndOffset, *result, resultSize);
+  auto rowIndices = getRowIndices(limitAndOffset, *result, resultSize);
   // One cache for the whole export, shared by all columns. It must outlive the
   // lazily evaluated view below.
   auto cache = std::make_shared<ql::exportIds::IdToStringAndTypeCache>(
       selectExportTermCacheConfig());
-  return std::move(rowIndicies) |
+  return std::move(rowIndices) |
          ql::views::transform(
              [&qet, columns = std::move(columns), result = std::move(result),
               cancellationHandle = std::move(cancellationHandle),
               cache](const auto& tableWithView) {
+               // Capture the shared handles by value: the inner view can
+               // outlive the outer lambda invocation, so it must not reference
+               // the outer closure's members.
                return ql::ranges::transform_view(
-                   tableWithView.view_, [&](uint64_t rowIndex) {
+                   tableWithView.view_,
+                   [&, cache, cancellationHandle](uint64_t rowIndex) {
                      cancellationHandle->throwIfCancelled();
                      const TableConstRefWithVocab tableWithVocab =
                          tableWithView.tableWithVocab_;
