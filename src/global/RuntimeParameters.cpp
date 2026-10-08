@@ -104,6 +104,13 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  selectExportTermCacheMinHitRate_.setParameterConstraint(
+      [](double value, std::string_view parameterName) {
+        if (!(value >= 0.0 && value <= 1.0)) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName, " must be in [0, 1], was ", value)};
+        }
+      });
 }
 
 // _____________________________________________________________________________
