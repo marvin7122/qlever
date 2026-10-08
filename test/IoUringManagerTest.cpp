@@ -489,6 +489,55 @@ TYPED_TEST(IoUringManagerTest, DirectIoBlockCacheServesPartialBlockHits) {
   }
 }
 
+// A completion submitted before the thread's cache changed must neither resize
+// that cache nor insert a block using the old dimensions.
+TYPED_TEST(IoUringManagerTest, DirectIoStaleCompletionPreservesCache) {
+  if constexpr (!reachesBlockCache<TypeParam>) {
+    GTEST_SKIP() << "This policy does not use the block cache";
+  }
+  constexpr size_t block = ad_utility::export_prototypes::kDirectIoBlockSize;
+  std::string content(block, 'x');
+  auto [tmp, fd] = makeTempFile(content);
+  ad_utility::export_prototypes::DirectIoFile directFile;
+  try {
+    directFile.open(absl::StrCat(gtestCurrentTestName(), ".tmp"), true);
+  } catch (const std::exception& e) {
+    GTEST_SKIP() << "O_DIRECT is not supported here: " << e.what();
+  }
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers = true;
+  options.directIoFd = directFile.fd();
+  options.blockCacheNumBlocks = 3;
+  auto& cache = ad_utility::vocab::threadLocalVocabBlockCache();
+  // Change capacity only, block size only, or disable the cache entirely.
+  for (auto [capacity, blockSize] : std::vector<std::pair<size_t, size_t>>{
+           {2, block}, {3, 2 * block}, {0, block}}) {
+    TypeParam manager(16);
+    cache.resize(options.blockCacheNumBlocks, block);
+    ReadBatchForTesting batch;
+    batch.add({{10, 5}});
+    const auto before = BlockCacheCounts::now();
+    auto handle = batch.submitTo(manager, fd, options);
+    EXPECT_EQ((BlockCacheCounts::now() - before).misses_, 1u);
+
+    cache.resize(capacity, blockSize);
+    std::string sentinel(blockSize, 's');
+    cache.insert(0, 0, 0, sentinel.data());
+    manager.wait(handle);
+
+    EXPECT_THAT(batch.result(), ::testing::ElementsAre(content.substr(10, 5)));
+    EXPECT_EQ(cache.capacity(), capacity);
+    EXPECT_EQ(cache.blockSize(), blockSize);
+    EXPECT_EQ(cache.size(), capacity == 0 ? 0u : 1u);
+    EXPECT_EQ((BlockCacheCounts::now() - before).inserts_, 0u);
+    if (capacity != 0) {
+      const char* cached = cache.lookup(0, 0, 0);
+      ASSERT_NE(cached, nullptr);
+      EXPECT_EQ(std::string_view(cached, blockSize), sentinel);
+    }
+  }
+}
+
 // A cache of one block evicts the previous block on every insert, so reading
 // block 0, then block 1, then block 0 again misses three times.
 TYPED_TEST(IoUringManagerTest, DirectIoBlockCacheEvicts) {

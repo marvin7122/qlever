@@ -560,12 +560,16 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
       // Only a complete block is cached (the last block of a file is short).
       if (cacheInsert.has_value() &&
           static_cast<size_t>(numBytesRead) == cacheInsert->blockSize) {
-        ad_utility::vocab::threadLocalVocabBlockCache(
-            cacheInsert->cacheNumBlocks, cacheInsert->blockSize)
-            .insert(cacheInsert->dev, cacheInsert->ino, cacheInsert->blockNo,
-                    slotData);
-        ad_utility::vocab::vocabBlockCacheCounters.inserts_.fetch_add(
-            1, std::memory_order_relaxed);
+        // Another batch may have resized this thread's cache in the meantime.
+        // A stale completion must not restore the old cache dimensions.
+        auto& cache = ad_utility::vocab::threadLocalVocabBlockCache();
+        if (cache.capacity() == cacheInsert->cacheNumBlocks &&
+            cache.blockSize() == cacheInsert->blockSize) {
+          cache.insert(cacheInsert->dev, cacheInsert->ino, cacheInsert->blockNo,
+                       slotData);
+          ad_utility::vocab::vocabBlockCacheCounters.inserts_.fetch_add(
+              1, std::memory_order_relaxed);
+        }
       }
     }
     copies.clear();

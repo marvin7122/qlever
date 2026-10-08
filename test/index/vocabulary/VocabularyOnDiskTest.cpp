@@ -337,6 +337,7 @@ TEST(VocabularyOnDisk, LookupBatchWithDirectIoAndBlockCache) {
   // A capacity that no other test uses, so that the cache starts empty.
   ad_utility::vocabularyBlockCacheNumBlocks = 1031;
   const auto& counters = ad_utility::vocab::vocabBlockCacheCounters;
+  const auto insertsBefore = counters.inserts_.load();
   uint64_t hitsAfterFirst = 0;
   for (size_t rep = 0; rep < 2; ++rep) {
     auto result = vocab.lookupBatch(indices);
@@ -346,7 +347,7 @@ TEST(VocabularyOnDisk, LookupBatchWithDirectIoAndBlockCache) {
       hitsAfterFirst = counters.hits_.load();
     }
   }
-  if (counters.inserts_.load() > 0) {
+  if (counters.inserts_.load() > insertsBefore) {
     // The blocks were cached by the first batch, so the second one hits.
     EXPECT_GT(counters.hits_.load(), hitsAfterFirst);
   }

@@ -307,6 +307,9 @@ struct RuntimeParameters {
   // read via `O_DIRECT` is kept, and later requests for bytes in a cached
   // block are copied from there instead of being read again. The vocabulary
   // files are immutable after the build, so cached blocks never go stale.
+  // Each thread using the cache reserves `vocab-block-cache-size` multiplied
+  // by `vocab-block-cache-block-size` bytes for block storage; aggregate
+  // storage scales with the number of threads using it.
   // The default of `0` disables the cache. Has no effect without
   // `vocabulary-iouring-direct-io`.
   SizeT vocabBlockCacheSize_{0, "vocab-block-cache-size"};

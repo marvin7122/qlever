@@ -148,6 +148,9 @@ class VocabBlockCache {
   uint64_t numEvictions_ = 0;
 };
 
+// Return the calling thread's cache shard without resizing it.
+VocabBlockCache& threadLocalVocabBlockCache();
+
 // Return the calling thread's cache shard, resizing it to `numBlocks` slots of
 // `blockSize` bytes first if needed (resizing drops all cached content). Each
 // thread gets its own shard, so concurrent lookups from different threads take

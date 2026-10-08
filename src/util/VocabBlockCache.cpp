@@ -170,9 +170,15 @@ void VocabBlockCache::clear() {
 }
 
 // _____________________________________________________________________________
+VocabBlockCache& threadLocalVocabBlockCache() {
+  thread_local VocabBlockCache cache;
+  return cache;
+}
+
+// _____________________________________________________________________________
 VocabBlockCache& threadLocalVocabBlockCache(size_t numBlocks,
                                             size_t blockSize) {
-  thread_local VocabBlockCache cache;
+  auto& cache = threadLocalVocabBlockCache();
   if (cache.capacity() != numBlocks || cache.blockSize() != blockSize) {
     cache.resize(numBlocks, blockSize);
   }
