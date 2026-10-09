@@ -8,6 +8,9 @@
 
 #include <gmock/gmock.h>
 
+#include <algorithm>
+#include <atomic>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
@@ -21,7 +24,11 @@
 #endif
 
 namespace {
+using ad_utility::FrameKey;
+using ad_utility::HotStringCache;
 using ad_utility::ResidentFileMapping;
+using ad_utility::ScanRingBuffer;
+using ad_utility::VocabFramePool;
 
 // Write `contents` to `filename` and return it opened for reading.
 ad_utility::File writeAndOpen(const std::string& filename,
@@ -329,6 +336,246 @@ TEST(ResidentFileMapping, evictedPagesAreDemoted) {
   ad_utility::deleteFile("residentFileMappingDemote.dat");
 }
 #endif
+
+// _____________________________________________________________________________
+// Frame table unit test: (file, page) keys map to distinct 4 KiB frames with
+// free/loading/resident state, and the admission filter keeps scan traffic
+// out of the pool.
+TEST(ResidentFileMapping, frameTableMapsFilePageToFrames) {
+  VocabFramePool pool{4};
+  EXPECT_EQ(pool.capacity(), 4);
+  EXPECT_EQ(pool.residentCount(), 0);
+  // Admission filter (Postgres discipline): scans never enter the pool.
+  EXPECT_FALSE(VocabFramePool::admit(true));
+  EXPECT_TRUE(VocabFramePool::admit(false));
+
+  const FrameKey key{0, 7};
+  EXPECT_EQ(pool.tryPin(key), nullptr);
+  VocabFramePool::Frame* loading = pool.allocate(key);
+  ASSERT_NE(loading, nullptr);
+  EXPECT_EQ(loading->state, VocabFramePool::FrameState::Loading);
+  // A loading frame is not yet readable.
+  char byte = 'X';
+  EXPECT_FALSE(pool.copyPinned(key, 0, 1, &byte));
+  std::fill(loading->data.begin(), loading->data.end(), 'f');
+  pool.markLoaded(key);
+  EXPECT_EQ(pool.residentCount(), 1);
+  VocabFramePool::Frame* pinned = pool.tryPin(key);
+  ASSERT_NE(pinned, nullptr);
+  EXPECT_TRUE(pool.copyPinned(key, 0, 1, &byte));
+  EXPECT_EQ(byte, 'f');
+  pool.unpin(key);
+  pool.unpin(key);
+  EXPECT_EQ(pool.pinnedCount(), 0);
+
+  // The offsets file is a distinct key space over the same table shape.
+  const FrameKey offsetsKey{1, 7};
+  EXPECT_EQ(pool.tryPin(offsetsKey), nullptr);
+  VocabFramePool::Frame* offsetsLoading = pool.allocate(offsetsKey);
+  ASSERT_NE(offsetsLoading, nullptr);
+  EXPECT_NE(offsetsLoading, loading);
+  pool.abandon(offsetsKey);
+  EXPECT_EQ(pool.residentCount(), 1);
+}
+
+// _____________________________________________________________________________
+// Pooled reads are byte-identical with the file: fills go through the reader
+// callback (production: the io_uring addBatch/wait path; here: pread), and
+// `tryReadPooled` serves pinned copies.
+TEST(ResidentFileMapping, pooledReadsAreByteIdentical) {
+  constexpr size_t P = ResidentFileMapping::pageSize;
+  const std::string filename = "residentFileMappingPooled.dat";
+  const std::string contents = makeContents();
+  auto file = writeAndOpen(filename, contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  if (!mapping.isMapped()) {
+    ad_utility::deleteFile(filename);
+    return;
+  }
+  EXPECT_FALSE(mapping.framePoolEnabled());
+  std::string target(16, 'X');
+  EXPECT_FALSE(mapping.tryReadPooled(10, 4, target.data()));
+
+  mapping.enableFramePool(8);
+  EXPECT_TRUE(mapping.framePoolEnabled());
+  auto preadReader = [&](char* dst, uint64_t fileOffset,
+                         size_t numBytes) -> bool {
+    return file.read(dst, numBytes, static_cast<off_t>(fileOffset)) ==
+           static_cast<ssize_t>(numBytes);
+  };
+  // Fill every page of the file through the reader.
+  const size_t numPages = (contents.size() + P - 1) / P;
+  for (size_t page = 0; page < numPages; ++page) {
+    ASSERT_TRUE(mapping.fillFrameFromFile(page, preadReader));
+  }
+  // Single-page and cross-page reads match the file byte for byte.
+  EXPECT_TRUE(mapping.tryReadPooled(10, 20, target.data()));
+  EXPECT_EQ(target.substr(0, 20), contents.substr(10, 20));
+  EXPECT_TRUE(mapping.tryReadPooled(P - 4, 8, target.data()));
+  EXPECT_EQ(target.substr(0, 8), contents.substr(P - 4, 8));
+  // A failing fill leaves the pool usable and the page missing.
+  ResidentFileMapping failing(file.fd(), contents.size());
+  failing.enableFramePool(8);
+  EXPECT_FALSE(failing.fillFrameFromFile(
+      0, [](char*, uint64_t, size_t) { return false; }));
+  EXPECT_FALSE(failing.tryReadPooled(0, 1, target.data()));
+  EXPECT_TRUE(failing.fillFrameFromFile(0, preadReader));
+  EXPECT_TRUE(failing.tryReadPooled(0, 1, target.data()));
+  EXPECT_EQ(target[0], contents[0]);
+  // Out-of-range pages and ranges are rejected; empty reads are served.
+  EXPECT_FALSE(mapping.fillFrameFromFile(numPages + 1, preadReader));
+  EXPECT_FALSE(mapping.tryReadPooled(contents.size() - 5, 10, target.data()));
+  EXPECT_TRUE(mapping.tryReadPooled(10, 0, target.data()));
+  // Disabling the pool disables pooled reads; the resident-bit path is
+  // untouched (nothing marked, so it misses).
+  mapping.disableFramePool();
+  EXPECT_FALSE(mapping.framePoolEnabled());
+  EXPECT_FALSE(mapping.tryReadPooled(10, 4, target.data()));
+  EXPECT_FALSE(mapping.tryRead(10, 4, target.data()));
+  ad_utility::deleteFile(filename);
+}
+
+// _____________________________________________________________________________
+// Pin discipline: eviction only touches unpinned frames, so a pinned page
+// survives forced evictions with intact bytes; when every frame is pinned,
+// allocation refuses instead of evicting.
+TEST(ResidentFileMapping, noEvictWhilePinned) {
+  constexpr size_t P = ResidentFileMapping::pageSize;
+  const std::string filename = "residentFileMappingPinned.dat";
+  std::string contents(8 * P, 'x');
+  for (size_t i = 0; i < contents.size(); ++i) {
+    contents[i] = static_cast<char>('a' + (i / P) % 26);
+  }
+  auto file = writeAndOpen(filename, contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  if (!mapping.isMapped()) {
+    ad_utility::deleteFile(filename);
+    return;
+  }
+  mapping.enableFramePool(4, 1);
+  auto preadReader = [&](char* dst, uint64_t fileOffset,
+                         size_t numBytes) -> bool {
+    return file.read(dst, numBytes, static_cast<off_t>(fileOffset)) ==
+           static_cast<ssize_t>(numBytes);
+  };
+  for (size_t page = 0; page < 4; ++page) {
+    ASSERT_TRUE(mapping.fillFrameFromFile(page, preadReader));
+  }
+  VocabFramePool* pool = mapping.framePool();
+  ASSERT_NE(pool, nullptr);
+  // Pin page 0 and hold it across forced evictions of pages 4..6.
+  const FrameKey pinnedKey{1, 0};
+  ASSERT_NE(pool->tryPin(pinnedKey), nullptr);
+  for (size_t page = 4; page < 7; ++page) {
+    ASSERT_TRUE(mapping.fillFrameFromFile(page, preadReader));
+  }
+  // The pinned page survived with intact bytes (no evict-while-pinned).
+  char byte = 'X';
+  EXPECT_TRUE(pool->copyPinned(pinnedKey, 0, 1, &byte));
+  EXPECT_EQ(byte, contents[0]);
+  pool->unpin(pinnedKey);
+  EXPECT_EQ(pool->pinnedCount(), 0);
+  // Pin every frame of a fresh pool: allocation must refuse instead of
+  // evicting a pinned frame.
+  mapping.enableFramePool(4, 1);
+  for (size_t page = 0; page < 4; ++page) {
+    ASSERT_TRUE(mapping.fillFrameFromFile(page, preadReader));
+  }
+  pool = mapping.framePool();
+  ASSERT_NE(pool, nullptr);
+  std::vector<FrameKey> allPinned;
+  for (size_t page = 0; page < 4; ++page) {
+    const FrameKey key{1, page};
+    EXPECT_NE(pool->tryPin(key), nullptr);
+    allPinned.push_back(key);
+  }
+  EXPECT_EQ(pool->allocate(FrameKey{1, 7}), nullptr);
+  for (const auto& key : allPinned) {
+    pool->unpin(key);
+  }
+  EXPECT_EQ(pool->pinnedCount(), 0);
+  ad_utility::deleteFile(filename);
+}
+
+// _____________________________________________________________________________
+// Eviction race (fault injection): concurrent fills, pins, and pooled reads
+// never produce a use-after-unpin; every served read is byte-identical.
+TEST(ResidentFileMapping, pooledReadsStayByteIdenticalUnderEvictionRace) {
+  constexpr size_t P = ResidentFileMapping::pageSize;
+  const std::string filename = "residentFileMappingPoolRace.dat";
+  std::string contents(16 * P, 'r');
+  for (size_t i = 0; i < contents.size(); ++i) {
+    contents[i] = static_cast<char>('A' + i % 26);
+  }
+  auto file = writeAndOpen(filename, contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  if (!mapping.isMapped()) {
+    ad_utility::deleteFile(filename);
+    return;
+  }
+  mapping.enableFramePool(4);
+  std::atomic<bool> failed{false};
+  std::vector<std::thread> workers;
+  for (size_t worker = 0; worker < 4; ++worker) {
+    workers.emplace_back([&, worker]() {
+      auto reader = [&](char* dst, uint64_t fileOffset,
+                        size_t numBytes) -> bool {
+        return file.read(dst, numBytes, static_cast<off_t>(fileOffset)) ==
+               static_cast<ssize_t>(numBytes);
+      };
+      std::string target(32, 'X');
+      for (size_t i = 0; i < 300; ++i) {
+        const size_t page = (i * 7 + worker * 5) % 16;
+        // Fills may refuse under pin pressure; that is legal, never an
+        // evict-while-pinned.
+        mapping.fillFrameFromFile(page, reader);
+        const uint64_t offset = page * P + (i % 16);
+        const size_t len = std::min<size_t>(32, contents.size() - offset);
+        std::fill(target.begin(), target.end(), 'X');
+        if (mapping.tryReadPooled(offset, len, target.data()) &&
+            target.substr(0, len) != contents.substr(offset, len)) {
+          failed.store(true);
+        }
+      }
+    });
+  }
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  EXPECT_FALSE(failed.load());
+  EXPECT_EQ(mapping.framePool()->pinnedCount(), 0);
+  ad_utility::deleteFile(filename);
+}
+
+// _____________________________________________________________________________
+// Scan ring buffers stay off-pool and the hot-string LRU evicts cold entries.
+TEST(ResidentFileMapping, scanRingAndHotStringCacheDiscipline) {
+  ScanRingBuffer ring;
+  char* first = ring.next();
+  ASSERT_NE(first, nullptr);
+  std::memset(first, 's', ScanRingBuffer::kSlotSize);
+  // The ring holds confined slots; walking past them wraps around.
+  for (size_t i = 1; i < ScanRingBuffer::kNumSlots; ++i) {
+    EXPECT_NE(ring.next(), nullptr);
+  }
+  char* wrapped = ring.next();
+  EXPECT_EQ(wrapped, first);
+
+  HotStringCache cache{3};
+  EXPECT_EQ(cache.size(), 0);
+  EXPECT_FALSE(cache.lookup(1).has_value());
+  cache.insert(1, "one");
+  cache.insert(2, "two");
+  cache.insert(3, "three");
+  EXPECT_EQ(cache.lookup(1), "one");
+  // Inserting a fourth entry evicts the least-recently-used (index 2: index
+  // 1 was refreshed by the lookup above).
+  cache.insert(4, "four");
+  EXPECT_EQ(cache.size(), 3);
+  EXPECT_EQ(cache.lookup(1), "one");
+  EXPECT_FALSE(cache.lookup(2).has_value());
+  EXPECT_EQ(cache.lookup(4), "four");
+}
 
 // _____________________________________________________________________________
 TEST(ResidentFileMapping, emptyAndUnmappableFiles) {
