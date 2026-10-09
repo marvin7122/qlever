@@ -765,6 +765,7 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
   const std::string filename = std::string{gtestCurrentTestName()} + "-blocks";
   ad_utility::deleteFile(filename, false);
   CompressedVocabulary<VocabularyInMemory, TypeParam, 2> vocab;
+  auto cleanup = makeVocabFileCleanup<decltype(vocab)>(filename);
   {
     auto writerPtr = vocab.makeDiskWriterPtr(filename);
     writeWordsAndFinish(*writerPtr, words);
@@ -799,8 +800,6 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchAcrossDecoderBlocks) {
     const size_t idx = indices[i];
     EXPECT_EQ(result[i], vocab[idx]) << "at vocabulary index " << idx;
   }
-
-  ad_utility::deleteFile(filename);
 }
 
 // _____________________________________________________________________________

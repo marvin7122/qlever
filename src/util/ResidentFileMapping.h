@@ -89,7 +89,9 @@ class ResidentFileMapping {
   // the mapping is read-only, so a reader that loses its page to `DONTNEED`
   // faults it back and continues with correct data. The cost is one disk
   // read, exactly what the non-mapping path would have paid. The CLOCK hand
-  // only makes that case rare by evicting the least recently marked pages.
+  // only makes that case rare by sweeping marked pages in file order from
+  // the hand. There is no second-chance bit, so a page marked just before a
+  // sweep can be demoted by that same sweep.
   //
   // Takes effect on the next `markResident`; when the value changes, the
   // marked pages are recounted once and the new cap is enforced immediately.

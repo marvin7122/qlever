@@ -170,12 +170,12 @@ void ResidentFileMapping::setResidentCapPages(size_t capPages) const {
 }
 
 // _____________________________________________________________________________
-// Clear marked pages down to `target`, oldest first from the CLOCK hand, and
-// demote the cleared runs from the page cache. Stops after one revolution:
-// pages marked concurrently may keep the count above target, which the next
-// `markResident` re-evaluates. Only ever clears bits, so concurrent `tryRead`
-// either sees the page (correct: it is still mapped) or misses it (correct:
-// it takes the other path).
+// Clear marked pages down to `target`, sweeping from the CLOCK hand in file
+// order, and demote the cleared runs from the page cache. Stops after one
+// revolution: pages marked concurrently may keep the count above target, which
+// the next `markResident` re-evaluates. Only ever clears bits, so concurrent
+// `tryRead` either sees the page (correct: it is still mapped) or misses it
+// (correct: it takes the other path).
 void ResidentFileMapping::evictDownTo(size_t target) const {
 #ifdef QL_RESIDENT_FILE_MAPPING
   if (data_ == nullptr || numBitWords_ == 0) {
