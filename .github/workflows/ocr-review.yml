@@ -1,8 +1,9 @@
 name: OpenCodeReview
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+  # Minimal PR profile 2026-09-28: no pull_request_target trigger, so no
+  # automatic review on PR pushes. Reviews run on demand only, via a
+  # maintainer comment (see the job `if:` below).
   issue_comment:
     types: [created]
 
@@ -12,13 +13,20 @@ permissions:
   issues: write
 
 concurrency:
-  group: ocr-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  # Comments that are not a review command (e.g. the bot's own result or error
+  # comments) get a group of their own, so they cannot cancel a running review.
+  group: >-
+    ${{ github.event_name == 'issue_comment' &&
+    !startsWith(github.event.comment.body, '/open-code-review') &&
+    !startsWith(github.event.comment.body, '@open-code-review') &&
+    format('ocr-ignored-{0}', github.run_id) ||
+    format('ocr-{0}', github.event.pull_request.number ||
+    github.event.issue.number || github.run_id) }}
   cancel-in-progress: true
 
 jobs:
   review:
     if: >-
-      github.event_name == 'pull_request_target' ||
       (github.event.issue.pull_request &&
        github.event.comment.user.type != 'Bot' &&
        (github.event.comment.author_association == 'MEMBER' ||
