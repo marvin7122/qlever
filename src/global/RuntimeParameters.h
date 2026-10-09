@@ -252,7 +252,10 @@ struct RuntimeParameters {
   // The maximal number of WHERE-result rows in one CONSTRUCT export batch.
   // Each batch resolves the vocabulary words of its `Id`s with one batched
   // vocabulary lookup per referenced variable column. Must be strictly
-  // positive.
+  // positive. This is the administrator-controlled per-batch row and memory
+  // bound: one batch holds all of its rows at once, so a very large value
+  // increases peak memory and delays the first output. Size it according to
+  // the workload and the available memory.
   SizeT constructExportRowBatchSize_{1024, "construct-export-row-batch-size"};
 
   // The number of rows in the first CONSTRUCT export batch. Every following

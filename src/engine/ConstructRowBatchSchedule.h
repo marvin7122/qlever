@@ -12,6 +12,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "util/Exception.h"
@@ -25,8 +28,10 @@ namespace qlever::constructExport {
 // the large later batches keep the per-batch cost low. With
 // `initialBatchSize >= maxBatchSize`, every batch has `maxBatchSize` rows.
 // The last batch may be smaller. Batch `k` is `[begin(k), end(k))`, relative
-// to the first row; all functions are O(1) or O(log(maxBatchSize)) and do
-// not overflow for any batch sizes.
+// to the first row; all functions are O(1) or O(log(maxBatchSize)). A
+// growing-batch configuration whose total does not fit into `size_t` is
+// rejected with `std::invalid_argument`, so no accepted configuration can
+// overflow.
 class ConstructRowBatchSchedule {
  public:
   ConstructRowBatchSchedule(size_t numRows, size_t initialBatchSize,
@@ -35,10 +40,23 @@ class ConstructRowBatchSchedule {
         maxBatchSize_{maxBatchSize},
         initialBatchSize_{std::min(initialBatchSize, maxBatchSize)} {
     AD_CONTRACT_CHECK(initialBatchSize >= 1 && maxBatchSize >= 1);
-    // The growing batches are those smaller than `maxBatchSize_`.
+    // The growing batches are those smaller than `maxBatchSize_`. Their
+    // total must fit into `size_t`; a combination like a small initial size
+    // with a huge maximum would let the total wrap and make `numBatches()`
+    // emit wrong ranges, so reject it fail-fast instead of saturating or
+    // capping it silently.
     for (size_t size = initialBatchSize_; size < maxBatchSize_;
          size = nextBatchSize(size, maxBatchSize_)) {
       ++numGrowingBatches_;
+      if (size > std::numeric_limits<size_t>::max() - rowsInGrowingBatches_) {
+        throw std::invalid_argument{
+            "ConstructRowBatchSchedule: the growing batch sizes from initial "
+            "size " +
+            std::to_string(initialBatchSize_) + " to maximum size " +
+            std::to_string(maxBatchSize_) +
+            " accumulate beyond what size_t can represent; choose a smaller "
+            "initial or maximum batch size"};
+      }
       rowsInGrowingBatches_ += size;
     }
   }

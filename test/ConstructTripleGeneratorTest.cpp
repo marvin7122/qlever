@@ -9,6 +9,7 @@
 #include <gmock/gmock.h>
 
 #include <limits>
+#include <stdexcept>
 
 #include "./util/IdTableHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
@@ -628,6 +629,19 @@ TEST(ConstructRowBatchSchedule, extremeSizesDoNotOverflow) {
   EXPECT_EQ(huge.end(63), maxSize);
   EXPECT_THROW((ConstructRowBatchSchedule{5, 0, 4}), ad_utility::Exception);
   EXPECT_THROW((ConstructRowBatchSchedule{5, 4, 0}), ad_utility::Exception);
+}
+
+// _____________________________________________________________________________
+TEST(ConstructRowBatchSchedule, unrepresentableGrowingBatchesAreRejected) {
+  constexpr size_t maxSize = std::numeric_limits<size_t>::max();
+  // The growing-batch totals 3 * (2^63 - 1) and 4294967298 * (2^32 - 1) both
+  // wrap `size_t`, so the configurations are rejected fail-fast.
+  EXPECT_THROW((ConstructRowBatchSchedule{5, 3, maxSize}),
+               std::invalid_argument);
+  EXPECT_THROW((ConstructRowBatchSchedule{5, 4294967298ULL, maxSize}),
+               std::invalid_argument);
+  // The largest representable prefix, 2^64 - 1, is still accepted.
+  EXPECT_NO_THROW((ConstructRowBatchSchedule{maxSize, 1, maxSize}));
 }
 
 // _____________________________________________________________________________
