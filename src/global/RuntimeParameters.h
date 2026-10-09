@@ -256,6 +256,14 @@ struct RuntimeParameters {
   // reads take the paths above.
   Bool vocabularyMmapResidentReads_{true, "vocabulary-mmap-resident-reads"};
 
+  // Bound the pages kept marked resident by the mappings above to this many
+  // MiB per mapped file (0, the default, means unbounded and keeps the
+  // current behavior). When marking would exceed the bound, a CLOCK hand
+  // clears marked pages down to it and demotes them with `MADV_DONTNEED`
+  // (VMCache-style explicit eviction, read path only). Only meaningful with
+  // `vocabulary-mmap-resident-reads`.
+  SizeT vocabularyMmapResidentCapMb_{0, "vocabulary-mmap-resident-cap-mb"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

@@ -14,6 +14,10 @@
 #include "util/File.h"
 #include "util/ResidentFileMapping.h"
 
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
+
 namespace {
 using ad_utility::ResidentFileMapping;
 
@@ -103,6 +107,100 @@ TEST(ResidentFileMapping, servesOnlyMarkedPages) {
   EXPECT_TRUE(assigned.tryRead(1, 4, target.data()));
   ad_utility::deleteFile(filename);
 }
+
+// _____________________________________________________________________________
+TEST(ResidentFileMapping, capBoundsMarkedPages) {
+  constexpr size_t P = ResidentFileMapping::pageSize;
+  // Eight full pages.
+  std::string contents(8 * P, 'q');
+  auto file = writeAndOpen("residentFileMappingCap.dat", contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  if (!mapping.isMapped()) {
+    ad_utility::deleteFile("residentFileMappingCap.dat");
+    return;
+  }
+  EXPECT_EQ(mapping.residentCapPages(), 0);
+  // Unbounded by default: all marks stick.
+  for (size_t page = 0; page < 8; ++page) {
+    mapping.markResident(page * P, 1);
+  }
+  std::string target(4, 'X');
+  for (size_t page = 0; page < 8; ++page) {
+    EXPECT_TRUE(mapping.tryRead(page * P, 4, target.data()));
+  }
+  // A cap of two pages evicts down immediately, oldest first.
+  mapping.setResidentCapPages(2);
+  EXPECT_EQ(mapping.residentCapPages(), 2);
+  size_t served = 0;
+  for (size_t page = 0; page < 8; ++page) {
+    served += mapping.tryRead(page * P, 4, target.data()) ? 1 : 0;
+  }
+  EXPECT_LE(served, 2);
+  // Marking beyond the cap keeps at most the cap (the CLOCK hand evicts
+  // oldest first; no survival promise for any single page).
+  mapping.markResident(0, 1);
+  served = 0;
+  for (size_t page = 0; page < 8; ++page) {
+    served += mapping.tryRead(page * P, 4, target.data()) ? 1 : 0;
+  }
+  EXPECT_LE(served, 2);
+  // Lifting the cap stops eviction; lowering it to zero disables the bound.
+  mapping.setResidentCapPages(0);
+  for (size_t page = 0; page < 8; ++page) {
+    mapping.markResident(page * P, 1);
+  }
+  for (size_t page = 0; page < 8; ++page) {
+    EXPECT_TRUE(mapping.tryRead(page * P, 4, target.data()));
+  }
+  // The cap survives a move.
+  mapping.setResidentCapPages(3);
+  ResidentFileMapping moved = std::move(mapping);
+  EXPECT_EQ(moved.residentCapPages(), 3);
+  ad_utility::deleteFile("residentFileMappingCap.dat");
+}
+
+#ifdef __linux__
+// _____________________________________________________________________________
+// Evicted pages are demoted from the page cache (`MADV_DONTNEED`), verified
+// with `mincore` on a second mapping of the same file (residency is a page
+// cache property, shared across mappings).
+TEST(ResidentFileMapping, evictedPagesAreDemoted) {
+  constexpr size_t P = ResidentFileMapping::pageSize;
+  std::string contents(4 * P, 'z');
+  auto file = writeAndOpen("residentFileMappingDemote.dat", contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  ASSERT_TRUE(mapping.isMapped());
+  // Fault all pages into the page cache through our own mapping.
+  void* probe =
+      ::mmap(nullptr, contents.size(), PROT_READ, MAP_SHARED, file.fd(), 0);
+  ASSERT_NE(probe, MAP_FAILED);
+  volatile char sink = 0;
+  for (size_t i = 0; i < contents.size(); i += P) {
+    sink += static_cast<const char*>(probe)[i];
+  }
+  (void)sink;
+  auto mincoreResident = [&](size_t& out) {
+    std::vector<unsigned char> vec(4, 0);
+    EXPECT_EQ(::mincore(probe, contents.size(), vec.data()), 0);
+    out = 0;
+    for (auto b : vec) {
+      out += (b & 1) ? 1 : 0;
+    }
+  };
+  size_t resident = 0;
+  mincoreResident(resident);
+  ASSERT_EQ(resident, 4);
+  // Mark everything, then cap at one page: three pages must demote.
+  for (size_t page = 0; page < 4; ++page) {
+    mapping.markResident(page * P, 1);
+  }
+  mapping.setResidentCapPages(1);
+  mincoreResident(resident);
+  EXPECT_EQ(resident, 1);
+  ::munmap(probe, contents.size());
+  ad_utility::deleteFile("residentFileMappingDemote.dat");
+}
+#endif
 
 // _____________________________________________________________________________
 TEST(ResidentFileMapping, emptyAndUnmappableFiles) {

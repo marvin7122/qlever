@@ -367,6 +367,14 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   const bool residentReads =
       pageCacheFastPath &&
       getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentReads_>();
+  // Apply the resident cap (0 means unbounded). The setter is cheap when the
+  // value is unchanged (one atomic exchange) and recounts plus enforces only
+  // on change.
+  const size_t residentCapPages =
+      getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentCapMb>() *
+      256;
+  wordsMapping_.setResidentCapPages(residentCapPages);
+  offsetsMapping_.setResidentCapPages(residentCapPages);
   auto offsetPairs =
       readOffsetPairs(*manager, indices, pageCacheFastPath, residentReads);
   return readStrings(*manager, offsetPairs, pageCacheFastPath, residentReads);

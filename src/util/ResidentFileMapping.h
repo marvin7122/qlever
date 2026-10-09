@@ -73,6 +73,31 @@ class ResidentFileMapping {
                                  ql::span<const uint64_t> offsets,
                                  ql::span<char*> buffers) const;
 
+  // Bound the pages kept marked resident to `capPages` (0 means unbounded,
+  // the default and current behavior). When marking would exceed the cap, a
+  // CLOCK hand clears marked pages down to the cap and demotes them from the
+  // page cache with `MADV_DONTNEED`, batched over contiguous runs. This is
+  // the read-only subset of VMCache-style explicit eviction (Leis et al.,
+  // SIGMOD 2023): residency stays in process state, but eviction no longer
+  // trusts the kernel, so a marked page can never surprise the reader with an
+  // unbounded synchronous fault storm under memory pressure.
+  //
+  // Eviction under a concurrent reader is transparent and needs no pinning:
+  // the mapping is read-only, so a reader that loses its page to `DONTNEED`
+  // faults it back and continues with correct data. The cost is one disk
+  // read, exactly what the non-mapping path would have paid. The CLOCK hand
+  // only makes that case rare by evicting the least recently marked pages.
+  //
+  // Takes effect on the next `markResident`; when the value changes, the
+  // marked pages are recounted once and the new cap is enforced immediately.
+  // May be called concurrently.
+  void setResidentCapPages(size_t capPages) const;
+
+  // The current cap in pages (0 means unbounded).
+  size_t residentCapPages() const {
+    return capPages_.load(std::memory_order_relaxed);
+  }
+
   // `markResident` for the reads at `positions`.
   void markAllResident(ql::span<const size_t> numBytes,
                        ql::span<const uint64_t> offsets,
@@ -83,12 +108,16 @@ class ResidentFileMapping {
   size_t size_ = 0;
   size_t numBitWords_ = 0;
   std::unique_ptr<std::atomic<uint64_t>[]> residentBits_;
+  std::atomic<size_t> capPages_{0};
+  std::atomic<size_t> residentPageCount_{0};
+  std::atomic<size_t> clockHand_{0};
 
   // The pages `[firstPage, lastPage]` of a non-empty range within the file.
   std::pair<size_t, size_t> pagesOf(uint64_t offset, size_t numBytes) const {
     return {offset / pageSize, (offset + numBytes - 1) / pageSize};
   }
   void unmap();
+  void evictDownTo(size_t target) const;
 };
 
 }  // namespace ad_utility
