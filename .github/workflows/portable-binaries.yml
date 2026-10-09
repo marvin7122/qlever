@@ -9,10 +9,8 @@ name: Portable Linux binaries
 # rolling pre-release `latest-master` (see the `release` job below).
 
 on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+  # Fork CI-trim (as in native-build.yml): no push/pull_request trigger on the
+  # fork; run via workflow_dispatch.
   workflow_dispatch:
 
 concurrency:
