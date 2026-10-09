@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <future>
 #include <string>
 #include <thread>
 #include <vector>
@@ -351,9 +352,9 @@ TEST(ResidentFileMapping, frameTableMapsFilePageToFrames) {
 
   const FrameKey key{0, 7};
   EXPECT_EQ(pool.tryPin(key), nullptr);
-  VocabFramePool::Frame* loading = pool.allocate(key);
+  auto [loading, installed] = pool.allocate(key);
+  EXPECT_TRUE(installed);
   ASSERT_NE(loading, nullptr);
-  EXPECT_EQ(loading->state, VocabFramePool::FrameState::Loading);
   // A loading frame is not yet readable.
   char byte = 'X';
   EXPECT_FALSE(pool.copyPinned(key, 0, 1, &byte));
@@ -371,11 +372,121 @@ TEST(ResidentFileMapping, frameTableMapsFilePageToFrames) {
   // The offsets file is a distinct key space over the same table shape.
   const FrameKey offsetsKey{1, 7};
   EXPECT_EQ(pool.tryPin(offsetsKey), nullptr);
-  VocabFramePool::Frame* offsetsLoading = pool.allocate(offsetsKey);
+  auto [offsetsLoading, offsetsInstalled] = pool.allocate(offsetsKey);
+  EXPECT_TRUE(offsetsInstalled);
   ASSERT_NE(offsetsLoading, nullptr);
   EXPECT_NE(offsetsLoading, loading);
   pool.abandon(offsetsKey);
   EXPECT_EQ(pool.residentCount(), 1);
+}
+
+// _____________________________________________________________________________
+TEST(ResidentFileMapping, allocationIdentifiesFillerAndReleasesFailedFill) {
+  VocabFramePool pool{1};
+  const FrameKey key{0, 0};
+  auto [frame, installed] = pool.allocate(key);
+  ASSERT_NE(frame, nullptr);
+  EXPECT_TRUE(installed);
+  auto [observer, observerInstalled] = pool.allocate(key);
+  EXPECT_EQ(observer, frame);
+  EXPECT_FALSE(observerInstalled);
+  EXPECT_FALSE(pool.copyPinned(key, 0, 0, nullptr));
+  pool.abandon(key);
+  pool.unpin(key);
+  EXPECT_EQ(pool.pinnedCount(), 0);
+  auto [retry, retryInstalled] = pool.allocate(key);
+  ASSERT_NE(retry, nullptr);
+  EXPECT_TRUE(retryInstalled);
+  pool.markLoaded(key);
+  auto [resident, residentInstalled] = pool.allocate(key);
+  EXPECT_EQ(resident, retry);
+  EXPECT_FALSE(residentInstalled);
+  EXPECT_TRUE(pool.copyPinned(key, 0, 0, nullptr));
+  pool.unpin(key);
+  pool.unpin(key);
+}
+
+// _____________________________________________________________________________
+TEST(ResidentFileMapping, onlyInstallingCallerFillsLoadingFrame) {
+  const std::string filename = "residentFileMappingSingleFiller.dat";
+  const std::string contents = makeContents();
+  auto file = writeAndOpen(filename, contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  for (bool succeeds : {false, true}) {
+    mapping.enableFramePool(1);
+    std::promise<void> started;
+    std::promise<void> resume;
+    auto resumed = resume.get_future();
+    bool filled = false;
+    std::thread filler{[&] {
+      filled = mapping.fillFrameFromFile(
+          0, [&](char* dst, uint64_t offset, size_t size) {
+            started.set_value();
+            resumed.wait();
+            std::memcpy(dst, contents.data() + offset, size);
+            return succeeds;
+          });
+    }};
+    started.get_future().wait();
+    auto unexpectedReader = [](char*, uint64_t, size_t) {
+      ADD_FAILURE() << "Only the installing caller may fill the frame";
+      return true;
+    };
+    EXPECT_FALSE(mapping.fillFrameFromFile(0, unexpectedReader));
+    char byte = 'X';
+    EXPECT_FALSE(mapping.tryReadPooled(0, 1, &byte));
+    EXPECT_EQ(byte, 'X');
+    resume.set_value();
+    filler.join();
+    EXPECT_EQ(filled, succeeds);
+    if (succeeds) {
+      EXPECT_TRUE(mapping.fillFrameFromFile(0, unexpectedReader));
+    } else {
+      EXPECT_TRUE(mapping.fillFrameFromFile(
+          0, [&](char* dst, uint64_t offset, size_t size) {
+            std::memcpy(dst, contents.data() + offset, size);
+            return true;
+          }));
+    }
+    EXPECT_TRUE(mapping.tryReadPooled(0, 1, &byte));
+    EXPECT_EQ(byte, contents[0]);
+    EXPECT_EQ(mapping.framePool()->pinnedCount(), 0);
+  }
+  ad_utility::deleteFile(filename);
+}
+
+// _____________________________________________________________________________
+TEST(ResidentFileMapping, poolSurvivesReplacementDuringFill) {
+  const std::string filename = "residentFileMappingPoolLifetime.dat";
+  const std::string contents = makeContents();
+  auto file = writeAndOpen(filename, contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  for (bool replace : {false, true}) {
+    mapping.enableFramePool(1, 7);
+    std::weak_ptr<VocabFramePool> previous = mapping.framePool();
+    EXPECT_TRUE(mapping.fillFrameFromFile(
+        0, [&](char* dst, uint64_t offset, size_t size) {
+          if (replace) {
+            mapping.enableFramePool(1, 8);
+          } else {
+            mapping.disableFramePool();
+          }
+          EXPECT_FALSE(previous.expired());
+          std::memcpy(dst, contents.data() + offset, size);
+          return true;
+        }));
+    EXPECT_TRUE(previous.expired());
+    EXPECT_EQ(mapping.framePoolEnabled(), replace);
+    EXPECT_EQ(mapping.framePoolFileId(), replace ? 8 : 7);
+    char byte = 'X';
+    EXPECT_FALSE(mapping.tryReadPooled(0, 1, &byte));
+    EXPECT_EQ(byte, 'X');
+  }
+  mapping.enableFramePool(1);
+  auto retained = mapping.framePool();
+  mapping.disableFramePool();
+  EXPECT_EQ(retained->capacity(), 1);
+  ad_utility::deleteFile(filename);
 }
 
 // _____________________________________________________________________________
@@ -393,7 +504,7 @@ TEST(ResidentFileMapping, pooledReadsAreByteIdentical) {
     return;
   }
   EXPECT_FALSE(mapping.framePoolEnabled());
-  std::string target(16, 'X');
+  std::string target(20, 'X');
   EXPECT_FALSE(mapping.tryReadPooled(10, 4, target.data()));
 
   mapping.enableFramePool(8);
@@ -461,7 +572,7 @@ TEST(ResidentFileMapping, noEvictWhilePinned) {
   for (size_t page = 0; page < 4; ++page) {
     ASSERT_TRUE(mapping.fillFrameFromFile(page, preadReader));
   }
-  VocabFramePool* pool = mapping.framePool();
+  auto pool = mapping.framePool();
   ASSERT_NE(pool, nullptr);
   // Pin page 0 and hold it across forced evictions of pages 4..6.
   const FrameKey pinnedKey{1, 0};
@@ -489,7 +600,9 @@ TEST(ResidentFileMapping, noEvictWhilePinned) {
     EXPECT_NE(pool->tryPin(key), nullptr);
     allPinned.push_back(key);
   }
-  EXPECT_EQ(pool->allocate(FrameKey{1, 7}), nullptr);
+  auto [unavailable, installed] = pool->allocate(FrameKey{1, 7});
+  EXPECT_EQ(unavailable, nullptr);
+  EXPECT_FALSE(installed);
   for (const auto& key : allPinned) {
     pool->unpin(key);
   }
@@ -539,6 +652,12 @@ TEST(ResidentFileMapping, pooledReadsStayByteIdenticalUnderEvictionRace) {
       }
     });
   }
+  workers.emplace_back([&] {
+    for (size_t i = 0; i < 300; ++i) {
+      mapping.disableFramePool();
+      mapping.enableFramePool(4, i % 2);
+    }
+  });
   for (auto& worker : workers) {
     worker.join();
   }

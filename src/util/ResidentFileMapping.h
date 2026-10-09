@@ -57,9 +57,10 @@ struct FrameKeyHash {
 // evict each other's in-flight pages. Immutable files remove dirty-page
 // handling entirely: fills are byte copies, eviction just drops the buffer.
 //
-// Fills go through the caller: `allocate` returns a pinned loading frame,
-// the caller reads the page (in production via the existing io_uring
-// `BatchManagerBase::addBatch`/`wait` path, see `VocabularyOnDisk`), then
+// Fills go through the caller: `allocate` identifies who installed a pinned
+// loading frame. Only that caller reads the page (in production via the
+// existing io_uring `BatchManagerBase::addBatch`/`wait` path, see
+// `VocabularyOnDisk`), then
 // calls `markLoaded`. Thread safety: all member functions may be called
 // concurrently.
 class VocabFramePool {
@@ -98,9 +99,11 @@ class VocabFramePool {
   // Return the frame for `key`, allocating it on a miss: on a hit this pins
   // like `tryPin`; on a miss it evicts one unpinned frame via CLOCK (second
   // chance via the reference bit), installs `key` as loading, and returns it
-  // pinned exactly once. Returns nullptr when every frame is pinned (no
-  // evict-while-pinned, the caller retries or takes the synchronous path).
-  Frame* allocate(const FrameKey& key);
+  // pinned exactly once. The bool is true only for the caller that installed
+  // the loading frame; only that caller may fill it. Existing loading frames
+  // are also pinned, but must not be filled by another caller. Returns
+  // {nullptr, false} when every frame is pinned (no evict-while-pinned).
+  std::pair<Frame*, bool> allocate(const FrameKey& key);
 
   // Mark a loading frame resident after its buffer was filled. No-op when
   // the frame is not loading (e.g. after `abandon`).
@@ -295,13 +298,16 @@ class ResidentFileMapping {
   void enableFramePool(size_t numFrames, uint32_t fileId = 0) const;
   void disableFramePool() const;
   bool framePoolEnabled() const;
-  uint32_t framePoolFileId() const { return framePoolFileId_; }
+  uint32_t framePoolFileId() const {
+    std::lock_guard<std::mutex> lock{framePoolMutex_};
+    return framePoolFileId_;
+  }
 
   // Fill the frame for `page` through `reader` (allocate pinned loading
   // frame, read the page bytes, mark resident). Returns false when `page` is
-  // beyond the file, the pool is disabled, every frame is pinned, or the
-  // reader fails. Byte-identity: the frame holds an exact copy of the file
-  // page (immutable files, no dirty handling).
+  // beyond the file, the pool is disabled, every frame is pinned, the frame
+  // is already loading, or the reader fails. Byte-identity: the frame holds
+  // an exact copy of the file page (immutable files, no dirty handling).
   bool fillFrameFromFile(uint64_t page, const FrameFillReader& reader) const;
 
   // Serve `[offset, offset + numBytes)` from resident pooled frames (pin,
@@ -311,7 +317,10 @@ class ResidentFileMapping {
   bool tryReadPooled(uint64_t offset, size_t numBytes, char* target) const;
 
   // Direct pool access for tests and for the future shared-pool wiring.
-  VocabFramePool* framePool() const { return framePool_.get(); }
+  std::shared_ptr<VocabFramePool> framePool() const {
+    std::lock_guard<std::mutex> lock{framePoolMutex_};
+    return framePool_;
+  }
 
  private:
   const char* data_ = nullptr;
@@ -326,7 +335,7 @@ class ResidentFileMapping {
   // Opt-in explicit frame pool (null when disabled); guarded so const reads
   // can lazily use it. The pool itself is internally synchronized.
   mutable std::mutex framePoolMutex_;
-  mutable std::unique_ptr<VocabFramePool> framePool_;
+  mutable std::shared_ptr<VocabFramePool> framePool_;
   mutable uint32_t framePoolFileId_ = 0;
 
   // The pages `[firstPage, lastPage]` of a non-empty range within the file.

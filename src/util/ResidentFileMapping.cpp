@@ -76,19 +76,19 @@ size_t VocabFramePool::clockVictimLocked() {
 }
 
 // _____________________________________________________________________________
-VocabFramePool::Frame* VocabFramePool::allocate(const FrameKey& key) {
+std::pair<VocabFramePool::Frame*, bool> VocabFramePool::allocate(
+    const FrameKey& key) {
   std::lock_guard<std::mutex> lock{mutex_};
   if (Frame* hit = findLocked(key)) {
-    // A loading frame is pinned by its filler; a second allocator pins it
-    // too and waits for `markLoaded` via its own fill path. Reference it.
+    // Pin existing frames, but leave filling to the installing caller.
     hit->pinCount += 1;
     hit->referenceBit = true;
-    return hit;
+    return {hit, false};
   }
   const size_t victim = clockVictimLocked();
   if (victim == frames_.size()) {
     // Every frame is pinned: never evict-while-pinned.
-    return nullptr;
+    return {nullptr, false};
   }
   Frame& frame = frames_[victim];
   if (frame.state != FrameState::Free) {
@@ -99,7 +99,7 @@ VocabFramePool::Frame* VocabFramePool::allocate(const FrameKey& key) {
   frame.pinCount = 1;
   frame.referenceBit = true;
   index_[key] = victim;
-  return &frame;
+  return {&frame, true};
 }
 
 // _____________________________________________________________________________
@@ -139,6 +139,13 @@ void VocabFramePool::unpin(const FrameKey& key) {
   AD_CONTRACT_CHECK(frame != nullptr);
   AD_CONTRACT_CHECK(frame->pinCount > 0);
   frame->pinCount -= 1;
+  // A failed filler may abandon while another allocator still holds a pin.
+  // Release that loading frame when the final observer unpins it.
+  if (frame->pinCount == 0 && frame->state == FrameState::Loading) {
+    index_.erase(key);
+    frame->state = FrameState::Free;
+    frame->referenceBit = false;
+  }
 }
 
 // _____________________________________________________________________________
@@ -284,14 +291,14 @@ ResidentFileMapping::ResidentFileMapping(ResidentFileMapping&& other) noexcept
       size_{std::exchange(other.size_, 0)},
       numBitWords_{std::exchange(other.numBitWords_, 0)},
       residentBits_{std::move(other.residentBits_)},
-      referenceBits_{std::move(other.referenceBits_)},
-      framePoolFileId_{other.framePoolFileId_} {
+      referenceBits_{std::move(other.referenceBits_)} {
   capPages_.store(other.capPages_.load(std::memory_order_relaxed),
                   std::memory_order_relaxed);
   clockHand_.store(other.clockHand_.load(std::memory_order_relaxed),
                    std::memory_order_relaxed);
   std::lock_guard<std::mutex> lock{other.framePoolMutex_};
   framePool_ = std::move(other.framePool_);
+  framePoolFileId_ = other.framePoolFileId_;
 }
 
 // _____________________________________________________________________________
@@ -308,10 +315,10 @@ ResidentFileMapping& ResidentFileMapping::operator=(
                     std::memory_order_relaxed);
     clockHand_.store(other.clockHand_.load(std::memory_order_relaxed),
                      std::memory_order_relaxed);
-    framePoolFileId_ = other.framePoolFileId_;
     std::lock_guard<std::mutex> lock{other.framePoolMutex_};
     std::lock_guard<std::mutex> selfLock{framePoolMutex_};
     framePool_ = std::move(other.framePool_);
+    framePoolFileId_ = other.framePoolFileId_;
   }
   return *this;
 }
@@ -494,7 +501,7 @@ void ResidentFileMapping::markAllResident(
 void ResidentFileMapping::enableFramePool(size_t numFrames,
                                           uint32_t fileId) const {
   std::lock_guard<std::mutex> lock{framePoolMutex_};
-  framePool_ = std::make_unique<VocabFramePool>(numFrames);
+  framePool_ = std::make_shared<VocabFramePool>(numFrames);
   framePoolFileId_ = fileId;
 }
 
@@ -520,25 +527,27 @@ bool ResidentFileMapping::fillFrameFromFile(
   if (page >= numPages) {
     return false;
   }
-  VocabFramePool* pool = nullptr;
+  std::shared_ptr<VocabFramePool> pool;
   uint32_t fileId = 0;
   {
     std::lock_guard<std::mutex> lock{framePoolMutex_};
-    pool = framePool_.get();
+    pool = framePool_;
     fileId = framePoolFileId_;
   }
   if (pool == nullptr) {
     return false;
   }
   const FrameKey key{fileId, page};
-  VocabFramePool::Frame* frame = pool->allocate(key);
+  auto [frame, installed] = pool->allocate(key);
   if (frame == nullptr) {
     return false;
   }
-  if (frame->state == VocabFramePool::FrameState::Resident) {
-    // Another thread already filled it; our pin is the hit.
+  if (!installed) {
+    // Query residency under the pool lock without copying any bytes. A
+    // concurrent fill may still be loading; only its installer may write.
+    const bool resident = pool->copyPinned(key, 0, 0, nullptr);
     pool->unpin(key);
-    return true;
+    return resident;
   }
   const uint64_t fileOffset = page * pageSize;
   const size_t numBytes = std::min(pageSize, size_ - fileOffset);
@@ -564,11 +573,11 @@ bool ResidentFileMapping::tryReadPooled(uint64_t offset, size_t numBytes,
   if (size_ == 0 || offset > size_ || numBytes > size_ - offset) {
     return false;
   }
-  VocabFramePool* pool = nullptr;
+  std::shared_ptr<VocabFramePool> pool;
   uint32_t fileId = 0;
   {
     std::lock_guard<std::mutex> lock{framePoolMutex_};
-    pool = framePool_.get();
+    pool = framePool_;
     fileId = framePoolFileId_;
   }
   if (pool == nullptr) {
