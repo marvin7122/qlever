@@ -10,6 +10,9 @@
 
 #include <gmock/gmock.h>
 
+#include <cstddef>
+#include <limits>
+
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "util/GTestHelpers.h"
@@ -36,6 +39,33 @@ TEST(Constants, testDefaultQueryTimeoutIsStriclyPositive) {
       std::runtime_error);
   EXPECT_NO_THROW(
       setRuntimeParameter<&RuntimeParameters::defaultQueryTimeout_>(1s));
+}
+
+// _____________________________________________________________________________
+TEST(Constants, constructExportRowBatchSizesAreStrictlyPositive) {
+  auto resetMax = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(size_t{1024});
+  auto resetInitial = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportInitialRowBatchSize_>(size_t{1024});
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(0),
+      AllOf(HasSubstr("construct-export-row-batch-size"), HasSubstr("was 0")),
+      std::runtime_error);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      setRuntimeParameter<
+          &RuntimeParameters::constructExportInitialRowBatchSize_>(0),
+      AllOf(HasSubstr("construct-export-initial-row-batch-size"),
+            HasSubstr("was 0")),
+      std::runtime_error);
+  constexpr auto maxSize = std::numeric_limits<size_t>::max();
+  EXPECT_NO_THROW(
+      setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(1));
+  EXPECT_NO_THROW(
+      setRuntimeParameter<&RuntimeParameters::constructExportRowBatchSize_>(
+          maxSize));
+  EXPECT_NO_THROW(
+      setRuntimeParameter<
+          &RuntimeParameters::constructExportInitialRowBatchSize_>(maxSize));
 }
 
 namespace {

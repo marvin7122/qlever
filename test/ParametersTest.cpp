@@ -10,6 +10,8 @@
 
 #include <gmock/gmock.h>
 
+#include <stdexcept>
+
 #include "util/MemorySize/MemorySize.h"
 #include "util/Parameters.h"
 
@@ -64,6 +66,21 @@ TEST(Parameter, verifyParameterConstraint) {
 
   EXPECT_THROW(parameter.set(1), std::runtime_error);
   EXPECT_EQ(parameter.get(), 0);
+}
+
+// _____________________________________________________________________________
+// `std::stoull` accepts a leading `-` and wraps the negated value (e.g.
+// `"-1"` becomes `SIZE_MAX`), so the `szt` parser must reject negative input
+// instead of parsing it.
+TEST(Parameter, sizeTParserRejectsNegativeInput) {
+  Parameter<size_t, szt, toString> parameter{42, "test"};
+
+  EXPECT_THROW(parameter.setFromString("-1"), std::invalid_argument);
+  EXPECT_THROW(parameter.setFromString("  -1"), std::invalid_argument);
+  // The failed parses leave the value unchanged, valid input still parses.
+  EXPECT_EQ(parameter.get(), 42u);
+  EXPECT_NO_THROW(parameter.setFromString("7"));
+  EXPECT_EQ(parameter.get(), 7u);
 }
 
 // _____________________________________________________________________________

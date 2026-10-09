@@ -249,6 +249,24 @@ struct RuntimeParameters {
   Bool vocabularyIouringPageCacheFastPath_{
       true, "vocabulary-iouring-page-cache-fast-path"};
 
+  // The maximal number of WHERE-result rows in one CONSTRUCT export batch.
+  // Each batch resolves the vocabulary words of its `Id`s with one batched
+  // vocabulary lookup per referenced variable column. Must be strictly
+  // positive. This is the administrator-controlled per-batch row and memory
+  // bound: one batch holds all of its rows at once, so a very large value
+  // increases peak memory and delays the first output. Size it according to
+  // the workload and the available memory.
+  SizeT constructExportRowBatchSize_{1024, "construct-export-row-batch-size"};
+
+  // The number of rows in the first CONSTRUCT export batch. Every following
+  // batch has twice as many rows as the one before, up to
+  // `construct-export-row-batch-size`. A small first batch lets the first
+  // triples out early. With a value >= `construct-export-row-batch-size`,
+  // every batch has `construct-export-row-batch-size` rows. Must be strictly
+  // positive.
+  SizeT constructExportInitialRowBatchSize_{
+      1024, "construct-export-initial-row-batch-size"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

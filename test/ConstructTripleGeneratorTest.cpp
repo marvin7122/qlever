@@ -8,12 +8,18 @@
 
 #include <gmock/gmock.h>
 
+#include <limits>
+#include <stdexcept>
+
 #include "./util/IdTableHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
+#include "engine/ConstructRowBatchSchedule.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "global/RuntimeParameters.h"
 #include "util/CancellationHandle.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 namespace {
 
@@ -301,6 +307,67 @@ TEST_F(ConstructTripleGeneratorTest, acrossBatchBoundary) {
   }
 }
 
+// The runtime parameter `construct-export-row-batch-size` sets the batch size.
+// Batches of one row, batches that do not divide the number of rows, and one
+// batch larger than the table all yield every row.
+TEST_F(ConstructTripleGeneratorTest, rowBatchSizeIsConfigurable) {
+  constexpr size_t N = 5;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  for (size_t batchSize : {size_t{1}, size_t{3}, size_t{4096}}) {
+    SCOPED_TRACE(batchSize);
+    auto reset = setRuntimeParameterForTest<
+        &RuntimeParameters::constructExportRowBatchSize_>(batchSize);
+    auto table = makeTableWithRange(*result, 0, N);
+    auto collected = run(templateTriples, varMap, table);
+    ASSERT_EQ(collected.size(), N) << "batch size " << batchSize;
+    for (const auto& triple : collected) {
+      EXPECT_THAT(triple, matchTriple("<s>", "<p>", "<o>"));
+    }
+
+    if (batchSize < N) {
+      auto handle = makeHandle();
+      auto range = ConstructTripleGenerator::generateStringTriples(
+          templateTriples, varMap, singleTableRange(table), 0,
+          makeConfig(handle));
+      ASSERT_TRUE(range.get().has_value());
+      handle->cancel(ad_utility::CancellationState::MANUAL);
+
+      // Cancellation leaves the remaining rows of the first batch readable.
+      for (size_t row = 1; row < batchSize; ++row) {
+        ASSERT_TRUE(range.get().has_value());
+      }
+      // The next row starts a new batch and must observe the cancellation.
+      EXPECT_THROW(range.get(), ad_utility::CancellationException);
+    }
+  }
+}
+
+// With `construct-export-initial-row-batch-size` smaller than
+// `construct-export-row-batch-size`, the batches grow (here 1, 2, 4, 4, ...
+// rows) and every row is still evaluated exactly once, in order.
+TEST_F(ConstructTripleGeneratorTest, growingRowBatchesYieldEveryRow) {
+  auto resetMax = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(size_t{4});
+  auto resetInitial = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportInitialRowBatchSize_>(size_t{1});
+  constexpr size_t N = 13;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  auto collected =
+      run(templateTriples, varMap, makeTableWithRange(*result, 0, N));
+  ASSERT_EQ(collected.size(), N);
+  for (const auto& triple : collected) {
+    EXPECT_THAT(triple, matchTriple("<s>", "<p>", "<o>"));
+  }
+}
+
 // After consuming all `ConstructTripleGenerator::BATCH_SIZE` triples in
 // batch 0, cancelling the handle causes the next get() call (which would start
 // batch 1) to throw.
@@ -512,3 +579,86 @@ TEST_F(ConstructTripleGeneratorTest,
 }
 
 }  // namespace qlever::constructExport
+
+// _____________________________________________________________________________
+namespace {
+using qlever::constructExport::ConstructRowBatchSchedule;
+// The batch sizes of `schedule`, in order.
+std::vector<size_t> batchSizes(const ConstructRowBatchSchedule& schedule) {
+  std::vector<size_t> sizes;
+  size_t expectedBegin = 0;
+  for (size_t k = 0; k < schedule.numBatches(); ++k) {
+    EXPECT_EQ(schedule.begin(k), expectedBegin) << "batch " << k;
+    sizes.push_back(schedule.end(k) - schedule.begin(k));
+    expectedBegin = schedule.end(k);
+  }
+  return sizes;
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(ConstructRowBatchSchedule, growsByDoublingUpToTheMaximum) {
+  using ::testing::ElementsAre;
+  EXPECT_THAT(batchSizes({100, 4, 32}),
+              ElementsAre(4, 8, 16, 32, 32, 8));  // 4 + 8 + 16 + 32 + 32 + 8
+  // A maximum that is not a power-of-two multiple of the initial size.
+  EXPECT_THAT(batchSizes({30, 4, 10}), ElementsAre(4, 8, 10, 8));
+  // The last batch is cut at the number of rows, also while growing.
+  EXPECT_THAT(batchSizes({10, 4, 32}), ElementsAre(4, 6));
+  EXPECT_THAT(batchSizes({4, 4, 32}), ElementsAre(4));
+  EXPECT_THAT(batchSizes({0, 4, 32}), ElementsAre());
+}
+
+// _____________________________________________________________________________
+TEST(ConstructRowBatchSchedule, fixedSizeWithoutGrowth) {
+  using ::testing::ElementsAre;
+  EXPECT_THAT(batchSizes({10, 4, 4}), ElementsAre(4, 4, 2));
+  // An initial size above the maximum is clamped to the maximum.
+  EXPECT_THAT(batchSizes({10, 100, 4}), ElementsAre(4, 4, 2));
+  EXPECT_THAT(batchSizes({3, 1, 1}), ElementsAre(1, 1, 1));
+}
+
+// _____________________________________________________________________________
+TEST(ConstructRowBatchSchedule, extremeSizesDoNotOverflow) {
+  constexpr size_t maxSize = std::numeric_limits<size_t>::max();
+  EXPECT_THAT(batchSizes({5, 1, maxSize}), ::testing::ElementsAre(1, 2, 2));
+  EXPECT_THAT(batchSizes({5, maxSize, maxSize}), ::testing::ElementsAre(5));
+  ConstructRowBatchSchedule huge{maxSize, 1, maxSize};
+  // 64 growing batches (1, 2, ..., 2^63) cover all `2^64 - 1` rows.
+  EXPECT_EQ(huge.numBatches(), 64u);
+  EXPECT_EQ(huge.end(63), maxSize);
+  EXPECT_THROW((ConstructRowBatchSchedule{5, 0, 4}), ad_utility::Exception);
+  EXPECT_THROW((ConstructRowBatchSchedule{5, 4, 0}), ad_utility::Exception);
+}
+
+// _____________________________________________________________________________
+TEST(ConstructRowBatchSchedule, unrepresentableGrowingBatchesAreRejected) {
+  constexpr size_t maxSize = std::numeric_limits<size_t>::max();
+  // The growing-batch totals 3 * (2^63 - 1) and 4294967298 * (2^32 - 1) both
+  // wrap `size_t`, so the configurations are rejected fail-fast.
+  EXPECT_THROW((ConstructRowBatchSchedule{5, 3, maxSize}),
+               std::invalid_argument);
+  EXPECT_THROW((ConstructRowBatchSchedule{5, 4294967298ULL, maxSize}),
+               std::invalid_argument);
+  // The largest representable prefix, 2^64 - 1, is still accepted.
+  EXPECT_NO_THROW((ConstructRowBatchSchedule{maxSize, 1, maxSize}));
+}
+
+// _____________________________________________________________________________
+TEST(ConstructRowBatchSchedule, initialBatchSizeAfterContinuesTheGrowth) {
+  // Batches 4, 8, 16, 32, 32, ... start at rows 0, 4, 12, 28, 60, ...
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(0, 4, 32), 4u);
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(3, 4, 32), 4u);
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(4, 4, 32), 8u);
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(11, 4, 32), 8u);
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(12, 4, 32), 16u);
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(28, 4, 32), 32u);
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(1000, 4, 32), 32u);
+  // Without growth, and with a maximum that is not a power-of-two multiple.
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(0, 64, 32), 32u);
+  EXPECT_EQ(ConstructRowBatchSchedule::initialBatchSizeAfter(12, 4, 10), 10u);
+  constexpr size_t maxSize = std::numeric_limits<size_t>::max();
+  EXPECT_EQ(
+      ConstructRowBatchSchedule::initialBatchSizeAfter(maxSize, 1, maxSize),
+      maxSize);
+}

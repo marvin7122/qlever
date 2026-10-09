@@ -11,6 +11,8 @@
 #include <absl/strings/str_split.h>
 
 #include <optional>
+#include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #include "backports/concepts.h"
@@ -155,6 +157,17 @@ struct dbl {
 struct szt {
   template <typename T>
   size_t operator()(const T& s) const {
+    // `std::stoull` accepts a leading `-` (via `strtoull`) and wraps the
+    // negated value, so `"-1"` would silently become `SIZE_MAX` and slip past
+    // positivity constraints. Reject it explicitly, like `parseSendParameter`
+    // in `HttpApiHelpers.cpp` does.
+    std::string_view view{s};
+    if (const auto pos = view.find_first_not_of(" \t\n\v\f\r");
+        pos != std::string_view::npos && view[pos] == '-') {
+      throw std::invalid_argument{
+          std::string{"Negative value for unsigned parameter: \""} +
+          std::string{view} + "\""};
+    }
     return std::stoull(s);
   }
 };

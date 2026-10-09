@@ -47,8 +47,6 @@ class ConstructTripleGenerator {
   friend class ConstructTripleGeneratorTest;
 
  public:
-  // the number of `IdTable` rows that one batch consists of.
-  static constexpr size_t BATCH_SIZE = 1024;
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
@@ -77,7 +75,8 @@ class ConstructTripleGenerator {
   static IdCache makeIdCache(const PreprocessedConstructTemplate& tmpl);
 
   // Lazily evaluates all `TableWithRange` values from `rowIndices`, processes
-  // them in batches of `BATCH_SIZE` rows, and returns a flat range of
+  // them in batches of `construct-export-row-batch-size` rows (runtime
+  // parameter, default 1024), and returns a flat range of
   // `EvaluatedTriple`. Duplicate triples are handled according to
   // `config.mode_`.
   static InputRangeTypeErased<EvaluatedTriple> evaluateTables(
