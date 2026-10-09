@@ -16,6 +16,7 @@
 
 #ifdef __linux__
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -169,6 +170,10 @@ TEST(ResidentFileMapping, evictedPagesAreDemoted) {
   constexpr size_t P = ResidentFileMapping::pageSize;
   std::string contents(4 * P, 'z');
   auto file = writeAndOpen("residentFileMappingDemote.dat", contents);
+  // Demotion only applies to clean pages (freshly written dirty pages are
+  // left for writeback, as in production where vocabulary files are synced
+  // at index build), so sync before mapping.
+  ASSERT_EQ(::fsync(file.fd()), 0);
   ResidentFileMapping mapping(file.fd(), contents.size());
   ASSERT_TRUE(mapping.isMapped());
   const char* probe = mapping.mappingForTesting();

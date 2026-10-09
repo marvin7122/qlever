@@ -77,7 +77,9 @@ class ResidentFileMapping {
   // the default and current behavior). When marking would exceed the cap, a
   // CLOCK hand clears marked pages down to the cap and demotes them from the
   // page cache (`MADV_PAGEOUT` where available, else `MADV_DONTNEED`),
-  // batched over contiguous runs. This is the read-only subset of
+  // batched over contiguous runs. Demotion applies to clean pages; freshly
+  // written dirty pages are left for writeback (vocabulary files are synced
+  // at index build). This is the read-only subset of
   // VMCache-style explicit eviction (Leis et al., SIGMOD 2023): residency
   // stays in process state, but eviction no longer trusts the kernel, so a
   // marked page can never surprise the reader with an unbounded synchronous
