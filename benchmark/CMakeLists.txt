@@ -39,8 +39,6 @@ if (NOT _NO_BENCHMARK)
     add_executable(ExportPipelineRouterBenchmark ExportPipelineRouterBenchmark.cpp)
     qlever_target_link_libraries(ExportPipelineRouterBenchmark engine sparqlParser qlever_util)
 
-    addAndLinkBenchmark(FsstScratchBufferBenchmark fsst)
-
     # Standalone (own main): do not use addAndLinkBenchmark, which would add a
     # second main via benchmarkWithMain.
     add_executable(SimdEscapeClassifierBenchmark SimdEscapeClassifierBenchmark.cpp)
