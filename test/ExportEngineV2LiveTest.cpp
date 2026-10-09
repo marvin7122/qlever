@@ -47,17 +47,6 @@ struct Exports {
   bool ordered_ = false;
 };
 
-// V2 streams the lazy result blocks (`Result::idTables`), so it needs a root
-// operation that is computed lazily. A fully materialized root result (e.g.
-// a cached result, or VALUES) is outside this test's scope.
-bool rootResultIsLazy(QueryExecutionContext* qec, ParsedQuery& parsed) {
-  qec->clearCacheUnpinnedOnly();
-  auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
-  QueryPlanner qp{qec, handle};
-  auto qet = qp.createExecutionTree(parsed);
-  return !qet.getResult(true)->isFullyMaterialized();
-}
-
 // `scheduler` (optional) runs the V2 morsels on helper threads.
 Exports runAllEngines(
     ad_utility::testing::TestIndexConfig config, const std::string& query,
@@ -91,11 +80,9 @@ Exports runAllEngines(
       result.legacy_ += block;
     }
   }
-  if (!rootResultIsLazy(qec, parsed)) {
-    ADD_FAILURE() << "root result is fully materialized, V2 cannot stream it: "
-                  << query;
-    return result;
-  }
+  // No laziness gate: V2 streams lazy blocks and clones a fully
+  // materialized root result (see `resultBlocks`), so both cases must match
+  // Legacy byte for byte below.
   {
     auto [qet, handle] = plan();
     EXPECT_TRUE(ExportEngineV2::canHandle(parsed, qet, mediaType)) << query;
