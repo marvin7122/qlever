@@ -284,6 +284,11 @@ PageCacheRead& pageCacheRead();
 // Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
 // tests that injected one.
 void resetPageCacheFastPathSupport();
+// Disable the fast path after an `EOPNOTSUPP` observed outside
+// `readPageCacheHits` (a single-page probe, see
+// `VocabularyOnDisk::copyRangesFromOwnedPage`). Logs once, like the disable
+// inside `readPageCacheHits`.
+void disablePageCacheFastPathSupport();
 }  // namespace detail
 
 // Build a batch manager. When io_uring is compiled in and the runtime flag

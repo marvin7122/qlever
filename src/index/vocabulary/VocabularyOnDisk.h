@@ -11,6 +11,8 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <array>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -50,6 +52,79 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
+
+  // One 4 KiB page of a vocabulary file, copied into memory this object owns.
+  // A later read of a range inside that page copies from `bytes_` and does not
+  // call `preadv2`.
+  struct OwnedPage {
+    static constexpr uint64_t kBytes = 4096;
+    int fd_ = -1;
+    uint64_t pageStart_ = 0;
+    // Bytes of this page that were copied, starting at `pageStart_`. A short
+    // read stores only the prefix that came back. 4096 means the whole page.
+    size_t validBytes_ = 0;
+    std::array<char, kBytes> bytes_{};
+
+    // True when this slot holds the bytes of `[offset, offset + length)`.
+    bool covers(int fd, uint64_t pageStart, uint64_t offset,
+                size_t length) const {
+      if (validBytes_ == 0 || fd_ != fd || pageStart_ != pageStart ||
+          offset < pageStart_) {
+        return false;
+      }
+      const uint64_t within = offset - pageStart_;
+      return within <= validBytes_ && length <= validBytes_ - within;
+    }
+  };
+  // Identity of the files `open` last installed. A thread-local page stores
+  // the value it was copied under. `open` replaces this value, so a page
+  // copied from the previous descriptor no longer matches.
+  static uint64_t freshSlotEpoch() {
+    static std::atomic<uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+  }
+  uint64_t slotEpoch_{freshSlotEpoch()};
+
+  // The page this thread keeps for the words file (`words == true`) or the
+  // `.offsets` file. The entry is keyed by this object. A different epoch
+  // drops the stored bytes before they are used.
+  OwnedPage& threadOwnedPage(bool words) const;
+
+  // True when `[offset, offset + length)` lies inside one 4096-byte page.
+  // `pageStart` receives that page's file offset.
+  static bool containedInOneOwnedPage(uint64_t offset, size_t length,
+                                      uint64_t* pageStart);
+
+  // One range that lies inside a single 4096-byte page: the index into the
+  // `offsets`/`lengths`/`destinations` spans of `copyRangesFromOwnedPage`,
+  // and the file offset of that page.
+  struct SinglePageRange {
+    size_t index;
+    uint64_t pageStart;
+  };
+
+  // Copy ranges out of `slot` as described on `OwnedPage`. The returned
+  // indices were not copied and stay on the existing read path. They are
+  // ascending.
+  static std::vector<size_t> copyRangesFromOwnedPage(
+      OwnedPage& slot, int fd, ql::span<const uint64_t> offsets,
+      ql::span<const size_t> lengths, ql::span<char*> destinations);
+
+  // Split the ranges into those inside one page (returned, sorted by page)
+  // and the rest (appended to `notServed`: ranges that cross a page).
+  static std::vector<SinglePageRange> partitionSinglePageRanges(
+      ql::span<const uint64_t> offsets, ql::span<const size_t> lengths,
+      std::vector<size_t>& notServed);
+
+  // Read the 4096-byte page at `pageStart` with one non-blocking `preadv2`
+  // and store it in `slot` when every grouped range ends inside the bytes
+  // read. True when the slot now serves the group. An `EOPNOTSUPP` disables
+  // the page-cache fast path for the rest of the process, so later groups
+  // and lookups stop probing.
+  static bool fetchPageIntoSlot(OwnedPage& slot, int fd, uint64_t pageStart,
+                                ql::span<const SinglePageRange> group,
+                                ql::span<const uint64_t> offsets,
+                                ql::span<const size_t> lengths);
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -197,10 +272,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   };
 
   // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
-  // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
-  // With `pageCacheFastPath`, each run of consecutive indices is first read as
-  // one range of the `.offsets` file with `readPageCacheHits`, and only the
-  // pairs of the runs that were not in the page cache go through `manager`.
+  // (16 bytes) from the `.offsets` file.
+  // With `pageCacheFastPath`, pairs on a 4096-byte page this object already
+  // copied, or on a page that holds two or more of them, are copied from that
+  // page. Each remaining run of consecutive indices is read as one range with
+  // `readPageCacheHits`. Only pairs that were not served go through `manager`.
   std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
                                           ql::span<const size_t> indices,
                                           bool pageCacheFastPath) const;
@@ -210,9 +286,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // read via `manager`, and return it as a `VocabBatchLookupResult`.
   // `offsetPairs` must be non-empty (guaranteed by `lookupBatch`, which
   // rejects empty input; the `ContiguousVocabBatchBuilder` requires it). With
-  // `pageCacheFastPath`, the words that are in the page cache are read with
-  // `readPageCacheHits` (adjacent words in one call), and only the others go
-  // through `manager`.
+  // `pageCacheFastPath`, words on a 4096-byte page this object already copied,
+  // or on a page that holds two or more of them, are copied from that page.
+  // The remaining words are read with `readPageCacheHits` (adjacent words in
+  // one call). Only the others go through `manager`.
   VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
                                      ql::span<const OffsetPair> offsetPairs,
                                      bool pageCacheFastPath) const;

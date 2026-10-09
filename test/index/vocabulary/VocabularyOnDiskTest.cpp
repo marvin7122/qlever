@@ -12,6 +12,8 @@
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
+#include <atomic>
+
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "../../util/PageCacheReadTestHelpers.h"
@@ -333,6 +335,71 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
     // The flag is still set, but the fast path is not used any more.
     check();
+  }
+  EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
+}
+
+// Words that share a 4 KiB page but are not adjacent in the batch are copied
+// from one page the export owns. A later batch that reads another word on
+// that page does not call `preadv2` again.
+TEST(VocabularyOnDisk, LookupBatchReusesOwnedPage) {
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not available";
+  }
+  std::vector<std::string> words;
+  words.reserve(30);
+  for (int i = 0; i < 30; ++i) {
+    words.push_back(absl::StrCat("word-", i));
+  }
+  auto vocab = createVocabularyFromWords(words);
+  std::array<size_t, 5> firstBatch{0, 2, 4, 6, 8};
+  std::array<size_t, 1> secondBatch{1};
+  using pageCacheReadTestHelpers::ScopedPageCacheRead;
+  ScopedPageCacheRead inject{
+      &pageCacheReadTestHelpers::countingPageCacheRead<>};
+  auto& numReads = pageCacheReadTestHelpers::numCountedPageCacheReads;
+  numReads.store(0);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(firstBatch), firstBatch);
+  const int readsAfterFirstBatch = static_cast<int>(numReads.load());
+  // One 4096-byte read of the words file and one of the offsets file.
+  EXPECT_EQ(readsAfterFirstBatch, 2);
+  numReads.store(0);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(secondBatch), secondBatch);
+  EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
+  EXPECT_EQ(numReads.load(), 0u);
+}
+
+// A page-group read that the file system rejects with `EOPNOTSUPP` disables
+// the fast path right away: the strings phase and `readPageCacheHits` issue
+// no further `preadv2` calls, and neither does the next lookup.
+TEST(VocabularyOnDisk, LookupBatchDisablesFastPathOnUnsupportedOwnedPageRead) {
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not available";
+  }
+  std::vector<std::string> words;
+  words.reserve(30);
+  for (int i = 0; i < 30; ++i) {
+    words.push_back(absl::StrCat("word-", i));
+  }
+  auto vocab = createVocabularyFromWords(words);
+  std::array<size_t, 5> firstBatch{0, 2, 4, 6, 8};
+  std::array<size_t, 1> secondBatch{1};
+  using pageCacheReadTestHelpers::ScopedPageCacheRead;
+  {
+    ScopedPageCacheRead inject{&pageCacheReadTestHelpers::countingPageCacheRead<
+        &pageCacheReadTestHelpers::notSupported>};
+    auto& numReads = pageCacheReadTestHelpers::numCountedPageCacheReads;
+    numReads.store(0);
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(firstBatch), firstBatch);
+    // The single probe of the offsets phase disables the fast path.
+    EXPECT_EQ(numReads.load(), 1u);
+    EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(secondBatch), secondBatch);
+    EXPECT_EQ(numReads.load(), 1u);
   }
   EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
 }
