@@ -53,6 +53,11 @@ concurrency:
     github.event.comment.author_association != 'COLLABORATOR')) &&
     format('ocr-fanout-project-rules-ignored-{0}', github.run_id) ||
     github.event_name == 'pull_request_target' &&
+    (github.event.pull_request.author_association != 'MEMBER' &&
+    github.event.pull_request.author_association != 'OWNER' &&
+    github.event.pull_request.author_association != 'COLLABORATOR') &&
+    format('ocr-fanout-project-rules-ignored-{0}', github.run_id) ||
+    github.event_name == 'pull_request_target' &&
     github.event.action == 'labeled' &&
     github.event.label.name != 'ocr-ready' &&
     format('ocr-fanout-project-rules-ignored-{0}', github.run_id) ||
