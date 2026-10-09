@@ -15,7 +15,6 @@
 // (unordered helper threads) the CONSTRUCT lines must be the same multiset, and
 // the same bytes for LIMIT/OFFSET (ordered session).
 
-#include <absl/strings/match.h>
 #include <absl/strings/str_split.h>
 #include <gmock/gmock.h>
 
@@ -42,6 +41,10 @@ struct Exports {
   std::string legacy_;
   std::string v2String_;
   std::string v2Chunks_;
+  // True when the parsed query bounds the session (LIMIT, OFFSET, or an
+  // export/text limit): morsels keep deterministic slot order, so V2 bytes
+  // must match Legacy exactly.
+  bool ordered_ = false;
 };
 
 // `scheduler` (optional) runs the V2 morsels on helper threads.
@@ -54,6 +57,14 @@ Exports runAllEngines(
   const auto& encodedIriManager = qec->getIndex().getImpl().encodedIriManager();
   auto parsed = SparqlParser::parseQuery(&encodedIriManager, query, {});
   Exports result;
+  // The session ordering follows the parsed clause (like `serializeMorsels`),
+  // never the query text, so a literal containing "LIMIT" cannot flip the
+  // parallel assertion below.
+  const auto& limitOffset = parsed._limitOffset;
+  result.ordered_ = limitOffset._limit.has_value() ||
+                    limitOffset._offset != 0 ||
+                    limitOffset.textLimit_.has_value() ||
+                    limitOffset.exportLimit_.has_value();
   {
     auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
     QueryPlanner qp{qec, handle};
@@ -84,6 +95,41 @@ Exports runAllEngines(
     }
   }
   return result;
+}
+
+// `computeResult` serves Legacy bytes for shapes V2 cannot handle (the
+// string path falls back, see `ExportEngineV2::computeResult`).
+void expectUnsupportedFallsBackToLegacy(
+    ad_utility::testing::TestIndexConfig config, const std::string& query,
+    MediaType mediaType,
+    ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
+  auto trace = generateLocationTrace(l);
+  auto qec = ad_utility::testing::getQec(std::move(config));
+  const auto& encodedIriManager = qec->getIndex().getImpl().encodedIriManager();
+  auto parsed = SparqlParser::parseQuery(&encodedIriManager, query, {});
+  EXPECT_FALSE(ExportEngineV2::canHandle(parsed, mediaType)) << query;
+  std::string legacy, v2;
+  {
+    auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
+    QueryPlanner qp{qec, handle};
+    auto qet = qp.createExecutionTree(parsed);
+    EXPECT_FALSE(ExportEngineV2::canHandle(parsed, qet, mediaType)) << query;
+    ad_utility::Timer timer{ad_utility::Timer::Started};
+    for (const auto& block : ExportQueryExecutionTrees::computeResult(
+             parsed, qet, mediaType, timer, handle)) {
+      legacy += block;
+    }
+  }
+  {
+    auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
+    QueryPlanner qp{qec, handle};
+    auto qet = qp.createExecutionTree(parsed);
+    for (const auto& block :
+         ExportEngineV2::computeResult(parsed, qet, mediaType, handle)) {
+      v2 += block;
+    }
+  }
+  EXPECT_EQ(v2, legacy) << ad_utility::toString(mediaType) << ": " << query;
 }
 
 void expectV2EqualsLegacy(
@@ -220,10 +266,11 @@ void expectConstructV2EqualsLegacy(
     ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
   auto trace = generateLocationTrace(l);
   ad_utility::export_v2::ElasticExportScheduler scheduler{4};
-  const bool ordered =
-      absl::StrContains(query, "LIMIT") || absl::StrContains(query, "OFFSET");
+  // All media types share the query, so every run reports the same ordering.
+  bool ordered = false;
   for (auto mediaType : {MediaType::turtle, MediaType::ntriples}) {
     auto exports = runAllEngines(config, query, mediaType);
+    ordered = exports.ordered_;
     EXPECT_EQ(exports.legacy_.empty(), expectEmpty)
         << ad_utility::toString(mediaType) << ": " << query;
     EXPECT_EQ(exports.v2String_, exports.legacy_)
@@ -315,7 +362,8 @@ TEST(ExportEngineV2LiveTest, ConstructEmptyResult) {
   }
 }
 
-// CONSTRUCT CSV/TSV and deduplicating CONSTRUCT stay on Legacy.
+// CONSTRUCT CSV/TSV and deduplicating CONSTRUCT stay on Legacy: `canHandle`
+// rejects them and `computeResult` serves Legacy bytes.
 TEST(ExportEngineV2LiveTest, ConstructRoutingStaysOnLegacyWhenUnsupported) {
   auto qec = ad_utility::testing::getQec(makeConfig(kg, std::nullopt));
   const auto& encodedIriManager = qec->getIndex().getImpl().encodedIriManager();
@@ -326,10 +374,16 @@ TEST(ExportEngineV2LiveTest, ConstructRoutingStaysOnLegacyWhenUnsupported) {
   EXPECT_FALSE(ExportEngineV2::canHandle(parsed, MediaType::csv));
   EXPECT_FALSE(ExportEngineV2::canHandle(parsed, MediaType::tsv));
   EXPECT_FALSE(ExportEngineV2::canHandle(parsed, MediaType::qleverJson));
+  expectUnsupportedFallsBackToLegacy(
+      makeConfig(kg, std::nullopt), "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }",
+      MediaType::csv);
   auto cleanup =
       setRuntimeParameterForTest<&RuntimeParameters::constructDeduplication_>(
           ad_utility::DeduplicationMode::full());
   EXPECT_FALSE(ExportEngineV2::canHandle(parsed, MediaType::turtle));
+  expectUnsupportedFallsBackToLegacy(
+      makeConfig(kg, std::nullopt), "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }",
+      MediaType::turtle);
 }
 
 // Many rows, tiny blocks: morsels span blocks and revocation windows, and the

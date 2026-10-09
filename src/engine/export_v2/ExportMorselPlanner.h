@@ -29,9 +29,11 @@ struct ExportMorselSegment {
   std::shared_ptr<Result::IdTableVocabPair> block_;
   uint64_t begin_ = 0;
   uint64_t end_ = 0;
-  // Number of rows exported from all earlier blocks. CONSTRUCT derives its
-  // blank-node labels from it exactly like Legacy, which numbers a row by the
-  // exported rows of the earlier blocks plus its row index in its block.
+  // Rows exported from all earlier blocks (OFFSET-skipped rows excluded).
+  // The serializer adds the still-applied OFFSET (`rowOffset_`) and the row
+  // index in its block on top, so a blank-node label is `rowOffset_ +
+  // rowsExportedBeforeBlock_ + rowIndex`, exactly like Legacy (the LIMIT and
+  // OFFSET live tests assert byte equality).
   uint64_t rowsExportedBeforeBlock_ = 0;
 };
 

@@ -333,11 +333,12 @@ class ExportPipelineRouter {
     return false;
   }
 
-  // V2 serves Scan/Join/Filter SELECT CSV/TSV and CONSTRUCT Turtle/N-Triples
-  // with LIMIT/OFFSET only. Anything else (GROUP BY and other aggregation,
-  // HAVING, ORDER BY, DISTINCT/REDUCED, or an unsupported graph pattern, see
-  // above) transparently falls back to Legacy V1. The media type is checked
-  // later by `ExportEngineV2::canHandle`.
+  // V2 serves Scan/Join/Filter SELECT CSV/TSV and non-deduplicating
+  // CONSTRUCT Turtle/N-Triples, with LIMIT/OFFSET included. Anything else
+  // (GROUP BY and other aggregation, HAVING, ORDER BY, DISTINCT/REDUCED, or
+  // an unsupported graph pattern, see above) transparently falls back to
+  // Legacy V1. Media type and CONSTRUCT deduplication mode are checked later
+  // by `ExportEngineV2::canHandle`.
   [[nodiscard]] static bool hasUnsupportedConstructs(
       const ParsedQuery& query) noexcept {
     if (query.isAggregatingQuery()) {

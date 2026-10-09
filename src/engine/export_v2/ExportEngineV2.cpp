@@ -373,6 +373,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
       uint64_t rowsDone = 0;
       bool reserved = false;
       for (const auto& segment : plan.segments_) {
+        cancellationHandle->throwIfCancelled();
         (*serialize)(segment, segment.begin_, segment.end_, builder);
         rowsDone += segment.end_ - segment.begin_;
         if (!reserved) {
