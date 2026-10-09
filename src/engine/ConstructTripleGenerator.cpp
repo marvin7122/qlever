@@ -13,6 +13,7 @@
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "global/RuntimeParameters.h"
 
 namespace qlever::constructExport {
 
@@ -113,14 +114,15 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
       templateTriples, variableColumns, config.index_);
   IdCache cache = makeIdCache(preprocessedTemplate);
 
+  const QueryExecutionContext& qec = config.qec_;
   std::shared_ptr<ConstructDeduplicator> deduplicator;
   if (!std::holds_alternative<DeduplicationMode::None>(config.mode_.value_)) {
     deduplicator =
-        std::make_shared<ConstructDeduplicator>(config.mode_, config.qec_);
+        qec.makeShared<ConstructDeduplicator>(config.mode_, config.qec_);
   }
 
   auto preprocessedTemplatePtr =
-      std::make_shared<const PreprocessedConstructTemplate>(
+      qec.makeShared<const PreprocessedConstructTemplate>(
           std::move(preprocessedTemplate));
 
   auto processTable =
@@ -154,6 +156,12 @@ ConstructTripleGenerator::generateFormattedTriples(
       evaluateTables(templateTriples, variableColumns, std::move(rowIndices),
                      rowOffset, config);
 
+  // The runtime parameter is read once per export, not once per triple.
+  if (mediaType == ad_utility::MediaType::turtle &&
+      getRuntimeParameter<
+          &RuntimeParameters::useFastExportStreamFormatter_>()) {
+    return formatTriplesAsTurtleInBatches(std::move(evaluatedTriples));
+  }
   auto transformer = [mediaType](const EvaluatedTriple& triple) {
     return formatTriple(triple, mediaType);
   };

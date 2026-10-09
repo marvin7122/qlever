@@ -65,13 +65,15 @@ class ExportEngineV2 {
   // `[rowBegin, rowEnd)` selects a half-open row range (default: all rows).
   // `lattice` parallels the SELECT list (see `ColumnLattice`); an empty span
   // means plan-time types are unknown and every column is checked at runtime.
+  // `monomorphicRows` writes the rows with `MonomorphicRowSerializer` (runtime
+  // parameter `export-v2-monomorphic-rows`); the bytes are the same.
   static void appendSerializedRows(
       const IdTableView<0>& idTable, const LocalVocab& localVocab,
       RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
       ql::span<const std::optional<ColumnIndex>> selectedColumns,
       uint64_t rowBegin = 0,
       uint64_t rowEnd = std::numeric_limits<uint64_t>::max(),
-      ql::span<const ColumnLattice> lattice = {});
+      ql::span<const ColumnLattice> lattice = {}, bool monomorphicRows = false);
 
   static ScatterGatherChunk serializeTableChunk(
       const IdTableView<0>& idTable, const LocalVocab& localVocab,

@@ -22,6 +22,7 @@
 #include "util/IdTestHelpers.h"
 #include "util/IndexTestHelpers.h"
 #include "util/ParseableDuration.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
@@ -592,6 +593,39 @@ TEST(ExportIds, resolveVocabIndexIds) {
   // Positions given out of order (and not in underlying-vocab-index order) to
   // exercise the scatter back to the correct result slot.
   check({4, 0, 2});
+}
+
+// _____________________________________________________________________________
+// Same oracle as `resolveVocabIndexIds`, but with
+// `vocabulary-deduplicate-batch-lookup` on and batches full of repeated
+// indices: each distinct index is looked up once, yet must resolve to the same
+// word in every one of its positions.
+TEST(ExportIds, resolveVocabIndexIdsDeduplicated) {
+  using namespace ad_utility::testing;
+  std::string kg = "<s> <p> <o> . <s> <q> \"hello\" . <s> <p> \"world\"@en .";
+  auto qec = getQec(kg);
+  const Index& index = qec->getIndex();
+  auto getId = makeGetId(index);
+
+  // Heavy duplication: each ID several times, interleaved and unsorted.
+  std::vector<Id> ids{getId("<s>"),       getId("<p>"),          getId("<s>"),
+                      getId("\"hello\""), getId("<p>"),          getId("<o>"),
+                      getId("<s>"),       getId("\"world\"@en"), getId("<p>")};
+
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyDeduplicateBatchLookup_>(true);
+  auto oracle = makeVocabOracle(index, ids, escapeWithMarker);
+  auto check = [&](const std::vector<size_t>& positions) {
+    oracle.checkAllFlagCombinations(positions);
+  };
+
+  // All positions, duplicates included.
+  check({0, 1, 2, 3, 4, 5, 6, 7, 8});
+  // Only repeated indices.
+  check({0, 2, 6});
+  check({1, 4, 8});
+  // A single repeated index twice, reversed.
+  check({8, 1});
 }
 
 // _____________________________________________________________________________

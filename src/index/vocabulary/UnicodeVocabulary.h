@@ -51,39 +51,16 @@ class UnicodeVocabulary {
     return _underlyingVocabulary.lookupBatch(indices);
   }
 
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices,
-                                     ArenaVocabBatchBuilder& builder) const {
+  // Append the words for `indices` to `builder`. Delegate when the underlying
+  // vocabulary supports this protocol. Otherwise copy its owning result.
+  void lookupBatch(ql::span<const size_t> indices,
+                   ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());
-    // NOTE: C++17-compatible overload detection via
-    // `detail::HasLookupBatchWithBuilder_v` (a C++20 `requires`-expression
-    // cannot be used here: this header is also compiled in the C++17
-    // configuration for GCC 8).
-    if constexpr (detail::HasLookupBatchWithBuilder_v<
-                      std::decay_t<decltype(_underlyingVocabulary)>>) {
-      if constexpr (std::is_void_v<decltype(_underlyingVocabulary.lookupBatch(
-                        indices, builder))>) {
-        // Fill-only protocol (e.g. `CompressedVocabulary`): the words were
-        // decoded into the caller's `builder`, finalize it here.
-        _underlyingVocabulary.lookupBatch(indices, builder);
-        return std::move(builder).finalize();
-      } else {
-        // Use the returned result: the underlying vocabulary populates
-        // `builder` on its own fallback path (see `Vocabulary` and
-        // `PolymorphicVocabulary`, whose callers finalize it
-        // unconditionally), so just forward the result here.
-        return _underlyingVocabulary.lookupBatch(indices, builder);
-      }
+    if constexpr (SupportsBuilderLookupBatch<UnderlyingVocabulary>) {
+      _underlyingVocabulary.lookupBatch(indices, builder);
     } else {
-      // The underlying vocabulary has no builder support: copy the
-      // single-shot words into the caller's builder, so the unconditional
-      // `finalize()` in outer delegations (e.g. `PolymorphicVocabulary`)
-      // sees a populated builder.
-      auto singleShot = _underlyingVocabulary.lookupBatch(indices);
-      AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
-      for (std::string_view word : singleShot) {
-        builder.appendWord(word);
-      }
-      return std::move(builder).finalize();
+      appendVocabBatchLookupResult(_underlyingVocabulary.lookupBatch(indices),
+                                   builder);
     }
   }
 
