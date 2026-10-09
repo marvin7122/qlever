@@ -161,12 +161,59 @@ TEST(ResidentFileMapping, capBoundsMarkedPages) {
 }
 
 #ifdef __linux__
+// Probe whether this kernel honors partial-range `MADV_PAGEOUT` demotion
+// (verified working on 6.19, silently ignored on Ural's 7.0.0-28, where only
+// full-mapping ranges demote and `MADV_DONTNEED` never does).
+bool kernelSupportsPartialDemotion() {
+  const std::string filename = "residentFileMappingProbe.dat";
+  {
+    ad_utility::File file(filename, "w");
+    std::string filler(2 * ResidentFileMapping::pageSize, 'p');
+    file.write(filler.data(), filler.size());
+  }
+  ad_utility::File file(filename, "r");
+  // Demotion applies to clean pages only; sync the fresh file first.
+  if (::fsync(file.fd()) != 0) {
+    ad_utility::deleteFile(filename);
+    return false;
+  }
+  void* probe = ::mmap(nullptr, 2 * ResidentFileMapping::pageSize, PROT_READ,
+                       MAP_SHARED, file.fd(), 0);
+  if (probe == MAP_FAILED) {
+    ad_utility::deleteFile(filename);
+    return false;
+  }
+  volatile char sink = 0;
+  for (size_t i = 0; i < 2 * ResidentFileMapping::pageSize;
+       i += ResidentFileMapping::pageSize) {
+    sink += static_cast<const char*>(probe)[i];
+  }
+  (void)sink;
+  ::madvise(probe, ResidentFileMapping::pageSize,
+#ifdef MADV_PAGEOUT
+            MADV_PAGEOUT
+#else
+            MADV_DONTNEED
+#endif
+  );
+  std::vector<unsigned char> vec(2, 0);
+  const bool ok =
+      ::mincore(probe, 2 * ResidentFileMapping::pageSize, vec.data()) == 0;
+  const bool demoted = ok && (vec[0] & 1) == 0 && (vec[1] & 1) == 1;
+  ::munmap(probe, 2 * ResidentFileMapping::pageSize);
+  ad_utility::deleteFile(filename);
+  return demoted;
+}
+
 // _____________________________________________________________________________
 // Evicted pages are demoted from the page cache, verified with `mincore`
 // through the mapping itself. This must stay the single live mapping of the
 // file: a second mapping pins the pages against cross-mapping pageout
 // (probed directly), which would make the check meaningless.
 TEST(ResidentFileMapping, evictedPagesAreDemoted) {
+  if (!kernelSupportsPartialDemotion()) {
+    GTEST_SKIP() << "kernel ignores partial-range demotion (e.g. Ural)";
+  }
   constexpr size_t P = ResidentFileMapping::pageSize;
   std::string contents(4 * P, 'z');
   auto file = writeAndOpen("residentFileMappingDemote.dat", contents);
