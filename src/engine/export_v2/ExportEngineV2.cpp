@@ -247,14 +247,20 @@ SelectedColumns selectedColumns(const ParsedQuery& parsedQuery,
 // (an index scan below `lazy-index-scan-max-size-materialization`, a cached
 // result) has no generator, so it is served as one block. The block is a copy
 // because morsels own their blocks and may outlive the caller's reference.
+// Ownership moves in here: the lazy range from `idTables()` is self-sustaining
+// (see `Result::idTables`), and the materialized path drops the original right
+// after cloning, so a fully materialized table is never held twice.
 Result::LazyResult resultBlocks(std::shared_ptr<const Result> result) {
   if (!result->isFullyMaterialized()) {
     return result->idTables();
   }
-  return Result::LazyResult{ad_utility::lazySingleValueRange([result]() {
-    return Result::IdTableVocabPair{result->cloneIdTable(),
-                                    result->localVocab().clone()};
-  })};
+  return Result::LazyResult{
+      ad_utility::lazySingleValueRange([result = std::move(result)]() mutable {
+        auto pair = Result::IdTableVocabPair{result->cloneIdTable(),
+                                             result->localVocab().clone()};
+        result.reset();
+        return pair;
+      })};
 }
 
 // Checkpoint interval for cooperative revocation: an in-flight morsel
