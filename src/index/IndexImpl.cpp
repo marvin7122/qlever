@@ -611,7 +611,9 @@ IndexBuilderDataAsExternalVector IndexImpl::passFileForVocabulary(
   ad_utility::vocabulary_merger::VocabularyMetaData mergeRes = [&]() {
     auto sortPred = [&cmp = vocab_.getCaseComparator()](std::string_view a,
                                                         std::string_view b) {
-      return cmp(a, b, TripleComponentComparator::Level::TOTAL);
+      return cmp(
+          a, b,
+          ad_utility::vocabulary::TripleComponentComparator::Level::TOTAL);
     };
     auto wordCallbackPtr = vocab_.makeWordWriterPtr(onDiskBase_ + VOCAB_SUFFIX);
     auto& wordCallback = *wordCallbackPtr;
