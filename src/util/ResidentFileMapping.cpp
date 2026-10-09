@@ -37,8 +37,10 @@ ResidentFileMapping::ResidentFileMapping([[maybe_unused]] int fd,
   const size_t numPages = (fileSize + pageSize - 1) / pageSize;
   numBitWords_ = (numPages + 63) / 64;
   residentBits_ = std::make_unique<std::atomic<uint64_t>[]>(numBitWords_);
+  referenceBits_ = std::make_unique<std::atomic<uint64_t>[]>(numBitWords_);
   for (size_t i = 0; i < numBitWords_; ++i) {
     residentBits_[i].store(0, std::memory_order_relaxed);
+    referenceBits_[i].store(0, std::memory_order_relaxed);
   }
 #else
   (void)fileSize;
@@ -56,7 +58,7 @@ void ResidentFileMapping::unmap() {
   size_ = 0;
   numBitWords_ = 0;
   residentBits_.reset();
-  residentPageCount_.store(0, std::memory_order_relaxed);
+  referenceBits_.reset();
   clockHand_.store(0, std::memory_order_relaxed);
 }
 
@@ -68,12 +70,10 @@ ResidentFileMapping::ResidentFileMapping(ResidentFileMapping&& other) noexcept
     : data_{std::exchange(other.data_, nullptr)},
       size_{std::exchange(other.size_, 0)},
       numBitWords_{std::exchange(other.numBitWords_, 0)},
-      residentBits_{std::move(other.residentBits_)} {
+      residentBits_{std::move(other.residentBits_)},
+      referenceBits_{std::move(other.referenceBits_)} {
   capPages_.store(other.capPages_.load(std::memory_order_relaxed),
                   std::memory_order_relaxed);
-  residentPageCount_.store(
-      other.residentPageCount_.load(std::memory_order_relaxed),
-      std::memory_order_relaxed);
   clockHand_.store(other.clockHand_.load(std::memory_order_relaxed),
                    std::memory_order_relaxed);
 }
@@ -87,11 +87,9 @@ ResidentFileMapping& ResidentFileMapping::operator=(
     size_ = std::exchange(other.size_, 0);
     numBitWords_ = std::exchange(other.numBitWords_, 0);
     residentBits_ = std::move(other.residentBits_);
+    referenceBits_ = std::move(other.referenceBits_);
     capPages_.store(other.capPages_.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
-    residentPageCount_.store(
-        other.residentPageCount_.load(std::memory_order_relaxed),
-        std::memory_order_relaxed);
     clockHand_.store(other.clockHand_.load(std::memory_order_relaxed),
                      std::memory_order_relaxed);
   }
@@ -115,6 +113,10 @@ bool ResidentFileMapping::tryRead(uint64_t offset, size_t numBytes,
       return false;
     }
   }
+  for (size_t page = firstPage; page <= lastPage; ++page) {
+    referenceBits_[page / 64].fetch_or(uint64_t{1} << (page % 64),
+                                       std::memory_order_relaxed);
+  }
   std::memcpy(target, data_ + offset, numBytes);
   return true;
 }
@@ -126,56 +128,36 @@ void ResidentFileMapping::markResident(uint64_t offset, size_t numBytes) const {
     return;
   }
   auto [firstPage, lastPage] = pagesOf(offset, numBytes);
-  size_t newlyMarked = 0;
   for (size_t page = firstPage; page <= lastPage; ++page) {
     const uint64_t mask = uint64_t{1} << (page % 64);
+    referenceBits_[page / 64].fetch_or(mask, std::memory_order_relaxed);
     auto& word = residentBits_[page / 64];
     // Skip the atomic read-modify-write if the bit is already set.
     if ((word.load(std::memory_order_relaxed) & mask) == 0) {
-      if ((word.fetch_or(mask, std::memory_order_relaxed) & mask) == 0) {
-        ++newlyMarked;
-      }
+      word.fetch_or(mask, std::memory_order_relaxed);
     }
   }
-  if (newlyMarked == 0) {
-    return;
-  }
-  const size_t count =
-      residentPageCount_.fetch_add(newlyMarked, std::memory_order_relaxed) +
-      newlyMarked;
   const size_t cap = capPages_.load(std::memory_order_relaxed);
-  if (cap > 0 && count > cap) {
+  if (cap > 0) {
     evictDownTo(cap);
   }
 }
 
 // _____________________________________________________________________________
 void ResidentFileMapping::setResidentCapPages(size_t capPages) const {
-  const size_t old = capPages_.exchange(capPages, std::memory_order_relaxed);
-  if (old == capPages || data_ == nullptr) {
-    return;
-  }
-  // The bits may predate the cap (marks without counting are impossible, but
-  // marks before the first cap are); recount once so the cap enforces the
-  // true state, then enforce immediately.
-  size_t count = 0;
-  for (size_t i = 0; i < numBitWords_; ++i) {
-    count += static_cast<size_t>(
-        __builtin_popcountll(residentBits_[i].load(std::memory_order_relaxed)));
-  }
-  residentPageCount_.store(count, std::memory_order_relaxed);
-  if (capPages > 0 && count > capPages) {
+  capPages_.store(capPages, std::memory_order_relaxed);
+  if (capPages > 0) {
     evictDownTo(capPages);
   }
 }
 
 // _____________________________________________________________________________
 // Clear marked pages down to `target`, sweeping from the CLOCK hand in file
-// order, and demote the cleared runs from the page cache. Stops after one
-// revolution: pages marked concurrently may keep the count above target, which
-// the next `markResident` re-evaluates. Only ever clears bits, so concurrent
-// `tryRead` either sees the page (correct: it is still mapped) or misses it
-// (correct: it takes the other path).
+// order, giving referenced pages a second chance and demoting cleared runs
+// from the page cache. Stops after two revolutions: concurrent accesses may
+// keep the bitmap above target, which the next `markResident` re-evaluates.
+// Only ever clears bits, so concurrent `tryRead` either sees the page (correct:
+// it is still mapped) or misses it (correct: it takes the other path).
 void ResidentFileMapping::evictDownTo(size_t target) const {
 #ifdef QL_RESIDENT_FILE_MAPPING
   if (data_ == nullptr || numBitWords_ == 0) {
@@ -183,11 +165,18 @@ void ResidentFileMapping::evictDownTo(size_t target) const {
   }
   const size_t numPages = (size_ + pageSize - 1) / pageSize;
   size_t hand = clockHand_.load(std::memory_order_relaxed);
-  size_t examined = 0;
+  auto countResidentPages = [&]() {
+    size_t count = 0;
+    for (size_t i = 0; i < numBitWords_; ++i) {
+      count += static_cast<size_t>(__builtin_popcountll(
+          residentBits_[i].load(std::memory_order_relaxed)));
+    }
+    return count;
+  };
+  size_t count = countResidentPages();
   // Contiguous cleared runs share one `madvise` call. A run is the page
   // interval [runStart, runEnd); `runEnd == numPages + 1` marks "no open run".
-  // Pages clear in ascending order within a word; words are visited in CLOCK
-  // order, so a run flushes at every gap.
+  // Pages are visited in CLOCK order, so a run flushes at every gap or wrap.
   size_t runStart = 0;
   size_t runEnd = numPages + 1;
   auto flushRun = [&]() {
@@ -213,36 +202,42 @@ void ResidentFileMapping::evictDownTo(size_t target) const {
     }
     runEnd = numPages + 1;
   };
-  while (examined < numBitWords_ &&
-         residentPageCount_.load(std::memory_order_relaxed) > target) {
-    const size_t w = (hand + examined) % numBitWords_;
-    ++examined;
-    uint64_t bits = residentBits_[w].load(std::memory_order_relaxed);
-    while (bits != 0 &&
-           residentPageCount_.load(std::memory_order_relaxed) > target) {
-      const unsigned bit = static_cast<unsigned>(__builtin_ctzll(bits));
-      bits &= bits - 1;
-      const size_t page = w * 64 + bit;
-      if (page >= numPages) {
+  for (size_t revolution = 0; revolution < 2 && count > target; ++revolution) {
+    for (size_t examined = 0; examined < numPages && count > target;
+         ++examined) {
+      const size_t page = hand;
+      hand = (hand + 1) % numPages;
+      const size_t w = page / 64;
+      const uint64_t mask = uint64_t{1} << (page % 64);
+      if ((residentBits_[w].load(std::memory_order_relaxed) & mask) == 0) {
         continue;
       }
-      const uint64_t mask = uint64_t{1} << bit;
+      // Clear the reference bit, but leave recently used pages resident.
+      if ((referenceBits_[w].fetch_and(~mask, std::memory_order_relaxed) &
+           mask) != 0) {
+        continue;
+      }
       const uint64_t old =
           residentBits_[w].fetch_and(~mask, std::memory_order_relaxed);
       if ((old & mask) == 0) {
         continue;
       }
-      residentPageCount_.fetch_sub(1, std::memory_order_relaxed);
+      --count;
       if (page != runEnd) {
         flushRun();
         runStart = page;
       }
       runEnd = page + 1;
+      // Concurrent marks can change the bitmap during the sweep. Recount
+      // before deciding that the target has been reached.
+      if (count <= target) {
+        count = countResidentPages();
+      }
     }
     flushRun();
+    count = countResidentPages();
   }
-  flushRun();
-  clockHand_.store((hand + examined) % numBitWords_, std::memory_order_relaxed);
+  clockHand_.store(hand, std::memory_order_relaxed);
 #else
   (void)target;
 #endif

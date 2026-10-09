@@ -21,7 +21,8 @@
 namespace ad_utility {
 
 // A read-only memory mapping of a file, together with one bit per page that
-// records whether this process has read the page before ("known resident").
+// records whether this process has read the page before ("known resident"),
+// plus a reference bit per page for CLOCK eviction.
 //
 // Purpose: a small read that hits the page cache still costs a system call
 // (`preadv2`), whose kernel work (page-cache lookup, permission and access
@@ -89,12 +90,13 @@ class ResidentFileMapping {
   // the mapping is read-only, so a reader that loses its page to `DONTNEED`
   // faults it back and continues with correct data. The cost is one disk
   // read, exactly what the non-mapping path would have paid. The CLOCK hand
-  // only makes that case rare by sweeping marked pages in file order from
-  // the hand. There is no second-chance bit, so a page marked just before a
-  // sweep can be demoted by that same sweep.
+  // sweeps pages in file order from its saved page position. Pages read via
+  // `tryRead` or marked via `markResident` get a second chance: the sweep
+  // clears their reference bit and skips them, evicting unreferenced pages.
   //
-  // Takes effect on the next `markResident`; when the value changes, the
-  // marked pages are recounted once and the new cap is enforced immediately.
+  // Enforced on `markResident` and immediately when set, using the resident
+  // bitmap to count marked pages. Concurrent accesses can keep pages marked
+  // above the cap after the bounded sweep; the next call re-evaluates it.
   // May be called concurrently.
   void setResidentCapPages(size_t capPages) const;
 
@@ -119,11 +121,10 @@ class ResidentFileMapping {
   size_t size_ = 0;
   size_t numBitWords_ = 0;
   std::unique_ptr<std::atomic<uint64_t>[]> residentBits_;
-  // Mutable so the const member functions (`markResident`,
-  // `setResidentCapPages`) can update the cap, the count, and the CLOCK hand;
-  // all updates are atomic.
+  std::unique_ptr<std::atomic<uint64_t>[]> referenceBits_;
+  // Mutable so const member functions can update the cap and CLOCK hand;
+  // all updates are atomic. The hand is the next page to examine.
   mutable std::atomic<size_t> capPages_{0};
-  mutable std::atomic<size_t> residentPageCount_{0};
   mutable std::atomic<size_t> clockHand_{0};
 
   // The pages `[firstPage, lastPage]` of a non-empty range within the file.

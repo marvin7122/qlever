@@ -9,6 +9,7 @@
 #include <gmock/gmock.h>
 
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "util/File.h"
@@ -129,7 +130,7 @@ TEST(ResidentFileMapping, capBoundsMarkedPages) {
   for (size_t page = 0; page < 8; ++page) {
     EXPECT_TRUE(mapping.tryRead(page * P, 4, target.data()));
   }
-  // A cap of two pages evicts down immediately, oldest first.
+  // A cap of two pages evicts down immediately in CLOCK order.
   mapping.setResidentCapPages(2);
   EXPECT_EQ(mapping.residentCapPages(), 2);
   size_t served = 0;
@@ -137,9 +138,9 @@ TEST(ResidentFileMapping, capBoundsMarkedPages) {
     served += mapping.tryRead(page * P, 4, target.data()) ? 1 : 0;
   }
   EXPECT_LE(served, 2);
-  // Marking beyond the cap keeps at most the cap (the CLOCK hand evicts
-  // oldest first; no survival promise for any single page).
+  // A newly marked page gets a second chance while the cap is enforced.
   mapping.markResident(0, 1);
+  EXPECT_TRUE(mapping.tryRead(0, 4, target.data()));
   served = 0;
   for (size_t page = 0; page < 8; ++page) {
     served += mapping.tryRead(page * P, 4, target.data()) ? 1 : 0;
@@ -158,6 +159,82 @@ TEST(ResidentFileMapping, capBoundsMarkedPages) {
   ResidentFileMapping moved = std::move(mapping);
   EXPECT_EQ(moved.residentCapPages(), 3);
   ad_utility::deleteFile("residentFileMappingCap.dat");
+}
+
+// _____________________________________________________________________________
+TEST(ResidentFileMapping, clockGivesAccessedPagesASecondChanceAfterMove) {
+  constexpr size_t P = ResidentFileMapping::pageSize;
+  const std::string filename = "residentFileMappingClock.dat";
+  // Cross a bitmap word boundary, with a partial last page.
+  const std::string contents(65 * P + 123, 'c');
+  auto file = writeAndOpen(filename, contents);
+  for (bool useTryRead : {false, true}) {
+    SCOPED_TRACE(useTryRead);
+    ResidentFileMapping mapping(file.fd(), contents.size());
+    if (!mapping.isMapped()) {
+      break;
+    }
+    mapping.markResident(61 * P, 4 * P);
+    mapping.setResidentCapPages(3);
+    // The sweep evicts page 61 and leaves the hand at page 62. The surviving
+    // pages have had their reference bits cleared on the first revolution.
+    char target = 'X';
+    EXPECT_FALSE(mapping.tryRead(61 * P, 1, &target));
+    if (useTryRead) {
+      ASSERT_TRUE(mapping.tryRead(62 * P, 1, &target));
+      EXPECT_EQ(target, 'c');
+    } else {
+      mapping.markResident(62 * P, 1);
+    }
+    ResidentFileMapping moved = std::move(mapping);
+    ResidentFileMapping assigned;
+    assigned = std::move(moved);
+    assigned.markResident(contents.size() - 1, 1);
+    // Page 62 gets a second chance; the next page in CLOCK order is evicted.
+    EXPECT_TRUE(assigned.tryRead(62 * P, 1, &target));
+    EXPECT_FALSE(assigned.tryRead(63 * P, 1, &target));
+    EXPECT_TRUE(assigned.tryRead(64 * P, 1, &target));
+    EXPECT_TRUE(assigned.tryRead(contents.size() - 1, 1, &target));
+  }
+  ad_utility::deleteFile(filename);
+}
+
+// _____________________________________________________________________________
+TEST(ResidentFileMapping, capUsesBitmapAfterConcurrentUpdates) {
+  constexpr size_t P = ResidentFileMapping::pageSize;
+  const std::string filename = "residentFileMappingConcurrent.dat";
+  const std::string contents(70 * P, 't');
+  auto file = writeAndOpen(filename, contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  if (mapping.isMapped()) {
+    mapping.setResidentCapPages(3);
+    std::vector<std::thread> workers;
+    for (size_t worker = 0; worker < 4; ++worker) {
+      workers.emplace_back([&, worker]() {
+        char target;
+        for (size_t i = 0; i < 200; ++i) {
+          const size_t offset = ((i + worker * 17) % 70) * P;
+          mapping.markResident(offset, 1);
+          mapping.tryRead(offset, 1, &target);
+          mapping.setResidentCapPages(i % 2 == 0 ? 3 : 5);
+        }
+      });
+    }
+    for (auto& worker : workers) {
+      worker.join();
+    }
+    // Reapply the cap after concurrent changes, including an unchanged cap.
+    for (size_t cap : {size_t{3}, size_t{3}, size_t{1}}) {
+      mapping.setResidentCapPages(cap);
+      size_t served = 0;
+      char target;
+      for (size_t page = 0; page < 70; ++page) {
+        served += mapping.tryRead(page * P, 1, &target) ? 1 : 0;
+      }
+      EXPECT_LE(served, cap);
+    }
+  }
+  ad_utility::deleteFile(filename);
 }
 
 #ifdef __linux__
