@@ -47,13 +47,23 @@ struct Exports {
   bool ordered_ = false;
 };
 
+// V2 streams the lazy result blocks (`Result::idTables`), so it needs a root
+// operation that is computed lazily. A fully materialized root result (e.g.
+// a cached result, or VALUES) is outside this test's scope.
+bool rootResultIsLazy(QueryExecutionContext* qec, ParsedQuery& parsed) {
+  qec->clearCacheUnpinnedOnly();
+  auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
+  QueryPlanner qp{qec, handle};
+  auto qet = qp.createExecutionTree(parsed);
+  return !qet.getResult(true)->isFullyMaterialized();
+}
+
 // `scheduler` (optional) runs the V2 morsels on helper threads.
 Exports runAllEngines(
     ad_utility::testing::TestIndexConfig config, const std::string& query,
     MediaType mediaType,
     ad_utility::export_v2::ElasticExportScheduler* scheduler = nullptr) {
   auto qec = ad_utility::testing::getQec(std::move(config));
-  qec->clearCacheUnpinnedOnly();
   const auto& encodedIriManager = qec->getIndex().getImpl().encodedIriManager();
   auto parsed = SparqlParser::parseQuery(&encodedIriManager, query, {});
   Exports result;
@@ -65,20 +75,29 @@ Exports runAllEngines(
                     limitOffset._offset != 0 ||
                     limitOffset.textLimit_.has_value() ||
                     limitOffset.exportLimit_.has_value();
-  {
+  // Every engine run plans afresh on an empty cache: a cached (fully
+  // materialized) result from the previous run would not be lazy.
+  auto plan = [&]() {
+    qec->clearCacheUnpinnedOnly();
     auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
     QueryPlanner qp{qec, handle};
-    auto qet = qp.createExecutionTree(parsed);
+    return std::pair{qp.createExecutionTree(parsed), handle};
+  };
+  {
+    auto [qet, handle] = plan();
     ad_utility::Timer timer{ad_utility::Timer::Started};
     for (const auto& block : ExportQueryExecutionTrees::computeResult(
              parsed, qet, mediaType, timer, handle)) {
       result.legacy_ += block;
     }
   }
+  if (!rootResultIsLazy(qec, parsed)) {
+    ADD_FAILURE() << "root result is fully materialized, V2 cannot stream it: "
+                  << query;
+    return result;
+  }
   {
-    auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
-    QueryPlanner qp{qec, handle};
-    auto qet = qp.createExecutionTree(parsed);
+    auto [qet, handle] = plan();
     EXPECT_TRUE(ExportEngineV2::canHandle(parsed, qet, mediaType)) << query;
     for (const auto& block : ExportEngineV2::computeResult(
              parsed, qet, mediaType, handle, scheduler)) {
@@ -86,9 +105,7 @@ Exports runAllEngines(
     }
   }
   {
-    auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
-    QueryPlanner qp{qec, handle};
-    auto qet = qp.createExecutionTree(parsed);
+    auto [qet, handle] = plan();
     for (const auto& chunk : ExportEngineV2::computeResultChunks(
              parsed, qet, mediaType, handle, scheduler)) {
       result.v2Chunks_ += chunk.toString();
@@ -217,12 +234,13 @@ TEST(ExportEngineV2LiveTest, SmallIndexMatchesLegacy) {
   }
 }
 
-// More rows than one revocation window (1024) and one morsel (8192), with a
-// tiny permutation block size, so a morsel spans many blocks and windows
-// (exercises the per-morsel reservation and in-place window appends).
+// More rows than one revocation window (1024) and one morsel (8192): 300
+// triples times 40 VALUES rows. The test index builder uses two triples per
+// partial vocabulary, so the row count comes from the cartesian product, not
+// from more triples (which would exhaust the file descriptors).
 TEST(ExportEngineV2LiveTest, ManyRowsMatchLegacy) {
   std::string turtle;
-  for (size_t i = 0; i < 10'000; ++i) {
+  for (size_t i = 0; i < 300; ++i) {
     const std::string n = std::to_string(i);
     turtle += "<http://example.org/" + n + "> <http://example.org/label> ";
     switch (i % 5) {
@@ -242,10 +260,18 @@ TEST(ExportEngineV2LiveTest, ManyRowsMatchLegacy) {
         turtle += "\"\" .\n";
     }
   }
+  std::string values;
+  for (size_t k = 0; k < 40; ++k) {
+    values +=
+        k % 2 == 0 ? std::to_string(k) : "\"v," + std::to_string(k) + "\"";
+    values += " ";
+  }
   for (const auto& vocabularyType : vocabularyTypes) {
     expectV2EqualsLegacy(
         makeConfig(turtle, vocabularyType),
-        "SELECT ?s ?o WHERE { ?s <http://example.org/label> ?o }");
+        "SELECT ?s ?o ?k WHERE { ?s <http://example.org/label> "
+        "?o . VALUES ?k { " +
+            values + "} }");
   }
 }
 
