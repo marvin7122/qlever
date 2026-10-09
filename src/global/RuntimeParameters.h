@@ -244,8 +244,11 @@ struct RuntimeParameters {
   // submits only the remaining reads to its `io_uring` ring. A read that hits
   // the page cache then costs a share of one syscall instead of an `io_uring`
   // submission and completion; a read that misses costs one extra failed
-  // syscall per run of adjacent ranges. On by default: it removes the
-  // warm-cache cost of the ring and also speeds up cold exports.
+  // syscall per run of adjacent ranges. A 4 KiB page read this way is kept in
+  // memory owned by the vocabulary, and later reads of ranges inside that
+  // page are copied from the owned page without another `preadv2` call. On by
+  // default: it removes the warm-cache cost of the ring and also speeds up
+  // cold exports.
   Bool vocabularyIouringPageCacheFastPath_{
       true, "vocabulary-iouring-page-cache-fast-path"};
 

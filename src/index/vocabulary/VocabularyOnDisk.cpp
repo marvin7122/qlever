@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -209,8 +210,10 @@ VocabularyOnDisk::OwnedPage& VocabularyOnDisk::threadOwnedPage(
     }
     return words ? entry.words_ : entry.offsets_;
   }
-  entries.push_back(Entry{this, slotEpoch_, {}, {}});
+  entries.emplace_back();
   Entry& created = entries.back();
+  created.vocab = this;
+  created.epoch = slotEpoch_;
   return words ? created.words_ : created.offsets_;
 }
 
@@ -233,42 +236,79 @@ bool VocabularyOnDisk::containedInOneOwnedPage(uint64_t offset, size_t length,
   return true;
 }
 
-// Copy each range that lies in a page `slot` already holds. When two or more
-// ranges lie in a page the slot does not hold, one `preadv2(RWF_NOWAIT)` of
-// 4096 bytes fills the slot and those ranges are copied from it. A short read
-// is stored only when every range in that group ends inside the returned
-// bytes. A range that crosses a page, and a page with a single range the slot
-// does not hold, stay unserved. The returned indices are ascending.
-std::vector<size_t> VocabularyOnDisk::copyRangesFromOwnedPage(
-    OwnedPage& slot, int fd, ql::span<const uint64_t> offsets,
-    ql::span<const size_t> lengths, ql::span<char*> destinations) {
+// Split the ranges into those inside one page (returned, sorted by page)
+// and the rest (appended to `notServed`: ranges that cross a page).
+std::vector<VocabularyOnDisk::SinglePageRange>
+VocabularyOnDisk::partitionSinglePageRanges(ql::span<const uint64_t> offsets,
+                                            ql::span<const size_t> lengths,
+                                            std::vector<size_t>& notServed) {
   const size_t numRanges = offsets.size();
-  std::vector<size_t> notServed;
-  struct Item {
-    size_t index;
-    uint64_t pageStart;
-  };
-  std::vector<Item> inPage;
+  std::vector<SinglePageRange> inPage;
   inPage.reserve(numRanges);
   for (size_t i = 0; i < numRanges; ++i) {
     uint64_t pageStart = 0;
     if (!containedInOneOwnedPage(offsets[i], lengths[i], &pageStart)) {
       notServed.push_back(i);
     } else {
-      inPage.push_back(Item{i, pageStart});
+      inPage.push_back(SinglePageRange{i, pageStart});
     }
   }
-  ql::ranges::sort(inPage, [](const Item& a, const Item& b) {
-    return a.pageStart < b.pageStart ||
-           (a.pageStart == b.pageStart && a.index < b.index);
-  });
-  if (!ad_utility::pageCacheFastPathIsSupported()) {
-    for (const Item& item : inPage) {
-      notServed.push_back(item.index);
-    }
-    ql::ranges::sort(notServed);
-    return notServed;
+  ql::ranges::sort(inPage,
+                   [](const SinglePageRange& a, const SinglePageRange& b) {
+                     return a.pageStart < b.pageStart ||
+                            (a.pageStart == b.pageStart && a.index < b.index);
+                   });
+  return inPage;
+}
+
+// Read the 4096-byte page at `pageStart` with one non-blocking `preadv2`
+// and store it in `slot` when every grouped range ends inside the bytes
+// read. True when the slot now serves the group. An `EOPNOTSUPP` disables
+// the page-cache fast path for the rest of the process, so later groups
+// and lookups stop probing.
+bool VocabularyOnDisk::fetchPageIntoSlot(OwnedPage& slot, int fd,
+                                         uint64_t pageStart,
+                                         ql::span<const SinglePageRange> group,
+                                         ql::span<const uint64_t> offsets,
+                                         ql::span<const size_t> lengths) {
+  std::array<char, VocabularyOnDisk::OwnedPage::kBytes> buffer{};
+  ::iovec iovec{buffer.data(), buffer.size()};
+  const int64_t numRead = ad_utility::detail::pageCacheRead()(
+      fd, &iovec, 1, static_cast<int64_t>(pageStart));
+  if (numRead < 0 && errno == EOPNOTSUPP) {
+    ad_utility::detail::disablePageCacheFastPathSupport();
+    return false;
   }
+  if (numRead <= 0) {
+    return false;
+  }
+  const uint64_t available = pageStart + static_cast<uint64_t>(numRead);
+  for (const SinglePageRange& range : group) {
+    const uint64_t end = offsets[range.index] + lengths[range.index];
+    if (end < offsets[range.index] || end > available) {
+      return false;
+    }
+  }
+  slot.fd_ = fd;
+  slot.pageStart_ = pageStart;
+  slot.validBytes_ = static_cast<size_t>(numRead);
+  std::memcpy(slot.bytes_.data(), buffer.data(), slot.validBytes_);
+  return true;
+}
+
+// Copy each range that lies in a page `slot` already holds. When two or more
+// ranges share a page the slot does not hold, `fetchPageIntoSlot` reads that
+// page with one `preadv2(RWF_NOWAIT)` and those ranges are copied from it. A
+// range that crosses a page, and a page with a single range the slot does
+// not hold, stay unserved. The returned indices are ascending.
+std::vector<size_t> VocabularyOnDisk::copyRangesFromOwnedPage(
+    OwnedPage& slot, int fd, ql::span<const uint64_t> offsets,
+    ql::span<const size_t> lengths, ql::span<char*> destinations) {
+  const size_t numRanges = offsets.size();
+  std::vector<size_t> notServed;
+  notServed.reserve(numRanges);
+  std::vector<SinglePageRange> inPage =
+      partitionSinglePageRanges(offsets, lengths, notServed);
   size_t group = 0;
   while (group < inPage.size()) {
     size_t groupEnd = group + 1;
@@ -276,51 +316,33 @@ std::vector<size_t> VocabularyOnDisk::copyRangesFromOwnedPage(
            inPage[groupEnd].pageStart == inPage[group].pageStart) {
       ++groupEnd;
     }
+    const ql::span<const SinglePageRange> grouped{inPage.data() + group,
+                                                  groupEnd - group};
     const uint64_t pageStart = inPage[group].pageStart;
-    auto rangeEndsInside = [&](int64_t numRead) {
-      if (numRead <= 0) {
-        return false;
-      }
-      const uint64_t available = pageStart + static_cast<uint64_t>(numRead);
-      for (size_t k = group; k < groupEnd; ++k) {
-        const size_t index = inPage[k].index;
-        const uint64_t end = offsets[index] + lengths[index];
-        if (end < offsets[index] || end > available) {
-          return false;
+    // When the fast path was found unsupported (at entry, or by an earlier
+    // group in this loop), the rest stays unserved without further probes.
+    bool served = ad_utility::pageCacheFastPathIsSupported();
+    if (served) {
+      for (const SinglePageRange& range : grouped) {
+        if (!slot.covers(fd, pageStart, offsets[range.index],
+                         lengths[range.index])) {
+          served = false;
+          break;
         }
       }
-      return true;
-    };
-    bool served = true;
-    for (size_t k = group; k < groupEnd; ++k) {
-      const size_t index = inPage[k].index;
-      if (!slot.covers(fd, pageStart, offsets[index], lengths[index])) {
-        served = false;
-        break;
+      if (!served && grouped.size() >= 2) {
+        served =
+            fetchPageIntoSlot(slot, fd, pageStart, grouped, offsets, lengths);
       }
     }
-    if (!served && groupEnd - group >= 2) {
-      std::array<char, VocabularyOnDisk::OwnedPage::kBytes> buffer{};
-      ::iovec iovec{buffer.data(), buffer.size()};
-      const int64_t numRead = ad_utility::detail::pageCacheRead()(
-          fd, &iovec, 1, static_cast<int64_t>(pageStart));
-      if (rangeEndsInside(numRead)) {
-        slot.fd_ = fd;
-        slot.pageStart_ = pageStart;
-        slot.validBytes_ = static_cast<size_t>(numRead);
-        std::memcpy(slot.bytes_.data(), buffer.data(), slot.validBytes_);
-        served = true;
-      }
-    }
-    for (size_t k = group; k < groupEnd; ++k) {
-      const size_t index = inPage[k].index;
+    for (const SinglePageRange& range : grouped) {
       if (served) {
-        std::memcpy(destinations[index],
+        std::memcpy(destinations[range.index],
                     slot.bytes_.data() +
-                        static_cast<size_t>(offsets[index] - pageStart),
-                    lengths[index]);
+                        static_cast<size_t>(offsets[range.index] - pageStart),
+                    lengths[range.index]);
       } else {
-        notServed.push_back(index);
+        notServed.push_back(range.index);
       }
     }
     group = groupEnd;
@@ -354,10 +376,8 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
 
   // `positions` are the batch indices still to read. A page the export already
   // copied, or a page that holds two or more of these pairs, is copied here.
-  std::vector<size_t> positions(numIndices);
-  std::iota(positions.begin(), positions.end(), size_t{0});
-  positions = copyRangesFromOwnedPage(threadOwnedPage(false), offsetsFile_.fd(),
-                                      fileOffsets, sizes, targets);
+  std::vector<size_t> positions = copyRangesFromOwnedPage(
+      threadOwnedPage(false), offsetsFile_.fd(), fileOffsets, sizes, targets);
   if (positions.empty()) {
     return offsetPairs;
   }
@@ -446,10 +466,8 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   auto targets = builder.targets();
   ql::span<char*> targetSpan{targets};
   if (pageCacheFastPath) {
-    std::vector<size_t> positions(numIndices);
-    std::iota(positions.begin(), positions.end(), size_t{0});
-    positions = copyRangesFromOwnedPage(threadOwnedPage(true), file_.fd(),
-                                        fileOffsets, sizes, targetSpan);
+    std::vector<size_t> positions = copyRangesFromOwnedPage(
+        threadOwnedPage(true), file_.fd(), fileOffsets, sizes, targetSpan);
     std::vector<size_t> subsetSizes;
     std::vector<uint64_t> subsetOffsets;
     std::vector<char*> subsetTargets;

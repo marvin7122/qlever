@@ -95,12 +95,36 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   static bool containedInOneOwnedPage(uint64_t offset, size_t length,
                                       uint64_t* pageStart);
 
+  // One range that lies inside a single 4096-byte page: the index into the
+  // `offsets`/`lengths`/`destinations` spans of `copyRangesFromOwnedPage`,
+  // and the file offset of that page.
+  struct SinglePageRange {
+    size_t index;
+    uint64_t pageStart;
+  };
+
   // Copy ranges out of `slot` as described on `OwnedPage`. The returned
   // indices were not copied and stay on the existing read path. They are
   // ascending.
   static std::vector<size_t> copyRangesFromOwnedPage(
       OwnedPage& slot, int fd, ql::span<const uint64_t> offsets,
       ql::span<const size_t> lengths, ql::span<char*> destinations);
+
+  // Split the ranges into those inside one page (returned, sorted by page)
+  // and the rest (appended to `notServed`: ranges that cross a page).
+  static std::vector<SinglePageRange> partitionSinglePageRanges(
+      ql::span<const uint64_t> offsets, ql::span<const size_t> lengths,
+      std::vector<size_t>& notServed);
+
+  // Read the 4096-byte page at `pageStart` with one non-blocking `preadv2`
+  // and store it in `slot` when every grouped range ends inside the bytes
+  // read. True when the slot now serves the group. An `EOPNOTSUPP` disables
+  // the page-cache fast path for the rest of the process, so later groups
+  // and lookups stop probing.
+  static bool fetchPageIntoSlot(OwnedPage& slot, int fd, uint64_t pageStart,
+                                ql::span<const SinglePageRange> group,
+                                ql::span<const uint64_t> offsets,
+                                ql::span<const size_t> lengths);
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.

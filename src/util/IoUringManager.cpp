@@ -89,6 +89,18 @@ void resetPageCacheFastPathSupport() {
   pageCacheFastPathSupported.store(true);
 #endif
 }
+
+//______________________________________________________________________________
+void disablePageCacheFastPathSupport() {
+#ifdef QL_PAGE_CACHE_FAST_PATH
+  if (pageCacheFastPathSupported.exchange(false)) {
+    AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported for the "
+                   "vocabulary files; reading them without the "
+                   "page-cache fast path"
+                << std::endl;
+  }
+#endif
+}
 }  // namespace detail
 
 //______________________________________________________________________________
