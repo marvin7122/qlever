@@ -1,6 +1,6 @@
 // Copyright 2022 - 2026, The QLever Authors, in particular:
 //
-// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2022 - 2026 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
 // 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
@@ -10,6 +10,8 @@
 
 #ifndef QLEVER_PREFIXCOMPRESSOR_H
 #define QLEVER_PREFIXCOMPRESSOR_H
+
+#include <gtest/gtest_prod.h>
 
 #include <array>
 #include <cstdint>
@@ -70,17 +72,51 @@ class PrefixCompressor {
     serializer | arg.prefixToCode_;
   }
 
- public:
   // ___________________________________________________________________________
-  // Compress the given `word`. Note: This iterates over all prefixes in the
-  // codebook, and it is currently not a bottleneck in the IndexBuilder.
-  [[nodiscard]] std::string compress(std::string_view word) const {
-    for (const auto& p : codeToPrefix_) {
-      if (ql::starts_with(word, p.prefix_)) {
-        return p.code_ + std::string_view(word).substr(p.prefix_.size());
-      }
+  // Return the decompressed size of a compressed word whose prefix index is
+  // `prefixIdx` and whose size without the leading code byte is `restSize`.
+  //
+  // This helper and `decompressIntoWithIndex` run once per decoded word. Their
+  // bounds checks therefore use `AD_CONTRACT_CHECK`, which is an inline branch,
+  // and not `AD_CORRECTNESS_CHECK`, which calls an out-of-line function even
+  // when the check passes (four such calls per word measurably slowed
+  // `decompressInto`). The checks stay active in release builds.
+  [[nodiscard]] size_t decompressedSizeWithIndex(
+      size_t restSize, std::optional<size_t> prefixIdx) const {
+    if (prefixIdx.has_value()) {
+      AD_CONTRACT_CHECK(*prefixIdx < prefixToCode_.size());
+      const size_t prefixSize = prefixToCode_[*prefixIdx].size();
+      AD_CONTRACT_CHECK(prefixSize <=
+                        std::numeric_limits<size_t>::max() - restSize);
+      return prefixSize + restSize;
     }
-    return static_cast<char>(NO_PREFIX_CHAR) + word;
+    return restSize;
+  }
+
+  // ___________________________________________________________________________
+  // Write the decompressed `compressedWord` (whose prefix index `prefixIdx` is
+  // already known) to `out` and return the number of bytes written. Used by
+  // `decompressInto`. Preconditions: `compressedWord` is not
+  // empty, `out.size()` is at least `decompressedSizeWithIndex` for it, and
+  // `out` does not overlap `compressedWord`.
+  [[nodiscard]] size_t decompressIntoWithIndex(std::string_view compressedWord,
+                                               std::optional<size_t> prefixIdx,
+                                               ql::span<char> out) const {
+    const std::string_view rest = compressedWord.substr(1);
+    size_t outputSize = 0;
+    if (prefixIdx.has_value()) {
+      const std::string& prefix = prefixToCode_[*prefixIdx];
+      AD_CONTRACT_CHECK(prefix.size() <= out.size());
+      if (!prefix.empty()) {
+        std::memcpy(out.data(), prefix.data(), prefix.size());
+      }
+      outputSize = prefix.size();
+    }
+    AD_CONTRACT_CHECK(rest.size() <= out.size() - outputSize);
+    if (!rest.empty()) {
+      std::memcpy(out.data() + outputSize, rest.data(), rest.size());
+    }
+    return outputSize + rest.size();
   }
 
   // ___________________________________________________________________________
@@ -88,7 +124,7 @@ class PrefixCompressor {
   // [MIN_COMPRESSION_PREFIX, MIN_COMPRESSION_PREFIX +
   // NUM_COMPRESSION_PREFIXES); otherwise return `std::nullopt`.
   [[nodiscard]] static std::optional<size_t> prefixIndex(
-      std::string_view compressedWord) {
+      std::string_view compressedWord) noexcept {
     if (compressedWord.empty()) {
       return std::nullopt;
     }
@@ -105,53 +141,60 @@ class PrefixCompressor {
     return std::nullopt;
   }
 
-  // ___________________________________________________________________________
-  // Return the exact decompressed size of `compressedWord`.
-  [[nodiscard]] size_t maxDecompressedSize(
-      std::string_view compressedWord) const {
-    AD_CONTRACT_CHECK(!compressedWord.empty());
-    const auto idx = prefixIndex(compressedWord);
-    const size_t rest = compressedWord.size() - 1;
+  FRIEND_TEST(PrefixCompressor, PrefixIndexBoundaryMarkers);
+  FRIEND_TEST(PrefixCompressor, PrefixIndexBoundaries);
+  FRIEND_TEST(PrefixCompressor, HelperContractChecks);
 
-    if (idx.has_value()) {
-      AD_CORRECTNESS_CHECK(*idx < prefixToCode_.size());
-      const size_t prefixSize = prefixToCode_[*idx].size();
-      AD_CORRECTNESS_CHECK(prefixSize <=
-                           std::numeric_limits<size_t>::max() - rest);
-      return prefixSize + rest;
+ public:
+  // ___________________________________________________________________________
+  // Compress the given `word`. Note: This iterates over all prefixes in the
+  // codebook, and it is currently not a bottleneck in the IndexBuilder.
+  [[nodiscard]] std::string compress(std::string_view word) const {
+    for (const auto& p : codeToPrefix_) {
+      if (ql::starts_with(word, p.prefix_)) {
+        return p.code_ + std::string_view(word).substr(p.prefix_.size());
+      }
     }
-    return rest;
+    return static_cast<char>(NO_PREFIX_CHAR) + word;
   }
 
   // ___________________________________________________________________________
-  // Decompress `compressedWord` into `out`. `out.size()` must be at least
-  // `maxDecompressedSize(compressedWord)`. Return the number of bytes written.
+  // Return the decompressed size of `compressedWord`. For this compressor the
+  // bound is exact; the name matches `FsstDecoder::maxDecompressedSize`, where
+  // it is a true upper bound, so that both can size the output of
+  // `decompressInto` in the same way.
+  [[nodiscard]] size_t maxDecompressedSize(
+      std::string_view compressedWord) const {
+    AD_CONTRACT_CHECK(!compressedWord.empty());
+    return decompressedSizeWithIndex(compressedWord.size() - 1,
+                                     prefixIndex(compressedWord));
+  }
+
+  // ___________________________________________________________________________
+  // Decompress `compressedWord` into the caller-owned `out` and return the
+  // number of bytes written. `out.size()` must be at least
+  // `maxDecompressedSize(compressedWord)`, and `out` must not overlap
+  // `compressedWord`. Nothing is allocated, so a caller that decodes many
+  // words into one reused buffer or arena pays no allocation per word.
   [[nodiscard]] size_t decompressInto(std::string_view compressedWord,
                                       ql::span<char> out) const {
-    AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(compressedWord));
-
-    const auto idx = prefixIndex(compressedWord);
-    const std::string_view rest = compressedWord.substr(1);
-    size_t outputSize = 0;
-    if (idx.has_value()) {
-      const std::string& prefix = prefixToCode_[*idx];
-      AD_CORRECTNESS_CHECK(prefix.size() <= out.size());
-      std::memcpy(out.data(), prefix.data(), prefix.size());
-      outputSize = prefix.size();
-    }
-    AD_CORRECTNESS_CHECK(rest.size() <= out.size() - outputSize);
-    std::memcpy(out.data() + outputSize, rest.data(), rest.size());
-    return outputSize + rest.size();
+    AD_CONTRACT_CHECK(!compressedWord.empty());
+    const auto prefixIdx = prefixIndex(compressedWord);
+    AD_CONTRACT_CHECK(out.size() >= decompressedSizeWithIndex(
+                                        compressedWord.size() - 1, prefixIdx));
+    return decompressIntoWithIndex(compressedWord, prefixIdx, out);
   }
 
   // ___________________________________________________________________________
   // Decompress the given `compressedWord`.
   [[nodiscard]] std::string decompress(std::string_view compressedWord) const {
-    std::string result(maxDecompressedSize(compressedWord), '\0');
-    const size_t numBytesWritten = decompressInto(
-        compressedWord, ql::span<char>{result.data(), result.size()});
-    result.resize(numBytesWritten);
-    return result;
+    AD_CONTRACT_CHECK(!compressedWord.empty());
+    auto idx = static_cast<uint8_t>(compressedWord[0]) - MIN_COMPRESSION_PREFIX;
+    if (idx >= 0 && idx < NUM_COMPRESSION_PREFIXES) {
+      return prefixToCode_[idx] + compressedWord.substr(1);
+    } else {
+      return std::string(compressedWord.substr(1));
+    }
   }
 
   // ___________________________________________________________________________

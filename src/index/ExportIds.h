@@ -13,9 +13,12 @@
 #ifndef QLEVER_SRC_INDEX_EXPORTIDS_H
 #define QLEVER_SRC_INDEX_EXPORTIDS_H
 
+#include <algorithm>
 #include <array>
+#include <numeric>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,6 +26,7 @@
 #include "backports/span.h"
 #include "global/Constants.h"
 #include "global/Id.h"
+#include "global/RuntimeParameters.h"
 #include "index/Index.h"
 #include "index/IndexImpl.h"
 #include "index/LocalVocab.h"
@@ -288,6 +292,53 @@ void resolveVocabIndexIds(
       positions | ql::views::transform([&ids](size_t i) {
         return static_cast<size_t>(ids[i].getVocabIndex().get());
       }));
+  const auto convert = [&](std::string_view sv) {
+    return literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
+                                       returnOnlyLiterals>(
+        LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
+  };
+  if (rawIndices.size() > 1 &&
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyDeduplicateBatchLookup_>()) {
+    // Sort the batch positions by index and look each distinct index up only
+    // once, then scatter the converted word to all of its positions. Removing
+    // the repeated rank probes and reads pays when batches contain many
+    // repeated indices; otherwise the sort is pure overhead (see
+    // `vocabulary-deduplicate-batch-lookup`, off by default).
+    std::vector<size_t> order(rawIndices.size());
+    std::iota(order.begin(), order.end(), size_t{0});
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+      return rawIndices[a] < rawIndices[b];
+    });
+    std::vector<size_t> uniqueIndices;
+    uniqueIndices.reserve(rawIndices.size());
+    // `runEnd[k]` is the first `order` position after the run of equal
+    // indices that `uniqueIndices[k]` was taken from.
+    std::vector<size_t> runEnd;
+    runEnd.reserve(rawIndices.size());
+    for (size_t begin = 0; begin < order.size();) {
+      size_t end = begin + 1;
+      while (end < order.size() &&
+             rawIndices[order[end]] == rawIndices[order[begin]]) {
+        ++end;
+      }
+      uniqueIndices.push_back(rawIndices[order[begin]]);
+      runEnd.push_back(end);
+      begin = end;
+    }
+    auto uniqueStrings = index.getImpl().getVocab().lookupBatch(uniqueIndices);
+    size_t begin = 0;
+    for (const auto& [unique, end] :
+         ::ranges::views::zip(uniqueStrings, runEnd)) {
+      auto converted = convert(unique);
+      for (size_t j = begin; j + 1 < end; ++j) {
+        results[positions[order[j]]] = converted;
+      }
+      results[positions[order[end - 1]]] = std::move(converted);
+      begin = end;
+    }
+    return;
+  }
   ad_utility::vocabulary::ArenaVocabBatchBuilder builder(
       rawIndices.size(), index.getImpl().allocator());
   auto vocabStrings =
@@ -296,9 +347,7 @@ void resolveVocabIndexIds(
   // `vocabStrings` is in the same order as `positions`, so zip scatters each
   // looked-up string back to the position it came from.
   for (auto&& [sv, i] : ::ranges::views::zip(vocabStrings, positions)) {
-    results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
-                                             returnOnlyLiterals>(
-        LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
+    results[i] = convert(sv);
   }
 }
 
