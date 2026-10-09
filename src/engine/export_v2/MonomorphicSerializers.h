@@ -33,8 +33,16 @@ enum class ColumnType {
   BlankNode,
   Boolean,
   String,
+  // Cell bytes that the caller already rendered and escaped for the target
+  // format (e.g. the Legacy `idToStringAndType` output of a vocabulary or
+  // mixed-datatype column). Written verbatim; an empty value is an empty
+  // field.
+  Preformatted,
   Undefined
 };
+
+// The value passed for a cell of an `Undefined` column.
+struct UndefinedCell {};
 
 // The row oriented formats supported by the V2 serializer.
 enum class RowFormat { Csv, Tsv, Turtle, NTriples };
@@ -86,10 +94,13 @@ struct CellWriter {
             std::enable_if_t<IsStringLike_v<Value>, int> = 0>
   static void write(Writer& writer, const Value& value) {
     const std::string_view string{value};
-    // Contract: for CSV/TSV the caller passes bare vocabulary content (Legacy
-    // strips `<>` and quotes before escaping), so the writer only escapes.
-    // Turtle keeps the bracketed/quoted representation instead.
-    if constexpr (Type == ColumnType::Iri) {
+    // Contract: the caller passes the unescaped cell content in the Legacy
+    // representation of the format: bare content for CSV (Legacy strips `<>`
+    // and quotes), the full representation (`<iri>`, `"lit"@en`) for TSV. The
+    // writer only escapes. Turtle keeps the bracketed/quoted representation.
+    if constexpr (Type == ColumnType::Preformatted) {
+      writer.writeRaw(string);
+    } else if constexpr (Type == ColumnType::Iri) {
       if constexpr (Format == RowFormat::Csv) {
         writer.writeEscapedCsv(string);
       } else if constexpr (Format == RowFormat::Tsv) {
@@ -117,7 +128,8 @@ struct CellWriter {
     } else {
       static_assert(Type == ColumnType::Iri || Type == ColumnType::Literal ||
                         Type == ColumnType::BlankNode ||
-                        Type == ColumnType::String,
+                        Type == ColumnType::String ||
+                        Type == ColumnType::Preformatted,
                     "This column type requires a non-string argument");
     }
   }

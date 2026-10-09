@@ -93,6 +93,7 @@ class ResolvedColumn {
   [[nodiscard]] bool isBound(size_t row) const {
     return unbound_.empty() || !unbound_[row];
   }
+  [[nodiscard]] size_t size() const { return cells_.size(); }
   [[nodiscard]] size_t totalBytes() const { return totalBytes_; }
 };
 
