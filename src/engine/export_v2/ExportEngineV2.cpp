@@ -13,6 +13,9 @@
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
+#include <array>
+#include <charconv>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -30,10 +33,14 @@
 #include "engine/Values.h"
 #include "engine/export_v2/ColumnLattice.h"
 #include "engine/export_v2/ExportMorselPlanner.h"
+#include "engine/export_v2/MonomorphicSerializers.h"
+#include "engine/export_v2/SimdEscapeClassifier.h"
 #include "global/Id.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
+#include "util/InputRangeUtils.h"
 #include "util/Log.h"
 #include "util/Timer.h"
 
@@ -133,6 +140,7 @@ class ResolvedColumn {
   [[nodiscard]] std::string_view operator[](size_t row) const {
     return cells_[row];
   }
+  [[nodiscard]] size_t size() const { return cells_.size(); }
   [[nodiscard]] size_t totalBytes() const { return totalBytes_; }
 };
 
@@ -216,6 +224,128 @@ void resolveMixedColumn(ResolvedColumn& column, const Index& index,
   }
 }
 
+// The writer that `MonomorphicRowSerializer` renders into: appends to one
+// window string. Only the operations of the column types that
+// `appendSerializedRows` selects (`Integer`, `Double`, `Boolean`,
+// `Preformatted`, `Undefined`) are needed.
+class StringRowWriter {
+ public:
+  explicit StringRowWriter(std::string& out) : out_{out} {}
+  void writeChar(char c) { out_.push_back(c); }
+  void writeRaw(std::string_view bytes) { out_.append(bytes); }
+  // Same digits as the Legacy `std::to_string`, without the temporary string.
+  template <typename Integer>
+  void writeInteger(Integer value) {
+    std::array<char, std::numeric_limits<Integer>::digits10 + 3> buffer;
+    const auto [end, error] =
+        std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+    AD_CORRECTNESS_CHECK(error == std::errc{});
+    out_.append(buffer.data(), end);
+  }
+
+ private:
+  std::string& out_;
+};
+
+// One output column of a window, as `MonomorphicRowSerializer` consumes it:
+// direct `Id`s for uniform `Int`/`Double`/`Bool` columns, the Legacy-resolved
+// (already escaped) cells for everything else, nothing for unbound columns.
+struct MonomorphicColumn {
+  ColumnType type_ = ColumnType::Undefined;
+  ql::span<const Id> ids_;
+  const ResolvedColumn* resolved_ = nullptr;
+};
+
+// SELECTs with more columns keep the generic assembly loop: the dispatch below
+// instantiates one row loop per schema (5^k for k columns).
+constexpr size_t kMaxMonomorphicColumns = 3;
+
+// The column type for a window column that holds only `datatype`, if the
+// serializer renders it directly from the `Id` (Legacy bytes, see
+// `idToStringAndTypeForEncodedValue`).
+std::optional<ColumnType> directColumnType(Datatype datatype) {
+  switch (datatype) {
+    case Datatype::Int:
+      return ColumnType::Integer;
+    case Datatype::Double:
+      return ColumnType::Double;
+    case Datatype::Bool:
+      return ColumnType::Boolean;
+    case Datatype::Undefined:
+      return ColumnType::Undefined;
+    default:
+      return std::nullopt;
+  }
+}
+
+template <ColumnType Type>
+auto monomorphicCell(const MonomorphicColumn& column, size_t row) {
+  if constexpr (Type == ColumnType::Integer) {
+    return column.ids_[row].getInt();
+  } else if constexpr (Type == ColumnType::Double) {
+    return column.ids_[row].getDouble();
+  } else if constexpr (Type == ColumnType::Boolean) {
+    return column.ids_[row];
+  } else if constexpr (Type == ColumnType::Preformatted) {
+    // `ResolvedColumn` cells are views (empty view = empty field), already
+    // escaped for the target format.
+    return (*column.resolved_)[row];
+  } else {
+    static_assert(Type == ColumnType::Undefined);
+    return UndefinedCell{};
+  }
+}
+
+template <RowFormat Format, ColumnType... Types, size_t... Indices>
+void writeMonomorphicRows(ql::span<const MonomorphicColumn> columns,
+                          size_t numRows, std::string& out,
+                          std::index_sequence<Indices...>) {
+  StringRowWriter writer{out};
+  for (size_t row = 0; row < numRows; ++row) {
+    MonomorphicRowSerializer<Types...>::template serializeRow<Format>(
+        writer, monomorphicCell<Types>(columns[Indices], row)...);
+  }
+}
+
+// Turn the runtime column types of one window into a compile-time schema,
+// one column at a time, and write all rows with that instantiation.
+template <RowFormat Format, ColumnType... Chosen>
+void dispatchMonomorphicRows(ql::span<const MonomorphicColumn> columns,
+                             size_t numRows, std::string& out) {
+  constexpr size_t numChosen = sizeof...(Chosen);
+  if constexpr (numChosen > 0) {
+    if (columns.size() == numChosen) {
+      writeMonomorphicRows<Format, Chosen...>(
+          columns, numRows, out, std::make_index_sequence<numChosen>{});
+      return;
+    }
+  }
+  if constexpr (numChosen < kMaxMonomorphicColumns) {
+    AD_CORRECTNESS_CHECK(columns.size() > numChosen);
+    auto next = [&](auto type) {
+      dispatchMonomorphicRows<Format, Chosen..., decltype(type)::value>(
+          columns, numRows, out);
+    };
+    using enum ColumnType;
+    switch (columns[numChosen].type_) {
+      case Integer:
+        return next(std::integral_constant<ColumnType, Integer>{});
+      case Double:
+        return next(std::integral_constant<ColumnType, Double>{});
+      case Boolean:
+        return next(std::integral_constant<ColumnType, Boolean>{});
+      case Preformatted:
+        return next(std::integral_constant<ColumnType, Preformatted>{});
+      case Undefined:
+        return next(std::integral_constant<ColumnType, Undefined>{});
+      default:
+        AD_FAIL();
+    }
+  } else {
+    AD_FAIL();
+  }
+}
+
 std::string makeHeaderLine(const parsedQuery::SelectClause& selectClause,
                            RowFormat format) {
   std::vector<std::string> variables =
@@ -253,6 +383,26 @@ SelectedColumns selectedColumns(const ParsedQuery& parsedQuery,
   }
   columns.lattice_ = compileColumnLattice(parsedQuery, selected);
   return columns;
+}
+
+// The blocks of `result` for `planExportMorsels`. A fully materialized result
+// (an index scan below `lazy-index-scan-max-size-materialization`, a cached
+// result) has no generator, so it is served as one block. The block is a copy
+// because morsels own their blocks and may outlive the caller's reference.
+// Ownership moves in here: the lazy range from `idTables()` is self-sustaining
+// (see `Result::idTables`), and the materialized path drops the original right
+// after cloning, so a fully materialized table is never held twice.
+Result::LazyResult resultBlocks(std::shared_ptr<const Result> result) {
+  if (!result->isFullyMaterialized()) {
+    return result->idTables();
+  }
+  return Result::LazyResult{
+      ad_utility::lazySingleValueRange([result = std::move(result)]() mutable {
+        auto pair = Result::IdTableVocabPair{result->cloneIdTable(),
+                                             result->localVocab().clone()};
+        result.reset();
+        return pair;
+      })};
 }
 
 // Checkpoint interval for cooperative revocation: an in-flight morsel
@@ -307,16 +457,20 @@ struct CheckpointMorselRunner {
   std::shared_ptr<const Index> index_;
   RowFormat format_ = RowFormat::Csv;
   bool checkpoints_ = false;
+  bool monomorphicRows_ = false;
 
   absl::AnyInvocable<ScatterGatherChunkBuilder()> makeTask(
       ExportMorsel plan) const {
-    const uint64_t epoch = state_->currentEpoch();
-    return [*this, plan = std::move(plan), epoch]() mutable {
-      return run(std::move(plan), epoch);
+    return [*this, plan = std::move(plan)]() mutable {
+      return run(std::move(plan));
     };
   }
 
-  ScatterGatherChunkBuilder run(ExportMorsel plan, uint64_t epoch) const {
+  ScatterGatherChunkBuilder run(ExportMorsel plan) const {
+    // The epoch is sampled when the morsel starts, not when it is planned: a
+    // morsel that starts after a revocation already runs within the new
+    // quota and must not be split again.
+    const uint64_t epoch = state_->currentEpoch();
     ScatterGatherChunkBuilder builder;
     const size_t numSegments = plan.segments_.size();
     uint64_t rowsDone = 0;
@@ -330,7 +484,7 @@ struct CheckpointMorselRunner {
         ExportEngineV2::appendSerializedRows(
             seg.block_->idTable_.asStaticView<0>(), seg.block_->localVocab_,
             format_, builder, *index_, *columnsPtr_, pos, windowEnd,
-            *latticePtr_);
+            *latticePtr_, monomorphicRows_);
         rowsDone += windowEnd - pos;
         if (!reserved) {
           reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
@@ -379,6 +533,8 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   const auto& selectClause = parsedQuery.selectClause();
   const auto columns = selectedColumns(parsedQuery, qet, selectClause);
   const Index& index = qet.getQec()->getIndex();
+  const bool monomorphicRows =
+      getRuntimeParameter<&RuntimeParameters::exportV2MonomorphicRows_>();
 
   {
     ScatterGatherChunkBuilder header;
@@ -389,12 +545,22 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
+  // The root operation may already have applied LIMIT/OFFSET (e.g. an
+  // `IndexScan` handles it `FULL` while scanning, see
+  // `QueryPlanner::createExecutionTrees`). Compensate exactly like Legacy
+  // (`ExportQueryExecutionTrees::computeResult`) so `planExportMorsels`
+  // applies each exactly once; without this, OFFSET rows would be skipped a
+  // second time for such roots.
+  auto plannedLimitOffset = parsedQuery._limitOffset;
+  ExportQueryExecutionTrees::compensateForLimitOffsetClause(plannedLimitOffset,
+                                                            qet);
+
   constexpr uint64_t rowsPerMorsel = 8192;
   if (scheduler == nullptr) {
     // No session exists here, so nothing can revoke: serialize each plan
     // directly without checkpoints.
-    for (auto&& plan : planExportMorsels(
-             result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
+    for (auto&& plan : planExportMorsels(resultBlocks(std::move(result)),
+                                         plannedLimitOffset, rowsPerMorsel)) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
       uint64_t rowsDone = 0;
@@ -404,7 +570,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
             segment.block_->idTable_.asStaticView<0>(),
             segment.block_->localVocab_, format, builder, index,
             columns.indices_, segment.begin_, segment.end_,
-            columns.lattice_.columns_);
+            columns.lattice_.columns_, monomorphicRows);
         rowsDone += segment.end_ - segment.begin_;
         if (!reserved) {
           reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
@@ -420,7 +586,16 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   AD_LOG_INFO << "ExportEngineV2 streaming lazy result blocks to morsels on "
                  "queryThreadPool_ (no extra V2 threads)"
               << std::endl;
-  auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
+  const auto policy =
+      getRuntimeParameter<&RuntimeParameters::exportV2HelperPolicy_>() ==
+              "exclusive"
+          ? ad_utility::export_v2::HelperPolicy::Exclusive
+          : ad_utility::export_v2::HelperPolicy::Fair;
+  auto session = scheduler->createSession<ScatterGatherChunkBuilder>(policy);
+  // `ordered` deliberately uses the original clause: a query that was bounded
+  // (LIMIT and/or OFFSET) keeps deterministic slot order like Legacy V1, even
+  // when compensation above already zeroed the offset for a root that applied
+  // it. Only the planner consumes the compensated clause.
   const auto& limitOffset = parsedQuery._limitOffset;
   const bool ordered = limitOffset._limit.has_value() ||
                        limitOffset._offset != 0 ||
@@ -440,18 +615,59 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
                                       latticePtr,
                                       qet.getQec()->getIndexSharedPtr(),
                                       format,
-                                      !ordered};
-  for (auto&& plan : planExportMorsels(
-           result->idTables(), parsedQuery._limitOffset, rowsPerMorsel)) {
+                                      !ordered,
+                                      monomorphicRows};
+  // Optional helper trace for concurrency measurements.
+  const auto logInterval = std::chrono::milliseconds{
+      getRuntimeParameter<&RuntimeParameters::exportV2HelperLogIntervalMs_>()};
+  auto nextLog = std::chrono::steady_clock::now();
+  auto logHelpers = [&session, logInterval, policy, &nextLog](bool force) {
+    if (logInterval.count() == 0) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && now < nextLog) {
+      return;
+    }
+    nextLog = now + logInterval;
+    AD_LOG_INFO << "ExportEngineV2 helpers job=" << session.jobId()
+                << " policy=" << ad_utility::export_v2::toString(policy)
+                << " active=" << session.activeHelpers()
+                << " quota=" << session.helperQuota()
+                << " state=" << ad_utility::export_v2::toString(session.state())
+                << " consumed=" << session.consumedSlots() << "/"
+                << session.totalSlots() << std::endl;
+  };
+  logHelpers(true);
+  // Keep a small window of work available to the pool without pulling the
+  // entire lazy result or retaining all serialized builders. Use the session
+  // counters so remainders submitted at revocation checkpoints also count.
+  const size_t maxInFlight = std::max(size_t{1}, 2 * scheduler->poolSize());
+  auto consume = [&]() {
+    cancellationHandle->throwIfCancelled();
+    auto builder = session.consumeNextResult();
+    cancellationHandle->throwIfCancelled();
+    logHelpers(false);
+    return builder;
+  };
+  for (auto&& plan : planExportMorsels(resultBlocks(std::move(result)),
+                                       plannedLimitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
     session.submitMorsel(runner.makeTask(std::move(plan)));
+    while (session.totalSlots() - session.consumedSlots() >= maxInFlight) {
+      auto builder = consume();
+      if (!builder.empty()) {
+        co_yield std::move(builder);
+      }
+    }
   }
   while (session.hasMoreResults()) {
-    auto builder = session.consumeNextResult();
+    auto builder = consume();
     if (!builder.empty()) {
       co_yield std::move(builder);
     }
   }
+  logHelpers(true);
 }
 
 }  // namespace
@@ -524,7 +740,8 @@ void ExportEngineV2::appendSerializedRows(
     const IdTableView<0>& idTable, const LocalVocab& localVocab,
     RowFormat format, ScatterGatherChunkBuilder& builder, const Index& index,
     ql::span<const std::optional<ColumnIndex>> selectedColumns,
-    uint64_t rowBegin, uint64_t rowEnd, ql::span<const ColumnLattice> lattice) {
+    uint64_t rowBegin, uint64_t rowEnd, ql::span<const ColumnLattice> lattice,
+    bool monomorphicRows) {
   const uint64_t numRows = idTable.numRows();
   rowEnd = std::min(rowEnd, numRows);
   if (rowBegin >= rowEnd) {
@@ -542,11 +759,17 @@ void ExportEngineV2::appendSerializedRows(
 
   // Uniform encoded columns (Int/Double/Bool/Date/...) use the same
   // idToStringAndTypeForEncodedValue bytes as Legacy. Mixed or vocab columns
-  // go through `resolveMixedColumn` (one batched `lookupBatch` for the
-  // `VocabIndex` ids, the `idToStringAndType` bytes for the rest). Compile-time
-  // MonomorphicRowSerializer stays off: its to_chars doubles and IRI brackets
-  // do not match SELECT CSV (MonomorphicSerializersTest).
+  // still go through idsToStringAndType / lookupBatch. With
+  // `monomorphicRows`, uniform Int/Double/Bool/Undefined columns are not
+  // resolved to strings: `MonomorphicRowSerializer` renders them from the
+  // `Id`s with the Legacy formatting, and the resolved columns are written
+  // verbatim (`ColumnType::Preformatted`). Either way the resolved bytes are
+  // copied exactly once into the builder (see below).
   const size_t n = static_cast<size_t>(rowEnd - rowBegin);
+  const bool monomorphic = monomorphicRows && numOutputCols > 0 &&
+                           numOutputCols <= kMaxMonomorphicColumns;
+  std::vector<MonomorphicColumn> monomorphicColumns(monomorphic ? numOutputCols
+                                                                : 0);
   auto isVocabLike = [](Datatype d) {
     using enum Datatype;
     return d == VocabIndex || d == LocalVocabIndex ||
@@ -581,11 +804,14 @@ void ExportEngineV2::appendSerializedRows(
         latticeTrivial || (!ids.empty() && !isVocabLike(ids[0].getDatatype()));
     if (uniformEncoded && !latticeTrivial) {
       const Datatype dt = ids[0].getDatatype();
-      for (Id id : ids) {
-        if (id.getDatatype() != dt) {
-          uniformEncoded = false;
-          break;
-        }
+      uniformEncoded = std::all_of(ids.begin(), ids.end(), [dt](Id id) {
+        return id.getDatatype() == dt;
+      });
+    }
+    if (monomorphic && uniformEncoded) {
+      if (auto type = directColumnType(ids[0].getDatatype())) {
+        monomorphicColumns[outCol] = {type.value(), ids, nullptr};
+        continue;
       }
     }
     auto& column = resolved[outCol].emplace(n);
@@ -602,19 +828,38 @@ void ExportEngineV2::appendSerializedRows(
       resolveMixedColumn<RowFormat::Tsv>(column, index, ids, localVocab);
     }
     column.finish();
+    AD_CORRECTNESS_CHECK(resolved[outCol]->size() == n);
+    if (monomorphic) {
+      monomorphicColumns[outCol] = {ColumnType::Preformatted, ids,
+                                    &resolved[outCol].value()};
+    }
   }
 
-  // Write the rows straight into the builder's copy buffer: the exact window
-  // size is known, so the buffer grows at most once per window and every
-  // cell's bytes are copied exactly once (from the decoded vocabulary batch or
-  // the column's scratch buffer). This also keeps one builder segment per
-  // window run instead of one per cell.
+  // Assemble the whole window with a single coalesced append into the
+  // builder's copy buffer: the exact window size is known, so the buffer
+  // grows at most once per window and every cell's bytes are copied exactly
+  // once (from the decoded vocabulary batch or the column's scratch buffer).
+  // Per-cell appends would create one builder segment per cell (millions of
+  // segments per morsel, ~600 s for 1M H-size rows, measured); one append
+  // per window keeps segments per morsel in the single digits, and the extra
+  // coalescing copy is linear and far cheaper than that segment overhead.
   const char separator = format == RowFormat::Csv ? ',' : '\t';
   size_t windowBytes = n * numOutputCols;  // separators and newlines
   for (const auto& column : resolved) {
     if (column.has_value()) {
       windowBytes += column->totalBytes();
     }
+  }
+  if (monomorphic) {
+    std::string out;
+    out.reserve(windowBytes);
+    if (format == RowFormat::Csv) {
+      dispatchMonomorphicRows<RowFormat::Csv>(monomorphicColumns, n, out);
+    } else {
+      dispatchMonomorphicRows<RowFormat::Tsv>(monomorphicColumns, n, out);
+    }
+    builder.appendCopy(out);
+    return;
   }
   builder.appendCopiedWith(windowBytes, [&](std::string& out) {
     for (size_t i = 0; i < n; ++i) {

@@ -83,12 +83,13 @@ Server::Server(
             auto held =
                 std::make_shared<absl::AnyInvocable<void()>>(std::move(work));
             boost::asio::post(queryThreadPool_, [held]() { (*held)(); });
-          });
+          },
+          numThreads_);
   exportScheduler_->attachToQueryRegistry(queryRegistry_);
   AD_LOG_INFO << "ExportEngineV2 serialize posts onto queryThreadPool_ ("
               << numThreads_
-              << " threads); no extra V2 pool. Helpers stop admitting when "
-                 "another query is registered."
+              << " threads); no extra V2 pool. Helper threads per query: "
+                 "runtime parameter export-v2-helper-policy (fair|exclusive)."
               << std::endl;
 #endif
 
@@ -1066,6 +1067,13 @@ CPP_template_def(typename RequestT, typename SendT)(
                         "response: "
                      << e.what() << std::endl;
         metrics_->sparqlErrors_->Add(1, {SparqlErrorType::systemError});
+      } catch (const std::exception& e) {
+        // Mirror the generic response path below: never propagate an
+        // exception from a partially written stream, log it and account it
+        // instead.
+        AD_LOG_ERROR << e.what() << std::endl;
+        metrics_->sparqlErrors_->Add(1,
+                                     {SparqlErrorType::sendStreamableResponse});
       }
       co_return;
     }

@@ -10,6 +10,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <future>
@@ -326,7 +327,7 @@ TEST(ElasticExportSchedulerTest, ThrowingPostedMorselDoesNotEscapePoolThread) {
       [&posted](absl::AnyInvocable<void()> task) {
         posted.push_back(std::move(task));
       },
-      64);
+      2, 64);
   scheduler.setMaxForegroundQueriesForHelperAdmission(1);
 
   auto session = scheduler.createSession<std::string>();
@@ -540,6 +541,33 @@ TEST(ElasticExportSchedulerTest,
 }
 
 // -----------------------------------------------------------------------------
+// Test 10c: SetOrdered Rejects a Change After an Unordered Consume
+// -----------------------------------------------------------------------------
+
+TEST(ElasticExportSchedulerTest, SetOrderedRejectsChangeAfterUnorderedConsume) {
+  // Regression test: `nextSlotToConsume_ == 0` alone does not catch this,
+  // because unordered consumption never advances `nextSlotToConsume_`.
+  ElasticExportScheduler scheduler(2, 64);
+  scheduler.onForegroundQueryStarted();
+
+  auto session = scheduler.createSession<std::string>();
+  session.setOrdered(false);
+  session.submitMorsel([]() { return std::string{"a"}; });
+  session.submitMorsel([]() { return std::string{"b"}; });
+
+  EXPECT_TRUE(session.hasMoreResults());
+  session.consumeNextResult();
+  EXPECT_EQ(session.consumedSlots(), 1u);
+
+  // The invariant "fixed before first consume" must still be enforced once
+  // any slot has been consumed, ordered or not.
+  EXPECT_THROW(session.setOrdered(true), ad_utility::Exception);
+
+  session.consumeNextResult();
+  scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
 // Test 11: TrySubmitMorsel Reports Instead Of Firing
 // -----------------------------------------------------------------------------
 
@@ -595,5 +623,353 @@ TEST(ElasticExportSchedulerTest, AbandonedRemainderRunsExactlyOnce) {
   EXPECT_FALSE(session.hasMoreResults());
 
   scheduler.onForegroundQueryEnded();
+  scheduler.onForegroundQueryEnded();
+}
+
+// -----------------------------------------------------------------------------
+// Fair helper policy
+// -----------------------------------------------------------------------------
+
+namespace {
+
+// Wait until `predicate` holds, at most `timeout`.
+template <typename Predicate>
+bool eventually(Predicate predicate, std::chrono::milliseconds timeout = 5s) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(1ms);
+  }
+  return predicate();
+}
+
+// Mirrors `CheckpointMorselRunner`: serializes rows [begin, end) and checks
+// the session epoch after every `checkEvery` rows. On an epoch change it
+// resubmits the unprocessed tail and returns the rows done so far. Every row
+// increments its counter once, so a lost or duplicated row is visible.
+struct RangeTask {
+  std::shared_ptr<ExportJobState<std::string>> state_;
+  std::shared_ptr<std::vector<std::atomic<int>>> counts_;
+  size_t begin_;
+  size_t end_;
+  std::chrono::microseconds perRow_{0};
+  size_t checkEvery_{1};
+  bool checkpoints_{true};
+
+  std::string operator()() const {
+    const uint64_t epoch{state_->currentEpoch()};
+    std::string done{};
+    for (size_t pos{begin_}; pos < end_; ++pos) {
+      (*counts_)[pos].fetch_add(1);
+      done += std::to_string(pos) + ",";
+      if (perRow_.count() > 0) {
+        std::this_thread::sleep_for(perRow_);
+      }
+      const bool checkpoint = (pos + 1 - begin_) % checkEvery_ == 0;
+      if (checkpoints_ && checkpoint && pos + 1 < end_ &&
+          state_->currentEpoch() != epoch) {
+        RangeTask tail{*this};
+        tail.begin_ = pos + 1;
+        EXPECT_TRUE(state_->trySubmitMorsel(tail));
+        return done;
+      }
+    }
+    return done;
+  }
+};
+
+auto makeCounts(size_t numRows) {
+  return std::make_shared<std::vector<std::atomic<int>>>(numRows);
+}
+
+void expectEveryRowOnce(const std::vector<std::atomic<int>>& counts) {
+  for (size_t i{0}; i < counts.size(); ++i) {
+    ASSERT_EQ(counts[i].load(), 1) << "row " << i;
+  }
+}
+
+// Submit `numMorsels` morsels of `rowsPerMorsel` rows each.
+void submitRanges(ExportWorkSession<std::string>& session,
+                  const std::shared_ptr<std::vector<std::atomic<int>>>& counts,
+                  size_t numMorsels, size_t rowsPerMorsel,
+                  std::chrono::microseconds perRow, bool checkpoints) {
+  for (size_t i = 0; i < numMorsels; ++i) {
+    session.submitMorsel(RangeTask{session.sharedState(), counts,
+                                   i * rowsPerMorsel, (i + 1) * rowsPerMorsel,
+                                   perRow, 1, checkpoints});
+  }
+}
+
+}  // namespace
+
+// The quota rule for every n = 1..m+1: floor(m/n) threads per query, the
+// remainder to the earliest queries, one thread is the coordinator.
+TEST(ElasticExportSchedulerTest, FairThreadQuotaFormula) {
+  for (size_t m : {1u, 2u, 5u, 8u}) {
+    for (size_t n = 1u; n <= m + size_t{1}; ++n) {
+      size_t sum{0};
+      for (size_t rank = 0; rank < n; ++rank) {
+        const size_t total =
+            ElasticExportScheduler::fairThreadQuota(m, n, rank);
+        EXPECT_EQ(total, m / n + (rank < m % n ? 1 : 0));
+        // Earlier queries never get fewer threads than later ones.
+        if (rank > 0) {
+          EXPECT_GE(ElasticExportScheduler::fairThreadQuota(m, n, rank - 1),
+                    total);
+        }
+        EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(m, n, rank),
+                  total > 0 ? total - 1 : 0);
+        if (n >= m) {
+          EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(m, n, rank), 0u);
+        }
+        sum += total;
+      }
+      EXPECT_EQ(sum, m) << "m=" << m << " n=" << n;
+    }
+  }
+  // m = 8: n = 1 -> 7 helpers; n = 3 -> 3,3,2 threads -> 2,2,1 helpers.
+  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 1, 0), 7u);
+  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 0), 2u);
+  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 1), 2u);
+  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 2), 1u);
+  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 9, 0), 0u);
+}
+
+// Live sessions get their quota by start order; a finishing query hands its
+// threads to the remaining sessions.
+TEST(ElasticExportSchedulerTest, FairQuotasFollowSessionStartOrder) {
+  ElasticExportScheduler scheduler{5, 64};
+  scheduler.setHelperPolicy(HelperPolicy::Fair);
+  for (int i = 0; i < 3; ++i) {
+    scheduler.onForegroundQueryStarted();
+  }
+  auto s0{scheduler.createSession<std::string>()};
+  auto s1 = scheduler.createSession<std::string>();
+  auto s2 = scheduler.createSession<std::string>();
+  EXPECT_EQ(s0.helperPolicy(), HelperPolicy::Fair);
+  // m = 5, n = 3: 2, 2, 1 threads.
+  EXPECT_EQ(s0.helperQuota(), 1u);
+  EXPECT_EQ(s1.helperQuota(), 1u);
+  EXPECT_EQ(s2.helperQuota(), 0u);
+  EXPECT_EQ(s2.state(), SessionState::PrimaryOnly);
+
+  // The first query finishes: m = 5, n = 2 -> 3, 2 threads.
+  s0.drainRemainingResults();
+  scheduler.onForegroundQueryEnded();
+  EXPECT_EQ(s1.helperQuota(), 2u);
+  EXPECT_EQ(s2.helperQuota(), 1u);
+  EXPECT_EQ(s2.state(), SessionState::HelpersEligible);
+
+  // A fourth query arrives: m = 5, n = 3 -> 2, 2 threads for s1, s2.
+  scheduler.onForegroundQueryStarted();
+  EXPECT_EQ(s1.helperQuota(), 1u);
+  EXPECT_EQ(s2.helperQuota(), 1u);
+  // n >= m: no helpers at all.
+  scheduler.onForegroundQueryStarted();
+  scheduler.onForegroundQueryStarted();
+  EXPECT_EQ(s1.helperQuota(), 0u);
+  EXPECT_EQ(s2.helperQuota(), 0u);
+  for (int i = 0; i < 4; ++i) {
+    scheduler.onForegroundQueryEnded();
+  }
+  EXPECT_EQ(s1.helperQuota(), 2u);
+  EXPECT_EQ(s2.helperQuota(), 1u);
+}
+
+// Posted helper loops never exceed the quota and run every pending morsel.
+TEST(ElasticExportSchedulerTest, FairPostedHelperLoopsRespectQuota) {
+  std::vector<absl::AnyInvocable<void()>> posted;
+  ElasticExportScheduler scheduler(
+      [&posted](absl::AnyInvocable<void()> task) {
+        posted.push_back(std::move(task));
+      },
+      3, 64);
+  auto session = scheduler.createSession<std::string>(HelperPolicy::Fair);
+  EXPECT_EQ(session.helperQuota(), 2u);
+  for (int i = 0; i < 5; ++i) {
+    session.submitMorsel([i]() { return std::to_string(i); });
+  }
+  ASSERT_EQ(posted.size(), 2u);
+  EXPECT_EQ(session.postedHelpers(), 2u);
+  posted[0]();
+  posted[1]();
+  EXPECT_EQ(session.postedHelpers(), 0u);
+  EXPECT_EQ(session.activeHelpers(), 0u);
+  for (int i = 0; i < 5; ++i) {
+    EXPECT_EQ(session.consumeNextResult(), std::to_string(i));
+  }
+  for (const auto& profile : session.inspectMorselProfiles()) {
+    EXPECT_TRUE(profile.executedByHelper_);
+  }
+}
+
+// Unordered session: a new query shrinks the running session at the next
+// checkpoint, the end of that query grows it again; every row once.
+TEST(ElasticExportSchedulerTest, FairShrinkOnArrivalGrowOnFinish) {
+  ElasticExportScheduler scheduler(4, 256);
+  scheduler.setHelperPolicy(HelperPolicy::Fair);
+  scheduler.onForegroundQueryStarted();
+  auto sessionA = scheduler.createSession<std::string>();
+  sessionA.setOrdered(false);
+  EXPECT_EQ(sessionA.helperQuota(), 3u);
+
+  constexpr size_t numMorsels = 64;
+  constexpr size_t rowsPerMorsel = 200;
+  auto counts = makeCounts(numMorsels * rowsPerMorsel);
+  submitRanges(sessionA, counts, numMorsels, rowsPerMorsel, 100us, true);
+  EXPECT_TRUE(eventually([&] { return sessionA.activeHelpers() == 3; }));
+
+  // Arrival: m = 4, n = 2 -> A keeps 2 threads = 1 helper, B gets 1 helper.
+  scheduler.onForegroundQueryStarted();
+  EXPECT_EQ(sessionA.helperQuota(), 1u);
+  EXPECT_TRUE(eventually([&] { return sessionA.activeHelpers() <= 1; }));
+  auto sessionB = scheduler.createSession<std::string>();
+  EXPECT_EQ(sessionB.helperQuota(), 1u);
+  EXPECT_LE(sessionA.activeHelpers(), 1u);
+
+  // B finishes: A grows back to 3 helpers right away.
+  sessionB.drainRemainingResults();
+  scheduler.onForegroundQueryEnded();
+  EXPECT_EQ(sessionA.helperQuota(), 3u);
+  EXPECT_TRUE(eventually([&] { return sessionA.activeHelpers() == 3; }));
+
+  sessionA.drainRemainingResults();
+  expectEveryRowOnce(*counts);
+  scheduler.onForegroundQueryEnded();
+}
+
+// Ordered sessions have no checkpoints: surplus helpers leave after their
+// running morsel, and slot order is preserved.
+TEST(ElasticExportSchedulerTest, FairOrderedSessionShrinksAfterMorsel) {
+  ElasticExportScheduler scheduler(4, 256);
+  scheduler.setHelperPolicy(HelperPolicy::Fair);
+  scheduler.onForegroundQueryStarted();
+  auto session = scheduler.createSession<std::string>();
+  constexpr size_t numMorsels = 40;
+  constexpr size_t rowsPerMorsel = 20;
+  auto counts = makeCounts(numMorsels * rowsPerMorsel);
+  submitRanges(session, counts, numMorsels, rowsPerMorsel, 1ms, false);
+  EXPECT_TRUE(eventually([&] { return session.activeHelpers() == 3; }));
+
+  scheduler.onForegroundQueryStarted();
+  EXPECT_EQ(session.helperQuota(), 1u);
+  EXPECT_TRUE(eventually([&] { return session.activeHelpers() <= 1; }));
+
+  for (size_t i = 0; i < numMorsels; ++i) {
+    std::string expected;
+    for (size_t pos = i * rowsPerMorsel; pos < (i + size_t{1}) * rowsPerMorsel;
+         ++pos) {
+      expected += std::to_string(pos) + ",";
+    }
+    EXPECT_EQ(session.consumeNextResult(), expected);
+  }
+  EXPECT_EQ(session.totalSlots(), numMorsels);
+  expectEveryRowOnce(*counts);
+  scheduler.onForegroundQueryEnded();
+  scheduler.onForegroundQueryEnded();
+}
+
+// Many arrivals and departures while the coordinator consumes: every
+// revocation splits running morsels, no row is lost or duplicated.
+TEST(ElasticExportSchedulerTest, FairRepeatedRevocationLosesNoRow) {
+  ElasticExportScheduler scheduler(4, 1024);
+  scheduler.setHelperPolicy(HelperPolicy::Fair);
+  scheduler.onForegroundQueryStarted();
+  auto session = scheduler.createSession<std::string>();
+  session.setOrdered(false);
+  constexpr size_t numMorsels = 200;
+  constexpr size_t rowsPerMorsel = 64;
+  auto counts = makeCounts(numMorsels * rowsPerMorsel);
+  submitRanges(session, counts, numMorsels, rowsPerMorsel, 5us, true);
+
+  std::atomic<bool> stop{false};
+  std::thread churn([&] {
+    while (!stop.load()) {
+      scheduler.onForegroundQueryStarted();
+      std::this_thread::sleep_for(200us);
+      scheduler.onForegroundQueryEnded();
+      std::this_thread::sleep_for(200us);
+    }
+  });
+  size_t rows{0};
+  while (session.hasMoreResults()) {
+    const std::string part = session.consumeNextResult();
+    rows += static_cast<size_t>(std::count(part.begin(), part.end(), ','));
+  }
+  stop = true;
+  churn.join();
+  EXPECT_EQ(rows, numMorsels * rowsPerMorsel);
+  expectEveryRowOnce(*counts);
+  // The churn did split morsels.
+  EXPECT_GE(session.totalSlots(), numMorsels);
+  scheduler.onForegroundQueryEnded();
+}
+
+// Several concurrent fair sessions with query churn (TSan target).
+TEST(ElasticExportSchedulerTest, FairConcurrentSessionsStress) {
+  ElasticExportScheduler scheduler(6, 1024);
+  scheduler.setHelperPolicy(HelperPolicy::Fair);
+  constexpr size_t numSessions = 4;
+  constexpr size_t numMorsels = 60;
+  constexpr size_t rowsPerMorsel = 50;
+  std::atomic<bool> stop{false};
+  std::thread churn([&] {
+    while (!stop.load()) {
+      scheduler.onForegroundQueryStarted();
+      std::this_thread::sleep_for(300us);
+      scheduler.onForegroundQueryEnded();
+    }
+  });
+  std::vector<std::thread> exports{};
+  std::vector<std::shared_ptr<std::vector<std::atomic<int>>>> counts{};
+  for (size_t s = 0; s < numSessions; ++s) {
+    counts.push_back(makeCounts(numMorsels * rowsPerMorsel));
+  }
+  std::atomic<size_t> maxQuotaSeen{0};
+  for (size_t s = 0; s < numSessions; ++s) {
+    exports.emplace_back([&, s] {
+      scheduler.onForegroundQueryStarted();
+      auto session = scheduler.createSession<std::string>();
+      session.setOrdered(s % 2u == 0u ? false : true);
+      submitRanges(session, counts[s], numMorsels, rowsPerMorsel, 2us,
+                   s % 2 == 0);
+      while (session.hasMoreResults()) {
+        session.consumeNextResult();
+        size_t quota = session.helperQuota();
+        size_t seen = maxQuotaSeen.load();
+        while (quota > seen &&
+               !maxQuotaSeen.compare_exchange_weak(seen, quota)) {
+        }
+      }
+      session.drainRemainingResults();
+      scheduler.onForegroundQueryEnded();
+    });
+  }
+  for (auto& t : exports) {
+    t.join();
+  }
+  stop = true;
+  churn.join();
+  for (const auto& c : counts) {
+    expectEveryRowOnce(*c);
+  }
+  EXPECT_LE(maxQuotaSeen.load(), 5u);
+  EXPECT_EQ(scheduler.activeForegroundQueries(), 0u);
+  EXPECT_TRUE(eventually([&] { return scheduler.activeHelperCount() == 0; }));
+}
+
+// Under the exclusive policy a second query still revokes all helpers.
+TEST(ElasticExportSchedulerTest, ExclusivePolicyIgnoresFairQuota) {
+  ElasticExportScheduler scheduler(4, 64);
+  scheduler.onForegroundQueryStarted();
+  auto session = scheduler.createSession<std::string>(HelperPolicy::Exclusive);
+  EXPECT_EQ(session.state(), SessionState::HelpersEligible);
+  EXPECT_EQ(session.helperQuota(), 0u);
+  scheduler.onForegroundQueryStarted();
+  EXPECT_EQ(session.state(), SessionState::PrimaryOnly);
+  scheduler.onForegroundQueryEnded();
+  EXPECT_EQ(session.state(), SessionState::HelpersEligible);
   scheduler.onForegroundQueryEnded();
 }
