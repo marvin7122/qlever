@@ -198,8 +198,17 @@ void ResidentFileMapping::evictDownTo(size_t target) const {
         byteEnd = size_;
       }
       if (byteEnd > byteStart) {
+// `MADV_PAGEOUT` demotes clean pages and starts writeback on dirty ones;
+// plain `MADV_DONTNEED` is a silent no-op on some machines in our fleet
+// (verified on Ural: rc 0, pages stay resident), so prefer `PAGEOUT` where
+// the headers know it.
+#ifdef MADV_PAGEOUT
+        ::madvise(const_cast<char*>(data_) + byteStart, byteEnd - byteStart,
+                  MADV_PAGEOUT);
+#else
         ::madvise(const_cast<char*>(data_) + byteStart, byteEnd - byteStart,
                   MADV_DONTNEED);
+#endif
       }
     }
     runEnd = numPages + 1;

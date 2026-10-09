@@ -161,9 +161,9 @@ TEST(ResidentFileMapping, capBoundsMarkedPages) {
 
 #ifdef __linux__
 // _____________________________________________________________________________
-// Evicted pages are demoted from the page cache (`MADV_DONTNEED`), verified
-// with `mincore` on a second mapping of the same file (residency is a page
-// cache property, shared across mappings).
+// Evicted pages are demoted from the page cache, verified with `mincore` on
+// a second mapping of the same file (residency is a page cache property,
+// shared across mappings).
 TEST(ResidentFileMapping, evictedPagesAreDemoted) {
   constexpr size_t P = ResidentFileMapping::pageSize;
   std::string contents(4 * P, 'z');

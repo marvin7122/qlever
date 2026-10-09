@@ -259,7 +259,7 @@ struct RuntimeParameters {
   // Bound the pages kept marked resident by the mappings above to this many
   // MiB per mapped file (0, the default, means unbounded and keeps the
   // current behavior). When marking would exceed the bound, a CLOCK hand
-  // clears marked pages down to it and demotes them with `MADV_DONTNEED`
+  // clears marked pages down to it and demotes them from the page cache
   // (VMCache-style explicit eviction, read path only). Only meaningful with
   // `vocabulary-mmap-resident-reads`.
   SizeT vocabularyMmapResidentCapMb_{0, "vocabulary-mmap-resident-cap-mb"};
