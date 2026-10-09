@@ -38,7 +38,9 @@ int main(int argc, char** argv) {
   ad_utility::vocabulary_merger::mergeVocabulary(
       basename, numFiles,
       [&comparator](std::string_view a, std::string_view b) {
-        return comparator(a, b, TripleComponentComparator::Level::TOTAL);
+        return comparator(
+            a, b,
+            ad_utility::vocabulary::TripleComponentComparator::Level::TOTAL);
       },
       wordCallback, 4_GB);
 }
