@@ -2010,24 +2010,28 @@ CPP_template_def(typename... NextSorter)(requires(
     AD_CORRECTNESS_CHECK(prefix.has_value());
     return std::move(prefix).value();
   }();
-  auto determineNextAvailableInternalGraph =
-      [&nextAvailableIndex, newGraphPrefixIdx](const auto& triple) mutable {
-        const auto& graph = triple[3];
-        if (graph.getDatatype() != Datatype::EncodedVal) {
-          return;
-        }
-        // NOTE: The payload may only be decoded after the prefix has been
-        // checked, because the payload of a general pattern is not a single
-        // decimal number (see `EncodedIriManager`).
-        auto [prefix, payload] =
-            EncodedIriManager::splitIntoPrefixIdxAndPayload(graph);
-        if (prefix != newGraphPrefixIdx) {
-          return;
-        }
-        nextAvailableIndex =
-            std::max(nextAvailableIndex,
-                     EncodedIriManager::decodeDecimalFrom64Bit(payload) + 1);
-      };
+  auto determineNextAvailableInternalGraph = [&nextAvailableIndex,
+                                              newGraphPrefixIdx](
+                                                 const auto& triple) mutable {
+    const auto& graph = triple[3];
+    if (graph.getDatatype() != Datatype::EncodedVal) {
+      return;
+    }
+    // NOTE: The payload may only be decoded after the prefix has been
+    // checked, because the payload of a general pattern is not a single
+    // decimal number (see `EncodedIriManager`).
+    auto [prefix, payload] =
+        ad_utility::vocabulary::EncodedIriManager::splitIntoPrefixIdxAndPayload(
+            graph);
+    if (prefix != newGraphPrefixIdx) {
+      return;
+    }
+    nextAvailableIndex = std::max(
+        nextAvailableIndex,
+        ad_utility::vocabulary::EncodedIriManager::decodeDecimalFrom64Bit(
+            payload) +
+            1);
+  };
   size_t numPredicates =
       createPermutationPair(numColumns, AD_FWD(sortedTriples), *pso_, *pos_,
                             nextSorter.makePushBlockCallback()..., countTriples,
@@ -2151,7 +2155,7 @@ ad_utility::BlankNodeManager* IndexImpl::getBlankNodeManager() const {
 void IndexImpl::setPrefixesForEncodedValues(
     std::vector<std::string> prefixesWithoutAngleBrackets,
     std::vector<encodedIri::Pattern> patterns) {
-  encodedIriManager_ = EncodedIriManager{
+  encodedIriManager_ = ad_utility::vocabulary::EncodedIriManager{
       std::move(prefixesWithoutAngleBrackets), std::move(patterns)};
 }
 

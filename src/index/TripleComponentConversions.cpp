@@ -58,7 +58,7 @@ std::string toRdfLiteral(const TripleComponent& tripleComponent) {
   if (auto view = toRdfLiteralView(tripleComponent)) {
     return std::string{view.value()};
   }
-  EncodedIriManager ev;
+  ad_utility::vocabulary::EncodedIriManager ev;
   auto [value, type] = ql::exportIds::idToStringAndTypeForEncodedValue(
                            toValueIdIfNotString(tripleComponent, &ev).value())
                            .value();
