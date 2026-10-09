@@ -80,6 +80,9 @@ class HardwarePerformanceMonitor {
   };
 
  private:
+  // Gated on the cycle counter only: if individual cache-event counters fail
+  // to open, their reads degrade to 0 and the miss-rate helpers report 0.0%
+  // (no accesses counted), while cycles and IPC stay usable.
   bool supported_{false};
   int fdCycles_{-1};
   int fdInstructions_{-1};
@@ -315,6 +318,14 @@ class PrefetchingBenchmark : public BenchmarkInterface {
 
     HardwarePerformanceMonitor perfMonitor;
 
+    // Index extraction is setup, not lookup work: precomputing `rawIndices`
+    // once keeps ID decoding out of every timed measurement region below, so
+    // the baseline and the prefetched variants time the same work.
+    std::vector<size_t> rawIndices(NUM_LOOKUP_IDS);
+    for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
+      rawIndices[i] = lookupIds_[i].getVocabIndex().get();
+    }
+
     // 1. Baseline: Standard sequential lookup without software prefetching
     {
       std::vector<std::string_view> resolved(NUM_LOOKUP_IDS);
@@ -327,15 +338,16 @@ class PrefetchingBenchmark : public BenchmarkInterface {
             const auto data = vocabWords_.dataSpan();
 
             for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
-              const size_t wordIdx = lookupIds_[i].getVocabIndex().get();
+              const size_t wordIdx = rawIndices[i];
               const auto curOffset = offsets[wordIdx];
               const auto nextOffset = offsets[wordIdx + 1];
               resolved[i] = std::string_view(data.data() + curOffset,
                                              nextOffset - curOffset);
             }
 
+            const auto checksum = checksumViews(resolved);
             sample = perfMonitor.stop();
-            return checksumViews(resolved);
+            return checksum;
           });
 
       const double mResolutionsPerSec =
@@ -371,14 +383,6 @@ class PrefetchingBenchmark : public BenchmarkInterface {
           "Prefetched Lookup (Pipelined K = " + std::to_string(distance) +
           " rows ahead)";
 
-      // Index extraction is setup, not lookup work: allocating and filling
-      // `rawIndices` here keeps memory allocation overhead out of the timed
-      // measurement region below.
-      std::vector<size_t> rawIndices(NUM_LOOKUP_IDS);
-      for (size_t i = 0; i < NUM_LOOKUP_IDS; ++i) {
-        rawIndices[i] = lookupIds_[i].getVocabIndex().get();
-      }
-
       auto& m = group.addMeasurement(label, [&]() {
         perfMonitor.start();
 
@@ -388,8 +392,11 @@ class PrefetchingBenchmark : public BenchmarkInterface {
               resolved[i] = view;
             });
 
+        // Stop the counters after the checksum so the reported perf interval
+        // covers the same lookup-plus-checksum work as the framework timing.
+        const auto checksum = checksumViews(resolved);
         sample = perfMonitor.stop();
-        return checksumViews(resolved);
+        return checksum;
       });
 
       const double mResolutionsPerSec =
