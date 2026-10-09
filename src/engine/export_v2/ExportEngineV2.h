@@ -100,8 +100,8 @@ class ExportEngineV2 {
       ad_utility::export_v2::ElasticExportScheduler* scheduler = nullptr);
 
   // Same serialize as `computeResult`, but each morsel is a ScatterGatherChunk
-  // for `export-send=iovec`. Requires `canHandle`; does not fall back to
-  // Legacy.
+  // for `export-send=iovec`; otherwise delegates to Legacy V1, one owned
+  // chunk per Legacy string.
   static cppcoro::generator<ScatterGatherChunk> computeResultChunks(
       const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
       ad_utility::MediaType mediaType,

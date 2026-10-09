@@ -715,7 +715,27 @@ cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
     ad_utility::MediaType mediaType,
     ad_utility::SharedCancellationHandle cancellationHandle,
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
-  AD_CONTRACT_CHECK(canHandle(parsedQuery, qet, mediaType));
+  if (!canHandle(parsedQuery, qet, mediaType)) {
+    // Backstop, mirroring the string path above: `canHandle` re-reads the
+    // mutable `construct-deduplication` runtime parameter, so an admin flip
+    // between the server's routing check and this coroutine's first resume
+    // must fall back to Legacy instead of tripping a contract check. Each
+    // Legacy string becomes one owned chunk.
+    AD_LOG_INFO << "ExportEngineV2 falls back to Legacy V1 "
+                   "(operation tree not supported)"
+                << std::endl;
+    ad_utility::Timer timer{ad_utility::Timer::Started};
+    for (auto& chunk : ExportQueryExecutionTrees::computeResult(
+             parsedQuery, qet, mediaType, timer,
+             std::move(cancellationHandle))) {
+      if (!chunk.empty()) {
+        ScatterGatherChunkBuilder builder;
+        builder.appendOwned(std::move(chunk));
+        co_yield std::move(builder).finalize();
+      }
+    }
+    co_return;
+  }
   // Serialize on the caller thread. Do not spawn a producer thread here:
   // GCC rewrites this function as a coroutine frame and rejected
   // `std::thread` + `AsyncChunkPipeline` locals (91a9a7845). Overlap with

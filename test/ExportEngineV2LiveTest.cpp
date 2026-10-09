@@ -114,8 +114,8 @@ Exports runAllEngines(
   return result;
 }
 
-// `computeResult` serves Legacy bytes for shapes V2 cannot handle (the
-// string path falls back, see `ExportEngineV2::computeResult`).
+// `computeResult` and `computeResultChunks` serve Legacy bytes for shapes V2
+// cannot handle (both paths fall back, see `ExportEngineV2::computeResult`).
 void expectUnsupportedFallsBackToLegacy(
     ad_utility::testing::TestIndexConfig config, const std::string& query,
     MediaType mediaType,
@@ -147,6 +147,18 @@ void expectUnsupportedFallsBackToLegacy(
     }
   }
   EXPECT_EQ(v2, legacy) << ad_utility::toString(mediaType) << ": " << query;
+  {
+    auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
+    QueryPlanner qp{qec, handle};
+    auto qet = qp.createExecutionTree(parsed);
+    std::string v2Chunks;
+    for (const auto& chunk :
+         ExportEngineV2::computeResultChunks(parsed, qet, mediaType, handle)) {
+      v2Chunks += chunk.toString();
+    }
+    EXPECT_EQ(v2Chunks, legacy)
+        << ad_utility::toString(mediaType) << ": " << query;
+  }
 }
 
 void expectV2EqualsLegacy(
