@@ -101,7 +101,7 @@ std::vector<EvaluatedTriple> instantiateBatch(
 std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
   if (term.rdfTermDataType_ == nullptr) {
     // IRI, blank node, or vocab-indexed literal: already in final form.
-    return term.rdfTermString_;
+    return std::string{term.rdfTermString_};
   }
   const auto* i = static_cast<const char*>(XSD_INT_TYPE);
   const auto* d = static_cast<const char*>(XSD_DECIMAL_TYPE);
@@ -112,7 +112,7 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
   if (!includeDataType &&
       (term.rdfTermDataType_ == i || term.rdfTermDataType_ == d ||
        (term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1))) {
-    return term.rdfTermString_;
+    return std::string{term.rdfTermString_};
   }
   return absl::StrCat("\"", term.rdfTermString_, "\"^^<", term.rdfTermDataType_,
                       ">");

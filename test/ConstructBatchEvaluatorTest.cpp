@@ -6,11 +6,15 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
+
+#include <string_view>
 
 #include "./util/IdTableHelpers.h"
 #include "./util/IndexTestHelpers.h"
 #include "engine/ConstructBatchEvaluator.h"
+#include "global/Constants.h"
 
 namespace {
 
@@ -27,8 +31,8 @@ using ::testing::Pointee;
 // optional is non-empty and the pointed-to term's `rdfTermString_` field equals
 // `expected`.
 constexpr auto evalTerm = [](const std::string& expected) {
-  return Optional(
-      Pointee(Field(&EvaluatedTermData::rdfTermString_, Eq(expected))));
+  return Optional(Pointee(Field(&EvaluatedTermData::rdfTermString_,
+                                Eq(std::string_view{expected}))));
 };
 
 const EvaluatedVariableValues& getColumn(const BatchEvaluationResult& result,
@@ -172,6 +176,78 @@ TEST_F(ConstructBatchEvaluatorTest, repeatedIdsProduceConsistentResults) {
   EXPECT_THAT(getColumn(result, 0), Each(Eq(firstTerm)));
   // check that the shared_ptr holds the correct result.
   EXPECT_THAT(getColumn(result, 0), Each(evalTerm("<s>")));
+}
+
+// A vocabulary term retained in `IdCache` must stay readable after the batch
+// lookup that produced it has been destroyed. Its owner therefore has to keep
+// the storage backing the borrowed view alive.
+TEST_F(ConstructBatchEvaluatorTest, cachedVocabTermKeepsItsStorageAlive) {
+  auto idTable = makeIdTableFromVector({{idS_}});
+  IdCache idCache{1024};
+
+  {
+    auto result = evaluateIdTable({0}, idTable, idCache);
+    ASSERT_EQ(result.numRows_, 1);
+    ASSERT_TRUE(getColumn(result, 0).at(0).has_value());
+    EXPECT_NE(getColumn(result, 0).at(0).value()->owner_, nullptr);
+  }
+
+  const auto cached = idCache.tryGet(idS_);
+  ASSERT_TRUE(cached.has_value());
+  ASSERT_TRUE(cached.value().has_value());
+  const auto& term = cached.value().value();
+  EXPECT_EQ(std::string{term->rdfTermString_}, "<s>");
+  EXPECT_NE(term->owner_, nullptr);
+}
+
+// A vocabulary literal takes the borrowing path just like a vocabulary IRI:
+// its serialized form is the whole vocabulary word, so it shares the batch
+// storage instead of copying the bytes. It must stay readable from the cache
+// after the producing batch is gone.
+TEST_F(ConstructBatchEvaluatorTest, borrowedLiteralKeepsItsStorageAlive) {
+  auto idTable = makeIdTableFromVector({{getId_("\"hello\"")}});
+  IdCache idCache{1024};
+
+  {
+    auto result = evaluateIdTable({0}, idTable, idCache);
+    ASSERT_EQ(result.numRows_, 1);
+    ASSERT_TRUE(getColumn(result, 0).at(0).has_value());
+    const auto& term = getColumn(result, 0).at(0).value();
+    EXPECT_EQ(std::string{term->rdfTermString_}, "\"hello\"");
+    EXPECT_NE(term->owner_, nullptr);
+  }
+
+  const auto cached = idCache.tryGet(getId_("\"hello\""));
+  ASSERT_TRUE(cached.has_value());
+  ASSERT_TRUE(cached.value().has_value());
+  EXPECT_EQ(std::string{cached.value().value()->rdfTermString_}, "\"hello\"");
+  EXPECT_NE(cached.value().value()->owner_, nullptr);
+}
+
+// A vocabulary word that is an internal blank-node IRI must NOT borrow: its
+// serialized form (`_:b0`) is a fresh conversion, not the stored word bytes.
+// It is materialized in owned storage (null owner) with the converted value.
+TEST_F(ConstructBatchEvaluatorTest, blankNodeIriFromVocabIsMaterialized) {
+  const std::string blankNodeIri =
+      absl::StrCat(QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX, "_:b0>");
+  QueryExecutionContext* blankQec =
+      ad_utility::testing::getQec(absl::StrCat(blankNodeIri, " <p> <o> ."));
+  const Index& blankIndex = blankQec->getIndex();
+  const Id blankId = ad_utility::testing::makeGetId(blankIndex)(blankNodeIri);
+  auto idTable = makeIdTableFromVector({{blankId}});
+  IdCache idCache{1024};
+  LocalVocab localVocab;
+  const BatchEvaluationContext ctx{idTable.asStaticView<0>(), 0,
+                                   idTable.numRows()};
+  const std::vector<ColumnIndex> variableColumns{0};
+  auto result = ConstructBatchEvaluator::evaluateBatch(
+      variableColumns, ctx, localVocab, blankIndex, idCache);
+
+  ASSERT_EQ(result.numRows_, 1);
+  ASSERT_TRUE(getColumn(result, 0).at(0).has_value());
+  const auto& term = getColumn(result, 0).at(0).value();
+  EXPECT_EQ(std::string{term->rdfTermString_}, "_:b0");
+  EXPECT_EQ(term->owner_, nullptr);
 }
 
 // The same `IdCache` instance is passed to multiple `evaluateBatch` calls.
