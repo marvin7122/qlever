@@ -249,6 +249,13 @@ struct RuntimeParameters {
   Bool vocabularyIouringPageCacheFastPath_{
       true, "vocabulary-iouring-page-cache-fast-path"};
 
+  // If set to true (and the page-cache fast path above is on), the vocabulary
+  // files are also mapped into memory, and a word (or offset) whose pages this
+  // process has read before is copied from the mapping instead of being read
+  // with a system call (see `ad_utility::ResidentFileMapping`). All other
+  // reads take the paths above.
+  Bool vocabularyMmapResidentReads_{true, "vocabulary-mmap-resident-reads"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

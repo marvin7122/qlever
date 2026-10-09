@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 
+#include "backports/filesystem.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
@@ -185,9 +186,52 @@ void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
 }
 
 // _____________________________________________________________________________
+std::vector<size_t> VocabularyOnDisk::readResidentOrPageCacheHits(
+    const ad_utility::ResidentFileMapping* mapping, int fd,
+    ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+    ql::span<char*> buffers) {
+  if (mapping == nullptr) {
+    return ad_utility::readPageCacheHits(fd, numBytes, offsets, buffers);
+  }
+  // The reads that the mapping could not serve, compacted (in order, so that
+  // adjacent ranges are still coalesced by `readPageCacheHits`).
+  auto candidates = mapping->tryReadAll(numBytes, offsets, buffers);
+  if (candidates.empty()) {
+    return candidates;
+  }
+  std::vector<size_t> candidateNumBytes;
+  std::vector<uint64_t> candidateOffsets;
+  std::vector<char*> candidateBuffers;
+  candidateNumBytes.reserve(candidates.size());
+  candidateOffsets.reserve(candidates.size());
+  candidateBuffers.reserve(candidates.size());
+  for (size_t i : candidates) {
+    candidateNumBytes.push_back(numBytes[i]);
+    candidateOffsets.push_back(offsets[i]);
+    candidateBuffers.push_back(buffers[i]);
+  }
+  auto missedCandidates = ad_utility::readPageCacheHits(
+      fd, candidateNumBytes, candidateOffsets, candidateBuffers);
+  // Mark the served candidates resident and translate the missed ones back to
+  // the original indices (both lists are ascending).
+  std::vector<size_t> missed;
+  missed.reserve(missedCandidates.size());
+  auto nextMissed = missedCandidates.begin();
+  for (size_t k = 0; k < candidates.size(); ++k) {
+    if (nextMissed != missedCandidates.end() && *nextMissed == k) {
+      missed.push_back(candidates[k]);
+      ++nextMissed;
+    } else {
+      mapping->markResident(candidateOffsets[k], candidateNumBytes[k]);
+    }
+  }
+  return missed;
+}
+
+// _____________________________________________________________________________
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
-    bool pageCacheFastPath) const {
+    bool pageCacheFastPath, bool residentReads) const {
   // For each requested index `i`, read its offset together with the next offset
   // (which bounds the string) as one 16-byte pair from `.offsets`.
   const size_t numIndices = indices.size();
@@ -229,8 +273,9 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     runFileOffsets[run] = fileOffsets[begin];
     runTargets[run] = reinterpret_cast<char*>(runOffsets.data() + begin + run);
   }
-  auto missedRuns = ad_utility::readPageCacheHits(offsetsFile_.fd(), runSizes,
-                                                  runFileOffsets, runTargets);
+  auto missedRuns = readResidentOrPageCacheHits(
+      residentReads ? &offsetsMapping_ : nullptr, offsetsFile_.fd(), runSizes,
+      runFileOffsets, runTargets);
 
   // Fill the pairs of the served runs, and collect the pairs of the missed runs
   // for `manager`.
@@ -253,13 +298,17 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
   }
   readThroughManager(manager, offsetsFile_.fd(), sizes, fileOffsets, targets,
                      missedPositions);
+  if (residentReads) {
+    offsetsMapping_.markAllResident(sizes, fileOffsets, missedPositions);
+  }
   return offsetPairs;
 }
 
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::readStrings(
     ad_utility::BatchManagerBase& manager,
-    ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath) const {
+    ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath,
+    bool residentReads) const {
   // Read the string data. String `i` starts at `offset_` with length
   // `nextOffset_ - offset_`; the strings are packed contiguously into the
   // builder's buffer, with one precomputed view per word at its fixed offset.
@@ -281,10 +330,14 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   auto targets = builder.targets();
   ql::span<char*> targetSpan{targets};
   if (pageCacheFastPath) {
-    auto missed = ad_utility::readPageCacheHits(file_.fd(), sizes, fileOffsets,
-                                                targetSpan);
+    const auto* mapping = residentReads ? &wordsMapping_ : nullptr;
+    auto missed = readResidentOrPageCacheHits(mapping, file_.fd(), sizes,
+                                              fileOffsets, targetSpan);
     readThroughManager(manager, file_.fd(), sizes, fileOffsets, targetSpan,
                        missed);
+    if (mapping != nullptr) {
+      mapping->markAllResident(sizes, fileOffsets, missed);
+    }
   } else {
     manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targetSpan));
   }
@@ -311,8 +364,12 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
       getRuntimeParameter<
           &RuntimeParameters::vocabularyIouringPageCacheFastPath_>() &&
       ad_utility::pageCacheFastPathIsSupported();
-  auto offsetPairs = readOffsetPairs(*manager, indices, pageCacheFastPath);
-  return readStrings(*manager, offsetPairs, pageCacheFastPath);
+  const bool residentReads =
+      pageCacheFastPath &&
+      getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentReads_>();
+  auto offsetPairs =
+      readOffsetPairs(*manager, indices, pageCacheFastPath, residentReads);
+  return readStrings(*manager, offsetPairs, pageCacheFastPath, residentReads);
 }
 
 // _____________________________________________________________________________
@@ -365,6 +422,23 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 void VocabularyOnDisk::open(const std::string& filename) {
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+  // Map both files for `vocabulary-mmap-resident-reads`, but only when the
+  // feature is enabled (and the page-cache fast path is available, which the
+  // resident reads require): a disabled feature takes the pre-PR path with
+  // no address-space or bitmap cost. The parameter is read here at open time;
+  // changing it later takes effect when the vocabulary is reopened. If a
+  // mapping fails, all reads of that file take the other paths.
+  if (getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentReads_>() &&
+      ad_utility::pageCacheFastPathIsSupported()) {
+    wordsMapping_ = ad_utility::ResidentFileMapping(
+        file_.fd(), static_cast<size_t>(ql::filesystem::file_size(filename)));
+    offsetsMapping_ = ad_utility::ResidentFileMapping(
+        offsetsFile_.fd(), static_cast<size_t>(ql::filesystem::file_size(
+                               filename + std::string{offsetSuffix_})));
+  } else {
+    wordsMapping_ = ad_utility::ResidentFileMapping{};
+    offsetsMapping_ = ad_utility::ResidentFileMapping{};
+  }
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.
