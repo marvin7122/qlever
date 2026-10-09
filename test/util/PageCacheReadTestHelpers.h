@@ -10,7 +10,9 @@
 #ifndef QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
 #define QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
 
+#include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 
@@ -48,6 +50,25 @@ inline int64_t nothingCached(int, const ::iovec*, int, int64_t) {
 inline int64_t notSupported(int, const ::iovec*, int, int64_t) {
   errno = EOPNOTSUPP;
   return -1;
+}
+
+// Number of page-cache reads observed by `countingPageCacheRead` below.
+// Reset it before the measured section; like the injected function itself it
+// is process-wide, so only one test may use it at a time (GoogleTest runs
+// tests sequentially by default).
+inline std::atomic<size_t> numCountedPageCacheReads{0};
+
+// A page-cache read that counts the call in `numCountedPageCacheReads` and
+// then delegates to `Delegate` (the real `preadv2(RWF_NOWAIT)` by default).
+// Inject it with `ScopedPageCacheRead` to assert how many fast-path reads a
+// lookup issued, e.g. `countingPageCacheRead<&notSupported>` to count the
+// probes on a file system that rejects `RWF_NOWAIT`.
+template <ad_utility::detail::PageCacheRead Delegate =
+              &ad_utility::detail::systemPageCacheRead>
+int64_t countingPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
+                              int64_t offset) {
+  numCountedPageCacheReads.fetch_add(1, std::memory_order_relaxed);
+  return Delegate(fd, iov, iovcnt, offset);
 }
 
 }  // namespace pageCacheReadTestHelpers
