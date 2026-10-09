@@ -93,12 +93,9 @@ class PrefetchingBatchResolver {
   }
 
   // ___________________________________________________________________________
-  // Pipelined batch lookup loop issuing prefetch requests K rows ahead during
-  // `resolveVocabIndexIds`.
-  //
-  // Resolves the `VocabIndex` IDs at `positions` in `ids`, prefetching
-  // future ID structures and vocabulary memory lines K iterations ahead
-  // while converting and formatting the current row into `results[position]`.
+  // Resolve the `VocabIndex` IDs at `positions` in a single vocabulary batch,
+  // preserving result positions and conversion options. The vocabulary
+  // backend handles prefetching.
   template <bool removeQuotesAndAngleBrackets = false,
             bool returnOnlyLiterals = false,
             typename EscapeFunction = ql::identity>
@@ -116,40 +113,9 @@ class PrefetchingBatchResolver {
       return pos < ids.size() && ids[pos].getDatatype() == Datatype::VocabIndex;
     }));
 
-    const size_t n = positions.size();
-    const size_t distance = config_.prefetchDistance;
-
-    // Warm-up pipeline: prefetch the first `distance` entries
-    for (size_t k = 0; k < std::min(distance, n); ++k) {
-      const size_t pfPos = positions[k];
-      prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-    }
-
-    // Main pipelined loop: prefetch row (i + distance) ahead while serializing
-    // row i. Only the `Id` array element itself is prefetched: the vocabulary
-    // string data lives in separate heap structures that are not reachable
-    // through `index` here, so prefetching `&index.getImpl()` would only touch
-    // the `IndexImpl` object and provide no caching benefit.
-    for (size_t i = 0; i < n; ++i) {
-      // Subtraction-based guard: `i + distance` would wrap for a huge
-      // caller-supplied distance (`i < n`, so `n - i` cannot underflow).
-      if (distance < n - i) {
-        const size_t pfPos = positions[i + distance];
-        prefetchVocabEntry(&ids[pfPos], static_cast<int>(distance));
-      }
-
-      const size_t pos = positions[i];
-      const Id id = ids[pos];
-      const auto vocabIndex = id.getVocabIndex();
-      // Bind by value: `indexToString` may return an owning `std::string`,
-      // so a `string_view` would dangle at the end of the full expression.
-      const auto word = index.indexToString(vocabIndex);
-
-      results[pos] = ql::exportIds::literalOrIriToStringAndType<
-          removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-          ql::exportIds::LiteralOrIriView::fromStringRepresentation(word),
-          escapeFunction);
-    }
+    ql::exportIds::resolveVocabIndexIds<removeQuotesAndAngleBrackets,
+                                        returnOnlyLiterals>(
+        index, ids, positions, results, escapeFunction);
   }
 
   // ___________________________________________________________________________
@@ -165,10 +131,10 @@ class PrefetchingBatchResolver {
   }
 
   // ___________________________________________________________________________
-  // Pipelined batch variant of `idsToStringAndType`.
+  // Batch variant of `idsToStringAndType`.
   //
   // Partitions ID positions into in-memory IDs and `VocabIndex` IDs, then
-  // executes pipelined prefetch resolution across the vocabulary slots.
+  // resolves the vocabulary slots through the shared batch lookup.
   template <bool removeQuotesAndAngleBrackets = false,
             bool returnOnlyLiterals = false,
             typename EscapeFunction = ql::identity>
@@ -192,7 +158,7 @@ class PrefetchingBatchResolver {
         index, ids, localVocab, positions.nonVocabIndexIndices_, results,
         escapeFunction);
 
-    // 2. Resolve VocabIndex IDs with pipelined prefetching
+    // 2. Resolve VocabIndex IDs with the shared batch lookup
     resolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
         index, ids, positions.vocabIndexIndices_, results, escapeFunction);
 

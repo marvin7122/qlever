@@ -167,6 +167,7 @@ TEST(VocabularyInMemory, LookupBatchWithPrefetchDistance) {
     AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                  ::testing::HasSubstr("!indices.empty()"));
   }
+  ad_utility::deleteFile(gtestCurrentTestName());
 }
 
 }  // namespace
