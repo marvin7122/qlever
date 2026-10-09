@@ -99,6 +99,12 @@ class ResidentFileMapping {
     return capPages_.load(std::memory_order_relaxed);
   }
 
+  // Testing hook: the mapping base, for `mincore` probes. Do not read or
+  // write through it outside tests; use `tryRead`. A second live mapping of
+  // the same file pins its pages against cross-mapping pageout, so probes
+  // must use this address (the single-mapping pattern).
+  const char* mappingForTesting() const { return data_; }
+
   // `markResident` for the reads at `positions`.
   void markAllResident(ql::span<const size_t> numBytes,
                        ql::span<const uint64_t> offsets,

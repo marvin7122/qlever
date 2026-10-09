@@ -161,27 +161,27 @@ TEST(ResidentFileMapping, capBoundsMarkedPages) {
 
 #ifdef __linux__
 // _____________________________________________________________________________
-// Evicted pages are demoted from the page cache, verified with `mincore` on
-// a second mapping of the same file (residency is a page cache property,
-// shared across mappings).
+// Evicted pages are demoted from the page cache, verified with `mincore`
+// through the mapping itself. This must stay the single live mapping of the
+// file: a second mapping pins the pages against cross-mapping pageout
+// (probed directly), which would make the check meaningless.
 TEST(ResidentFileMapping, evictedPagesAreDemoted) {
   constexpr size_t P = ResidentFileMapping::pageSize;
   std::string contents(4 * P, 'z');
   auto file = writeAndOpen("residentFileMappingDemote.dat", contents);
   ResidentFileMapping mapping(file.fd(), contents.size());
   ASSERT_TRUE(mapping.isMapped());
-  // Fault all pages into the page cache through our own mapping.
-  void* probe =
-      ::mmap(nullptr, contents.size(), PROT_READ, MAP_SHARED, file.fd(), 0);
-  ASSERT_NE(probe, MAP_FAILED);
+  const char* probe = mapping.mappingForTesting();
+  // Fault all pages into the page cache by reading them.
   volatile char sink = 0;
   for (size_t i = 0; i < contents.size(); i += P) {
-    sink += static_cast<const char*>(probe)[i];
+    sink += probe[i];
   }
   (void)sink;
   auto mincoreResident = [&](size_t& out) {
     std::vector<unsigned char> vec(4, 0);
-    EXPECT_EQ(::mincore(probe, contents.size(), vec.data()), 0);
+    EXPECT_EQ(::mincore(const_cast<char*>(probe), contents.size(), vec.data()),
+              0);
     out = 0;
     for (auto b : vec) {
       out += (b & 1) ? 1 : 0;
@@ -197,7 +197,6 @@ TEST(ResidentFileMapping, evictedPagesAreDemoted) {
   mapping.setResidentCapPages(1);
   mincoreResident(resident);
   EXPECT_EQ(resident, 1);
-  ::munmap(probe, contents.size());
   ad_utility::deleteFile("residentFileMappingDemote.dat");
 }
 #endif
