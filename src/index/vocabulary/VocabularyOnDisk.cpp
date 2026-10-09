@@ -371,7 +371,7 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   // value is unchanged (one atomic exchange) and recounts plus enforces only
   // on change.
   const size_t residentCapPages =
-      getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentCapMb>() *
+      getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentCapMb_>() *
       256;
   wordsMapping_.setResidentCapPages(residentCapPages);
   offsetsMapping_.setResidentCapPages(residentCapPages);
