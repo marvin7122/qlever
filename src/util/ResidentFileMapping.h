@@ -108,9 +108,12 @@ class ResidentFileMapping {
   size_t size_ = 0;
   size_t numBitWords_ = 0;
   std::unique_ptr<std::atomic<uint64_t>[]> residentBits_;
-  std::atomic<size_t> capPages_{0};
-  std::atomic<size_t> residentPageCount_{0};
-  std::atomic<size_t> clockHand_{0};
+  // Mutable so the const member functions (`markResident`,
+  // `setResidentCapPages`) can update the cap, the count, and the CLOCK hand;
+  // all updates are atomic.
+  mutable std::atomic<size_t> capPages_{0};
+  mutable std::atomic<size_t> residentPageCount_{0};
+  mutable std::atomic<size_t> clockHand_{0};
 
   // The pages `[firstPage, lastPage]` of a non-empty range within the file.
   std::pair<size_t, size_t> pagesOf(uint64_t offset, size_t numBytes) const {
