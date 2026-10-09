@@ -282,7 +282,11 @@ bool reserveForMorsel(ScatterGatherChunkBuilder& builder, uint64_t rowsDone,
   const auto estimate = static_cast<size_t>(
       static_cast<double>(builder.size()) * static_cast<double>(rowsTotal) /
       static_cast<double>(rowsDone));
-  builder.reserveCopied(estimate + estimate / 8);
+  // Cap the extrapolation at a bounded multiple of the bytes written so
+  // far: the sampled rows may be atypically large, and a revoked or
+  // cancelled partial builder would otherwise keep a reservation sized for
+  // a full morsel. A low estimate only costs the usual geometric growth.
+  builder.reserveCopied(std::min(estimate + estimate / 8, builder.size() * 16));
   return true;
 }
 
