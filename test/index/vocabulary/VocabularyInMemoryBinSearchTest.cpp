@@ -5,7 +5,12 @@
 #include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <limits>
+#include <numeric>
+#include <optional>
+#include <random>
 
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
@@ -37,9 +42,11 @@ class VocabularyCreator {
  public:
   explicit VocabularyCreator(std::string filename)
       : vocabFilename_{filename + suffix} {
-    removeVocabularyFiles();
+    deleteVocabularyFiles<VocabularyInMemoryBinSearch>(vocabFilename_);
   }
-  ~VocabularyCreator() { removeVocabularyFiles(); }
+  ~VocabularyCreator() {
+    deleteVocabularyFiles<VocabularyInMemoryBinSearch>(vocabFilename_);
+  }
 
   // Create and return a `VocabularyInMemoryBinSearch` from words and ids.
   // `words` and `ids` must have the same size. If `ids` is `nullopt`, then
@@ -149,12 +156,18 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesClose) {
               ::testing::ElementsAre("gamma", "alpha", "gamma", "beta"));
 }
 
-TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsMissingIndex) {
-  auto vocab = createVocabulary("LookupBatchRejectsMissingIndex")(
+TEST(VocabularyInMemoryBinSearch,
+     LookupBatchReportsPlaceholderForMissingIndex) {
+  auto vocab = createVocabulary("LookupBatchPlaceholderForMissingIndex")(
       std::vector<std::string>{"alpha", "beta"});
   const std::array<size_t, 1> missingIndex{2};
 
-  EXPECT_THROW(vocab.lookupBatch(missingIndex), ad_utility::Exception);
+  // A missing index yields a placeholder rather than an exception, like the
+  // "holes" of a vocabulary with non-contiguous ids (see
+  // `replaceOptionalByPlaceholderOnExport` in `VocabularyTypes.h`).
+  EXPECT_THAT(vocab.lookupBatch(missingIndex),
+              ::testing::ElementsAre(
+                  ad_utility::vocabulary::placeholderForMissingVocabIndex(2)));
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
 }
@@ -168,7 +181,7 @@ TEST(VocabularyInMemoryBinSearch, LookupBatchRejectsEmptyBatch) {
 }
 
 TEST(VocabularyInMemoryBinSearch, LookupBatchOutlivesVocabulary) {
-  ad_utility::vocabulary::VocabBatchLookupResult result;
+  VocabBatchLookupResult result;
   {
     auto vocab = createVocabulary("LookupBatchOutlivesVocabularyOnly")(
         std::vector<std::string>{"alpha", "beta", "gamma"});
@@ -229,11 +242,10 @@ ad_utility::vocabulary::VocabularyInMemoryBinSearch createVocabularyWithIndices(
   return vocabulary;
 }
 
-// Delete the two files (words and indices) that a `WordWriter` for the given
-// `filename` creates. Do not warn about files that were never created.
-void deleteVocabularyFiles(const std::string& filename) {
-  ad_utility::deleteFile(filename, false);
-  ad_utility::deleteFile(filename + ".ids", false);
+// An `absl::Cleanup` that deletes all the files that a
+// `VocabularyInMemoryBinSearch` with the given base `filename` consists of.
+auto getFileCleanup(const std::string& filename) {
+  return makeVocabFileCleanup<VocabularyInMemoryBinSearch>(filename);
 }
 
 // Check that the two vocabularies contain exactly the same words with exactly
@@ -261,7 +273,7 @@ std::vector<std::pair<uint64_t, std::string>> expectedIndicesAndWords() {
 // _____________________________________________________________________________
 TEST(VocabularyInMemoryBinSearch, positionOfIndexAndAccessOperator) {
   std::string filename = gtestCurrentTestName();
-  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto cleanup = getFileCleanup(filename);
   auto vocab =
       createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles);
 
@@ -290,7 +302,7 @@ TEST(VocabularyInMemoryBinSearch, positionOfIndexAndAccessOperator) {
 // _____________________________________________________________________________
 TEST(VocabularyInMemoryBinSearch, endIndexAndGetPositionOfWord) {
   std::string filename = gtestCurrentTestName();
-  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto cleanup = getFileCleanup(filename);
   auto vocab =
       createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles);
 
@@ -308,7 +320,7 @@ TEST(VocabularyInMemoryBinSearch, endIndexAndGetPositionOfWord) {
 // _____________________________________________________________________________
 TEST(VocabularyInMemoryBinSearch, scanAll) {
   std::string filename = gtestCurrentTestName();
-  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto cleanup = getFileCleanup(filename);
   auto vocab =
       createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles);
 
@@ -324,7 +336,7 @@ TEST(VocabularyInMemoryBinSearch, scanAll) {
 // _____________________________________________________________________________
 TEST(VocabularyInMemoryBinSearch, lookupBatch) {
   std::string filename = gtestCurrentTestName();
-  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto cleanup = getFileCleanup(filename);
   auto vocab =
       createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles);
 
@@ -354,7 +366,7 @@ TEST(VocabularyInMemoryBinSearch, lookupBatch) {
 // _____________________________________________________________________________
 TEST(VocabularyInMemoryBinSearch, genericSerialization) {
   std::string filename = gtestCurrentTestName();
-  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto cleanup = getFileCleanup(filename);
   auto vocab =
       createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles);
 
@@ -377,7 +389,7 @@ TEST(VocabularyInMemoryBinSearch, genericSerialization) {
 // _____________________________________________________________________________
 TEST(VocabularyInMemoryBinSearch, zeroCopyDeserialization) {
   std::string filename = gtestCurrentTestName();
-  absl::Cleanup cleanup = [&filename] { deleteVocabularyFiles(filename); };
+  auto cleanup = getFileCleanup(filename);
   auto vocab =
       createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles);
 
@@ -402,4 +414,108 @@ TEST(VocabularyInMemoryBinSearch, makeDiskWriterPtrThrows) {
       ad_utility::vocabulary::VocabularyInMemoryBinSearch::makeDiskWriterPtr(
           gtestCurrentTestName()),
       ::testing::HasSubstr("cannot be built word by word"));
+}
+
+namespace {
+// For a vocabulary with the given (strictly ascending) `indices`, check that
+// `positionOfIndex` gives the same results with and without the rank
+// directory, for every index in `[0, endIndex() + 70)`, in
+// ascending, random, and repeated order.
+void expectRankDirectoryMatchesBinarySearch(
+    const std::string& filename, const std::vector<uint64_t>& indices,
+    uint64_t seed) {
+  auto cleanup = getFileCleanup(filename);
+  std::vector<std::string> words;
+  for (size_t i = 0; i < indices.size(); ++i) {
+    words.push_back(absl::StrCat("word", 1'000'000 + i));
+  }
+  auto vocab = createVocabularyWithIndices(filename, words, indices);
+  ASSERT_FALSE(vocab.hasIndexRankDirectory());
+  EXPECT_EQ(vocab.indexRankDirectoryNumBytes(), 0);
+
+  std::vector<size_t> queries(vocab.endIndex() + 70);
+  std::iota(queries.begin(), queries.end(), size_t{0});
+  queries.push_back(std::numeric_limits<uint64_t>::max());
+  std::mt19937_64 gen{seed};
+  std::vector<size_t> shuffled = queries;
+  std::shuffle(shuffled.begin(), shuffled.end(), gen);
+  std::vector<size_t> repeated;
+  std::uniform_int_distribution<size_t> pick{0, queries.size() - 1};
+  for (size_t i = 0; i < 300; ++i) {
+    repeated.push_back(queries[pick(gen)]);
+  }
+
+  auto positionsOf = [&vocab](const std::vector<size_t>& batch) {
+    std::vector<std::optional<size_t>> result;
+    for (size_t index : batch) {
+      result.push_back(vocab.positionOfIndex(index));
+    }
+    return result;
+  };
+  // The expected values from the definition (via `indices`).
+  std::vector<std::optional<size_t>> expected;
+  for (size_t index : queries) {
+    auto it = std::find(indices.begin(), indices.end(), index);
+    expected.push_back(it == indices.end() ? std::nullopt
+                                           : std::optional{static_cast<size_t>(
+                                                 it - indices.begin())});
+  }
+  EXPECT_EQ(positionsOf(queries), expected);
+  const auto expectedShuffled = positionsOf(shuffled);
+  const auto expectedRepeated = positionsOf(repeated);
+
+  // The rank directory.
+  vocab.buildIndexRankDirectory();
+  ASSERT_TRUE(vocab.hasIndexRankDirectory());
+  EXPECT_EQ(vocab.indexRankDirectoryNumBytes(),
+            64 * ((vocab.endIndex() + 447) / 448));
+  EXPECT_EQ(positionsOf(queries), expected);
+  EXPECT_EQ(positionsOf(shuffled), expectedShuffled);
+  EXPECT_EQ(positionsOf(repeated), expectedRepeated);
+  for (size_t position = 0; position < indices.size(); ++position) {
+    // The prefetch hints do not change anything.
+    vocab.prefetchPositionOfIndex(indices[position]);
+    vocab.prefetchWordOffsetsAtPosition(position);
+    vocab.prefetchWordAtPosition(position);
+    EXPECT_EQ(vocab[indices[position]], std::optional{words[position]});
+  }
+  vocab.prefetchPositionOfIndex(std::numeric_limits<uint64_t>::max());
+
+  // A rebuild gives the same result; `close` removes the directory.
+  vocab.buildIndexRankDirectory();
+  EXPECT_EQ(positionsOf(shuffled), expectedShuffled);
+  vocab.close();
+  EXPECT_FALSE(vocab.hasIndexRankDirectory());
+  EXPECT_EQ(vocab.positionOfIndex(0), std::nullopt);
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(VocabularyInMemoryBinSearch, rankDirectoryMatchesBinarySearch) {
+  std::string filename = gtestCurrentTestName();
+  // The fixed vocabulary with holes, and the empty vocabulary.
+  expectRankDirectoryMatchesBinarySearch(filename, indicesWithHoles, 1);
+  expectRankDirectoryMatchesBinarySearch(filename, {}, 2);
+  // Boundaries: a single index at 0, a single large index, indices at the
+  // first and last bit of the 64-bit words and 448-bit blocks of the rank
+  // directory, and a contiguous range (no holes).
+  expectRankDirectoryMatchesBinarySearch(filename, {0}, 3);
+  expectRankDirectoryMatchesBinarySearch(filename, {5000}, 4);
+  expectRankDirectoryMatchesBinarySearch(
+      filename, {63, 64, 127, 447, 448, 895, 896, 897}, 5);
+  std::vector<uint64_t> contiguous(1000);
+  std::iota(contiguous.begin(), contiguous.end(), uint64_t{0});
+  expectRankDirectoryMatchesBinarySearch(filename, contiguous, 6);
+  // Random sparse and dense sets.
+  for (double density : {0.002, 0.05, 0.5, 0.97}) {
+    std::mt19937_64 gen{static_cast<uint64_t>(density * 1000)};
+    std::bernoulli_distribution contained{density};
+    std::vector<uint64_t> indices;
+    for (uint64_t index = 0; index < 4000; ++index) {
+      if (contained(gen)) {
+        indices.push_back(index);
+      }
+    }
+    expectRankDirectoryMatchesBinarySearch(filename, indices, 7);
+  }
 }

@@ -10,10 +10,17 @@
 
 #include "index/vocabulary/VocabularyInternalExternal.h"
 
+#include <absl/strings/str_cat.h>
+
+#include <optional>
 #include <range/v3/view/enumerate.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
+
+#include "global/RuntimeParameters.h"
+#include "util/HugePages.h"
 
 namespace ad_utility::vocabulary {
 
@@ -27,95 +34,89 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 }
 
 // _____________________________________________________________________________
-// Partition input indices into internal-vocabulary hits and indices that must
-// be resolved by the external vocabulary, while keeping their positions in the
-// original input. Keeping the two groups separate allows each vocabulary to be
-// batch-looked-up independently; the stored result positions are required to
-// restore the original request order when the sub-results are assembled.
-struct IndexPartition {
-  MarkerIndicesAndPositions internalSlots_;
-  MarkerIndicesAndPositions diskSlots_;
-  // Words probed from the internal vocabulary while partitioning, in the same
-  // order as `internalSlots_`. Reusing them below avoids looking each
-  // internal hit up a second time inside `lookupBatch`.
-  std::vector<std::string_view> internalWords_;
-};
-
-// _____________________________________________________________________________
-// _____________________________________________________________________________
-static IndexPartition partitionIndicesBySource(
-    ql::span<const size_t> indices,
-    const VocabularyInMemoryBinSearch& internalVocab) {
-  IndexPartition result;
-  result.internalSlots_.reserve(indices.size());
-  result.diskSlots_.reserve(indices.size());
-  result.internalWords_.reserve(indices.size());
-
-  for (const auto& [i, idx] : ::ranges::views::enumerate(indices)) {
-    const auto& fromInternal = internalVocab[idx];
-    if (fromInternal.has_value()) {
-      result.internalSlots_.addPair(idx, i);
-      result.internalWords_.push_back(fromInternal.value());
-    } else {
-      result.diskSlots_.addPair(idx, i);
-    }
-  }
-  return result;
-}
-
-// _____________________________________________________________________________
-// Assemble a self-contained batch result from the internal words preserved
-// during partitioning (no second vocabulary lookup for these hits).
-static VocabBatchLookupResult makeInternalSubBatchResult(
-    ql::span<const std::string_view> internalWords) {
-  return makePmrVocabBatchLookupResult(internalWords);
-}
-
-// _____________________________________________________________________________
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
 
-  auto partition = partitionIndicesBySource(indices, internalVocab_);
-
-  // Take the fast path when all indices are resolved through the external
-  // (disk) vocabulary.
-  if (partition.internalSlots_.empty()) {
-    return externalVocab_.lookupBatch(
-        partition.diskSlots_.getUnderlyingIndices());
-  }
-
-  if (partition.diskSlots_.empty()) {
-    return makeInternalSubBatchResult(partition.internalWords_);
-  }
-
-  // Handle mixed internal and external indices by assembling results from both
-  // sources.
+  // One pass over `indices`: a word of the internal vocabulary is placed as a
+  // view into that vocabulary (no copy); all other indices are collected, with
+  // their positions in `indices`, for one batched lookup in the external
+  // vocabulary. The internal vocabulary has "holes", so each index needs one
+  // membership probe: one cache line with the rank directory (see
+  // `vocabulary-internal-rank-lookup`), else a binary search; indices at or
+  // past `internalVocab_.endIndex()` are known misses and skip the probe.
+  // Results do not depend on the prefetch distance.
   MultiSourceVocabBatchAssembler assembler(indices.size());
+  MarkerIndicesAndPositions externalSlots;
+  const uint64_t internalEnd = internalVocab_.endIndex();
+  auto internalPositionOf = [&](size_t index) -> std::optional<size_t> {
+    return index < internalEnd ? internalVocab_.positionOfIndex(index)
+                               : std::nullopt;
+  };
+  auto placeWord = [&](size_t position, size_t index,
+                       std::optional<size_t> internalPosition) {
+    if (internalPosition.has_value()) {
+      assembler.assignUnownedViewAtPosition(
+          position, internalVocab_.wordAtPosition(internalPosition.value()));
+    } else {
+      externalSlots.addPair(index, position);
+    }
+  };
+  const size_t distance =
+      internalVocab_.hasIndexRankDirectory()
+          ? getRuntimeParameter<
+                &RuntimeParameters::vocabularyInternalRankPrefetchDistance_>()
+          : 0;
+  if (distance == 0) {
+    for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+      placeWord(position, index, internalPositionOf(index));
+    }
+  } else {
+    // With the rank directory, each probe is one cache miss in the directory,
+    // and each in-RAM word one more in its offsets and one in its bytes. Issue
+    // these loads ahead (see `vocabulary-internal-rank-prefetch-distance`), so
+    // that they overlap instead of stalling one after another.
+    const size_t n = indices.size();
+    std::vector<std::optional<size_t>> internalPositions(n);
+    for (size_t i = 0; i < n; ++i) {
+      if (i + distance < n) {
+        internalVocab_.prefetchPositionOfIndex(indices[i + distance]);
+      }
+      internalPositions[i] = internalPositionOf(indices[i]);
+    }
+    for (size_t i = 0; i < n; ++i) {
+      if (i + 2 * distance < n && internalPositions[i + 2 * distance]) {
+        internalVocab_.prefetchWordOffsetsAtPosition(
+            internalPositions[i + 2 * distance].value());
+      }
+      if (i + distance < n && internalPositions[i + distance]) {
+        internalVocab_.prefetchWordAtPosition(
+            internalPositions[i + distance].value());
+      }
+      placeWord(i, indices[i], internalPositions[i]);
+    }
+  }
 
-  // 1. Pass the internal sub-result to the assembler, which takes ownership of
-  // the result data so its string views remain valid, and place the values at
-  // their original request positions.
-  auto internal = makeInternalSubBatchResult(partition.internalWords_);
+  if (externalSlots.empty()) {
+    return std::move(assembler).finalizeVocabBatchLookupResult();
+  }
+  auto external =
+      externalVocab_.lookupBatch(externalSlots.getUnderlyingIndices());
+  if (externalSlots.size() == indices.size()) {
+    // No internal hit: the positions are `0, 1, ...`, so the external batch
+    // already is the result.
+    return external;
+  }
   assembler.scatterSubBatchResultAtPositions(
-      internal, partition.internalSlots_.getResultPositions());
-
-  // 2. Pass the external sub-result to the assembler and retain its result data
-  // so the returned string views remain valid, placing the values at their
-  // original request positions.
-  auto disk =
-      externalVocab_.lookupBatch(partition.diskSlots_.getUnderlyingIndices());
-  assembler.scatterSubBatchResultAtPositions(
-      std::move(disk), partition.diskSlots_.getResultPositions());
-
+      std::move(external), externalSlots.getResultPositions());
   return std::move(assembler).finalizeVocabBatchLookupResult();
 }
 
 // _____________________________________________________________________________
 VocabularyInternalExternal::WordWriter::WordWriter(const std::string& filename,
                                                    size_t milestoneDistance)
-    : internalWriter_{filename + ".internal"},
-      externalWriter_{filename + ".external"},
+    : internalWriter_{absl::StrCat(filename, internalSuffix)},
+      externalWriter_{absl::StrCat(filename, externalSuffix)},
       milestoneDistance_{milestoneDistance} {}
 
 // _____________________________________________________________________________
@@ -149,11 +150,33 @@ VocabularyInternalExternal::WordWriter::~WordWriter() {
 void VocabularyInternalExternal::open(const std::string& filename) {
   AD_LOG_INFO << "Reading vocabulary from file " << filename << " ..."
               << std::endl;
-  internalVocab_.open(filename + ".internal");
-  externalVocab_.open(filename + ".external");
+  internalVocab_.open(absl::StrCat(filename, internalSuffix));
+  externalVocab_.open(absl::StrCat(filename, externalSuffix));
   AD_LOG_INFO << "Done, number of words: " << size() << std::endl;
   AD_LOG_INFO << "Number of words in internal vocabulary (these are also part "
                  "of the external vocabulary): "
               << internalVocab_.size() << std::endl;
+  if (getRuntimeParameter<
+          &RuntimeParameters::vocabularyInternalRankLookup_>()) {
+    const bool useHugePages = getRuntimeParameter<
+        &RuntimeParameters::vocabularyInternalRankHugePages_>();
+    internalVocab_.buildIndexRankDirectory(useHugePages);
+    AD_LOG_INFO << "Rank directory of the internal vocabulary: "
+                << internalVocab_.indexRankDirectoryNumBytes() << " bytes for "
+                << internalVocab_.endIndex() << " vocabulary indices"
+                << std::endl;
+    if (useHugePages) {
+      const auto [begin, size] = internalVocab_.indexRankDirectoryAllocation();
+      const auto hugeBytes = ad_utility::anonHugePageBytes(begin, size);
+      AD_LOG_INFO << "Huge pages for the rank directory requested "
+                  << "(transparent huge pages: "
+                  << ad_utility::transparentHugePagesMode() << "): "
+                  << (hugeBytes.has_value() ? std::to_string(hugeBytes.value())
+                                            : std::string{"unknown"})
+                  << " of " << size
+                  << " allocated bytes on huge pages (upper bound)"
+                  << std::endl;
+    }
+  }
 }
 }  // namespace ad_utility::vocabulary

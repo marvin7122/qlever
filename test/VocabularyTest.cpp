@@ -14,9 +14,14 @@
 #include <cstdio>
 #include <vector>
 
+#include "global/Constants.h"
+#include "index/vocabulary/CompressedVocabulary.h"
+#include "index/vocabulary/SplitVocabulary.h"
 #include "index/vocabulary/Vocabulary.h"
+#include "index/vocabulary/VocabularyInternalExternal.h"
 #include "index/vocabulary/VocabularyTestHelpers.h"
 #include "index/vocabulary/VocabularyType.h"
+#include "rdfTypes/GeoCellGrid.h"
 #include "util/GTestHelpers.h"
 #include "util/Serializer/ByteBufferSerializer.h"
 #include "util/json.h"
@@ -93,6 +98,68 @@ RdfsVocabularyHandle createExampleVocabulary(
                               words};
 }
 }  // namespace
+
+// Test that the geo cell grid (see `GeoVocabulary`) is forwarded through the
+// `Vocabulary` to a geo split vocabulary, and that the indices of such a
+// vocabulary carry the grid cell. Other vocabularies have no grid.
+TEST(VocabularyTest, geoCellGrid) {
+  using ad_utility::GeoCellGrid;
+  VocabularyType type{VocabularyType::Enum::OnDiskCompressedGeoSplit};
+  std::string filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  auto deleteFiles = [&filename, &type]() {
+    for (std::string_view suffix : PolymorphicVocabulary::fileSuffixes(type)) {
+      ad_utility::deleteFile(absl::StrCat(filename, suffix), false);
+    }
+  };
+  deleteFiles();
+  absl::Cleanup cleanup{deleteFiles};
+
+  // With a grid of level 2, the first literal is in cell 3, the other two in
+  // cell 12. The words have to be written in this order.
+  auto wkt = [](std::string_view content) {
+    return absl::StrCat("\"", content, GEO_LITERAL_SUFFIX);
+  };
+  std::string w3 = wkt("LINESTRING(170 -80, 171 -81)");
+  std::string w12 = wkt("LINESTRING(-170 80, -171 81)");
+  std::string w12b = wkt("LINESTRING(-170 80, -172 82)");
+  GeoCellGrid grid{2};
+
+  RdfsVocabulary vocab;
+  vocab.resetToType(type);
+  EXPECT_FALSE(vocab.getGeoCellGrid().has_value());
+  vocab.setGeoCellGrid(grid);
+  EXPECT_EQ(vocab.getGeoCellGrid(), std::optional{grid});
+  {
+    auto writer = vocab.makeWordWriterPtr(filename);
+    writer->readableName() = "test";
+    for (const auto& word : {"<a>", w3.c_str(), w12.c_str(), w12b.c_str()}) {
+      (*writer)(word, false);
+    }
+    writer->finish();
+  }
+  vocab.readFromFile(filename);
+  EXPECT_EQ(vocab.getGeoCellGrid(), std::optional{grid});
+
+  // The WKT literals are found under their cell-carrying indices, the other
+  // word in the main vocabulary.
+  using SGV =
+      SplitGeoVocabulary<CompressedVocabulary<VocabularyInternalExternal>>;
+  auto indexOf = [&grid](uint64_t cell, uint64_t position) {
+    return VocabIndex::make(
+        SGV::addMarker(grid.indexFromCellAndPosition(cell, position), 1));
+  };
+  EXPECT_EQ(vocab[indexOf(3, 0)], w3);
+  EXPECT_EQ(vocab[indexOf(12, 1)], w12);
+  EXPECT_EQ(vocab[indexOf(12, 2)], w12b);
+  VocabIndex idx;
+  ASSERT_TRUE(vocab.getId("<a>", &idx));
+  EXPECT_EQ(vocab[idx], "<a>");
+
+  // A vocabulary that cannot hold a `GeoVocabulary` ignores the grid.
+  TextVocabulary textVocab;
+  textVocab.setGeoCellGrid(grid);
+  EXPECT_FALSE(textVocab.getGeoCellGrid().has_value());
+}
 
 // _____________________________________________________________________________
 TEST(VocabularyTest, getIdForWordTest) {
@@ -274,6 +341,21 @@ TEST(VocabularyTest, LookupBatchWithBuilderOnDisk) {
   EXPECT_THAT(result, ::testing::ElementsAre("ba", "a", "car", "ab"));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*v, result,
                                                                 indices);
+}
+
+// _____________________________________________________________________________
+// The builder overload appends the same words, in input order, to the
+// caller's builder; two calls append to the same builder.
+TEST(VocabularyTest, LookupBatchWithBuilder) {
+  auto v = createExampleVocabulary();
+  ArenaVocabBatchBuilder builder(6);
+  v->lookupBatch(std::vector<size_t>{2, 0, 3, 1}, builder);
+  v->lookupBatch(std::vector<size_t>{1, 1}, builder);
+  EXPECT_THAT(std::move(builder).finalize(),
+              ::testing::ElementsAre("ba", "a", "car", "ab", "ab", "ab"));
+
+  ArenaVocabBatchBuilder unused(1);
+  EXPECT_ANY_THROW(v->lookupBatch(ql::span<const size_t>{}, unused));
 }
 
 // Each streamed result must equal the eager `lookupBatch` for that batch's

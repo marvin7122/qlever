@@ -7,6 +7,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "backports/algorithm.h"
@@ -14,6 +15,7 @@
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
+#include "util/BitVectorWithRank.h"
 #include "util/CompactStringVector.h"
 #include "util/Exception.h"
 #include "util/Serializer/FileSerializer.h"
@@ -24,7 +26,9 @@ namespace ad_utility::vocabulary {
 
 // A vocabulary that stores all words in memory. The vocabulary supports
 // "holes", meaning that the indices of the contained words don't have to be
-// contiguous (but ascending). All accesses are implemented using binary search.
+// contiguous (but ascending). All accesses are implemented using binary
+// search, except `positionOfIndex` after `buildIndexRankDirectory`, which
+// then answers in constant time via a bit vector with rank counters.
 class VocabularyInMemoryBinSearch
     : public VocabularyBinarySearchMixin<VocabularyInMemoryBinSearch> {
  public:
@@ -34,6 +38,11 @@ class VocabularyInMemoryBinSearch
   using Words = CompactVectorOfStrings<CharType>;
   using Indices = std::vector<uint64_t>;
   using IndicesView = ql::span<const uint64_t>;
+
+  // This suffix is appended to the base filename in order to get the name of
+  // the file in which the (because of the holes, explicit) indices of the words
+  // are stored. The words themselves are stored under the base filename itself.
+  static constexpr std::string_view idsSuffix = ".ids";
 
   // The holes of this vocabulary are deliberate: such a vocabulary is created
   // by excluding some of the entries of a larger vocabulary, and is used in
@@ -50,6 +59,9 @@ class VocabularyInMemoryBinSearch
   // `fromZeroCopyDeserializer`).
   Words words_;
   std::variant<Indices, IndicesView> indices_;
+  // Optional constant-time replacement for the binary search in
+  // `positionOfIndex` (see `buildIndexRankDirectory`).
+  std::optional<ad_utility::BitVectorWithRank> indexRankDirectory_;
 
  public:
   // Construct an empty vocabulary
@@ -94,8 +106,53 @@ class VocabularyInMemoryBinSearch
 
   // Return the position (i.e. the offset into the words) of the word with the
   // given vocabulary `index`, or `std::nullopt` if `index` is not contained in
-  // this vocabulary (which can happen because of the "holes", see above).
+  // this vocabulary (which can happen because of the "holes", see above). Takes
+  // constant time after `buildIndexRankDirectory`, a binary search otherwise.
   std::optional<size_t> positionOfIndex(uint64_t index) const;
+
+  // Build a bit vector over `[0, endIndex())` with one bit per vocabulary index
+  // (set if the index is contained) plus rank counters, which `positionOfIndex`
+  // then uses instead of the binary search. Costs `8/7 * endIndex()` bits (see
+  // `ad_utility::BitVectorWithRank`). Calling it again rebuilds the directory.
+  // With `useHugePages`, the directory is allocated on transparent huge pages
+  // if the system allows it (see `ad_utility::BitVectorWithRank`).
+  void buildIndexRankDirectory(bool useHugePages = false);
+
+  // Prefetch hints for a batch of lookups (no effect on results): load what
+  // `positionOfIndex(index)` reads (the rank directory block, nothing without
+  // the directory), the offsets of the word at `position`, and the first
+  // bytes of that word. `prefetchWordAtPosition` reads the offsets, so they
+  // should have been prefetched before.
+  void prefetchPositionOfIndex(uint64_t index) const {
+    if (indexRankDirectory_.has_value()) {
+      indexRankDirectory_->prefetch(index);
+    }
+  }
+  void prefetchWordOffsetsAtPosition(size_t position) const {
+    words_.prefetchOffsets(position);
+  }
+  void prefetchWordAtPosition(size_t position) const {
+    __builtin_prefetch(wordAtPosition(position).data());
+  }
+
+  // Whether `buildIndexRankDirectory` was called (since the last `close`).
+  bool hasIndexRankDirectory() const { return indexRankDirectory_.has_value(); }
+
+  // The allocated memory of the rank directory (`{nullptr, 0}` if it was not
+  // built), for example to check how much of it is backed by huge pages.
+  std::pair<const void*, size_t> indexRankDirectoryAllocation() const {
+    if (!indexRankDirectory_.has_value()) {
+      return {nullptr, 0};
+    }
+    return {indexRankDirectory_->allocationBegin(),
+            indexRankDirectory_->numAllocatedBytes()};
+  }
+
+  // The number of bytes of the rank directory, 0 if it was not built.
+  size_t indexRankDirectoryNumBytes() const {
+    return indexRankDirectory_.has_value() ? indexRankDirectory_->numBytes()
+                                           : 0;
+  }
 
   // Return the vocabulary index of the word at the given `position`. The
   // `position` must be smaller than `size()`.
@@ -183,6 +240,10 @@ class VocabularyInMemoryBinSearch
     void finish();
   };
 
+  // The words are stored under the base filename itself, their explicit
+  // indices in an additional file (see `idsSuffix`).
+  static FileSuffixes fileSuffixes() { return {"", std::string{idsSuffix}}; }
+
   // A vocabulary with holes cannot be written via the `WordWriterBase`
   // interface (which cannot express the explicit indices), so this function
   // always throws. Use the nested `WordWriter` above instead.
@@ -206,6 +267,7 @@ class VocabularyInMemoryBinSearch
     } else {
       auto& indices = arg.indices_.template emplace<Indices>();
       serializer | indices;
+      arg.indexRankDirectory_.reset();
     }
   }
 

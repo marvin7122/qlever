@@ -68,35 +68,16 @@ VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
 }
 
 // _____________________________________________________________________________
-VocabBatchLookupResult PolymorphicVocabulary::lookupBatch(
-    ql::span<const size_t> indices, ArenaVocabBatchBuilder& builder) const {
-  return std::visit(
-      [&indices, &builder](const auto& vocab) -> VocabBatchLookupResult {
-        AD_CONTRACT_CHECK(!indices.empty());
-        if constexpr (detail::HasLookupBatchWithBuilder_v<
+void PolymorphicVocabulary::lookupBatch(ql::span<const size_t> indices,
+                                        ArenaVocabBatchBuilder& builder) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  std::visit(
+      [&indices, &builder](const auto& vocab) {
+        if constexpr (SupportsBuilderLookupBatch<
                           std::decay_t<decltype(vocab)>>) {
-          if constexpr (std::is_void_v<decltype(vocab.lookupBatch(indices,
-                                                                  builder))>) {
-            // Fill-only protocol: the words were decoded into `builder`.
-            vocab.lookupBatch(indices, builder);
-            return std::move(builder).finalize();
-          } else {
-            // The alternative already finalized `builder` (for example
-            // `UnicodeVocabulary`); finalizing it again would read a
-            // moved-from builder.
-            return vocab.lookupBatch(indices, builder);
-          }
+          vocab.lookupBatch(indices, builder);
         } else {
-          // No batched leaf for the active alternative: reuse the
-          // single-shot batch path and copy the words into the caller's
-          // builder, so the unconditional `finalize()` above (and in
-          // further outer delegations) sees a populated builder.
-          auto singleShot = vocab.lookupBatch(indices);
-          AD_CORRECTNESS_CHECK(singleShot.size() == indices.size());
-          for (std::string_view word : singleShot) {
-            builder.appendWord(word);
-          }
-          return std::move(builder).finalize();
+          appendVocabBatchLookupResult(vocab.lookupBatch(indices), builder);
         }
       },
       vocab_);
@@ -128,6 +109,28 @@ std::unique_ptr<WordWriterBase> PolymorphicVocabulary::makeDiskWriterPtr(
   PolymorphicVocabulary dummyVocab;
   dummyVocab.resetToType(type);
   return dummyVocab.makeDiskWriterPtr(filename);
+}
+
+// _____________________________________________________________________________
+FileSuffixes PolymorphicVocabulary::fileSuffixes(VocabularyType type) {
+  // The names of the enum values are the same as the type aliases for the
+  // implementations, so we can shorten the following code using a macro.
+#undef AD_CASE
+#define AD_CASE(vocabType)              \
+  case VocabularyType::Enum::vocabType: \
+    return vocabType::fileSuffixes()
+
+  switch (type.value()) {
+    AD_CASE(InMemoryUncompressed);
+    AD_CASE(OnDiskUncompressed);
+    AD_CASE(InMemoryCompressed);
+    AD_CASE(OnDiskCompressed);
+    AD_CASE(OnDiskCompressedGeoSplit);
+    AD_CASE(InMemoryUncompressedWithHoles);
+    AD_CASE(InMemoryCompressedWithHoles);
+    default:
+      AD_FAIL();
+  }
 }
 
 // _____________________________________________________________________________
