@@ -20,7 +20,7 @@
 struct FilteredVocabulary {
   // The filtered vocabulary. Its active alternative is one of the
   // `...WithHoles` types (see `ad_utility::VocabularyType`).
-  PolymorphicVocabulary vocabulary_;
+  ad_utility::vocabulary::PolymorphicVocabulary vocabulary_;
   // The type of `vocabulary_`, which the reading side needs in order to
   // `resetToType` before deserializing.
   ad_utility::VocabularyType type_;
@@ -63,7 +63,7 @@ struct FilteredVocabulary {
 // handle that case (in which the complete vocabulary survives and hence nothing
 // has to be built) itself.
 FilteredVocabulary buildFilteredVocabulary(
-    const PolymorphicVocabulary& vocabulary,
+    const ad_utility::vocabulary::PolymorphicVocabulary& vocabulary,
     const std::vector<std::string>& excludedEntryRegexes,
     const std::string& temporaryBasename);
 
